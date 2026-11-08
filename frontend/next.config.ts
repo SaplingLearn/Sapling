@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 // foot of this file for why it is not simply invoked.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
+import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -81,25 +82,16 @@ const nextConfig: NextConfig = {
   // packaging), but keeping it lets `next build` alone still produce a
   // runnable Docker-style server if anyone ever deploys that way.
   output: "standalone",
-  // The 3D knowledge graph stack is ESM-only and touches `window` at module
-  // load. We import it via `next/dynamic({ ssr: false })`, but Next/OpenNext's
-  // server bundler still needs to transpile these packages so the worker
-  // build doesn't choke on bare ESM or browser globals.
-  //
-  // Tried `serverExternalPackages` alone (mutually exclusive with
-  // transpilePackages); broke local Next.js builds because the RSC bundler
-  // still resolves the module graph at static-analysis time and crashes
-  // on `window is not defined`. transpilePackages with `dynamic({ssr:false})`
-  // is the local-build-clean configuration; CF behavior is investigated
-  // separately via the dashboard logs.
-  transpilePackages: [
-    "react-force-graph-3d",
-    "3d-force-graph",
-    "three-render-objects",
-    "d3-force-3d",
-    "react-kapsule",
-    "three",
-  ],
+  // three.js (the landing hero's WebGL scene) is ESM-only; it is imported
+  // client-side only, but the server bundler still resolves the module graph,
+  // so transpile it to keep the OpenNext worker build clean.
+  transpilePackages: ["three"],
+  // PostHog's endpoints end in a slash (`/ingest/e/`, `/ingest/flags/?v=2`);
+  // Next's default trailing-slash redirect would 308 every analytics batch
+  // before the /ingest route handler (src/app/ingest/[...path]/route.ts) sees
+  // it. With this set, the page routes' own slash normalisation is kept by the
+  // `redirects()` entry below instead.
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     return [
       { source: "/api/auth/session", destination: "/api/auth/session" },
@@ -109,6 +101,11 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       { source: "/auth", destination: "/", permanent: false },
+      // Stand-in for the trailing-slash redirect `skipTrailingSlashRedirect`
+      // turns off (see above): Next's `trailingSlash: false` built-in, for
+      // every path except `/ingest/*` (PostHog's endpoints need the slash).
+      // The rule and why it is shaped that way: src/lib/trailingSlashRedirect.ts.
+      TRAILING_SLASH_REDIRECT,
     ];
   },
   async headers() {

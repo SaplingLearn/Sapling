@@ -91,3 +91,77 @@ class TestOcrContentCache:
         extraction_service.extract_text_from_file(b"AAA", "f.pdf", "application/pdf")
         extraction_service.extract_text_from_file(b"BBB", "f.pdf", "application/pdf")
         assert keys[0] != keys[1]  # different bytes → different cache key
+
+
+class TestCacheInitState:
+    """#771: a failed connect used to latch the cache off for the process,
+    and concurrent first callers saw the half-initialized state as off."""
+
+    def _fake_redis(self, monkeypatch, ping):
+        import sys
+        import types
+
+        built = []
+
+        class _Redis:
+            @staticmethod
+            def from_url(url, **_k):
+                c = MagicMock()
+                c.ping.side_effect = ping
+                built.append(c)
+                return c
+
+        monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=_Redis))
+        monkeypatch.setenv("REDIS_URL", "redis://example:6379")
+        cache.reset()
+        return built
+
+    def test_a_failed_connect_is_retried_after_backoff(self, monkeypatch):
+        state = {"up": False}
+
+        def ping():
+            if not state["up"]:
+                raise ConnectionError("down")
+
+        built = self._fake_redis(monkeypatch, ping)
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(cache.time, "monotonic", lambda: clock["t"])
+        assert cache.enabled() is False
+        assert cache.enabled() is False  # inside the backoff: no reconnect
+        assert len(built) == 1
+        state["up"] = True
+        clock["t"] += cache._RETRY_BASE_S + 1
+        assert cache.enabled() is True
+        assert len(built) == 2
+
+    def test_backoff_doubles_and_is_capped(self, monkeypatch):
+        def ping():
+            raise ConnectionError("down")
+
+        self._fake_redis(monkeypatch, ping)
+        clock = {"t": 0.0}
+        monkeypatch.setattr(cache.time, "monotonic", lambda: clock["t"])
+        waits = []
+        for _ in range(12):
+            cache.enabled()
+            waits.append(cache._retry_at - clock["t"])
+            clock["t"] = cache._retry_at
+        assert waits[:3] == [5.0, 10.0, 20.0]
+        assert max(waits) == cache._RETRY_MAX_S
+
+    def test_concurrent_first_callers_share_one_connect(self, monkeypatch):
+        import threading
+
+        gate = threading.Event()
+        built = self._fake_redis(monkeypatch, lambda: gate.wait(5))
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(cache.enabled()))
+                   for _ in range(6)]
+        for t in threads:
+            t.start()
+        gate.set()
+        for t in threads:
+            t.join(5)
+        assert results == [True] * 6
+        assert len(built) == 1
+        cache.reset()

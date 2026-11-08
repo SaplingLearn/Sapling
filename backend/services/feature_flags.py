@@ -20,6 +20,7 @@ import hashlib
 import logging
 import math
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -42,7 +43,8 @@ class FlagDef:
 
 #: Main-nav features an admin can hide (sidebar + top nav, and the route
 #: redirects to /dashboard). "on" HIDES, so the fail-closed "off" leaves the
-#: feature visible. Frontend twin: frontend/src/lib/navFeatures.ts.
+#: feature visible. Frontend twin: frontend/src/lib/navFeatures.ts. The API
+#: side is NAV_FEATURE_API at the bottom of this module (#771).
 NAV_FEATURES: tuple[tuple[str, str], ...] = (
     ("tutor", "Tutor"), ("quiz", "Quiz"), ("tree", "Tree"), ("study", "Study"),
     ("library", "Library"), ("calendar", "Calendar"),
@@ -63,6 +65,12 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("decision_router", ("off", "jev", "jev_shadow"),
             "Tutor turn router on the Jev decision seam (ADR 0027). jev_shadow "
             "also runs flash-lite to measure agreement.", False),
+    # #677 (ADR 0028): PostHog product analytics, end to end — the backend
+    # worker drops every capture for a student it resolves "off" for, and the
+    # frontend (#675) never starts posthog-js. The #620 migration seeds it
+    # "on", so analytics stays on wherever it already was.
+    FlagDef("product_analytics", ("off", "on"),
+            "PostHog product analytics, frontend + backend (ADR 0028).", True),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
@@ -119,6 +127,28 @@ _snapshot: tuple[float, Snapshot] | None = None
 _generation = 0
 _roles: dict[str, tuple[float, tuple[tuple[str, int], ...]]] = {}
 _warned: set[str] = set()
+#: Bounds on the two per-process maps keyed by caller input (#771): one entry
+#: per student ever resolved (roles) and one per distinct warning. Past the
+#: cap the oldest role entry goes (a re-read costs one bounded query); the
+#: warned set is reset (a warning may then repeat once).
+ROLES_CACHE_MAX = 10_000
+WARNED_MAX = 1_000
+
+
+class _Flight:
+    """One in-flight snapshot read that concurrent cold callers wait on
+    instead of each reading the store (#771: single-flight)."""
+
+    __slots__ = ("done", "generation", "result", "error")
+
+    def __init__(self, generation: int) -> None:
+        self.done = threading.Event()
+        self.generation = generation
+        self.result: Snapshot | None = None
+        self.error: BaseException | None = None
+
+
+_flight: _Flight | None = None
 #: monotonic time until which the store counts as unreadable (0 = readable).
 _store_down_until = 0.0
 
@@ -141,6 +171,8 @@ def roles_ttl_s() -> float:
 
 def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
     if key not in _warned:
+        if len(_warned) >= WARNED_MAX:
+            _warned.clear()
         _warned.add(key)
         logger.warning(msg, *args, **kwargs)
 
@@ -183,26 +215,60 @@ def read_config(*, timeout: float | None = None) -> Snapshot:
 
 
 def _get_snapshot(fresh: bool = False) -> Snapshot:
-    global _snapshot
+    global _snapshot, _flight
     ttl = snapshot_ttl_s()
     global _store_down_until
-    with _lock:
-        generation = _generation
-        if not fresh and _snapshot and time.monotonic() - _snapshot[0] < ttl:
-            return _snapshot[1]
-        if not fresh and time.monotonic() < _store_down_until:
-            raise StoreUnreadable("flag store unreadable (cached)")
     if fresh:
+        with _lock:
+            generation = _generation
         # The admin path (ADR 0029): the connection's normal timeout, and an
         # admin read never marks the store down — it only clears the mark
         # when it succeeds.
         snap = read_config()
-    else:
+        return _store_snapshot(snap, generation)
+    with _lock:
+        generation = _generation
+        if _snapshot and time.monotonic() - _snapshot[0] < ttl:
+            return _snapshot[1]
+        if time.monotonic() < _store_down_until:
+            raise StoreUnreadable("flag store unreadable (cached)")
+        # Single-flight (#771): a cold cache used to send every concurrent
+        # caller to the store. Join a read already in flight for this
+        # generation (one begun before a clear would serve a pre-write view);
+        # otherwise lead one.
+        flight = _flight
+        leader = flight is None or flight.generation != generation
+        if leader:
+            flight = _flight = _Flight(generation)
+    if not leader:
+        # The leader's read is bounded per page by STORE_TIMEOUT_S; wait a
+        # little longer than a two-page read, then fail closed.
+        if not flight.done.wait(STORE_TIMEOUT_S * 3):
+            raise StoreUnreadable("flag store read still in flight")
+        if flight.error is not None:
+            raise flight.error
+        assert flight.result is not None
+        return flight.result
+    try:
         try:
             snap = read_config(timeout=STORE_TIMEOUT_S)
         except _STORE_ERRORS:
             _mark_store_down()  # callers fail closed; nothing re-reads for a while
             raise
+        flight.result = snap
+        return _store_snapshot(snap, generation)
+    except BaseException as exc:
+        flight.error = exc
+        raise
+    finally:
+        with _lock:
+            if _flight is flight:
+                _flight = None
+        flight.done.set()
+
+
+def _store_snapshot(snap: Snapshot, generation: int) -> Snapshot:
+    global _snapshot, _store_down_until
     with _lock:
         _store_down_until = 0.0  # the store answered
         if generation == _generation:  # no clear landed while we were reading
@@ -246,7 +312,10 @@ def _user_roles(user_id: str) -> tuple[tuple[str, int], ...]:
         for r in rows
     )
     with _lock:
+        _roles.pop(user_id, None)  # re-inserted last: insertion order = age
         _roles[user_id] = (time.monotonic(), out)
+        while len(_roles) > ROLES_CACHE_MAX:
+            _roles.pop(next(iter(_roles)))
     return out
 
 
@@ -370,6 +439,15 @@ def resolved_client_flags(user_id: str | None) -> dict[str, str]:
             for k, fd in REGISTRY.items() if fd.client_visible}
 
 
+def store_unreadable() -> bool:
+    """Whether the flag store is inside its unreadable window right now — so
+    a fail-closed answer just given was an outage, not configuration. GET
+    /api/flags reports it (``degraded``) so the client keeps its last-known
+    nav flags instead of un-hiding every hidden feature (#771)."""
+    with _lock:
+        return time.monotonic() < _store_down_until
+
+
 def require_flag(key: str):
     """Route dependency: 404 when `key` is off for the session user."""
     def _dependency(request: Request) -> None:
@@ -381,3 +459,78 @@ def require_flag(key: str):
         if not flag_on(key, uid):
             raise HTTPException(status_code=404, detail="Not found")
     return _dependency
+
+
+#: The backend half of the ``hide_<feature>`` flags (#771): the API routers a
+#: hidden feature's pages use, mounted in main.py with
+#: ``require_feature_visible``. A hidden feature used to stay fully callable —
+#: the flags were enforced only by the frontend nav. Each router is listed
+#: under the ONE flag that hides it; ``exempt`` names the (method, path regex)
+#: pairs another visible surface still calls, so hiding one feature never
+#: breaks another. A ``hide_*`` flag absent here is deliberately not enforced
+#: on the API (``NAV_FEATURES_NOT_ENFORCED`` says why).
+NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
+    "hide_quiz": {
+        # Tree shows the student's recent attempts.
+        "/api/quiz": (("GET", r"/attempts"),),
+    },
+    "hide_study": {"/api/flashcards": (), "/api/study-guide": ()},
+    "hide_calendar": {
+        # The dashboard's upcoming-deadlines card.
+        "/api/calendar": (("GET", r"/upcoming/[^/]+"),),
+    },
+    "hide_social": {
+        # Friends are on every profile page (ProfileView), not just Social.
+        "/api/social": (("*", r"/friends(/.*)?"),),
+    },
+    "hide_achievements": {
+        # The quiz results screen shows the XP/streak delta.
+        "/api/gamification": (("GET", r"/me"),),
+    },
+    # /api/gradescope stays: Settings > Connected accounts manages it.
+    "hide_grades": {"/api/gradebook": ()},
+    "hide_notetaker": {"/api/notes": ()},
+}
+
+NAV_FEATURES_NOT_ENFORCED: dict[str, str] = {
+    "hide_tutor": "the quiz Ask panel streams through the tutor's chat/session "
+                  "endpoints and the dashboard/tree list sessions",
+    "hide_tree": "/api/graph backs the course list every page loads",
+    "hide_library": "/api/documents backs the shared upload modal (Calendar) and "
+                    "Study's document list",
+    "hide_course_planner": "the page is static; it calls no API",
+}
+
+
+def require_feature_visible(flag: str, prefix: str):
+    """Router dependency for a ``hide_<feature>`` flag: 404 when the flag hides
+    the feature for the session user, except on the ``NAV_FEATURE_API``
+    exemptions for ``prefix``. Fail-closed "off" (an unreadable store) means
+    visible, exactly as the nav reads it."""
+    exempt = tuple(
+        (method, re.compile(re.escape(prefix) + pattern + r"/?$"))
+        for method, pattern in NAV_FEATURE_API[flag][prefix]
+    )
+
+    def _dependency(request: Request) -> None:
+        path = request.url.path
+        if any((m == "*" or m == request.method) and rx.match(path) for m, rx in exempt):
+            return
+        from services.auth_guard import get_session_user_id
+        try:
+            uid = get_session_user_id(request)
+        except HTTPException:
+            uid = None
+        if flag_variant(flag, uid) == "on":
+            raise HTTPException(status_code=404, detail="Not found")
+    return _dependency
+
+
+def nav_feature_gate(prefix: str) -> list:
+    """``include_router(dependencies=...)`` for the router mounted at
+    ``prefix``: the ``require_feature_visible`` gate of the ``hide_*`` flag
+    that lists it in NAV_FEATURE_API."""
+    from fastapi import Depends
+
+    flag = next(f for f, routers in NAV_FEATURE_API.items() if prefix in routers)
+    return [Depends(require_feature_visible(flag, prefix))]

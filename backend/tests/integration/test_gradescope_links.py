@@ -266,3 +266,30 @@ def test_gradescope_is_a_legal_assignment_source(db_conn):
         row = cur.fetchone()
     assert row, "assignments_source_check should exist"
     assert "gradescope" in row["pg_get_constraintdef"]
+
+
+def test_status_reads_the_sync_state_columns(authed_client, db_conn):
+    """#770: /status selects needs_reauth / last_attempt_at / last_sync_error.
+    The mocked suite agrees with any column list, so this is the guard that the
+    migration actually added them (the #265 drift class)."""
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM gradescope_credentials WHERE user_id = %s", (USER_ACTIVE,))
+        if cur.fetchone():
+            pytest.skip("seed already holds Gradescope credentials for this user")
+        cur.execute(
+            "INSERT INTO gradescope_credentials "
+            "(user_id, auth_mode, cookies_encrypted, needs_reauth, last_sync_error, last_attempt_at) "
+            "VALUES (%s, 'cookies', 'placeholder', true, 'auth_failed', now())",
+            (USER_ACTIVE,),
+        )
+    try:
+        r = authed_client.get("/api/gradescope/status", params={"user_id": USER_ACTIVE})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["state"] == "needs_reauth"
+        assert body["connected"] is False
+        assert body["last_sync_error"] == "auth_failed"
+        assert body["last_attempt_at"]
+    finally:
+        with db_conn.cursor() as cur:
+            cur.execute("DELETE FROM gradescope_credentials WHERE user_id = %s", (USER_ACTIVE,))

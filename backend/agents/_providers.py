@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import importlib
+import logging
 import os
 import threading
 import weakref
@@ -533,10 +534,72 @@ class UnregisteredHandlerError(LookupError):
     preserves any existing code that already catches the builtin type."""
 
 
-def _model_mode() -> str:
-    """The active model mode. Unset/blank → 'real'. Normalized for stray
-    case/whitespace so a CI or shell-exported value isn't brittle."""
+# ── Mode immutability (#771) ───────────────────────────────────────────────
+#
+# Agents capture their model at IMPORT (`Agent(model=model_for(task))`), while
+# the gates (`model_mode()`: RAG embeddings, the index sweeper, PostHog,
+# events, decisions, the tutor/quiz stream paths) are asked per call. If
+# SAPLING_MODEL_MODE changed at runtime the two would disagree — agents still
+# on FunctionModel while the embed gate went real, or the reverse. So the
+# app's lifespan calls `freeze_model_mode()` FIRST, before anything starts:
+# from then on every reader gets the boot value, and a later env change is
+# ignored (with one warning). Before the freeze — scripts, the unit lane,
+# which drives the mode per test via setenv — the env is read per call,
+# exactly as before; the seam's semantics do not change, only when they
+# can change.
+_logger = logging.getLogger(__name__)
+_FROZEN_MODE: str | None = None
+#: The mode the first `model_for` call saw — i.e. what the import-time agents
+#: were built under. The freeze compares against it.
+_BUILT_UNDER: str | None = None
+_drift_warned = False
+
+
+def _env_model_mode() -> str:
+    """SAPLING_MODEL_MODE as the environment says it now. Unset/blank → 'real'.
+    Normalized for stray case/whitespace so a CI or shell-exported value
+    isn't brittle."""
     return (os.getenv("SAPLING_MODEL_MODE") or "real").strip().lower()
+
+
+def _model_mode() -> str:
+    """The active model mode: the boot value once frozen, else the env."""
+    global _drift_warned
+    frozen = _FROZEN_MODE
+    if frozen is None:
+        return _env_model_mode()
+    if not _drift_warned and _env_model_mode() != frozen:
+        _drift_warned = True
+        _logger.warning(
+            "SAPLING_MODEL_MODE changed to %r after boot; ignored — this process "
+            "stays in %r mode (frozen at startup, #771). Restart to change it.",
+            _env_model_mode(), frozen,
+        )
+    return frozen
+
+
+def freeze_model_mode() -> str:
+    """Latch the model mode for the life of this process (main.py's lifespan,
+    before anything starts). Idempotent; returns the frozen mode. Logs an
+    error if the import-time agents were built under a different mode — that
+    process is already split-brained and should be restarted."""
+    global _FROZEN_MODE
+    if _FROZEN_MODE is None:
+        _FROZEN_MODE = _env_model_mode()
+        if _BUILT_UNDER is not None and _BUILT_UNDER != _FROZEN_MODE:
+            _logger.error(
+                "agents were built under SAPLING_MODEL_MODE=%r but the process "
+                "boots in %r; the env changed between import and startup",
+                _BUILT_UNDER, _FROZEN_MODE,
+            )
+    return _FROZEN_MODE
+
+
+def _unfreeze_model_mode_for_tests() -> None:
+    """Test-only: drop the latch so the next test's env is read again."""
+    global _FROZEN_MODE, _drift_warned
+    _FROZEN_MODE = None
+    _drift_warned = False
 
 
 def model_mode() -> str:
@@ -780,7 +843,10 @@ def model_for(task: AgentTask) -> "Model":
     event loop it ends up running on. In function mode, returns a
     FunctionModel (see the seam notes above).
     """
+    global _BUILT_UNDER
     mode = _model_mode()
+    if _BUILT_UNDER is None:
+        _BUILT_UNDER = mode
     if mode == "real":
         return provider_model(model_name_for(task), task=task)
     if mode == "function":

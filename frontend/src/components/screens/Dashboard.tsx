@@ -12,12 +12,15 @@ import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import {
   getGraph,
   getCourses,
   getUpcomingAssignments,
   getSessions,
   getRecommendations,
+  fetchActivity,
+  fetchGamificationMe,
   type EnrolledCourse,
   type Session,
   type Assignment,
@@ -26,11 +29,18 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { dueSet } from "@/lib/quiz/proposals";
+import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
+
+// The desktop greeting's line box. The header actions centre on this line,
+// so both read from one place.
+const HERO_PAD_TOP = 6;
+const HERO_PAD_BOTTOM = 18;
+const HERO_FONT = 42;
+const HERO_LINE_HEIGHT = 1.15;
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -216,15 +226,15 @@ export function Dashboard() {
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
-  // Mirrors the same tier-membership filter `/quiz`'s useQuizHome runs (R-7) —
-  // computed over the RAW (pre-apiToGraphNode) nodes because `dueSet` is typed
-  // against the wire `GraphNode` (concept_name/times_studied included), while
-  // this screen's own `nodes` state has already been through `apiToGraphNode`
-  // and dropped those fields.
-  const [due, setDue] = React.useState<ReturnType<typeof dueSet>>({ conceptIds: [], count: 0, courseCount: 0 });
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
+  // Days with XP this week (gamification /activity) and the longest streak
+  // (/me). XP and the streak are written by the same post-commit hook, so an
+  // XP day is a streak day. Best-effort: the column falls back to session and
+  // concept dates when these don't load.
+  const [xpDays, setXpDays] = React.useState<Set<string>>(new Set());
+  const [bestStreak, setBestStreak] = React.useState<number | null>(null);
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
@@ -270,8 +280,13 @@ export function Dashboard() {
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
 
+  // Latest load wins (#769): a semester switch mid-flight, or a Retry /
+  // course change racing the first load, must not let the OLDER reply
+  // repaint the screen (or its finally clear the newer load's skeleton).
+  const loadReq = useLatestRequest();
   const load = React.useCallback(async () => {
     if (!userId) return;
+    const run = loadReq.begin();
     setLoading(true);
     setLoadError(null);
     try {
@@ -287,13 +302,13 @@ export function Dashboard() {
         getSessions(userId, 10),
         getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
       ]);
+      if (!run.isCurrent()) return;
       const cs = coursesRes.courses || [];
       setCourses(cs);
       const rawNodes: ApiNode[] = graphRes.nodes || [];
       const gNodes: GraphNode[] = rawNodes.map((n) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
-      setDue(dueSet(rawNodes));
       setStats({
         streak: graphRes.stats?.streak ?? 0,
         mastered: graphRes.stats?.mastered ?? 0,
@@ -316,12 +331,32 @@ export function Dashboard() {
       }
       setActiveDays(days);
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("dashboard load failed", err);
       setLoadError(String(err));
     } finally {
-      setLoading(false);
+      if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, activeSemester]);
+  }, [userId, activeSemester, loadReq]);
+
+  React.useEffect(() => {
+    if (!userReady || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [activity, me] = await Promise.all([
+          fetchActivity(userId).catch(() => null),
+          fetchGamificationMe(userId).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setXpDays(new Set((activity?.week ?? []).filter((d) => d.xp > 0).map((d) => d.date)));
+        setBestStreak(me ? me.longest_streak : null);
+      } catch {
+        /* streak extras are decoration; the dashboard renders without them */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userReady, userId]);
 
   React.useEffect(() => {
     // Wait for the active-semester read from localStorage before the first load,
@@ -346,7 +381,12 @@ export function Dashboard() {
     setGreetingPrefix(getGreetingPrefix(new Date(now())));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
-  const [greetingDone, setGreetingDone] = React.useState(false);
+  // WHICH greeting finished typing (#769), not a one-way latch: the text
+  // changes after mount (the name and the time-of-day prefix arrive late),
+  // the Typewriter restarts, and the quote must hide again until the NEW
+  // text settles.
+  const [greetingDoneFor, setGreetingDoneFor] = React.useState<string | null>(null);
+  const greetingDone = greetingDoneFor === greetingText;
   // Greeting + quote render as a centered hero below the TopBar (see
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
@@ -508,188 +548,49 @@ export function Dashboard() {
     return c?.course_code || c?.course_name || null;
   };
 
-  // The Learn-next panel's quiz CTA, and its sidenav-layout counterpart:
-  // "review everything due" when there's a due set, else a plain quiz home.
-  const reviewDueHref = due.count > 0
-    ? buildQuizHref({ scope: "due" }, { kind: "dashboard", returnTo: "/dashboard" })
-    : buildQuizHref({}, { kind: "dashboard", returnTo: "/dashboard" });
-  const reviewDueLabel = due.count > 0 ? `Review what's due · ${due.count}` : "Quiz";
-
   const rightPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
-          {/* Sidenav layout has no "Learn next" panel of its own (that CTA
-              only lives in the legacy topnav's right column below), so the
-              same review-what's-due entry point is surfaced here instead. */}
-          <button
-            className="btn btn--sm"
-            data-testid="dashboard-review-due"
-            onClick={() => router.push(reviewDueHref)}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="bolt" size={13} /> {reviewDueLabel}
-          </button>
-          <button
-            className="btn btn--sm"
-            onClick={() => router.push("/library")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="search" size={13} /> Search
-          </button>
-          <button
-            className="btn btn--sm btn--primary"
-            onClick={() => router.push("/learn")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="sparkle" size={13} /> Start learning
-          </button>
-        </div>
-      )}
-
-      {/* Panel 1 — Streak + Mastered, split 50/50 like the design reference. */}
-      <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-        <div style={{ padding: "16px 18px", borderRight: "1px solid var(--border)" }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Streak</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span
-              className="h-serif"
-              style={{ fontSize: 32, fontWeight: 600, color: stats.streak > 0 ? "var(--warn)" : "var(--text)", lineHeight: 1 }}
-            >
-              {stats.streak}
-            </span>
-            <span style={{ fontSize: 13, color: "var(--text-dim)" }}>days</span>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-            Personal best: {Math.max(stats.streak, 0)}
-          </div>
-        </div>
-        <div style={{ padding: "16px 18px" }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Mastered</div>
-          <div
-            className="h-serif"
-            style={{ fontSize: 32, fontWeight: 600, lineHeight: 1 }}
-          >
-            {stats.mastered}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-            {stats.total ? `of ${stats.total} concepts` : "no concepts yet"}
-          </div>
-        </div>
-      </div>
-
-      {/* Panel 2 — Where you left off (recent sessions). */}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <div className="label-micro">Today</div>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => router.push("/learn")}
-          >
-            View all
-          </button>
-        </div>
-        <div className="h-serif" style={{ fontSize: 16, marginBottom: 12 }}>Where you left off</div>
-        {sessions.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            No recent sessions — start learning to fill this in.
-          </div>
-        ) : (
-          sessions.slice(0, 3).map((s) => (
-            <button
-              key={s.id}
-              data-testid={`dashboard-resume-${s.id}`}
-              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
-              style={{
-                display: "flex", alignItems: "center", gap: 10, width: "100%",
-                padding: "10px 12px", borderRadius: "var(--r-md)",
-                background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-              }}
-            >
-              <Icon name="brain" size={14} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13, fontWeight: 600,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.topic}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11, color: "var(--text-muted)",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}
-                >
-                  {[courseNameFor(s.course_id), s.mode, relTime(s.started_at)].filter(Boolean).join(" · ")}
-                </div>
-              </div>
-              <Icon name="chev" size={12} />
-            </button>
-          ))
-        )}
-      </div>
-
-      {/* Panel 3 — Upcoming assignments. */}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
-        </div>
-        {assignments.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
-        )}
-        {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - now();
-          const hours = diffMs / (1000 * 60 * 60);
-          const days = Math.ceil(diffMs / 86400000);
-          let chipClass = "chip--info";
-          let label = `${days}D`;
-          if (hours <= 0) {
-            chipClass = "chip--err";
-            label = "OVERDUE";
-          } else if (hours <= 24) {
-            chipClass = "chip--err";
-            label = hours < 1 ? "NOW" : `${Math.max(1, Math.round(hours))}H`;
-          } else if (days <= 2) {
-            chipClass = "chip--warn";
-          }
-          return (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.course_name || "—"} · {a.assignment_type || "task"}
-                </div>
-              </div>
-              <span className={`chip ${chipClass}`}>{label}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <TodayColumn
+      sessions={sessions}
+      nodes={nodes}
+      assignments={assignments}
+      hasCourses={courses.length > 0}
+      stats={stats}
+      bestStreak={bestStreak}
+      xpDays={xpDays}
+      today={today}
+      weekDays={weekDays}
+      nowMs={now()}
+      courseLabel={(id) => courseNameFor(id ?? null)}
+      relTime={relTime}
+      navigate={(href) => router.push(href)}
+      openCourses={() => setCoursesOpen(true)}
+      courseRows={
+        courseProgress.length > 0
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
+          : undefined
+      }
+    />
   );
 
   const heroBlock = (
     <div
       style={{
         textAlign: useLegacyPanels && !isMobile ? "center" : "left",
-        padding: isMobile ? "14px 4px 14px" : "6px 0 18px",
+        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 ${HERO_PAD_BOTTOM}px`,
       }}
     >
       <h1
         className="h-serif"
         style={{
           margin: 0,
-          fontSize: isMobile ? 34 : 42,
+          fontSize: isMobile ? 34 : HERO_FONT,
           fontWeight: 600,
           color: "var(--text)",
           letterSpacing: "-0.02em",
-          lineHeight: 1.15,
+          lineHeight: HERO_LINE_HEIGHT,
         }}
       >
-        <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
+        <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
       </h1>
       {quote && (
         <p
@@ -716,23 +617,6 @@ export function Dashboard() {
 
   const mobileMetaRow = isMobile ? (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* The sidenav (non-legacy) layout has no Learn-next panel to carry
-          this CTA into on mobile — rightPanel's own copy is `!isMobile`-gated
-          — so it gets its own full-width row here instead. The legacy
-          layout already has its copy inside the Learn-next panel (reachable
-          via the "Stats & More" mobile tab), so it's skipped here: exactly
-          one `dashboard-review-due` button ever mounts for a given
-          layout/viewport combination. */}
-      {!useLegacyPanels && (
-        <button
-          className="btn btn--sm"
-          data-testid="dashboard-review-due"
-          onClick={() => router.push(reviewDueHref)}
-          style={{ width: "100%", padding: "7px 14px", fontSize: 12 }}
-        >
-          <Icon name="bolt" size={13} /> {reviewDueLabel}
-        </button>
-      )}
       <div
         style={{
           display: "flex",
@@ -742,13 +626,6 @@ export function Dashboard() {
           flexWrap: "wrap",
         }}
       >
-        <button
-          className="btn btn--sm"
-          onClick={() => router.push("/library")}
-          style={{ padding: "7px 14px", fontSize: 12 }}
-        >
-          <Icon name="search" size={13} /> Library
-        </button>
         <button
           className="btn btn--sm btn--primary"
           onClick={() => router.push("/learn")}
@@ -869,13 +746,6 @@ export function Dashboard() {
       {!isMobile && (
         <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
           <button
-            className="btn btn--sm"
-            onClick={() => router.push("/library")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="search" size={13} /> Library
-          </button>
-          <button
             className="btn btn--sm btn--primary"
             onClick={() => router.push("/learn")}
             style={{ padding: "7px 14px", fontSize: 12 }}
@@ -955,14 +825,6 @@ export function Dashboard() {
           </button>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button
-            className="btn btn--sm btn--primary"
-            style={{ flex: 1 }}
-            data-testid="dashboard-review-due"
-            onClick={() => router.push(reviewDueHref)}
-          >
-            <Icon name="bolt" size={12} /> {reviewDueLabel}
-          </button>
           <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
             <Icon name="users" size={12} /> Study room
           </button>
@@ -1024,19 +886,40 @@ export function Dashboard() {
             </>
           )}
         </div>
-      ) : (
-        <div
-          style={{
-            padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
-            display: "grid", gap: 16,
-            gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
-            alignItems: isMobile ? "start" : "stretch",
-            flex: isMobile ? "0 0 auto" : 1,
-            minHeight: 0,
-          }}
-        >
+      ) : isMobile ? (
+        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
           {mainColumn}
           {rightPanel}
+        </div>
+      ) : (
+        // Desktop sidebar layout: the greeting and the actions share one header
+        // row, so the graph and the right column start on the same line and
+        // stretch to the same bottom edge.
+        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
+            <div style={{ minWidth: 0 }}>{heroBlock}</div>
+            {/* Bottom-aligned with the quote: both sides of the header end on
+                one line, the same distance above the cards. */}
+            <div
+              style={{
+                paddingBottom: HERO_PAD_BOTTOM,
+                display: "flex", alignItems: "flex-end", flexShrink: 0,
+              }}
+            >
+              <DashboardActions navigate={(href) => router.push(href)} />
+            </div>
+          </div>
+          {suggestBlock}
+          <div
+            style={{
+              display: "grid", gap: PANEL_GAP,
+              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
+              alignItems: "stretch", flex: 1, minHeight: 0,
+            }}
+          >
+            {graphPanel}
+            {rightPanel}
+          </div>
         </div>
       )}
 
@@ -1122,8 +1005,11 @@ type CourseProgressEntry = {
 // four-segment mastery bar.
 function CourseProgressRow({
   entry,
+  spacing = 12,
 }: {
   entry: CourseProgressEntry;
+  /** Space below the row. 0 when the parent spaces its rows itself. */
+  spacing?: number;
 }) {
   const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
   const pct = Math.round(progress * 100);
@@ -1177,7 +1063,7 @@ function CourseProgressRow({
     </>
   );
 
-  return <div style={{ marginBottom: 12 }}>{body}</div>;
+  return <div style={{ marginBottom: spacing }}>{body}</div>;
 }
 
 function CoursesKey({

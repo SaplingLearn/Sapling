@@ -33,6 +33,7 @@ import {
   fetchFriendRequests,
   acceptFriendRequest,
   declineFriendRequest,
+  cancelFriendRequest,
   removeFriend,
   type StudentRow,
 } from "@/lib/api";
@@ -106,6 +107,26 @@ export function planMessageRealtimeAction(
     };
   }
   return { type: "refetch" };
+}
+
+/**
+ * #764: fold a fresh latest page into what the chat already holds. A realtime
+ * refetch used to REPLACE the list with the latest page, dropping every
+ * earlier page the user had loaded. Server rows win inside the latest page's
+ * window; older loaded rows and still-unsent optimistic `tmp_` rows are kept.
+ */
+export function mergeLatestMessages<T extends { id: string; created_at: string }>(
+  prev: T[],
+  latest: T[],
+): T[] {
+  if (latest.length === 0) return prev;
+  const latestIds = new Set(latest.map((m) => m.id));
+  const pending = prev.filter((m) => m.id.startsWith("tmp_"));
+  const windowStart = Date.parse(latest[0].created_at);
+  const older = prev.filter(
+    (m) => !m.id.startsWith("tmp_") && !latestIds.has(m.id) && Date.parse(m.created_at) < windowStart,
+  );
+  return [...older, ...latest, ...pending];
 }
 
 function CreateJoinBar({ onDone }: { onDone: () => void }) {
@@ -374,6 +395,18 @@ export function FriendsPanel() {
     }
   };
 
+  // #764: the sender can withdraw a request that is still pending.
+  const cancel = async (requestId: string) => {
+    if (!userId) return;
+    try {
+      await cancelFriendRequest(requestId, userId);
+    } catch (err) {
+      toast.error(humanizeError(err, "Couldn't cancel that request."));
+    } finally {
+      await refresh();
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -436,6 +469,13 @@ export function FriendsPanel() {
                 {r.name}
               </div>
               <span className="chip" style={{ fontSize: 10 }}>Pending</span>
+              <button
+                data-testid={`social-friend-cancel-${r.id}`}
+                className="btn btn--sm btn--ghost"
+                onClick={() => cancel(r.id)}
+              >
+                Cancel
+              </button>
             </div>
           ))}
         </div>
@@ -513,6 +553,18 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
 
   React.useEffect(() => { load(); }, [load]);
 
+  // #764: a realtime "something changed" refetch MERGES the latest page into
+  // the list instead of replacing it, so earlier pages the user loaded stay.
+  // hasMore is untouched: it describes the oldest page held, not the newest.
+  const refreshLatest = React.useCallback(async () => {
+    try {
+      const res = await getRoomMessages(roomId, { limit: 50 });
+      setMessages(prev => mergeLatestMessages(prev, res.messages || []));
+    } catch (err) {
+      console.error("messages refresh failed", err);
+    }
+  }, [roomId]);
+
   // Realtime subscriptions.
   React.useEffect(() => {
     const supa = supabaseClient();
@@ -527,7 +579,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           // REST rather than appending payload.new. Own echoes are ignored (the
           // optimistic UI + POST reconciliation already have them).
           const action = planMessageRealtimeAction("INSERT", payload.new, userId);
-          if (action.type === "refetch") void load();
+          if (action.type === "refetch") void refreshLatest();
         })
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
@@ -535,7 +587,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           const action = planMessageRealtimeAction("UPDATE", payload.new, userId);
           if (action.type === "refetch") {
             // #124: foreign edit/delete — re-fetch decrypted via REST.
-            void load();
+            void refreshLatest();
           } else if (action.type === "applyOwnFlags") {
             // Own edit/delete keeps its optimistic plaintext; take server flags.
             setMessages(prev => prev.map(m =>
@@ -554,7 +606,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       .subscribe();
 
     return () => { supa.removeChannel(channel); };
-  }, [roomId, load, userId]);
+  }, [roomId, refreshLatest, userId]);
 
   // Presence / typing channel.
   React.useEffect(() => {
@@ -696,8 +748,22 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
   const handleReaction = async (messageId: string, emoji: string) => {
     if (!userId) return;
     try {
-      await toggleRoomReaction(roomId, messageId, userId, emoji);
-      void load();
+      const res = await toggleRoomReaction(roomId, messageId, userId, emoji);
+      // #764: apply the toggle locally. A full load() here replaced the list
+      // with the latest page, so reacting to an older message dropped it.
+      setMessages(prev => prev.map(m => {
+        if (m.id !== messageId) return m;
+        const list = m.reactions || [];
+        const withEmoji = list.some(r => r.emoji === emoji) ? list : [...list, { emoji, user_ids: [] }];
+        const reactions = withEmoji
+          .map(r => {
+            if (r.emoji !== emoji) return r;
+            const rest = r.user_ids.filter(id => id !== userId);
+            return { ...r, user_ids: res.added ? [...rest, userId] : rest };
+          })
+          .filter(r => r.user_ids.length > 0);
+        return { ...m, reactions };
+      }));
     } catch (err) {
       toast.error(`Reaction failed: ${String(err)}`);
     }
@@ -1405,7 +1471,9 @@ export function Social() {
       const res = await getUserRooms(userId);
       const list = (res.rooms || []) as Room[];
       setRooms(list);
-      setActiveId(prev => prev || list[0]?.id || null);
+      // #764: keep the selection only while it is still one of our rooms —
+      // after a leave (or a kick) the old id would leave the pane blank.
+      setActiveId(prev => (prev && list.some(r => r.id === prev) ? prev : list[0]?.id || null));
     } catch (err) {
       console.error("rooms load failed", err);
     } finally {
@@ -1417,7 +1485,13 @@ export function Social() {
 
   React.useEffect(() => {
     if (!activeId) { setOverview(null); return; }
-    getRoomOverview(activeId).then(setOverview).catch(console.error);
+    // #764: drop a slower response for a room we have already switched away
+    // from, so room A's member list never lands on room B.
+    let current = true;
+    getRoomOverview(activeId)
+      .then(data => { if (current) setOverview(data); })
+      .catch(console.error);
+    return () => { current = false; };
   }, [activeId]);
 
   const active = rooms.find((r) => r.id === activeId);
@@ -1448,10 +1522,12 @@ export function Social() {
                 size="sm"
               />
             </div>
-            {tab === "chat" && <RoomChat roomId={active.id} members={members} />}
-            {tab === "overview" && <RoomOverview roomId={active.id} onChange={load} />}
-            {tab === "match" && <StudyMatch roomId={active.id} />}
-            {tab === "activity" && <RoomActivity roomId={active.id} />}
+            {/* #764: keyed by room so replyTo, edit state, matches and any
+                in-flight load reset on a room switch instead of leaking. */}
+            {tab === "chat" && <RoomChat key={active.id} roomId={active.id} members={members} />}
+            {tab === "overview" && <RoomOverview key={active.id} roomId={active.id} onChange={load} />}
+            {tab === "match" && <StudyMatch key={active.id} roomId={active.id} />}
+            {tab === "activity" && <RoomActivity key={active.id} roomId={active.id} />}
           </>
         ) : (
           <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-muted)" }}>
@@ -1464,7 +1540,7 @@ export function Social() {
         display: "flex", flexDirection: "column", flexShrink: 0,
       }}>
         <div style={{ padding: "18px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div></div>
           <CreateJoinBar onDone={load} />
           <button
             data-testid="social-directory-open"

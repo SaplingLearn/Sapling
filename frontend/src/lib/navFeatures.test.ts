@@ -16,6 +16,11 @@ describe("NAV_SECTIONS", () => {
     for (const i of flagged) expect(i.flag).toMatch(/^hide_[a-z_]+$/);
   });
 
+  it("keeps Quiz inside Study rather than the primary navigation", () => {
+    expect(allItems.some(item => item.href === "/quiz")).toBe(false);
+    expect(allItems.some(item => item.href === "/study")).toBe(true);
+  });
+
   it("every destination is an app-shell route", () => {
     for (const i of allItems) expect(SHELL_PREFIXES as readonly string[]).toContain(i.href);
   });

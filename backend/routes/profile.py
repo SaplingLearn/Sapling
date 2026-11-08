@@ -26,8 +26,10 @@ from models import (
     DeleteAccountBody,
 )
 from services.academics import school_peer_user_ids
-from services.auth_guard import require_self, get_session_user_id
+from services.analytics_consent import clear_analytics_consent_cache
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id, guard_off_loop
 from services.http_cache import cached_json, conditional, make_etag
+from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.achievement_service import LOWER_IS_BETTER, get_user_stat
 
@@ -142,10 +144,16 @@ _SETTINGS_COLS = (
     "user_id,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
-    "theme,font_size,accent_color,share_class_context,"
+    "theme,font_size,accent_color,share_class_context,analytics_opt_out,"
     "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
     "featured_role_id,featured_achievement_ids,updated_at"
 )
+
+#: Folded into the GET /settings ETag; bump it whenever the body's SHAPE
+#: changes (here: analytics_opt_out joined _SETTINGS_COLS, ADR 0028). An
+#: unchanged tag over a changed shape would 304 a browser's pre-deploy cached
+#: body — without the new field — for as long as the row's updated_at holds.
+_SETTINGS_ETAG_VERSION = "2"
 
 
 def _get_or_create_settings(user_id: str) -> dict:
@@ -231,8 +239,13 @@ def _get_featured_achievements(user_id: str) -> list:
 
 
 def _get_user_stats(user_id: str) -> dict:
-    user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user[0].get("streak_count", 0) if user else 0
+    # effective_streak: a lapsed streak keeps its stored count until the next
+    # activity (#767).
+    from services.streak_service import effective_streak
+    user = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"}
+    )
+    streak = effective_streak(user[0] if user else None)
 
     sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
     session_count = len(sessions) if sessions else 0
@@ -417,7 +430,7 @@ class _AvatarUploadBody(BaseModel):
 
 @router.post("/{user_id}/avatar")
 async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     _get_user_or_404(user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL
@@ -465,7 +478,7 @@ def get_settings(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     # user_settings.updated_at is bumped on every patch → a clean single-source
     # ETag. A matching If-None-Match returns 304 without re-serializing.
-    etag = make_etag("settings", user_id, settings.get("updated_at"))
+    etag = make_etag("settings", _SETTINGS_ETAG_VERSION, user_id, settings.get("updated_at"))
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
@@ -493,6 +506,9 @@ def update_settings(
         # (course_context_service.update_course_context) can honor it; the
         # SharedContextToggle PATCHes it best-effort (migration 0037).
         "share_class_context",
+        # ADR 0028: PostHog opt-out. Read per event through the cached
+        # analytics_consent lookup, which is invalidated below.
+        "analytics_opt_out",
     }
     incoming = body.model_dump(exclude_none=True)
     updates = {k: v for k, v in incoming.items() if k in ALLOWED}
@@ -510,6 +526,11 @@ def update_settings(
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+
+    # The consent cache's invalidation hook: an opt-out stops this process's
+    # mirroring from the very next event (other processes: within the TTL).
+    if "analytics_opt_out" in updates:
+        clear_analytics_consent_cache(user_id)
 
     # #72 (PR #464 review): flipping the Class Intel opt-out must take effect
     # NOW, not whenever some classmate's activity next fires the aggregation.
@@ -814,8 +835,14 @@ def get_roles(user_id: str):
 # ── Delete Account ───────────────────────────────────────────────────────────
 
 @router.delete("/{user_id}/account")
-def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
-    require_self(user_id, request)
+def delete_account(
+    user_id: str,
+    body: DeleteAccountBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    # #756: a removed (unapproved) student may still erase their account.
+    require_self(user_id, request, allow_unapproved=True)
 
     if body.confirmation != "DELETE":
         raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
@@ -824,6 +851,19 @@ def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{user_id}"},
     )
+    # ADR 0028: from here on the PostHog worker's consent check reads
+    # deleted_at, so nothing — not even items already queued — names this user
+    # (which would re-create the person the delete below removes). Drop the
+    # cached "allowed" answer now.
+    clear_analytics_consent_cache(user_id)
+    # #756: the auth guard refuses a deleted account; drop its cached "active"
+    # answer so this process stops honouring the session now, not at the TTL.
+    clear_account_state_cache(user_id)
+    # Best-effort PostHog person + event delete, AFTER the response so it adds
+    # no latency and cannot fail the deletion (it never raises; unconfigured
+    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
+    # after the consent TTL. Only reached once the soft delete landed.
+    background_tasks.add_task(delete_posthog_person, user_id)
     return {"deleted": True}
 
 
@@ -831,7 +871,8 @@ def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
-    require_self(user_id, request)
+    # #756: a removed (unapproved) student may still export their data.
+    require_self(user_id, request, allow_unapproved=True)
 
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)

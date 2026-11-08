@@ -24,7 +24,7 @@ const COURSE_PALETTE = [
 ];
 
 // DJB2-ish string hash -> non-negative 32-bit integer. Shared by
-// `paletteFor` (palette index seeding) and `KnowledgeGraph3D`'s `shadeFor`
+// `paletteFor` (palette index seeding) and `lib/graph/nodeStyle`'s `shadeFor`
 // (per-node HSL jitter seeding). Keep the body identical across consumers
 // so the same input always maps to the same downstream color.
 //
@@ -33,7 +33,7 @@ const COURSE_PALETTE = [
 // unsigned 32-bit integer with `>>> 0`, which is always in `[0, 2^32)`. This
 // gives consistent, deterministic indexing for every `% COURSE_PALETTE.length`
 // and keeps the hash semantics identical across both consumers (the 2D
-// `paletteFor` and the 3D `KnowledgeGraph3D`'s `shadeFor`).
+// `paletteFor` and `nodeStyle`'s `shadeFor`).
 export function hashSeed(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
@@ -95,8 +95,8 @@ export function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    // Resolved hex (not CSS custom property): the 3D KnowledgeGraph feeds
-    // this into Three.js which can't resolve `var(--…)`.
+    // Resolved hex (not CSS custom property): `shadeFor` can only jitter a
+    // hex base — a `var(--…)` passes through unshaded.
     // Seed prefers the course-record id so every node in the same family
     // hashes to the same palette color, even if some nodes arrive without
     // `n.course_id` set (round-2 fix — two siblings could otherwise land

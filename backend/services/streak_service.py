@@ -21,6 +21,30 @@ def _today() -> date:
     return datetime.now(timezone.utc).date()
 
 
+def effective_streak(row: dict | None, today: date | None = None) -> int:
+    """The streak as of `today`, from a users row's `streak_count` +
+    `last_active_date` (#767).
+
+    touch_streak is the only writer and only runs on activity, so a broken
+    streak is not reset until the student is next active: the stored
+    `streak_count` of someone last seen a week ago still reads 12. Every reader
+    must go through this instead of `streak_count` — a streak whose last
+    active day is before yesterday is 0. Yesterday still counts: the student
+    can extend it today. Same UTC calendar days as touch_streak; a missing
+    `last_active_date` is "never active", so 0.
+    """
+    if not row:
+        return 0
+    streak = int(row.get("streak_count") or 0)
+    last_raw = row.get("last_active_date")
+    if not streak or not last_raw:
+        return 0
+    last = date.fromisoformat(str(last_raw)[:10])
+    if last < (today or _today()) - timedelta(days=1):
+        return 0
+    return streak
+
+
 def touch_streak(user_id: str) -> int:
     """Advance the streak for today's activity. Idempotent within a day."""
     rows = table("users").select(

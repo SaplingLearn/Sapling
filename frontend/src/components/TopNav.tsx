@@ -19,7 +19,7 @@
  *  - Click on a group label is also valid (keyboard / touch parity).
  *  - Mobile (≤768px) collapses everything into a hamburger that drops a
  *    panel grouped the same way.
- *  - Right-side cluster (settings / admin / avatar) unchanged.
+ *  - Right-side cluster contains settings, report, admin and account.
  */
 
 import React from "react";
@@ -27,6 +27,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
+import { ShellActions } from "./ShellActions";
 import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -39,6 +40,7 @@ export const TOP_NAV_HEIGHT = 56;
 
 function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
+  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -136,21 +138,7 @@ export function TopNav() {
       <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
         {isAuthenticated && (
           <>
-            <Link
-              href="/settings"
-              aria-label="Settings"
-              title="Settings"
-              style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 44, height: 44, borderRadius: "var(--r-sm)",
-                color: pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)"; }}
-            >
-              <Icon name="cog" size={16} />
-            </Link>
+            <ShellActions />
             {isAdmin && (
               <Link
                 href="/admin"

@@ -9,10 +9,24 @@ PENDING_SESSIONS lives here (not in routes/learn.py) so non-tutor routes
 can apply the same rule without importing a router module. A session is
 pending between start-session and the first chat turn: it has no
 `sessions` row yet, only this in-process record of who started it.
+
+Lifecycle (#761):
+
+    pending --first turn--> live (row, ended_at NULL) --end--> ended
+       |                                                  (ended_at set;
+       +--end / delete / TTL / size cap--> gone            turns -> 409)
+
+A pending entry is bounded in time and count (``stash_pending``): it holds a
+plaintext greeting in process memory, and a session nobody chats in must not
+live for the life of the worker. A discard (end-session or delete) leaves a
+short-lived tombstone, so a turn that passed its ownership check just before
+the discard answers 409/404 instead of carrying on as if the session row
+existed.
 """
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -20,10 +34,130 @@ from fastapi import HTTPException
 
 from db.connection import table
 
-# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
+# Maps session_id -> pending payload (cleared on first chat, end-session
+# discard, delete, or eviction by ``stash_pending``). Write it through
+# ``stash_pending`` so the TTL/size bound holds; reads may use it directly.
 PENDING_SESSIONS: dict[str, dict] = {}
 
 SESSION_NOT_FOUND = "Session not found"
+
+#: A pending session nobody chatted in for this long is dropped on the next
+#: stash. Long enough for a tab left open over a lecture; short enough that a
+#: greeting doesn't sit in memory for the life of the worker.
+PENDING_TTL_SECONDS = 12 * 60 * 60
+#: Hard cap on pending entries (and on tombstones) per process; oldest go first.
+PENDING_MAX_ENTRIES = 2000
+#: How long a discard is remembered. Covers any turn already in flight (an
+#: agent turn is bounded well under this) without growing without bound.
+DISCARD_TOMBSTONE_TTL_SECONDS = 10 * 60
+
+#: The typed code a turn on an ended session answers with (409). It rides the
+#: error body as ``error.code`` (services/quiz_errors.py::error_content), which
+#: the frontend's ``ApiError.code`` already reads.
+SESSION_ENDED_CODE = "SESSION_ENDED"
+SESSION_ENDED_MESSAGE = (
+    "This tutoring session has ended. Start a new session to keep learning."
+)
+
+# Stamped on each payload by ``stash_pending``; private, never sent anywhere.
+_STASHED_AT = "_stashed_at"
+
+# session_id -> (user_id, reason, discarded_at). reason: "ended" | "deleted".
+_DISCARDED: dict[str, tuple[str, str, float]] = {}
+_STATE_GUARD = threading.Lock()
+
+
+def _now() -> float:
+    """Module-level clock so tests can move time."""
+    return time.monotonic()
+
+
+def stash_pending(session_id: str, payload: dict) -> None:
+    """Record a freshly started session as pending, enforcing the bounds.
+
+    Expired entries (older than ``PENDING_TTL_SECONDS``) are dropped, then the
+    oldest are evicted until there is room under ``PENDING_MAX_ENTRIES``. Dicts
+    keep insertion order, so "oldest" is the front of the dict. An evicted
+    session answers 404 on its first turn, like any unknown id.
+    """
+    now = _now()
+    with _STATE_GUARD:
+        cutoff = now - PENDING_TTL_SECONDS
+        # Snapshot first: other threads pop entries without this guard (the
+        # pops are atomic), and iterating the live dict would race them.
+        for sid in [
+            sid for sid, p in list(PENDING_SESSIONS.items())
+            if p.get(_STASHED_AT, now) < cutoff
+        ]:
+            PENDING_SESSIONS.pop(sid, None)
+        overflow = len(PENDING_SESSIONS) - PENDING_MAX_ENTRIES + 1
+        if overflow > 0:
+            for sid in list(PENDING_SESSIONS)[:overflow]:
+                PENDING_SESSIONS.pop(sid, None)
+        PENDING_SESSIONS[session_id] = {**payload, _STASHED_AT: now}
+
+
+def discard_pending(session_id: str, *, user_id: str, reason: str) -> dict | None:
+    """Pop ``session_id``'s pending entry and leave a tombstone saying why
+    (``"ended"`` or ``"deleted"``). Returns the popped payload, or None.
+
+    Callers hold ``materialization_lock(session_id)``. The tombstone is left
+    even when there was nothing to pop: a session that materialised while the
+    caller waited is still being ended or deleted, and a turn that already
+    passed its ownership check must not write into it.
+    """
+    now = _now()
+    with _STATE_GUARD:
+        popped = PENDING_SESSIONS.pop(session_id, None)
+        cutoff = now - DISCARD_TOMBSTONE_TTL_SECONDS
+        for sid in [sid for sid, t in _DISCARDED.items() if t[2] < cutoff]:
+            del _DISCARDED[sid]
+        _DISCARDED.pop(session_id, None)  # re-insert at the back
+        while len(_DISCARDED) >= PENDING_MAX_ENTRIES:
+            del _DISCARDED[next(iter(_DISCARDED))]
+        _DISCARDED[session_id] = (user_id, reason, now)
+    return popped
+
+
+def discarded_reason(session_id: str | None, user_id: str | None = None) -> str | None:
+    """``"ended"`` / ``"deleted"`` if ``session_id`` was discarded within the
+    tombstone TTL (by ``user_id``, when one is given), else None."""
+    if not session_id:
+        return None
+    t = _DISCARDED.get(session_id)
+    if t is None or t[2] < _now() - DISCARD_TOMBSTONE_TTL_SECONDS:
+        return None
+    if user_id is not None and t[0] != user_id:
+        return None
+    return t[1]
+
+
+def session_ended_error() -> HTTPException:
+    """The one 409 for a turn on an ended session (code SESSION_ENDED)."""
+    exc = HTTPException(status_code=409, detail=SESSION_ENDED_MESSAGE)
+    exc.code = SESSION_ENDED_CODE  # main.py's handler puts it in the body
+    return exc
+
+
+def raise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
+    """409 SESSION_ENDED for an ended discard, 404 for a deleted one."""
+    reason = discarded_reason(session_id, user_id)
+    if reason == "ended":
+        raise session_ended_error()
+    if reason is not None:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+def require_session_open(session_id: str) -> None:
+    """Before a turn runs on a materialised session: 409 SESSION_ENDED if it
+    has ended, 404 if its row is gone (deleted since the ownership check)."""
+    rows = table("sessions").select(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    if rows[0].get("ended_at"):
+        raise session_ended_error()
 
 # Per-session locks serialising every pending -> materialised/discarded
 # transition. PENDING_SESSIONS is a plain module dict, so it is per-process:

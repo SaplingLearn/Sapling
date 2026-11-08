@@ -17,10 +17,12 @@ import {
   GLOW,
   NODE_STROKE_OPACITY,
   edgeWidthFor,
+  masteryFillFor,
   opacityFor,
   radiusFor,
   shadeFor,
   truncateLabel,
+  type GraphColorMode,
 } from "@/lib/graph/nodeStyle";
 import { IS_TEST_MODE, random } from "@/lib/testMode";
 
@@ -65,12 +67,17 @@ type Props = {
    * simulation's spacing, which the full tree depends on.
    */
   initialZoom?: number;
+  /** Top offset of the zoom stack (default 12, flush with the corner). */
+  zoomControlsTop?: number;
+  /** `course` (default): course colours, tier as opacity. `mastery`: one
+   *  colour per mastery tier, hubs brown, edges blend between their ends. */
+  colorMode?: GraphColorMode;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
-// truncation) lives in `lib/graph/nodeStyle` (#537). It was byte-duplicated
-// here and in KnowledgeGraph3D; the quiz surfaces consume the same module, so
-// a retune moves the tree and the quiz together.
+// truncation, colour modes) lives in `lib/graph/nodeStyle` (#537); the quiz
+// surfaces consume the same module, so a retune moves the tree and the quiz
+// together.
 
 type DragState =
   | { kind: "node"; nodeId: string; pointerId: number }
@@ -80,8 +87,8 @@ type DragState =
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 3;
 
-// Visually-hidden but screen-reader-available. Mirrors KnowledgeGraph3D so the
-// pointer-only SVG graph still exposes its nodes as a navigable text list.
+// Visually-hidden but screen-reader-available, so the pointer-only SVG graph
+// still exposes its nodes as a navigable text list.
 const SR_ONLY: React.CSSProperties = {
   position: "absolute",
   width: 1,
@@ -107,7 +114,13 @@ function KnowledgeGraph2DImpl({
   comparisonColor = "#8a7bc4",
   comparisonLabel,
   initialZoom = 1,
+  zoomControlsTop = 12,
+  colorMode = "course",
 }: Props) {
+  const mastery = colorMode === "mastery";
+  // Per-instance prefix for the edge-gradient ids: several graphs can share
+  // a page, and SVG `url(#…)` references resolve document-wide.
+  const gradPrefix = `kg${React.useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const comparisonByName = React.useMemo(() => {
     const map = new Map<string, GraphComparisonEntry>();
     for (const entry of comparison || []) {
@@ -158,6 +171,9 @@ function KnowledgeGraph2DImpl({
   // calls setState.
   const nodeElsRef = React.useRef(new Map<string, SVGGElement>());
   const edgeElsRef = React.useRef(new Map<number, SVGLineElement>());
+  // `mastery` mode's per-edge gradients are in user space, so their endpoints
+  // ride the same per-tick writes as the lines they paint.
+  const gradElsRef = React.useRef(new Map<number, SVGLinearGradientElement>());
   const tooltipRef = React.useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
 
@@ -183,10 +199,13 @@ function KnowledgeGraph2DImpl({
       const s = resolve(l.source);
       const t = resolve(l.target);
       if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
-      el.setAttribute("x1", String(s.x));
-      el.setAttribute("y1", String(s.y));
-      el.setAttribute("x2", String(t.x));
-      el.setAttribute("y2", String(t.y));
+      for (const target of [el, gradElsRef.current.get(i)]) {
+        if (!target) continue;
+        target.setAttribute("x1", String(s.x));
+        target.setAttribute("y1", String(s.y));
+        target.setAttribute("x2", String(t.x));
+        target.setAttribute("y2", String(t.y));
+      }
     });
   }, []);
 
@@ -288,7 +307,7 @@ function KnowledgeGraph2DImpl({
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
-  const fillFor = (n: GraphNode) => courseColor(n);
+  const fillFor = (n: GraphNode) => (mastery ? masteryFillFor(n) : courseColor(n));
 
   // ── Pause simulation when offscreen ─────────────────────────────────────
   React.useEffect(() => {
@@ -486,6 +505,7 @@ function KnowledgeGraph2DImpl({
         height={height}
         role="img"
         aria-label="Knowledge graph"
+        data-color-mode={colorMode}
         style={{
           display: "block",
           cursor: "grab",
@@ -510,24 +530,45 @@ function KnowledgeGraph2DImpl({
               const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
               const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
               if (!s || !t || s.x == null || t.x == null) return null;
-              const op = variant === "constellation" ? 0.35 : 0.2;
+              const op = mastery ? 0.85 : variant === "constellation" ? 0.35 : 0.2;
+              const gradId = `${gradPrefix}-e${i}`;
               return (
-                <line
-                  key={i}
-                  ref={(el) => {
-                    if (el) edgeElsRef.current.set(i, el);
-                    else edgeElsRef.current.delete(i);
-                  }}
-                  data-testid="graph-edge"
-                  x1={s.x}
-                  y1={s.y}
-                  x2={t.x}
-                  y2={t.y}
-                  stroke="var(--text-muted)"
-                  strokeOpacity={op}
-                  strokeWidth={edgeWidthFor(l.strength)}
-                  strokeLinecap="round"
-                />
+                <React.Fragment key={i}>
+                  {mastery && (
+                    <defs>
+                      <linearGradient
+                        id={gradId}
+                        ref={(el) => {
+                          if (el) gradElsRef.current.set(i, el);
+                          else gradElsRef.current.delete(i);
+                        }}
+                        gradientUnits="userSpaceOnUse"
+                        x1={s.x}
+                        y1={s.y}
+                        x2={t.x}
+                        y2={t.y}
+                      >
+                        <stop offset="0%" stopColor={fillFor(s)} />
+                        <stop offset="100%" stopColor={fillFor(t)} />
+                      </linearGradient>
+                    </defs>
+                  )}
+                  <line
+                    ref={(el) => {
+                      if (el) edgeElsRef.current.set(i, el);
+                      else edgeElsRef.current.delete(i);
+                    }}
+                    data-testid="graph-edge"
+                    x1={s.x}
+                    y1={s.y}
+                    x2={t.x}
+                    y2={t.y}
+                    stroke={mastery ? `url(#${gradId})` : "var(--text-muted)"}
+                    strokeOpacity={op}
+                    strokeWidth={mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength)}
+                    strokeLinecap="round"
+                  />
+                </React.Fragment>
               );
             })}
           </g>
@@ -538,7 +579,9 @@ function KnowledgeGraph2DImpl({
               if (n.x == null || n.y == null) return null;
               const r = nodeRadius(n);
               const color = fillFor(n);
-              const op = n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
+              // `mastery` mode carries the tier in the hue, so every mark is
+              // fully opaque; `course` mode carries it in the opacity.
+              const op = n.is_subject_root || mastery ? 1 : opacityFor(n.mastery_tier);
               const isHl = highlightId === n.id;
               const isHovered = hovered?.id === n.id;
               const isPinned = n.fx != null && n.fy != null;
@@ -656,9 +699,10 @@ function KnowledgeGraph2DImpl({
       </svg>
 
       <div
+        data-testid="graph-zoom-controls"
         style={{
           position: "absolute",
-          top: 12,
+          top: zoomControlsTop,
           right: 12,
           display: "flex",
           flexDirection: "column",

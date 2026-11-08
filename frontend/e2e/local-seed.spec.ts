@@ -11,8 +11,9 @@
  *
  * Real Google OAuth cannot be driven headlessly, so the journey starts where
  * the OAuth redirect would leave a first sign-in: a fresh users row
- * (support/db.ts::insertGoogleAccount) and a session token minted through
- * test-login, handed to the same-tab /auth/callback as `auth_token`.
+ * (support/db.ts::insertGoogleAccount) and the handoff token test-login mints
+ * alongside the session (#756: the only kind the session BFF exchanges),
+ * handed to the same-tab /auth/callback as `auth_token`.
  *
  * Timing-robust by design: the watcher idles on a 30s poll but every
  * `pending` status answer nudges it awake, so it can finish the seed before
@@ -44,7 +45,7 @@ test("a new local Google account is seeded with the sample data and lands on the
   const googleId = `e2e${randomUUID().replace(/-/g, "")}`;
   const userId = `user_${googleId}`;
   await insertGoogleAccount(userId, googleId);
-  const { token } = await mintSessionToken(userId);
+  const { handoffToken } = await mintSessionToken(userId);
 
   // A clean browser: not the USER_ACTIVE storageState every spec starts from.
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
@@ -58,7 +59,7 @@ test("a new local Google account is seeded with the sample data and lands on the
     const callback = new URL("/auth/callback", FRONTEND_URL);
     callback.searchParams.set("user_id", userId);
     callback.searchParams.set("is_approved", "true");
-    callback.searchParams.set("auth_token", token);
+    callback.searchParams.set("auth_token", handoffToken);
     await page.goto(callback.toString());
 
     await expect(page).toHaveURL(/\/dashboard$/, { timeout: 90_000 });

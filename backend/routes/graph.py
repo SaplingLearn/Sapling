@@ -83,9 +83,16 @@ def set_course_color(user_id: str, course_id: str, body: UpdateCourseColorBody, 
 
 
 @router.delete("/{user_id}/courses/{course_id}")
-def remove_course(user_id: str, course_id: str, request: Request):
+def remove_course(
+    user_id: str, course_id: str, request: Request, term: Optional[str] = None,
+):
+    """Drop the course for ONE term (``?term=<label>``; default: the current
+    term). Other terms' enrollments — and their gradebooks — survive (#766)."""
     require_self(user_id, request)
-    return delete_course(user_id, course_id)
+    result = delete_course(user_id, course_id, term)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 # ── Node endpoints ───────────────────────────────────────────────────────────

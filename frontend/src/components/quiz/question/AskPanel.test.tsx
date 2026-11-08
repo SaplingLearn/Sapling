@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   sendChat: vi.fn(),
   endSession: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  newTurnId: vi.fn(() => `turn-${Math.random().toString(36).slice(2, 14)}`),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -253,6 +254,101 @@ describe("AskPanel", () => {
     await screen.findByText("The base case is the exit.");
   });
 
+  // #762: closing the sheet is this panel's Stop. It used to drop the half
+  // answer on the floor (and, mid-follow-up, wipe the whole conversation on
+  // reopen); Learn keeps a stopped partial as "interrupted" with Retry.
+  it("keeps a half-written answer as interrupted when the panel is closed mid-sentence", async () => {
+    let signal: AbortSignal | undefined;
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      const handlers = args[6] as { onToken?: (d: string) => void; signal?: AbortSignal };
+      signal = handlers.signal;
+      handlers.onToken?.("A base case is ");
+      return new Promise(() => {}); // still mid-sentence when the sheet closes
+    });
+
+    const props = {
+      onClose: vi.fn(),
+      userId: "user-1",
+      conceptName: "Recursion",
+      courseId: "course-cs101",
+      courseLabel: "CS101",
+      seed: SEED,
+    };
+    const { rerender } = render(<AskPanel open {...props} />);
+    await screen.findByText("A base case is");
+
+    await act(async () => {
+      rerender(<AskPanel open={false} {...props} />);
+    });
+    expect(signal!.aborted).toBe(true);
+    await act(async () => {
+      rerender(<AskPanel open {...props} />);
+    });
+
+    // The partial is still there, marked, with Retry — not silently gone and
+    // not silently re-asked.
+    expect(screen.getByText("A base case is")).toBeInTheDocument();
+    expect(screen.getByText(/Interrupted/)).toBeInTheDocument();
+    expect(api.streamChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-retry"));
+    });
+    await screen.findByText("The base case is the exit.");
+    expect(screen.queryByText("A base case is")).toBeNull();
+    expect(api.streamChat.mock.calls[1][2]).toBe(composeAskMessage(SEED));
+    expect(api.startSessionStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing during a follow-up keeps the conversation so far, and offers Retry for the follow-up", async () => {
+    const props = {
+      onClose: vi.fn(),
+      userId: "user-1",
+      conceptName: "Recursion",
+      courseId: "course-cs101",
+      courseLabel: "CS101",
+      seed: SEED,
+    };
+    const { rerender } = render(<AskPanel open {...props} />);
+    await screen.findByText("The base case is the exit.");
+
+    api.streamChat.mockImplementationOnce(() => new Promise(() => {}));
+    fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "And without it?" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-send"));
+    });
+    await act(async () => {
+      rerender(<AskPanel open={false} {...props} />);
+    });
+    await act(async () => {
+      rerender(<AskPanel open {...props} />);
+    });
+
+    expect(screen.getByText("The base case is the exit.")).toBeInTheDocument();
+    expect(screen.getByText("And without it?")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-ask-retry")).toBeInTheDocument();
+    // Not re-seeded: one session, and the seed was asked once.
+    expect(api.startSessionStream).toHaveBeenCalledTimes(1);
+    expect(api.streamChat).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-retry"));
+    });
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(3));
+    expect(api.streamChat.mock.calls[2][2]).toBe("And without it?");
+  });
+
+  it("says what the tutor is doing before its first word (progress events)", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      const handlers = args[6] as { onProgress?: (step: string) => void };
+      handlers.onProgress?.("search_course_materials");
+      return new Promise(() => {});
+    });
+    renderPanel();
+    expect(await screen.findByText("Searching your course materials…")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).toBeNull();
+  });
+
   it("leaves a finished turn alone when the panel closes and reopens", async () => {
     const onClose = vi.fn();
     const props = {
@@ -326,6 +422,47 @@ describe("AskPanel", () => {
     expect(api.endSession).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+
+  // #761/#762: one turn_id per turn, unchanged across the stream, its JSON
+  // fallback and a Retry — so a re-send of a turn that already persisted is
+  // replayed by the server instead of answered twice.
+  describe("turn_id", () => {
+    const TURN_ID = /^[A-Za-z0-9_\-]{8,128}$/;
+
+    it("the stream and its JSON fallback carry the same turn_id", async () => {
+      api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+      renderPanel();
+      await waitFor(() => expect(api.sendChat).toHaveBeenCalledTimes(1));
+      const turnId = api.streamChat.mock.calls[0][7];
+      expect(turnId).toMatch(TURN_ID);
+      expect(api.sendChat.mock.calls[0][6]).toBe(turnId);
+    });
+
+    it("Retry re-sends the failed turn's turn_id; a follow-up gets a new one", async () => {
+      api.shouldFallBackToJson.mockReturnValue(false);
+      api.streamChat.mockRejectedValueOnce(new Error("tool writes already landed"));
+      renderPanel();
+      const retry = await screen.findByTestId("quiz-ask-retry");
+      const first = api.streamChat.mock.calls[0][7];
+      expect(first).toMatch(TURN_ID);
+
+      api.streamChat.mockResolvedValueOnce({ reply: "Replayed answer.", replayed: true });
+      await act(async () => {
+        fireEvent.click(retry);
+      });
+      await screen.findByText("Replayed answer.");
+      expect(api.streamChat.mock.calls[1][7]).toBe(first);
+      expect(screen.getAllByText("Replayed answer.")).toHaveLength(1);
+
+      fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "And then?" } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("quiz-ask-send"));
+      });
+      await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(3));
+      expect(api.streamChat.mock.calls[2][7]).toMatch(TURN_ID);
+      expect(api.streamChat.mock.calls[2][7]).not.toBe(first);
+    });
   });
 
   it("does nothing at all until it is opened", () => {

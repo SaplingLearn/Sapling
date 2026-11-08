@@ -19,12 +19,24 @@ both, and the error rungs run neither. See `stream_agent_turn` for the rungs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from services.agent_events import SaplingEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _managed(stream: Any) -> Any:
+    """The async context manager that owns an agent event stream's cleanup.
+
+    pydantic-ai's `AgentEventStream` is its own context manager (entering it
+    switches iteration off the deprecated standalone generator); a plain async
+    generator (test fakes) is wrapped in `aclosing`.
+    """
+    return stream if hasattr(stream, "__aenter__") else aclosing(stream)
 
 
 def merge_graph_updates(updates: list[dict]) -> dict:
@@ -196,6 +208,8 @@ async def stream_agent_turn(
     data. It persists; on the success path it is called once, after the run
     completes and BEFORE `done` is yielded, so a mid-generation disconnect
     (which cancels this generator at its current yield) persists nothing.
+    It is SYNC and runs in a worker thread (#761): anything in it that needs
+    the event loop must hand itself back (`loop.call_soon_threadsafe`).
 
     on_usage(run_result) -> observability hook (#118): called once with the
     final `AgentRunResult` after the stream completes, BEFORE on_complete —
@@ -261,51 +275,60 @@ async def stream_agent_turn(
     mastery_hw = 0
 
     try:
-        async for event in agent.run_stream_events(user_message, **run_kwargs):
-            text = _text_from(event)
-            if text:
-                if (
-                    type(event).__name__ == "PartStartEvent"
-                    and chunks
-                    and not chunks[-1].endswith("\n")
-                    and not text.startswith("\n")
-                ):
-                    # A NEW text part after earlier text this turn (see
-                    # TEXT_PART_SEPARATOR) — stream the break too, so what
-                    # the student watched is what gets persisted.
-                    text = TEXT_PART_SEPARATOR + text
-                chunks.append(text)
-                yield SaplingEvent(
-                    type="token", step="reply", message="", data={"delta": text}
-                )
-                continue
-
-            cls_name = type(event).__name__
-
-            if cls_name == "FunctionToolCallEvent":
-                tool = _tool_name_from(event) or "tool"
-                yield SaplingEvent(
-                    type="progress", step=tool, message=f"Calling {tool}."
-                )
-                continue
-
-            if cls_name == "FunctionToolResultEvent":
-                # A graph tool may have just written. Emit only what is new.
-                new_nodes = merge_graph_updates(deps.graph_updates[graph_hw:])
-                new_mastery = deps.mastery_changes[mastery_hw:]
-                graph_hw = len(deps.graph_updates)
-                mastery_hw = len(deps.mastery_changes)
-                if new_nodes or new_mastery:
+        # Managed iteration: a client disconnect closes THIS generator at a
+        # `yield` inside the loop. Iterated bare (pydantic-ai's deprecated
+        # standalone path), the agent's event stream was left for the
+        # async-gen finalizer, which aclose()d it from another task while it
+        # was still suspended -> "aclose(): asynchronous generator is already
+        # running" (#772 E2E logscan). `async with` closes it here, same task.
+        async with _managed(
+            agent.run_stream_events(user_message, **run_kwargs)
+        ) as agent_events:
+            async for event in agent_events:
+                text = _text_from(event)
+                if text:
+                    if (
+                        type(event).__name__ == "PartStartEvent"
+                        and chunks
+                        and not chunks[-1].endswith("\n")
+                        and not text.startswith("\n")
+                    ):
+                        # A NEW text part after earlier text this turn (see
+                        # TEXT_PART_SEPARATOR) — stream the break too, so what
+                        # the student watched is what gets persisted.
+                        text = TEXT_PART_SEPARATOR + text
+                    chunks.append(text)
                     yield SaplingEvent(
-                        type="graph_update",
-                        step="graph",
-                        message="Knowledge graph updated.",
-                        data={"nodes": new_nodes, "mastery_changes": new_mastery},
+                        type="token", step="reply", message="", data={"delta": text}
                     )
-                continue
+                    continue
 
-            if cls_name == "AgentRunResultEvent":
-                run_result = getattr(event, "result", None)
+                cls_name = type(event).__name__
+
+                if cls_name == "FunctionToolCallEvent":
+                    tool = _tool_name_from(event) or "tool"
+                    yield SaplingEvent(
+                        type="progress", step=tool, message=f"Calling {tool}."
+                    )
+                    continue
+
+                if cls_name == "FunctionToolResultEvent":
+                    # A graph tool may have just written. Emit only what is new.
+                    new_nodes = merge_graph_updates(deps.graph_updates[graph_hw:])
+                    new_mastery = deps.mastery_changes[mastery_hw:]
+                    graph_hw = len(deps.graph_updates)
+                    mastery_hw = len(deps.mastery_changes)
+                    if new_nodes or new_mastery:
+                        yield SaplingEvent(
+                            type="graph_update",
+                            step="graph",
+                            message="Knowledge graph updated.",
+                            data={"nodes": new_nodes, "mastery_changes": new_mastery},
+                        )
+                    continue
+
+                if cls_name == "AgentRunResultEvent":
+                    run_result = getattr(event, "result", None)
 
     # Catches UsageLimitExceeded / UnexpectedModelBehavior (both Exception
     # subclasses) and anything else the model or a tool raises. Deliberately
@@ -464,15 +487,29 @@ async def stream_agent_turn(
     mastery = list(deps.mastery_changes)
 
     try:
-        extra = on_complete(reply, merged, mastery) or {}
+        # #761: on_complete makes synchronous DB writes; in a worker thread
+        # they never stall the event loop (and every other stream on it).
+        # `to_thread` copies this context, so request contextvars still read.
+        #
+        # Cancel-after-persist: a client that disconnects while this runs
+        # cancels the await, but not the thread — the turn finishes
+        # persisting and `done` is simply never delivered. The client's
+        # fallback/retry must therefore not re-run the turn blindly: it
+        # re-sends the turn's `turn_id`, and the route replays the stored
+        # reply (routes/learn.py::_persisted_turn).
+        extra = await asyncio.to_thread(on_complete, reply, merged, mastery) or {}
     except Exception as exc:
         # Persistence failed AFTER the reply fully streamed. Letting this
         # propagate would abort the ASGI response mid-stream with no closing
         # event (sse_starlette has already flushed headers), leaving the
         # client an unstructured network error. Emit the structured error
         # instead so the ADR-0020 interrupted-turn treatment (keep partial
-        # text, offer Retry) applies; the turn persisted at most a partial
-        # write, and Retry re-sends it.
+        # text, offer Retry) applies.
+        #
+        # The turn may have persisted PART of its rows. on_complete stamps
+        # `sapling_wrote` on the exception when a re-run could not be
+        # deduplicated (e.g. the user row landed and the client sent no turn
+        # id), and then — exactly as for tool writes — retrying is unsafe.
         logger.warning("on_complete persistence failed after streamed reply", exc_info=exc)
         yield SaplingEvent(
             type="error",
@@ -480,7 +517,11 @@ async def stream_agent_turn(
             message="The tutor was interrupted. Please retry.",
             data={
                 "request_id": request_id,
-                "retryable": not (deps.graph_updates or deps.mastery_changes),
+                "retryable": not (
+                    deps.graph_updates
+                    or deps.mastery_changes
+                    or getattr(exc, "sapling_wrote", False)
+                ),
             },
         )
         return

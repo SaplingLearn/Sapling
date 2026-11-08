@@ -129,13 +129,7 @@ def award_xp(
         return XpAward(awarded=0, total_xp=total_xp, level=level,
                        leveled_up=False, duplicate=True)
 
-    _prev_total, prev_level = _user_state(user_id)
-    total_xp = _ledger_total(user_id)
-    level = level_for_xp(total_xp)
-    table("users").update(
-        {"total_xp": total_xp, "level": level}, filters={"id": f"eq.{user_id}"}
-    )
-    leveled_up = level > prev_level
+    total_xp, level, leveled_up = _refresh_cache(user_id)
 
     _dispatch_xp_achievements(user_id, leveled_up=leveled_up)
 
@@ -143,6 +137,66 @@ def award_xp(
         awarded=value, total_xp=total_xp, level=level,
         leveled_up=leveled_up,
     )
+
+
+# Compare-and-set attempts before giving up on refreshing the cache. Each
+# failed attempt means another award for this user landed between our read and
+# our write, so contention this deep is a burst from one user; whatever we
+# leave stale, their next award recomputes from the ledger.
+_CACHE_CAS_ATTEMPTS = 5
+
+
+def _refresh_cache(user_id: str) -> tuple[int, int, bool]:
+    """Refresh users.total_xp/level from the ledger as a compare-and-set
+    (#767). Returns (total_xp, level, leveled_up).
+
+    The ledger insert and this cache write are separate statements, and two
+    concurrent awards used to race between them: each read prev_level, each
+    summed the ledger, and the writes landed in either order — so a stale,
+    LOWER total could overwrite a newer one, and the same level-up could be
+    reported by both awards (or after a regressed write, twice over time).
+
+    The UPDATE is conditioned on `total_xp` still being the value we read. If
+    another award moved it first, the PATCH matches no row and we re-read and
+    retry. So the cache only ever moves forward from a state we observed, and
+    `leveled_up` compares against the level of the row we actually replaced:
+    each crossing of a level boundary is reported by exactly one award (the
+    one whose write crossed it), even when that write also carries a
+    concurrent award's XP. Ledger amounts are always positive (award_xp is the
+    only writer and refuses value <= 0), so a re-read sum is never lower than
+    one a competing writer already cached.
+    """
+    total_xp, level = 0, 1
+    for _ in range(_CACHE_CAS_ATTEMPTS):
+        rows = table("users").select("total_xp,level", filters={"id": f"eq.{user_id}"})
+        if not rows:
+            total_xp = _ledger_total(user_id)
+            return total_xp, level_for_xp(total_xp), False
+        raw_prev = rows[0].get("total_xp")
+        prev_total = int(raw_prev or 0)
+        prev_level = int(rows[0].get("level") or 1)
+
+        total_xp = _ledger_total(user_id)
+        level = level_for_xp(total_xp)
+        if total_xp == prev_total and level == prev_level:
+            # A concurrent award already landed exactly this state (it
+            # reported any level-up). Nothing to write.
+            return total_xp, level, False
+
+        updated = table("users").update(
+            {"total_xp": total_xp, "level": level},
+            filters={
+                "id": f"eq.{user_id}",
+                "total_xp": "is.null" if raw_prev is None else f"eq.{raw_prev}",
+            },
+        )
+        if updated:
+            return total_xp, level, level > prev_level
+    logger.warning(
+        "award_xp: cache CAS lost %d times user=%s; left for the next award",
+        _CACHE_CAS_ATTEMPTS, user_id,
+    )
+    return total_xp, level, False
 
 
 # Re-entrancy guard for the achievement dispatch below. check_achievements pays

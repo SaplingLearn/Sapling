@@ -1,7 +1,7 @@
 /**
  * Manual add-concept journey (#330).
  *
- * As the seeded student on /tree: select the MATH210 course pill (the
+ * As the seeded student on /tree: select MATH210 in the course dropdown (the
  * composer only renders for a single-course filter — "all" gives no course
  * to attribute the node to), add a uniquely named concept, and assert the
  * DB truth (exactly one graph_nodes row for user+course+name) plus the
@@ -22,10 +22,11 @@ const CONCEPT = "E2E Manual Concept";
 
 test("Tree add-concept persists, renders, and dedups on re-add (#330)", async ({ page }) => {
   await page.goto(`${FRONTEND_URL}/tree`);
-  // `exact` matters: the course pill's label is a prefix of the graph node's
-  // a11y activate button ("MATH210 - Linear Algebra"), so a loose match is a
-  // strict-mode violation once the graph renders.
-  await page.getByRole("button", { name: "MATH210", exact: true }).click();
+  // The course filter is a dropdown in the Tree toolbar; pick by testid, not
+  // label — "MATH210" is a prefix of the graph node's a11y activate button
+  // ("MATH210 - Linear Algebra"), so a text match is a strict-mode trap.
+  await page.getByTestId("graph-course-filter").click();
+  await page.getByTestId(`graph-course-filter-${COURSE_ID}`).click();
 
   await page.getByTestId("graph-add-concept").click();
   await page.getByTestId("graph-add-concept-input").fill(CONCEPT);

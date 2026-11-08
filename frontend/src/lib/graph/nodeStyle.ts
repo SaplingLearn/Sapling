@@ -1,10 +1,10 @@
 /**
  * nodeStyle — how a concept node is painted, as pure functions.
  *
- * Extracted verbatim from `KnowledgeGraph2D` / `KnowledgeGraph3D` (#537),
- * which each carried their own byte-identical copy of `hexToHsl` + `shadeFor`
- * and their own tier→opacity / mastery→radius tables. Both renderers now
- * import from here, and so do the quiz surfaces (`ConceptNode`,
+ * Extracted verbatim from `KnowledgeGraph2D` and the since-removed 3D graph
+ * (#537), which each carried their own byte-identical copy of `hexToHsl` +
+ * `shadeFor` and their own tier→opacity / mastery→radius tables. The tree
+ * renderer imports from here, and so do the quiz surfaces (`ConceptNode`,
  * `ConceptNeighbourhood`), so a retune moves the tree and the quiz together
  * instead of drifting them apart.
  *
@@ -77,9 +77,9 @@ export function hslToHex(h: number, s: number, l: number): string {
  *
  * `as` picks the output form, and the choice is load-bearing:
  *   - `"css"` (default) → `hsl(h s% l%)`, what the SVG renderers use.
- *   - `"hex"` → `#rrggbb`, what the 3D renderer MUST use. Three.js's
- *     `Color.setStyle` only accepts the comma-separated `hsl(h, s%, l%)`
- *     form; the modern space-separated string silently renders BLACK.
+ *   - `"hex"` → `#rrggbb`, for consumers that can't parse modern CSS colour
+ *     (e.g. three.js's `Color.setStyle` only accepts the comma-separated
+ *     `hsl(h, s%, l%)` form; the space-separated string renders BLACK).
  *
  * A non-hex base (e.g. `var(--c-sage)`) can't be jittered, so it passes
  * through unchanged — which silently disables shading. Callers that care
@@ -159,3 +159,42 @@ export const NODE_STROKE_OPACITY = 0.4;
 
 /** The soft halo behind an `organism` node: a blurred disc at `r + pad`. */
 export const GLOW = { pad: 8, opacity: 0.15, blur: 3 } as const;
+
+/**
+ * How the tree colours its nodes:
+ *   - `course`  — each course's colour, per-node shaded (`shadeFor`), with
+ *                 the mastery tier encoded as opacity (`opacityFor`).
+ *   - `mastery` — one fixed colour per mastery tier (`MASTERY_PALETTE`), fully
+ *                 opaque, course hubs in hub brown. Course identity comes from
+ *                 the graph's structure (each hub's family) instead of hue.
+ */
+export type GraphColorMode = "course" | "mastery";
+
+/** The `mastery` colour mode's palette — the redesign's source palette. */
+export const MASTERY_PALETTE = {
+  mastered: "#A3B06D",
+  learning: "#FCC98A",
+  struggling: "#EF908F",
+  unexplored: "#DECDC1",
+  hub: "#6C462F",
+} as const;
+
+/** The readable name of each tier, in legend order. */
+export const TIER_LABEL: Record<MasteryTier, string> = {
+  mastered: "Mastered",
+  learning: "Learning",
+  struggling: "Struggling",
+  unexplored: "Unexplored",
+};
+
+/** Fill for one node under the `mastery` colour mode: hub brown for a course
+ *  hub, else its server tier's colour. An unknown tier reads as unexplored
+ *  rather than inventing a state. */
+export function masteryFillFor(n: { is_subject_root?: boolean; mastery_tier?: string | null }): string {
+  if (n.is_subject_root) return MASTERY_PALETTE.hub;
+  const t = n.mastery_tier;
+  // Own-property check, not `in`: "toString" & co. are on the prototype.
+  return t && Object.prototype.hasOwnProperty.call(TIER_LABEL, t)
+    ? MASTERY_PALETTE[t as MasteryTier]
+    : MASTERY_PALETTE.unexplored;
+}

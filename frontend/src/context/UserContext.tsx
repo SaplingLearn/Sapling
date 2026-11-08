@@ -1,8 +1,31 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useSyncExternalStore,
+} from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
-import { API_URL, getMe } from '@/lib/api';
+import { usePathname } from 'next/navigation';
+import { API_URL, getMe, onSessionExpired } from '@/lib/api';
+import { readAccountSettings } from '@/lib/accountSettings';
+import { isAppShellRoute } from '@/lib/appRoutes';
+import { clearUserScopedStorage } from '@/lib/userScopedStorage';
+import {
+  ACCOUNT_REFRESH_MS,
+  accountRefreshDue,
+  needsAccountRead,
+  pageviewsMayRun,
+  resumeAnalytics,
+  stopAnalytics,
+  subscribeAnalytics,
+} from '@/lib/analytics';
+
+const pageviewsNeverRunOnServer = () => false;
 
 interface UserContextValue {
   userId: string;
@@ -10,14 +33,12 @@ interface UserContextValue {
   avatarUrl: string;
   userReady: boolean;
   isAuthenticated: boolean;
-  isApproved: boolean;
   username: string | null;
   roles: UserRole[];
   equippedCosmetics: EquippedCosmetics;
   featuredRole: Role | null;
   isAdmin: boolean;
   setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
-  confirmApproved: () => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   // Direct setter exposed so callers can do an optimistic UI update
@@ -33,31 +54,32 @@ export const UserContext = createContext<UserContextValue>({
   avatarUrl: '',
   userReady: false,
   isAuthenticated: false,
-  isApproved: false,
   username: null,
   roles: [],
   equippedCosmetics: {},
   featuredRole: null,
   isAdmin: false,
   setActiveUser: () => {},
-  confirmApproved: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
   setAvatarUrl: () => {},
 });
 
-// Mirror of middleware.ts PROTECTED (keep in sync; app/robots.ts mirrors it
-// too): the shell routes where a cleared session leaves no usable UI.
-const SHELL_PREFIXES = [
-  '/dashboard', '/learn', '/quiz', '/study', '/tree',
-  '/library', '/calendar', '/social',
-  '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner', '/notetaker', '/profile',
-];
-
 // Pure + exported for tests (window.location is unstubbable under jsdom).
+// The shell routes (lib/appRoutes.ts) are where a cleared session leaves no
+// usable UI.
 export function shouldBounceToSignin(pathname: string): boolean {
-  return SHELL_PREFIXES.some(p => pathname.startsWith(p));
+  return isAppShellRoute(pathname);
+}
+
+/** The account id persisted in `sapling_user`, or '' (none / unreadable). */
+function persistedIdentity(): string {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+    return saved && typeof saved.id === 'string' ? saved.id : '';
+  } catch {
+    return '';
+  }
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -65,7 +87,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
 
   const [username, setUsername] = useState<string | null>(null);
@@ -79,6 +100,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const activeIdentity = React.useRef('');
 
   const setActiveUser = useCallback((id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
+    // #756: signing in as someone else on this browser (no sign-out between)
+    // must not inherit the previous student's semester, drafts, quiz or
+    // privacy toggle. Same account again → nothing is cleared.
+    const persisted = persistedIdentity();
+    if (
+      (activeIdentity.current && activeIdentity.current !== id) ||
+      (persisted && persisted !== id)
+    ) {
+      clearUserScopedStorage();
+    }
     // A repeated confirmation of the same account must not cancel its
     // profile load: userId would be unchanged, so the effect would not retry.
     if (id !== activeIdentity.current) profileGeneration.current += 1;
@@ -147,7 +178,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
         setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
-        if (me.is_approved) setIsApproved(true);
       } catch {
         // No identity source is left, for any reason: a 401 (no/expired
         // session), a 404 (the cookie names a user row that no longer
@@ -182,14 +212,82 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUserName('');
     setAvatarUrl('');
     setIsAuthenticated(false);
-    setIsApproved(false);
     setUsername(null);
     setRoles([]);
     setEquippedCosmetics({});
     setFeaturedRole(null);
     setIsAdmin(false);
-    localStorage.removeItem('sapling_user');
+    // #756: every user-scoped key, not just the identity — a shared browser
+    // must not hand the next student this one's semester, drafts or quiz.
+    clearUserScopedStorage();
+    // Sign-out, account deletion (Settings → signOut) and a dead session all
+    // land here: analytics stops at once, and stopAnalytics resets the
+    // PostHog identity, so nothing more is attributed to this account (a
+    // soft-deleted one included). No-op when analytics is off.
+    stopAnalytics();
   }, []);
+
+  // Product-analytics pageviews (src/lib/analytics.ts) run only for a
+  // signed-in student, only inside the app shell (lib/appRoutes.ts — never
+  // public or marketing pages, /auth/*, onboarding), and only once their
+  // account preference (user_settings.analytics_opt_out) has been read as
+  // `false`. Nothing about it is stored in the browser, so it is read on the
+  // first shell page of each page load — and only while pageviews may run
+  // here at all (pageviewsMayRun: a configured build, the admin
+  // `product_analytics` flag on, no DNT/GPC). A build without analytics, or a
+  // student the flag is off for, costs no settings request. The read goes
+  // through lib/accountSettings.ts, which shares one in-flight GET with the
+  // Settings screen and feeds every answer — whoever asked — into the
+  // analytics state, so the two never disagree.
+  //
+  // Signed out → off. A failed read → off, retried on each later shell
+  // navigation until it answers or MAX_ACCOUNT_READ_FAILURES reads have
+  // failed (needsAccountRead) — bounded, never a loop; opening Settings
+  // always reads again. A read overtaken by a Settings toggle or a sign-out
+  // is ignored (analytics.ts's generation counter). The capture gate itself
+  // also checks the live route, so leaving the shell (Settings → /privacy)
+  // stops capture for that page at once.
+  const pathname = usePathname();
+  const onAppRoute = isAppShellRoute(pathname);
+  const mayRun = useSyncExternalStore(subscribeAnalytics, pageviewsMayRun, pageviewsNeverRunOnServer);
+  useEffect(() => {
+    if (!userReady) return;
+    if (!isAuthenticated || !userId) {
+      stopAnalytics();
+      return;
+    }
+    // Back in the shell with the answer known: start posthog-js if it is not
+    // running (one retry of a failed load per entry into the shell).
+    if (mayRun && onAppRoute && !needsAccountRead(userId)) resumeAnalytics();
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun]);
+  useEffect(() => {
+    if (!userReady || !isAuthenticated || !userId || !mayRun || !onAppRoute) return;
+    if (!needsAccountRead(userId)) return;
+    readAccountSettings(userId).catch(() => {
+      // Fail closed: analytics.ts records the failure (`unreadable`); the
+      // next shell navigation (`pathname`) retries, within the budget.
+    });
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun, pathname]);
+  // While this tab is SENDING, re-read the preference every
+  // ACCOUNT_REFRESH_MS (visible tabs only) and on coming back to the tab, so
+  // an opt-out made on another device or tab stops these pageviews within
+  // about a minute without a reload. A failed re-read is `unreadable`: off
+  // (fail closed) until a later read answers.
+  useEffect(() => {
+    if (!userReady || !isAuthenticated || !userId || !mayRun || !onAppRoute) return;
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || !accountRefreshDue(userId)) return;
+      readAccountSettings(userId).catch(() => {
+        // Recorded by analytics.ts (`unreadable`); capture is off meanwhile.
+      });
+    };
+    const timer = window.setInterval(tick, ACCOUNT_REFRESH_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun]);
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;
@@ -234,7 +332,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // fallback above): just drop the stale identity there.
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
         setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
-        if (data.is_approved) setIsApproved(true);
         return;
       }
       // /me is the source of truth for the display name (it may have changed
@@ -284,9 +381,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (userReady && userId) fetchProfileData(userId);
   }, [userReady, userId, fetchProfileData]);
 
-  const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
+  // #756: a 401 from ANY fetchJSON call (lib/api.ts onSessionExpired) means
+  // the server may have stopped honouring this session — expired, signed out
+  // elsewhere, account deleted. Re-check it at once with the same
+  // GET /api/auth/me reconciliation as above instead of waiting for the next
+  // profile refetch: a definitive 401/404 there clears the identity, the
+  // user-scoped storage and the analytics identity, and bounces shell routes
+  // to sign-in; a blip keeps the session. One check at a time, so a burst
+  // of 401s costs one /me. Signed-out tabs (anonymous pages) have nothing to
+  // check.
+  const sessionCheck = React.useRef<Promise<void> | null>(null);
+  useEffect(
+    () =>
+      onSessionExpired(() => {
+        const uid = activeIdentity.current;
+        if (!uid || sessionCheck.current) return;
+        sessionCheck.current = fetchProfileData(uid).finally(() => {
+          sessionCheck.current = null;
+        });
+      }),
+    [fetchProfileData],
+  );
 
-  const confirmApproved = () => setIsApproved(true);
+  const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
   const signOut = useCallback(async () => {
     try {
@@ -298,11 +415,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+      // #757: no `isApproved` — nothing read it, and it sat false on a
+      // localStorage boot. Approval is enforced server-side (the auth guard's
+      // 403 not_approved, #756) and routed by the middleware (/pending).
+      userId, userName, avatarUrl, userReady, isAuthenticated,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
-      setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
+      setActiveUser, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated,
      username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
   );
 

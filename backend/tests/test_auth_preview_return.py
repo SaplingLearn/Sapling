@@ -192,7 +192,7 @@ def test_pending_user_lands_on_preview_pending(drive_callback):
 
 def test_failure_redirect_goes_to_preview(drive_callback):
     location = drive_callback({"rt": PREVIEW}, nonce_in_state="other")
-    assert location == f"{PREVIEW}/auth?error=invalid_state"
+    assert location == f"{PREVIEW}/?error=invalid_state"
 
 
 def test_return_to_on_callback_query_is_ignored(drive_callback):

@@ -10,6 +10,8 @@ import {
   deleteGradescopeCredentials,
   type GradescopeStatus,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
+import { gradescopeConnectionState } from "@/components/Gradebook/gradescopeState";
 
 /**
  * Connected Accounts — settings surface for managing third-party
@@ -26,16 +28,24 @@ export function ConnectedAccounts() {
   const [connectOpen, setConnectOpen] = React.useState(false);
   const [reconnect, setReconnect] = React.useState(false);
 
+  // Latest-wins: the mount load and the post-dialog / post-disconnect
+  // reloads can overlap, and an older answer must not repaint the card.
+  const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async () => {
     if (!userId) return;
+    const seq = ++refreshSeq.current;
     try {
       const s = await getGradescopeStatus(userId);
+      if (seq !== refreshSeq.current) return;
       setStatus(s);
     } catch (e: unknown) {
-      toast.error(`Couldn't load Gradescope status: ${e instanceof Error ? e.message : ""}`);
-      setStatus({ has_credentials: false, auth_mode: null, last_synced_at: null });
+      if (seq !== refreshSeq.current) return;
+      toast.error(`Couldn't load Gradescope status: ${humanizeError(e, "Try again.")}`);
+      // Unknown, not "disconnected": a failed read says nothing about the
+      // connection, and Connect over saved credentials would be misleading.
+      setStatus(null);
     } finally {
-      setLoading(false);
+      if (seq === refreshSeq.current) setLoading(false);
     }
   }, [userId, toast]);
 
@@ -45,13 +55,13 @@ export function ConnectedAccounts() {
 
   async function onDisconnect() {
     if (!userId) return;
-    if (!window.confirm("Disconnect Gradescope from Sapling?")) return;
+    if (!window.confirm("Disconnect Gradescope from Sapling? Your course links are kept, so reconnecting resumes syncing.")) return;
     try {
       await deleteGradescopeCredentials(userId);
       toast.info("Gradescope disconnected.");
       await refresh();
     } catch (e: unknown) {
-      toast.error(`Couldn't disconnect: ${e instanceof Error ? e.message : ""}`);
+      toast.error(`Couldn't disconnect: ${humanizeError(e, "Try again.")}`);
     }
   }
 
@@ -128,6 +138,15 @@ export function ConnectedAccounts() {
   );
 }
 
+// Copy for the last sync attempt's failure code (routes/gradescope.py). An
+// auth failure isn't listed: it surfaces as the needs-reauth state instead.
+const SYNC_ERROR_COPY: Record<NonNullable<GradescopeStatus["last_sync_error"]>, string | null> = {
+  auth_failed: null,
+  fetch_failed: "Gradescope was unavailable",
+  write_failed: "grades couldn't be saved",
+  partial_write: "some grades couldn't be saved",
+};
+
 // ───────────────────────────────────────────────────────────────────────────
 // ProviderCard — one row per integration. Same shape regardless of
 // connection state; the trailing button(s) and status badge change.
@@ -149,9 +168,16 @@ function ProviderCard({
   onReconnect: () => void;
   onDisconnect: () => void;
 }) {
-  const connected = !!status?.has_credentials;
+  // #770: "has a credentials row" is not "connected". Rejected credentials are
+  // their own state (reconnect), and a failed status read is unknown.
+  const state = status ? gradescopeConnectionState(status) : null;
+  const connected = state === "connected" || state === "needs_reauth"; // credentials saved
+  const needsReauth = state === "needs_reauth";
   const modeLabel =
     status?.auth_mode === "cookies" ? "session cookies (SSO)" : "password";
+  const syncProblem = state === "connected" && status?.last_sync_error
+    ? SYNC_ERROR_COPY[status.last_sync_error]
+    : null;
   return (
     <section
       style={{
@@ -206,17 +232,23 @@ function ProviderCard({
             textTransform: "uppercase",
             color: loading
               ? "var(--text-muted)"
-              : connected
-                ? "var(--sap-600)"
-                : "var(--text-muted)",
+              : needsReauth
+                ? "var(--err)"
+                : connected
+                  ? "var(--sap-600)"
+                  : "var(--text-muted)",
             marginBottom: 6,
           }}
         >
           {loading
             ? "Checking…"
-            : connected
-              ? `Credentials saved · ${modeLabel}`
-              : "Not connected"}
+            : state === null
+              ? "Couldn't check status"
+              : needsReauth
+                ? "Sign-in expired · reconnect needed"
+                : connected
+                  ? `Credentials saved · ${modeLabel}`
+                  : "Not connected"}
         </div>
         <p
           style={{
@@ -245,6 +277,15 @@ function ProviderCard({
             Last sync · {new Date(status.last_synced_at).toLocaleString()}
           </div>
         )}
+        {syncProblem && (
+          <div
+            className="mono"
+            style={{ fontSize: 11, color: "var(--err)", marginTop: 4, letterSpacing: "-0.01em" }}
+          >
+            Last attempt · {syncProblem}
+            {status?.last_attempt_at ? ` · ${new Date(status.last_attempt_at).toLocaleString()}` : ""}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -252,7 +293,7 @@ function ProviderCard({
           <>
             <button
               type="button"
-              className="btn"
+              className={needsReauth ? "btn btn--primary" : "btn"}
               onClick={onReconnect}
               style={{ padding: "8px 14px", fontSize: 13 }}
             >
