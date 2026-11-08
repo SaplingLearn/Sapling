@@ -214,8 +214,6 @@ export default function GraphPreview() {
         {legible && courseCount > 1 && (
           <CoursesKey
             courseProgress={courseProgressFor(keyCourses, data.nodes)}
-            hasCourses
-            semesterActive={false}
             placement="top-left"
             testIdPrefix="preview"
             activeCourseId={keyHover ?? graphHover}

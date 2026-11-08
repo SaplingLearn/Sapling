@@ -17,7 +17,9 @@ Topic Checklist uses the `topic-checklist` prefix in
 `topic-checklist-toggle`, `topic-checklist-semester`, `topic-checklist-filter`,
 `topic-checklist-refresh`, and repeated `topic-checklist-topic-{topicId}` /
 `topic-checklist-check-{topicId}`. Topic IDs are stable name hashes supplied by
-the API. Course selection on the map uses `graph-course-filter-{courseId}`.
+the API. The panel is not mounted anywhere right now (it was dropped from the
+Tree toolbar). Course selection on the map uses `graph-course-filter-{courseId}`:
+the course key's rows on the Tree, which double as its course filter.
 
 Kebab-case, `<surface>-<element>`:
 
@@ -390,10 +392,10 @@ never collide in the DOM.
 
 | testid | element |
 | --- | --- |
-| `dashboard-courses-key` | the always-open "My courses" key overlay on the graph panel (default sidebar layout; mounts once enrollments have loaded, absent with no courses) |
+| `dashboard-courses-key` | the always-open course key overlay on the graph panel (default sidebar layout; mounts once enrollments have loaded, absent when no course is in the graph) |
 | `dashboard-course-row` | a course row button inside the key (click: zoom to the course, again to zoom out); carries `data-course-id` |
 | `dashboard-course-code` | a course row's code/name label inside the key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
-| `dashboard-courses-manage` | the cog in the key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-courses-manage` | the "Open courses →" link at the top right of the course list (right column's mastery card) that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | Today's plan session item — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 | `dashboard-today-column` / `dashboard-streak` / `dashboard-plan` / `dashboard-mastery` | the sidebar layout's right column and its three cards (`dashboard/TodayColumn.tsx`) |
 | `dashboard-plan-progress` | the plan's "N of M done today" line |

@@ -31,8 +31,8 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 | dashboard/upcoming-empty | "No upcoming assignments." | upcoming → [] | Dashboard.tsx:640-642 | — |
 | dashboard/upcoming-chips | OVERDUE / NOW / Nh / Nd warn / Nd info chips | due offsets vs clock | Dashboard.tsx:643-669 | — |
 | dashboard/empty-new-student | All empties combined | `rich-user-new` | — | — |
-| dashboard/courses-key-expanded | Always-open bottom-right key: "MY COURSES" + cog, one row per course (dot + code) | courses exist | graph/CoursesKey.tsx | dashboard-courses-key, dashboard-courses-manage, dashboard-course-code |
-| dashboard/courses-key-empty-term | "Nothing enrolled this semester." | active term with no courses | Dashboard.tsx:1349-1353 | — |
+| dashboard/courses-key-expanded | Always-open bottom-right key, one row per course (dot + code); "Open courses →" sits on the course list in the right column | courses exist | graph/CoursesKey.tsx | dashboard-courses-key, dashboard-courses-manage, dashboard-course-code |
+| dashboard/courses-key-empty-term | "Nothing enrolled this semester." on the right column's course list; no key | active term with no courses | dashboard/TodayColumn.tsx | dashboard-courses-manage |
 | dashboard/courses-key-hidden | No overlay | 0 courses | Dashboard.tsx:1200 | — |
 | dashboard/suggest-banner | "Try this next: {concept}" + Start quiz + Dismiss; node pulses | `?suggest=<name>` | Dashboard.tsx:763-783 | — |
 | dashboard/fullscreen-graph | Fullscreen overlay + Esc hint + × | "Fullscreen graph" btn | Dashboard.tsx:1044-1070 | — (aria-label) |
@@ -108,17 +108,13 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 | State id | What the user sees | Trigger | File:line | testids |
 |---|---|---|---|---|
 | tree/loading | Toolbar "0 nodes", GraphPanelSkeleton | before graph GET | Tree.tsx:577-579 | — |
-| tree/populated | Search, tier pills (All/Mastered/Learning/Struggling/Unexplored), "N nodes", course pills, graph | `rich-user-active` | Tree.tsx:441-603 | graph-container, graph-course-filter-{id} |
+| tree/populated | Search, tier pills (All/Mastered/Learning/Struggling/Unexplored), "N nodes", graph with the course key (the course filter) | `rich-user-active` | Tree.tsx:441-603 | graph-container, graph-course-filter-{id} |
 | tree/empty | "All courses" only, 0 nodes, blank canvas (ALSO the load-error state) | `rich-user-new` | Tree.tsx:107-131 | — |
 | tree/search-filtered / filtered-zero | Reduced graph / 0 nodes | type search | Tree.tsx:245-260 | — |
 | tree/tier-filtered | Tier pill colored | click tier | Tree.tsx:480-491 | — |
-| tree/course-filtered | Course pill filled, ＋ Add concept, Topic checklist bar | course pill | Tree.tsx:508-566 | graph-add-concept, topic-checklist-toggle |
+| tree/course-filtered | Key row outlined, ＋ Add concept | click a course in the key | Tree.tsx:508-566 | graph-add-concept |
 | tree/add-concept-composer | Input + Add | ＋ Add concept | Tree.tsx:526-551 | graph-add-concept-input/-submit |
 | tree/toast-added / -merged / -add-failed | toasts | POST nodes | Tree.tsx:175-194 | — |
-| tree/checklist-loading | "Updating checklist…" | delay checklist GET | TopicChecklistPanel.tsx:96-115 | topic-checklist, topic-checklist-refresh |
-| tree/checklist-populated | Topic rows w/ status, mastery, description, gaps, assessments, sources | cs101 seed | TopicChecklistPanel.tsx:119-139 | topic-checklist-topic-{id}, -check-{id}, -filter |
-| tree/checklist-semester-select | Extra Semester select | multi-term, no active semester | TopicChecklistPanel.tsx:101-106 | topic-checklist-semester |
-| tree/checklist-stale / -warnings / -empty-filter / -error | stale notice / warnings / "No topics match this view." / alert | needs_refresh / warnings / filter / 500 | TopicChecklistPanel.tsx:47-122 | — |
 | tree/detail-concept | 320px aside: mastery, tier, last studied, Learn this, Quick quiz, Delete, Recent quizzes, Sessions | click node | Tree.tsx:325-439 | tree-node-recent-quizzes |
 | tree/detail-quizzes-loading / -empty / -rows | Loading… / No quizzes yet / rows "4/5 · +12% mastery" | attempts GET | Tree.tsx:380-409 | tree-node-recent-quiz-{id} |
 | tree/detail-delete-armed | "Click again to confirm" | Delete once | Tree.tsx:363-376 | — |
@@ -128,7 +124,7 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 | tree/fullscreen | Fullscreen overlay | Fullscreen btn | Tree.tsx:626-644 | — |
 | tree/mobile-bottom-sheet | Slide-up sheet (80vh) | < 768 + select | Tree.tsx:605-624 | — |
 
-**Transitions:** loading → populated|empty · tier/search/course filters ↔ · course-filtered → add composer → toast · checklist toggle → loading → populated; check box / refresh · node → detail (desktop) / sheet (mobile) –×→ populated · Learn this → `/learn?topic=…` · Quick quiz → `/quiz?concept={id}&from=tree&return=/tree?node={id}` · session row → `/learn?resume=` · Delete → armed → toast · Fullscreen ↔ · /quiz exit → `/tree?node=`.
+**Transitions:** loading → populated|empty · tier/search/course filters ↔ · course-filtered → add composer → toast · node → detail (desktop) / sheet (mobile) –×→ populated · Learn this → `/learn?topic=…` · Quick quiz → `/quiz?concept={id}&from=tree&return=/tree?node={id}` · session row → `/learn?resume=` · Delete → armed → toast · Fullscreen ↔ · /quiz exit → `/tree?node=`.
 
 ## Uncertain / needs a human
 1. Dashboard error banner only on first-load failure with no cached courses.

@@ -4,7 +4,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
-import { CustomSelect } from "../CustomSelect";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { FullHeightScreen } from "../FullHeightScreen";
@@ -21,7 +20,6 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
-import { TopicChecklistPanel } from "../TopicChecklistPanel";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -95,9 +93,8 @@ export function Tree() {
   const [attempts, setAttempts] = React.useState<AttemptSummary[] | null>(null);
   const attemptsFor = React.useRef<string | null>(null);
 
-  // Manual add-concept composer (#330) — only offered when a single course
-  // is selected: courseFilter is a FILTER whose "all" value gives no course
-  // to attribute the new node to.
+  // Manual add-concept composer (#330) — only offered when a course is picked
+  // in the key: "all" gives no course to attribute the new node to.
   const [addingConcept, setAddingConcept] = React.useState(false);
   const [newConceptName, setNewConceptName] = React.useState("");
   const [savingConcept, setSavingConcept] = React.useState(false);
@@ -253,9 +250,13 @@ export function Tree() {
     () => courseProgressFor(scopedCourses, nodes),
     [scopedCourses, nodes],
   );
+  // Picking a course in the key centres the graph on it and fades the other
+  // courses behind it (they stay on the map); picking it again zooms back out.
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
   const pickCourse = (courseId: string) => {
-    // Clicking the chosen course again goes back to all courses.
-    setCourseFilter((cur) => (cur === courseId ? "all" : courseId));
+    const next = courseFilter === courseId ? "all" : courseId;
+    setCourseFilter(next);
+    setZoomRequest((r) => ({ courseId: next === "all" ? null : next, seq: (r?.seq ?? 0) + 1 }));
     setAddingConcept(false);
     setNewConceptName("");
   };
@@ -263,12 +264,11 @@ export function Tree() {
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return nodes.filter(n => {
-      if (courseFilter !== "all" && n.course_id !== courseFilter) return false;
       if (tier !== "all" && !n.is_subject_root && n.mastery_tier !== tier) return false;
       if (q && !n.name.toLowerCase().includes(q) && !n.subject.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [nodes, courseFilter, tier, query]);
+  }, [nodes, tier, query]);
 
   const filteredEdges = React.useMemo(() => {
     const ids = new Set(filteredNodes.map(n => n.id));
@@ -495,27 +495,6 @@ export function Tree() {
             <Icon name="search" size={12} />
           </span>
         </div>
-        <CustomSelect<string>
-          size="sm"
-          ariaLabel="Course"
-          testId="graph-course-filter"
-          value={courseFilter}
-          onChange={(v) => { setCourseFilter(v); setAddingConcept(false); setNewConceptName(""); }}
-          style={{ flex: "0 0 auto", minWidth: 150 }}
-          triggerStyle={{ borderRadius: "var(--r-full)", background: "var(--bg-panel)", padding: "5px 12px" }}
-          options={[
-            { value: "all", label: <CourseOptionLabel>All courses</CourseOptionLabel> },
-            ...scopedCourses.map((c) => ({
-              value: c.course_id,
-              testId: `graph-course-filter-${c.course_id}`,
-              label: (
-                <CourseOptionLabel color={c.color || "var(--accent)"}>
-                  {c.course_code || c.course_name}
-                </CourseOptionLabel>
-              ),
-            })),
-          ]}
-        />
         {courseFilter !== "all" && (
           addingConcept ? (
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
@@ -570,9 +549,6 @@ export function Tree() {
         </div>
       </div>
 
-      {courseFilter !== "all" && userId && (
-        <TopicChecklistPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
-      )}
 
       {/* The graph row absorbs whatever `<main>` has left after the TopBar and
           the filter row. `flex: 1` + `minHeight: 0` rather than a viewport
@@ -595,21 +571,23 @@ export function Tree() {
                 onNodeClick={(n) => setSelected(n)}
                 zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
                 legible
-                focusCourseId={courseFilter === "all" ? keyHoverCourse : null}
+                focusCourseId={keyHoverCourse ?? (courseFilter === "all" ? null : courseFilter)}
                 onHoverCourse={setGraphHoverCourse}
+                zoomRequest={zoomRequest}
               />
-              {scopedCourses.length > 1 && (
+              {/* The course key picks the Tree's course: click one to centre it
+                  (others fade behind) and add concepts to it; again for all. */}
+              {scopedCourses.length > 0 && (
                 <CoursesKey
                   courseProgress={courseProgress}
-                  hasCourses={courses.length > 0}
-                  semesterActive={!!activeSemester}
                   placement="top-left"
                   testIdPrefix="tree"
+                  rowTestId={(id) => `graph-course-filter-${id}`}
                   activeCourseId={keyHoverCourse ?? graphHoverCourse}
                   selectedCourseId={courseFilter === "all" ? null : courseFilter}
                   onHoverCourse={setKeyHoverCourse}
                   onSelectCourse={pickCourse}
-                  selectHint="Click to show only this course; click again for all"
+                  selectHint="Click to center this course, again to zoom out"
                 />
               )}
               {/* The graph's own top-right corner: a Fullscreen icon the
@@ -726,21 +704,3 @@ function FullscreenGraph({
  *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
 const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
 
-/** A course row in the Tree's course dropdown: colour dot + code. "All
- *  courses" passes no colour and gets a hollow dot so the labels align. */
-function CourseOptionLabel({ color, children }: { color?: string; children: React.ReactNode }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}>
-      <span
-        aria-hidden
-        style={{
-          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-          background: color || "transparent",
-          border: color ? "none" : "1px solid var(--text-muted)",
-          boxSizing: "border-box",
-        }}
-      />
-      {children}
-    </span>
-  );
-}

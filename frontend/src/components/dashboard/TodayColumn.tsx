@@ -310,7 +310,8 @@ export function TodayColumn(props: {
   relTime: (iso: string | null | undefined) => string;
   navigate: (href: string) => void;
   openCourses: () => void;
-  /** Per-course progress rows, rendered at the foot of the mastery card. */
+  /** Per-course progress rows, rendered at the foot of the mastery card,
+   *  under an "Open courses →" link to the Courses & Semesters hub. */
   courseRows?: React.ReactNode;
 }) {
   const { sessions, nodes, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
@@ -507,6 +508,28 @@ export function TodayColumn(props: {
             </div>
           </>
         )}
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            marginTop: 10, paddingTop: 6, borderTop: "1px solid var(--border)",
+          }}
+        >
+          {!courseRows && (
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            data-testid="dashboard-courses-manage"
+            onClick={openCourses}
+            title="Add or remove courses, switch semester"
+            style={{ marginLeft: "auto", marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
+          >
+            Open courses →
+          </button>
+        </div>
         {courseRows && (
           // basis 0 + grow: the rows take the card's spare height (up to
           // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
@@ -515,7 +538,7 @@ export function TodayColumn(props: {
           <div
             data-testid="dashboard-course-rows"
             style={{
-              marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
+              marginTop: 4,
               // basis auto, not 0: with no definite card height (mobile stacks
               // the column) a 0 basis collapsed the rows to nothing.
               flex: "1 1 auto", minHeight: 0, overflowY: "auto",

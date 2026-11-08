@@ -35,8 +35,6 @@ const SESSIONS_LIST = /^\/api\/learn\/sessions\/[^/]+\?limit=/;
 const SESSION_ITEM = /^\/api\/learn\/sessions\/[^/]+(\?user_id=.*)?$/;
 const RESUME = /^\/api\/learn\/sessions\/[^/]+\/resume$/;
 const UPCOMING = /^\/api\/calendar\/upcoming\//;
-const CHECKLIST = /^\/api\/topic-checklist\/[^/]+\/courses\/[^/]+(\?.*)?$/;
-const CHECKLIST_REFRESH = /^\/api\/topic-checklist\/[^/]+\/courses\/[^/]+\/refresh(\?.*)?$/;
 const ATTEMPTS = /^\/api\/quiz\/attempts\?/;
 const ONBOARDING_SEARCH = /^\/api\/onboarding\/courses/;
 
@@ -232,12 +230,7 @@ async function openTree(page: Page, path = "/tree"): Promise<void> {
 async function treeCourse(page: Page, courseId = COURSE_CS101): Promise<void> {
   await openTree(page);
   await page.getByTestId(`graph-course-filter-${courseId}`).click();
-  await visible(page, "topic-checklist-toggle");
-}
-
-async function openChecklist(page: Page): Promise<void> {
-  await treeCourse(page);
-  await page.getByTestId("topic-checklist-toggle").click();
+  await visible(page, "graph-add-concept");
 }
 
 /** Pick a course in /learn's "Course (optional)" CustomSelect. */
@@ -357,99 +350,6 @@ const CHIP_ASSIGNMENTS = [
   assignment("fig-a3", "Lab Report 2", "2026-03-13T09:00:00Z", "project", "Linear Algebra"), // 2D warn
   assignment("fig-a4", "Midterm 1", "2026-03-17T14:00:00Z", "exam", "Introduction to Computer Science"), // 7D info
 ];
-
-type Topic = Record<string, unknown>;
-
-function topic(over: Topic): Topic {
-  return {
-    description: "",
-    importance: 0.5,
-    parent_id: null,
-    prerequisite_ids: [],
-    prerequisite_gaps: [],
-    checked: false,
-    mastery_score: null,
-    last_studied_at: null,
-    review_reasons: [],
-    priority: "normal",
-    assessments: [],
-    sources: [],
-    node_id: null,
-    ...over,
-  };
-}
-
-const MIDTERM = { id: "fig-midterm", title: "Midterm 1", due_date: "2026-03-17", assignment_type: "exam" };
-
-const CHECKLIST_TOPICS: Topic[] = [
-  topic({
-    id: "fig-t-variables",
-    name: "Variables and Types",
-    description: "Naming values, primitive types, and how Python binds names to objects.",
-    status: "mastered",
-    checked: true,
-    mastery_score: 0.92,
-    sources: [{ id: "s1", label: "Lecture 2 — Values and Types" }],
-    node_id: "rich-node-cs-variables",
-  }),
-  topic({
-    id: "fig-t-controlflow",
-    name: "Control Flow",
-    description: "Conditionals and loops: choosing and repeating work.",
-    status: "in_progress",
-    checked: true,
-    mastery_score: 0.6,
-    sources: [{ id: "s2", label: "Lecture 4 — Branching" }],
-    node_id: "rich-node-cs-controlflow",
-  }),
-  topic({
-    id: "fig-t-recursion",
-    name: "Recursion",
-    description: "Functions that call themselves on a smaller version of the same problem.",
-    importance: 0.9,
-    status: "needs_review",
-    checked: true,
-    mastery_score: 0.25,
-    review_reasons: ["Mastery is below 45%", "Last quiz scored 6/10"],
-    prerequisite_gaps: ["Control Flow"],
-    priority: "high",
-    assessments: [MIDTERM],
-    sources: [{ id: "s3", label: "Lecture 6 — Recursion" }, { id: "s4", label: "Problem Set 4" }],
-    node_id: NODE_RECURSION,
-  }),
-  topic({
-    id: "fig-t-basecase",
-    name: "Base cases",
-    description: "The stopping condition every recursive function needs.",
-    parent_id: "fig-t-recursion",
-    status: "not_started",
-    assessments: [MIDTERM],
-    sources: [{ id: "s3", label: "Lecture 6 — Recursion" }],
-  }),
-  topic({
-    id: "fig-t-pointers",
-    name: "Pointers and Memory",
-    description: "References, aliasing, and how values live in memory.",
-    status: "not_started",
-    mastery_score: 0.05,
-    sources: [{ id: "s5", label: "Course catalog" }],
-    node_id: "rich-node-cs-pointers",
-  }),
-];
-
-function checklist(over: Record<string, unknown> = {}) {
-  return {
-    course_id: COURSE_CS101,
-    semester: "Spring 2026",
-    generated_at: "2026-03-10T15:00:00Z",
-    needs_refresh: false,
-    topics: CHECKLIST_TOPICS,
-    assessments: [MIDTERM],
-    warnings: [],
-    review_after_days: 7,
-    ...over,
-  };
-}
 
 function attempt(id: string, score: number, total: number, delta: number, completed: string) {
   return {
@@ -1641,88 +1541,6 @@ export const RECIPES_CORE: RecipeBook = {
       await page.getByTestId("graph-add-concept-input").fill("Memoization");
       await page.getByTestId("graph-add-concept-submit").click();
       await toast(page, "Couldn't add the concept.");
-    },
-  },
-
-  "tree/checklist-loading": {
-    run: async (page) => {
-      await hold(page, CHECKLIST, "GET");
-      await openChecklist(page);
-      await text(page, "Updating checklist…");
-      await visible(page, "topic-checklist-refresh");
-    },
-  },
-
-  "tree/checklist-populated": {
-    run: async (page) => {
-      await mockJson(page, CHECKLIST, checklist(), { method: "GET" });
-      await openChecklist(page);
-      await visible(page, "topic-checklist-topic-fig-t-recursion");
-      await visible(page, "topic-checklist-filter");
-    },
-  },
-
-  "tree/checklist-semester-select": {
-    run: async (page) => {
-      // CS101 is enrolled in two terms and no semester is active → the extra select.
-      await mockJson(page, CHECKLIST, checklist(), { method: "GET" });
-      await openChecklist(page);
-      await visible(page, "topic-checklist-topic-fig-t-recursion");
-      await visible(page, "topic-checklist-semester");
-    },
-  },
-
-  "tree/checklist-stale": {
-    run: async (page) => {
-      const stale = checklist({ needs_refresh: true });
-      await mockJson(page, CHECKLIST, stale, { method: "GET" });
-      await mockJson(page, CHECKLIST_REFRESH, stale, { method: "POST" });
-      await openChecklist(page);
-      await text(page, "Showing the previous outline. Update from materials to include recent changes.");
-    },
-  },
-
-  "tree/checklist-warnings": {
-    run: async (page) => {
-      await mockJson(
-        page,
-        CHECKLIST,
-        checklist({
-          warnings: [
-            "No syllabus uploaded for this course yet — topics come from the BU catalog description only.",
-            "2 documents could not be read and were skipped.",
-          ],
-        }),
-        { method: "GET" },
-      );
-      await openChecklist(page);
-      await text(page, "2 documents could not be read and were skipped.");
-    },
-  },
-
-  "tree/checklist-empty-filter": {
-    run: async (page) => {
-      await mockJson(
-        page,
-        CHECKLIST,
-        checklist({ topics: CHECKLIST_TOPICS.filter((t) => t.status !== "mastered") }),
-        { method: "GET" },
-      );
-      await openChecklist(page);
-      await visible(page, "topic-checklist-topic-fig-t-recursion");
-      await page.getByTestId("topic-checklist-filter").selectOption("mastered");
-      await text(page, "No topics match this view.");
-    },
-  },
-
-  "tree/checklist-error": {
-    run: async (page) => {
-      await mockError(page, CHECKLIST, 500, "Internal Server Error", "GET");
-      await openChecklist(page);
-      // Next's route announcer is also role="alert" — scope to the checklist's.
-      await expect(
-        page.getByRole("alert").filter({ hasText: "Could not update the checklist" }),
-      ).toBeVisible({ timeout: 30_000 });
     },
   },
 

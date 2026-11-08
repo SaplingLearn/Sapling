@@ -519,7 +519,7 @@ export function Dashboard() {
           height={size.h}
           highlightId={suggestNode?.id}
           onNodeClick={(n) => router.push(learnHrefForNode(n))}
-          focusCourseId={keyHoverCourse}
+          focusCourseId={keyHoverCourse ?? zoomedCourse}
           onHoverCourse={setGraphHoverCourse}
           zoomRequest={zoomRequest}
         />
@@ -528,9 +528,6 @@ export function Dashboard() {
         {!useLegacyPanels && (
           <CoursesKey
             courseProgress={courseProgress}
-            hasCourses={courses.length > 0}
-            semesterActive={!!activeSemester}
-            onManage={() => setCoursesOpen(true)}
             activeCourseId={keyHoverCourse ?? graphHoverCourse}
             onHoverCourse={setKeyHoverCourse}
             selectedCourseId={zoomedCourse}
