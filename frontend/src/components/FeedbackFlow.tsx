@@ -5,12 +5,17 @@ import { useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
-import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
+import {
+  currentLearningSession,
+  mayPrompt,
+  recordPrompt,
+  releaseFeedbackSlot,
+  tryClaimFeedbackSlot,
+  whenFeedbackFree,
+} from "@/lib/feedbackPacing";
 import { useToast } from "./ToastProvider";
 
 const DELAY_MS = 45_000;
-const COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
-const STORAGE_KEY = "sapling_last_feedback";
 // Numeric scale (serif numeral) keeps the tone "quiet library,"
 // not mobile-game. Labels on hover for clarity.
 const RATINGS: { value: number; label: string }[] = [
@@ -32,7 +37,8 @@ const OPTIONS = [
 ];
 
 interface FeedbackFlowProps {
-  /** Passive mode: auto-opens after 45s + cooldown. */
+  /** Passive mode: comes due 45s after mount; opens when lib/feedbackPacing.ts
+   *  allows (never mid-learning, one per session, cooldowns). */
   passive?: boolean;
   /** Manual mode: caller controls open state. */
   open?: boolean;
@@ -56,17 +62,22 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   useEffect(() => {
     if (!passive) return;
     if (!isAuthenticated) return;
-    let cancelled = false;
-    const last = Number(localStorage.getItem(STORAGE_KEY) ?? "0");
-    const now = Date.now();
-    const cooledDown = testOverride || !last || now - last > COOLDOWN_MS;
-    if (!cooledDown) return;
-    // The session prompt may already be on screen (#762) — then skip this
-    // pulse rather than stack a second modal on it.
-    const t = setTimeout(() => {
-      if (!cancelled && tryClaimFeedbackSlot("global")) setOpen(true);
-    }, DELAY_MS);
-    return () => { cancelled = true; clearTimeout(t); };
+    // Not worth a timer while a cooldown has it spent anyway.
+    if (!testOverride && !mayPrompt("global", null)) return;
+    let cancelWait = () => {};
+    // Due at 45s, but a learning activity in progress holds it until the next
+    // natural break; then pacing decides again, against the session the
+    // student is in by then. Spent there → dropped, never re-queued. The
+    // session prompt may also be on screen (#762): then skip, not stack.
+    const show = () => {
+      const session = currentLearningSession();
+      if (!testOverride && !mayPrompt("global", session)) return;
+      if (!tryClaimFeedbackSlot("global")) return;
+      recordPrompt("global", session); // on open: a dismissal counts as shown
+      setOpen(true);
+    };
+    const t = setTimeout(() => { cancelWait = whenFeedbackFree(show); }, DELAY_MS);
+    return () => { clearTimeout(t); cancelWait(); };
   }, [passive, isAuthenticated, testOverride]);
 
   // Give the one-prompt slot back if the shell unmounts mid-prompt.
@@ -76,15 +87,17 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     if (openProp !== undefined) setOpen(openProp);
   }, [openProp]);
 
-  const close = useCallback((recordCooldown: boolean) => {
+  const close = useCallback(() => {
     setOpen(false);
     releaseFeedbackSlot("global");
     setRating(null);
     setSelected([]);
     setComment("");
-    if (recordCooldown) localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    // A passive open was recorded when it opened; a manual one (the caller's
+    // own form) still restarts the pulse's cooldown, as it always has.
+    if (!passive) recordPrompt("global", null);
     onClose?.();
-  }, [onClose]);
+  }, [onClose, passive]);
 
   const toggleOption = (o: string) => {
     setSelected(prev => prev.includes(o) ? prev.filter(x => x !== o) : [...prev, o]);
@@ -102,7 +115,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         comment: comment.trim() || undefined,
       });
       toast.success("Thanks for the feedback!");
-      close(true);
+      close();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit.");
     } finally {
@@ -123,7 +136,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         alignItems: "center",
         justifyContent: "center",
       }}
-      onClick={() => !submitting && close(true)}
+      onClick={() => !submitting && close()}
     >
       <div
         onClick={e => e.stopPropagation()}
@@ -138,7 +151,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="h-serif" style={{ fontSize: 24 }}>What's clicking?</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
         <div className="body-serif" style={{ fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>
           A quick pulse. Nothing is a wrong answer.
@@ -214,7 +227,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         />
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button className="btn" onClick={() => close(true)} disabled={submitting}>Not now</button>
+          <button className="btn" onClick={() => close()} disabled={submitting}>Not now</button>
           <button className="btn btn--primary" onClick={submit} disabled={rating === null || submitting}>
             {submitting ? "Sending…" : "Submit"}
           </button>

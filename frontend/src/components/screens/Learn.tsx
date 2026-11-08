@@ -50,6 +50,7 @@ import {
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
 import { humanizeError, isNotFound, statusOf } from "@/lib/errorMessage";
+import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -66,8 +67,6 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 ];
 
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
-// Read by SessionFeedbackGlobal when the student navigates away from /learn.
-const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 const RAIL_OPEN_KEY = "sapling_learn_rail_open";
 const RAIL_WIDTH = 400;
 
@@ -468,9 +467,7 @@ function LearnInner() {
   };
   // The feedback context belongs to the last session the student ENDED; once
   // they move into another one it would attribute feedback to the wrong one.
-  const clearLastSessionContext = () => {
-    try { sessionStorage.removeItem(LAST_SESSION_CTX_KEY); } catch {}
-  };
+  const clearLastSessionContext = forgetEndedSession;
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -558,6 +555,16 @@ function LearnInner() {
   const descInflightRef = useRef<Set<string>>(new Set());
 
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
+  // Feedback pacing (lib/feedbackPacing.ts), as in LoopLearn: a prompt counts
+  // against the session on screen, and no survey opens while a session is live
+  // or a tutor turn streams. Ending it is the natural break — End session here
+  // (summary or not), or the server's 409.
+  const [endedHere, setEndedHere] = useState<string | null>(null);
+  useEffect(() => { if (sessionId) noteLearningSession(sessionId); }, [sessionId]);
+  useFeedbackHold(
+    starting || resuming || sending || actionPending || streamingText !== null ||
+    (!!sessionId && !sessionEnded && sessionId !== endedHere),
+  );
   const [mobileTab, setMobileTab] = useState<"chat" | "graph">("chat");
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
@@ -1132,9 +1139,8 @@ function LearnInner() {
       const res = await endSession(sessionId, userId);
       // Write session context for navigate-away feedback — even if the
       // student has already moved on, this IS the session they ended.
-      try {
-        sessionStorage.setItem(LAST_SESSION_CTX_KEY, JSON.stringify({ sessionId, topic }));
-      } catch {}
+      rememberEndedSession({ sessionId, topic });
+      setEndedHere(sessionId);
       // …but its summary only belongs on screen while they're still in it.
       if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {

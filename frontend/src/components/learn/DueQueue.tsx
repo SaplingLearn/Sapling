@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
 import { extractErrorDetail } from "@/lib/errorMessage";
+import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ReportQuestion } from "./ReportQuestion";
 
@@ -126,6 +127,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   }, [load]);
 
   const item = next?.item ?? null;
+  // No feedback survey over a review item, answered or not, until the queue
+  // moves past it (lib/feedbackPacing.ts).
+  useFeedbackHold(item !== null);
 
   const submit = async (extra: { rating?: number } = {}) => {
     if (!next || !item || busy) return;

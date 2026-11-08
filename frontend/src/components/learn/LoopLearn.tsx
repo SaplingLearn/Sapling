@@ -73,6 +73,7 @@ import {
   type StreamChatHandlers,
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
+import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
@@ -302,6 +303,29 @@ export function LoopLearn() {
   }, [deepLink, router, pathname]);
 
   const course = useMemo(() => courses?.find((c) => c.course_id === courseId) ?? null, [courses, courseId]);
+
+  // Feedback pacing (lib/feedbackPacing.ts): the session on screen is the one a
+  // feedback prompt counts against, and its wrap-up is what "How was that
+  // session?" asks about once the student leaves /learn. Moving into another
+  // session drops that marker. The row's topic is kept while it is listed: the
+  // close drops it from the picker in the same render that shows the wrap-up.
+  const listedTopic = openSessions?.find((s) => s.session_id === sessionId)?.topic || null;
+  const lastListedTopic = useRef<{ sessionId: string; topic: string } | null>(null);
+  useEffect(() => {
+    if (sessionId && listedTopic) lastListedTopic.current = { sessionId, topic: listedTopic };
+  }, [sessionId, listedTopic]);
+  const courseName = course?.course_name;
+  useEffect(() => {
+    if (!sessionId || readOnly) return;
+    noteLearningSession(sessionId);
+    if (state.phase !== "close") {
+      forgetEndedSession();
+      return;
+    }
+    const listed = lastListedTopic.current;
+    rememberEndedSession({ sessionId, topic: (listed?.sessionId === sessionId ? listed.topic : courseName) || undefined });
+  }, [sessionId, readOnly, state.phase, courseName]);
+
   const applyLearningScope = useCallback((payload: LoopLearningScope | null | undefined) => {
     if (!payload) return;
     if (payload.goal !== undefined) setGoal(payload.goal);
@@ -1301,6 +1325,15 @@ export function LoopLearn() {
   const loadingSessions =
     !sessionsError && !noCourses && !readOnly && loadError !== "start" &&
     (openSessions === null || (!sessionId && starting));
+  // No feedback survey mid-learning (lib/feedbackPacing.ts): an open session
+  // holds the shell's prompts through every phase before the wrap-up (the
+  // check-in probe, the plan, an open check card, a streaming tutor turn,
+  // feedback), as does the boot that is about to resume or start one. The
+  // wrap-up releases them: the natural break where a deferred prompt may open.
+  useFeedbackHold(
+    loadingSessions || starting || streaming || !!item || !!pendingGrade ||
+    (!!sessionId && !readOnly && state.phase !== "close"),
+  );
 
   const header = (
     <TopBar
