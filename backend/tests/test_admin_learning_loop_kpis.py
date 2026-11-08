@@ -529,6 +529,36 @@ def test_confidence_calibration_reports_stated_confidence_per_channel(monkeypatc
     assert free["guessing"]["n"] == 0 and free["guessing"]["observed"] is None
 
 
+def test_confidence_calibration_leaves_out_void_evidence(monkeypatch):
+    """A123 × A127: the one void rule covers the confidence calibration too. A
+    confidence stated on a grade against an item staff retired measures
+    nothing about the student, so the row is left out, as it is from the BKT
+    calibration beside it; the same item in another course, and a quiz row,
+    stay."""
+    sure = params.STUDENT_CONFIDENCE_LEVELS["sure"]
+
+    def row(i, *, course, qh, correct, item=True):
+        return {**_evidence(i, session=f"s{i}", correct=correct, p_before=0.6),
+                "student_confidence": sure,
+                "question_hash": qh, "check_item_id": f"ci-{qh}" if item else None,
+                "graph_nodes": {"course_id": course}}
+
+    evidence = [
+        row(0, course="c1", qh="q-bad", correct=False),  # void
+        row(1, course="c1", qh="q-ok", correct=True),
+        row(2, course="c2", qh="q-bad", correct=True),  # another course's item
+    ]
+    _serve(monkeypatch, {"events": [], "node_mastery_events": evidence})
+    monkeypatch.setattr(analytics, "retired_items", lambda: {("c1", "q-bad")})
+    body = client.get(URL, params=RANGE).json()
+    cc = body["confidence_calibration"]
+    assert cc["all"]["n"] == 2 and cc["all"]["observed_rate"] == 1.0
+    assert body["calibration"]["excluded_void"] == 1
+    monkeypatch.setattr(analytics, "retired_items", lambda: set())
+    cc = client.get(URL, params=RANGE).json()["confidence_calibration"]
+    assert cc["all"]["n"] == 3
+
+
 def test_confidence_calibration_is_empty_not_zero(monkeypatch):
     monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
     cc = client.get(URL, params=RANGE).json()["confidence_calibration"]

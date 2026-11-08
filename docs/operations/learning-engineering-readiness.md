@@ -286,12 +286,22 @@ unfinished engineering requirement.
    batch closed), `20261108051912_learning_item_alignment.sql` (A119),
    `20261108072715_learning_evidence_void.sql` (A123),
    `20261108073631_learning_item_keys.sql` (A124),
-   `20261108091912_learning_document_drafting.sql` (A128) and
+   `20261108091912_learning_document_drafting.sql` (A128),
    `20261108092032_learning_student_confidence.sql` (A127; it re-creates
    `learning_evidence_commit` to admit `student_confidence` — before it, a grade
    that carries a stated confidence fails its batch closed, and the admin
-   learning-loop KPI scan reads the column). The verifier's `--db-audit`
-   requires the columns they add.
+   learning-loop KPI scan reads the column) and
+   `20261108103333_learning_evidence_commit_reconcile.sql` (A123 × A127). The
+   verifier's `--db-audit` requires the columns they add.
+   **`learning_evidence_commit` is re-created three times; only the last is
+   correct.** A127's migration was written on the pre-A123 function, so on its
+   own it drops A123's item lock and retired-item refusal and refuses A123's
+   journaled replay keys (`retention`, `same_session_recheck`,
+   `propagated_to`): every evidence write from this code would fail its batch.
+   The reconcile re-creates the function with both A123's changes and A127's
+   key. Apply 072715 (A123), 092032 (A127) and 103333 (the reconcile) in the
+   same migration run, all before the code: `python -m db.migrate` applies
+   every pending file in order. Never stop a run between 092032 and 103333.
 2. Rolling back to pre-A120 code while an A120 probe grade checkpoint is in
    flight cannot open that checkpoint (503). Roll forward only, or drain probe
    checkpoints first.

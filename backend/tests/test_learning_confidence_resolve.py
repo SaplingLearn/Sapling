@@ -485,30 +485,50 @@ def test_the_migration_adds_the_column_and_the_commit_function_admits_it():
     assert "GRANT EXECUTE ON FUNCTION learning_evidence_commit" in sql
 
 
-def test_the_migration_is_the_forward_repair_function_plus_the_new_key():
-    """Re-created, never rewritten: with A127's three edits taken out, the
-    function is byte-identical to its last definition."""
-    prior = (
-        BACKEND / "db" / "migrations" / "20261019141950_learning_evidence_forward_repair.sql"
-    ).read_text()
+#: The A123 × A127 reconcile: the LAST definition of learning_evidence_commit.
+RECONCILE = (
+    BACKEND / "db" / "migrations" / "20261108103333_learning_evidence_commit_reconcile.sql"
+)
+#: A123's definition, the one A127's three edits are applied to.
+A123_VOID = BACKEND / "db" / "migrations" / "20261108072715_learning_evidence_void.sql"
 
-    def body(text):
-        start = text.index("CREATE OR REPLACE FUNCTION learning_evidence_commit")
-        return text[start : text.index("END $$;", start)]
 
-    new = body(MIGRATION.read_text())
+def _commit_body(text: str) -> str:
+    start = text.index("CREATE OR REPLACE FUNCTION learning_evidence_commit")
+    return text[start : text.index("END $$;", start)]
+
+
+def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
+    """Re-created, never rewritten. A127's own migration re-created the
+    pre-A123 body (20261019141950) plus the key, which, applied after A123's,
+    dropped A123's item lock and retired refusal. The function the database
+    runs is the reconcile's: with A127's three edits taken out, it is
+    byte-identical to A123's definition, and no later migration re-creates
+    it."""
+    new = _commit_body(RECONCILE.read_text())
     new = new.replace(
-        "'evidence_seq','planning_observation',\n                'student_confidence'))\n"
+        "'retention','same_session_recheck','propagated_to',\n                'student_confidence'))\n"
         "           -- spec §13 A127: a stated confidence is a JSON number in [0, 1], or absent/null\n"
         "           OR (x ? 'student_confidence' AND jsonb_typeof(x->'student_confidence') NOT IN ('number','null'))\n"
         "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1) THEN",
-        "'evidence_seq','planning_observation')) THEN",
+        "'retention','same_session_recheck','propagated_to')) THEN",
     )
-    new = new.replace("planning_observation,\n            student_confidence)", "planning_observation)")
     new = new.replace(
-        "ev.planning_observation,\n            ev.student_confidence);", "ev.planning_observation);"
+        "retention,same_session_recheck,propagated_to,\n            student_confidence)",
+        "retention,same_session_recheck,propagated_to)",
     )
-    assert new == body(prior)
+    new = new.replace(
+        "ev.retention,ev.same_session_recheck,ev.propagated_to,\n            ev.student_confidence);",
+        "ev.retention,ev.same_session_recheck,ev.propagated_to);",
+    )
+    assert new == _commit_body(A123_VOID.read_text())
+    later = [
+        p.name
+        for p in sorted((BACKEND / "db" / "migrations").glob("*.sql"))
+        if p.name > RECONCILE.name
+        and "CREATE OR REPLACE FUNCTION learning_evidence_commit" in p.read_text()
+    ]
+    assert later == [], "a later migration re-creates the function: re-pin it here"
 
 
 # ── 4. the resolution rule ──────────────────────────────────────────────────
