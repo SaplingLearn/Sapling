@@ -334,27 +334,34 @@ def test_intentional_cross_user_reads_project_only_public_fields(mode, matrix_wo
 @pytest.mark.parametrize("mode", m.MODES)
 def test_reply_to_cannot_pull_a_private_message_into_a_shared_room(mode, matrix_world, db_conn, b_client):
     """A secondary-param probe the one-case-per-route matrix cannot express:
-    the room is one B legitimately posts in, only reply_to_id is A's. The post
-    may succeed; the room's transcript must not carry A's private text."""
+    the room is one B legitimately posts in, only reply_to_id is A's.
+
+    Fixed by #115 on both sides: the post is refused (404, the same answer as
+    a reply_to_id that names nothing), and the read only resolves snippets of
+    messages in the room being read, so a cross-room row stored before the fix
+    (inserted directly below) renders with no snippet."""
+    from db.connection import table
+    from services.encryption import encrypt_if_present
+
+    # A pre-fix row: B's message in the shared room quoting A's private one,
+    # written straight to the table the way the unchecked post used to.
+    table("room_messages").insert({
+        "room_id": SHARED_ROOM, "user_id": m.USER_B, "user_name": "Sam Second",
+        "text": encrypt_if_present("matrix stored cross-room reply"),
+        "reply_to_id": matrix_world["reply_to_id"],
+    })
     post = m.Case(
         "probe", "POST", "/api/social/rooms/{room_id}/messages",
         f"/api/social/rooms/{SHARED_ROOM}/messages",
         json={"user_id": m.USER_B, "user_name": "Sam Second", "text": "matrix reply",
               "reply_to_id": matrix_world["reply_to_id"]},
-        has_json=True, expect=(200, 400, 403, 404), probed=("reply_to_id",),
+        has_json=True, expect=(404,), probed=("reply_to_id",),
         note="post with a foreign reply_to_id",
-        known_leak=m.KNOWN_LEAKS[("probe", "POST", "/api/social/rooms/{room_id}/messages")],
     )
     read = m.Case(
         "probe", "GET", "/api/social/rooms/{room_id}/messages",
         f"/api/social/rooms/{SHARED_ROOM}/messages", expect=(200,),
-        note="the shared room's transcript after the post",
-        known_leak=post.known_leak,
+        note="the shared room's transcript, holding the stored cross-room reply",
+        must_contain=("matrix stored cross-room reply",),
     )
-    results = _run(b_client, db_conn, [post, read], mode)
-    # The leak surfaces on the READ; the POST alone is not one. Judge the pair:
-    # strict on the known leak, so the fix PR must drop the KNOWN_LEAKS entry.
-    leaked = any(r["leak"].startswith("READ") for r in results)
-    for r in results:
-        r["ok"], r["verdict"] = (leaked, "known-leak") if leaked else (False, "KNOWN-LEAK-FIXED")
-    _report(results, f"reply_to probe [{mode}]")
+    _report(_run(b_client, db_conn, [post, read], mode), f"reply_to probe [{mode}]")
