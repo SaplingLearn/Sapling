@@ -445,3 +445,26 @@ def test_note_move_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_w
         "SELECT offering_id FROM notes WHERE id = %(n)s", {"n": B_NOTE},
     ).fetchone()
     assert after["offering_id"] == before["offering_id"], "B's note was moved into A's course"
+
+
+def test_roles_need_a_session_and_deleted_profiles_are_gone(seeded_user, b_client):
+    """#115, outside the B-as-caller groups: who is an admin is not an
+    anonymous read (the /roles route and the public profile's roles), and a
+    soft-deleted account's public profile and roles are a 404."""
+    from fastapi.testclient import TestClient
+
+    from db.connection import table
+    from main import app
+
+    anon = TestClient(app, raise_server_exceptions=False)
+    r = anon.get(f"/api/profile/{m.USER_A}/roles")
+    assert r.status_code == 401, r.text
+    r = anon.get(f"/api/profile/{m.USER_A}")
+    assert r.status_code == 200 and r.json()["roles"] == [], r.text
+
+    gone = seeded_user(name="Gone Student")
+    table("users").update({"deleted_at": "2026-11-08T00:00:00+00:00"},
+                          filters={"id": f"eq.{gone}"})
+    for path in (f"/api/profile/{gone}", f"/api/profile/{gone}/roles"):
+        r = b_client.get(path)
+        assert r.status_code == 404, f"{path}: {r.status_code} {r.text[:120]}"

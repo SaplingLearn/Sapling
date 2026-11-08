@@ -129,8 +129,15 @@ def _get_user_or_404(user_id: str) -> dict:
     `users` now holds only id/email/auth/activity; the public profile fields live
     on `user_profiles` (migration 0024). We read both and merge so callers keep the
     same flat dict they relied on before the split.
+
+    A soft-deleted account (`users.deleted_at`) is a 404 like a missing one
+    (#115): its public profile must not outlive the deletion. Every other
+    caller here is behind `require_self`, which already refuses a deleted
+    account's session, so the filter only changes the public read.
     """
-    rows = table("users").select(_USERS_COLS, filters={"id": f"eq.{user_id}"})
+    rows = table("users").select(
+        _USERS_COLS, filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
     user = rows[0]
@@ -323,7 +330,10 @@ def get_public_profile(user_id: str, request: Request):
         "username": user.get("username"),
         "avatar_url": user.get("avatar_url"),
         "created_at": user.get("created_at"),
-        "roles": roles,
+        # Roles say who is staff/admin (#115): signed-in viewers only, the
+        # same audience as GET /{user_id}/roles. The app renders profiles
+        # only behind sign-in (frontend middleware), so anonymous gets [].
+        "roles": roles if viewer_id is not None else [],
         "equipped_cosmetics": equipped,
     }
 
@@ -833,9 +843,17 @@ def get_cosmetics_catalog(user_id: str, request: Request):
 
 # ── Roles ────────────────────────────────────────────────────────────────────
 
-# #115: public roles of any user (unauthenticated) -> service role.
+# #115: roles of any live user, for any SIGNED-IN viewer -> service role.
+# Roles reveal who is an admin, so an anonymous caller gets a 401; a
+# signed-in one sees exactly what the public profile already shows them
+# (its role badges), and a soft-deleted or missing user is a 404.
 @router.get("/{user_id}/roles", dependencies=[Depends(service_route)])
-def get_roles(user_id: str):
+def get_roles(user_id: str, request: Request):
+    get_session_user_id(request)
+    if not table("users").select(
+        "id", filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
+    ):
+        raise HTTPException(status_code=404, detail="User not found")
     return {"roles": _get_user_roles(user_id)}
 
 
