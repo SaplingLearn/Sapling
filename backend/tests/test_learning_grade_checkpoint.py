@@ -242,6 +242,27 @@ def test_check_graded_metadata_is_typed_and_bound_to_evidence(field, value):
         cp.GradeCheckpoint.model_validate(data)
 
 
+@pytest.mark.parametrize(
+    "backend", ["claude", "claude_second", "gemini", "gemini_second", "deterministic", "jev"]
+)
+def test_a_grade_recovers_with_the_provider_that_graded_it(backend):
+    """Spec §13 A116: the envelope keeps the grader's provenance exactly, and the
+    graded metadata must name the evidence's own backend, never another provider."""
+    data = payload()
+    data["evidence"][0]["grader_backend"] = backend
+    data["continuation"]["graded"]["grader_backend"] = backend
+    sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
+    recovered = cp.open_checkpoint(sealed, **bindings(data))
+    assert recovered.evidence[0]["grader_backend"] == backend
+    assert recovered.continuation["graded"]["grader_backend"] == backend
+    other = deepcopy(data)
+    other["continuation"]["graded"]["grader_backend"] = (
+        "gemini" if backend.startswith("claude") else "claude"
+    )
+    with pytest.raises(ValidationError):
+        cp.GradeCheckpoint.model_validate(other)
+
+
 @pytest.mark.parametrize("field,value", [("question_hash", "other-question"), ("idk", True),
     ("idk", "false"), ("reason", {}), ("reference_answer", "forbidden")])
 def test_check_answer_has_typed_allowed_fields_and_exact_question_binding(field, value):

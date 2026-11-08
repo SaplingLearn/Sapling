@@ -29,6 +29,7 @@ from learning.ladder import Rung, intent
 from learning.learner_state import LearnerState
 from learning.params import (
     BAND_DEVELOP_MAX,
+    GRADER_SECOND_OPINION_CONFIDENCE,
     LOOP_HISTORY_MAX_MESSAGES,
     LOOP_MAX_VISIBLE_TOKENS,
     LOOP_PRO_THINKING_BUDGET,
@@ -1654,6 +1655,60 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
     )
     assert [c.args[1] for c in seams.save_msg.call_args_list] == ["user", "assistant"]
     assert seams.save_msg.call_args_list[0].args[2] == "n == 0 returns 1"
+
+
+@pytest.mark.parametrize(
+    "first_confidence,label",
+    [(0.9, "claude"), (GRADER_SECOND_OPINION_CONFIDENCE / 2, "claude_second")],
+)
+def test_check_answer_records_the_provider_that_graded(
+    gate_on, seams, monkeypatch, first_confidence, label
+):
+    """Spec §13 A116, through the route: the REAL grade_answer, decision seam and
+    grade() (one scripted FunctionModel for both grader slots, flipped to Claude by
+    env). The evidence the route flushes, the step it keeps (and seals for grade
+    recovery) and the zpd.step it emits name the provider that graded; they all
+    said `gemini` whatever model the slots ran."""
+    import agents.grader as g
+    from agents.tools.check import grade_answer
+    from services import events_service
+    from tests import grader_fakes
+
+    monkeypatch.setenv("SAPLING_MODEL_GRADER", "claude-haiku-5-5")
+    monkeypatch.setenv("SAPLING_MODEL_GRADER_SECOND", "claude-sonnet-5-5")
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    made = []
+    monkeypatch.setattr(
+        events_service,
+        "log_event",
+        lambda et, **kw: made.append(kw["payload"]["backend"]) if et == "decision.made" else None,
+    )
+    verdict = {
+        "addresses_grader": False,
+        "contradicts_reference": False,
+        "item_results": ["r1:yes", "r2:yes"],
+        "matched_wrong_key": "",
+        "feedback_hint": "",
+    }
+    model, calls = grader_fakes.scripted_grader(
+        [{**verdict, "confidence": first_confidence}, {**verdict, "confidence": 0.9}]
+    )
+    monkeypatch.setattr(g, "model_for", lambda slot: model)  # the grader_second runs
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    seams.grade.side_effect = grade_answer  # the real helper, under the route's wrapper
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p, g.grader_agent.override(model=model):
+        r = client.post(
+            "/api/learn/loop/check/answer",
+            json=_answer(answer="The base case returns 1 when n is 0, so it stops."),
+        )
+    assert r.status_code == 200 and r.json()["verdict"] == "correct"
+    assert calls["n"] == (2 if label.endswith("_second") else 1)
+    deps = seams.flush.call_args.args[0]
+    assert [ev["grader_backend"] for ev in deps.pending_evidence] == [label]
+    assert seams.store["doc"]["steps"]["qh-1"]["grader_backend"] == label
+    assert seams.zpd.emit_zpd_step.call_args.kwargs["grader_backend"] == label
+    assert made == ["claude", "claude"]  # grade_rubric_items, then the key from its prior
 
 
 def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, seams):

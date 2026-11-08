@@ -20,7 +20,7 @@ import logging
 from typing import Any, Callable, Literal
 
 from learning import params
-from learning.evidence import Channel
+from learning.evidence import Channel, GraderBackend  # spec §5 (A22/A24, A116): one list
 from learning.ladder import Rung
 from learning.leak import Detector
 from learning.arms import Variant
@@ -32,7 +32,6 @@ logger = logging.getLogger("sapling.learning.zpd_events")
 Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttest"]  # A8: posttest
 Rating = Literal["too_easy", "appropriate", "too_hard"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
-GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]  # spec §5 (A22/A24)
 
 
 def _is_plain(value: object) -> bool:
