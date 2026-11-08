@@ -457,8 +457,8 @@ def add_course(
         "nickname": nickname,
     })
     try:
-        from services.course_context_service import update_course_context
-        update_course_context(offering_id)
+        from services.course_context_service import refresh_course_context
+        refresh_course_context(offering_id, user_id=user_id)
     except Exception:
         pass
     return {"course_id": course_id, "already_existed": False}
@@ -511,11 +511,11 @@ def delete_node(user_id: str, node_id: str) -> dict:
     if course_id:
         # course_id from graph_nodes is the abstract course; refresh each of the
         # user's offerings of that course (analytics is offering-scoped).
-        from services.course_context_service import update_course_context
+        from services.course_context_service import refresh_course_context
         from services.academics import user_offering_ids_for_course
         for offering_id in user_offering_ids_for_course(user_id, course_id):
             try:
-                update_course_context(offering_id)
+                refresh_course_context(offering_id, user_id=user_id)
             except Exception:
                 pass
     return {"deleted": True}
@@ -583,13 +583,13 @@ def delete_course(user_id: str, course_id: str, term: str | None = None) -> dict
                          "pass the term to drop",
             }
         return {"deleted": False}
-    from services.course_context_service import update_course_context
+    from services.course_context_service import refresh_course_context
     for offering_id in offering_ids:
         table("enrollments").delete(
             {"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
         )
         try:
-            update_course_context(offering_id)
+            refresh_course_context(offering_id, user_id=user_id)
         except Exception:
             pass
     return {"deleted": True}
@@ -976,12 +976,12 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     if touched_courses:
         # touched_courses holds abstract course ids (the graph key). Analytics is
         # offering-scoped, so refresh each of this user's offerings of those courses.
-        from services.course_context_service import update_course_context
+        from services.course_context_service import refresh_course_context
         from services.academics import user_offering_ids_for_course
         for cid in touched_courses:
             for offering_id in user_offering_ids_for_course(user_id, cid):
                 try:
-                    update_course_context(offering_id)
+                    refresh_course_context(offering_id, user_id=user_id)
                 except Exception:
                     pass
 
