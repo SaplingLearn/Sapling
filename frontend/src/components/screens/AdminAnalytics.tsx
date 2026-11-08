@@ -18,6 +18,7 @@ import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { HelpAbusePanel } from "./admin/HelpAbusePanel";
+import { MultiConceptPanel } from "./admin/MultiConceptPanel";
 import { LoopCostPanel } from "./AdminLoopCost";
 import { useUser } from "@/context/UserContext";
 import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
@@ -628,6 +629,8 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       )}
       {/* spec §13 A133: help abuse on the hint ladder (its own component) */}
       <HelpAbusePanel data={d.help_abuse} />
+      {/* spec §13 A141: questions that combine concepts — served and outcomes */}
+      <MultiConceptPanel data={d.multi_concept} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "16px 0 0" }}>
         Are the questions valid?{" "}

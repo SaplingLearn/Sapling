@@ -2154,6 +2154,9 @@ export interface AdminCheckItemEntry extends AdminCheckItemText {
    *  a key hold (A124) or a staff hold (A123: `reports_threshold` — enough
    *  students reported it, status 'quarantined'; nothing is deleted). */
   held: boolean;
+  /** spec §13 A141: a multi-concept item's concept keys, apex first (absent
+   *  on a single-concept item, whose concept is `concept_key`). */
+  components?: string[];
 }
 export interface AdminCheckItemQueue {
   items: AdminCheckItemEntry[];
