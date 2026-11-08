@@ -4,6 +4,11 @@ import { Skeleton } from "@/components/Skeleton";
 // mounts INSIDE ShellFrame's <main> — the real TopNav/SideNav are persistent
 // chrome rendered around the children slot — so it must be content-only:
 // a fabricated topbar here would stack under the real one.
+//
+// On a full page load the server sends this fallback in place of a large page
+// and the page after it, hidden, behind a queued reveal; the root layout's
+// StreamedRevealGuard reveals it at hydration, so the page is never there
+// twice (lib/streamedReveal.ts).
 export default function ShellLoading() {
   return (
     <div
