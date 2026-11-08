@@ -261,6 +261,11 @@ def test_applied_migration_reference_detects_changed_history_but_is_not_live_sch
         ("learner_state", "evidence_version", "integer"),
         ("graph_nodes", "evidence_version", "integer"),
         ("learner_state", "evidence_touch_at", "timestamp without time zone"),
+        # the learning-loop wave-2 schema (spec §13 A112, A113, A119)
+        ("posttest_poses", "window_days", "bigint"),
+        ("check_items", "lint_flags", "text"),
+        ("check_item_reviews", "status", None),  # absent: no information_schema row
+        ("check_items", "aligned_at", "timestamp without time zone"),
     ],
 )
 def test_durable_budget_and_evidence_metadata_types_are_required(table, column, wrong_type):
@@ -283,6 +288,59 @@ def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable,
     result = audit(db)
     assert result["status"] == "failed"
     assert result["missing_or_wrong_column_attributes"]
+
+
+#: the learning-loop wave-2 migrations that add tables or columns (spec §13
+#: A112, A113, A119). Extend this when a learning migration adds one.
+_LEARNING_SCHEMA_MIGRATIONS = (
+    "20261108041639_learning_item_quality.sql",  # A113
+    "20261108041742_learning_posttest_windows.sql",  # A112
+    "20261108051912_learning_item_alignment.sql",  # A119
+)
+#: SQL type -> information_schema.columns.data_type (an array column reads ARRAY)
+_DATA_TYPE = {
+    "text": "text",
+    "timestamptz": "timestamp with time zone",
+    "integer": "integer",
+    "smallint": "smallint",
+    "boolean": "boolean",
+    "double precision": "double precision",
+    "text[]": "ARRAY",
+}
+_TYPES = "double precision|timestamptz|smallint|integer|boolean|text"
+
+
+def _introduced_columns(sql: str) -> set[tuple[str, str, str]]:
+    """(table, column, data_type) of every column a migration adds: its
+    `ADD COLUMN IF NOT EXISTS` statements and its `CREATE TABLE` columns."""
+    import re
+
+    out = set()
+    for table, column, kind, array in re.findall(
+        rf"ALTER TABLE (?:public\.)?(\w+) ADD COLUMN IF NOT EXISTS (\w+) ({_TYPES})(\[\])?\s*;", sql
+    ):
+        out.add((table, column, _DATA_TYPE[kind + array]))
+    for table, body in re.findall(r"CREATE TABLE IF NOT EXISTS (?:public\.)?(\w+) \((.*?)\n\);", sql, re.S):
+        for column, kind, array in re.findall(rf"^\s*(\w+)\s+({_TYPES})(\[\])?\b", body, re.M):
+            out.add((table, column, _DATA_TYPE[kind + array]))
+    return out
+
+
+def test_every_column_the_learning_wave2_migrations_add_is_required():
+    """The release fence knows the wave-2 schema: every table and column those
+    migrations add is a REQUIRED_COLUMNS entry of the type information_schema
+    reports — so a release whose database lacks one fails the audit."""
+    directory = verify.BACKEND / "db" / "migrations"
+    introduced = set()
+    for name in _LEARNING_SCHEMA_MIGRATIONS:
+        introduced |= _introduced_columns((directory / name).read_text())
+    assert len(introduced) == 21  # 7 post-test window/outcome columns, 13 for A113, 1 for A119
+    required = {
+        (table, column, kind)
+        for table, columns in verify.REQUIRED_COLUMNS.items()
+        for column, kind in columns.items()
+    }
+    assert introduced <= required, sorted(introduced - required)
 
 
 def test_real_repository_learning_rpc_signatures_are_readable_and_new_rpc_is_discovered(tmp_path):

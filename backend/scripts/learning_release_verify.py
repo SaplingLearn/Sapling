@@ -88,6 +88,28 @@ REQUIRED_COLUMNS = {
         "question_hash": "text",
         "final_answer": "text",
         "difficulty": "smallint",
+        # spec §13 A113: the item-flaw linter's codes (text[]: information_schema
+        # reports an array column's data_type as ARRAY); A119 adds its alignment codes
+        "lint_flags": "ARRAY",
+        "aligned_at": "timestamp with time zone",  # spec §13 A119: the alignment check ran
+    },
+    # spec §13 A113: a student's "Report this question", one row per (student, item)
+    "check_item_reports": {
+        "user_id": "text",
+        "question_hash": "text",
+        "course_id": "text",
+        "reason": "text",
+        "surface": "text",
+        "created_at": "timestamp with time zone",
+    },
+    # spec §13 A113: the decision on one course item (approved / retired)
+    "check_item_reviews": {
+        "course_id": "text",
+        "question_hash": "text",
+        "status": "text",
+        "decided_by": "text",
+        "reviewed_by": "text",
+        "reviewed_at": "timestamp with time zone",
     },
     "llm_usage": {"cached_tokens": "integer", "thinking_tokens": "integer", "session_id": "text"},
     "learning_reveals": {"rung": "smallint", "graded_at": "timestamp with time zone"},
