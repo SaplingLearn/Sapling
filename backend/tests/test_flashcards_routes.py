@@ -15,6 +15,8 @@ term's (or all of the user's) material.
 """
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from main import app
@@ -82,6 +84,13 @@ class TestListFlashcards:
 
 
 class TestCourseDocumentsTermScope:
+    @pytest.fixture(autouse=True)
+    def _enrolled(self):
+        # The course-name match is narrowed to courses the user is enrolled in.
+        with patch("routes.flashcards.user_offering_ids_for_course",
+                   return_value=["off-enrolled"]) as m:
+            yield m
+
     @staticmethod
     def _tables(docs, captured):
         def side_effect(name):
@@ -180,6 +189,71 @@ class TestCourseDocumentsTermScope:
         assert docs == []
         # The all-user-documents fallback must NOT fire for a term miss.
         assert "filters" not in captured
+
+
+class TestCourseLookupFilters:
+    """Regression: the course lookup filtered `courses.user_id`, a column the
+    abstract catalog table does not have (0020). PostgREST 400'd, the helper's
+    blanket except returned [], and every generation ran with no documents.
+    Assert the filters actually sent to `courses`."""
+
+    @staticmethod
+    def _tables(courses, captured):
+        def side_effect(name):
+            m = MagicMock()
+            if name == "courses":
+                def _courses(cols, filters=None, order=None, limit=None):
+                    captured["courses"] = filters or {}
+                    return courses
+                m.select.side_effect = _courses
+            elif name == "documents":
+                def _docs(cols, filters=None, order=None, limit=None):
+                    captured["documents"] = filters or {}
+                    return [{"file_name": "a.pdf", "category": "notes",
+                             "summary": None, "concept_notes": None}]
+                m.select.side_effect = _docs
+            else:
+                m.select.return_value = []
+            return m
+        return side_effect
+
+    def test_courses_filtered_by_name_only_never_user_id(self):
+        captured = {}
+        with patch("routes.flashcards.table",
+                   side_effect=self._tables([{"id": "c1"}], captured)), \
+             patch("routes.flashcards.user_offering_ids_for_course",
+                   return_value=["off-1"]) as enrolled, \
+             patch("routes.flashcards.resolve_offering", return_value="off-1") as ro:
+            docs = _get_course_documents(USER_ID, "Intro CS")
+        assert captured["courses"] == {"course_name": "eq.Intro CS"}
+        assert "user_id" not in captured["courses"]
+        enrolled.assert_called_once_with(USER_ID, "c1")
+        ro.assert_called_once_with("c1")
+        assert captured["documents"]["offering_id"] == "eq.off-1"
+        assert captured["documents"]["user_id"] == f"eq.{USER_ID}"
+        assert len(docs) == 1
+
+    def test_same_name_course_user_is_not_enrolled_in_is_skipped(self):
+        captured = {}
+        enrolled_in = {"c-mine": ["off-mine"]}
+        with patch("routes.flashcards.table",
+                   side_effect=self._tables([{"id": "c-other"}, {"id": "c-mine"}], captured)), \
+             patch("routes.flashcards.user_offering_ids_for_course",
+                   side_effect=lambda u, c: enrolled_in.get(c, [])), \
+             patch("routes.flashcards.resolve_offering", return_value="off-mine") as ro:
+            _get_course_documents(USER_ID, "Intro CS")
+        ro.assert_called_once_with("c-mine")
+
+    def test_name_match_with_no_enrollment_keeps_the_all_docs_fallback(self):
+        captured = {}
+        with patch("routes.flashcards.table",
+                   side_effect=self._tables([{"id": "c-other"}], captured)), \
+             patch("routes.flashcards.user_offering_ids_for_course", return_value=[]), \
+             patch("routes.flashcards.resolve_offering") as ro:
+            docs = _get_course_documents(USER_ID, "Intro CS")
+        ro.assert_not_called()
+        assert captured["documents"] == {"user_id": f"eq.{USER_ID}", "deleted_at": "is.null"}
+        assert len(docs) == 1
 
 
 class TestGenerateThreadsSemester:

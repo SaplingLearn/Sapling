@@ -14,7 +14,11 @@ from pydantic import BaseModel
 from config import is_weak
 from db.connection import table
 from services import events_service
-from services.academics import resolve_offering, term_id_for_label
+from services.academics import (
+    resolve_offering,
+    term_id_for_label,
+    user_offering_ids_for_course,
+)
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
@@ -133,9 +137,18 @@ def _get_course_documents(
     the user's documents, byte-identical.
     """
     try:
-        course_rows = table("courses").select(
-            "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
-        )
+        # `courses` is the abstract catalog (0020): it has no user_id column —
+        # filtering on one 400'd, the except below swallowed it, and generation
+        # silently ran with NO documents. Match the name in the catalog, then
+        # keep only a course the user is actually enrolled in (names are not
+        # unique across schools).
+        candidates = table("courses").select(
+            "id", filters={"course_name": f"eq.{course_name}"}
+        ) or []
+        course_rows = [
+            c for c in candidates
+            if c.get("id") and user_offering_ids_for_course(user_id, c["id"])
+        ][:1]
         if course_rows:
             if semester:
                 term_id = term_id_for_label(semester)
