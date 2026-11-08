@@ -64,7 +64,7 @@ from db.connection import page_all, table
 from learning import item_reports
 from learning.checks import CheckItem, held
 from learning.item_audit import stratified_sample, summary
-from learning.item_stats import empty_stats, item_statistics, multi_concept_rests
+from learning.item_stats import empty_stats, item_statistics, multi_concept_components
 from learning.multi_concept import components_of
 from learning.params import (
     ITEM_AUDIT_SAMPLE_DEFAULT,
@@ -345,11 +345,12 @@ def audit(item_id: str, body: AuditBody, request: Request) -> dict:
 #: flag (journaled since A123; on an older row the planning envelope's, or the
 #: weight with the grader's confidence) — plus the journal's total order, and
 #: whether a multi-concept item graded the row (spec §13 A141: its own row may
-#: be gone; migration 20261108205812).
+#: be gone; migration 20261108205812), and the node's concept name (a
+#: combination's rest score reads its components' nodes off the journal).
 _STATS_EVIDENCE_COLUMNS = (
     "id,node_id,question_hash,check_item_id,channel,reason,correct,assisted,max_rung,weight,"
     "confidence,same_session_recheck,planning_recheck:planning_observation->same_session_recheck,"
-    "created_at,evidence_seq,multi_concept,graph_nodes!inner(user_id,course_id)"
+    "created_at,evidence_seq,multi_concept,graph_nodes!inner(user_id,course_id,concept_name)"
 )
 #: The most evidence rows one statistics read scans (admin analytics' scan cap).
 STATS_SCAN_CAP = 100_000
@@ -432,7 +433,7 @@ def item_statistics_report(request: Request, course_id: str) -> dict:
         logger.warning("check item statistics unavailable (course %s)", course_id, exc_info=True)
         raise HTTPException(status_code=503, detail="Item statistics unavailable; try again.") from None
     # spec §13 A141: a multi-concept item's rest score is its components' items
-    multi = multi_concept_rests(stored) or None
+    multi = multi_concept_components(stored) or None
     stats = item_statistics(evidence, retired=_retired_at(decisions), multi=multi)
     items: list[dict] = []
     flagged: list[dict] = []

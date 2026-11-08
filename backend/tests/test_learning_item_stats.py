@@ -513,9 +513,22 @@ def test_the_evidence_read_is_one_course_in_journal_order_and_capped(monkeypatch
         "check_item_id": "not.is.null",
     }
     assert seen["order"] == "created_at.asc,evidence_seq.asc.nullslast,id.asc"
+    # the read's top-level columns (an embed's own list stays whole)
+    columns, depth, current = [], 0, ""
+    for char in seen["columns"]:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            columns.append(current)
+            current = ""
+        else:
+            current += char
+    columns.append(current)
     for column in ("same_session_recheck", "planning_recheck:planning_observation->same_session_recheck",
-                   "graph_nodes!inner(user_id,course_id)", "weight", "confidence", "max_rung", "assisted"):
-        assert column in seen["columns"]
+                   "weight", "confidence", "max_rung", "assisted",
+                   # spec §13 A141: the journal's flag (a combination whose row is
+                   # gone) and the node's concept (a combination's components)
+                   "multi_concept", "graph_nodes!inner(user_id,course_id,concept_name)"):
+        assert column in columns, column
     monkeypatch.setattr(admin, "STATS_SCAN_CAP", 3)
     rows, truncated = admin._course_evidence(COURSE)
     assert len(rows) == 3 and truncated is True
