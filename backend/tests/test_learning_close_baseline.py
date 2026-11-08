@@ -413,6 +413,10 @@ class _Journal:
                 for key in ("session_id", "node_id"):
                     if key in filters:
                         rows = [r for r in rows if f"eq.{r.get(key)}" == filters[key]]
+                if "id" in filters:  # A123's void filter: not.in.("id",…)
+                    assert filters["id"].startswith("not.in.(") and filters["id"].endswith(")")
+                    out = {v.strip('"') for v in filters["id"][len("not.in.(") : -1].split(",")}
+                    rows = [r for r in rows if r.get("id") not in out]
                 return [dict(r) for r in rows][: limit or None]
 
         return _T()
@@ -444,6 +448,38 @@ def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(
         assert "graph_nodes!inner(user_id)" in cols
         assert order == "created_at.asc,evidence_seq.asc" and limit == 1
     assert loop._measured_before("u1", SID, []) == set()
+
+
+def test_a_void_earlier_row_does_not_measure_a_node_before_the_session(monkeypatch):
+    """Spec §13 A123: a row graded against an item staff retired is no
+    measurement, so the node's first VALID row decides. n-void's only earlier
+    row is void: it was first measured in this session and starts at that
+    measurement. n-old's earlier row stands. The student's void ids are read
+    once, by node, and only n-void's read leaves its void id out."""
+    import routes.learn_loop as loop
+
+    journal = _Journal(
+        [
+            {"id": "e-void", "node_id": "n-void", "session_id": "s0"},
+            {"id": "e-old", "node_id": "n-old", "session_id": "s0"},
+            {"id": "e-void-here", "node_id": "n-void", "session_id": SID},
+            {"id": "e-old-here", "node_id": "n-old", "session_id": SID},
+        ]
+    )
+    reads = []
+
+    def voided_by_node(user_id):
+        reads.append(user_id)
+        return {"n-void": {"e-void"}}
+
+    monkeypatch.setattr(loop, "table", journal)
+    monkeypatch.setattr(loop, "voided_by_node", voided_by_node)
+    evidence = [{"node_id": "n-void"}, {"node_id": "n-old"}]
+    assert loop._measured_before("u1", SID, evidence) == {"n-old"}
+    assert reads == ["u1"]
+    assert [c[1].get("id") for c in journal.calls] == ['not.in.("e-void")', None]
+    monkeypatch.setattr(loop, "voided_by_node", lambda user_id: {})
+    assert loop._measured_before("u1", SID, evidence) == {"n-old", "n-void"}  # nothing void
 
 
 def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch):

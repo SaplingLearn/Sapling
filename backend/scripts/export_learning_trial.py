@@ -12,10 +12,12 @@ exported.
 What it reads (read-only, PostgREST through db.connection):
   - the students' course concepts (graph_nodes: id, course, concept name — the
     name only to form the course-level concept key, never exported);
-  - each concept's A112 anchor, its FIRST graded evidence in the journal's
-    total order (learning/loop_state_store.py::evidence_spans's rule, restated
-    here because scripts may not import that ZPD-layer module —
-    tests/test_learning_zpd_policy.py; a test pins the two equal);
+  - each concept's A112 anchor, its FIRST valid graded evidence in the
+    journal's total order (learning/loop_state_store.py::evidence_spans's rule,
+    restated here because scripts may not import that ZPD-layer module —
+    tests/test_learning_zpd_policy.py; a test pins the two equal). A row the
+    student's void record names (learning_evidence_voids, spec §13 A123:
+    graded against an item staff retired) is no evidence and never anchors;
   - the anchor journal rows and their sessions' probe histories -> the probe
     pretest (learning.learning_gain.pretest_outcome, A112's own rule);
   - posttest_poses, every window;
@@ -40,8 +42,9 @@ Run from backend/:
     python scripts/export_learning_trial.py --arm-label <label> --treatment-variant A --out trial.csv
 
 Reads .env; for staging/prod run under `dotenv -f .env.<env> run -- ...` and
-check the `Project:` line it prints first. Needs the A112/A113 migrations
-(20261108041742_learning_posttest_windows.sql, 20261108041639_learning_item_quality.sql).
+check the `Project:` line it prints first. Needs the A112/A113/A123 migrations
+(20261108041742_learning_posttest_windows.sql, 20261108041639_learning_item_quality.sql,
+20261108072715_learning_evidence_void.sql).
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import SUPABASE_URL, page_all, pg_quote_value, table  # noqa: E402
+from learning import void_store  # noqa: E402
 from learning.arms import variant_for  # noqa: E402
 from learning.item_alignment import concept_key  # noqa: E402
 from learning.learning_gain import posttest_outcome, pretest_outcome  # noqa: E402
@@ -159,8 +163,11 @@ def _anchors(user_id: str) -> dict[str, tuple[str, datetime]]:
     with graded evidence: the node's FIRST event_type='evidence' row in the
     journal's total order, owner-scoped through the graph_nodes!inner embed —
     evidence_spans' rule (A112), over all the student's courses at once.
-    Propagation is never journaled, so it never anchors. An unreadable journal
-    time raises, as evidence_spans' does: the database wrote it."""
+    Propagation is never journaled, so it never anchors. Spec §13 A123: nor
+    does a void row (the student's void record names it), so a concept whose
+    every row is void has no anchor. An unreadable journal time raises, as
+    evidence_spans' does: the database wrote it."""
+    voided = void_store.voided_event_ids(user_id=user_id)
     out: dict[str, tuple[str, datetime]] = {}
     for row in page_all(
         table("node_mastery_events"),
@@ -169,7 +176,7 @@ def _anchors(user_id: str) -> dict[str, tuple[str, datetime]]:
         order=_JOURNAL_ORDER,
     ):
         node = row.get("node_id")
-        if not node or not row.get("id") or str(node) in out:
+        if not node or not row.get("id") or str(node) in out or row["id"] in voided:
             continue
         at = _ts(row.get("created_at"))
         if at is None:

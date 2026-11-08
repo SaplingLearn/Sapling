@@ -186,6 +186,40 @@ def test_opportunity_window_is_owner_scoped_newest_last_and_bounded(monkeypatch)
     ]  # newest LAST
 
 
+def test_opportunity_window_leaves_void_rows_out_before_the_limit(monkeypatch):
+    """Spec §13 A123: a row graded against an item staff retired is no
+    opportunity. The student's void ids for the node are filtered out in the
+    read itself, before the limit, so the window still holds the newest
+    WINDOW_KEEP valid rows. A failed void read leaves no verdict (None)."""
+    from learning import loop_state_store, void_store
+
+    scopes, calls = [], []
+
+    def voided(**scope):
+        scopes.append(scope)
+        return {"ev-b", "ev-a"}
+
+    class _Table:
+        def select(self, cols, **kw):
+            calls.append(kw)
+            return [{"correct": True, "assisted": False, "max_rung": 0}]
+
+    monkeypatch.setattr(void_store, "voided_event_ids", voided)
+    monkeypatch.setattr(loop_state_store, "table", lambda name: _Table())
+    assert loop_state_store.opportunity_window("u1", "node-1") == [Opportunity(True, False, 0, None, None)]
+    assert scopes == [{"user_id": "u1", "node_id": "node-1"}]
+    (kw,) = calls
+    assert kw["filters"]["id"] == 'not.in.("ev-a","ev-b")'
+    assert kw["filters"]["node_id"] == "eq.node-1" and kw["limit"] == policy.WINDOW_KEEP
+
+    def down(**scope):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(void_store, "voided_event_ids", down)
+    assert loop_state_store.opportunity_window("u1", "node-1") is None
+    assert len(calls) == 1  # no window read without the void record
+
+
 def test_opportunity_window_fails_soft_and_never_reads_unknown_help_as_none(monkeypatch):
     from learning import loop_state_store
 

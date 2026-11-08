@@ -7,8 +7,9 @@ graph writer's void transaction (services/graph_service.py::_apply_void), so a
 row is void exactly when the state was recomputed without it. Every reader
 that reads the journal AS EVIDENCE leaves these rows out (the learner's
 evidence spans for the post-test windows, the planning history, a session's
-close, the learner brief's past closes, the learning velocity, the ZPD
-metrics). Readers of EXPOSURE do not: a void row still means the student saw
+close and its measured-before read, the learner brief's past closes, the
+learning velocity, the ZPD metrics, the band-control window, the trial
+export's anchors). Readers of EXPOSURE do not: a void row still means the student saw
 the question (the seen / revealed sets, the re-check-after-release rule, the
 post-test's "practised since the pose" floor) — and its item is retired, so it
 is never served again anyway. The admin reports apply the same rule to the
@@ -43,6 +44,18 @@ def voided_event_ids(
         for row in page_all(table(VOIDS), "event_id", filters=filters, order="event_id")
         if row.get("event_id")
     }
+
+
+def voided_by_node(user_id: str) -> dict[str, set[str]]:
+    """The student's void journal row ids, grouped by node: one paged read for
+    a reader that then reads several of the student's nodes one at a time."""
+    out: dict[str, set[str]] = {}
+    for row in page_all(
+        table(VOIDS), "event_id,node_id", filters={"user_id": f"eq.{user_id}"}, order="event_id"
+    ):
+        if row.get("event_id") and row.get("node_id"):
+            out.setdefault(row["node_id"], set()).add(row["event_id"])
+    return out
 
 
 def voided_sessions(user_id: str) -> set[str]:

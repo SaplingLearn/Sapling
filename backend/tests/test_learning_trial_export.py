@@ -300,27 +300,41 @@ def test_read_trial_composes_the_reads(monkeypatch):
 def test_the_anchor_read_is_evidence_spans_rule(monkeypatch):
     """The exporter restates A112's anchor read (scripts may not import the ZPD
     layer's loop_state_store): same journal rows in, same anchors out, same
-    total order asked of PostgREST."""
+    total order asked of PostgREST. Spec §13 A123 is part of that rule: a row
+    the student's void record names never anchors, so n1 (its first row void)
+    is anchored by its next row and n4 (every row void) by none."""
     from learning import loop_state_store as store
+    from learning import void_store
 
     rows = [
         {"id": "e1", "node_id": "n1", "created_at": "2026-11-01T09:00:00Z", "evidence_seq": 1},
         {"id": "e2", "node_id": "n2", "created_at": "2026-11-01T09:00:00+00:00", "evidence_seq": 2},
         {"id": "e3", "node_id": "n1", "created_at": "2026-11-02T09:00:00Z", "evidence_seq": 3},
         {"id": "e4", "node_id": "n3", "created_at": "2026-11-03T10:30:00.123456Z", "evidence_seq": None},
+        {"id": "e5", "node_id": "n4", "created_at": "2026-11-03T11:00:00Z", "evidence_seq": 5},
     ]
-    orders = []
+    orders, void_scopes = [], []
 
     def page_all(handle, columns="*", *, filters=None, order, **kwargs):
         orders.append(order)
         assert filters["event_type"] == "eq.evidence"
         return iter(dict(r) for r in rows)
 
+    def voided_event_ids(**scope):
+        void_scopes.append(scope)
+        return {"e1", "e5"}
+
+    monkeypatch.setattr(void_store, "voided_event_ids", voided_event_ids)
     monkeypatch.setattr(store, "page_all", page_all)
     monkeypatch.setattr(export, "page_all", page_all)
     monkeypatch.setattr(export, "table", lambda name: SimpleNamespace(name=name))
     spans = store.evidence_spans("u1", "course")
-    assert export._anchors("u1") == {node: (span.first_id, span.first_at) for node, span in spans.items()}
+    anchors = export._anchors("u1")
+    assert anchors == {node: (span.first_id, span.first_at) for node, span in spans.items()}
+    assert {node: anchor_id for node, (anchor_id, _) in anchors.items()} == {
+        "n1": "e3", "n2": "e2", "n3": "e4",
+    }
+    assert void_scopes == [{"user_id": "u1"}, {"user_id": "u1"}]  # one read each, owner-scoped
     assert orders[0] == orders[1] == export._JOURNAL_ORDER
 
 

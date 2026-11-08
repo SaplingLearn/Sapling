@@ -90,7 +90,7 @@ from agents.loop_tutor import (
 )
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
-from db.connection import page_all, table
+from db.connection import page_all, pg_quote_value, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
 from learning import grade_checkpoint, item_reports
 from learning import probe as probe_policy
@@ -104,7 +104,7 @@ from learning.evidence_transaction import (
     EvidenceObservationSuperseded,
     read_receipt as read_evidence_receipt,
 )
-from learning.void_store import voided_event_ids
+from learning.void_store import voided_by_node, voided_event_ids
 from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
@@ -5751,17 +5751,25 @@ def _measured_before(user_id: str, session_id: str, evidence: list[dict]) -> set
     post-test). They report their change from the estimate before the session;
     every other node was first measured here and starts at that measurement,
     never at the BKT prior. Propagation is never journaled, so it measures
-    nothing. One limit-1 read per node (idx_node_mastery_events_node); a failed
-    read propagates (the close is retried, like the evidence read)."""
+    nothing. Spec §13 A123: nor does a void row (graded against an item staff
+    retired), so the node's first VALID row decides. The student's void ids
+    are read once, by node, and each node's are left out of its read before
+    the limit. One limit-1 read per node (idx_node_mastery_events_node); a
+    failed read propagates (the close is retried, like the evidence read)."""
     out: set[str] = set()
-    for node_id in dict.fromkeys(e.get("node_id") for e in evidence or [] if e.get("node_id")):
+    nodes = list(dict.fromkeys(e.get("node_id") for e in evidence or [] if e.get("node_id")))
+    voided = voided_by_node(user_id) if nodes else {}
+    for node_id in nodes:
+        filters = {
+            "graph_nodes.user_id": f"eq.{user_id}",
+            "node_id": f"eq.{node_id}",
+            "event_type": "eq.evidence",
+        }
+        if voided.get(node_id):
+            filters["id"] = f"not.in.({','.join(pg_quote_value(v) for v in sorted(voided[node_id]))})"
         first = table("node_mastery_events").select(
             "session_id,graph_nodes!inner(user_id)",
-            filters={
-                "graph_nodes.user_id": f"eq.{user_id}",
-                "node_id": f"eq.{node_id}",
-                "event_type": "eq.evidence",
-            },
+            filters=filters,
             order="created_at.asc,evidence_seq.asc",
             limit=1,
         )

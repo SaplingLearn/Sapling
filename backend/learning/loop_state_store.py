@@ -238,17 +238,24 @@ def opportunity_window(user_id: str, node_id: str) -> list[Opportunity] | None:
     and surfaces, as policy.Opportunity. Read in the journal's order
     (created_at, evidence_seq, id) and owner-scoped through the
     graph_nodes!inner embed. Propagation is never journaled, so it is never an
-    opportunity. None when the read failed (never raises): the caller then
-    has no verdict to apply, never an invented one."""
+    opportunity. Spec §13 A123: nor is a void row (graded against an item staff
+    retired). Its id is left out in the read itself, before the limit (as
+    scripts/derive_zpd_metrics.py's read does), so the window still holds the
+    newest WINDOW_KEEP valid rows. None when either read failed (never raises):
+    the caller then has no verdict to apply, never an invented one."""
+    filters = {
+        "graph_nodes.user_id": f"eq.{user_id}",
+        "node_id": f"eq.{node_id}",
+        "event_type": "eq.evidence",
+        "question_hash": "not.is.null",
+    }
     try:
+        voided = void_store.voided_event_ids(user_id=user_id, node_id=node_id)
+        if voided:
+            filters["id"] = f"not.in.({','.join(pg_quote_value(v) for v in sorted(voided))})"
         rows = table("node_mastery_events").select(
             "correct,assisted,max_rung,p_before,p_after,graph_nodes!inner(user_id)",
-            filters={
-                "graph_nodes.user_id": f"eq.{user_id}",
-                "node_id": f"eq.{node_id}",
-                "event_type": "eq.evidence",
-                "question_hash": "not.is.null",
-            },
+            filters=filters,
             order="created_at.desc,evidence_seq.desc.nullslast,id.desc",
             limit=WINDOW_KEEP,
         )

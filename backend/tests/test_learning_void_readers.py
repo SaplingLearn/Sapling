@@ -7,7 +7,11 @@ post-test windows' anchor and last evidence (eligibility), the planning history
 (a void row consumes its hash's first exposure but certifies nothing), a
 session's close, the learner brief's past closes, the learning velocity (the
 Tree and the quiz prompt) and the nightly ZPD metrics. Kept by: the seen /
-revealed sets (the student did see the question).
+revealed sets (the student did see the question). The wave-2 readers are
+pinned beside their own tests: the band-control window
+(test_learning_band_control.py), the close's measured-before read
+(test_learning_close_baseline.py) and the trial export's anchors
+(test_learning_trial_export.py).
 """
 
 from __future__ import annotations
@@ -49,6 +53,16 @@ def test_void_reads_name_their_scope_and_page_in_a_total_order():
     assert sessions.select_with_count.call_args.kwargs["filters"] == {
         "user_id": "eq.u1", "session_id": "not.is.null",
     }
+    by_node = _paged([
+        {"event_id": "e1", "node_id": "n1"},
+        {"event_id": "e2", "node_id": "n1"},
+        {"event_id": "e3", "node_id": "n2"},
+        {"event_id": "e4", "node_id": None},
+    ])
+    with patch("learning.void_store.table", return_value=by_node):
+        assert void_store.voided_by_node("u1") == {"n1": {"e1", "e2"}, "n2": {"e3"}}
+    kw = by_node.select_with_count.call_args.kwargs
+    assert kw["filters"] == {"user_id": "eq.u1"} and kw["order"] == "event_id"
 
 
 # ── post-test eligibility: the windows' anchor ─────────────────────────────
