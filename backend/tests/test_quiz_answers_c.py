@@ -153,7 +153,7 @@ class TestAnswerEndpoint:
     def test_grades_and_persists_a_response(self):
         factory, responses = _tables()
         with patch("routes.quiz.table", side_effect=factory):
-            r = _answer({"time_ms": 4200, "confidence": 0.8})
+            r = _answer({"time_ms": 4200, "confidence": "fairly_sure"})
         assert r.status_code == 200
         data = r.json()
         assert data["is_correct"] is True          # option index 1 is "B", correct
@@ -171,7 +171,8 @@ class TestAnswerEndpoint:
         assert row["selected_index"] == 1
         assert row["is_correct"] is True
         assert row["time_ms"] == 4200
-        assert row["confidence"] == 0.8
+        # Learning-loop spec §13 A132: the body's label, stored as its level.
+        assert row["confidence"] == 0.55
 
     def test_last_question_has_no_next(self):
         factory, _ = _tables()

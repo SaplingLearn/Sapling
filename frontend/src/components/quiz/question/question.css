@@ -19,6 +19,7 @@
   --quiz-q-stem-mh: 72px;      /* reserved, so a one-line stem doesn't jump */
   --quiz-q-feedback-mh: 20px;  /* reserved for the verdict line */
   --quiz-q-feedback-mt: 18px;
+  --quiz-q-confidence-mt: 14px; /* the stated-confidence row under the answer */
   --quiz-q-aside-mt: 10px;
   --quiz-q-skeleton-row: 55px; /* one `AnswerOption` row, while generating */
   --quiz-q-skeleton-stem: 26px;
@@ -121,6 +122,12 @@
 /* The rows bring their own bottom rule; the group supplies the top one. */
 .quiz-question__options {
   border-top: 1px solid var(--border);
+}
+
+/* Learning-loop spec §13 A132: the optional stated-confidence row (the shared
+   `learn/ConfidenceControl`), under the answer and above the verdict line. */
+.quiz-question__confidence {
+  margin-top: var(--quiz-q-confidence-mt);
 }
 
 /* ── Feedback ───────────────────────────────────────────────────────── */

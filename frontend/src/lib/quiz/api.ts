@@ -12,7 +12,7 @@
  * the non-quiz routes; its own quiz wrappers went with `QuizPanel`.
  */
 
-import { fetchJSON, describeConcept as describeConceptRaw } from "@/lib/api";
+import { fetchJSON, describeConcept as describeConceptRaw, type StudentConfidence } from "@/lib/api";
 import type {
   AbandonResult,
   AnswerResult,
@@ -86,15 +86,27 @@ export const generateQuiz = (p: {
  * `(attempt_id, question_index)`: replaying an answer returns the FIRST recorded
  * response with `recorded: false` rather than revising it.
  *
- * `time_ms` and `confidence` are accepted by the route and stored, but nothing
- * ever reads them back and the redesign surfaces neither, so they are
- * deliberately omitted rather than sent as junk.
- * TODO(#537-followup: per-question timing) — send them once something displays
- * them (gap G10).
+ * `confidence` (learning-loop spec §13 A132) is the student's optional stated
+ * confidence, A127's label. It is sent only when one was chosen: a skip sends
+ * no key at all, which the route records as absent — never as a default
+ * level. The route maps the label onto the §3.3 scale and keeps it with the
+ * answer's mastery evidence.
+ *
+ * `time_ms` is accepted by the route and stored, but nothing ever reads it
+ * back and the redesign does not surface it, so it is deliberately omitted
+ * rather than sent as junk.
+ * TODO(#537-followup: per-question timing) — send it once something displays
+ * it (gap G10).
  */
 export const answerQuestion = (
   attemptId: string,
-  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string },
+  p: {
+    questionIndex: number;
+    selectedIndex: number | null;
+    questionId: number;
+    answerText?: string;
+    confidence?: StudentConfidence | null;
+  },
 ): Promise<AnswerResult> =>
   fetchJSON<AnswerResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/answer`, {
     method: "POST",
@@ -102,6 +114,7 @@ export const answerQuestion = (
       question_index: p.questionIndex,
       ...(p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
       question_id: p.questionId,
+      ...(p.confidence ? { confidence: p.confidence } : {}),
     }),
   });
 

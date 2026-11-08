@@ -62,6 +62,11 @@ quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 quiz.answer_key_served        usage     quiz_id
 quiz.answer_key_flag_omitted  usage     quiz_id
+quiz.evidence_excluded        system    quiz_id, concept_node_id, question_hash, flags (the
+                                        item's lint codes), excluded_by (the codes that kept it
+                                        out), correct — a submitted quiz answer kept out of
+                                        mastery evidence for an item-flaw code (spec §13 A132);
+                                        codes and ids only, never the item's text
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 flashcard.generated           usage     card_count, documents_used, weak_concepts_used, via
@@ -290,6 +295,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # routes/quiz.py::_record_answer_key_flag.
     "quiz.answer_key_served",
     "quiz.answer_key_flag_omitted",
+    # Learning-loop spec §13 A132: a quiz answer kept out of mastery evidence
+    # because its item carries an excluding item-flaw code
+    # (learning/quiz_evidence.py::EVIDENCE_EXCLUDING_FLAGS) — one per such item
+    # per submit. category="system": the server's decision about an item, not
+    # the student's activity, so the usage rollups leave it out. It is what
+    # counts the evidence the linter withheld, and its `correct` split is the
+    # measure of the cue (correct rate on cued items against clean ones).
+    "quiz.evidence_excluded",
     "chat.message_sent",
     "note.created",
     # ADR 0028: flashcard generation (an LLM feature) and review had no event

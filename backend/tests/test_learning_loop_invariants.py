@@ -39,6 +39,7 @@ PURE_MODULES = (
     "item_keys.py",  # A124: the blind solve compared with the key (answers in, decisions out)
     "item_audit.py",  # A124: the stratified audit sample and the Wilson key-error rate
     "stem_match.py",  # A125: does a text quote a posed item's stem (texts in, hashes out)
+    "quiz_evidence.py",  # A132: the quiz's stated confidence and lint gate (values in, decisions out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)

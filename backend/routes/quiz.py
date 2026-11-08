@@ -44,6 +44,8 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
 from services.quiz_algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
+from learning import quiz_evidence
+from learning.evidence import stated_confidence
 from learning.help_ledger import max_help_many
 from learning.params import RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
 from services.quiz_context_service import get_quiz_context, save_quiz_context
@@ -749,7 +751,10 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 # student's own question) but because nothing client-side consumes it yet.
 # Per-question feedback (#26) is the change that should surface it, and it
 # should do so by adding it to the keyless allowlist, deliberately.
-_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash")
+#
+# `lint_flags` (learning-loop spec §13 A132) IS sensitive: a code such as
+# `correct_longest` says where the key is.
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash", "lint_flags")
 
 
 def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
@@ -1887,6 +1892,20 @@ def _renumber(questions: list[dict]) -> list[dict]:
     return questions
 
 
+def _lint_questions(questions: list[dict]) -> list[dict]:
+    """Learning-loop spec §13 A132: store A113's item-flaw codes with every
+    question of the attempt being assembled (`lint_flags`, in the encrypted
+    `questions_json`; [] = linted clean). Generated and re-served (G5) items
+    alike are linted here, the one place an attempt's questions are final, so
+    a re-served item carries the current linter's answer. Submit reads the
+    codes to decide whether an answer is mastery evidence
+    (`learning.quiz_evidence.evidence_exclusion`); no client ever sees them
+    (`_strip_answer_key`'s allowlist, `_INTERNAL_QUESTION_KEYS`)."""
+    for question in questions:
+        question["lint_flags"] = quiz_evidence.lint_question(question)
+    return questions
+
+
 async def _generate_or_502(
     body: GenerateQuizBody,
     *,
@@ -2137,6 +2156,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             exam_days_away = generated.exam_days_away
     regenerated_count = len(questions) - len(recovered)
     _renumber(questions)
+    _lint_questions(questions)
 
     quiz_id = str(uuid.uuid4())
     attempt_row = {
@@ -2335,7 +2355,14 @@ def get_attempt(attempt_id: str, request: Request):
         order="question_index.asc",
     ) or []
     responses = [
-        {**r, "answer_text": _written_response_text(r) if r.get("answer_text") else None}
+        {
+            **r,
+            "answer_text": _written_response_text(r) if r.get("answer_text") else None,
+            # Learning-loop spec §13 A132: the stated confidence as the label
+            # the answer body takes (the stored number is the §3.3 rule's
+            # scale), so a resumed question shows the level that was stated.
+            "confidence": quiz_evidence.stored_label(r.get("confidence")),
+        }
         for r in responses
     ]
     last_activity = max(
@@ -2456,7 +2483,14 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "selected_index": body.selected_index,
             "is_correct": _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
-            "confidence": body.confidence,
+            # Learning-loop spec §13 A132: the stated label's
+            # STUDENT_CONFIDENCE_LEVELS value, or None for a skip; an idk
+            # written answer states none (A127 (c)). Submit carries it onto
+            # the question's evidence.
+            "confidence": stated_confidence(
+                body.confidence,
+                idk=written and quiz_evidence.is_idk_answer(body.answer_text),
+            ),
         }
         if written:
             row["answer_text"] = encrypt_json({"text": body.answer_text})
@@ -2672,7 +2706,12 @@ def _gamification_block(
     return {**paid, **snapshot}
 
 
-def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -> list[dict]:
+def _quiz_evidence(
+    concept_node_id: str,
+    questions: list,
+    results: list[dict],
+    stated: list[float | None] | None = None,
+) -> list[dict]:
     """PKG-11: one `learning.evidence.Evidence` dict per graded question.
 
     Every quiz format conservatively uses the existing "mc" likelihood
@@ -2687,10 +2726,15 @@ def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -
     and help-ledger floor to every format. Otherwise Evidence keeps its model
     defaults, including rung 0 and derived weight; quiz grades do not invent
     learning-check planning provenance. The student's self-reported confidence
-    is NOT Evidence.confidence (that field is grader confidence, spec §5).
+    is NOT Evidence.confidence (that field is grader confidence, spec §5): it
+    is `student_confidence` (spec §13 A132, as A127 (f)), `stated[i]` for the
+    i-th question, written only when one was stated — an evidence dict without
+    one is exactly the dict it was before A132.
     """
-    return [
-        {
+    stated = stated or []
+    out = []
+    for i, (question, result) in enumerate(zip(questions, results)):
+        ev = {
             "node_id": concept_node_id,
             "channel": "mc",
             "correct": bool(result["correct"]),
@@ -2698,8 +2742,51 @@ def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -
             "check_item_id": None,
             "session_id": None,
         }
-        for question, result in zip(questions, results)
-    ]
+        confidence = stated[i] if i < len(stated) else None
+        if confidence is not None:
+            ev["student_confidence"] = confidence
+        out.append(ev)
+    return out
+
+
+def _lint_gate(
+    user_id: str,
+    quiz_id: str,
+    concept_node_id: str,
+    questions: list,
+    results: list[dict],
+    evidence: list[dict],
+) -> list[dict]:
+    """Learning-loop spec §13 A132: keep an answer to a flawed item out of
+    mastery evidence. `evidence[i]` is `questions[i]`'s (`_quiz_evidence`).
+    An item carrying one of `quiz_evidence.EVIDENCE_EXCLUDING_FLAGS` (its
+    stored `lint_flags`, or the linter's answer now for a question stored
+    without them) writes nothing, whichever way it was answered, and claims
+    no farm-guard window (this runs first). One `quiz.evidence_excluded`
+    event per such item: ids, codes and the outcome only. The score and the
+    results are not touched."""
+    kept: list[dict] = []
+    for question, result, ev in zip(questions, results, evidence):
+        flags = quiz_evidence.question_lint_flags(question)
+        excluded_by = quiz_evidence.evidence_exclusion(flags)
+        if not excluded_by:
+            kept.append(ev)
+            continue
+        events_service.log_event(
+            "quiz.evidence_excluded",
+            category=events_service.SYSTEM_CATEGORY,
+            user_id=user_id,
+            request_id=current_request_id(),
+            payload={
+                "quiz_id": quiz_id,
+                "concept_node_id": concept_node_id,
+                "question_hash": ev.get("question_hash"),
+                "flags": flags,
+                "excluded_by": excluded_by,
+                "correct": bool(result.get("correct")),
+            },
+        )
+    return kept
 
 
 #: † spec §13 A100 (tightens A94): a quiz question earns at most one evidence per
@@ -2820,8 +2907,14 @@ def _mastery_span(applied, default_before: float) -> tuple[float, float]:
 
 def _grade_submission(
     body: SubmitQuizBody, questions: list[dict],
-) -> tuple[list[dict], list[dict], int]:
-    """Grade a claimed attempt: (results, graded_answers, score)."""
+) -> tuple[list[dict], list[dict], int, list[float | None]]:
+    """Grade a claimed attempt: (results, graded_answers, score, stated).
+
+    `stated[i]` is the confidence the student stated on question i's
+    recorded response (learning-loop spec §13 A132), as the exact
+    STUDENT_CONFIDENCE_LEVELS value (`quiz_evidence.evidence_confidence`), or
+    None: skipped, idk, or answered only through the submit payload, which
+    carries no statement."""
     # #541 C4: responses recorded through /attempts/{id}/answer are the
     # source of truth — a payload answer for the same question is ignored
     # (the recorded response was graded at answer time; letting the final
@@ -2829,10 +2922,14 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index,answer_text",
+        "question_index,selected_index,answer_text,confidence",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
+    stated = [
+        quiz_evidence.evidence_confidence((recorded_by_index.get(i) or {}).get("confidence"))
+        for i in range(len(questions))
+    ]
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
     results = []
@@ -2889,7 +2986,7 @@ def _grade_submission(
             "explanation": q.get("explanation", ""),
         })
 
-    return results, graded_answers, score
+    return results, graded_answers, score, stated
 
 
 def _release_submit_claim(quiz_id: str, claim_stamp: str) -> None:
@@ -3013,7 +3110,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise _already_completed()
 
     try:
-        results, graded_answers, score = _grade_submission(body, questions)
+        results, graded_answers, score, stated = _grade_submission(body, questions)
         total = len(questions)
         # The score lands FIRST and alone (#760): everything after it is
         # best-effort, so nothing after it can strand the attempt scoreless.
@@ -3044,6 +3141,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # question_hash) per rolling 24 h, by claim; hashless questions count once per attempt
     # spec §13 A99: then the help ledger's floor (a question asked about in a
     # quiz-ask session earns no unassisted credit)
+    # spec §13 A132: before both, an answer to an item the linter flagged with
+    # an excluding code is no evidence (`_lint_gate`), and each evidence
+    # carries the confidence the student stated on its response
     #
     # #760: best-effort. The score is already persisted; a graph failure here
     # must not turn a scored submit into a 500 (whose retry would 409 and pay
@@ -3053,7 +3153,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     try:
         evidence = _help_floor(
             user_id,
-            _farm_guard(user_id, body.quiz_id, _quiz_evidence(concept_node_id, questions, results)),
+            _farm_guard(
+                user_id,
+                body.quiz_id,
+                _lint_gate(
+                    user_id,
+                    body.quiz_id,
+                    concept_node_id,
+                    questions,
+                    results,
+                    _quiz_evidence(concept_node_id, questions, results, stated),
+                ),
+            ),
         )
         applied = (
             apply_graph_update(user_id, {"evidence": evidence}, course_id=node.get("course_id"))

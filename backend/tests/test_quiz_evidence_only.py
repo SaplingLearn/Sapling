@@ -191,7 +191,7 @@ def _hashes():
 
     return [
         LOOP_QUESTIONS[0]["question_hash"],
-        question_hash("What is a function?", ["a loop", "a reusable block"]),
+        question_hash("What is a function?", ["a repeating loop", "a reusable block"]),
     ]
 
 
@@ -420,7 +420,7 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
     ):
         first = client.post(
             "/api/quiz/attempts/written-first/answer",
-            json={"question_index": 0, "answer_text": selected, "confidence": 0.99},
+            json={"question_index": 0, "answer_text": selected, "confidence": "sure"},
         )
         revised = client.post(
             "/api/quiz/attempts/written-first/answer",
@@ -475,6 +475,9 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
         expected_weight = params.WEIGHT_ASSISTED
     assert evidence.weight == expected_weight
     assert evidence.confidence is None  # student confidence is not grader confidence
+    # spec §13 A132: the confidence the first recorded answer stated rides the
+    # evidence as the student's, never as a weight
+    assert evidence.student_confidence == params.STUDENT_CONFIDENCE_LEVELS["sure"]
     assert evidence.planning_provenance is None
     assert evidence.check_item_id is None and evidence.session_id is None
     assert set(claims.rows) == {qh}

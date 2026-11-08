@@ -91,7 +91,7 @@ renders the element.
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
 | Admin check-item review | `admin-items`, `admin-audit` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged, a key hold withdraws or students reported, with Approve / Retire — learning-loop spec §13 A113, A124 — and its Key audit tab, a stratified sample of one course's keys with the key-error rate — A124) |
 | Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
-| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure are you?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards and the review card, never the post-test; the call sites write its prefix — spec §13 A127) |
+| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`, `quiz-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure are you?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards, the review card and every quiz question, never the post-test; the call sites write its prefix — spec §13 A127, A132) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
@@ -272,6 +272,9 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
+| `quiz-confidence` | the optional "How sure are you?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer` |
+| `quiz-confidence-{level}` | one level in it: `quiz-confidence-guessing` / `-fairly_sure` / `-sure` (`aria-checked`) |
+| `quiz-confidence-clear` | its "Clear", present once a level is chosen — takes the choice back (nothing is sent) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
 | `quiz-next` | the same footer button once the verdict is showing — "Next question" / "See results" |
 | `quiz-review-verdict` | "Correct." / "Not quite." banner |

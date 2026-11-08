@@ -7,6 +7,7 @@
  * session/scope model, the phase machine) is marked as a client concept.
  */
 
+import type { StudentConfidence } from "@/lib/api";
 import type { GamificationMe } from "@/lib/types";
 import type { QuizError } from "./errors";
 
@@ -212,6 +213,9 @@ export interface AttemptDetail {
     selected_index: number | null;
     answer_text?: string | null;
     is_correct: boolean;
+    /** Learning-loop spec §13 A132: the confidence stated with this answer, as
+     *  the label the answer body took; null when none was (a skip, an idk). */
+    confidence?: StudentConfidence | null;
     answered_at: string;
   }[];
   score: number | null;
@@ -262,6 +266,14 @@ export interface QuizItem {
   selectedIndex: number | null;
   verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
+  /**
+   * Learning-loop spec §13 A132: the student's optional stated confidence
+   * ("Guessing" / "Fairly sure" / "Sure", A127). Null (or absent, in a record
+   * saved before A132) = none chosen, which `/answer` sends as nothing at all.
+   * Persisted with the session; on resume an answered question's comes from
+   * its recorded response.
+   */
+  confidence?: StudentConfidence | null;
 }
 
 export type Phase =

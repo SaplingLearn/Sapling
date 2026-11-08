@@ -111,6 +111,10 @@ def test_event_taxonomy_is_pinned():
         # test_quiz_answers_c.py::TestAnswerKeyFlagTelemetry (the C3 file).
         "quiz.answer_key_served",
         "quiz.answer_key_flag_omitted",
+        # Learning-loop spec §13 A132: a quiz answer kept out of mastery
+        # evidence for an item-flaw code. Emit coverage lives in
+        # test_quiz_confidence_lint.py.
+        "quiz.evidence_excluded",
         "chat.message_sent",
         "note.created",
         # ADR 0028: flashcard generation/review had no event; added so both

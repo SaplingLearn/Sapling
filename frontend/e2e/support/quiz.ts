@@ -72,6 +72,12 @@ export function bktAfterCorrect(before: number, n: number): number {
   return p;
 }
 
+/** learning/params.py STUDENT_CONFIDENCE_LEVELS mirror (pinned by
+ *  backend/tests/test_quiz_confidence_lint.py): the value a stated confidence
+ *  label is stored as, in `quiz_responses.confidence` and on the evidence
+ *  (`node_mastery_events.student_confidence`) — learning-loop spec §13 A132. */
+export const CONFIDENCE_LEVELS = { guessing: 0.2, fairly_sure: 0.55, sure: 0.85 } as const;
+
 /** A wrong label for question `n` — any option that isn't the marked one. */
 export function wrongLabelFor(n: number): string {
   return CORRECT_LABELS[n - 1] === "A" ? "B" : "A";

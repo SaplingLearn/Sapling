@@ -166,7 +166,8 @@ class Evidence(BaseModel):
     # answer's label), journaled as node_mastery_events.student_confidence for
     # the metacognitive calibration report. Never the grader's `confidence`
     # above, never a weight (evidence_weight does not read it); None = none
-    # stated (a skip, an idk, the post-test, the quiz).
+    # stated (a skip, an idk, the post-test). The quiz states one since §13
+    # A132 (learning/quiz_evidence.py).
     student_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     same_session_recheck: bool = False
     grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
