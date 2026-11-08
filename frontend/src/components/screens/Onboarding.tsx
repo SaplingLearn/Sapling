@@ -25,6 +25,7 @@ import {
 } from "@/lib/api";
 import type { UserSettings } from "@/lib/types";
 import { onboardingRedirect } from "@/lib/localSeed";
+import SignInModal from "@/components/marketing/SignInModal";
 import { statusOf } from "@/lib/errorMessage";
 import { OnboardingGraph, type GraphPhase, type GraphZoom } from "@/components/onboarding/OnboardingGraph";
 import { CakeArt, FEATURES, TourArt } from "@/components/onboarding/illustrations";
@@ -113,6 +114,11 @@ function loadDraft(userId: string): Draft | null {
   }
 }
 
+/** Draft owner for someone who hasn't signed in yet (the landing takeover).
+ * Signing in adopts it: carried over in place, or picked up by /onboarding
+ * after a same-tab sign-in redirect. */
+export const GUEST_OWNER = "guest";
+
 function clearDraft(userId: string) {
   try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
 }
@@ -131,10 +137,22 @@ function prefersReducedMotion(): boolean {
 
 type Phase = GraphPhase;
 
-export function Onboarding() {
+export function Onboarding({ takeover = false }: {
+  /** Played over the landing from Get Started. Everyone is treated as a new
+   * student: no sign-in needed until Finish, and no local-seed redirect. */
+  takeover?: boolean;
+} = {}) {
   const router = useRouter();
   const { userId, userName, userReady, isAuthenticated, signOut } = useUser();
   const toast = useToast();
+  // Whose answers these are: the account, or (takeover only) a guest.
+  const owner = userId || (takeover && userReady && !isAuthenticated ? GUEST_OWNER : "");
+  const guest = owner === GUEST_OWNER;
+  const [signInOpen, setSignInOpen] = useState(false);
+  /** Set when a guest hits Finish; the save runs once sign-in lands. */
+  const finishAfterSignIn = useRef(false);
+  const ownerRef = useRef<string>("");
+  const signedIn = useRef(false);
 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   // Whose draft is in state. Saving only when it matches the signed-in user
@@ -160,26 +178,42 @@ export function Onboarding() {
   // #715: on a local backend this account is getting (or has) the sample
   // dataset; the hold screen waits for it and moves on to the dashboard.
   useEffect(() => {
+    if (takeover) return;
     let cancelled = false;
     void onboardingRedirect().then(route => { if (route && !cancelled) router.replace(route); });
     return () => { cancelled = true; };
-  }, [router]);
+  }, [router, takeover]);
 
   useEffect(() => {
-    if (!userReady) return;
+    if (takeover || !userReady) return;
     if (!isAuthenticated) router.replace("/");
-  }, [userReady, isAuthenticated, router]);
+  }, [takeover, userReady, isAuthenticated, router]);
 
-  // Hydrate once per account, then either resume (no intro) or play the intro.
+  // Hydrate once per owner, then either resume (no intro) or play the intro.
   useEffect(() => {
-    if (!userId) return;
-    const saved = loadDraft(userId);
-    const googleFirst = (userName || "").split(" ")[0] || "";
+    if (!owner) return;
+    const previous = ownerRef.current;
+    ownerRef.current = owner;
+    if (previous === GUEST_OWNER && owner !== GUEST_OWNER) {
+      // The guest just signed in: their answers are already on screen, so
+      // they carry over in place (the save effect rewrites them under the
+      // account's key) instead of reloading and replaying the intro.
+      clearDraft(GUEST_OWNER);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHydratedFor(owner);
+      return;
+    }
+    let saved = loadDraft(owner);
+    if (!saved && owner !== GUEST_OWNER) {
+      // A guest who signed in through a same-tab redirect lands here.
+      saved = loadDraft(GUEST_OWNER);
+      if (saved) clearDraft(GUEST_OWNER);
+    }
+    const googleFirst = guest ? "" : (userName || "").split(" ")[0] || "";
     // Syncing from localStorage (an external store) into state is this
-    // effect's whole job; it runs once per signed-in account.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // effect's whole job; it runs once per owner.
     setDraft(saved ? { ...saved, name: saved.name || googleFirst } : { ...EMPTY_DRAFT, name: googleFirst });
-    setHydratedFor(userId);
+    setHydratedFor(owner);
     clearTimers();
     if (saved && saved.screen > 0) {
       setZoom("active");
@@ -194,12 +228,12 @@ export function Onboarding() {
         setTimeout(() => setPhase("active"), INTRO_DONE),
       ];
     }
-  }, [userId, userName, clearTimers]);
+  }, [owner, guest, userName, clearTimers]);
 
   useEffect(() => {
-    if (!hydratedFor || hydratedFor !== userId) return;
+    if (!hydratedFor || hydratedFor !== owner) return;
     try { localStorage.setItem(onboardingDraftKey(hydratedFor), JSON.stringify(draft)); } catch {}
-  }, [draft, hydratedFor, userId]);
+  }, [draft, hydratedFor, owner]);
 
   // UI scale: large displays zoom the column so they don't feel empty.
   useEffect(() => {
@@ -283,6 +317,13 @@ export function Onboarding() {
   }, [router]);
 
   const finish = useCallback(() => {
+    if (guest) {
+      // Saving needs an account: sign in (or create one) first, then the
+      // save and the outro carry on from here.
+      finishAfterSignIn.current = true;
+      setSignInOpen(true);
+      return;
+    }
     clearTimers();
     setDraft(prev => ({ ...prev, done: Array.from(new Set([...prev.done, screen.ch])) }));
     setPhase("complete");
@@ -303,7 +344,18 @@ export function Onboarding() {
       setTimeout(() => setWhiteout(true), OUTRO_WHITE),
       setTimeout(() => { void saving.then(dest => { if (!failed) go(dest); }, () => {}); }, OUTRO_HANDOFF),
     ];
-  }, [clearTimers, screen.ch, save, abortOutro, go]);
+  }, [guest, clearTimers, screen.ch, save, abortOutro, go]);
+
+  // A guest who signed in from Finish: their answers have been adopted by the
+  // account (hydratedFor), so the save can run now.
+  useEffect(() => {
+    if (!finishAfterSignIn.current || guest || !userId || hydratedFor !== userId) return;
+    finishAfterSignIn.current = false;
+    // Reacting to the sign-in (an external event) is the point: this starts
+    // the save + outro the guest asked for with Finish.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    finish();
+  }, [guest, userId, hydratedFor, finish]);
 
   const next = useCallback(() => {
     if (!canNext) return;
@@ -323,10 +375,12 @@ export function Onboarding() {
   }, [consent, phase, draft.screen, set]);
 
   const leave = useCallback(async () => {
-    if (userId) clearDraft(userId);
-    await signOut();
-    router.replace("/");
-  }, [userId, signOut, router]);
+    if (owner) clearDraft(owner);
+    if (!guest) await signOut();
+    // Over the landing, a full reload is what takes the takeover down.
+    if (takeover) window.location.assign("/");
+    else router.replace("/");
+  }, [owner, guest, takeover, signOut, router]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -380,7 +434,7 @@ export function Onboarding() {
                     placeholder="Your first name"
                     autoFocus
                   />
-                  <p className="ob-note">From your Google account. Change it if you go by something else.</p>
+                  {!guest && <p className="ob-note">From your Google account. Change it if you go by something else.</p>}
                 </div>
               </section>
             )}
@@ -600,6 +654,17 @@ export function Onboarding() {
           </p>
         </div>
       )}
+      <SignInModal
+        open={signInOpen}
+        // The modal calls onSignedIn and then onClose; only a close without a
+        // sign-in (dismissed, failed) drops the pending save.
+        onClose={() => {
+          setSignInOpen(false);
+          if (!signedIn.current) finishAfterSignIn.current = false;
+          signedIn.current = false;
+        }}
+        onSignedIn={() => { signedIn.current = true; finishAfterSignIn.current = true; }}
+      />
       <div className="ob-whiteout" style={{ opacity: whiteout ? 1 : 0, pointerEvents: whiteout ? "auto" : "none" }} />
     </div>
   );

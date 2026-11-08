@@ -13,14 +13,24 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 
 const signOut = vi.fn(async () => {});
 let user = { userId: "user_a", userName: "Ada Lovelace" };
+let authed = true;
 vi.mock("@/context/UserContext", () => ({
-  useUser: () => ({ ...user, userReady: true, isAuthenticated: true, signOut }),
+  useUser: () => ({ ...user, userReady: true, isAuthenticated: authed, signOut }),
+}));
+
+// The real modal runs a Google popup; this stand-in signs in on click.
+vi.mock("@/components/marketing/SignInModal", () => ({
+  default: ({ open, onClose, onSignedIn }: { open: boolean; onClose: () => void; onSignedIn?: () => void }) =>
+    open ? (
+      <button data-testid="signin-modal" onClick={() => { onSignedIn?.(); onClose(); }}>Sign in</button>
+    ) : null,
 }));
 
 const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() };
 vi.mock("@/components/ToastProvider", () => ({ useToast: () => toast }));
 
-vi.mock("@/lib/localSeed", () => ({ onboardingRedirect: async () => null }));
+let seedRoute: string | null = null;
+vi.mock("@/lib/localSeed", () => ({ onboardingRedirect: async () => seedRoute }));
 
 const COURSES = [
   { id: "c1", course_code: "CAS CS 111", course_name: "Introduction to Computer Science 1" },
@@ -35,7 +45,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   onboardingCoursesSearch: async () => ({ courses: COURSES }),
 }));
 
-import { Onboarding, onboardingDraftKey, ageOn } from "./Onboarding";
+import { Onboarding, onboardingDraftKey, ageOn, GUEST_OWNER } from "./Onboarding";
 import { ApiError } from "@/lib/api";
 
 const CONNECT = 8; // index of the last screen
@@ -63,6 +73,8 @@ describe("Onboarding", () => {
     vi.clearAllMocks();
     localStorage.clear();
     user = { userId: "user_a", userName: "Ada Lovelace" };
+    authed = true;
+    seedRoute = null;
     reducedMotion(true);
   });
   afterEach(cleanup);
@@ -220,5 +232,76 @@ describe("ageOn", () => {
     expect(ageOn(today, "11", "8", "2013")).toBe(12);
     expect(ageOn(today, "11", "7", "2013")).toBe(13);
     expect(ageOn(today, "", "7", "2013")).toBeNull();
+  });
+});
+
+describe("Onboarding over the landing (Get Started)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    seedRoute = null;
+    reducedMotion(true);
+  });
+  afterEach(cleanup);
+
+  it("a signed-out visitor goes through as a guest: no redirect, no prefilled name", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    render(<Onboarding takeover />);
+    const name = (await screen.findByTestId("onboarding-name")) as HTMLInputElement;
+    expect(name.value).toBe("");
+    expect(replace).not.toHaveBeenCalled();
+    fireEvent.change(name, { target: { value: "Sam" } });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(onboardingDraftKey(GUEST_OWNER))!).name).toBe("Sam"));
+  });
+
+  it("a guest's Finish signs in first, then saves their answers under the account", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    localStorage.setItem(onboardingDraftKey(GUEST_OWNER), JSON.stringify({ ...AT_CONNECT, name: "Sam" }));
+    submitOnboardingProfile.mockResolvedValueOnce({ user_id: "user_new", courses_linked: ["c1"] });
+    const view = render(<Onboarding takeover />);
+    fireEvent.click(await screen.findByText("Finish"));
+    expect(submitOnboardingProfile).not.toHaveBeenCalled();
+    // Signing in: the modal reports success, and the account becomes current.
+    fireEvent.click(screen.getByTestId("signin-modal"));
+    user = { userId: "user_new", userName: "Sam Rivera" };
+    authed = true;
+    view.rerender(<Onboarding takeover />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
+    expect(submitOnboardingProfile).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: "user_new", first_name: "Sam", last_name: "Rivera", course_ids: ["c1"],
+    }));
+    expect(localStorage.getItem(onboardingDraftKey(GUEST_OWNER))).toBeNull();
+  });
+
+  it("closing sign-in without signing in saves nothing", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    localStorage.setItem(onboardingDraftKey(GUEST_OWNER), JSON.stringify(AT_CONNECT));
+    render(<Onboarding takeover />);
+    fireEvent.click(await screen.findByText("Finish"));
+    expect(screen.getByTestId("signin-modal")).toBeTruthy();
+    expect(submitOnboardingProfile).not.toHaveBeenCalled();
+  });
+
+  it("a signed-in account is treated as new: no local-seed redirect away from the flow", async () => {
+    user = { userId: "user_a", userName: "Ada Lovelace" };
+    authed = true;
+    seedRoute = "/setting-up";
+    render(<Onboarding takeover />);
+    await screen.findByTestId("onboarding-name");
+    await new Promise(r => setTimeout(r, 20));
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("the /onboarding route picks up a guest draft after a same-tab sign-in", async () => {
+    localStorage.setItem(onboardingDraftKey(GUEST_OWNER), JSON.stringify({ ...AT_CONNECT, name: "Sam" }));
+    user = { userId: "user_new", userName: "Sam Rivera" };
+    authed = true;
+    render(<Onboarding />);
+    await waitFor(() => expect(continueBtn().textContent).toBe("Finish"));
+    expect(localStorage.getItem(onboardingDraftKey(GUEST_OWNER))).toBeNull();
+    expect(JSON.parse(localStorage.getItem(onboardingDraftKey("user_new"))!).name).toBe("Sam");
   });
 });

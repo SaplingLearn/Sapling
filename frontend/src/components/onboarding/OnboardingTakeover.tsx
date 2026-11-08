@@ -6,11 +6,14 @@
  * and fades in, so the landing's nodes cross-fade into the onboarding graph's
  * original colors, then the intro plays and the graph zooms in.
  *
+ * Everyone who clicks Get Started is treated as a new student: signed in or
+ * not, onboarded or not, the flow plays. A guest signs in at Finish.
+ *
  * Onboarding is loaded on demand so the landing bundle doesn't carry it.
  */
 import React, { useEffect, useState } from "react";
 
-type OnboardingComponent = React.ComponentType;
+type OnboardingComponent = React.ComponentType<{ takeover?: boolean }>;
 
 export function OnboardingTakeover() {
   const [Screen, setScreen] = useState<OnboardingComponent | null>(null);
@@ -35,7 +38,7 @@ export function OnboardingTakeover() {
   if (!Screen) return null;
   return (
     <div className="ob-takeover" data-testid="onboarding-takeover">
-      <Screen />
+      <Screen takeover />
     </div>
   );
 }
