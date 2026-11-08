@@ -98,7 +98,11 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/document_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
     ("services/document_jobs.py", "fail_if_running", "runs_as_service"):
         "#116 document_uploads: record a dead-lettered job",
-    ("services/document_jobs.py", "_saved_row", "runs_as_service"):
+    ("services/document_jobs.py", "clear_result", "runs_as_service"):
+        "#116 document_uploads: drop a delivered outcome",
+    ("services/document_jobs.py", "finish_inline", "runs_as_service"):
+        "#116 document_uploads: record an inline run's outcome",
+    ("services/documents_read.py", "saved_document", "runs_as_service"):
         "#116 reads back the uploader's own row the worker saved (select * incl. index columns)",
     ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions",
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",

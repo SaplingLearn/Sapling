@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import random
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -97,6 +98,17 @@ def job_handler(job_type: str) -> Callable[[Handler], Handler]:
         _HANDLERS[job_type] = fn
         return fn
     return register
+
+
+#: The job the worker is running right now (set by worker/runner.py around
+#: each handler call). Handlers take only the payload; one that needs to fence
+#: its own writes on the claim (document_jobs: the upload row's owner) reads
+#: the attempt and worker id here. None outside a worker run.
+_CURRENT_JOB: ContextVar["Job | None"] = ContextVar("sapling_current_job", default=None)
+
+
+def current_job() -> "Job | None":
+    return _CURRENT_JOB.get()
 
 
 def get_handler(job_type: str) -> Handler | None:

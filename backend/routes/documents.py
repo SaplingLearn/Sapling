@@ -44,6 +44,7 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
+from services.documents_read import decrypt_document_row
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -384,15 +385,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     first = rows[0]
     if not isinstance(first, dict):
         return None
-    row = dict(first)
-    row["summary"] = decrypt_if_present(row.get("summary"))
-    notes_raw = row.get("concept_notes")
-    if isinstance(notes_raw, str):
-        try:
-            row["concept_notes"] = decrypt_json(notes_raw)
-        except Exception:
-            row["concept_notes"] = []
-    return row
+    return decrypt_document_row(first)
 
 
 def _replay_result_payload(row: dict) -> dict:
@@ -675,6 +668,7 @@ def _graph_backstop(*, user_id: str, course_id: str, filename: str,
 
 
 @router.post("/upload/sync")
+@document_jobs.records_inline_outcome  # #116: a queued upload taken back records its outcome
 async def upload_document_sync(
     background_tasks: BackgroundTasks,
     request: Request,
@@ -815,12 +809,23 @@ async def upload_document_sync(
         _graph_backstop, user_id=user_id, course_id=course_id,
         filename=filename, result=result,
     )
-    doc_id, full_row = await asyncio.to_thread(
-        _persist_document, user_id=user_id, offering_id=offering_id,
-        filename=filename, result=result, request_id=request_id,
-        course_id=course_id, char_count=len(extracted_text),
-        extracted_text=extracted_text,
-    )
+    try:
+        doc_id, full_row = await asyncio.to_thread(
+            _persist_document, user_id=user_id, offering_id=offering_id,
+            filename=filename, result=result, request_id=request_id,
+            course_id=course_id, char_count=len(extracted_text),
+            extracted_text=extracted_text,
+        )
+    except Exception:
+        # #759/#116: a duplicate of this request saved it first (the unique
+        # (user_id, request_id) index refused this insert): answer with that
+        # row, as the replay at the top would have, instead of a 500.
+        winner = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
+        if not winner or not winner.get("id"):
+            raise
+        response = dict(winner)
+        response.setdefault("categories", [])
+        return response
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     # update_course_context aggregates an OFFERING's enrollments (#759: the
@@ -1255,7 +1260,9 @@ async def upload_document(
         ))
 
     return EventSourceResponse(
-        event_stream(), headers={"Cache-Control": SSE_CACHE_CONTROL}
+        # #116: a queued upload this request took back records its outcome.
+        document_jobs.record_inline_outcome(event_stream()),
+        headers={"Cache-Control": SSE_CACHE_CONTROL},
     )
 
 
