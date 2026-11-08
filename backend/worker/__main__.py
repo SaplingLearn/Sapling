@@ -11,16 +11,25 @@ SIGTERM or SIGINT. A signal lets the job in hand finish, claims nothing more,
 flushes the events queue and exits 0. A boot failure exits 2.
 
 Delivery is at least once (a crash or an outlived lease re-offers a job), so
-handlers must be safe to re-run. While a handler runs its lease is heartbeated
-(every lease/3), up to --max-heartbeat-seconds; there is no per-job timeout
-beyond that: a hung handler holds its worker, and once the heartbeat gives up
-the job is offered to another one lease later.
+handlers must be safe to re-run. While a handler runs its lease is heartbeated,
+up to --max-heartbeat-seconds; there is no per-job timeout beyond that: a hung
+handler holds its worker, and once the heartbeat gives up the job is offered to
+another one lease later.
+
+Lease rule (services/jobs.py MIN_LEASE_SECONDS, 300 s): a job is re-offered
+once `locked_at + <the CLAIMING worker's lease>` has passed, so every worker
+beats every MIN_LEASE_SECONDS / 3 regardless of its own lease, and a
+--lease-seconds / JOBS_LEASE_SECONDS under the minimum is refused at boot
+(exit 2). Then no worker in the fleet can re-claim a job another one is still
+running. A longer lease is allowed; it only slows how soon THIS worker's
+claims pick up a job whose heartbeat stopped.
 
 Railway: the `worker` service in .railway/railway.ts (docs/deploy/railway.md).
   image           backend/Dockerfile, SAPLING_IMAGE_TARGET=worker (or full)
   start command   python -m worker   (WORKDIR is /app)
-  env             the API service's variables (same SUPABASE_*, ENCRYPTION_KEY,
-                  model keys, APP_ENV); no PORT, no healthcheck path
+  env             references to every API variable a worker code path reads
+                  (railway.ts SHARED_VARIABLES, pinned by
+                  tests/test_railway_worker_env.py); no PORT, no healthcheck
   scaling         any number of replicas: claims use FOR UPDATE SKIP LOCKED
 """
 from __future__ import annotations
@@ -82,7 +91,12 @@ def _env_float(name: str, default: float) -> float:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    from services.jobs import DEFAULT_LEASE_SECONDS, MAX_HEARTBEAT_SECONDS, PRUNE_AFTER_DAYS
+    from services.jobs import (
+        DEFAULT_LEASE_SECONDS,
+        MAX_HEARTBEAT_SECONDS,
+        MIN_LEASE_SECONDS,
+        PRUNE_AFTER_DAYS,
+    )
 
     p = argparse.ArgumentParser(prog="python -m worker", description=__doc__.split("\n")[0])
     p.add_argument("--poll-interval", type=float,
@@ -92,11 +106,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="most jobs per pass, each claimed when its turn comes (default 10)")
     p.add_argument("--lease-seconds", type=int,
                    default=int(_env_float("JOBS_LEASE_SECONDS", DEFAULT_LEASE_SECONDS)),
-                   help="how long a claim holds its job before it is re-offered")
+                   help="how long a claim holds its job before it is re-offered "
+                        f"(default {DEFAULT_LEASE_SECONDS}; at least {MIN_LEASE_SECONDS}, "
+                        "or the worker refuses to start)")
     p.add_argument("--max-heartbeat-seconds", type=float,
                    default=_env_float("JOBS_MAX_HEARTBEAT_SECONDS", MAX_HEARTBEAT_SECONDS),
                    help="stop extending a running job's lease after this long, so a "
                         "hung handler's job is re-offered (default 3600)")
+    # An env var/CLI knob, not a feature flag, on purpose: pruning succeeded
+    # job rows past their retention is queue upkeep, not a product feature.
+    # The prune never touches queued/failed/running or dead rows (prune_jobs
+    # deletes only `succeeded`), no student sees it, and 0 turns it off.
     p.add_argument("--prune-after-days", type=int,
                    default=int(_env_float("JOBS_PRUNE_AFTER_DAYS", PRUNE_AFTER_DAYS)),
                    help="delete succeeded jobs older than this many days, from an "
@@ -153,6 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     args = parse_args(argv)
     _configure_logging(args.log_format)
+
+    from services.jobs import check_lease
+
+    try:
+        check_lease(args.lease_seconds)
+    except ValueError as exc:
+        logger.critical("worker.boot_failed: --lease-seconds/JOBS_LEASE_SECONDS: %s", exc)
+        return EXIT_BOOT_FAILED
 
     try:
         boot()

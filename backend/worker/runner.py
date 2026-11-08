@@ -10,16 +10,28 @@ lease and be re-run by another worker while still queued here. The stop
 signal is checked before every claim, so a SIGTERM lets the job in hand
 finish and claims nothing after it.
 
-While a handler runs, a heartbeat thread pushes the job's lease forward every
-lease/3 (services/jobs.py::heartbeat), so a job that legitimately takes longer
-than one lease (a 50-page OCR) is not handed to a second worker mid-run. Once
-a heartbeat reports the claim lost it stops; the fenced complete/fail then
-records nothing, as before. It also stops after `max_heartbeat_seconds`, so a
-HUNG handler still loses its job to another worker one lease later, as it did
-before heartbeats existed.
+While a handler runs, a heartbeat thread pushes the job's lease forward
+(services/jobs.py::heartbeat), so a job that legitimately takes longer than
+one lease (a 50-page OCR) is not handed to a second worker mid-run.
 
-Upkeep: a worker that claims `jobs.prune` makes sure one prune run is queued
-every `prune_interval` seconds (deduped across replicas), which deletes old
+The lease rule (services/jobs.py MIN_LEASE_SECONDS): claim_jobs re-offers a
+running job once `locked_at + <the CLAIMER's lease>` has passed, so a beat
+protects a job only from claimers whose lease is longer than the gap between
+beats. Hence every worker (a) refuses a lease under MIN_LEASE_SECONDS and (b)
+beats every HEARTBEAT_INTERVAL_SECONDS = MIN_LEASE_SECONDS / 3 whatever its own
+lease is: no worker in the fleet can then see a live job as expired, even with
+two beats lost.
+
+Once a heartbeat reports the claim lost it stops. The fenced complete/fail is
+still attempted (a reaped `dead` row accepts it; a re-claimed one refuses it),
+and a refusal is warned about once, not twice. It also stops after
+`max_heartbeat_seconds`, so a HUNG handler still loses its job to another
+worker one lease later, as it did before heartbeats existed.
+
+Upkeep: a worker that claims `jobs.prune` calls services/jobs.py::
+schedule_prune every `prune_interval` seconds, which enqueues a prune only
+when none is pending and none succeeded within the interval (and dedupes on an
+hourly key), so N replicas give about one run per interval. A run deletes old
 `succeeded` rows, and the terminal rows of the upload/sync staging tables, in
 bounded batches.
 """
@@ -55,6 +67,9 @@ class Worker:
     ) -> None:
         if not types:
             raise ValueError("a worker needs at least one job type to claim")
+        # Fleet-wide lease rule (module docstring): refuse a lease other
+        # workers' heartbeats cannot outpace.
+        jobs_module.check_lease(lease_seconds)
         self.worker_id = worker_id
         self.types = list(types)
         self.batch = max(1, int(batch))
@@ -62,10 +77,13 @@ class Worker:
         self.poll_interval = float(poll_interval)
         self.queue = queue
         self.stop = stop or threading.Event()
-        # A third of the lease: two beats can be lost (a PostgREST blip) before
-        # the job is re-offered. <= 0 turns the heartbeat off.
+        # A third of the FLEET minimum lease, not of this worker's own: any
+        # worker may claim with MIN_LEASE_SECONDS, so two beats can be lost (a
+        # PostgREST blip) before any claimer sees the job as expired. An
+        # explicit interval is capped at that; <= 0 turns the heartbeat off.
+        cap = jobs_module.HEARTBEAT_INTERVAL_SECONDS
         self.heartbeat_interval = (
-            self.lease_seconds / 3 if heartbeat_interval is None else float(heartbeat_interval)
+            cap if heartbeat_interval is None else min(float(heartbeat_interval), cap)
         )
         self.max_heartbeat_seconds = float(max_heartbeat_seconds)
         self.prune_interval = float(prune_interval)
@@ -116,16 +134,25 @@ class Worker:
             self._fail(job, f"no handler registered for job type {job.type!r}",
                        permanent=False, started=started)
             return
+        # A refused heartbeat (`beat.lost`) does NOT skip the fenced
+        # complete/fail below: "refused" is either a re-claim (the fenced write
+        # is refused too, harmlessly) or the reap to `dead` on a last attempt,
+        # where complete_job/fail_job still ACCEPT the same fence so the row
+        # records how the attempt really ended (20261108095241). What `lost`
+        # changes is the logging: the heartbeat already warned, so a refused
+        # outcome is not warned about twice.
+        beat = _Heartbeat(self.queue, job, self.heartbeat_interval, self.max_heartbeat_seconds)
         try:
-            with _Heartbeat(self.queue, job, self.heartbeat_interval,
-                            self.max_heartbeat_seconds):
+            with beat:
                 handler(job.payload)
         except PermanentJobError as exc:
-            self._fail(job, _describe(exc), permanent=True, started=started)
+            self._fail(job, _describe(exc), permanent=True, started=started,
+                       lease_lost_logged=beat.lost)
             return
         except Exception as exc:
             logger.warning("job.handler_raised id=%s type=%s", job.id, job.type, exc_info=True)
-            self._fail(job, _describe(exc), permanent=False, started=started)
+            self._fail(job, _describe(exc), permanent=False, started=started,
+                       lease_lost_logged=beat.lost)
             return
         ms = int((time.monotonic() - started) * 1000)
         try:
@@ -139,11 +166,11 @@ class Worker:
             logger.info("job.succeeded id=%s type=%s attempt=%d duration_ms=%d",
                         job.id, job.type, job.attempt, ms)
         else:
-            logger.warning("job.lease_lost id=%s type=%s attempt=%d duration_ms=%d "
-                           "(re-claimed after its lease ran out; that run decides it)",
-                           job.id, job.type, job.attempt, ms)
+            _log_lease_lost(job, ms, already_logged=beat.lost,
+                            note="re-claimed after its lease ran out; that run decides it")
 
-    def _fail(self, job: Job, error: str, *, permanent: bool, started: float) -> None:
+    def _fail(self, job: Job, error: str, *, permanent: bool, started: float,
+              lease_lost_logged: bool = False) -> None:
         ms = int((time.monotonic() - started) * 1000)
         try:
             status = self.queue.fail(job, error, permanent=permanent)
@@ -151,8 +178,7 @@ class Worker:
             logger.exception("job.fail_failed id=%s type=%s", job.id, job.type)
             return
         if status is None:
-            logger.warning("job.lease_lost id=%s type=%s attempt=%d duration_ms=%d",
-                           job.id, job.type, job.attempt, ms)
+            _log_lease_lost(job, ms, already_logged=lease_lost_logged)
             return
         log = logger.error if status == "dead" else logger.warning
         log("job.%s id=%s type=%s attempt=%d/%d duration_ms=%d error=%s",
@@ -205,9 +231,10 @@ class Worker:
 class _Heartbeat:
     """Context manager: beat `job`'s lease every `interval` seconds on a
     daemon thread until the block exits. A failed beat (exception) is logged
-    and retried next interval; a refused one (the claim is gone) ends it, and
-    so does running past `max_seconds` (a hung handler must not hold its job
-    forever)."""
+    and retried next interval; a refused one (the claim is gone) sets `lost`
+    and ends it, and so does running past `max_seconds` (a hung handler must
+    not hold its job forever). The worker reads `lost` after the handler so a
+    refused outcome write is not warned about a second time."""
 
     def __init__(self, queue: Any, job: Job, interval: float,
                  max_seconds: float = float("inf")) -> None:
@@ -217,7 +244,6 @@ class _Heartbeat:
         self._max_seconds = max_seconds
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
-        self.beats = 0
         self.lost = False
 
     def __enter__(self) -> "_Heartbeat":
@@ -255,7 +281,14 @@ class _Heartbeat:
                                "re-claimed or reaped; this run's outcome will not be recorded)",
                                job.id, job.type, job.attempt)
                 return
-            self.beats += 1
+
+
+def _log_lease_lost(job: Job, ms: int, *, already_logged: bool, note: str = "") -> None:
+    """The fenced outcome write was refused. WARNING once per lost claim: when
+    the heartbeat already warned (`already_logged`), this is only INFO."""
+    log = logger.info if already_logged else logger.warning
+    log("job.lease_lost id=%s type=%s attempt=%d duration_ms=%d%s",
+        job.id, job.type, job.attempt, ms, f" ({note})" if note else "")
 
 
 def _describe(exc: BaseException) -> str:

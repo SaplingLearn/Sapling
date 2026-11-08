@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from services import jobs as jobs_module
 from services.jobs import Job, PermanentJobError
 from worker import __main__ as worker_main
 from worker.runner import Worker
@@ -73,9 +74,9 @@ def test_a_successful_job_is_completed():
 
 def test_claims_one_at_a_time_for_the_registered_types_up_to_the_batch():
     q = FakeQueue([_job(i) for i in range(5)], {"t.ok": lambda p: None})
-    assert _worker(q, batch=3, lease_seconds=42).run_once() == 3
+    assert _worker(q, batch=3, lease_seconds=420).run_once() == 3
     assert [c["limit"] for c in q.claims] == [1, 1, 1]
-    assert all(c["types"] == ["t.ok"] and c["lease"] == 42 for c in q.claims)
+    assert all(c["types"] == ["t.ok"] and c["lease"] == 420 for c in q.claims)
     assert q.completed == ["j-0", "j-1", "j-2"]
 
 
@@ -237,12 +238,12 @@ def test_once_runs_one_pass_with_the_cli_settings_and_flushes_events(quiet_main)
     with patch.object(worker_main, "boot"), \
          patch.object(worker_main, "load_handlers", return_value=["t.a", "t.b"]), \
          patch("worker.runner.Worker.run_once", autospec=True) as run_once:
-        rc = worker_main.main(["--once", "--batch", "4", "--lease-seconds", "90",
+        rc = worker_main.main(["--once", "--batch", "4", "--lease-seconds", "900",
                                "--poll-interval", "0.5", "--worker-id", "w-test"])
     assert rc == 0
     (w,), _ = run_once.call_args
     assert (w.worker_id, w.types, w.batch, w.lease_seconds, w.poll_interval) == (
-        "w-test", ["t.a", "t.b"], 4, 90, 0.5)
+        "w-test", ["t.a", "t.b"], 4, 900, 0.5)
     quiet_main.assert_called_once()  # events_service.shutdown
 
 
@@ -295,21 +296,101 @@ def test_a_quick_handler_never_beats():
     assert q.beats == [] and q.completed == ["j-1"]
 
 
-def test_the_default_heartbeat_is_a_third_of_the_lease_and_zero_turns_it_off():
-    assert _worker(FakeQueue(), lease_seconds=90).heartbeat_interval == 30
+def test_the_default_heartbeat_is_a_third_of_the_fleet_minimum_and_zero_turns_it_off():
+    # Paced by the FLEET minimum, not this worker's own lease: another worker
+    # claiming with MIN_LEASE_SECONDS must never see this one's job as expired.
+    third = jobs_module.MIN_LEASE_SECONDS / 3
+    assert _worker(FakeQueue()).heartbeat_interval == third
+    assert _worker(FakeQueue(), lease_seconds=3600).heartbeat_interval == third
     q = BeatingQueue([_job(1)], {"t.ok": _sleeper(0.1)})
     _worker(q, heartbeat_interval=0).run_once()
     assert q.beats == []
 
 
+def _lease_lost_warnings(caplog):
+    return [r for r in caplog.records
+            if r.levelname == "WARNING" and "job.lease_lost" in r.getMessage()]
+
+
 def test_a_refused_heartbeat_stops_beating_and_the_outcome_is_still_attempted(caplog):
     q = BeatingQueue([_job(1)], {"t.ok": _sleeper(0.25)}, beat_results=[True, False],
                      complete_result=False)
-    with caplog.at_level("WARNING", "sapling.worker"):
+    with caplog.at_level("INFO", "sapling.worker"):
         _worker(q, heartbeat_interval=0.03).run_once()
     assert q.beats == ["j-1", "j-1"]  # stopped at the refusal
     assert q.completed == ["j-1"]     # the fenced complete still decides it
     assert "heartbeat refused" in caplog.text
+    # One lost claim, one warning: the refused complete is only INFO.
+    assert len(_lease_lost_warnings(caplog)) == 1
+
+
+def test_a_refused_heartbeat_then_a_refused_fail_warns_once(caplog):
+    def boom(payload):
+        threading.Event().wait(0.2)
+        raise ValueError("x")
+
+    q = BeatingQueue([_job(1)], {"t.ok": boom}, beat_results=[False], fail_result=None)
+    with caplog.at_level("INFO", "sapling.worker"):
+        _worker(q, heartbeat_interval=0.03).run_once()
+    assert q.failed and q.failed[0][0] == "j-1"   # still attempted
+    assert len(_lease_lost_warnings(caplog)) == 1
+
+
+def test_a_reaped_job_still_records_its_real_outcome(caplog):
+    # Heartbeat refused because the row was reaped `dead` on its last attempt:
+    # complete_job accepts the same fence on a dead row, so the run is recorded.
+    q = BeatingQueue([_job(1)], {"t.ok": _sleeper(0.2)}, beat_results=[False],
+                     complete_result=True)
+    with caplog.at_level("INFO", "sapling.worker"):
+        _worker(q, heartbeat_interval=0.03).run_once()
+    assert q.completed == ["j-1"]
+    assert "job.succeeded" in caplog.text
+
+
+def test_a_lost_complete_without_a_refused_heartbeat_still_warns(caplog):
+    q = BeatingQueue([_job(1)], {"t.ok": lambda p: None}, complete_result=False)
+    with caplog.at_level("INFO", "sapling.worker"):
+        _worker(q, heartbeat_interval=5).run_once()
+    assert len(_lease_lost_warnings(caplog)) == 1
+
+
+# ── the fleet-wide lease rule (services/jobs.py MIN_LEASE_SECONDS) ──────────
+
+
+def test_a_worker_refuses_a_lease_under_the_fleet_minimum():
+    with pytest.raises(ValueError, match="minimum"):
+        _worker(FakeQueue(), lease_seconds=jobs_module.MIN_LEASE_SECONDS - 1)
+    assert _worker(FakeQueue(), lease_seconds=jobs_module.MIN_LEASE_SECONDS).lease_seconds \
+        == jobs_module.MIN_LEASE_SECONDS
+
+
+def test_an_explicit_heartbeat_interval_is_capped_at_the_fleet_pace():
+    w = _worker(FakeQueue(), lease_seconds=3600, heartbeat_interval=1200)
+    assert w.heartbeat_interval == jobs_module.HEARTBEAT_INTERVAL_SECONDS
+
+
+def test_any_allowed_lease_outlasts_every_workers_heartbeat_gap():
+    # The invariant the rule exists for: the shortest lease any claimer may
+    # use spans three beats of ANY worker, so two lost beats are survivable.
+    for lease in (jobs_module.MIN_LEASE_SECONDS, 900, 3600):
+        w = _worker(FakeQueue(), lease_seconds=lease)
+        assert 3 * w.heartbeat_interval <= jobs_module.MIN_LEASE_SECONDS
+
+
+@pytest.mark.parametrize("how", ["cli", "env"])
+def test_the_cli_refuses_a_short_lease_at_boot(quiet_main, monkeypatch, caplog, how):
+    argv = ["--once"]
+    if how == "cli":
+        argv += ["--lease-seconds", "60"]
+    else:
+        monkeypatch.setenv("JOBS_LEASE_SECONDS", "60")
+    with patch.object(worker_main, "boot") as boot, \
+         patch("worker.runner.Worker.run_once") as run, \
+         caplog.at_level("CRITICAL", "sapling.worker"):
+        assert worker_main.main(argv) == worker_main.EXIT_BOOT_FAILED
+    boot.assert_not_called()
+    run.assert_not_called()
+    assert "minimum" in caplog.text and "JOBS_LEASE_SECONDS" in caplog.text
 
 
 def test_a_heartbeat_error_is_retried_next_interval():
