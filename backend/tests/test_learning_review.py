@@ -161,12 +161,17 @@ def test_review_session_id_is_one_per_user_course_day():
 @pytest.fixture(autouse=True)
 def _no_review_history(monkeypatch):
     """A23 readers (PKG-07) and the post-test reserve (PKG-04) default to
-    "nothing excluded"; the exclusion tests override them."""
+    "nothing excluded"; the exclusion tests override them. Returns the real
+    readers it replaced, so a test that needs them puts them back by name.
+    Never `monkeypatch.undo()`: that also drops the conftest hermetic guards
+    installed with the same monkeypatch (spec §13 A123 review)."""
     from learning import review
 
+    real = {name: getattr(review, name) for name in ("seen_hashes", "revealed_hashes")}
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set(), raising=False)
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set(), raising=False)
     monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None, raising=False)
+    return real
 
 
 class _Store:
@@ -1702,24 +1707,18 @@ def test_sr_key_names_the_claim_key():
     assert review.sr_key(_item("flashcard", 0.4, id="f1")) == "fc:f1"
 
 
-def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
+def test_due_concepts_read_pkg07s_seen_and_revealed_sets(_no_review_history):
     """Post-merge (PKG-07): review's A23 readers resolve to loop_state_store's
     seen_hashes / revealed_hashes — and, spec §13 A113, reported_hashes — and
-    a queue build with a due concept reads them and excludes all three."""
+    a queue build with a due concept reads them and excludes all three.
+
+    This test's patches sit on a MonkeyPatch context of its own. It used to
+    call `monkeypatch.undo()` to drop the autouse "nothing excluded" stubs,
+    which also dropped the conftest hermetic DB guard (spec §13 A123 review);
+    it now puts the real readers back by name instead."""
     from learning import loop_state_store, review
 
-    monkeypatch.undo()  # drop the autouse "nothing excluded" stubs
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None)
     reads = []
-    monkeypatch.setattr(
-        loop_state_store, "seen_hashes", lambda uid: reads.append("seen") or {"q-seen"}
-    )
-    monkeypatch.setattr(
-        loop_state_store, "revealed_hashes", lambda uid: reads.append("rev") or {"q-rev"}
-    )
-    monkeypatch.setattr(
-        loop_state_store, "reported_hashes", lambda uid: reads.append("rep") or {"q-rep"}
-    )
     past = (NOW - timedelta(days=3)).isoformat()
     pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q-seen", "q-rev", "q-rep", "q-new")]
     factory, _ = _tables(
@@ -1729,9 +1728,16 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
             "flashcards": [],
         }
     )
-    monkeypatch.setattr(review, "table", factory)
-    monkeypatch.setattr(review, "list_items", lambda course, key: pool)
-    queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={})
+    with pytest.MonkeyPatch.context() as mp:
+        for name, real in _no_review_history.items():  # the real A23 readers, not the stubs
+            mp.setattr(review, name, real)
+        mp.setattr(review, "posttest_reserve_hash", lambda items: None)
+        mp.setattr(loop_state_store, "seen_hashes", lambda uid: reads.append("seen") or {"q-seen"})
+        mp.setattr(loop_state_store, "revealed_hashes", lambda uid: reads.append("rev") or {"q-rev"})
+        mp.setattr(loop_state_store, "reported_hashes", lambda uid: reads.append("rep") or {"q-rep"})
+        mp.setattr(review, "table", factory)
+        mp.setattr(review, "list_items", lambda course, key: pool)
+        queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={})
     assert reads == ["seen", "rev", "rep"]
     assert [i.question_hash for i in queue] == ["q-new"] and stats["unservable"] == 0
 
