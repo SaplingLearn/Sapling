@@ -627,6 +627,7 @@ def log_llm_usage(
     thinking_tokens: int | None = None,
     session_id: str | None = None,
     requests: int | None = None,
+    course_id: str | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
@@ -641,7 +642,8 @@ def log_llm_usage(
     ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
     ``None`` when unmeasured, and cached input is billed at the cached rate.
     ``session_id`` (PKG-14b, spec §13 A92) is the loop session the run belonged
-    to, ``None`` (never blank) when the run site knew none.
+    to, ``None`` (never blank) when the run site knew none; ``course_id``
+    (spec §13 A137) the course it served, the same way.
     """
     try:
         _warn_zero_token_usage(usage, requests, feature=feature, task=task, model=model)
@@ -658,6 +660,10 @@ def log_llm_usage(
             cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
             session_id=session_id, requests=requests,
         )
+        # spec §13 A137: on every enqueued row (a bulk insert needs one key set,
+        # PGRST102), never in build_llm_usage_row: a checklist receipt is that
+        # row, and checklist_budget_reconcile admits only its fixed keys.
+        row["course_id"] = (course_id or "").strip() or None
         _enqueue("llm_usage", row)
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
@@ -748,8 +754,10 @@ def dropped_count() -> int:
 #: 42703 'column "<col>" of relation … does not exist' — drops exactly that
 #: column from the batch and retries once, so a code-before-migration deploy
 #: loses no llm_usage row (every $/token budget cap reads them). Any other error
-#: keeps every column and takes the per-row salvage below.
-_OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id",)}
+#: keeps every column and takes the per-row salvage below. PostgREST names one
+#: unknown column per error, so a retry that names another drops it too, once
+#: per optional column at most. `course_id` is spec §13 A137's.
+_OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id", "course_id")}
 
 
 def _error_text(exc: BaseException) -> str:
@@ -775,6 +783,33 @@ def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
     ]
 
 
+def _insert_without_unknown_columns(
+    table_name: str, rows: list[dict], exc: BaseException
+) -> tuple[bool, list[dict]]:
+    """Retry a failed bulk insert without each optional column an error names as
+    unknown, until it succeeds or an error names none not yet dropped (bounded:
+    every retry drops at least one more optional column). Returns (inserted,
+    the rows as last tried)."""
+    dropped: set[str] = set()
+    error = exc
+    while True:
+        unknown = [c for c in _unknown_optional_columns(table_name, error) if c not in dropped]
+        if not unknown:
+            return False, rows
+        dropped.update(unknown)
+        logger.warning(
+            "events insert for table %r named unknown column(s) %s (migration "
+            "not applied yet?); retrying %d row(s) without them",
+            table_name, unknown, len(rows),
+        )
+        rows = [{k: v for k, v in row.items() if k not in dropped} for row in rows]
+        try:
+            table(table_name).insert(rows)
+            return True, rows
+        except Exception as retry:
+            error = retry
+
+
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
@@ -792,19 +827,9 @@ def _flush_batch(items: list[dict]) -> None:
         try:
             table(table_name).insert(rows)
         except Exception as exc:
-            unknown = _unknown_optional_columns(table_name, exc)
-            if unknown:
-                logger.warning(
-                    "events insert for table %r named unknown column(s) %s (migration "
-                    "not applied yet?); retrying %d row(s) without them",
-                    table_name, unknown, len(rows),
-                )
-                rows = [{k: v for k, v in row.items() if k not in unknown} for row in rows]
-                try:
-                    table(table_name).insert(rows)
-                    continue
-                except Exception:
-                    pass
+            inserted, rows = _insert_without_unknown_columns(table_name, rows, exc)
+            if inserted:
+                continue
             logger.info(
                 "events bulk insert failed for table %r (%d row(s)); "
                 "retrying rows individually",

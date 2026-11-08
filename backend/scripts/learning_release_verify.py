@@ -165,7 +165,13 @@ REQUIRED_COLUMNS = {
         "reviewed_at": "timestamp with time zone",
         "approved_at": "timestamp with time zone",
     },
-    "llm_usage": {"cached_tokens": "integer", "thinking_tokens": "integer", "session_id": "text"},
+    # spec §13 A137: course_id puts a session-less loop run's cost on its course
+    "llm_usage": {
+        "cached_tokens": "integer",
+        "thinking_tokens": "integer",
+        "session_id": "text",
+        "course_id": "text",
+    },
     "learning_reveals": {"rung": "smallint", "graded_at": "timestamp with time zone"},
     "posttest_poses": {
         "claim": "text",

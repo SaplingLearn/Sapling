@@ -303,6 +303,7 @@ def _record_unfinished(
             feature=feature,
             task=task,
             user_id=deps.user_id or None,
+            course_id=deps.course_id,  # spec §13 A137: course assets, no session
         )
 
 
@@ -349,7 +350,13 @@ async def run_drafting(
             _record_unfinished(usage, deps, feature, task)
             logger.warning("%s unavailable: %s", feature, type(exc).__name__)
             return CheckItemsUnavailable(reason=type(exc).__name__)
-        record_agent_usage(result, feature=feature, task=task, user_id=deps.user_id or None)
+        record_agent_usage(
+            result,
+            feature=feature,
+            task=task,
+            user_id=deps.user_id or None,
+            course_id=deps.course_id,  # spec §13 A137: course assets, no session
+        )
         return result.output
     return CheckItemsUnavailable(reason="ModelHTTPError")  # pragma: no cover - loop always returns
 

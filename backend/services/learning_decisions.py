@@ -737,13 +737,19 @@ async def _run_decision(decision: str, state, deps):
                 task="learning_decision",
                 user_id=deps.user_id,
                 session_id=deps.session_id,
+                course_id=getattr(deps, "course_id", None),  # spec §13 A137
             )
         if not isinstance(exc, _DECISION_FAILURES):
             raise
         logger.warning("decision unavailable (%s): %s", decision, exc)
         return None
     record_agent_usage(
-        result, feature=deps.feature, task="learning_decision", user_id=deps.user_id, session_id=deps.session_id
+        result,
+        feature=deps.feature,
+        task="learning_decision",
+        user_id=deps.user_id,
+        session_id=deps.session_id,
+        course_id=getattr(deps, "course_id", None),  # spec §13 A137
     )
     return result.output
 
@@ -869,6 +875,7 @@ def _record_jev_usage(deps, *, task: str, model: str | None, input_tokens: int, 
         user_id=deps.user_id,
         request_id=deps.request_id,
         session_id=getattr(deps, "session_id", None),
+        course_id=getattr(deps, "course_id", None),  # spec §13 A137
     )
 
 

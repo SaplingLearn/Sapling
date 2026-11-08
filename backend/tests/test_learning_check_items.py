@@ -3522,9 +3522,10 @@ class TestDraftItems:
             asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=False))
             asyncio.run(ci.draft_items(["A"], [], deps=system, flex=False))
         kwargs = [c.kwargs for c in rec.call_args_list]
+        # spec §13 A137: drafting has no session, so the row names its course
         assert kwargs == [
-            {"feature": "check_items", "task": "check_items", "user_id": "u1"},
-            {"feature": "check_items", "task": "check_items", "user_id": None},
+            {"feature": "check_items", "task": "check_items", "user_id": "u1", "course_id": "course-1"},
+            {"feature": "check_items", "task": "check_items", "user_id": None, "course_id": "course-1"},
         ]
 
     def test_a_run_that_fails_after_billing_still_records_its_usage(self):
@@ -3555,7 +3556,9 @@ class TestDraftItems:
             out = asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=False))
         assert isinstance(out, ci.CheckItemsUnavailable)
         (call,) = rec.call_args_list
-        assert call.kwargs == {"feature": "check_items", "task": "check_items", "user_id": "u1"}
+        assert call.kwargs == {
+            "feature": "check_items", "task": "check_items", "user_id": "u1", "course_id": "course-1"
+        }
         billed = call.args[0].usage()
         assert billed.requests == CHECK_ITEM_OUTPUT_RETRIES + 1 and billed.total_tokens > 0
 
@@ -3743,6 +3746,7 @@ class TestMcTopUpAgent:
             "feature": "check_items_topup",
             "task": "check_items",
             "user_id": "u1",
+            "course_id": "course-1",  # spec §13 A137
         }
         sent = str(seen[0])
         assert "one_correct: 2 options marked is_correct" in sent and "[chunk c1]" in sent
