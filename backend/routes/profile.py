@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
+from starlette.concurrency import run_in_threadpool
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
@@ -495,7 +496,9 @@ class _AvatarUploadBody(BaseModel):
 @router.post("/{user_id}/avatar")
 async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
     await guard_off_loop(require_self, user_id, request)
-    _get_user_or_404(user_id)
+    # #117: an async handler runs on the event loop; every PostgREST and
+    # Storage call below hops off it.
+    await run_in_threadpool(_get_user_or_404, user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL
     # (`data:image/png;base64,...`) depending on how the client encoded
@@ -524,12 +527,13 @@ async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Req
             detail=f"File too large. Maximum size is {MAX_AVATAR_SIZE // (1024 * 1024)} MB",
         )
 
-    avatar_url = upload_avatar(user_id, file_bytes, body.content_type)
+    avatar_url = await run_in_threadpool(upload_avatar, user_id, file_bytes, body.content_type)
 
     # avatar_url moved to user_profiles in migration 0024.
-    _get_or_create_profile(user_id)  # ensure a row exists to update
-    table("user_profiles").update(
-        {"avatar_url": avatar_url}, filters={"user_id": f"eq.{user_id}"}
+    await run_in_threadpool(_get_or_create_profile, user_id)  # ensure a row exists to update
+    await run_in_threadpool(
+        table("user_profiles").update,
+        {"avatar_url": avatar_url}, filters={"user_id": f"eq.{user_id}"},
     )
     return {"avatar_url": avatar_url}
 

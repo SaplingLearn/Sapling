@@ -40,7 +40,7 @@ from services.quiz_config import (
     mastery_after,
     quiz_config_payload,
 )
-from services.request_limits import claim_rate_limit, refund_rate_limit
+from services.request_limits import aclaim_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
@@ -1732,7 +1732,8 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
     """
     if not body.source_attempt_id:
         return None
-    rows = table("quiz_attempts").select(
+    rows = await asyncio.to_thread(  # #117: on the loop otherwise
+        table("quiz_attempts").select,
         # score/total are plaintext scalars (#521) and ride along for free:
         # they are the only evidence that a pre-#537 attempt with no recorded
         # responses missed anything at all (see _missed_something).
@@ -1818,7 +1819,8 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         # them is a discrepancy whoever sent the list wants to know about.
         missed_something = True
     else:
-        found = missed_question_hashes(body.source_attempt_id, stored)
+        found = await asyncio.to_thread(
+            missed_question_hashes, body.source_attempt_id, stored)
         hashes = found.hashes
         missed_something = _missed_something(attempt, found)
     # Only questions in the CURRENT wire shape can be re-served: the client
@@ -1999,7 +2001,10 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 "hard, or adaptive."
             ),
         )
-    node_rows = table("graph_nodes").select(
+    # #117: this handler runs on the event loop, so every sync PostgREST call
+    # below hops off it (tests/test_no_sync_db_in_async_handlers.py).
+    node_rows = await asyncio.to_thread(
+        table("graph_nodes").select,
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
@@ -2025,7 +2030,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # first, so probing can't consume a victim's quota) and BEFORE the
     # model call. Neither rejection is a backend failure, so neither emits
     # quiz.generation_failed.
-    retry_after, slot = claim_rate_limit(
+    retry_after, slot = await aclaim_rate_limit(
         f"quiz_generate:{body.user_id}",
         limit=QUIZ_GENERATE_RATE_LIMIT,
         window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
@@ -2057,7 +2062,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
 
-    if missing > 0 and _daily_spend_exceeded(body.user_id):
+    if missing > 0 and await asyncio.to_thread(_daily_spend_exceeded, body.user_id):
         logger.warning(
             "quiz: daily spend cap reached user=%s request_id=%s",
             body.user_id, request_id,
@@ -2162,7 +2167,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
     try:
-        _insert_attempt(attempt_row)
+        await asyncio.to_thread(_insert_attempt, attempt_row)
     except Exception as e:
         # #760: the quiz was generated (and billed) but there is no row to
         # serve it from, so the student got nothing. Same three duties as
