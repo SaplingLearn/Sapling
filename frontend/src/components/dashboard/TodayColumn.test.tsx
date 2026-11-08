@@ -154,6 +154,12 @@ describe("TodayColumn", () => {
     expect(props.navigate).toHaveBeenCalledWith("/learn?resume=s1");
   });
 
+  it("never says 'Today counted' over a zero streak", () => {
+    render(<TodayColumn {...props} stats={{ ...props.stats, streak: 0 }} />);
+    expect(screen.queryByText(/Today counted/)).toBeNull();
+    expect(screen.getByText("Nice work today.")).toBeInTheDocument();
+  });
+
   it("invites a first session when there is no streak yet", () => {
     render(<TodayColumn {...props} nodes={[]} sessions={[]} bestStreak={0} stats={{ ...props.stats, streak: 0, total: 0 }} />);
     expect(screen.getByText("One session today starts your streak.")).toBeInTheDocument();
