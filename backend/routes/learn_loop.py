@@ -5773,8 +5773,8 @@ def _attempt_hash(text: str) -> str:
 #: not match.
 _ATTEMPT_TOKENS = "attempt_tokens"
 _ATTEMPT_TOKEN_KEY = derive_key("learning/attempt-tokens")
-#: hex characters kept per digest (48 bits: a chance collision among a step's
-#: HELP_NOVELTY_DIGESTS_MAX digests is about one in a billion)
+#: hex characters kept per digest (48 bits: a new token's chance of matching
+#: one of a step's HELP_NOVELTY_DIGESTS_MAX digests is about 1 in 10^12)
 _ATTEMPT_TOKEN_HEX = 12
 
 
@@ -5911,7 +5911,7 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
             return  # the same attempt again is no new work
         fresh = signals_of(e)
         if strict_on and not fresh.strict:
-            return  # A134: on the fresh document a rung or a counted attempt moved it
+            return  # A134: re-judged on the fresh document (a rung granted, an attempt counted meanwhile)
         _record_attempt(e, now, failed=True)  # the step stays open: a failed genuine attempt
         e["attempt_hashes"] = [*(e.get("attempt_hashes") or []), digest]
         _remember_attempt_tokens(e, fresh.digests)  # A134's novelty memory (either rule)
