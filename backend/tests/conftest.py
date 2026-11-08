@@ -29,6 +29,28 @@ os.environ.setdefault("APP_ENV", "test")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _slot_override_names() -> tuple[str, ...]:
+    """`SAPLING_MODEL_<TASK>` for every `agents._providers.AgentTask` slot. The
+    function-mode seam (`SAPLING_MODEL_MODE`, `SAPLING_FUNCTION_HANDLERS`) is not
+    among them."""
+    from typing import get_args
+
+    from agents._providers import AgentTask
+
+    return tuple(f"SAPLING_MODEL_{task.upper()}" for task in get_args(AgentTask))
+
+
+# A shell's slot overrides (the owner's live-walkthrough shell exports one per
+# learning-loop slot) must not reach the agents that test modules build at
+# import — an agent's model and settings are fixed then — so they are cleared
+# here, before any test module is collected (after config's load_dotenv, which
+# the import above ran). `_no_shell_slot_overrides` keeps every test on the
+# slot defaults after that.
+SLOT_OVERRIDES = _slot_override_names()
+for _name in SLOT_OVERRIDES:
+    os.environ.pop(_name, None)
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -60,6 +82,23 @@ def _kill_switch(request, monkeypatch):
         import config
 
         monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
+def _no_shell_slot_overrides(monkeypatch):
+    """Every test starts on the slot defaults: a `SAPLING_MODEL_<TASK>` override
+    exported by the developer's shell (a live real-model walkthrough exports
+    one per learning-loop slot) would flip a slot's provider under the suite —
+    grader provenance labels, Claude- vs Gemini-shaped settings, the A111
+    pins. One delete per `agents._providers.AgentTask` name (SLOT_OVERRIDES,
+    so a new slot is covered when it is added), on top of the clear at import
+    above: an override a test set straight into os.environ never leaks into
+    the next one. A test that wants an override sets it itself
+    (monkeypatch.setenv runs after this). `SAPLING_MODEL_MODE` and
+    `SAPLING_FUNCTION_HANDLERS` are the function-mode seam, not slot
+    overrides: untouched."""
+    for name in SLOT_OVERRIDES:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
