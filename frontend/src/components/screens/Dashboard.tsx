@@ -249,12 +249,14 @@ export function Dashboard() {
   const [fullscreen, setFullscreen] = React.useState(false);
   // The "My courses" key and the graph, wired together: hovering a course row
   // fades the other courses; hovering a concept lights its course's row;
-  // clicking a row zooms the graph to that course.
+  // clicking a row zooms the graph to that course, clicking it again zooms
+  // back out.
   const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
   const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
-  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string; seq: number } | null>(null);
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
+  const zoomedCourse = zoomRequest?.courseId ?? null;
   const zoomToCourse = (courseId: string) =>
-    setZoomRequest((r) => ({ courseId, seq: (r?.seq ?? 0) + 1 }));
+    setZoomRequest((r) => ({ courseId: r?.courseId === courseId ? null : courseId, seq: (r?.seq ?? 0) + 1 }));
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
   // Graph container is now flex-filled, so there's no "correct" initial
@@ -474,14 +476,15 @@ export function Dashboard() {
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => {
-            const lit = (keyHoverCourse ?? graphHoverCourse) === c.course_id;
+            const lit = (keyHoverCourse ?? graphHoverCourse ?? zoomedCourse) === c.course_id;
             return (
               <button
                 key={c.course_id}
                 type="button"
                 data-testid="dashboard-graph-course-chip"
                 data-course-id={c.course_id}
-                title="Click to zoom to this course"
+                title={zoomedCourse === c.course_id ? "Click to zoom back out" : "Click to zoom to this course"}
+                aria-pressed={zoomedCourse === c.course_id}
                 onPointerEnter={() => setKeyHoverCourse(c.course_id)}
                 onPointerLeave={() => setKeyHoverCourse(null)}
                 onFocus={() => setKeyHoverCourse(c.course_id)}
@@ -530,8 +533,9 @@ export function Dashboard() {
             onManage={() => setCoursesOpen(true)}
             activeCourseId={keyHoverCourse ?? graphHoverCourse}
             onHoverCourse={setKeyHoverCourse}
+            selectedCourseId={zoomedCourse}
             onSelectCourse={zoomToCourse}
-            selectHint="Click to zoom to this course"
+            selectHint="Click to zoom to this course, again to zoom out"
           />
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>

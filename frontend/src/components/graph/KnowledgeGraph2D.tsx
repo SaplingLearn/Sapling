@@ -94,8 +94,9 @@ type Props = {
   focusCourseId?: string | null;
   /** Legible: the course of the concept under the pointer, or null on leave. */
   onHoverCourse?: (courseId: string | null) => void;
-  /** Legible: zoom to a course; a new `seq` asks again for the same course. */
-  zoomRequest?: { courseId: string; seq: number } | null;
+  /** Legible: zoom to a course (null = back out to the whole graph); a new
+   *  `seq` asks again for the same course. */
+  zoomRequest?: { courseId: string | null; seq: number } | null;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -504,7 +505,13 @@ function KnowledgeGraph2DImpl({
   const zoomSeq = zoomRequest?.seq;
   const zoomCourse = zoomRequest?.courseId;
   React.useEffect(() => {
-    if (zoomSeq == null || !zoomCourse) return;
+    if (zoomSeq == null) return;
+    if (!zoomCourse) {
+      // Zoom back out to the whole graph, as the reset button does.
+      viewTouchedRef.current = false;
+      easeView(fittedViewRef.current ?? initialView());
+      return;
+    }
     const rootId = planned.rootOfCourse.get(zoomCourse);
     // Where the course is now (it may have been dragged), else where planned.
     const live = rootId ? simNodesRef.current.find((n) => n.id === rootId) : undefined;

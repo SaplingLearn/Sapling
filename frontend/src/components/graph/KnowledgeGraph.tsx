@@ -94,7 +94,7 @@ type Props = {
   /** 2D legible: course focus / hover / zoom, wired to the host's course key. */
   focusCourseId?: string | null;
   onHoverCourse?: (courseId: string | null) => void;
-  zoomRequest?: { courseId: string; seq: number } | null;
+  zoomRequest?: { courseId: string | null; seq: number } | null;
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];

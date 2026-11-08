@@ -165,10 +165,10 @@ export default function GraphPreview() {
   }, []);
 
   // The Dashboard's wiring: hover a row to fade the other courses, hover a
-  // concept to light its row, click a row to zoom to the course.
+  // concept to light its row, click a row to zoom to the course, again to zoom out.
   const [keyHover, setKeyHover] = React.useState<string | null>(null);
   const [graphHover, setGraphHover] = React.useState<string | null>(null);
-  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string; seq: number } | null>(null);
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
   const keyCourses = React.useMemo(
     () => COURSES.slice(0, courseCount).map((c) => ({
       course_id: c.id, course_code: c.code, course_name: c.title, color: paletteFor(c.id),
@@ -221,8 +221,9 @@ export default function GraphPreview() {
             testIdPrefix="preview"
             activeCourseId={keyHover ?? graphHover}
             onHoverCourse={setKeyHover}
-            onSelectCourse={(id) => setZoomRequest((r) => ({ courseId: id, seq: (r?.seq ?? 0) + 1 }))}
-            selectHint="Click to zoom to this course"
+            selectedCourseId={zoomRequest?.courseId ?? null}
+            onSelectCourse={(id) => setZoomRequest((r) => ({ courseId: r?.courseId === id ? null : id, seq: (r?.seq ?? 0) + 1 }))}
+            selectHint="Click to zoom to this course, again to zoom out"
           />
         )}
       </div>
