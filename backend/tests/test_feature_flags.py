@@ -328,7 +328,9 @@ def test_resolved_client_flags_reads_the_store_once_even_when_it_is_down(monkeyp
     with patch("services.feature_flags.table",
                side_effect=lambda name: calls.append(name) or factory(name)):
         out = ff.resolved_client_flags("u1")
-    assert calls.count("feature_flags") == 1
+    # One read: the cold load's version read finds the store down (#117) and
+    # fails closed without reading the config too.
+    assert calls == ["feature_flags_version"]
     assert out["hide_tree"] == "on"
     assert {v for k, v in out.items() if k != "hide_tree"} == {"off"}
 
@@ -572,7 +574,10 @@ def test_another_replicas_write_is_seen_within_the_version_interval(monkeypatch)
 
         clock[0] += 2  # past the interval, well inside the 30 s snapshot TTL
         assert ff.flag_variant(KEY, "u1") == "on"
-        assert reads["config"] == 2
+        # One version read for the check; the reload it triggered files the
+        # new snapshot under that version instead of reading the row again.
+        assert reads == {"version": 2, "config": 2}
+        assert ff._version == 4
 
 
 def test_an_unchanged_version_keeps_the_snapshot(monkeypatch):
@@ -610,22 +615,93 @@ def test_cached_explain_defers_a_due_version_check_off_the_loop(monkeypatch):
         assert ff.cached_explain(KEY, "u1") is None  # needs a read: caller hops
 
 
-def test_a_failed_version_read_never_fails_resolution(monkeypatch):
+def test_a_failed_version_read_serves_the_warm_snapshot_and_marks_the_store_down(monkeypatch):
+    """The warm snapshot still answers, but an unreachable store is marked
+    unreadable: no further blocking version read inside the window."""
     clock = [1000.0]
     monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
     factory, _reads = _versioned([1], [[_row("on")]])
     with patch("services.feature_flags.table", side_effect=factory):
         ff.flag_variant(KEY, "u1")
 
+    version_reads = {"n": 0}
+
     def broken(name):
         if name == "feature_flags_version":
+            version_reads["n"] += 1
             raise httpx.ConnectError("down")
         return factory(name)
     clock[0] += ff.DEFAULT_VERSION_CHECK_S + 0.1
     with patch("services.feature_flags.table", side_effect=broken):
         r = ff.explain(KEY, "u1")
-    assert (r.variant, r.step) == ("on", "default")
-    assert not ff.store_unreadable()
+        assert (r.variant, r.step) == ("on", "default")
+        assert ff.store_unreadable()
+        assert version_reads["n"] == 1
+
+        clock[0] += ff.DEFAULT_VERSION_CHECK_S + 0.1  # due again, but inside the window
+        assert ff.cached_explain(KEY, "u1").variant == "on"  # nothing due: no hop
+        assert ff.flag_variant(KEY, "u1") == "on"
+        assert version_reads["n"] == 1
+
+
+def test_a_missing_version_table_is_not_an_outage(monkeypatch):
+    """A 404 (the migration not applied yet) is an answer: TTL-only
+    behaviour, never the unreadable window."""
+    req = httpx.Request("GET", "http://x/rest/v1/feature_flags_version")
+    base = _tables(flags=[_row("on")])
+
+    def factory(name):
+        if name == "feature_flags_version":
+            m = MagicMock()
+            m.select.side_effect = httpx.HTTPStatusError(
+                "404", request=req, response=httpx.Response(404, request=req))
+            return m
+        return base(name)
+    with patch("services.feature_flags.table", side_effect=factory):
+        assert ff.flag_variant(KEY, "u1") == "on"
+    assert not ff.store_unreadable() and ff._version is None
+
+
+def test_a_cold_load_whose_version_read_finds_the_store_down_fails_closed_at_once():
+    reads = {"config": 0}
+    base = _tables(flags=[_row("on")])
+
+    def factory(name):
+        if name == "feature_flags_version":
+            m = MagicMock()
+            m.select.side_effect = httpx.ConnectTimeout("down")
+            return m
+        if name == "feature_flags":
+            reads["config"] += 1
+        return base(name)
+    with patch("services.feature_flags.table", side_effect=factory):
+        r = ff.explain(KEY, "u1")
+    assert (r.variant, r.step, r.detail) == ("off", "fail_closed", ff.STORE_UNREADABLE)
+    assert reads["config"] == 0  # no second blocking read in the same outage
+    assert ff.store_unreadable()
+
+
+def test_a_ttl_reload_with_a_known_version_is_one_round_trip(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    monkeypatch.setenv(ff.VERSION_CHECK_ENV, "1000")  # no checks in between
+    factory, reads = _versioned([5], [[_row("on")]])
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+        assert reads == {"version": 1, "config": 1}  # the first load learns it
+        clock[0] += ff.DEFAULT_SNAPSHOT_TTL_S + 1
+        ff.flag_variant(KEY, "u1")
+    assert reads == {"version": 1, "config": 2}
+    assert ff._version == 5
+
+
+def test_a_zero_snapshot_ttl_never_reads_the_version(monkeypatch):
+    monkeypatch.setenv(ff.SNAPSHOT_TTL_ENV, "0")
+    factory, reads = _versioned([1], [[_row("on")]])
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+        ff.flag_variant(KEY, "u1")
+    assert reads == {"version": 0, "config": 2}
 
 
 def test_the_version_check_can_be_turned_off(monkeypatch):
@@ -639,4 +715,4 @@ def test_the_version_check_can_be_turned_off(monkeypatch):
         version[0], flags[0] = 2, [_row("on")]
         clock[0] += 10
         assert ff.flag_variant(KEY, "u1") == "off"  # TTL (30 s) still governs
-    assert reads["version"] == 1
+    assert reads["version"] == 0  # never read at all

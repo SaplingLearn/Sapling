@@ -14,8 +14,13 @@ replicas see the write through `feature_flags_version` (#117): a trigger bumps
 it on every flag write, and a process serving flag reads re-reads it at most
 every `FEATURE_FLAGS_VERSION_CHECK_S` (5 s) and drops its snapshot when it
 moved. Convergence across replicas is therefore ~5 s while requests flow (and
-never worse than the snapshot TTL: a missing version table, or a failed
-version read, leaves exactly the TTL behaviour). A user's roles are cached 60 s
+never worse than the snapshot TTL: a missing version table leaves exactly the
+TTL behaviour; a version read that finds the store unreachable marks it
+unreadable like a failed snapshot read, so an outage costs one bounded read
+per window). The check only validates a WARM snapshot: a reload files the new
+snapshot under the version already known (older or equal, so at worst one
+extra reload), and reads the row only when none is known yet. It is off when
+either interval is 0. A user's roles are cached 60 s
 (`FEATURE_FLAGS_ROLES_TTL_S`). Both TTLs are read at call time; 0 means
 "always read fresh" (the E2E stack exports 0 so a per-test DB reset is seen
 immediately).
@@ -298,23 +303,48 @@ def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
 
 
 def clear_feature_flags_cache() -> None:
+    _clear()
+
+
+def _clear(version: int | None = None) -> None:
+    """Drop the snapshot. `version`: the version the next snapshot may be
+    filed under (one just read, so not newer than that snapshot); None = the
+    next load reads it again."""
     global _snapshot, _generation, _store_down_until, _version
     with _lock:
         _snapshot = None
         _generation += 1
         _store_down_until = 0.0  # a write just went through: read again
-        _version = None  # the next snapshot load records the version again
+        _version = version
 
 
-def _read_version() -> int | None:
+def _version_checks_on() -> bool:
+    """FEATURE_FLAGS_VERSION_CHECK_S=0, or a snapshot TTL of 0 (every read is
+    fresh anyway), turns the version row off entirely: never read."""
+    return version_check_s() > 0 and snapshot_ttl_s() > 0
+
+
+def _is_outage(exc: BaseException) -> bool:
+    """The store did not answer (transport, timeout, 5xx). A 4xx is an
+    answer -- e.g. the version table not migrated yet -- not an outage."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.HTTPError)
+
+
+def _read_version(*, mark_down: bool = True) -> int | None:
     """`feature_flags_version.version`, or None when it cannot be known (no
-    table yet, an empty or odd answer, a failed read). Never raises."""
+    table yet, an empty or odd answer, a failed read). Never raises. An
+    unreachable store is marked unreadable (`mark_down`; not on the admin
+    path), so nothing re-reads it -- version or config -- inside the window."""
     try:
         with service_scope():  # #115: part of the flag store
             rows = table("feature_flags_version").select(
                 "version", filters={"id": "eq.true"}, timeout=STORE_TIMEOUT_S,
             )
     except Exception as exc:
+        if mark_down and _is_outage(exc):
+            _mark_store_down()
         _warn_once("version", "feature_flags_version unreadable (%s); flag changes "
                    "reach this process within the snapshot TTL only", type(exc).__name__)
         return None
@@ -326,11 +356,30 @@ def _read_version() -> int | None:
 
 def _version_due() -> bool:
     """Whether the snapshot in hand should be re-validated against the
-    version row before it is served. Caller holds no lock."""
+    version row before it is served. Never inside the unreadable window.
+    Caller holds no lock."""
+    if not _version_checks_on():
+        return False
     interval = version_check_s()
     with _lock:
-        return (_version is not None and interval > 0 and _snapshot is not None
-                and time.monotonic() - _version_checked >= interval)
+        if _version is None or _snapshot is None:
+            return False
+        now = time.monotonic()
+        return now >= _store_down_until and now - _version_checked >= interval
+
+
+def _baseline_version(*, mark_down: bool = True) -> int | None:
+    """The version to file a newly read snapshot under: the one already
+    known when there is one (it is not newer than the new snapshot, so a
+    write in between costs one extra reload, never a missed write), else a
+    read of the row -- once per process, and after a local clear."""
+    if not _version_checks_on():
+        return None
+    with _lock:
+        known = _version
+    if known is not None:
+        return known
+    return _read_version(mark_down=mark_down)
 
 
 def _maybe_check_version() -> None:
@@ -347,7 +396,9 @@ def _maybe_check_version() -> None:
         with _lock:
             _version_checked = time.monotonic()
         if current is not None and current != seen:
-            clear_feature_flags_cache()
+            # Read before the reload, so it is a safe baseline for it: the
+            # reload does not read the version row again.
+            _clear(current)
     finally:
         _version_lock.release()
 
@@ -395,7 +446,7 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
         # The admin path (ADR 0029): the connection's normal timeout, and an
         # admin read never marks the store down — it only clears the mark
         # when it succeeds.
-        version = _read_version()
+        version = _baseline_version(mark_down=False)
         snap = read_config()
         return _store_snapshot(snap, generation, version)
     _maybe_check_version()
@@ -425,8 +476,12 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
     try:
         # The version BEFORE the config: the snapshot is then at least as new
         # as the version it is filed under (a write in between only causes
-        # one extra reload on the next check).
-        version = _read_version()
+        # one extra reload on the next check). Usually no read at all (a
+        # version is already known); when it read and found the store
+        # unreachable, fail closed now rather than wait on the config too.
+        version = _baseline_version()
+        if version is None and store_unreadable():
+            raise StoreUnreadable("flag store unreadable (version read)")
         try:
             snap = read_config(timeout=STORE_TIMEOUT_S)
         except _STORE_ERRORS:
