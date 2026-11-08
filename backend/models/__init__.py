@@ -23,6 +23,12 @@ class ChatBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # #761: client-minted id for ONE student turn, sent unchanged on the
+    # stream AND on its JSON fallback/retry. Makes the turn's message writes
+    # idempotent and lets a re-send of an already-persisted turn replay the
+    # stored reply instead of running the turn twice. Optional: without it a
+    # turn is not deduplicated across requests.
+    turn_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_\-]{8,128}$")
 
 
 class EndSessionBody(BaseModel):
@@ -346,6 +352,11 @@ class UpdateSettingsBody(BaseModel):
     accent_color: Optional[str] = None
     # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
     share_class_context: Optional[bool] = None
+    # ADR 0028: third-party (PostHog) analytics opt-out
+    # (user_settings.analytics_opt_out) — the student's own choice, written by
+    # the Settings → Data switch only. Do Not Track / Global Privacy Control
+    # are honoured per request and are deliberately NOT persisted here.
+    analytics_opt_out: Optional[bool] = None
 
 
 class EquipCosmeticBody(BaseModel):
@@ -582,7 +593,18 @@ class SyllabusApplyBody(BaseModel):
 # ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────
 
 class AllowlistEmailBody(BaseModel):
+    """POST /api/admin/allowlist/{approve,revoke}. Lowercased and stripped the
+    way the bulk path normalises (#757): the waitlist keeps emails as typed, so
+    a raw spelling would miss (or twin) the row sign-in matches."""
     email: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        email = (v or "").strip().lower()
+        if not email or len(email) > 254 or not _EMAIL_SHAPE.match(email):
+            raise ValueError("invalid email address")
+        return email
 
 
 # One address, no spaces, a dot in the domain. Deliberately loose (the waitlist

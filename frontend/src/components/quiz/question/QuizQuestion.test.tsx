@@ -33,6 +33,7 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  newTurnId: vi.fn(() => "turn-test-0001"),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -121,6 +122,7 @@ function makeActions(): QuizActions {
     practiseMissed: vi.fn(),
     nextInQueue: vi.fn(),
     exit: vi.fn(),
+    cancel: vi.fn(),
     flag: vi.fn(),
     dismissError: vi.fn(),
     retry: vi.fn(),
@@ -593,6 +595,22 @@ describe("QuizQuestion — flag and generating", () => {
     expect(screen.getByText("Writing your quiz…")).toBeInTheDocument();
     expect(container.querySelectorAll(".quiz-question__skeleton-row")).toHaveLength(4);
     expect(screen.queryByTestId("quiz-answer-options")).toBeNull();
+  });
+
+  it("offers a way off the skeleton (#760)", () => {
+    const { actions } = renderScreen(
+      makeSession({ phase: "generating", items: [], attemptId: null }),
+    );
+    fireEvent.click(screen.getByTestId("quiz-cancel-generate"));
+    expect(actions.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("swaps Leave for Cancel while scoring, since Leave is refused there (#760)", () => {
+    const { actions } = renderScreen(makeSession({ phase: "submitting" }));
+    expect(screen.queryByTestId("quiz-leave")).toBeNull();
+    fireEvent.click(screen.getByTestId("quiz-cancel-submit"));
+    expect(actions.cancel).toHaveBeenCalledTimes(1);
+    expect(actions.requestLeave).not.toHaveBeenCalled();
   });
 
   it("says so exactly once when fewer questions arrived than were asked for", () => {

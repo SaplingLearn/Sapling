@@ -38,6 +38,7 @@ import {
   deleteGraphNode,
   describeConcept,
   shouldFallBackToJson,
+  newTurnId,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -45,6 +46,7 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
+import { humanizeError, isNotFound, statusOf } from "@/lib/errorMessage";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -61,7 +63,7 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 ];
 
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
-const SESSION_END_COUNT_KEY = "sapling_session_end_count";
+// Read by SessionFeedbackGlobal when the student navigates away from /learn.
 const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 const RAIL_OPEN_KEY = "sapling_learn_rail_open";
 const RAIL_WIDTH = 400;
@@ -150,8 +152,8 @@ export function mergeGraphDelta(
     // real id. The raw payload carries no course_id, so anchor it to the
     // session's active course when there is one. Mirrors `addConcept`
     // (~:892): resolve color + subject from the course's subject-root node
-    // instead of a hardcoded `var(--…)` (the 3D rail can't resolve CSS
-    // custom properties — lib/data.ts:78-79 — so that rendered black). The
+    // instead of a hardcoded `var(--…)` (a CSS custom property can't be
+    // shaded per node — see `shadeFor` in lib/graph/nodeStyle.ts). The
     // root-anchoring edge is added separately by `deltaPlaceholderEdges`,
     // not here.
     const id = `stream-${normalizeConceptName(name)}`;
@@ -324,6 +326,19 @@ export function removeInterruptedTurn(
   return next;
 }
 
+// A turn the server refused because the session is already over (#761 /
+// #762): a 409 whose envelope carries `error.code: "SESSION_ENDED"` —
+// `ApiError.code` off fetchJSON, the same `code` streamSSE attaches. A coded
+// error decides it by its code (a 409 with any OTHER code is an ordinary
+// error); only an error with no code at all — an older backend — falls back
+// to the bare 409.
+export const SESSION_ENDED_CODE = "SESSION_ENDED";
+export function isSessionEndedError(err: unknown): boolean {
+  const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+  if (typeof code === "string") return code === SESSION_ENDED_CODE;
+  return statusOf(err) === 409;
+}
+
 export function Learn() {
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -356,8 +371,8 @@ function LearnInner() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
-  // Deep-link resume (#164) in flight — renders a loading state instead of
-  // flashing the session picker the deep link is about to leave. Lazily
+  // A resume (#164 deep link, or any other — #762) in flight — renders a
+  // loading state instead of flashing the session picker. Lazily
   // initialized from the URL so the VERY FIRST paint already shows the
   // loading branch: starting at false and flipping in the (post-paint)
   // consume effect would paint the picker for a frame — the exact flash
@@ -379,6 +394,55 @@ function LearnInner() {
   // is the only feedback for several seconds. ChatPanel's `streamingStatus`.
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
+  // The in-flight hint/confused/skip request. It shares the streamed turn's
+  // "waiting for a reply" encoding (`streamingText === ""`), but a plain JSON
+  // call can't be stopped — so while it runs ChatPanel gets no `onStop`.
+  const [actionPending, setActionPending] = useState(false);
+  // The server answered 409 to a turn: this session is over (backend E1).
+  // Cleared by `enterSession`, so it never follows the student elsewhere.
+  const [sessionEnded, setSessionEnded] = useState(false);
+  // Latest mode switch issued; an older one's failure must not roll back a
+  // newer one.
+  const modeSwitchSeqRef = useRef(0);
+
+  // Session epoch (#762). Every path that changes which session is on screen
+  // — start, resume, back-to-picker, summary close — goes through
+  // `enterSession`, which bumps this and aborts the live stream. Every async
+  // path (start, resume, send, action, mode switch) captures the epoch it
+  // began under and drops its result if the epoch moved on, so a late reply
+  // can only ever land in the session that asked for it. `sessionIdRef` is
+  // written here synchronously too: its post-render mirror effect (above) is
+  // too late for a turn that settles in the same tick.
+  const sessionEpochRef = useRef(0);
+  // turn_id of each interrupted bubble, keyed by the bubble's id, so Retry
+  // re-sends the SAME turn (#761). ChatMsg itself carries only `retryText`.
+  const retryTurnIdsRef = useRef<Map<string, string>>(new Map());
+  const enterSession = (id: string | null): number => {
+    const epoch = ++sessionEpochRef.current;
+    streamAbort.current?.abort();
+    streamAbort.current = null;
+    sessionIdRef.current = id;
+    setSessionId(id);
+    setSending(false);
+    setStarting(false);
+    setResuming(false);
+    setActionPending(false);
+    setSessionEnded(false);
+    setStreamingText(null);
+    setStreamingStatus(null);
+    return epoch;
+  };
+  // Adopt the id a start/resume produced, WITHOUT a new epoch — it is the
+  // session that epoch was opened for.
+  const adoptSession = (id: string) => {
+    sessionIdRef.current = id;
+    setSessionId(id);
+  };
+  // The feedback context belongs to the last session the student ENDED; once
+  // they move into another one it would attribute feedback to the wrong one.
+  const clearLastSessionContext = () => {
+    try { sessionStorage.removeItem(LAST_SESSION_CTX_KEY); } catch {}
+  };
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -455,6 +519,10 @@ function LearnInner() {
   const [addingConcept, setAddingConcept] = useState(false);
   const [newConceptName, setNewConceptName] = useState("");
   const optimisticSeq = useRef(0);
+  // Optimistic adds still waiting on POST /nodes, keyed by temp id. A remove
+  // of one of these is queued here (`removed`) instead of sending a DELETE for
+  // a temp id the server has never seen (#762).
+  const pendingAddsRef = useRef<Map<string, { removed: boolean }>>(new Map());
   // AI-generated concept descriptions, fetched lazily for the focused concept
   // when it has no stored description (keyed by node id). `descInflightRef`
   // dedupes concurrent fetches for the same node.
@@ -520,10 +588,16 @@ function LearnInner() {
     return () => { cancelled = true; };
   }, [userReady, userId, semesterHydrated, activeSemester]);
 
-  // Sync URL params when mode changes (preserve other params)
+  // Sync URL params when mode changes (preserve other params). Compared
+  // against the mode this effect last WROTE, not the `searchParams` snapshot:
+  // `router.replace` lands after the render that reads the params, so a
+  // mode-switch rollback (`handleModeSwitch`) that ran before the forward
+  // write caught up used to see the old mode in the snapshot, skip, and leave
+  // the URL on the mode that just failed (#762).
+  const syncedModeRef = useRef<string | null>(searchParams.get("mode"));
   useEffect(() => {
-    const current = searchParams.get("mode");
-    if (current === mode) return;
+    if (syncedModeRef.current === mode) return;
+    syncedModeRef.current = mode;
     const params = new URLSearchParams(searchParams.toString());
     params.set("mode", mode);
     router.replace(`/learn?${params.toString()}`, { scroll: false });
@@ -584,6 +658,14 @@ function LearnInner() {
   const beginSession = async (t: string) => {
     const topicName = t.trim();
     if (!topicName || !userId) return;
+    // Leave the current session FIRST (#762): a failed or stopped start must
+    // drop back to the picker, not strand the student in the old session
+    // under the new title. This also aborts any stream in flight (e.g. a
+    // graph-node click starting a new session while a reply streams), so two
+    // streams never interleave writes into the same streamingText/messages.
+    const epoch = enterSession(null);
+    const isCurrent = () => sessionEpochRef.current === epoch;
+    clearLastSessionContext();
     setFocusedNodeId(null);
     setTopic(topicName);
     setTopicDraft(topicName);
@@ -591,10 +673,6 @@ function LearnInner() {
     setStarting(true);
     setStreamingText("");
     setStreamingStatus(null);
-    // A stream may already be in flight (e.g. a graph-node click starting a
-    // new session while a reply streams) — abort it first so two streams
-    // never interleave writes into the same streamingText/messages state.
-    streamAbort.current?.abort();
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;
@@ -608,12 +686,14 @@ function LearnInner() {
             // a degenerate blank stream must take the transparent Rung-3
             // retry, not the manual-Retry Rung-2 branch (PR #470 review).
             if (delta.trim()) sawToken = true;
-            setStreamingText(prev => (prev ?? "") + delta);
+            // The pacer flushes its backlog AFTER an abort; a superseded
+            // start must not type into the next session's bubble.
+            if (isCurrent()) setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
           onProgress: (step) => {
             const label = tutorStepLabel(step);
-            if (label) setStreamingStatus(label);
+            if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
         });
@@ -621,7 +701,9 @@ function LearnInner() {
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
       } catch (err) {
-        if (controller.signal.aborted) { setMessages([]); return; } // Stop pressed — intentional, not an error.
+        // Stop pressed — intentional, not an error. Superseded (a resume or
+        // another start took over) — that path owns the screen now.
+        if (controller.signal.aborted) { if (isCurrent()) setMessages([]); return; }
         if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
         // #151a: the server marked the turn non-retryable (tool writes
         // landed — a re-run would double-apply them) or it was a 413 the
@@ -633,20 +715,27 @@ function LearnInner() {
         // Rung 3: the stream never produced text — retry transparently via
         // the non-streaming JSON route. Clear streamingText first so
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
+        if (!isCurrent()) return;
         setStreamingText(null);
         const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
-      setSessionId(newSessionId);
+      // The JSON start can't be aborted: if the student moved on while it
+      // ran, its session is simply not adopted.
+      if (!isCurrent()) return;
+      adoptSession(newSessionId);
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
+      if (!isCurrent()) return;
       toast.error(err instanceof Error ? err.message : "Couldn't start session.");
       setMessages([]);
     } finally {
-      setStarting(false);
-      setStreamingText(null);
-      setStreamingStatus(null);
+      if (isCurrent()) {
+        setStarting(false);
+        setStreamingText(null);
+        setStreamingStatus(null);
+      }
       if (streamAbort.current === controller) streamAbort.current = null;
     }
   };
@@ -656,11 +745,25 @@ function LearnInner() {
   // Loads a session by id and enters it. Server-authoritative: topic/mode/
   // course come off the resume payload itself, so a deep link works even for
   // a session outside the 10-row recent list (#164).
-  const resumeSessionById = async (id: string, opts?: { deepLink?: boolean }) => {
-    if (opts?.deepLink) setResuming(true);
+  //
+  // Leaves the current session (and aborts an in-flight start) up front, so
+  // a start that settles while the resume loads can't overwrite it (#762).
+  // While it loads, the screen shows the resume loading state rather than
+  // the old session's composer — a turn sent there would land in the wrong
+  // transcript.
+  const resumeSessionById = async (id: string) => {
+    const epoch = enterSession(null);
+    const isCurrent = () => sessionEpochRef.current === epoch;
+    clearLastSessionContext();
+    setMessages([]);
+    setResuming(true);
     try {
       const res = await resumeSession(id);
-      setSessionId(res.session.id);
+      if (!isCurrent()) return;
+      adoptSession(res.session.id);
+      // Resume still returns ENDED sessions: open those read-only, with the
+      // start-a-new-session banner, instead of a composer that can only 409.
+      if (res.session.ended_at) setSessionEnded(true);
       setTopic(res.session.topic);
       setMode(normalizeMode(res.session.mode));
       setSelectedCourseId(res.session.course_id || "");
@@ -672,9 +775,10 @@ function LearnInner() {
         })),
       );
     } catch (err) {
+      if (!isCurrent()) return;
       toast.error(err instanceof Error ? err.message : "Resume failed.");
     } finally {
-      if (opts?.deepLink) setResuming(false);
+      if (isCurrent()) setResuming(false);
     }
   };
 
@@ -691,7 +795,7 @@ function LearnInner() {
     if (!resumeParam || !userReady || !userId) return;
     if (consumedResumeRef.current === resumeParam) return;
     consumedResumeRef.current = resumeParam;
-    void resumeSessionById(resumeParam, { deepLink: true });
+    void resumeSessionById(resumeParam);
     // resumeSessionById is a plain function (same pattern as handleResume);
     // the guard ref makes re-runs from its identity changing harmless.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -753,10 +857,17 @@ function LearnInner() {
   // (a placeholder there would double up with that live bubble). The real
   // assistant message is appended once, after the turn resolves one way or
   // another.
-  const send = useCallback(async (userText: string) => {
+  // `turnId` is this turn's idempotency key (#761): minted fresh for a new
+  // turn, passed back in by Retry so the re-send is the SAME turn — the
+  // server dedupes its writes and replays a reply it already persisted.
+  const send = useCallback(async (userText: string, turnId: string = newTurnId()) => {
     if (!userText.trim() || !sessionId || !userId) return;
     const turnSessionId = sessionId;
-    setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
+    // The session epoch this turn belongs to (#762) — see `enterSession`.
+    const turnEpoch = sessionEpochRef.current;
+    const isCurrent = () => sessionEpochRef.current === turnEpoch && sessionIdRef.current === turnSessionId;
+    const userMsgId = msgId();
+    setMessages(m => [...m, { id: userMsgId, role: "user", content: userText }]);
     setSending(true);
     setStreamingText("");
     setStreamingStatus(null);
@@ -777,11 +888,20 @@ function LearnInner() {
     // persisted server-side for the turn (routes persist only on
     // completion), so Retry is a plain re-send.
     const appendInterrupted = () => {
-      if (sessionIdRef.current !== turnSessionId) return;
+      if (!isCurrent()) return;
+      const bubbleId = msgId();
+      retryTurnIdsRef.current.set(bubbleId, turnId);
       setMessages(m => [
         ...m,
-        { id: msgId(), role: "assistant", content: acc, interrupted: true, retryText: userText },
+        { id: bubbleId, role: "assistant", content: acc, interrupted: true, retryText: userText },
       ]);
+    };
+    // The turn never happened (409): take its user bubble back out by id and
+    // show the session-ended state.
+    const endedTurn = () => {
+      if (!isCurrent()) return;
+      setMessages(m => m.filter(x => x.id !== userMsgId));
+      setSessionEnded(true);
     };
     try {
       let res: ChatResult;
@@ -791,20 +911,29 @@ function LearnInner() {
             // Same whitespace rule as beginSession's onToken above.
             if (delta.trim()) sawToken = true;
             acc += delta;
-            setStreamingText(t => (t ?? "") + delta);
+            // The pacer flushes its backlog AFTER an abort — a turn the
+            // student switched away from must not type into the next
+            // session's bubble.
+            if (isCurrent()) setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
           onProgress: (step) => {
             const label = tutorStepLabel(step);
-            if (label) setStreamingStatus(label);
+            if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        });
+        }, turnId);
       } catch (err) {
         if (controller.signal.aborted) {
-          // Stop pressed (or the session switched, aborting via the
-          // sessionId-keyed effect below) — intentional, not an error.
+          // Stop pressed (or the session switched, aborting via
+          // `enterSession`) — intentional, not an error.
           appendInterrupted();
+          return;
+        }
+        if (isSessionEndedError(err)) {
+          // 409: the session is over. Not a failure to retry — no JSON rung
+          // (it would 409 too), no interrupted bubble.
+          endedTurn();
           return;
         }
         if (sawToken) {
@@ -839,7 +968,10 @@ function LearnInner() {
         // still disabled — the turn just no longer looks interruptible,
         // which is now the truth.
         setStreamingText(null);
-        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
+        // Same turn_id as the stream leg: if the stream DID persist before
+        // it died, this replays that reply (`replayed: true`) rather than
+        // answering the message twice (#761).
+        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref, turnId);
       }
       // Same session-switch guard as appendInterrupted, and it matters most
       // on the Rung-3 leg: sendChat cannot be aborted, so the user can have
@@ -851,19 +983,20 @@ function LearnInner() {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
       }
     } catch (err) {
+      if (isSessionEndedError(err)) { endedTurn(); return; }
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
       // + Retry, error detail in a toast rather than a fake assistant reply.
       toast.error(err instanceof Error ? err.message : "The tutor is unavailable.");
       appendInterrupted();
     } finally {
-      setSending(false);
+      // A superseded turn leaves `sending` alone: `enterSession` already
+      // reset it for the new session, which may have a turn of its own.
+      if (isCurrent()) setSending(false);
       // Clear the live bubble only while this turn still owns the stream
       // slot: if a newer send/beginSession took over (it aborts this one,
       // then seeds its own streamingText), nulling here would blank THAT
-      // turn's in-flight bubble. `sending` stays unconditional — no newer
-      // owner may exist to restore it (e.g. a beginSession interleave), and
-      // a stuck-true `sending` would disable the composer permanently.
+      // turn's in-flight bubble.
       if (streamAbort.current === controller) {
         setStreamingText(null);
         setStreamingStatus(null);
@@ -878,76 +1011,104 @@ function LearnInner() {
   const handleRetry = useCallback((m: ChatMsg) => {
     const text = m.retryText;
     if (!text || sending || starting) return;
+    // The interrupted turn's own turn_id (#761): a Retry is the same turn.
+    const turnId = retryTurnIdsRef.current.get(m.id);
+    retryTurnIdsRef.current.delete(m.id);
     setMessages(prev => removeInterruptedTurn(prev, m.id, text));
-    void send(text);
+    void send(text, turnId);
   }, [send, sending, starting]);
 
-  // Abort any in-flight stream when the active session changes (including to
-  // none) and on unmount — guards the #131/#133 leaked-stream bug class. A
-  // plain unmount-only effect would miss the "switched sessions mid-stream"
-  // case, so this keys on sessionId: its cleanup fires both when sessionId
-  // changes and when the component unmounts.
+  // Abort any in-flight stream on unmount — guards the #131/#133
+  // leaked-stream bug class. Switching sessions mid-stream is covered by
+  // `enterSession`, which aborts synchronously: an effect keyed on sessionId
+  // used to do it, but it ran a render late — after `beginSession` had
+  // already installed its OWN controller, which it then aborted (#762).
   useEffect(() => {
     return () => streamAbort.current?.abort();
-  }, [sessionId]);
+  }, []);
 
+  // Hint / confused / skip. Waits the way a streamed turn does — through
+  // `streamingText === ""`, ChatPanel's one "waiting for a reply" bubble —
+  // rather than a `loading` placeholder in `messages` (#762), and is guarded
+  // by the same session epoch so a late reply can't land in another session.
+  // On failure it removes exactly its own label, by id.
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
+    const turnSessionId = sessionId;
+    const turnEpoch = sessionEpochRef.current;
+    const isCurrent = () => sessionEpochRef.current === turnEpoch && sessionIdRef.current === turnSessionId;
     const labelMap = { hint: "(Requested a hint)", confused: "(Said I'm confused)", skip: "(Asked to skip)" };
-    setMessages(m => [
-      ...m,
-      { id: msgId(), role: "user", content: labelMap[action] },
-      { id: msgId(), role: "assistant", content: "", loading: true },
-    ]);
+    const labelId = msgId();
+    setMessages(m => [...m, { id: labelId, role: "user", content: labelMap[action] }]);
     setSending(true);
+    setActionPending(true);
+    setStreamingText("");
+    setStreamingStatus(null);
     try {
       const res = await learnAction(sessionId, userId, action, mode, sharedCtx, modelPref);
-      setMessages(m => {
-        const next = [...m];
-        next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
-        return next;
-      });
+      if (!isCurrent()) return;
+      setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Action failed.");
-      setMessages(m => m.slice(0, -2));
+      if (!isCurrent()) return;
+      setMessages(m => m.filter(x => x.id !== labelId));
+      if (isSessionEndedError(err)) { setSessionEnded(true); return; }
+      toast.error(humanizeError(err, "Action failed."));
     } finally {
-      setSending(false);
+      if (isCurrent()) {
+        setSending(false);
+        setActionPending(false);
+        setStreamingText(null);
+        setStreamingStatus(null);
+      }
     }
   };
 
   const handleModeSwitch = async (newMode: Mode) => {
     if (newMode === mode) return;
+    // An ended session is read-only: a switch would only 409.
+    if (sessionEnded) return;
     if (!sessionId || !userId) {
       setMode(newMode);
       return;
     }
+    // Same epoch guard as `send` (#762): a reply or rollback for a session
+    // the student already left must not touch the one they are in now. The
+    // sequence number keeps an OLDER failed switch from rolling back a newer
+    // one. The URL follows the rollback through the mode-sync effect.
+    const turnSessionId = sessionId;
+    const turnEpoch = sessionEpochRef.current;
+    const seq = ++modeSwitchSeqRef.current;
+    const isCurrent = () => sessionEpochRef.current === turnEpoch && sessionIdRef.current === turnSessionId;
     const prev = mode;
     setMode(newMode);
     try {
       const res = await switchMode(sessionId, userId, newMode);
+      if (!isCurrent()) return;
       if (res.reply) {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply }]);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Mode switch failed.");
-      setMode(prev);
+      if (!isCurrent()) return;
+      if (modeSwitchSeqRef.current === seq) setMode(prev);
+      if (isSessionEndedError(err)) { setSessionEnded(true); return; }
+      // Incl. the 422 "Unknown tutor mode" — an ordinary error, read off
+      // the body's `detail` rather than dumped as raw JSON.
+      toast.error(humanizeError(err, "Mode switch failed."));
     }
   };
 
   const handleEndSession = useCallback(async () => {
     if (!sessionId || !userId) return;
+    const epoch = sessionEpochRef.current;
     try {
       const res = await endSession(sessionId, userId);
-      setSummary(res.summary ?? null);
-      // Write session context for navigate-away feedback
+      // Write session context for navigate-away feedback — even if the
+      // student has already moved on, this IS the session they ended.
       try {
         sessionStorage.setItem(LAST_SESSION_CTX_KEY, JSON.stringify({ sessionId, topic }));
       } catch {}
-      // Bump end-count for every-3 session-feedback trigger
-      try {
-        const n = Number(localStorage.getItem(SESSION_END_COUNT_KEY) ?? "0") + 1;
-        localStorage.setItem(SESSION_END_COUNT_KEY, String(n));
-      } catch {}
+      // …but its summary only belongs on screen while they're still in it.
+      if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "End session failed.");
     }
@@ -957,14 +1118,14 @@ function LearnInner() {
 
   const closeSummary = () => {
     setSummary(null);
-    setSessionId(null);
+    enterSession(null);
     setMessages([]);
     setTopic("");
     setTopicDraft("");
   };
 
   const handleBackToLearn = () => {
-    setSessionId(null);
+    enterSession(null);
     setMessages([]);
     setTopic("");
     setTopicDraft("");
@@ -973,7 +1134,7 @@ function LearnInner() {
 
   const startNextFromSummary = (concept: string) => {
     setSummary(null);
-    setSessionId(null);
+    enterSession(null);
     setMessages([]);
     setTopicDraft(concept);
     setTopic(concept);
@@ -1199,12 +1360,31 @@ function LearnInner() {
     setNewConceptName("");
     setAddingConcept(false);
     if (!userId) return;
+    const pending = { removed: false };
+    pendingAddsRef.current.set(id, pending);
     addGraphNode(userId, {
       concept_name: label,
       course_id: cardCourseId,
       anchor_node_id: anchorId || undefined,
     })
       .then((res) => {
+        pendingAddsRef.current.delete(id);
+        if (pending.removed) {
+          // Removed while the add was in flight: the remove was queued, and
+          // now has a real id to target. A dedup MERGE into a node the
+          // student already had is left alone — they removed what they just
+          // typed, not the concept they were already studying.
+          if (!res.already_existed) {
+            deleteGraphNode(userId, res.node.id).catch((err) => {
+              if (isNotFound(err)) return;
+              const anchorEdge = anchorId ? [{ source: anchorId, target: id, strength: 0.4 }] : [];
+              setGraphNodes(prev => reconcileNodes([...prev, newNode], id, res.node));
+              setGraphEdges(prev => retargetEdges(mergeGraphEdges(prev, anchorEdge), id, res.node.id));
+              toast.error("Couldn't remove the concept — it was restored.");
+            });
+          }
+          return;
+        }
         // A live tutor turn may already have rendered this concept as a
         // `stream-<name>` placeholder; the backend merged by name, so absorb
         // that node and its edges too (PR #485 review).
@@ -1216,6 +1396,8 @@ function LearnInner() {
         if (res.already_existed) toast.success(`Merged into your existing “${label}” node.`);
       })
       .catch(() => {
+        pendingAddsRef.current.delete(id);
+        if (pending.removed) return; // already gone from the map; nothing was saved
         setGraphNodes(prev => dropOptimisticConcept(prev, [], id).nodes);
         setGraphEdges(prev => dropOptimisticConcept([], prev, id).edges);
         setFocusedNodeId(cur => (cur === id ? null : cur));
@@ -1224,12 +1406,31 @@ function LearnInner() {
   };
 
   // Remove a concept: drop the node + its edges and clear focus if it was
-  // focused. Best-effort persistence via the delete endpoint on real backends.
+  // focused, then persist via the delete endpoint (#762):
+  //  - a concept whose add is still in flight has no server id yet, so the
+  //    delete is queued on the add (see `addConcept`) rather than sent for
+  //    the temp id — which used to 404 and leave the saved row behind;
+  //  - a failed delete puts the node and its edges back, with a toast. A 404
+  //    means it is already gone (or was only ever a client placeholder), so
+  //    that is not rolled back.
   const removeConcept = (nodeId: string) => {
+    const removedNode = graphNodes.find(n => n.id === nodeId);
+    const removedEdges = graphEdges.filter(e => e.source === nodeId || e.target === nodeId);
     setGraphNodes(prev => prev.filter(n => n.id !== nodeId));
     setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
     setFocusedNodeId(cur => (cur === nodeId ? null : cur));
-    if (userId) deleteGraphNode(userId, nodeId).catch(() => {});
+    if (!userId) return;
+    const pendingAdd = pendingAddsRef.current.get(nodeId);
+    if (pendingAdd) {
+      pendingAdd.removed = true;
+      return;
+    }
+    deleteGraphNode(userId, nodeId).catch((err) => {
+      if (isNotFound(err) || !removedNode) return;
+      setGraphNodes(prev => (prev.some(n => n.id === nodeId) ? prev : [...prev, removedNode]));
+      setGraphEdges(prev => mergeGraphEdges(prev, removedEdges));
+      toast.error("Couldn't remove the concept — it was restored.");
+    });
   };
 
   // ────────── Entry screen (no active session) ──────────
@@ -1370,6 +1571,7 @@ function LearnInner() {
                 <button
                   key={m.id}
                   onClick={() => handleModeSwitch(m.id)}
+                  disabled={sessionEnded}
                   style={{
                     padding: "6px 14px",
                     borderRadius: "var(--r-full)",
@@ -1387,14 +1589,45 @@ function LearnInner() {
               <AIDisclaimerChip />
               <ModelToggle pref={modelPref} onChange={setModelPref} />
             </div>
+            {sessionEnded && (
+              // The server refused a turn with 409 (#762): this session is
+              // over. Say so and offer a fresh one on the same topic, instead
+              // of an error toast on every further message.
+              <div
+                data-testid="tutor-session-ended"
+                role="status"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  padding: "10px 32px",
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--bg-subtle)",
+                  fontSize: 13,
+                  color: "var(--text-dim)",
+                }}
+              >
+                <span>This session has ended. Start a new one to keep going.</span>
+                <button
+                  data-testid="tutor-session-ended-new"
+                  className="btn btn--primary btn--sm"
+                  onClick={() => beginSession(topic)}
+                >
+                  Start a new session
+                </button>
+              </div>
+            )}
             <ChatPanel
               messages={messages}
               onSend={send}
               onAction={handleAction}
-              disabled={sending || starting}
+              disabled={sending || starting || sessionEnded}
               streamingText={streamingText}
               streamingStatus={streamingStatus}
-              onStop={() => streamAbort.current?.abort()}
+              // A hint/confused/skip request can't be cancelled, so it gets
+              // the waiting bubble but no Stop.
+              onStop={actionPending ? undefined : () => streamAbort.current?.abort()}
               onRetry={handleRetry}
             />
           </div>

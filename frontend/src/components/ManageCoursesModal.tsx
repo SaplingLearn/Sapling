@@ -15,6 +15,7 @@ import {
   type OnboardingCourse,
 } from "@/lib/api";
 import { useActiveSemester, distinctTerms, courseInTerm } from "@/lib/useActiveSemester";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -57,17 +58,26 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
     };
   }, [open, onClose]);
 
+  // Latest query wins (#769). Clearing the debounce timer only stops a search
+  // that hasn't been SENT; one already in flight for an older query could
+  // land after the newer one and replace its results (and its finally could
+  // clear the newer search's spinner). The cleanup cancels it.
+  const searchReq = useLatestRequest();
   React.useEffect(() => {
     if (!open) return;
+    const run = searchReq.begin();
     const t = setTimeout(() => {
       setLoading(true);
       onboardingCoursesSearch(query)
-        .then(r => setResults(r.courses ?? []))
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
+        .then(r => { if (run.isCurrent()) setResults(r.courses ?? []); })
+        .catch(() => { if (run.isCurrent()) setResults([]); })
+        .finally(() => { if (run.isCurrent()) setLoading(false); });
     }, 200);
-    return () => clearTimeout(t);
-  }, [query, open]);
+    return () => {
+      clearTimeout(t);
+      searchReq.cancel();
+    };
+  }, [query, open, searchReq]);
 
   const enrolledIds = React.useMemo(() => new Set(courses.map(c => c.course_id)), [courses]);
   const enrolledTermById = React.useMemo(() => {
@@ -182,7 +192,16 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             {courses
               .filter((c) => courseInTerm(c, activeTerm))
               .map((c) => (
-                <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
+                <EnrolledRow
+                  key={c.course_id}
+                  userId={userId}
+                  course={c}
+                  // Remove drops the enrollment for the tab being viewed (or,
+                  // under "All semesters", the course's representative term)
+                  // — never every term's, which wiped past gradebooks (#766).
+                  dropTerm={activeTerm || c.term}
+                  onChanged={onChanged}
+                />
               ))}
           </div>
 
@@ -262,10 +281,11 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
 }
 
 function EnrolledRow({
-  userId, course, onChanged,
+  userId, course, dropTerm, onChanged,
 }: {
   userId: string;
   course: EnrolledCourse;
+  dropTerm?: string;
   onChanged: () => Promise<void> | void;
 }) {
   const toast = useToast();
@@ -292,7 +312,7 @@ function EnrolledRow({
 
   const doDelete = async () => {
     try {
-      await deleteCourse(userId, course.course_id);
+      await deleteCourse(userId, course.course_id, dropTerm || undefined);
       toast.success(`Removed ${course.course_code || course.course_name}`);
       await onChanged();
     } catch (err) {

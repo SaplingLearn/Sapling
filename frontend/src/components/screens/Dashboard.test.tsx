@@ -18,7 +18,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
@@ -30,8 +30,9 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+const userState = vi.hoisted(() => ({ name: "Ada" }));
 vi.mock("@/context/UserContext", () => ({
-  useUser: () => ({ userId: "u1", userReady: true, userName: "Ada" }),
+  useUser: () => ({ userId: "u1", userReady: true, userName: userState.name }),
 }));
 
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
@@ -85,6 +86,7 @@ function course(code: string, term: string): EnrolledCourse {
 
 beforeEach(() => {
   layoutState.pref = "topnav";
+  userState.name = "Ada";
   window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
@@ -181,5 +183,51 @@ describe("Dashboard upcoming assignments", () => {
 
     await waitFor(() => expect(screen.getAllByText("Problem Set 4").length).toBeGreaterThan(0));
     expect(screen.queryByText("Participation")).toBeNull();
+  });
+});
+
+describe("Dashboard async races (#769)", () => {
+  it("a slow load for the previous semester can't repaint over the newer one", async () => {
+    let resolveStale!: (v: { recommendations: { concept_name: string }[] }) => void;
+    vi.mocked(getRecommendations).mockImplementation(async (_u, semester) =>
+      semester === "Fall 2025"
+        ? { recommendations: [{ concept_name: "FRESH-REC" }] }
+        : new Promise(res => { resolveStale = res; }),
+    );
+
+    render(<Dashboard />);
+    await waitFor(() => expect(getRecommendations).toHaveBeenCalledWith("u1", undefined));
+
+    // Switch term while the All-semesters load is still out.
+    await act(async () => {
+      window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+      window.dispatchEvent(new Event("sapling-active-semester-change"));
+    });
+    expect(await screen.findByText("FRESH-REC")).toBeInTheDocument();
+
+    await act(async () => { resolveStale({ recommendations: [{ concept_name: "STALE-REC" }] }); });
+    expect(screen.queryByText("STALE-REC")).toBeNull();
+    expect(screen.getByText("FRESH-REC")).toBeInTheDocument();
+  });
+
+  it("the quote hides again while a CHANGED greeting re-types", async () => {
+    const { rerender } = render(<Dashboard />);
+    const quote = () => screen.getByRole("heading", { level: 1 }).nextElementSibling as HTMLElement;
+    await screen.findByText("My courses");
+    // Flush the hero's passive effects (the Typewriter's interval) first —
+    // advancing before they run would fast-forward nothing.
+    await act(async () => {});
+
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(quote()).toHaveAttribute("aria-hidden", "false");
+
+    // The name arrives/changes after the first greeting settled.
+    userState.name = "Grace Hopper";
+    rerender(<Dashboard />);
+    expect(quote()).toHaveAttribute("aria-hidden", "true");
+
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(quote()).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Grace");
   });
 });

@@ -4,7 +4,10 @@
  *
  * A `flag` is a backend `hide_<feature>` flag (services/feature_flags.py
  * NAV_FEATURES): "on" hides the destination from both navs, and
- * NavFeatureGate sends its routes to /dashboard. Dashboard has no flag; it is
+ * NavFeatureGate sends its routes to /dashboard; the backend also 404s the
+ * feature's own API (services/feature_flags.py NAV_FEATURE_API, #771), so a
+ * page that calls another feature's endpoint must be listed as an exemption
+ * there. Dashboard has no flag; it is
  * where a hidden feature's routes land. Pure data + string checks only.
  */
 export type NavItem = { href: string; label: string; icon: string; flag?: string };

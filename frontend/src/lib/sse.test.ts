@@ -181,6 +181,27 @@ describe('streamSSE', () => {
     expect((caught as { status?: number }).status).toBe(413);
   });
 
+  it('attaches the typed error code from the body envelope to the non-2xx throw (#762)', async () => {
+    // The tutor's ended-session refusal is a 409 whose body carries
+    // `error.code: "SESSION_ENDED"`; the stream ladder must see the code,
+    // exactly as fetchJSON's ApiError exposes it, not only the status.
+    mockFetchResponse(
+      makeStreamingResponse(
+        ['{"detail":"This tutoring session has ended. Start a new session to keep learning.","error":{"code":"SESSION_ENDED"}}'],
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await collect(streamSSE('/x', { method: 'POST' }));
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as { status?: number }).status).toBe(409);
+    expect((caught as { code?: string }).code).toBe('SESSION_ENDED');
+  });
+
   it('correctly splits events separated by \\r\\n\\r\\n with no junk leaking between blocks', async () => {
     const payload =
       'event: a\r\ndata: {"i":1}\r\n\r\n' +

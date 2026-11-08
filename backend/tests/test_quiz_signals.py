@@ -159,6 +159,43 @@ class TestGatherSignals:
             "in-flight must share #542's TTL, not define 'unfinished' again"
         )
 
+    def test_in_flight_counts_an_old_attempt_with_recent_answers(self):
+        """#760: the TTL is `_attempt_status`'s rule — created_at OR the newest
+        answer. An attempt generated two days ago and answered five minutes
+        ago is being worked on, and the rest of the app (get_attempt, history,
+        the sweep) says in_progress; created_at alone called it abandoned."""
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        reads = _Reads({
+            # fresh by created_at: 1
+            "quiz_attempts": ([{"id": "old-live"}, {"id": "old-dead"}], 1),
+            # only old-live has an answer inside the window (filtered by the
+            # query; the fake returns it as the DB would)
+            "quiz_responses": ([
+                {"attempt_id": "old-live", "answered_at": recent},
+                {"attempt_id": "old-live", "answered_at": recent},
+            ], 2),
+        })
+        with patch("services.quiz_signals.table", side_effect=reads):
+            s = gather_signals("u1", "node1", scope=_NO_SCOPE)
+
+        assert s.in_flight_attempts == 2, "1 fresh + 1 old-but-active, counted once"
+        old_read = [c for c in reads.calls["quiz_attempts"]
+                    if c["filters"].get("created_at", "").startswith("lt.")]
+        assert old_read, "the old open attempts must be read to check their activity"
+        assert old_read[0]["filters"]["completed_at"] == "is.null"
+        assert old_read[0]["filters"]["abandoned_at"] == "is.null"
+        assert old_read[0]["filters"]["concept_node_id"] == "eq.node1"
+        activity = reads.calls["quiz_responses"][0]["filters"]
+        assert activity["attempt_id"] == "in.(old-dead,old-live)"
+        assert activity["answered_at"].startswith("gte.")
+
+    def test_in_flight_skips_the_activity_read_when_nothing_is_old(self):
+        reads = _Reads({"quiz_attempts": ([], 3)})
+        with patch("services.quiz_signals.table", side_effect=reads):
+            s = gather_signals("u1", "node1", scope=_NO_SCOPE)
+        assert s.in_flight_attempts == 3
+        assert "quiz_responses" not in reads.calls
+
     def test_a_failing_read_degrades_to_unknown_not_zero(self):
         """None means 'we could not tell'; 0 is a fact about the student.
         Collapsing them would report 'never studied' for a broken query."""

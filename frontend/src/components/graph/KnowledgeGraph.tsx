@@ -1,125 +1,79 @@
 "use client";
 
 /**
- * KnowledgeGraph — wrapper that toggles between the 2D SVG/d3-force
- * and the 3D WebGL/three.js implementations.
+ * KnowledgeGraph — the sized, crash-contained slot every screen mounts the
+ * knowledge graph through. Renders the 2D SVG/d3-force graph plus the
+ * colour-mode toggle.
  *
- * Defaults to 2D. The mode is persisted in localStorage and synced
- * across mounted instances via the `storage` event plus a same-tab
- * custom event so toggling on one graph updates them all.
+ * Colour modes (`lib/graph/nodeStyle::GraphColorMode`):
+ *   - `course`  (default) — course colours, mastery tier as opacity.
+ *   - `mastery` — one colour per mastery tier, brown course hubs, edges that
+ *                 blend between their endpoints; a small legend explains it.
+ * The choice persists in localStorage and is synced across mounted graphs
+ * (the `storage` event for other tabs plus a same-tab custom event), so
+ * flipping it on one graph flips every graph.
  *
- * #538: the persisted mode is a WISH, not a command. Three r163+
- * throws from the WebGLRenderer constructor when WebGL2 is
- * unavailable, so the wrapper derives the EFFECTIVE mode from the
- * persisted wish + a capability probe, and contains any residual
- * renderer crash in a graph-local error boundary. The persisted
- * preference is never rewritten by capability or crashes — it survives
- * for the profile's WebGL-capable browsers.
+ * (A 3D WebGL/three.js mode used to live behind a 2D⇄3D toggle in this same
+ * corner; it was dropped. A stale `sapling.kg.mode` value is simply ignored.)
+ *
+ * The graph-local error boundary (#538) stays: a renderer failure degrades
+ * to a placeholder in place instead of unmounting the whole app into the
+ * root error page.
  */
 
 import React from "react";
-import dynamic from "next/dynamic";
 import type { GraphEdge, GraphNode } from "@/lib/data";
+import {
+  MASTERY_PALETTE,
+  TIER_LABEL,
+  type GraphColorMode,
+  type MasteryTier,
+} from "@/lib/graph/nodeStyle";
 import { KnowledgeGraph2D } from "./KnowledgeGraph2D";
 import { ErrorBoundary } from "../ErrorBoundary";
 
-// The 3D graph pulls in three.js + react-force-graph-3d + d3-force-3d.
-// Static-importing it bloats the OpenNext worker bundle past Cloudflare's
-// size limit even on paid plans. Lazy-load it (ssr:false) so the three.js
-// stack only enters the bundle as a client chunk when 3D mode is toggled.
-const KnowledgeGraph3D = dynamic(
-  () => import("./KnowledgeGraph3D").then((m) => m.KnowledgeGraph3D),
-  { ssr: false, loading: () => null },
-);
+// Exported for the unit tests; e2e journeys mirror the literal by comment
+// convention (they cannot import from src/).
+export const GRAPH_COLOR_STORAGE_KEY = "sapling.kg.colors";
+export const GRAPH_COLOR_SYNC_EVENT = "sapling:kg-colors-change";
 
-type Mode = "2d" | "3d";
+function parseMode(v: unknown): GraphColorMode {
+  return v === "mastery" ? "mastery" : "course";
+}
 
-// Exported for the unit tests; the e2e journey mirrors the literals by
-// comment convention (it cannot import from src/).
-export const GRAPH_MODE_STORAGE_KEY = "sapling.kg.mode";
-export const GRAPH_MODE_SYNC_EVENT = "sapling:kg-mode-change";
-const STORAGE_KEY = GRAPH_MODE_STORAGE_KEY;
-const SYNC_EVENT = GRAPH_MODE_SYNC_EVENT;
-
-function readMode(): Mode {
-  if (typeof window === "undefined") return "2d";
+function readColorMode(): GraphColorMode {
   try {
-    const v = window.localStorage.getItem(STORAGE_KEY);
-    return v === "3d" ? "3d" : "2d";
+    return parseMode(window.localStorage.getItem(GRAPH_COLOR_STORAGE_KEY));
   } catch {
-    return "2d";
+    return "course";
   }
 }
 
-/**
- * Three r163+ requires WebGL2 and THROWS from the WebGLRenderer
- * constructor when the context can't be created (#538) — so the 3D
- * variant must never mount unless a webgl2 context is actually
- * obtainable. The verdict is memoized module-wide (a real probe is a
- * 5–50ms GPU-process handshake — slowest exactly on the software-
- * rasterized machines this gate protects); `force` re-probes, and the
- * crash-containment path uses it as the one signal that capability may
- * have changed since the cache was primed. The probe context is
- * released via WEBGL_lose_context so probes never count toward the
- * browser's per-page live-context cap.
- */
-let webgl2Verdict: boolean | null = null;
-export function probeWebgl2(force = false): boolean {
-  if (!force && webgl2Verdict !== null) return webgl2Verdict;
-  try {
-    const ctx = document.createElement("canvas").getContext("webgl2");
-    if (ctx) {
-      ctx.getExtension?.("WEBGL_lose_context")?.loseContext();
-      webgl2Verdict = true;
-    } else {
-      webgl2Verdict = false;
-    }
-  } catch {
-    webgl2Verdict = false;
-  }
-  return webgl2Verdict;
-}
-
-function writeMode(mode: Mode) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, mode);
-  } catch {
-    // ignore quota / privacy mode failures — toggle still works in-tab
-  }
-  window.dispatchEvent(new CustomEvent<Mode>(SYNC_EVENT, { detail: mode }));
-}
-
-/**
- * The raw persisted/synced mode — deliberately UNGATED. Capability
- * gating happens exactly once, where the wrapper derives `effective`
- * from this wish at render; gating the listeners or the setter would
- * re-encode the same rule in three places (and rewrite state the
- * ignore-don't-rewrite contract says to leave alone).
- */
-function useGraphMode(): [Mode, (m: Mode) => void] {
-  // SSR returns "2d"; client may compute the same. The wrapper renders
-  // identical markup at first paint either way, so no hydration mismatch.
-  const [mode, setMode] = React.useState<Mode>("2d");
+function useGraphColorMode(): [GraphColorMode, (m: GraphColorMode) => void] {
+  // SSR and the first client paint both render "course", so hydration
+  // matches; the effect then applies the stored choice.
+  const [mode, setMode] = React.useState<GraphColorMode>("course");
   React.useEffect(() => {
-    setMode(readMode());
+    setMode(readColorMode());
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY) return;
-      setMode(e.newValue === "3d" ? "3d" : "2d");
+      if (e.key === GRAPH_COLOR_STORAGE_KEY) setMode(parseMode(e.newValue));
     };
-    const onCustom = (e: Event) => {
-      const detail = (e as CustomEvent<Mode>).detail;
-      if (detail === "2d" || detail === "3d") setMode(detail);
-    };
+    const onSync = (e: Event) => setMode(parseMode((e as CustomEvent).detail));
     window.addEventListener("storage", onStorage);
-    window.addEventListener(SYNC_EVENT, onCustom);
+    window.addEventListener(GRAPH_COLOR_SYNC_EVENT, onSync);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener(SYNC_EVENT, onCustom);
+      window.removeEventListener(GRAPH_COLOR_SYNC_EVENT, onSync);
     };
   }, []);
-  const update = React.useCallback((next: Mode) => {
+  const update = React.useCallback((next: GraphColorMode) => {
     setMode(next);
-    writeMode(next);
+    try {
+      window.localStorage.setItem(GRAPH_COLOR_STORAGE_KEY, next);
+    } catch {
+      // quota / privacy mode — the toggle still works for this page
+    }
+    window.dispatchEvent(new CustomEvent(GRAPH_COLOR_SYNC_EVENT, { detail: next }));
   }, []);
   return [mode, update];
 }
@@ -136,51 +90,44 @@ type Props = {
   zoomControlsTop?: number;
 };
 
-const SR_ONLY: React.CSSProperties = {
+const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
+
+const PANEL: React.CSSProperties = {
   position: "absolute",
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: "hidden",
-  clip: "rect(0,0,0,0)",
-  whiteSpace: "nowrap",
-  border: 0,
+  left: 12,
+  background: "var(--bg-panel)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-sm)",
+  boxShadow: "var(--shadow-sm)",
+  zIndex: 5,
 };
 
+/** Four overlapping tier dots — the toggle's glyph. */
+function PaletteGlyph() {
+  return (
+    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" style={{ display: "block" }}>
+      {TIERS.map((t, i) => (
+        <circle key={t} cx={5 + i * 4} cy={6} r={4.5} fill={MASTERY_PALETTE[t]} />
+      ))}
+    </svg>
+  );
+}
+
 /**
- * Crash fallback for the graph slot (#538). Renders a static
- * placeholder — NEVER another graph component: an error thrown while
- * rendering a boundary's own fallback cannot be caught by that
- * boundary and would escape to the root error page, the exact
- * whole-app collapse this wrapper exists to prevent. Recovery instead
- * flows through the parent: `onCrash` re-probes capability pre-paint,
- * and if WebGL2 is really gone the parent's `effective` mode flips,
- * changing the boundary's key and mounting the 2D graph inside a
- * FRESH boundary. For transient crashes the placeholder stays up with
- * the boundary's own reset wired to "Try again".
+ * Crash fallback for the graph slot. Renders a static placeholder — NEVER
+ * another graph component: an error thrown while rendering a boundary's own
+ * fallback cannot be caught by that boundary and would escape to the root
+ * error page, the exact whole-app collapse this wrapper exists to prevent.
  */
-function GraphCrashFallback({
-  crashedMode,
-  error,
-  reset,
-  onCrash,
-}: {
-  crashedMode: Mode;
-  error: Error;
-  reset: () => void;
-  onCrash: (crashed: Mode, error: unknown) => void;
-}) {
+function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void }) {
   const fired = React.useRef(false);
-  // Layout effect: pre-paint, so a capability downgrade swaps in the 2D
-  // graph without a painted placeholder flash — and the discarded
-  // fallback never boots a graph, keeping test-mode PRNG consumption
-  // identical to a clean load.
-  React.useLayoutEffect(() => {
+  React.useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    onCrash(crashedMode, error);
-  }, [crashedMode, error, onCrash]);
+    // The shared ErrorBoundary only logs outside production; graph crashes
+    // at real users must stay operationally visible.
+    console.error("[KnowledgeGraph] renderer crashed:", error);
+  }, [error]);
   return (
     <div
       role="status"
@@ -210,96 +157,72 @@ function GraphCrashFallback({
 }
 
 export function KnowledgeGraph(props: Props) {
-  const [mode, setMode] = useGraphMode();
-  // Optimistic `true` matches the SSR markup; the mount effect corrects
-  // it in the same effect flush that first moves `mode` off "2d", so the
-  // 3D renderer can never mount against an unprobed verdict.
-  const [webglOk, setWebglOk] = React.useState(true);
-  React.useEffect(() => {
-    setWebglOk(probeWebgl2());
-  }, []);
-
-  // THE one encoding of the #538 rule: a persisted/synced "3d" wish is
-  // ignored — not rewritten — while WebGL2 is unavailable.
-  const effective: Mode = webglOk ? mode : "2d";
-  const next: Mode = effective === "2d" ? "3d" : "2d";
   const { width = 800, height = 480 } = props;
-  const descId = React.useId();
-
-  const handleCrash = React.useCallback((crashed: Mode, error: unknown) => {
-    // The shared ErrorBoundary only logs outside production; graph
-    // crashes at real users must stay operationally visible.
-    console.error(
-      `[KnowledgeGraph] ${crashed.toUpperCase()} renderer crashed:`,
-      error,
-    );
-    // A 3D crash is the one signal the cached capability verdict may be
-    // stale (GPU process died, context cap hit): re-probe. Really gone →
-    // `effective` flips to 2D, preference untouched. Still fine → the
-    // crash was transient; the placeholder + retry handle it.
-    if (crashed === "3d") setWebglOk(probeWebgl2(true));
-  }, []);
-
+  const [colorMode, setColorMode] = useGraphColorMode();
+  const mastery = colorMode === "mastery";
   return (
     <div data-testid="graph-container" style={{ position: "relative", width, height }}>
-      {/* Local boundary so a renderer failure degrades in place instead
-          of unmounting the whole app into the root fallback (#538).
-          Keyed by the EFFECTIVE mode: a capability downgrade or a mode
-          toggle remounts a fresh boundary, so an errored slot never
-          wedges the other renderer. */}
-      <ErrorBoundary
-        key={effective}
-        fallback={(error, reset) => (
-          <GraphCrashFallback
-            crashedMode={effective}
-            error={error}
-            reset={reset}
-            onCrash={handleCrash}
-          />
-        )}
-      >
-        {effective === "2d" ? (
-          <KnowledgeGraph2D {...props} />
-        ) : (
-          <KnowledgeGraph3D {...props} />
-        )}
+      <ErrorBoundary fallback={(error, reset) => <GraphCrashFallback error={error} reset={reset} />}>
+        <KnowledgeGraph2D {...props} colorMode={colorMode} />
       </ErrorBoundary>
       <button
         type="button"
-        data-testid="graph-mode-toggle"
+        data-testid="graph-color-toggle"
         className="btn btn--ghost btn--sm"
-        onClick={() => {
-          if (webglOk) setMode(next);
-        }}
-        // aria-disabled, NOT native disabled: a natively disabled button
-        // leaves the tab order, making the "requires WebGL" reason
-        // unreachable to keyboard and screen-reader users. The accessible
-        // NAME stays the action; the reason rides aria-describedby.
-        aria-disabled={!webglOk}
-        aria-describedby={webglOk ? undefined : descId}
-        title={webglOk ? `Switch to ${next.toUpperCase()} graph` : "3D requires WebGL"}
-        aria-label={`Switch to ${next.toUpperCase()} graph`}
+        // Constant name + aria-pressed: the label says what the switch
+        // turns on, the pressed state says whether it is on.
+        aria-pressed={mastery}
+        title={mastery ? "Back to course colors" : "Color nodes by mastery"}
+        onClick={() => setColorMode(mastery ? "course" : "mastery")}
         style={{
-          position: "absolute",
+          ...PANEL,
           top: 12,
-          left: 12,
-          padding: "2px 10px",
-          fontFamily: "var(--font-mono)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "3px 8px",
           fontSize: 11,
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          boxShadow: "var(--shadow-sm)",
-          zIndex: 5,
-          ...(webglOk ? null : { opacity: 0.55, cursor: "not-allowed" }),
+          ...(mastery
+            ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
+            : null),
         }}
       >
-        {effective.toUpperCase()}
+        <PaletteGlyph />
+        <span>Mastery colors</span>
       </button>
-      {!webglOk && (
-        <span id={descId} style={SR_ONLY}>
-          3D requires WebGL, which this browser doesn&apos;t have available.
-        </span>
+      {mastery && (
+        <ul
+          data-testid="graph-color-legend"
+          aria-label="Mastery colors"
+          style={{
+            ...PANEL,
+            bottom: 12,
+            listStyle: "none",
+            margin: 0,
+            padding: "6px 10px",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "4px 12px",
+            fontSize: 11,
+            color: "var(--text-dim)",
+            maxWidth: width - 24,
+          }}
+        >
+          {TIERS.map((t) => (
+            <li key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: "50%",
+                  background: MASTERY_PALETTE[t],
+                }}
+              />
+              {TIER_LABEL[t]}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

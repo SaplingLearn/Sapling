@@ -7,14 +7,18 @@ import { RoleBadge } from "./RoleBadge";
 import { Icon } from "./Icon";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { fetchFriends, fetchFriendRequests, sendFriendRequest } from "@/lib/api";
+import {
+  fetchFriends, fetchFriendRequests, sendFriendRequest, acceptFriendRequest, cancelFriendRequest,
+} from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
 import type { UserProfile } from "@/lib/types";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css).
 const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
 
-type FriendStatus = "loading" | "friends" | "pending" | "eligible";
+// "pending" = the viewer sent a request; "incoming" = this profile sent the
+// viewer one (#764: that used to render a plain "Add friend" that 409d).
+type FriendStatus = "loading" | "friends" | "pending" | "incoming" | "eligible";
 
 /**
  * The add-friend action on someone else's profile. `fetchFriends` is
@@ -30,28 +34,54 @@ export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
   const { userId: viewerId } = useUser();
   const toast = useToast();
   const [status, setStatus] = React.useState<FriendStatus>("loading");
+  // The request behind "pending"/"incoming" — what Cancel/Accept act on.
+  const [requestId, setRequestId] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  // #764: a different profile starts from "loading", never from the last
+  // profile's status (React's adjust-state-during-render pattern).
+  const [statusFor, setStatusFor] = React.useState(profileUserId);
+  if (statusFor !== profileUserId) {
+    setStatusFor(profileUserId);
+    setStatus("loading");
+    setRequestId(null);
+  }
+  // A response for a profile we have since navigated away from must not
+  // land on the new one (ProfileView also keys this component by profile id).
+  const latestProfile = React.useRef(profileUserId);
+  React.useEffect(() => { latestProfile.current = profileUserId; }, [profileUserId]);
 
   const checkStatus = React.useCallback(async () => {
     if (!viewerId || viewerId === profileUserId) return;
+    const apply = (next: FriendStatus, id: string | null = null) => {
+      if (latestProfile.current !== profileUserId) return;
+      setStatus(next);
+      setRequestId(id);
+    };
     try {
       const [friendsRes, requestsRes] = await Promise.all([
         fetchFriends(viewerId),
         fetchFriendRequests(viewerId),
       ]);
       if (friendsRes.friends.some((f) => f.user_id === profileUserId)) {
-        setStatus("friends");
+        apply("friends");
         return;
       }
-      if (requestsRes.outgoing.some((r) => r.to_user_id === profileUserId)) {
-        setStatus("pending");
+      const incoming = requestsRes.incoming.find((r) => r.from_user_id === profileUserId);
+      if (incoming) {
+        apply("incoming", incoming.id);
         return;
       }
-      setStatus("eligible");
+      const outgoing = requestsRes.outgoing.find((r) => r.to_user_id === profileUserId);
+      if (outgoing) {
+        apply("pending", outgoing.id);
+        return;
+      }
+      apply("eligible");
     } catch {
       // Couldn't confirm status. Default to eligible rather than hiding the
       // action entirely — a stale "Add friend" that 409s is recoverable via
       // the toast in send(), unlike a button that silently never shows up.
-      setStatus("eligible");
+      apply("eligible");
     }
   }, [viewerId, profileUserId]);
 
@@ -63,7 +93,8 @@ export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
     if (!viewerId || status !== "eligible") return;
     setStatus("pending");
     try {
-      await sendFriendRequest(viewerId, profileUserId);
+      const res = await sendFriendRequest(viewerId, profileUserId);
+      setRequestId(res?.request?.id ?? null);
       toast.success("Friend request sent");
     } catch (err) {
       // 409 means already friends, or a request is already pending in a
@@ -74,12 +105,69 @@ export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
     }
   };
 
+  // Accept / Cancel: on success go straight to the new state; on a lost race
+  // (409/404) show the server's reason and resync.
+  const respond = async (action: "accept" | "cancel") => {
+    if (!viewerId || !requestId || busy) return;
+    setBusy(true);
+    try {
+      if (action === "accept") {
+        await acceptFriendRequest(requestId, viewerId);
+        toast.success("Friend request accepted");
+        setStatus("friends");
+      } else {
+        await cancelFriendRequest(requestId, viewerId);
+        toast.success("Friend request cancelled");
+        setStatus("eligible");
+      }
+      setRequestId(null);
+    } catch (err) {
+      toast.error(humanizeError(
+        err, action === "accept" ? "Couldn't accept that request." : "Couldn't cancel that request.",
+      ));
+      await checkStatus();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!viewerId || viewerId === profileUserId || status === "loading") return null;
 
   if (status === "friends") {
     return (
       <span className="chip chip--accent" data-testid="profile-friend-status">
         Friends
+      </span>
+    );
+  }
+
+  if (status === "incoming") {
+    return (
+      <button
+        data-testid="profile-accept-friend"
+        className="btn btn--sm btn--primary"
+        disabled={busy}
+        onClick={() => respond("accept")}
+      >
+        <Icon name="check" size={12} /> Accept friend request
+      </button>
+    );
+  }
+
+  if (status === "pending" && requestId) {
+    return (
+      <span style={{ display: "inline-flex", gap: 6 }}>
+        <button data-testid="profile-add-friend" className="btn btn--sm btn--primary" disabled>
+          Request sent
+        </button>
+        <button
+          data-testid="profile-cancel-friend-request"
+          className="btn btn--sm btn--ghost"
+          disabled={busy}
+          onClick={() => respond("cancel")}
+        >
+          Cancel
+        </button>
       </span>
     );
   }
@@ -123,7 +211,7 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
       }}
     >
       <div style={{ position: "absolute", top: "var(--pad-lg)", right: "var(--pad-lg)" }}>
-        <AddFriendAction profileUserId={profile.id} />
+        <AddFriendAction key={profile.id} profileUserId={profile.id} />
       </div>
       <div>
         <AvatarFrame

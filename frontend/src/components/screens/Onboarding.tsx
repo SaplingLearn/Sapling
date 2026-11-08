@@ -13,6 +13,7 @@ import {
   type OnboardingProfilePayload,
 } from "@/lib/api";
 import { onboardingRedirect } from "@/lib/localSeed";
+import { statusOf } from "@/lib/errorMessage";
 
 type LearningStyleId = OnboardingProfilePayload["learning_style"];
 
@@ -28,7 +29,14 @@ const LEARNING_STYLES: { id: LearningStyleId; title: string; description: string
   { id: "mixed",    title: "A mix of all",    description: "I learn best through a blend of modes.",                          icon: "sparkle" },
 ];
 
-const DRAFT_KEY = "sapling_onboarding_draft";
+/** The pre-#757 key, shared by every account on the browser: one student's
+ * half-finished draft prefilled the next one's form. Never read; dropped. */
+const LEGACY_DRAFT_KEY = "sapling_onboarding_draft";
+
+/** The draft lives per account (#757). */
+export function onboardingDraftKey(userId: string): string {
+  return `${LEGACY_DRAFT_KEY}:${userId}`;
+}
 
 interface Draft {
   first_name: string;
@@ -56,10 +64,11 @@ const EMPTY_DRAFT: Draft = {
   step: 0,
 };
 
-function loadDraft(): Draft {
+function loadDraft(userId: string): Draft {
   if (typeof window === "undefined") return EMPTY_DRAFT;
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    localStorage.removeItem(LEGACY_DRAFT_KEY);
+    const raw = localStorage.getItem(onboardingDraftKey(userId));
     if (!raw) return EMPTY_DRAFT;
     const parsed = JSON.parse(raw);
     return { ...EMPTY_DRAFT, ...parsed };
@@ -76,7 +85,10 @@ export function Onboarding() {
   const toast = useToast();
 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [hydrated, setHydrated] = useState(false);
+  // Whose draft is in state. Saving only when it matches the signed-in user
+  // keeps one account's answers from being written under another's key in
+  // the render between a user switch and the re-hydrate.
+  const [hydratedFor, setHydratedFor] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // #715: on a local backend this account is getting (or has) the sample
@@ -88,20 +100,21 @@ export function Onboarding() {
   }, [router]);
 
   useEffect(() => {
-    const d = loadDraft();
+    if (!userId) return;
+    const d = loadDraft(userId);
     const [first, ...rest] = (userName || "").split(" ");
-    setDraft(prev => ({
+    setDraft({
       ...d,
-      first_name: d.first_name || first || prev.first_name,
-      last_name: d.last_name || rest.join(" ") || prev.last_name,
-    }));
-    setHydrated(true);
-  }, [userName]);
+      first_name: d.first_name || first || "",
+      last_name: d.last_name || rest.join(" ") || "",
+    });
+    setHydratedFor(userId);
+  }, [userId, userName]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch {}
-  }, [draft, hydrated]);
+    if (!hydratedFor || hydratedFor !== userId) return;
+    try { localStorage.setItem(onboardingDraftKey(hydratedFor), JSON.stringify(draft)); } catch {}
+  }, [draft, hydratedFor, userId]);
 
   useEffect(() => {
     if (!userReady) return;
@@ -159,10 +172,17 @@ export function Onboarding() {
         course_ids: draft.course_ids,
         learning_style: draft.learning_style,
       });
-      localStorage.removeItem(DRAFT_KEY);
+      try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
       toast.success("Welcome to Sapling!");
       router.replace("/dashboard");
     } catch (err) {
+      if (statusOf(err) === 409) {
+        // #757: this account already finished onboarding (another tab, or a
+        // stale page); the server keeps the profile it has. Nothing to save.
+        try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
+        router.replace("/dashboard");
+        return;
+      }
       toast.error(err instanceof Error ? err.message : "Failed to save profile. Please try again.");
     } finally {
       setSubmitting(false);

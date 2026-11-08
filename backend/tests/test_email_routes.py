@@ -154,26 +154,36 @@ def test_send_failure_never_fails_the_signup(monkeypatch):
     assert r.status_code == 200
 
 
-def test_single_approve_enqueues_youre_in(sent):
-    with patch("routes.admin.table") as t, \
-         patch("routes.admin.log_admin_action"):
-        t.return_value.upsert.return_value = [{"email": "A@B.co"}]
+def test_single_approve_enqueues_youre_in(monkeypatch, sent):
+    factory, made = _factory()
+    stored = {"id": "w1", "email": "A@B.co", "approved_at": None}
+    made_rows = factory("newsletter_emails")
+    made_rows.select.return_value = [stored]
+    monkeypatch.setattr("routes.admin.table", factory)
+    monkeypatch.setattr("routes.auth.table", factory)
+    with patch("routes.admin.log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.co"})
     assert r.status_code == 200
-    assert r.json() == {"email": {"email": "A@B.co"}}  # response unchanged
+    assert r.json() == {"email": stored}
     kw = sent.call_args.kwargs
     assert kw["kind"] == "waitlist_approved"
     assert kw["dedupe_key"] == f"waitlist_approved:{_h('a@b.co')}"
+    assert kw["to"] == "A@B.co"  # the stored spelling
 
 
-def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(sent):
+def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(monkeypatch, sent):
     from services.encryption import encrypt
-    with patch("routes.admin.table") as t, \
-         patch("routes.admin.log_admin_action"):
-        t.return_value.upsert.return_value = [{"email": "a@bu.edu", "first_name": encrypt("Ada")}]
+    factory, made = _factory()
+    factory("newsletter_emails").select.return_value = [
+        {"id": "w1", "email": "a@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
+    ]
+    monkeypatch.setattr("routes.admin.table", factory)
+    monkeypatch.setattr("routes.auth.table", factory)
+    with patch("routes.admin.log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
     assert r.status_code == 200
-    assert r.json() == {"email": {"email": "a@bu.edu"}}  # no first_name, encrypted or not
+    # no first_name, encrypted or not
+    assert r.json() == {"email": {"id": "w1", "email": "a@bu.edu", "approved_at": None}}
     kw = sent.call_args.kwargs
     assert kw["subject"] == "Your Sapling spot is ready"
     assert "Your spot is ready, Ada!" in kw["html"] and "Your spot is ready, Ada!" in kw["text"]
@@ -426,7 +436,8 @@ def test_create_broadcast_returns_202_and_sends_in_background(audience_tables):
         "failed_count": 0, "created_at": "2026-10-22T00:00:00Z", "sent_at": None,
         "created_by": "user_andres",
     }
-    admin_email.table("email_broadcasts").insert.return_value = [row]
+    # The DB hands back what was inserted (incl. the fresh heartbeat).
+    admin_email.table("email_broadcasts").insert.side_effect = lambda data: [{**row, **data}]
     with patch("routes.admin_email.run_broadcast") as run, \
          patch("routes.admin_email.log_admin_action") as audit:
         r = client.post("/api/admin/email/broadcasts",
@@ -437,9 +448,12 @@ def test_create_broadcast_returns_202_and_sends_in_background(audience_tables):
     assert set(broadcast) == {
         "id", "subject", "audience", "status", "recipient_count", "sent_count",
         "skipped_count", "failed_count", "created_at", "sent_at", "created_by",
+        "heartbeat_at", "stale", "resumable",
     }
+    assert broadcast["stale"] is False and broadcast["resumable"] is False
     inserted = admin_email.table("email_broadcasts").insert.call_args.args[0]
     assert inserted["recipient_count"] == 3 and inserted["created_by"] == "user_andres"
+    assert inserted["heartbeat_at"]
     args = run.call_args.args
     assert args[0] == "b1" and sorted(a.lower() for a in args[3]) == [
         "approved@bu.edu", "joined@bu.edu", "pending@bu.edu",
@@ -462,9 +476,12 @@ def test_run_broadcast_counts_and_final_status(monkeypatch):
     assert keys == [f"broadcast:b1:{_h(a)}" for a in recipients]
     assert all(c.kwargs["broadcast_id"] == "b1" for c in send.call_args_list)
     updates = [c.args[0] for c in made["email_broadcasts"].update.call_args_list]
-    assert updates[0] == {"sent_count": 1, "skipped_count": 1, "failed_count": 0}  # after 2
+    assert all(u["heartbeat_at"] for u in updates)  # every write is a heartbeat
+    first = {k: v for k, v in updates[0].items() if k != "heartbeat_at"}
+    assert first == {"sent_count": 1, "skipped_count": 1, "failed_count": 0}  # after 2
     final = updates[-1]
-    assert final["status"] == "sent" and final["sent_at"]
+    # Some went out and one failed: that is `partial`, not `sent`.
+    assert final["status"] == "partial" and final["sent_at"]
     assert (final["sent_count"], final["skipped_count"], final["failed_count"]) == (1, 3, 1)
 
 
@@ -486,8 +503,218 @@ def test_run_broadcast_survives_a_crashing_send(monkeypatch):
                         MagicMock(side_effect=[RuntimeError("boom"), "sent"]))
     admin_email.run_broadcast("b1", "S", "B", ["a@bu.edu", "b@bu.edu"])
     final = made["email_broadcasts"].update.call_args.args[0]
-    assert final["status"] == "sent"
+    assert final["status"] == "partial"
     assert (final["sent_count"], final["failed_count"]) == (1, 1)
+
+
+@pytest.mark.parametrize("statuses,expected", [
+    (["sent", "sent"], "sent"),
+    (["skipped", "skipped"], "skipped"),  # kill switch: nothing went out, nothing failed
+    (["suppressed", "opted_out"], "skipped"),
+    (["sent", "duplicate"], "sent"),
+    ([], "skipped"),  # empty audience
+])
+def test_run_broadcast_status_is_honest(monkeypatch, statuses, expected):
+    from routes import admin_email
+    factory, made = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    monkeypatch.setattr(email_service, "send_email", MagicMock(side_effect=list(statuses)))
+    admin_email.run_broadcast("b1", "S", "B", [f"u{i}@bu.edu" for i in range(len(statuses))])
+    assert made["email_broadcasts"].update.call_args.args[0]["status"] == expected
+
+
+def test_run_broadcast_crash_after_mail_went_out_is_partial_not_failed(monkeypatch):
+    from routes import admin_email
+    factory, made = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    monkeypatch.setattr(email_service, "send_email", MagicMock(return_value="sent"))
+    calls = {"n": 0}
+
+    def _monotonic():
+        # 1: the run's start; 2: the progress check after the first send.
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("run died")
+        return 0.0
+    monkeypatch.setattr(admin_email.time, "monotonic", _monotonic)
+    admin_email.run_broadcast("b1", "S", "B", ["a@bu.edu", "b@bu.edu", "c@bu.edu"])
+    final = made["email_broadcasts"].update.call_args.args[0]
+    assert final["status"] == "partial" and final["sent_count"] == 1
+
+
+def test_run_broadcast_crash_before_anything_went_out_is_failed(monkeypatch):
+    from routes import admin_email
+    factory, made = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    monkeypatch.setattr(admin_email, "_names", MagicMock(side_effect=RuntimeError("db")))
+    admin_email.run_broadcast("b1", "{{first_name}}", "B", ["a@bu.edu"])
+    assert made["email_broadcasts"].update.call_args.args[0]["status"] == "failed"
+
+
+def test_resumed_run_counts_earlier_runs_sends_from_the_ledger(monkeypatch):
+    from routes import admin_email
+    factory, made = _factory()
+    # Two of three were mailed by the run a deploy killed; they come back
+    # `duplicate` now. The ledger, read at the end, has all three as sent.
+    factory("email_sends").select_with_count.return_value = _paged(
+        [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}],
+    )
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    monkeypatch.setattr(email_service, "send_email",
+                        MagicMock(side_effect=["duplicate", "duplicate", "sent"]))
+    admin_email.run_broadcast("b1", "S", "B", ["a@bu.edu", "b@bu.edu", "c@bu.edu"], resumed=True)
+    final = made["email_broadcasts"].update.call_args.args[0]
+    assert final["status"] == "sent"
+    assert (final["sent_count"], final["skipped_count"], final["failed_count"]) == (3, 0, 0)
+    call = made["email_sends"].select_with_count.call_args
+    assert call.kwargs["filters"] == {"broadcast_id": "eq.b1", "status": "eq.sent"}
+
+
+def test_run_broadcast_heartbeats_on_time_too(monkeypatch):
+    from routes import admin_email
+    factory, made = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    monkeypatch.setattr(email_service, "send_email", MagicMock(return_value="sent"))
+    clock = iter(float(t) for t in range(0, 10_000, 100))
+    monkeypatch.setattr(admin_email.time, "monotonic", lambda: next(clock))
+    admin_email.run_broadcast("b1", "S", "B", ["a@bu.edu", "b@bu.edu", "c@bu.edu"])
+    # PROGRESS_EVERY is 25, but a slow run still writes after each slow step:
+    # two progress writes (after 1 and 2) plus the final one.
+    assert made["email_broadcasts"].update.call_count == 3
+
+
+# ── Stale / resume ──────────────────────────────────────────────────────────
+
+BID = "11111111-1111-1111-1111-111111111111"
+
+
+def _broadcast_row(**over):
+    row = {
+        "id": BID, "subject": "News", "body": "Hello", "audience": "waitlist_all",
+        "status": "sending", "recipient_count": 3, "sent_count": 1, "skipped_count": 0,
+        "failed_count": 0, "created_at": "2026-10-22T00:00:00Z", "sent_at": None,
+        "created_by": "user_andres", "heartbeat_at": "2026-10-22T00:00:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_list_flags_a_sending_broadcast_with_no_heartbeat_as_stale(monkeypatch):
+    from datetime import datetime, timezone
+    factory, _ = _factory()
+    fresh = datetime.now(timezone.utc).isoformat()
+    factory("email_broadcasts").select.return_value = [
+        _broadcast_row(id="old"),
+        _broadcast_row(id="live", heartbeat_at=fresh),
+        _broadcast_row(id="part", status="partial"),
+        _broadcast_row(id="done", status="sent"),
+    ]
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    rows = {b["id"]: b for b in client.get("/api/admin/email/broadcasts").json()["broadcasts"]}
+    assert (rows["old"]["stale"], rows["old"]["resumable"]) == (True, True)
+    assert (rows["live"]["stale"], rows["live"]["resumable"]) == (False, False)
+    assert (rows["part"]["stale"], rows["part"]["resumable"]) == (False, True)
+    assert (rows["done"]["stale"], rows["done"]["resumable"]) == (False, False)
+
+
+def test_resume_reclaims_a_stale_broadcast_and_reruns_through_dedupe(audience_tables):
+    from routes import admin_email
+    bt = admin_email.table("email_broadcasts")
+    bt.select.return_value = [_broadcast_row()]
+    bt.update.return_value = [_broadcast_row(heartbeat_at="2026-11-06T00:00:00Z")]
+    with patch("routes.admin_email.run_broadcast") as run, \
+         patch("routes.admin_email.log_admin_action") as audit:
+        r = client.post(f"/api/admin/email/broadcasts/{BID}/resume")
+    assert r.status_code == 202
+    claim = bt.update.call_args
+    assert claim.args[0]["status"] == "sending" and claim.args[0]["recipient_count"] == 3
+    f = claim.kwargs["filters"]
+    assert f["id"] == f"eq.{BID}"
+    assert f["or"].startswith("(status.in.(failed,partial),and(status.eq.sending,heartbeat_at.lt.")
+    args, kwargs = run.call_args
+    assert args[0] == BID and kwargs == {"resumed": True}
+    assert sorted(a.lower() for a in args[3]) == ["approved@bu.edu", "joined@bu.edu", "pending@bu.edu"]
+    assert audit.call_args.kwargs["action"] == "email.broadcast_resume"
+
+
+def test_resume_refuses_a_live_or_finished_broadcast(audience_tables):
+    from datetime import datetime, timezone
+    from routes import admin_email
+    bt = admin_email.table("email_broadcasts")
+    for row in (
+        _broadcast_row(heartbeat_at=datetime.now(timezone.utc).isoformat()),
+        _broadcast_row(status="sent"),
+        _broadcast_row(status="skipped"),
+    ):
+        bt.select.return_value = [row]
+        with patch("routes.admin_email.run_broadcast") as run:
+            r = client.post(f"/api/admin/email/broadcasts/{BID}/resume")
+        assert r.status_code == 409
+        run.assert_not_called()
+    bt.update.assert_not_called()
+
+
+def test_resume_lost_race_is_409(audience_tables):
+    from routes import admin_email
+    bt = admin_email.table("email_broadcasts")
+    bt.select.return_value = [_broadcast_row(status="failed")]
+    bt.update.return_value = []  # another click claimed it first
+    with patch("routes.admin_email.run_broadcast") as run:
+        r = client.post(f"/api/admin/email/broadcasts/{BID}/resume")
+    assert r.status_code == 409
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("bid", ["nope", "11111111-1111-1111-1111-111111111112"])
+def test_resume_unknown_broadcast_is_404(monkeypatch, bid):
+    factory, _ = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    assert client.post(f"/api/admin/email/broadcasts/{bid}/resume").status_code == 404
+
+
+# ── Un-suppress ─────────────────────────────────────────────────────────────
+
+
+def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch):
+    factory, made = _factory()
+    factory("email_suppressions").delete.return_value = [{"recipient_hash": _h("a@bu.edu")}]
+    monkeypatch.setattr(email_service, "table", factory)
+    with patch("routes.admin_email.log_admin_action") as audit:
+        r = client.post("/api/admin/email/suppressions/remove", json={"email": "  A@BU.edu "})
+    assert r.status_code == 200 and r.json() == {"removed": True}
+    assert made["email_suppressions"].delete.call_args.kwargs["filters"] == {
+        "recipient_hash": f"eq.{_h('a@bu.edu')}",
+    }
+    kw = audit.call_args.kwargs
+    assert kw["action"] == "email.unsuppress" and kw["target_id"] == _h("a@bu.edu")
+    assert "bu.edu" not in repr(kw).lower()
+
+
+def test_unsuppress_not_on_the_list(monkeypatch):
+    factory, _ = _factory()
+    factory("email_suppressions").delete.return_value = []
+    monkeypatch.setattr(email_service, "table", factory)
+    with patch("routes.admin_email.log_admin_action"):
+        r = client.post("/api/admin/email/suppressions/remove", json={"email": "a@bu.edu"})
+    assert r.json() == {"removed": False}
+
+
+def test_unsuppress_rejects_a_non_address(monkeypatch):
+    factory, made = _factory()
+    monkeypatch.setattr(email_service, "table", factory)
+    r = client.post("/api/admin/email/suppressions/remove", json={"email": "nobody"})
+    assert r.status_code == 422
+    assert "email_suppressions" not in made
+
+
+def test_audiences_exclude_accounts_with_email_notifications_off(audience_tables, monkeypatch):
+    monkeypatch.setattr(
+        email_service, "notification_opt_out_hashes",
+        MagicMock(return_value=frozenset({_h("pending@bu.edu")})),
+    )
+    counts = {a["key"]: a["count"] for a in client.get("/api/admin/email/audiences").json()["audiences"]}
+    assert counts["waitlist_all"] == 2 and counts["waitlist_pending"] == 0
+    email_service.notification_opt_out_hashes.assert_called_with(fresh=True)
 
 
 def test_list_broadcasts_newest_first(monkeypatch):

@@ -12,6 +12,7 @@ import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import {
   getGraph,
   getCourses,
@@ -272,8 +273,13 @@ export function Dashboard() {
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
 
+  // Latest load wins (#769): a semester switch mid-flight, or a Retry /
+  // course change racing the first load, must not let the OLDER reply
+  // repaint the screen (or its finally clear the newer load's skeleton).
+  const loadReq = useLatestRequest();
   const load = React.useCallback(async () => {
     if (!userId) return;
+    const run = loadReq.begin();
     setLoading(true);
     setLoadError(null);
     try {
@@ -289,6 +295,7 @@ export function Dashboard() {
         getSessions(userId, 10),
         getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
       ]);
+      if (!run.isCurrent()) return;
       const cs = coursesRes.courses || [];
       setCourses(cs);
       const rawNodes: ApiNode[] = graphRes.nodes || [];
@@ -317,12 +324,13 @@ export function Dashboard() {
       }
       setActiveDays(days);
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("dashboard load failed", err);
       setLoadError(String(err));
     } finally {
-      setLoading(false);
+      if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, activeSemester]);
+  }, [userId, activeSemester, loadReq]);
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
@@ -366,7 +374,12 @@ export function Dashboard() {
     setGreetingPrefix(getGreetingPrefix(new Date(now())));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
-  const [greetingDone, setGreetingDone] = React.useState(false);
+  // WHICH greeting finished typing (#769), not a one-way latch: the text
+  // changes after mount (the name and the time-of-day prefix arrive late),
+  // the Typewriter restarts, and the quote must hide again until the NEW
+  // text settles.
+  const [greetingDoneFor, setGreetingDoneFor] = React.useState<string | null>(null);
+  const greetingDone = greetingDoneFor === greetingText;
   // Greeting + quote render as a centered hero below the TopBar (see
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
@@ -570,7 +583,7 @@ export function Dashboard() {
           lineHeight: 1.15,
         }}
       >
-        <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
+        <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
       </h1>
       {quote && (
         <p

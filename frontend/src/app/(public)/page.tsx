@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import SignInModal from '@/components/marketing/SignInModal';
+import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { BetaModal } from '@/components/landing-v5/BetaModal';
@@ -31,6 +32,9 @@ export default function LandingPage() {
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
   const [signInOpen, setSignInOpen] = useState(false);
+  // #756: a failed sign-in lands here as `/?error=<code>`; open the modal
+  // with that error's copy (e.g. account_deleted) instead of saying nothing.
+  const [signInError, clearSignInError] = useSignInErrorParam();
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
@@ -86,7 +90,14 @@ export default function LandingPage() {
         onGetStarted={() => actions.scrollToId('cta')}
       />
 
-      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} />
+      <SignInModal
+        open={signInOpen || signInError !== null}
+        onClose={() => {
+          setSignInOpen(false);
+          clearSignInError();
+        }}
+        errorCode={signInError}
+      />
 
       <BetaModal
         open={betaOpen}

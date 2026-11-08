@@ -6,7 +6,6 @@ import { useUser } from "@/context/UserContext";
 import {
   listNotes,
   createNote as createNoteApi,
-  patchNote,
   deleteNote as deleteNoteApi,
   listNoteConcepts,
   linkNoteConcept,
@@ -29,8 +28,11 @@ import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
+import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
+
+type NoteAction = "delete" | "summarize" | "extract" | "quiz" | "tutor";
 
 type Course = {
   id: string;
@@ -141,7 +143,6 @@ function NotetakerScreen() {
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [conceptPickerOpen, setConceptPickerOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
-  const [busy, setBusy] = React.useState<string | null>(null);
 
   const active = notes.find((n) => n.id === activeId) ?? notes[0] ?? null;
 
@@ -240,95 +241,48 @@ function NotetakerScreen() {
     });
   }, [notes, query, courseFilter, courseFor]);
 
-  // Debounced autosave for title/body/tags. We keep the latest pending patch
-  // per note next to its timer so it can be flushed immediately on unmount,
-  // navigation, or when switching notes — instead of being silently dropped.
-  type PendingSave = {
-    handle: number;
-    patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>;
-  };
-  const pendingSavesRef = React.useRef<Map<string, PendingSave>>(new Map());
-  // Drives the editor footer so it never claims "Saved" while a write is still
-  // queued or in flight.
-  const [saveStatus, setSaveStatus] = React.useState<"saved" | "unsaved" | "saving">(
-    "saved",
-  );
-
-  const runSave = React.useCallback(
-    (
-      noteId: string,
-      patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>,
-      keepalive = false,
-    ) => {
-      if (!userId) return;
-      setSaveStatus("saving");
-      patchNote(noteId, userId, patch, { keepalive })
-        .then(() => {
-          if (pendingSavesRef.current.size === 0) setSaveStatus("saved");
-        })
-        .catch((e) => console.error("Autosave failed", e));
-    },
-    [userId],
-  );
-
-  const flushSave = React.useCallback(
-    (noteId: string, keepalive = false) => {
-      if (!userId) return;
-      const pending = pendingSavesRef.current.get(noteId);
-      if (!pending) return;
-      window.clearTimeout(pending.handle);
-      pendingSavesRef.current.delete(noteId);
-      runSave(noteId, pending.patch, keepalive);
-    },
-    [userId, runSave],
-  );
-
-  const flushAllSaves = React.useCallback(
-    (keepalive = false) => {
-      for (const noteId of Array.from(pendingSavesRef.current.keys())) {
-        flushSave(noteId, keepalive);
-      }
-    },
-    [flushSave],
-  );
-
-  const queueSave = React.useCallback(
-    (noteId: string, patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>) => {
-      if (!userId) return;
-      const pending = pendingSavesRef.current;
-      const existing = pending.get(noteId);
-      const merged = { ...(existing?.patch ?? {}), ...patch };
-      if (existing) window.clearTimeout(existing.handle);
-      setSaveStatus("unsaved");
-      const handle = window.setTimeout(() => {
-        pending.delete(noteId);
-        runSave(noteId, merged);
-      }, 800);
-      pending.set(noteId, { handle, patch: merged });
-    },
-    [userId, runSave],
-  );
+  // Debounced, per-note autosave for title/body/tags (#768): failed saves keep
+  // the edit and retry, a deleted note's queued save is cancelled, and the
+  // footer status aggregates every note (see lib/notes/useNoteAutosave).
+  const {
+    status: saveStatus,
+    queue: queueSave,
+    flush: flushSave,
+    cancel: cancelSave,
+    retry: retrySave,
+  } = useNoteAutosave(userId);
 
   // Flush pending edits before the active note changes, so switching notes
-  // never drops a queued save.
+  // never waits out the debounce on a note the user has left.
   const prevActiveIdRef = React.useRef<string | null>(activeId);
   React.useEffect(() => {
     const prev = prevActiveIdRef.current;
-    if (prev && prev !== activeId) flushSave(prev);
+    if (prev && prev !== activeId) void flushSave(prev);
     prevActiveIdRef.current = activeId;
   }, [activeId, flushSave]);
 
-  // Flush on unmount and on tab close / hard navigation. The pagehide flush
-  // uses keepalive so the request survives the unload; the unmount flush is a
-  // normal request that completes against the still-live page.
-  React.useEffect(() => {
-    const onPageHide = () => flushAllSaves(true);
-    window.addEventListener("pagehide", onPageHide);
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      flushAllSaves();
-    };
-  }, [flushAllSaves]);
+  // Per-note, per-action busy state (#768): each action clears its own flag in
+  // `finally`, and an action on note A never locks or relabels note B.
+  const [busyByNote, setBusyByNote] = React.useState<Record<string, NoteAction[]>>({});
+  const busy: NoteAction | null = active ? (busyByNote[active.id]?.[0] ?? null) : null;
+  const runAction = async (
+    noteId: string,
+    action: NoteAction,
+    fn: () => Promise<void>,
+  ) => {
+    setBusyByNote((prev) => ({ ...prev, [noteId]: [...(prev[noteId] ?? []), action] }));
+    try {
+      await fn();
+    } finally {
+      setBusyByNote((prev) => {
+        const rest = (prev[noteId] ?? []).filter((a) => a !== action);
+        const next = { ...prev };
+        if (rest.length) next[noteId] = rest;
+        else delete next[noteId];
+        return next;
+      });
+    }
+  };
 
   const updateActive = (patch: Partial<Note>) => {
     if (!active) return;
@@ -359,19 +313,24 @@ function NotetakerScreen() {
 
   const deleteActive = async () => {
     if (!active || !userId) return;
-    setBusy("delete");
-    try {
-      await deleteNoteApi(active.id, userId);
-      setNotes((prev) => {
-        const next = prev.filter((n) => n.id !== active.id);
-        setActiveId(next[0]?.id ?? null);
-        return next;
-      });
-    } catch (e) {
-      console.error("Delete failed", e);
-    } finally {
-      setBusy(null);
-    }
+    const noteId = active.id;
+    await runAction(noteId, "delete", async () => {
+      // Drop the queued save first so its debounce can't PATCH the note
+      // mid-delete; restore it if the delete fails (#768).
+      const dropped = cancelSave(noteId);
+      try {
+        await deleteNoteApi(noteId, userId);
+        cancelSave(noteId); // edits typed while the DELETE was in flight
+        setNotes((prev) => {
+          const next = prev.filter((n) => n.id !== noteId);
+          setActiveId(next[0]?.id ?? null);
+          return next;
+        });
+      } catch (e) {
+        console.error("Delete failed", e);
+        if (dropped) queueSave(noteId, dropped);
+      }
+    });
   };
 
   const refreshActiveConcepts = async () => {
@@ -396,64 +355,76 @@ function NotetakerScreen() {
     }
   };
 
+  // Agent actions read the note server-side, so the latest edits must land
+  // first; a failed save aborts the action instead of running on a stale body.
+  const saveBeforeAgent = async (noteId: string): Promise<boolean> => {
+    if (await flushSave(noteId)) return true;
+    toast.error("Couldn't save your latest edits. Check your connection and try again.");
+    return false;
+  };
+
   const onSummarize = async () => {
     if (!active || !userId) return;
-    setBusy("summarize");
-    try {
-      const { summary } = await summarizeNote(active.id, userId);
-      setNotes((prev) =>
-        prev.map((n) => (n.id === active.id ? { ...n, lastSummary: summary } : n)),
-      );
-    } catch (e) {
-      console.error("Summarize failed", e);
-      toast.error(humanizeError(e, "Couldn't summarize this note."));
-    } finally {
-      setBusy(null);
-    }
+    const noteId = active.id;
+    await runAction(noteId, "summarize", async () => {
+      if (!(await saveBeforeAgent(noteId))) return;
+      try {
+        const { summary } = await summarizeNote(noteId, userId);
+        setNotes((prev) =>
+          prev.map((n) => (n.id === noteId ? { ...n, lastSummary: summary } : n)),
+        );
+      } catch (e) {
+        console.error("Summarize failed", e);
+        toast.error(humanizeError(e, "Couldn't summarize this note."));
+      }
+    });
   };
 
   const onExtract = async () => {
     if (!active || !userId) return;
-    setBusy("extract");
-    try {
-      await extractNoteConcepts(active.id, userId);
-      await refreshActiveConcepts();
-    } catch (e) {
-      console.error("Extract failed", e);
-      toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
-    } finally {
-      setBusy(null);
-    }
+    const noteId = active.id;
+    await runAction(noteId, "extract", async () => {
+      if (!(await saveBeforeAgent(noteId))) return;
+      try {
+        await extractNoteConcepts(noteId, userId);
+        await refreshActiveConcepts();
+      } catch (e) {
+        console.error("Extract failed", e);
+        toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
+      }
+    });
   };
 
   const onGenerateQuiz = async () => {
     if (!active || !userId) return;
-    flushSave(active.id);
-    setBusy("quiz");
-    try {
-      const { concept_node_id } = await generateQuizFromNote(active.id, userId);
-      router.push(quizHrefForNote(active.id, concept_node_id));
-    } catch (e) {
-      console.error("Quiz failed", e);
-      toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
-      setBusy(null);
-    }
+    const noteId = active.id;
+    await runAction(noteId, "quiz", async () => {
+      if (!(await saveBeforeAgent(noteId))) return;
+      try {
+        const { concept_node_id } = await generateQuizFromNote(noteId, userId);
+        router.push(quizHrefForNote(noteId, concept_node_id));
+      } catch (e) {
+        console.error("Quiz failed", e);
+        toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
+      }
+    });
   };
 
   const onSendToTutor = async () => {
     if (!active || !userId) return;
-    flushSave(active.id);
-    setBusy("tutor");
-    try {
-      const { topic, course_id } = await sendNoteToTutor(active.id, userId);
-      router.push(
-        `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
-      );
-    } catch (e) {
-      console.error("Send to tutor failed", e);
-      toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
-      setBusy(null);
-    }
+    const noteId = active.id;
+    await runAction(noteId, "tutor", async () => {
+      if (!(await saveBeforeAgent(noteId))) return;
+      try {
+        const { topic, course_id } = await sendNoteToTutor(noteId, userId);
+        router.push(
+          `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
+        );
+      } catch (e) {
+        console.error("Send to tutor failed", e);
+        toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
+      }
+    });
   };
 
   const onLinkConcept = async (conceptNodeId: string) => {
@@ -651,6 +622,7 @@ function NotetakerScreen() {
               note={active}
               onChange={updateActive}
               saveStatus={saveStatus}
+              onRetrySave={retrySave}
               fullscreen={fullscreen}
               onToggleFullscreen={() => setFullscreen((f) => !f)}
             />
@@ -701,7 +673,8 @@ function NotetakerScreen() {
           }}
           aria-hidden={!fullscreen}
         >
-          <AIChatPanel noteId={active.id} userId={userId} />
+          {/* Keyed per note: switching notes starts a fresh thread + composer. */}
+          <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
         </div>
       </div>
 
@@ -966,12 +939,14 @@ function NoteEditor({
   note,
   onChange,
   saveStatus,
+  onRetrySave,
   fullscreen,
   onToggleFullscreen,
 }: {
   note: Note;
   onChange: (patch: Partial<Note>) => void;
-  saveStatus: "saved" | "unsaved" | "saving";
+  saveStatus: AutosaveStatus;
+  onRetrySave: () => void;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
@@ -1084,14 +1059,37 @@ function NoteEditor({
             "padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Icon name={saveStatus === "saved" ? "check" : "pencil"} size={11} />
-          {saveStatus === "saving"
-            ? "Saving…"
-            : saveStatus === "unsaved"
-              ? "Unsaved changes"
-              : `Saved · ${relTime(note.updatedAt)}`}
-        </span>
+        {saveStatus === "error" ? (
+          <span
+            role="status"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              color: "var(--state-struggle)",
+            }}
+          >
+            <Icon name="x" size={11} />
+            Couldn&apos;t save ·
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={onRetrySave}
+              style={{ padding: "0 6px", fontSize: 11, color: "inherit" }}
+            >
+              Retry
+            </button>
+          </span>
+        ) : (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Icon name={saveStatus === "saved" ? "check" : "pencil"} size={11} />
+            {saveStatus === "saving"
+              ? "Saving…"
+              : saveStatus === "unsaved"
+                ? "Unsaved changes"
+                : `Saved · ${relTime(note.updatedAt)}`}
+          </span>
+        )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
           <span>{note.body.split(/\s+/).filter(Boolean).length} words</span>
           <span>{note.body.length} chars</span>
@@ -1778,12 +1776,20 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [input, setInput] = React.useState("");
   const [sending, setSending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
-  // Reset thread when the active note changes.
+  // Stale-reply guard (#768). The parent keys this panel on the note id, so a
+  // note switch mounts a fresh thread; this ref additionally pins which note a
+  // reply belongs to, and is cleared on unmount / note change, so a reply (or
+  // failure) for a note that is no longer showing is dropped, never appended
+  // to another note's thread.
+  const currentNoteRef = React.useRef<string | null>(noteId);
   React.useEffect(() => {
-    setMessages([]);
-    setInput("");
+    currentNoteRef.current = noteId;
+    return () => {
+      currentNoteRef.current = null;
+    };
   }, [noteId]);
 
   React.useEffect(() => {
@@ -1791,25 +1797,33 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages]);
+  }, [messages, error]);
 
   const send = async () => {
     const text = input.trim();
     if (!text || sending || !userId) return;
+    const sentFor = noteId;
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
+    setError(null);
     setSending(true);
     try {
-      const { reply } = await noteChat(noteId, userId, text);
+      const { reply } = await noteChat(sentFor, userId, text);
+      if (currentNoteRef.current !== sentFor) return;
       setMessages((prev) => [...prev, { role: "ai", text: reply }]);
     } catch (e) {
       console.error("Chat failed", e);
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: "Sorry — something went wrong. Try again?" },
-      ]);
+      if (currentNoteRef.current !== sentFor) return;
+      // An error state, not a fake AI reply: take the unanswered question back
+      // out of the thread and return it to the composer so it can be resent.
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        return last && last.role === "user" && last.text === text ? prev.slice(0, -1) : prev;
+      });
+      setInput((cur) => (cur ? cur : text));
+      setError("Sorry — something went wrong. Try again?");
     } finally {
-      setSending(false);
+      if (currentNoteRef.current === sentFor) setSending(false);
     }
   };
 
@@ -1893,6 +1907,26 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
             }}
           >
             Sapling is thinking…
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            style={{
+              alignSelf: "stretch",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 11px",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--state-struggle)",
+              color: "var(--state-struggle)",
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            <Icon name="x" size={11} />
+            {error}
           </div>
         )}
       </div>
