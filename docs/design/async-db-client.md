@@ -325,21 +325,30 @@ Consequences that bind both W3a and this work:
 - **No application-level GET retries** on either path: the sync client has none, and the two paths
   keep identical error semantics. DB spans, the saturation gauges and a `PoolTimeout` -> 503 handler
   are not built yet.
-- **The 5 blocking handlers** (§1) hop their sync calls with `asyncio.to_thread` /
-  `run_in_threadpool` (`admin_documents.reindex` already did on main). The static ratchet
+- **The 5 blocking handlers** (§1): `careers.apply` and `profile.upload_user_avatar` awaited
+  nothing but their hops, so they are plain `def` handlers (one threadpool hop, by FastAPI); the
+  others hop their sync calls with `run_in_threadpool` only (one pool: AnyIO's 40-token limiter;
+  `admin_documents.reindex` already did on main). The static ratchet
   (`tests/test_no_sync_db_in_async_handlers.py`) also follows calls into same-module sync helpers,
-  and that finds **22 more** inline offenders (learn.py's tutor turn path, notes, documents upload);
-  they are its allowlist, by wave. `tests/test_async_handlers_off_loop.py` drives each fixed handler
+  local `t = table(...)` aliases, the attribute forms (`connection.rpc(...)`) and the sync rate
+  limiter (a DB call under `stateless_rate_limit`), and that finds **22 more** inline offenders
+  (learn.py's tutor turn path, notes, documents upload); they are its allowlist, by wave. `tests/test_async_handlers_off_loop.py` drives each fixed handler
   through the real seam with the runtime guard raising.
 - **First converted read:** `GET /api/quiz/attempts` (wave 2).
 - **§5 rate limiter:** `rate_limit_hits` + `claim_rate_limit()` (migration
   `20261108220438_stateless_rate_limit_and_flag_version.sql`) behind the `stateless_rate_limit`
-  flag (global, default off); a DB failure falls back to the per-process limiter.
+  flag (global, default off). Each claim is bounded at `CLAIM_TIMEOUT_S` (1.5 s, a per-call
+  `timeout` on `rpc`/`arpc`); a failure falls back to the per-process limiter and skips the DB
+  for `DB_DOWN_S` (30 s), so an outage costs one bounded wait per window, warned once per outage.
 - **§5 flag cache:** the version row and trigger as designed, but no lifespan poller (a 5 s poll
   would keep Railway Serverless previews awake, the reason the index sweeper is off there).
   Instead a process re-reads the version at most every `FEATURE_FLAGS_VERSION_CHECK_S` (5 s) while
-  it serves flag reads. Convergence across replicas: about 5 s under traffic, never worse than the
-  30 s TTL.
+  it serves flag reads, and only to validate a warm snapshot: a reload files the new snapshot
+  under the version already known (so a cold reload is one round trip), the row is read on a
+  cold path once per process and after a local clear, and a version read that finds the store
+  unreachable marks it unreadable like a failed snapshot read. Off when
+  `FEATURE_FLAGS_VERSION_CHECK_S` or the snapshot TTL is 0. Convergence across replicas: about
+  5 s under traffic, never worse than the 30 s TTL.
 - **Load test:** `loadtest/` (locust) and a `workflow_dispatch`-only workflow with a required
   `target_url`.
 
