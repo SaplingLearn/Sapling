@@ -436,7 +436,7 @@ export function TodayColumn(props: {
       <div
         className="card"
         data-testid="dashboard-mastery"
-        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ padding: "16px 18px 24px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
         {/* The course list's own header, like "Upcoming · Calendar →": a
             label on the left so the link never sits alone on its line. */}
