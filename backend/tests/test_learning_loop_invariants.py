@@ -138,6 +138,9 @@ ENCRYPTED_LEARNING_COLUMNS = (
     "evidence_text",
     "close_json",
     "loop_brief",
+    "surface_context",  # A140: check_items.surface_context (the item's scenario label)
+    "guess_json",  # A138: learning_prequestions.guess_json (a prequestion guess)
+    "reply_text",  # A139: learning_self_explanations.reply_text (a self-explanation reply)
 )
 _FILTER_ON_ENCRYPTED = re.compile(
     r"[\"'](?:%s)[\"']\s*:\s*f?[\"'](?:eq|neq|in|like|ilike)\."
