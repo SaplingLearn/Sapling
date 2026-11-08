@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from learning import params
+from tests.work_meter import assert_linear, cpu_seconds
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MIG_DIR = BACKEND / "db" / "migrations"
@@ -3024,27 +3025,34 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
 
 
 def test_leak_check_runs_in_linear_time():
-    """References and hints are model text of any length."""
-    import time
+    """References and hints are model text of any length.
 
+    Linearity is counted, not timed (tests/work_meter.py): the check's calls,
+    loop steps and str scans must grow linearly, on any machine. A quadratic
+    term shows at any size, so the count stops at `counted` to keep the test
+    quick. A regex engine's own steps are invisible to that count, so
+    catastrophic backtracking is held to a CPU-time ceiling at `big`: the old
+    1.0 s limit, now on CPU time rather than elapsed time."""
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    big = 20_000
-    for text, final in (
-        ("x" + " " * big + "^", "x ^"),
-        ("**a " * (big // 4), "a"),
-        ("1 " * (big // 2), "1 1"),
-        ("6x^2 + " * (big // 7), "6x^2 + 6x^2 + 1"),
-        ("²" * big, "x"),
-        ("1," * big, "1,1"),
-        ("( " * (big // 4) + ") " * (big // 4), "a"),
-        ("(1" * (big // 2) + " )" * (big // 2), "1"),  # a run holding every opener
-        ("( " * (big // 2) + "1)" * (big // 2), "1"),  # and every closer
-        ("answer " + " " * big + "is", "a"),  # option keywords and whitespace
-        ("option " * (big // 7) + "(C)", "a"),
-    ):
-        start = time.perf_counter()
+    def cases(big):
+        return (
+            ("x" + " " * big + "^", "x ^"),
+            ("**a " * (big // 4), "a"),
+            ("1 " * (big // 2), "1 1"),
+            ("6x^2 + " * (big // 7), "6x^2 + 6x^2 + 1"),
+            ("²" * big, "x"),
+            ("1," * big, "1,1"),
+            ("( " * (big // 4) + ") " * (big // 4), "a"),
+            ("(1" * (big // 2) + " )" * (big // 2), "1"),  # a run holding every opener
+            ("( " * (big // 2) + "1)" * (big // 2), "1"),  # and every closer
+            ("answer " + " " * big + "is", "a"),  # option keywords and whitespace
+            ("option " * (big // 7) + "(C)", "a"),
+        )
+
+    def check(case):
+        text, final = case
         detect_leak(
             reference=text, emitted=text, rung=Rung.H3, final_answer=final, correct_option="C"
         )
@@ -3055,7 +3063,11 @@ def test_leak_check_runs_in_linear_time():
             canonical_answer="1",
             correct_option="C",
         )
-        assert time.perf_counter() - start < 1.0, text[:20]
+
+    big, counted = 20_000, 8_000
+    for index, case in enumerate(cases(big)):
+        assert_linear(lambda size, index=index: cases(size)[index], check, counted, case[0][:20])
+        assert cpu_seconds(lambda case=case: check(case), limit=1.0) < 1.0, case[0][:20]
 
 
 # ── ladder: deterministic turns (spec §13 A17) ────────────────────────────────

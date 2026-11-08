@@ -17,6 +17,7 @@ from agents.topic_checklist import (
 from agents.topic_checklist_model import wrap_topic_checklist_model
 from services import checklist_budget
 from services import topic_checklist_service as svc
+from tests.manual_clock import ManualClockLoop
 
 PAYLOAD = {"sources": [{"id": "course-description", "text": "Functions."}], "assessments": []}
 
@@ -36,25 +37,6 @@ def response(info, value):
 @pytest.fixture
 def reservation():
     return checklist_budget.Reservation(uuid4(), "owner", "enrollment", "a" * 64, 1)
-
-
-class ManualClockLoop(asyncio.SelectorEventLoop):
-    """The default Unix loop, but only the test can move its clock past a deadline.
-
-    `asyncio.wait_for` arms its deadline from `loop.time()`, so skipping this
-    clock ahead decides exactly when the deadline expires: wall-clock speed
-    (a busy machine, a slow thread hop) never does.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.skipped = 0.0
-
-    def time(self):
-        return super().time() + self.skipped
-
-    def advance(self, seconds):
-        self.skipped += seconds
 
 
 def run(handler, reservation):

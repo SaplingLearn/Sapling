@@ -28,6 +28,7 @@ from pydantic_ai.models.function import FunctionModel
 from agents.deps import SaplingDeps
 from learning import answer_guard as guard
 from tests import grader_fakes
+from tests.work_meter import assert_linear, cpu_seconds
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.params import GRADER_RUBRIC_LABEL_CHARS
 
@@ -634,16 +635,25 @@ def test_verdict_tokens_in_an_honest_answer_are_counted_not_refused(text):
 def test_the_screen_stays_linear_at_the_longest_answer(unit):
     """The screen runs on every request before the grader; a flood of line breaks
     or markup at GRADER_ANSWER_MAX_CHARS must not make any rule backtrack
-    quadratically (a line-start rule never spans a line break)."""
-    import time
+    quadratically (a line-start rule never spans a line break).
 
+    Linearity is counted, not timed (tests/work_meter.py): the screen's calls,
+    loop steps and str scans must grow linearly up to the longest answer, on
+    any machine. A regex engine's own steps are invisible to that count, so
+    catastrophic backtracking is held to a CPU-time ceiling at the longest
+    answer: the old 0.1 s limit, now on CPU time rather than elapsed time."""
     from learning.params import GRADER_ANSWER_MAX_CHARS
 
-    text = (unit * GRADER_ANSWER_MAX_CHARS)[:GRADER_ANSWER_MAX_CHARS]
-    t0 = time.perf_counter()
-    guard.screen(text, rubric_ids=IDS)
-    guard.suspicion(text, rubric_ids=IDS)
-    assert time.perf_counter() - t0 < 0.1
+    def build(size):
+        return (unit * size)[:size]
+
+    def screen_both(text):
+        guard.screen(text, rubric_ids=IDS)
+        guard.suspicion(text, rubric_ids=IDS)
+
+    assert_linear(build, screen_both, GRADER_ANSWER_MAX_CHARS, repr(unit))
+    text = build(GRADER_ANSWER_MAX_CHARS)
+    assert cpu_seconds(lambda: screen_both(text), limit=0.1) < 0.1
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,7 @@ from services import checklist_budget as budget
 from services import topic_checklist_service as svc
 from services.checklist_budget_run import ChecklistDispatches
 from services.usage_receipts import prepare_checklist_usage_receipt
+from tests.manual_clock import ManualClockLoop
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
 
@@ -345,17 +346,27 @@ def test_component_price_mismatch_fails_even_if_aggregate_quote_unchanged(monkey
 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_start_wait_does_not_block_run_deadline_or_dispatch_after_cancellation(monkeypatch, reservation, cancel):
+    # What this proves: the first dispatch waits for `checklist_budget.start`
+    # (the DB ACK) in a worker thread, so a slow ACK never blocks the event
+    # loop. While it waits, the run's outer deadline [False] or the caller's
+    # cancellation [True] still ends the run, with no dispatch counted and the
+    # usage reconciled as never dispatched. When the ACK finally returns, the
+    # model is still never called.
+    #
+    # The deadline is the production value on a clock the test controls, and
+    # each wait is on an event, not a poll: the deadline passes only once the
+    # ACK is provably blocked in its thread [False], and it can never pass
+    # before the cancellation [True], however slow the machine is.
     entered, release, returned = threading.Event(), threading.Event(), threading.Event()
     handlers = []
     def delayed_start(r):
         entered.set()
         try:
-            assert release.wait(2)
+            assert release.wait(30)  # a hang guard, never reached when the test passes
             return replace(r, dispatch_at=NOW)
         finally:
             returned.set()
     monkeypatch.setattr(budget, "start", delayed_start)
-    monkeypatch.setattr(svc, "GENERATION_TIMEOUT_SECONDS", .02)
     async def handler(ctx):
         handlers.append(True)
         return response()
@@ -366,14 +377,12 @@ def test_start_wait_does_not_block_run_deadline_or_dispatch_after_cancellation(m
     async def run():
         task = asyncio.create_task(svc._generate({}, "owner", reservation))
         try:
-            for _ in range(100):
-                if entered.is_set():
-                    break
-                await asyncio.sleep(.001)
-            assert entered.is_set()
+            assert await asyncio.to_thread(entered.wait, 30)
             if cancel:
                 task.cancel()
-            result = await asyncio.wait_for(task, .2)
+            else:
+                asyncio.get_running_loop().advance(svc.GENERATION_TIMEOUT_SECONDS)
+            result = await task
             assert isinstance(result.error, asyncio.CancelledError if cancel else TimeoutError)
             assert result.dispatches.dispatched == 0 and result.dispatches.responses == []
             assert handlers == [] and not returned.is_set()
@@ -384,12 +393,9 @@ def test_start_wait_does_not_block_run_deadline_or_dispatch_after_cancellation(m
             assert calls == [{"receipt": None, "content": None, "no_dispatch": True}]
         finally:
             release.set()
-        for _ in range(100):
-            if returned.is_set():
-                break
-            await asyncio.sleep(.001)
-        assert returned.is_set() and handlers == []
-    asyncio.run(run())
+        assert await asyncio.to_thread(returned.wait, 30)
+        assert handlers == []
+    asyncio.run(run(), loop_factory=ManualClockLoop)
 
 
 @pytest.mark.parametrize("key,value", [("user_id", "other"), ("enrollment_id", "other"),
