@@ -299,7 +299,9 @@ function KnowledgeGraph2DImpl({
     // zoom out to fit — until the student pans or zooms themselves.
     const b = planBounds(plan, width, height);
     fittedViewRef.current = null;
-    if (b) {
+    // Only at the default zoom: a caller that asks for its own opening zoom
+    // (quiz home's neighbourhood fragment) has already chosen its framing.
+    if (b && initialZoom === 1) {
       const bw = b.maxX - b.minX;
       const bh = b.maxY - b.minY;
       const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / bw, height / bh));
@@ -796,7 +798,9 @@ function KnowledgeGraph2DImpl({
               const op = n.is_subject_root || mastery ? 1 : opacityFor(n.mastery_tier);
               const isHl = highlightId === n.id;
               const isHovered = hovered?.id === n.id;
-              const isPinned = n.fx != null && n.fy != null;
+              // Course roots are always pinned by the radial layout, so a pin
+              // only means "being dragged" for concepts.
+              const isPinned = !n.is_subject_root && n.fx != null && n.fy != null;
               return (
                 <g
                   key={n.id}

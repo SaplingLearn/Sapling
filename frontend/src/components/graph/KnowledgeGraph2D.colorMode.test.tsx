@@ -64,8 +64,11 @@ describe("KnowledgeGraph2D — colorMode", () => {
     const { container } = render(
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} colorMode="mastery" />,
     );
+    // The /api/graph spoke (hub → m) is not drawn: the course links to its
+    // inner-circle concepts instead — here all four, since m → s carries no
+    // prerequisite type — and then the one concept edge.
     const edges = Array.from(container.querySelectorAll('[data-testid="graph-edge"]'));
-    expect(edges).toHaveLength(2);
+    expect(edges).toHaveLength(5);
     const stops = edges.map((e) => {
       const id = /^url\(#(.+)\)$/.exec(e.getAttribute("stroke")!)![1];
       const grad = container.querySelector(`linearGradient[id="${id}"]`)!;
@@ -77,6 +80,9 @@ describe("KnowledgeGraph2D — colorMode", () => {
     });
     expect(stops).toEqual([
       [MASTERY_PALETTE.hub, MASTERY_PALETTE.mastered],
+      [MASTERY_PALETTE.hub, MASTERY_PALETTE.learning],
+      [MASTERY_PALETTE.hub, MASTERY_PALETTE.struggling],
+      [MASTERY_PALETTE.hub, MASTERY_PALETTE.unexplored],
       [MASTERY_PALETTE.mastered, MASTERY_PALETTE.struggling],
     ]);
   });
@@ -89,7 +95,7 @@ describe("KnowledgeGraph2D — colorMode", () => {
       </>,
     );
     const ids = Array.from(container.querySelectorAll("linearGradient")).map((g) => g.id);
-    expect(ids).toHaveLength(4);
-    expect(new Set(ids).size).toBe(4);
+    expect(ids).toHaveLength(10);
+    expect(new Set(ids).size).toBe(10);
   });
 });
