@@ -110,6 +110,12 @@ class _ProbeContinuation(_Metadata):
     observation: _Observation
     correct: bool
     check_item_id: str = Field(min_length=1)
+    # Spec §13 A120: the probe's slip/misconception diagnosis (the attempt for
+    # the session log and, when the §3.3 rule says so, the row to record) and
+    # the answer that row's evidence_text comes from. A probe diagnosis never
+    # carries a confrontation marker. Absent on a checkpoint saved before A120.
+    diagnosis: _Diagnosis | None = None
+    answer: _Answer | None = None
 
 
 def _primary(evidences: list[Evidence], node_id: str) -> Evidence:
@@ -159,6 +165,13 @@ def _continuation(kind: str, raw: dict, evidences: list[Evidence]) -> dict:
         _bind_observation(value.observation, ev)
         if value.correct != ev.correct or value.check_item_id != ev.check_item_id:
             raise ValueError("Probe continuation outcome disagrees with evidence")
+        if value.answer is not None and (
+            value.answer.question_hash != ev.question_hash or value.answer.idk != ev.idk
+        ):
+            raise ValueError("Probe continuation answer disagrees with evidence")
+        if value.diagnosis is not None and (value.diagnosis.confront or value.diagnosis.cleared):
+            raise ValueError("A probe diagnosis never touches the confrontation marker")
+        _bind_diagnosis(value.diagnosis, ev)
         return value.model_dump(mode="json")
     value = _CheckContinuation.model_validate(raw)
     ev = _primary(evidences, value.graded.node_id)

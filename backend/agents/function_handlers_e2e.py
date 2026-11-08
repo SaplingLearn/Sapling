@@ -572,7 +572,8 @@ register_function_handler("check_items_verify", _verify_handler)
 # `COMMON WRONG REASON <key>:` line of the message); grade_answer then takes the
 # key through decisions.match_wrong_reason with this result as `prior` (no
 # decision run). Two such answers on two isomorphs of one concept record a
-# misconception and make the next feedback turn a confronting one. Contract:
+# misconception and make the next feedback turn a confronting one (two in the
+# probe record it too, never confronted — spec §13 A120). Contract:
 # tests/test_e2e_function_handlers.py.
 
 E2E_GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT"
