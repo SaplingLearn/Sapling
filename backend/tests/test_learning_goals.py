@@ -320,3 +320,39 @@ def test_goal_review_waits_for_weak_ancestor_even_if_target_and_parent_look_know
     probe.states.return_value["A"] = 0.99
     response = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
     assert {c["node_id"] for c in response["concepts"]} == {"B", "T"}
+
+
+def test_a_novice_floor_exits_the_probe_onto_the_lowest_prerequisite(probe):
+    """Spec §3.3's novice rule ("3 misses at difficulty 1 or repeated idk →
+    novice: exit probe; novice step format on the lowest prerequisite") is a
+    composition (spec §13 A142 records where each half lives):
+    `probe.novice_floor` ends the probe, and the plan's readiness rule never
+    proposes a concept above an unproficient prerequisite, so a student who
+    misses the easiest items of a goal's target starts on the lowest
+    unproficient prerequisite of its chain. Each concept is then taught in
+    its own band's step format (the novice ceiling rows, A122)."""
+    probe.states.return_value = {"P1": 0.3, "P2": 0.3, "T": 0.3, "unrelated": 0.2}
+    probe.edges.return_value = [("P1", "P2"), ("P2", "T")]
+    assert set_goal(("T",), "Pass the unit on T").status_code == 200
+    probe.store["doc"]["probe"]["skills"] = ["T", "P1", "P2"]
+    probe.store["doc"]["probe"]["history"] = [
+        {
+            "node_id": "T",
+            "question_hash": f"miss-{k}",
+            "channel": "free_response",
+            "difficulty": 1,
+            "correct": False,
+            "idk": False,
+            "independent": True,
+            "p_after": 0.1,
+        }
+        for k in range(3)
+    ]
+    done = client.post(f"{LOOP}/probe/next", json=NEXT).json()
+    assert done["done"] is True and done["diagnosis"]["stop_reason"] == "novice_floor"
+    assert probe.store["doc"]["phase"] == "plan"
+    response = client.get(f"{LOOP}/plan", params=PLAN_Q)
+    assert response.status_code == 200
+    concepts = response.json()["concepts"]
+    assert [c["node_id"] for c in concepts] == ["P1"]  # never T or P2 above it
+    assert concepts[0]["reason"] == "prerequisite" and concepts[0]["target_node_ids"] == ["T"]
