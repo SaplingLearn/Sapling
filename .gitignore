@@ -21,6 +21,7 @@ yarn-error.log*
 
 # ---- Python ----
 .venv/
+.venv-analysis/
 venv/
 __pycache__/
 *.py[cod]
