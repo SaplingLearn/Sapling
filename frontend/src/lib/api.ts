@@ -978,11 +978,19 @@ export interface GenerateFlashcardsResponse {
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
-// documents; omitted = current term. JSON.stringify drops it when unset.
-export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
+// documents; omitted = every term. `courseId` (#829) scopes the documents to
+// the selected course by id — without it the backend matches `topic` against
+// the student's enrolled courses. JSON.stringify drops either when unset.
+export const generateFlashcards = (
+  userId: string,
+  topic: string,
+  count = 5,
+  semester?: string,
+  courseId?: string,
+) =>
   fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count, semester }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
 
 // `semester` scopes the list to that term's offerings (term-less cards stay
