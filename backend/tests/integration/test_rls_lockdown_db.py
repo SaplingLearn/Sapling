@@ -385,6 +385,8 @@ BACKEND_RPCS = frozenset({
     "llm_cost_per_active_user_weekly",  # routes/admin_analytics.py (#119, 20261108213311)
     "match_course_chunks",           # services/rag_service.py
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
+    "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
+    "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
 })
 
 APP_AUTH_FUNCTIONS = frozenset({
