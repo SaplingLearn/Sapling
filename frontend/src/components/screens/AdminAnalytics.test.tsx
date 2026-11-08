@@ -141,6 +141,7 @@ const loopFixture = {
       ],
     },
     posttest: emptyCalibration,
+    excluded_void: 0,
   },
   learning_gain: learningGain,
   truncated: false,
@@ -379,6 +380,15 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(within(all).getAllByText("50%").length).toBeGreaterThan(0); // observed in the top bin
     const post = screen.getByTestId("admin-loop-calibration-posttest");
     expect(within(post).getByText("No independent observations in this range.")).toBeTruthy();
+  });
+
+  it("counts the answers to retired questions the calibration left out (spec §13 A123)", () => {
+    const { rerender } = render(<LearningLoopPanelBody d={loopFixture} />);
+    expect(screen.queryByTestId("admin-loop-calibration-void")).toBeNull();
+    rerender(<LearningLoopPanelBody d={{ ...loopFixture, calibration: { ...loopFixture.calibration, excluded_void: 3 } }} />);
+    expect(screen.getByTestId("admin-loop-calibration-void").textContent).toContain(
+      "3 answers to retired questions left out",
+    );
   });
 
   it("marks a failing gate", () => {

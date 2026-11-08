@@ -23,15 +23,17 @@ counts — and the same over the "delayed" stratum, the pairs whose concept had
 no evidence for at least POSTTEST_DELAYED_MIN_DAYS before the pose (practice
 no longer postpones a window, so a pose may follow recent practice).
 
-An outcome whose item was RETIRED through spec §13 A113's review path (a staff
-retire, or the auto-retire at ITEM_REPORT_RETIRE_MIN_REPORTERS distinct
-reporters) is no valid measurement — the item was retired as broken — so it is
-left out of its window (its post-tests, its pairs and the delayed stratum) and
-counted in the window's `excluded_retired`, which keeps the drop visible. The
-caller passes the retired course items as (course_id, question_hash) keys read
-from that structured record (`check_item_reviews`, status 'retired'). An item
-row merely gone is no retire — A23's consent withdrawal deletes items too, and
-those outcomes stand — and neither is a report alone or an approval.
+An outcome graded against an item STAFF retired is void evidence (spec §13
+A123, the one rule learning/evidence_void.py states for every evidence read:
+the item was retired as broken, so no outcome on it measures the student) — so
+it is left out of its window (its post-tests, its pairs and the delayed
+stratum) and counted in the window's `excluded_retired`, which keeps the drop
+visible; the caller applies the same rule to the pretest anchors. The caller
+passes the retired course items as (course_id, question_hash) keys read from
+that structured record (`check_item_reviews`, status 'retired' — since A123
+only staff set it; students' reports only quarantine an item). An item row
+merely gone is no retire — A23's consent withdrawal deletes items too, and
+those outcomes stand — and neither is a quarantine, a report or an approval.
 
 Only observed outcomes are read — never p_known or any other belief. Every rate
 is None when n = 0, never a zero that reads as a result. A report: it never
@@ -43,6 +45,7 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
+from learning.evidence_void import pose_is_void
 from learning.params import POSTTEST_DELAYED_MIN_DAYS, POSTTEST_WINDOWS_DAYS
 
 #: The planning envelope cannot relabel the journal row it accompanies
@@ -150,7 +153,7 @@ def learning_gain(
         if post is None:
             continue
         bucket = buckets[window]
-        if pose_item(pose) in retired:  # retired as broken: no valid measurement (A113)
+        if pose_is_void(pose, retired):  # retired as broken: void evidence (A113, A123)
             bucket["excluded_retired"] += 1
             continue
         bucket["posttests"] += 1

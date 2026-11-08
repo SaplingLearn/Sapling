@@ -73,7 +73,7 @@ class TestPins:
     def test_constants(self):
         assert params.ITEM_REPORT_REASONS == ("wrong_answer", "unclear", "not_from_my_course")
         assert params.ITEM_REPORT_SURFACES == ("loop", "review")
-        assert params.ITEM_REPORT_RETIRE_MIN_REPORTERS == 2  # † #695's N
+        assert params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS == 2  # † #695's N (A123: a quarantine)
         assert 0 < params.ITEM_LINT_LONGEST_MARGIN < 1
         assert params.ITEM_LINT_STEM_OVERLAP_MARGIN >= 1
 
@@ -405,17 +405,46 @@ class TestServiceWrites:
             svc.create_items("course-1", "learning rate", None, [_draft()])
         assert "check_items" not in mocks  # nothing was written
 
-    def test_retire_course_item_retires_every_row_of_the_question(self):
+    def test_retire_course_item_voids_every_students_evidence_then_retires_every_row(self):
+        """A123: the staff retire voids first — one apply_graph_update(void_evidence)
+        per student with non-void evidence on the item — and deletes the rows
+        only after every void went through."""
         from services import check_item_service as svc
 
         factory, mocks = _cached_tables({"check_items": [{"id": "i1"}, {"id": "i2"}]})
         mocks_t = factory("check_items")
         mocks_t.delete.return_value = [{"id": "i1"}, {"id": "i2"}]
-        with patch("services.check_item_service.table", side_effect=factory):
-            assert svc.retire_course_item("c1", "qh-1") == 2
+        order = []
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.evidence_transaction.void_pending", return_value={"u2": 1, "u1": 3}),
+            patch(
+                "services.graph_service.apply_graph_update",
+                side_effect=lambda user, update, course: order.append((user, update, course)) or [],
+            ),
+        ):
+            out = svc.retire_course_item("c1", "qh-1")
+        assert out == svc.RetireOutcome(items=2, students=2, voided=4)
+        assert order == [
+            ("u1", {"void_evidence": {"question_hash": "qh-1"}}, "c1"),
+            ("u2", {"void_evidence": {"question_hash": "qh-1"}}, "c1"),
+        ]
         filters = mocks_t.select.call_args.kwargs["filters"]
         assert filters == {"course_id": "eq.c1", "question_hash": "eq.qh-1"}
         assert mocks_t.delete.call_args.kwargs["filters"]["id"] == 'in.("i1","i2")'
+
+    def test_a_failed_void_keeps_the_rows_for_a_retire_pending_rerun(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({"check_items": [{"id": "i1"}]})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.evidence_transaction.void_pending", return_value={"u1": 1}),
+            patch("services.graph_service.apply_graph_update", side_effect=RuntimeError("down")),
+            pytest.raises(RuntimeError),
+        ):
+            svc.retire_course_item("c1", "qh-1")
+        assert not factory("check_items").delete.called  # stored: the queue lists it retire-pending
 
     def test_store_lint_flags_batches_by_id(self):
         from services import check_item_service as svc
@@ -495,19 +524,19 @@ class TestReportStore:
     def test_record_report_is_one_database_decision(self):
         with patch(
             "learning.item_reports.rpc",
-            return_value=[{"first_report": True, "reporters": 2, "retire": True}],
+            return_value=[{"first_report": True, "reporters": 2, "quarantine": True}],
         ) as rpc:
             out = item_reports.record_report("u1", "c1", "qh", reason="wrong_answer", surface="loop")
-        assert out == item_reports.ReportOutcome(first=True, reporters=2, retire=True)
+        assert out == item_reports.ReportOutcome(first=True, reporters=2, quarantine=True)
         name, args = rpc.call_args.args
-        assert name == "check_item_report"
+        assert name == "check_item_report_quarantine"  # A123: reports never retire
         assert args == {
             "p_user_id": "u1",
             "p_course_id": "c1",
             "p_question_hash": "qh",
             "p_reason": "wrong_answer",
             "p_surface": "loop",
-            "p_min_reporters": params.ITEM_REPORT_RETIRE_MIN_REPORTERS,
+            "p_min_reporters": params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS,
         }
 
     def test_record_report_raises_when_the_store_does_not_answer(self):
@@ -600,6 +629,38 @@ class TestQueue:
         counts = {("c1", "q"): _count(at=NOW - timedelta(hours=2))}
         decisions = {("c1", "q"): {"status": "approved", "reviewed_at": NOW.isoformat()}}
         assert item_reports.queue_entries(rows, counts, decisions) == []
+
+    def test_a_quarantined_item_waits_for_staff_after_the_retire_pending(self):
+        """A123: an item its reporters quarantined is listed — after an
+        unfinished retire, before the merely reported — until staff decide;
+        an approval (the quarantine lifted) clears it like any approval."""
+        rows = [_row("reported", "q1"), _row("quarantined", "q2"), _row("pending", "q3")]
+        counts = {("c1", "q1"): _count(3), ("c1", "q2"): _count(2)}
+        decisions = {
+            ("c1", "q2"): {"status": "quarantined", "reviewed_at": NOW.isoformat()},
+            ("c1", "q3"): {"status": "retired", "reviewed_at": NOW.isoformat()},
+        }
+        entries = item_reports.queue_entries(rows, counts, decisions)
+        assert [e["id"] for e in entries] == ["pending", "quarantined", "reported"]
+        assert [e["quarantined"] for e in entries] == [False, True, False]
+        cleared = {("c1", "q2"): {"status": "approved", "reviewed_at": (NOW + timedelta(hours=1)).isoformat()}}
+        assert [e["id"] for e in item_reports.queue_entries(rows[1:2], counts, cleared)] == []
+
+    def test_withheld_hashes_are_the_courses_quarantined_and_retired_items(self):
+        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": "q1"}, {"question_hash": "q2"}]})
+        with patch("learning.item_reports.table", side_effect=factory):
+            assert item_reports.withheld_hashes("c1") == {"q1", "q2"}
+            assert item_reports.withheld_hashes("") == set()
+        kwargs = mocks["check_item_reviews"].select_with_count.call_args.kwargs
+        assert kwargs["filters"] == {"course_id": "eq.c1", "status": "in.(quarantined,retired)"}
+
+    def test_retired_items_are_the_staff_retires_only(self):
+        rows = [{"course_id": "c1", "question_hash": "q1"}, {"course_id": "c2", "question_hash": "q1"}]
+        factory, mocks = _cached_tables({"check_item_reviews": rows})
+        with patch("learning.item_reports.table", side_effect=factory):
+            assert item_reports.retired_items() == {("c1", "q1"), ("c2", "q1")}
+        kwargs = mocks["check_item_reviews"].select_with_count.call_args.kwargs
+        assert kwargs["filters"] == {"status": "eq.retired"}
 
     def test_order_most_reported_then_latest_then_most_flagged(self):
         rows = [
@@ -711,7 +772,7 @@ def test_the_queue_decrypts_only_its_page_at_the_read_boundary(admin_client, mon
     body = admin_client.get(f"{ADMIN}/queue").json()
     assert asked["keys"] == {("c1", "q2")}
     assert body["count"] == 2 and body["page_size"] == 1
-    assert body["retire_min_reporters"] == params.ITEM_REPORT_RETIRE_MIN_REPORTERS
+    assert body["quarantine_min_reporters"] == params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS
     (entry,) = body["items"]
     assert seen["ids"] == ["i2"]  # only the page is decrypted
     assert entry["id"] == "i2" and entry["reports"]["wrong_answer"] == 2
@@ -731,10 +792,26 @@ def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypat
         or item_reports.Decision(previous=None, applied=True),
     )
     r = admin_client.post(f"{ADMIN}/i1/approve")
-    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved"}
+    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved", "restored": False}
     assert calls == [("c1", "qh-1", "approved", "admin-1")]
     assert admin_client.events[0]["event_type"] == "learn.check_item_approved"
     assert admin_client.events[0]["category"] == "audit"
+    assert admin_client.events[0]["payload"]["restored"] is False
+
+
+def test_approving_a_quarantined_item_restores_it(admin_client, monkeypatch):
+    """A123: the staff approval lifts the quarantine (the database's decision
+    under the item lock); the response and the audit event say so."""
+    import routes.admin_check_items as admin
+
+    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(
+        admin.item_reports, "decide",
+        lambda *a, **k: item_reports.Decision(previous="quarantined", applied=True),
+    )
+    r = admin_client.post(f"{ADMIN}/i1/approve")
+    assert r.json() == {"id": "i1", "status": "approved", "restored": True}
+    assert admin_client.events[0]["payload"] == {"course_id": "c1", "question_hash": "qh-1", "restored": True}
 
 
 def test_a_retired_item_cannot_be_approved(admin_client, monkeypatch):
@@ -761,13 +838,22 @@ def test_retire_decides_then_retires_through_the_service(admin_client, monkeypat
         lambda c, q, s, *, reviewed_by: order.append(("decide", s))
         or item_reports.Decision(previous=None, applied=True),
     )
-    monkeypatch.setattr(admin, "retire_course_item", lambda c, q: order.append(("retire", c, q)) or 2)
+    from services.check_item_service import RetireOutcome
+
+    monkeypatch.setattr(
+        admin, "retire_course_item",
+        lambda c, q: order.append(("retire", c, q)) or RetireOutcome(items=2, students=3, voided=5),
+    )
     r = admin_client.post(f"{ADMIN}/i1/retire")
-    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "retired", "items": 2}
-    assert order == [("decide", "retired"), ("retire", "c1", "qh-1")]
+    assert r.status_code == 200
+    assert r.json() == {"id": "i1", "status": "retired", "items": 2, "students": 3, "voided": 5}
+    assert order == [("decide", "retired"), ("retire", "c1", "qh-1")]  # decided BEFORE any void
     (event,) = admin_client.events
     assert event["event_type"] == "learn.check_item_retired"
-    assert event["payload"]["decided_by"] == "admin" and event["payload"]["items"] == 2
+    assert event["payload"] == {
+        "course_id": "c1", "question_hash": "qh-1", "decided_by": "admin",
+        "items": 2, "students": 3, "voided": 5,
+    }
 
 
 def test_a_failed_retire_is_a_503_and_the_decision_stands(admin_client, monkeypatch):

@@ -701,7 +701,13 @@ export interface LearningLoopKpisData {
     gate: 'pass' | 'fail' | 'inconclusive';
   };
   gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
-  calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport };
+  calibration: {
+    all: LoopCalibrationReport;
+    posttest: LoopCalibrationReport;
+    /** independent observations left out: graded against an item staff
+     *  retired, so void evidence (spec §13 A123) — the drop, visible */
+    excluded_void: number;
+  };
   /** post-tests answered in the range, per fixed window (spec §13 A112) */
   learning_gain: { delayed_min_days: number; windows: LoopGainWindow[] };
   truncated: boolean;

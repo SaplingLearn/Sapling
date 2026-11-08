@@ -1,11 +1,12 @@
 """Durable planning needs from owned evidence; no learner prose or graph writes."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 from pydantic import ValidationError
 
 from db.connection import page_all, table
 from learning.evidence import PlanningObservation, PlanningPersistenceUnavailable
+from learning.void_store import voided_event_ids
 
 
 class _EvidenceRead:
@@ -45,6 +46,9 @@ def read_planning_history(user_id: str, course_id: str, node_ids) -> list[dict]:
     not prove durable provenance or chronology. Diagnostic/UI state stays intact.
     Read failures propagate: an explicit goal must retry rather than fall back
     to an old high posterior. All pages use the journal's stable total order.
+    Spec §13 A123: a void row (graded against an item staff retired) still
+    consumes its hash's first exposure — the student saw it — but certifies
+    nothing, exactly like an unknown legacy row.
     """
     try:
         rows = list(
@@ -60,14 +64,18 @@ def read_planning_history(user_id: str, course_id: str, node_ids) -> list[dict]:
                 order="created_at.asc,evidence_seq.asc.nullslast,id.asc",
             )
         )
+        voided = voided_event_ids(user_id=user_id) if rows else set()
     except Exception as exc:
         raise PlanningPersistenceUnavailable("learning evidence read unavailable") from exc
 
-    return project_planning_history(rows, user_id, course_id, node_ids)
+    return project_planning_history(rows, user_id, course_id, node_ids, voided=voided)
 
 
-def project_planning_history(rows, user_id: str, course_id: str, node_ids) -> list[dict]:
-    """Project an already chronologically ordered, owner-scoped journal."""
+def project_planning_history(
+    rows, user_id: str, course_id: str, node_ids, *, voided: Collection[str] = frozenset()
+) -> list[dict]:
+    """Project an already chronologically ordered, owner-scoped journal; a
+    row in `voided` (A123) is an exposure that certifies nothing."""
     wanted = set(node_ids)
     history = []
     for row in rows:
@@ -78,7 +86,11 @@ def project_planning_history(rows, user_id: str, course_id: str, node_ids) -> li
         if not isinstance(question_hash, str) or not question_hash.strip():
             continue
         observation = None
-        if owner.get("course_id") == course_id and row.get("node_id") in wanted:
+        if (
+            owner.get("course_id") == course_id
+            and row.get("node_id") in wanted
+            and row.get("id") not in voided
+        ):
             observation = _bound_observation(row)
         history.append(observation or {"question_hash": question_hash})
 

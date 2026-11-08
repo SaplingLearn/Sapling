@@ -327,6 +327,13 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         <CalibrationTable title="Delayed post-test" report={d.calibration.posttest} testid="admin-loop-calibration-posttest" />
         <CalibrationTable title="All independent evidence" report={d.calibration.all} testid="admin-loop-calibration-all" />
       </div>
+      {/* spec §13 A123: answers to a question staff retired are void evidence */}
+      {d.calibration.excluded_void > 0 && (
+        <p data-testid="admin-loop-calibration-void" style={{ color: "var(--text-muted)", fontSize: 13, margin: "8px 0 0" }}>
+          {d.calibration.excluded_void} answer{d.calibration.excluded_void === 1 ? "" : "s"} to retired
+          questions left out (their results were voided).
+        </p>
+      )}
       <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Did students learn?</h3>
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,

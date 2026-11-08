@@ -1,14 +1,18 @@
-"""Spec §13 A113 (GitHub #695), real-DB half: the report and review functions
-of migration 20261108041639_learning_item_quality.sql against real Postgres —
-a MagicMock suite sees the RPC arguments, never what the database decides.
+"""Spec §13 A113 (GitHub #695) and A123, real-DB half: the report and review
+functions of migrations 20261108041639_learning_item_quality.sql and
+20261108072715_learning_evidence_void.sql against real Postgres — a MagicMock
+suite sees the RPC arguments, never what the database decides.
 
 - a (student, question_hash) is recorded once: a repeat is not a first report
   and never counts twice;
-- the ITEM_REPORT_RETIRE_MIN_REPORTERS-th distinct reporter retires the course
-  item — and of several reporters racing (threads behind a barrier) EXACTLY ONE
-  is told to retire it (the per-item advisory lock + the database's count);
-- a report newer than an admin's approval counts afresh, and an approval never
-  un-retires a retired item;
+- the ITEM_REPORT_QUARANTINE_MIN_REPORTERS-th distinct reporter QUARANTINES
+  the course item (A123: never retires it) — and of several reporters racing
+  (threads behind a barrier) EXACTLY ONE is told it quarantined it (the
+  per-item advisory lock + the database's count);
+- a staff approval restores a quarantined item, and reports newer than it
+  count afresh; a staff retire is final (an approval never un-retires it);
+- the A113 signature (`check_item_report`) still answers a stale backend and
+  never retires anything;
 - loop_state_store.reported_hashes reads back exactly the student's reports;
 - both tables are backend-only (RLS on, no anon/authenticated grant).
 
@@ -79,45 +83,72 @@ def test_a_report_is_recorded_once(db_conn, seeded_user):
     assert rows == [{"reason": "wrong_answer", "surface": "loop"}]  # the first reason stands
 
 
-def test_the_threshold_retires_once_sequentially(db_conn, seeded_user):
-    from learning.params import ITEM_REPORT_RETIRE_MIN_REPORTERS
+def test_the_threshold_quarantines_once_sequentially(db_conn, seeded_user):
+    from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS
 
     qh = _qh()
-    users = [seeded_user() for _ in range(ITEM_REPORT_RETIRE_MIN_REPORTERS + 1)]
+    users = [seeded_user() for _ in range(ITEM_REPORT_QUARANTINE_MIN_REPORTERS + 1)]
     outcomes = [_report(u, qh) for u in users]
-    assert [o.retire for o in outcomes] == [
-        n + 1 == ITEM_REPORT_RETIRE_MIN_REPORTERS for n in range(len(users))
+    assert [o.quarantine for o in outcomes] == [
+        n + 1 == ITEM_REPORT_QUARANTINE_MIN_REPORTERS for n in range(len(users))
     ]
-    assert _review(db_conn, qh) == {"status": "retired", "decided_by": "reports"}
+    assert _review(db_conn, qh) == {"status": "quarantined", "decided_by": "reports"}
 
 
-def test_racing_reporters_retire_the_item_exactly_once(db_conn, seeded_user):
+def test_racing_reporters_quarantine_the_item_exactly_once(db_conn, seeded_user):
     qh = _qh()
     users = [seeded_user() for _ in range(6)]
     outcomes = _race(users, qh)
-    assert sum(o.retire for o in outcomes) == 1
+    assert sum(o.quarantine for o in outcomes) == 1
     assert all(o.first for o in outcomes)
     assert sorted(o.reporters for o in outcomes) == list(range(1, len(users) + 1))
-    assert _review(db_conn, qh) == {"status": "retired", "decided_by": "reports"}
+    assert _review(db_conn, qh) == {"status": "quarantined", "decided_by": "reports"}
 
 
-def test_an_approval_restarts_the_count_and_never_unretires(db_conn, seeded_user):
-    from learning.item_reports import decide
-    from learning.params import ITEM_REPORT_RETIRE_MIN_REPORTERS
+def test_an_approval_restores_a_quarantine_restarts_the_count_and_never_unretires(db_conn, seeded_user):
+    from learning.item_reports import decide, withheld_hashes
+    from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS
 
     qh = _qh()
     admin = seeded_user()
-    first = seeded_user()
-    assert _report(first, qh).retire is False
-    assert decide(COURSE, qh, "approved", reviewed_by=admin).applied is True
-    later = [seeded_user() for _ in range(ITEM_REPORT_RETIRE_MIN_REPORTERS)]
+    first = [seeded_user() for _ in range(ITEM_REPORT_QUARANTINE_MIN_REPORTERS)]
+    assert [_report(u, qh).quarantine for u in first][-1] is True
+    assert qh in withheld_hashes(COURSE)  # never served while quarantined
+    approval = decide(COURSE, qh, "approved", reviewed_by=admin)
+    assert (approval.previous, approval.applied) == ("quarantined", True)
+    assert qh not in withheld_hashes(COURSE)  # restored
+    stamped = db_conn.execute(
+        "SELECT approved_at FROM check_item_reviews WHERE course_id = %s AND question_hash = %s",
+        (COURSE, qh),
+    ).fetchone()
+    assert stamped["approved_at"] is not None
+    later = [seeded_user() for _ in range(ITEM_REPORT_QUARANTINE_MIN_REPORTERS)]
     outcomes = [_report(u, qh) for u in later]
-    # the report before the approval no longer counts toward retirement
-    assert [o.reporters for o in outcomes] == list(range(1, ITEM_REPORT_RETIRE_MIN_REPORTERS + 1))
-    assert outcomes[-1].retire is True
+    # the reports before the approval no longer count toward a quarantine
+    assert [o.reporters for o in outcomes] == list(range(1, ITEM_REPORT_QUARANTINE_MIN_REPORTERS + 1))
+    assert outcomes[-1].quarantine is True
+    assert decide(COURSE, qh, "retired", reviewed_by=admin).applied is True
     refused = decide(COURSE, qh, "approved", reviewed_by=admin)
     assert (refused.previous, refused.applied) == ("retired", False)
-    assert _review(db_conn, qh)["status"] == "retired"
+    assert _review(db_conn, qh) == {"status": "retired", "decided_by": "admin"}
+    assert qh in withheld_hashes(COURSE)
+
+
+def test_the_a113_signature_never_retires(db_conn, seeded_user):
+    """A backend deployed before A123 still calls check_item_report: the same
+    report, a quarantine at the threshold — and `retire` always false."""
+    from db.connection import rpc
+
+    qh = _qh()
+    rows = [
+        rpc("check_item_report", {
+            "p_user_id": seeded_user(), "p_course_id": COURSE, "p_question_hash": qh,
+            "p_reason": "unclear", "p_surface": "loop", "p_min_reporters": 2,
+        })[0]
+        for _ in range(2)
+    ]
+    assert [r["retire"] for r in rows] == [False, False]
+    assert _review(db_conn, qh) == {"status": "quarantined", "decided_by": "reports"}
 
 
 def test_reported_hashes_reads_the_students_own_reports(seeded_user):
@@ -143,6 +174,7 @@ def test_the_tables_are_backend_only(db_conn):
             assert grant["ok"] is False
     for fn in (
         "check_item_report(text,text,text,text,text,integer)",
+        "check_item_report_quarantine(text,text,text,text,text,integer)",
         "check_item_review_decide(text,text,text,text)",
     ):
         for role in ("anon", "authenticated"):

@@ -137,10 +137,12 @@ def test_event_taxonomy_is_pinned():
         "learn.answer_refused",
         # A37 (coordinator's ruling, 2026-09-28): one mc_reason top-up call, its counts.
         "learn.check_items_topup",
-        # Learning-loop spec §13 A113 (#695): a student's "Report this question",
-        # and an item retired (by reporters or an admin) or approved by an admin.
-        # Emit coverage lives in test_learning_item_quality.py.
+        # Learning-loop spec §13 A113 (#695), A123: a student's "Report this
+        # question", an item quarantined by its reporters, and an item retired
+        # (its evidence voided) or approved by an admin. Emit coverage lives in
+        # test_learning_item_quality.py and test_learn_loop_routes.py.
         "learn.check_item_reported",
+        "learn.check_item_quarantined",
         "learn.check_item_retired",
         "learn.check_item_approved",
         # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py

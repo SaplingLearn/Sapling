@@ -388,6 +388,7 @@ def seams():
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
         ns.reported_hashes = p("reported_hashes", return_value=set())  # spec §13 A113
+        ns.withheld_hashes = p("withheld_hashes", return_value=set())  # spec §13 A123
         # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
         # against, and the learning_reveals store (none by default)
         ns.open_posed = p("posed_items", return_value=([], None))  # A93: (items, overflow)
@@ -4009,27 +4010,29 @@ def _report_body(**over) -> dict:
 
 @pytest.fixture
 def reports(seams):
-    """The report store and the retire path, faked; the `item_reports` flag on."""
+    """The report store faked; the `item_reports` flag on. Spec §13 A123: a
+    report never retires (nor deletes) anything, so the retire path is a trap."""
     from learning import item_reports
 
-    ns = SimpleNamespace(outcomes=[], calls=[], retired=[], fail_retire=False)
+    ns = SimpleNamespace(outcomes=[], calls=[])
 
     def record(user_id, course_id, question_hash, *, reason, surface):
         ns.calls.append((user_id, course_id, question_hash, reason, surface))
         if ns.outcomes:
             return ns.outcomes.pop(0)
-        return item_reports.ReportOutcome(first=True, reporters=1, retire=False)
-
-    def retire(course_id, question_hash):
-        ns.retired.append((course_id, question_hash))
-        if ns.fail_retire:
-            raise RuntimeError("delete failed")
-        return 1
+        return item_reports.ReportOutcome(first=True, reporters=1, quarantine=False)
 
     with (
         patch("routes.learn_loop.flag_on", return_value=True) as flag,
         patch("routes.learn_loop.item_reports.record_report", side_effect=record),
-        patch("routes.learn_loop.retire_course_item", side_effect=retire),
+        patch(
+            "services.check_item_service.retire_course_item",
+            side_effect=AssertionError("a report never retires an item (A123)"),
+        ),
+        patch(
+            "services.check_item_service.retire_items_by_id",
+            side_effect=AssertionError("a report never deletes an item (A123)"),
+        ),
     ):
         ns.flag = flag
         yield ns
@@ -4049,6 +4052,69 @@ def test_activation_excludes_reported_items(seams):
     assert _activate_next_item("u1", "c1", st, now=NOW) == ITEM.question_hash
     assert "qh-reported" in seams.select_item.call_args.kwargs["exclude_hashes"]
     seams.reported_hashes.assert_called_with("u1")
+
+
+# ── spec §13 A123: a quarantined (or retired) item is never served ──────────
+
+ITEM_B = ITEM.model_copy(update={"id": "item-2", "question_hash": "qh-2", "prompt": "Why does it stop?"})
+
+
+def test_a_withheld_item_is_not_in_the_practice_bank(seams):
+    """A quarantined item is withheld from every student of the course (not
+    only its reporters): activation never picks it — it is not even in the
+    bank the post-test reserve is chosen from — and the read is the course's."""
+    from routes.learn_loop import _activate_next_item
+
+    seams.withheld_hashes.return_value = {ITEM.question_hash}
+    seams.list_items.return_value = [ITEM, ITEM_B]
+    st = _plan_state()
+    assert _activate_next_item("u1", "c1", st, now=NOW) == ITEM_B.question_hash
+    seams.withheld_hashes.assert_called_with("c1")
+    reserve_pool = seams.reserve.call_args.args[0]
+    assert [i.question_hash for i in reserve_pool] == [ITEM_B.question_hash]
+
+
+def test_a_withheld_item_is_not_activated_and_restored_once_approved(seams):
+    """Quarantined: nothing to activate. Approved (no longer withheld): served."""
+    from routes.learn_loop import _activate_next_item
+
+    seams.list_items.return_value = [ITEM]
+    seams.withheld_hashes.return_value = {ITEM.question_hash}
+    st = _plan_state(plan={"approved": ["node-1"], "cursor": 0})
+    assert _activate_next_item("u1", "c1", st, now=NOW) is None
+    seams.withheld_hashes.return_value = set()  # staff approved it: the quarantine is lifted
+    st = _plan_state()
+    assert _activate_next_item("u1", "c1", st, now=NOW) == ITEM.question_hash
+
+
+def test_the_goal_preflight_counts_a_withheld_item_as_unavailable(seams):
+    from routes.learn_loop import _goal_practice_unavailable
+
+    seams.list_items.return_value = [ITEM]
+    seams.withheld_hashes.return_value = {ITEM.question_hash}
+    assert _goal_practice_unavailable("u1", "c1", _plan_state(), ["node-1"]) == {"node-1"}
+    seams.withheld_hashes.return_value = set()
+    assert _goal_practice_unavailable("u1", "c1", _plan_state(), ["node-1"]) == set()
+
+
+def test_check_next_moves_past_an_open_check_the_course_now_withholds(gate_on, seams):
+    """The open (posed, unanswered) check was quarantined since: /check/next
+    drops it like a withdrawn one and activates another — but a check being
+    graded (a live claim) is never disturbed."""
+    seams.store["doc"] = _plan_state(current="qh-1", steps={"qh-1": _step()})
+    seams.list_items.return_value = [ITEM, ITEM_B]
+    seams.item.side_effect = lambda item_id: {ITEM.id: ITEM, ITEM_B.id: ITEM_B}.get(item_id)
+    seams.withheld_hashes.return_value = {ITEM.question_hash}
+    r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["check"]["question_hash"] == ITEM_B.question_hash
+    assert seams.store["doc"]["current"] == ITEM_B.question_hash
+    seams.store["doc"] = _plan_state(
+        current="qh-1", steps={"qh-1": _step(grading_claim="c", grading_claim_at=NOW)}
+    )
+    r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.json()["check"]["question_hash"] == ITEM.question_hash  # being graded: left alone
+    assert seams.store["doc"]["current"] == "qh-1"
 
 
 def test_report_is_404_when_the_flag_is_off(gate_on, seams, reports):
@@ -4074,7 +4140,7 @@ def test_report_records_then_takes_the_check_off_the_card(gate_on, seams, report
     hash only. Nothing is graded and no model runs."""
     r = client.post(REPORT, json=_report_body())
     assert r.status_code == 200, r.text
-    assert r.json() == {"reported": True, "first": True, "retired": False}
+    assert r.json() == {"reported": True, "first": True, "quarantined": False}
     assert reports.calls == [("u1", ITEM.course_id, "qh-1", "wrong_answer", "loop")]
     doc = seams.store["doc"]
     assert doc["current"] is None and doc["steps"]["qh-1"]["reported"] is True
@@ -4084,7 +4150,7 @@ def test_report_records_then_takes_the_check_off_the_card(gate_on, seams, report
         "course_id": ITEM.course_id, "question_hash": "qh-1", "reason": "wrong_answer",
         "surface": "loop", "first": True, "reporters": 1,
     }
-    assert reports.retired == []
+    assert _events_of(seams, "learn.check_item_quarantined") == []
     seams.grade.assert_not_called()
     seams.ai_budget.check.assert_not_called()
 
@@ -4092,40 +4158,34 @@ def test_report_records_then_takes_the_check_off_the_card(gate_on, seams, report
 def test_a_repeat_report_records_nothing_new(gate_on, seams, reports):
     from learning import item_reports
 
-    reports.outcomes = [item_reports.ReportOutcome(first=False, reporters=1, retire=False)]
+    reports.outcomes = [item_reports.ReportOutcome(first=False, reporters=1, quarantine=False)]
     r = client.post(REPORT, json=_report_body(reason="unclear"))
     assert r.status_code == 200 and r.json()["first"] is False
 
 
-def test_the_report_that_reaches_the_threshold_retires_the_item(gate_on, seams, reports):
+def test_the_report_that_reaches_the_threshold_quarantines_the_item(gate_on, seams, reports):
+    """Spec §13 A123: the ITEM_REPORT_QUARANTINE_MIN_REPORTERS-th distinct
+    reporter quarantines the course item (the database decided it) — one
+    audit event, nothing retired, nothing deleted, no evidence touched."""
     from learning import item_reports
-    from learning.params import ITEM_REPORT_RETIRE_MIN_REPORTERS
+    from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS
 
     reports.outcomes = [
-        item_reports.ReportOutcome(first=True, reporters=ITEM_REPORT_RETIRE_MIN_REPORTERS, retire=True)
+        item_reports.ReportOutcome(
+            first=True, reporters=ITEM_REPORT_QUARANTINE_MIN_REPORTERS, quarantine=True
+        )
     ]
     r = client.post(REPORT, json=_report_body())
-    assert r.status_code == 200 and r.json()["retired"] is True
-    assert reports.retired == [(ITEM.course_id, "qh-1")]
-    (event,) = _events_of(seams, "learn.check_item_retired")
+    assert r.status_code == 200
+    assert r.json() == {"reported": True, "first": True, "quarantined": True}
+    (event,) = _events_of(seams, "learn.check_item_quarantined")
     assert event.kwargs["category"] == "audit"
     assert event.kwargs["payload"] == {
-        "course_id": ITEM.course_id, "question_hash": "qh-1", "decided_by": "reports",
-        "reporters": ITEM_REPORT_RETIRE_MIN_REPORTERS, "items": 1,
+        "course_id": ITEM.course_id, "question_hash": "qh-1",
+        "reporters": ITEM_REPORT_QUARANTINE_MIN_REPORTERS,
     }
-
-
-def test_a_failed_retire_keeps_the_report_and_is_counted(gate_on, seams, reports):
-    from learning import item_reports
-
-    reports.outcomes = [item_reports.ReportOutcome(first=True, reporters=2, retire=True)]
-    reports.fail_retire = True
-    r = client.post(REPORT, json=_report_body())
-    assert r.status_code == 200 and r.json() == {"reported": True, "first": True, "retired": False}
-    assert seams.store["doc"]["current"] is None  # off the reporter's card all the same
-    (failed,) = _events_of(seams, "learn.check_items_failed")
-    assert failed.kwargs["payload"]["reason"] == "RetireError"
     assert _events_of(seams, "learn.check_item_retired") == []
+    seams.flush.assert_not_called()  # no evidence write, no void
 
 
 def test_only_a_check_this_session_posed_can_be_reported(gate_on, seams, reports):

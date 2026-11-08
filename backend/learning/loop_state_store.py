@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, table
-from learning import params
+from learning import params, void_store
 from learning.policy import LoopState
 
 logger = logging.getLogger("sapling.learning.loop_state")
@@ -247,7 +247,12 @@ def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
     owner- and course-scoped through the graph_nodes!inner embed. Propagation is
     never journaled, so it neither anchors a concept nor refreshes its last
     evidence (learner_state.last_evidence_at is the DECAY anchor, which a
-    propagation can set — HANDOFF-03). A failed read raises."""
+    propagation can set — HANDOFF-03). Spec §13 A123: a VOID row (graded
+    against an item staff retired) is no evidence — it neither anchors the
+    concept nor counts as its last evidence; a concept whose every row is void
+    has no span (no valid graded evidence to measure a delay from). A failed
+    read raises."""
+    voided = void_store.voided_event_ids(user_id=user_id)
     spans: dict[str, EvidenceSpan] = {}
     for row in page_all(
         _MasteryEventsRead(),
@@ -260,7 +265,7 @@ def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
         order="created_at.asc,evidence_seq.asc.nullslast,id.asc",
     ):
         node = row.get("node_id")
-        if not node or not row.get("id"):
+        if not node or not row.get("id") or row["id"] in voided:
             continue
         at = _journal_time(row.get("created_at"))
         span = spans.get(node)
@@ -272,7 +277,8 @@ def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
 
 
 def seen_hashes(user_id: str) -> set[str]:
-    """Every question_hash the user has evidence on (A23)."""
+    """Every question_hash the user has evidence on (A23) — void rows included
+    (spec §13 A123): seen is exposure, and a voided grade was still seen."""
     return {r["question_hash"] for r in _evidence_rows(user_id) if r.get("question_hash")}
 
 

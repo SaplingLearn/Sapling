@@ -700,37 +700,80 @@ def _windows(monkeypatch, store, calls=None) -> dict:
 
 
 def test_an_outcome_on_a_retired_item_is_excluded_and_counted(monkeypatch):
-    """A post-test outcome whose item A113's review path later retired — by its
-    reporters (the auto-retire) or by an admin, even while the delete is still
-    pending and the item row remains — is left out of its window and counted in
-    `excluded_retired`; the same hash in another course is another item and
-    stays. ONE status-filtered read of the review records, and a retired
-    outcome's anchor is never read for a pretest."""
+    """Spec §13 A123, the one void rule: a post-test outcome whose item STAFF
+    retired — even while its void and delete are still pending and the item
+    row remains — is left out of its window and counted in
+    `excluded_retired`; a QUARANTINED item (its reporters' decision, pending
+    staff) is no retire and its outcome stays; the same hash in another course
+    is another item. The retired items are ONE read of the structured record,
+    and a retired outcome's anchor is never read for a pretest."""
     calls: list = []
     store = {
         "node_mastery_events": [_anchor("ev-a", session="s1", qh="qa", correct=False)],
         "sessions": [{"id": "s1", "history": [{"question_hash": "qa"}]}],
         "posttest_poses": [
-            _asked("na", W1, course="c1", qh="q-auto", anchor="ev-a"),
+            _asked("na", W1, course="c1", qh="q-quarantined", anchor="ev-a"),
             _asked("nb", W1, course="c1", qh="q-admin", anchor="ev-b"),
-            _asked("nc", W1, course="c2", qh="q-auto", anchor="ev-a"),
-        ],
-        "check_item_reviews": [
-            _review("c1", "q-auto", "retired", "reports"),
-            _review("c1", "q-admin", "retired", "admin"),
+            _asked("nc", W1, course="c2", qh="q-admin", anchor="ev-a"),
         ],
         "check_items": [{"id": "ci-1", "course_id": "c1", "question_hash": "q-admin"}],  # pending
     }
+    reads = []
+    monkeypatch.setattr(
+        analytics, "retired_items", lambda: reads.append("retired") or {("c1", "q-admin")}
+    )
     gain = _windows(monkeypatch, store, calls)
     first = gain[W1]
-    assert (first["posttests"], first["excluded_retired"]) == (1, 2)
-    assert first["n"] == 1 and first["improved"] == 1  # c2's outcome, paired with the probe
+    assert (first["posttests"], first["excluded_retired"]) == (2, 1)
+    assert first["n"] == 2 and first["improved"] == 2  # both stand, paired with the probe
     assert gain[W2]["excluded_retired"] == 0
-    (read,) = [(cols, f) for name, cols, f in calls if name == "check_item_reviews"]
-    assert read[1] == {"question_hash": 'in.("q-admin","q-auto")', "status": "eq.retired"}
-    assert set(read[0].split(",")) == {"course_id", "question_hash"}
+    assert reads == ["retired"]
     anchors = [f["id"] for name, _, f in calls if name == "node_mastery_events" and "id" in f]
     assert anchors == ['in.("ev-a")']  # ev-b anchors only a retired outcome: never read
+
+
+def test_calibration_and_next_session_success_leave_out_void_evidence(monkeypatch):
+    """The calibration bug A123 fixes: the learning gain left out a retired
+    item's outcomes while the calibration beside it read every row. Now both
+    apply the one rule — an observation graded against a staff-retired item is
+    void — and the calibration counts what it left out (`excluded_void`). Its
+    course is the node's (the scan's graph_nodes embed); a quiz row (no check
+    item) and the same hash in another course are never void."""
+    def row(i, *, course, qh, item=True, **kw):
+        return {**_evidence(i, session=f"s{i}", p_before=0.6, **kw), "question_hash": qh,
+                "check_item_id": f"ci-{qh}" if item else None, "graph_nodes": {"course_id": course}}
+
+    evidence = [
+        row(0, course="c1", qh="q-bad", correct=False),  # void
+        row(1, course="c1", qh="q-ok", correct=True),
+        row(2, course="c2", qh="q-bad", correct=True),  # another course's item
+        row(3, course="c1", qh="q-bad", item=False, channel="mc", correct=True),  # a quiz question
+    ]
+    _serve(monkeypatch, {"node_mastery_events": evidence})
+    monkeypatch.setattr(analytics, "retired_items", lambda: {("c1", "q-bad")})
+    body = client.get(URL, params=RANGE).json()
+    calibration = body["calibration"]
+    assert calibration["all"]["n"] == 2 and calibration["excluded_void"] == 1
+    assert calibration["all"]["observed_rate"] == 1.0  # the void miss is not judged
+    monkeypatch.setattr(analytics, "retired_items", lambda: set())
+    body = client.get(URL, params=RANGE).json()
+    assert body["calibration"]["all"]["n"] == 3 and body["calibration"]["excluded_void"] == 0
+
+
+def test_a_void_pretest_anchor_is_no_pretest(monkeypatch):
+    """The concept's first evidence (the post-test anchor) was a probe grade on
+    an item staff retired since: no pretest — the pair is dropped, the
+    post-test outcome itself (another item) still counts."""
+    store = {
+        "node_mastery_events": [_anchor("ev-a", session="s1", qh="qa", correct=False)],
+        "sessions": [{"id": "s1", "history": [{"question_hash": "qa"}]}],
+        "posttest_poses": [_asked("na", W1, course="c1", qh="q-post", anchor="ev-a")],
+    }
+    monkeypatch.setattr(analytics, "retired_items", lambda: {("c1", "qa")})
+    first = _windows(monkeypatch, store)[W1]
+    assert (first["posttests"], first["n"], first["excluded_retired"]) == (1, 0, 0)
+    monkeypatch.setattr(analytics, "retired_items", lambda: set())
+    assert _windows(monkeypatch, store)[W1]["n"] == 1
 
 
 def test_an_outcome_on_a_reported_but_unretired_item_is_still_counted(monkeypatch):

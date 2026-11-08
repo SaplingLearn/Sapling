@@ -6,22 +6,20 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
-from learning import bkt, fsrs
+from learning import bkt, evidence_replay
 from learning.evidence import (
     EVIDENCE_EVENT_TYPE,
     PREREQ_RELATIONSHIP_TYPE,
     Evidence,
     evidence_weight,
-    is_strong_channel,
     planning_observation,
 )
 from learning.learner_state import LearnerState, state_row
 from learning.params import (
-    BKT_L0,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_RETENTION_DEFAULT,
-    FSRS_S0_GOOD,
 )
+from learning.void_store import voided_event_ids
 from services.streak_service import effective_streak, touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -198,20 +196,27 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     if node_ids:
         try:
             event_rows = table("node_mastery_events").select(
-                "node_id,delta,reason,created_at",
+                "id,node_id,delta,reason,created_at",
                 filters={"node_id": f"in.({','.join(node_ids)})"},
                 order="created_at.asc",
             ) or []
+            # spec §13 A123: a void row (graded against an item staff retired)
+            # moved no mastery that stands — it is no part of the velocity
+            voided = voided_event_ids(user_id=user_id) if event_rows else set()
         except Exception:
-            event_rows = []
+            event_rows, voided = [], set()
         for ev in event_rows:
+            if ev.get("id") in voided:
+                continue
             events_by_node.setdefault(ev.get("node_id"), []).append(ev)
 
     # Enrich each node with learning velocity; trim event history for API response
     for n in nodes:
         events = events_by_node.get(n["id"], [])
         n["learning_velocity"] = _compute_velocity(events)
-        n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
+        # keep last 5 for UI (the read's row id is not part of the API shape);
+        # full history lives in DB
+        n["mastery_events"] = [{k: v for k, v in e.items() if k != "id"} for e in events[-5:]]
 
     mastered   = sum(1 for n in nodes if n["mastery_tier"] == "mastered")
     learning   = sum(1 for n in nodes if n["mastery_tier"] == "learning")
@@ -704,8 +709,6 @@ def add_node(
 # Everything below up to apply_graph_update runs only when a graph_update
 # carries a non-empty "evidence" list; the legacy keys never reach it.
 
-_ONE_DAY = timedelta(days=1)
-
 
 def _prerequisite_edges(user_id: str, node_id: str) -> list[tuple[str, str]]:
     """(source_node_id, target_node_id) prerequisite pairs touching node_id.
@@ -752,60 +755,16 @@ def _propagation_targets(user_id: str, ev: Evidence) -> list[bkt.Propagation]:
 def _fsrs_after(
     st: LearnerState, ev: Evidence, now: datetime, retention: float | None = None
 ) -> None:
-    """ADAPTER — the one place fsrs.next_state's signature is assumed
-    (HANDOFF-02: `next_state(d, s, rating, days_since, *, same_day,
-    mc_unassisted) -> (D', S')`; nothing is scheduled there). Mutates st's
-    fsrs_* fields in place. A review less than one day after the last one
-    takes FSRS's same-day branch (py-fsrs: `(now − last_review).days < 1`).
-    The due date is at `retention` (FSRS_RETENTION_DEFAULT when None); the
-    caller picks it by exam window or set size (PKG-12's review passes
-    learning.review.retention_target's value through apply_graph_update)."""
-    rating = fsrs.rating_for(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
-    mc_unassisted = fsrs.mc_cap_applies(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
-    last = st.fsrs_last_review_at
-    days_since = 0.0
-    same_day = False
-    if last is not None:
-        days_since = max(0.0, (now - last) / _ONE_DAY)
-        same_day = now - last < _ONE_DAY
-    new_d, new_s = fsrs.next_state(
-        st.fsrs_d, st.fsrs_s, rating, days_since,
-        same_day=same_day, mc_unassisted=mc_unassisted,
+    """learning.evidence_replay.fsrs_after over an Evidence (the FSRS adapter
+    lives there since spec §13 A123, shared with the journal replay)."""
+    evidence_replay.fsrs_after(
+        st, channel=ev.channel, correct=ev.correct, max_rung=ev.max_rung, idk=ev.idk,
+        now=now, retention=retention,
     )
-    st.fsrs_d, st.fsrs_s = new_d, new_s
-    st.fsrs_last_review_at = now
-    target = FSRS_RETENTION_DEFAULT if retention is None else retention
-    st.fsrs_due_at = now + timedelta(days=fsrs.interval(target, new_s))
 
 
-def _keep_decay_anchor(st: LearnerState, p_now: float, now: datetime) -> tuple[float, datetime]:
-    """ADAPTER over fsrs.retrievability / fsrs.interval (the R that
-    bkt.decayed_p reads with). Returns `(p_stored, anchor)` for a write
-    that is NOT a check on st's concept (one-hop propagation): read_state
-    at `now` gives `p_now` back, but the concept's forgetting curve is not
-    restarted. Spec §1/§3.1: belief decays "between checks" along
-    R(Δt, S_c); restarting a power-law curve at every propagation made a
-    correct observation lower a later read (R(a)·R(b) < R(a+b)).
-
-    Keeps `st.last_evidence_at` and stores `L0 + (p_now − L0) / R(Δt, S_c)`.
-    Where that leaves [0, 1] (p_now is outside what the old anchor can
-    represent), it stores the bound and moves the anchor forward only as
-    far as needed, so R(now − anchor') = (p_now − L0) / (bound − L0). A
-    concept with no anchor (no row yet) is anchored at `now`.
-    """
-    anchor = st.last_evidence_at
-    if anchor is None:
-        return p_now, now
-    if anchor >= now:  # read_states decays nothing before the anchor
-        return p_now, anchor
-    s_c = FSRS_S0_GOOD if st.fsrs_s is None else st.fsrs_s
-    r = fsrs.retrievability((now - anchor) / _ONE_DAY, s_c)
-    p_stored = BKT_L0 + (p_now - BKT_L0) / r
-    if 0.0 <= p_stored <= 1.0:
-        return p_stored, anchor
-    bound = 1.0 if p_stored > 1.0 else 0.0
-    needed = (p_now - BKT_L0) / (bound - BKT_L0)  # in (r, 1]
-    return bound, now - timedelta(days=fsrs.interval(min(1.0, needed), s_c))
+#: The propagation decay-anchor adapter (learning.evidence_replay since A123).
+_keep_decay_anchor = evidence_replay.keep_decay_anchor
 
 
 def _apply_evidence(
@@ -851,10 +810,17 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
     The journal rows of one call share `created_at` and have random ids, so
     each carries `evidence_seq` = 0..n−1 in apply order (§13 A36): a replay
     orders by (created_at, evidence_seq). A skipped evidence takes no number.
+
+    §13 A123: the state transition is learning.evidence_replay's `observe` /
+    `propagate` — the same code the journal replay runs — and each row also
+    journals what its replay needs beyond the observation: the FSRS
+    `retention` it was scheduled at, its final `same_session_recheck` flag and
+    the nodes its propagation moved (`propagated_to`).
     """
     by_id, now = prepared.nodes, prepared.now
     changes: list[dict] = []
     now_iso = now.isoformat()
+    target_retention = FSRS_RETENTION_DEFAULT if retention is None else retention
     owned = [ev.node_id for ev in evidences if ev.node_id in by_id]
     # One batched read; nodes with no row start at the prior. The cache means
     # a later evidence on the same node sees the earlier posterior (elapsed
@@ -893,9 +859,24 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
         w = evidence_weight(ev)
 
         st = states[ev.node_id]
-        p_before = st.p_known
-        # weight 0.0 (correct after H4..H6) returns p_before unchanged.
-        p_after = bkt.update(p_before, ev.channel, ev.correct, weight=w, idk=ev.idk)
+        # weight 0.0 (correct after H4..H6) returns p_before unchanged; a
+        # correct re-check of a question already asked this session is not a
+        # first attempt (spec §3.3): an opportunity only, it neither extends
+        # nor breaks the streak †.
+        p_before, p_after = evidence_replay.observe(
+            st, channel=ev.channel, correct=ev.correct, idk=ev.idk, assisted=ev.assisted,
+            max_rung=ev.max_rung, weight=w, recheck=ev.same_session_recheck, now=now,
+            retention=retention,
+        )
+        prepared.state_rows[st.node_id] = state_row(st, now)
+        st.exists = True
+        # The propagated observation carries the evidence's own weight too
+        # (spec §5: weight = product of the applicable §3.1 weights) †, and
+        # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
+        # moves no neighbour.
+        targets = evidence_replay.propagation_targets(
+            ev.node_id, ev.correct, w, prepared.snapshot["edges"], by_id
+        )
 
         # A tagged grade needs durable readiness provenance before any scalar
         # or mirrored BKT mutation. A failed append cannot silently lose it.
@@ -909,29 +890,14 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             "check_item_id": ev.check_item_id, "question_hash": ev.question_hash,
             "confidence": ev.confidence, "grader_backend": ev.grader_backend,
             "evidence_seq": seq,
+            # §13 A123: what a replay of this row needs beyond the observation
+            "retention": target_retention,
+            "same_session_recheck": ev.same_session_recheck,
+            "propagated_to": [target_id for target_id, *_ in targets],
         }
         provenance = planning_observation(ev)
         if provenance is not None:
             event_row["planning_observation"] = provenance
-
-        unassisted = not ev.assisted and ev.max_rung == 0
-        st.opps += 1
-        if ev.correct and unassisted:
-            # A correct re-check of a question already asked this session is
-            # not a first attempt (spec §3.3): an opportunity only, it neither
-            # extends nor breaks the streak †.
-            if not ev.same_session_recheck:
-                st.streak_unassisted += 1
-                if is_strong_channel(ev.channel):
-                    st.n_strong_unassisted += 1
-        else:
-            st.streak_unassisted = 0
-        st.max_streak_unassisted = max(st.max_streak_unassisted, st.streak_unassisted)
-        st.p_known = p_after
-        st.last_evidence_at = now
-        _fsrs_after(st, ev, now, retention)
-        prepared.state_rows[st.node_id] = state_row(st, now)
-        st.exists = True
 
         times = (row.get("times_studied") or 0) + 1
         mirror = {
@@ -948,26 +914,8 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
         seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
 
-        # The propagated observation carries the evidence's own weight too
-        # (spec §5: weight = product of the applicable §3.1 weights) †, and
-        # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
-        # moves no neighbour, so its edges are not even read.
-        if w > 0.0:
-            parents, children = [], []
-            for edge in prepared.snapshot["edges"]:
-                src, tgt = edge["source"], edge["target"]
-                prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
-                if dependent == ev.node_id and prereq != ev.node_id:
-                    parents.append(prereq)
-                elif prereq == ev.node_id and dependent != ev.node_id:
-                    children.append(dependent)
-            targets = bkt.propagate_prereq(ev.correct, parents, children)
-        else:
-            targets = []
         for target_id, channel, target_correct, weight in targets:
-            trow = by_id.get(target_id)
-            if trow is None or target_id == ev.node_id:
-                continue
+            trow = by_id[target_id]
             tst = states.get(target_id)
             if tst is None:
                 tst = LearnerState(
@@ -976,14 +924,113 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
                 states[target_id] = tst
             # tst.p_known stays the belief AT now (a later evidence in this
             # call reads it); the row is stored against the kept anchor.
-            tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight * w)
-            p_stored, tst.last_evidence_at = _keep_decay_anchor(tst, tst.p_known, now)
+            p_stored = evidence_replay.propagate(
+                tst, channel=channel, correct=target_correct, weight=weight,
+                source_weight=w, now=now,
+            )
             prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
             tst.exists = True
             mirror = {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)}
             prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
             trow["mastery_score"] = tst.p_known
     return changes
+
+
+# ── §13 A123: void + recompute (a branch of the same single writer) ─────────
+
+
+def _apply_void(user_id: str, course_id: str, question_hash: str) -> tuple[list[dict], dict]:
+    """Void every evidence row this student has graded against the retired
+    course item and write their recomputed state, in ONE transaction
+    (learning.evidence_transaction.commit_void_transaction). Returns (the
+    recomputed nodes' {concept, before, after}, the commit's counts)."""
+    from learning.evidence_transaction import commit_void_transaction
+
+    def compute(snapshot):
+        return _calculate_void(user_id, course_id, question_hash, snapshot)
+
+    return commit_void_transaction(user_id, course_id, question_hash, compute)
+
+
+def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: dict):
+    """The void plan, from a void snapshot, without database I/O.
+
+    Voids: every one of the student's evidence rows graded against the item
+    (a check_item_id and the item's question_hash; rows already void are named
+    too, so the commit can check the set is whole). Recomputed: every node such
+    a row moved — its own concept and the nodes its propagation moved
+    (learning.evidence_replay.moved_by) — at the state a replay of the course's
+    NON-void journal (this item's rows and every earlier void left out) gives:
+    the learner_state row the writer would have stored and the mirror it would
+    hold. A node no non-void row reaches any more is back at the BKT prior
+    (exactly what read_state answers for a node with no row), its row stamped
+    with the latest voided row that touched it, so the plan is a pure function
+    of the journal and a re-run writes nothing. Misconceptions: the open rows
+    every supporting attempt of which was graded against a retired item of
+    the course (learning.evidence_void.closable_misconceptions)."""
+    from learning.evidence_transaction import EvidenceVoidRefused, VoidPlan
+    from learning.evidence_void import closable_misconceptions
+
+    if snapshot.get("retired") is not True:
+        raise EvidenceVoidRefused("The check item is not retired")
+    nodes = {n["id"]: n for n in snapshot["nodes"]}
+    owned = frozenset(nodes)
+    edges = snapshot["edges"]
+    journal = snapshot["journal"]
+    item_rows = [
+        r for r in journal if r.get("question_hash") == question_hash and r.get("check_item_id")
+    ]
+    void_ids = {r["id"] for r in journal if r.get("void")} | {r["id"] for r in item_rows}
+    replayed = evidence_replay.replay(
+        [evidence_replay.observation(r) for r in journal if r["id"] not in void_ids],
+        user_id=user_id, edges=edges, owned=owned,
+    )
+    touched_by_void: dict[str, datetime] = {}
+    for row in item_rows:
+        ob = evidence_replay.observation(row)
+        for node_id in evidence_replay.moved_by(ob, edges=edges, owned=owned):
+            if node_id in owned:
+                touched_by_void[node_id] = max(touched_by_void.get(node_id, ob.at), ob.at)
+    stored = {s["node_id"]: s for s in snapshot["states"]}
+    state_rows, mirrors, changes = [], [], []
+    for node_id in sorted(touched_by_void):
+        if node_id in replayed.state_rows:
+            row, belief = replayed.state_rows[node_id], replayed.mirrors[node_id]
+        else:
+            row = state_row(LearnerState(user_id=user_id, node_id=node_id), touched_by_void[node_id])
+            belief = row["p_known"]
+        state_rows.append(row)
+        mirrors.append({"id": node_id, "mastery_score": belief, "mastery_tier": bkt.tier_for(belief)})
+        changes.append({
+            "concept": nodes[node_id].get("concept_name"),
+            "before": nodes[node_id].get("mastery_score"),
+            "after": belief,
+        })
+    retired = set(snapshot.get("retired_hashes") or []) | {question_hash}
+    misconceptions = closable_misconceptions(
+        snapshot.get("misconceptions") or [],
+        course_id=course_id,
+        retired_hashes=retired,
+        retired_check_ids={
+            r["check_item_id"] for r in journal
+            if r.get("check_item_id") and r.get("question_hash") in retired
+        },
+    )
+    return VoidPlan(
+        payload={
+            "voids": sorted(r["id"] for r in item_rows),
+            "nodes": [{"id": n, "version": nodes[n]["evidence_version"]} for n in sorted(touched_by_void)],
+            "states_expected": [
+                {"node_id": n, "version": stored[n]["evidence_version"] if n in stored else None}
+                for n in sorted(touched_by_void)
+            ],
+            "edges": edges,
+            "state_rows": state_rows,
+            "mirrors": mirrors,
+            "misconceptions": misconceptions,
+        },
+        changes=changes,
+    )
 
 
 def apply_graph_update(
@@ -1009,6 +1056,31 @@ def apply_graph_update(
         # mastery tool and the quiz deltas were its only producers. Loud, and
         # before any read or write, so a stale caller can never half-apply.
         raise ValueError("updated_nodes is no longer accepted (PKG-14b): pass evidence")
+    if "void_evidence" in graph_update:
+        # §13 A123: a staff retire voids this student's evidence graded against
+        # the course item ({"question_hash": ...}) and writes the state a replay
+        # of the non-void journal gives — alone (never mixed with evidence or
+        # topology), in the item's course, before any other read or write.
+        void = graph_update["void_evidence"]
+        question_hash = void.get("question_hash") if isinstance(void, dict) else None
+        if set(graph_update) != {"void_evidence"} or not course_id:
+            raise ValueError("void_evidence is applied alone, in the item's course")
+        if not isinstance(question_hash, str) or not question_hash:
+            raise ValueError("void_evidence names the retired item's question_hash")
+        changes, counts = _apply_void(user_id, course_id, question_hash)
+        logger.info(
+            "graph: evidence void user=%s course=%s voided=%d states=%d mirrors=%d "
+            "misconceptions_closed=%d",
+            user_id, course_id, counts["voided"], counts["states"], counts["mirrors"],
+            counts["misconceptions"],
+        )
+        if counts["states"] or counts["mirrors"]:
+            # Post-commit: the offering aggregates read the mirrors it moved.
+            from services.academics import user_offering_ids_for_course
+
+            for offering_id in user_offering_ids_for_course(user_id, course_id):
+                _refresh_course_context(offering_id, user_id)
+        return changes
     mastery_changes: list = []
     touched_courses: set = set()
     # PKG-03: validate every evidence BEFORE any read or write; an invalid

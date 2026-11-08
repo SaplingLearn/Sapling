@@ -1474,9 +1474,10 @@ export type LoopReportBody =
   | { surface: 'loop'; user_id: string; session_id: string; question_hash: string; reason: LoopReportReason }
   // Study's review queue: today's review session's served item, by its id
   | { surface: 'review'; user_id: string; session_id: string; item_id: string; course_id?: string; reason: LoopReportReason };
-/** `first` false: already reported (nothing new recorded); `retired`: this
- *  report retired the question for the whole course. */
-export interface LoopReportResult { reported: true; first: boolean; retired: boolean }
+/** `first` false: already reported (nothing new recorded); `quarantined`:
+ *  this report withheld the question from the whole course until staff decide
+ *  (spec §13 A123 — a report never deletes a question). */
+export interface LoopReportResult { reported: true; first: boolean; quarantined: boolean }
 export const reportCheckItem = (body: LoopReportBody) =>
   loopPost<LoopReportResult>('/report', body);
 
@@ -2062,10 +2063,14 @@ export interface AdminCheckItemEntry {
   lint_flags: CheckItemLintFlag[];
   reports: Record<LoopReportReason, number> & { total: number };
   last_reported_at: string | null;
-  status: 'approved' | 'retired' | null;
+  status: 'approved' | 'quarantined' | 'retired' | null;
   reviewed_at: string | null;
-  /** The retire was decided but the question is still stored: retire it again. */
+  /** The retire was decided but did not finish (its results not all voided, or
+   *  the question still stored): retire it again. */
   retire_pending: boolean;
+  /** Spec §13 A123: enough students reported it, so it is withheld from every
+   *  student — nothing deleted — until staff approve (restore) or retire it. */
+  quarantined: boolean;
   prompt: string | null;
   options: { letter: string; text: string; correct: boolean }[] | null;
   final_answer: string | null;
@@ -2075,17 +2080,21 @@ export interface AdminCheckItemQueue {
   items: AdminCheckItemEntry[];
   count: number;
   page_size: number;
-  retire_min_reporters: number;
+  /** distinct reporters that quarantine a question (spec §13 A123) */
+  quarantine_min_reporters: number;
 }
 export const adminCheckItemQueue = () =>
   fetchJSON<AdminCheckItemQueue>('/api/admin/check-items/queue');
+/** `restored`: the approval lifted a quarantine (spec §13 A123). */
 export const adminApproveCheckItem = (itemId: string) =>
-  fetchJSON<{ id: string; status: 'approved' }>(
+  fetchJSON<{ id: string; status: 'approved'; restored: boolean }>(
     `/api/admin/check-items/${encodeURIComponent(itemId)}/approve`,
     { method: 'POST' },
   );
+/** Spec §13 A123: a retire voids every student's results on the question
+ *  (`voided` rows, `students` recomputed), then deletes it (`items` rows). */
 export const adminRetireCheckItem = (itemId: string) =>
-  fetchJSON<{ id: string; status: 'retired'; items: number }>(
+  fetchJSON<{ id: string; status: 'retired'; items: number; students: number; voided: number }>(
     `/api/admin/check-items/${encodeURIComponent(itemId)}/retire`,
     { method: 'POST' },
   );

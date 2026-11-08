@@ -25,9 +25,11 @@ from pydantic import BaseModel, Field
 
 from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
+from learning.calibration import eligible as calibration_eligible
 from learning.earnest_revise import earnest_revise
-from learning.item_reports import RETIRED, REVIEWS
-from learning.learning_gain import learning_gain, pose_item, posttest_outcome, pretest_outcome
+from learning.evidence_void import is_void_row, pose_is_void
+from learning.item_reports import retired_items
+from learning.learning_gain import learning_gain, posttest_outcome, pretest_outcome
 from learning.params import (
     ACQ_TARGET_HI,
     ACQ_TARGET_LO,
@@ -528,9 +530,11 @@ def errors(
 _STEP_EVENT = "zpd.step"
 _LEAK_EVENT = "zpd.leak"
 _REVEAL_EVENT = "zpd.reveal"  # spec §13 A88 (m5): a solution SERVED for an open posed item
+#: spec §13 A123: the check item and the node's course name the course item a
+#: row was graded against — what the void rule (learning/evidence_void.py) keys on
 _EVIDENCE_COLS = (
     "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at,"
-    "channel,p_before,weight"
+    "channel,p_before,weight,check_item_id,graph_nodes!inner(course_id)"
 )
 TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
 
@@ -603,6 +607,9 @@ class CalibrationReport(BaseModel):
 class Calibration(BaseModel):
     all: CalibrationReport
     posttest: CalibrationReport  # rung 3: fresh reserve item, tool-free, delayed
+    # spec §13 A123: independent observations left out because they were
+    # graded against an item staff retired (void evidence) — the drop, visible
+    excluded_void: int = 0
 
 
 class GainSummary(BaseModel):
@@ -622,8 +629,8 @@ class GainSummary(BaseModel):
 class GainWindow(GainSummary):
     window_days: int  # a POSTTEST_WINDOWS_DAYS window
     posttests: int  # unassisted post-test outcomes in the window, paired or not
-    # unassisted outcomes left out because their item was retired through A113's
-    # review path (retired as broken: no valid measurement) — the drop, visible
+    # unassisted outcomes left out because staff retired their item (A113/A123:
+    # retired as broken, so the outcome is void evidence) — the drop, visible
     excluded_retired: int
     delayed: GainSummary  # the pairs with no evidence for ≥ delayed_min_days before the pose
 
@@ -833,20 +840,21 @@ def _batches(values: list[str]):
         yield values[start : start + _IN_BATCH]
 
 
-def _pretests(poses: list[dict]) -> dict[str, bool]:
+def _pretests(poses: list[dict], retired: set[tuple[str, str]] = frozenset()) -> dict[str, bool]:
     """A112: anchor event id → the concept's pretest outcome
     (learning_gain.pretest_outcome), for the poses with an unassisted outcome.
     Two bounded reads: their anchor rows (each concept's first evidence) by id,
     then the probe histories of those rows' sessions — planning provenance tags
     the loop's in-session checks too, so only the session's probe history says
-    a row was a probe grade."""
-    ids = sorted(
-        {
-            str(p["anchor_event_id"])
-            for p in poses
-            if p.get("anchor_event_id") and posttest_outcome(p) is not None
-        }
-    )
+    a row was a probe grade. A123: an anchor graded against an item staff
+    retired is void evidence — no pretest (the void rule, keyed on the pose's
+    course)."""
+    course_of = {
+        str(p["anchor_event_id"]): p.get("course_id")
+        for p in poses
+        if p.get("anchor_event_id") and posttest_outcome(p) is not None
+    }
+    ids = sorted(course_of)
     anchors: list[dict] = []
     for batch in _batches(ids):
         anchors += (
@@ -855,6 +863,10 @@ def _pretests(poses: list[dict]) -> dict[str, bool]:
             )
             or []
         )
+    anchors = [
+        row for row in anchors
+        if not is_void_row(row, retired, course_of.get(str(row.get("id"))))
+    ]
     sessions = sorted({str(r["session_id"]) for r in anchors if r.get("session_id")})
     probed: dict[str, set[str]] = {}
     for batch in _batches(sessions):
@@ -875,28 +887,18 @@ def _pretests(poses: list[dict]) -> dict[str, bool]:
     return out
 
 
-def _retired_items(poses: list[dict]) -> set[tuple[str, str]]:
-    """A112 × A113: the course items, among those the poses with an unassisted
-    outcome asked, that A113's review path RETIRED — a check_item_reviews row
-    with status 'retired' (a staff retire, or the auto-retire at
-    ITEM_REPORT_RETIRE_MIN_REPORTERS distinct reporters). Retired as broken,
-    their outcomes are no valid measurement. ONE bounded read (question hashes
-    per `in.(…)`, status-filtered), matched on (course_id, question_hash): the
-    same hash in another course is another item. Keyed on that structured
-    record, never on the item row being gone — A23's consent withdrawal deletes
-    items too, and those outcomes stand; a report alone, or an approval, is no
-    retire. No unassisted outcome → no read."""
-    asked = {key for p in poses if posttest_outcome(p) is not None and (key := pose_item(p))}
-    retired: set[tuple[str, str]] = set()
-    for batch in _batches(sorted({question_hash for _, question_hash in asked})):
-        for row in table(REVIEWS).select(
-            "course_id,question_hash",
-            filters={"question_hash": _in(batch), "status": f"eq.{RETIRED}"},
-        ) or []:
-            key = pose_item(row)
-            if key in asked:
-                retired.add(key)
-    return retired
+def _void_items(evidence: list[dict], poses: list[dict]) -> set[tuple[str, str]]:
+    """Spec §13 A123 — the ONE rule both reports apply: an observation graded
+    against a check item STAFF retired is void (learning/evidence_void.py).
+    The staff-retired course items, as (course_id, question_hash) — the
+    structured record (`check_item_reviews`, status 'retired'), never an item
+    row being gone (A23's consent withdrawal and A119's re-key delete rows too,
+    and that evidence stands); a quarantine, a report or an approval is no
+    retire. Read only when there is an observation to judge: ONE paged,
+    status-filtered read (retired items are staff decisions, so few)."""
+    if not evidence and not any(posttest_outcome(p) is not None for p in poses):
+        return set()
+    return retired_items()
 
 
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
@@ -921,9 +923,12 @@ def learning_loop_kpis(
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
     and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
     BKT calibration (A110) and the pre/post learning gain of the post-tests
-    answered in the range, per fixed window (A112) — an outcome whose item
-    A113's review path retired is left out and counted in `excluded_retired`;
-    `truncated: true` means a scan cap cut the aggregation short."""
+    answered in the range, per fixed window (A112). One void rule (A123) for
+    every evidence read here: an observation graded against an item staff
+    retired is left out — of the calibration (counted in `excluded_void`), the
+    next-session success, the learning gain's post-tests (counted per window in
+    `excluded_retired`) and its pretests; `truncated: true` means a scan cap
+    cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -958,10 +963,15 @@ def learning_loop_kpis(
     in_band, banded = _in_band_share(steps)
     compliance = _ceiling_compliance(steps)
     earnest = EarnestRevise(**earnest_revise(steps))
-    # A113: an outcome on a retired item is excluded (and counted), so its
-    # anchor is never read for a pretest
-    retired = _retired_items(poses)
-    pretests = _pretests([p for p in poses if pose_item(p) not in retired])
+    # A123: ONE void rule for every evidence read — graded against an item
+    # staff retired. An outcome on one is excluded (and counted), so its anchor
+    # is never read for a pretest; a void anchor is no pretest.
+    retired = _void_items(evidence, poses)
+    valid = [row for row in evidence if not is_void_row(row, retired)]
+    excluded_void = sum(
+        1 for row in evidence if is_void_row(row, retired) and calibration_eligible(row) is not None
+    )
+    pretests = _pretests([p for p in poses if not pose_is_void(p, retired)], retired)
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -969,7 +979,7 @@ def learning_loop_kpis(
         in_band=in_band,
         in_band_share=in_band / banded if banded else None,
         htc_k_trend=_htc_k_trend(steps, to_iso),
-        unassisted_next_session=NextSessionSuccess(**_next_session_rate(evidence, quiz_ask)),
+        unassisted_next_session=NextSessionSuccess(**_next_session_rate(valid, quiz_ask)),
         caught_leaks=caught,
         served_reveals=served,
         unscanned_turns=unscanned,
@@ -981,7 +991,7 @@ def learning_loop_kpis(
             and compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
-        calibration=Calibration(**bkt_calibration(evidence)),
+        calibration=Calibration(**bkt_calibration(valid), excluded_void=excluded_void),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
         truncated=events_truncated or evidence_truncated or poses_truncated,
     )

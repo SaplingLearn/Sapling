@@ -98,9 +98,12 @@ from learning.evidence import (
     PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
 )
 from learning.evidence_transaction import (
+    EvidenceItemRetired,
     EvidenceObservationSuperseded,
     read_receipt as read_evidence_receipt,
 )
+from learning.item_reports import withheld_hashes
+from learning.void_store import voided_event_ids
 from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
@@ -249,7 +252,6 @@ from services.check_item_service import (
     items_by_ids,
     items_for_concepts,
     list_items,
-    retire_course_item,
 )
 from services.feature_flags import flag_on
 from services.graph_context import build_graph_context_block
@@ -2589,7 +2591,9 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     visibility-aware reader; H4 never shows the concept's post-test reserve
     (A23, HANDOFF-06), so the concept's items are read whole — the reserve is
     defined over all of them — and ladder.deterministic_content keeps the
-    siblings of the item's format and difficulty."""
+    siblings of the item's format and difficulty. A sibling withheld from the
+    course (A123: quarantined or retired as possibly broken) is never shown,
+    and the reserve is the one the post-test poses among the items served."""
     passages: list[str] = []
     if rung == Rung.H2:
         ids = list(item.source_chunk_ids or [])[:LOOP_SOURCE_CHUNKS_MAX]
@@ -2597,7 +2601,10 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     siblings: list = []
     reserve = None
     if rung == Rung.H4:
-        concept_items = list_items(item.course_id, item.concept_key)
+        withheld = withheld_hashes(item.course_id)
+        concept_items = [
+            i for i in list_items(item.course_id, item.concept_key) if i.question_hash not in withheld
+        ]
         reserve = posttest_reserve_hash(concept_items)
         siblings = [s for s in concept_items if s.question_hash != item.question_hash]
     payload = ladder.deterministic_content(
@@ -2689,7 +2696,8 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
     so far. A concept with nothing servable advances the cursor and tries the
     next (at most once per remaining concept). No plan → None (teaching only).
     Writes no evidence and runs no model. An item the student reported (A113)
-    is excluded like a seen or revealed one."""
+    is excluded like a seen or revealed one; an item withheld from the course
+    (A123: quarantined or retired) is not in the bank at all."""
     concept = state.get("concept")
     if not concept:
         return None
@@ -2700,6 +2708,7 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             | reported_hashes(user_id)
             | set(state.get("steps") or {})
         )
+        withheld = withheld_hashes(course_id)
     except Exception as exc:
         if state.get("goal"):
             raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
@@ -2707,7 +2716,7 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
     while True:
         item = None
         try:
-            items, exclude = _practice_pool(user_id, course_id, concept, excluded)
+            items, exclude = _practice_pool(user_id, course_id, concept, excluded, withheld=withheld)
         except Exception as exc:
             if state.get("goal"):
                 raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
@@ -2746,18 +2755,23 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
         concept = state["concept"]
 
 
-def _practice_pool(user_id: str, course_id: str, node_id: str, excluded: set[str]) -> tuple[list, set[str]]:
+def _practice_pool(
+    user_id: str, course_id: str, node_id: str, excluded: set[str], *, withheld: set[str]
+) -> tuple[list, set[str]]:
     """The same eligible bank for planning and actual check activation.
 
     A probe's practice reserve is eligible here; the delayed posttest reserve
     is not. Difficulty is not an availability filter: selection uses the
     nearest difficulty and rotates through all supported check formats.
-    Failed reads propagate, never masquerade as an empty bank.
+    Failed reads propagate, never masquerade as an empty bank. An item
+    withheld from the course (A123: quarantined or retired) is not in the
+    bank, so the reserve is chosen among the items still served — the one the
+    post-test will pose.
     """
     key = _concept_key_for_node(user_id, node_id)
     if not key:
         return [], excluded
-    items = list_items(course_id, key)
+    items = [i for i in list_items(course_id, key) if i.question_hash not in withheld]
     reserve = posttest_reserve_hash(items)
     return items, excluded | ({reserve} if reserve else set())
 
@@ -2773,9 +2787,10 @@ def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_i
             | reported_hashes(user_id)
             | set(state.get("steps") or {})
         )
+        withheld = withheld_hashes(course_id)
         unavailable = set()
         for node in node_ids:
-            items, excluded_for_node = _practice_pool(user_id, course_id, node, excluded)
+            items, excluded_for_node = _practice_pool(user_id, course_id, node, excluded, withheld=withheld)
             if not any(item.question_hash not in excluded_for_node and item.format in CHECK_ITEM_FORMATS
                        and is_servable(item) for item in items):
                 unavailable.add(node)
@@ -3552,6 +3567,12 @@ def _save_grade_checkpoint(checkpoint):
     _update_loop_state(checkpoint.session_id, save, require_open=True, require_existing=True)
 
 
+#: spec §13 A123: _flush_grade_checkpoint's answer when the commit refused the
+#: grade because staff retired its item meanwhile (EvidenceItemRetired)
+_ITEM_RETIRED = object()
+_RETIRED_DETAIL = "This question was withdrawn. Select another check to continue."
+
+
 def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
     def guard(doc):
         _refuse_while_closing(doc, _now_s())
@@ -3579,9 +3600,11 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
     deps.pending_evidence = copy.deepcopy(checkpoint.evidence)
     try:
         flush_pending(deps, checkpoint.course_id)
-    except EvidenceObservationSuperseded:
+    except EvidenceObservationSuperseded as exc:
         # The original answer has no committed receipt, and a newer observation
-        # is already authoritative. Never apply the old answer out of order or
+        # is already authoritative — or (A123, EvidenceItemRetired) staff retired
+        # the item while it was graded, so the grade is void by definition and
+        # nothing was written. Never apply the old answer out of order or
         # invent a diagnosis; retire its pose and ask for fresh evidence.
         def supersede(doc):
             if checkpoint.kind == "check":
@@ -3595,7 +3618,7 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
                 _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, _not_asked)(doc)
 
         _update_loop_state(checkpoint.session_id, supersede, require_open=True, require_existing=True)
-        return False
+        return _ITEM_RETIRED if isinstance(exc, EvidenceItemRetired) else False
     except PlanningPersistenceUnavailable:
         raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
     try:
@@ -3639,6 +3662,8 @@ def _committed_grade_observation(checkpoint, receipt, node_id):
 
 def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
     receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+    if receipt is _ITEM_RETIRED:
+        raise HTTPException(status_code=409, detail=_RETIRED_DETAIL)
     if receipt is False:
         raise HTTPException(status_code=409, detail="Newer learning activity was recorded. Select another check to continue.")
     qh, claim = checkpoint.question_hash, checkpoint.operation_id
@@ -3724,6 +3749,7 @@ def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> No
         mark["check_item_id"],
         mark["wrong_key"],
         grader_answer_text(item, answer),
+        question_hash=getattr(item, "question_hash", None),  # A123: the supporting attempt's item
     )
 
 
@@ -3806,22 +3832,24 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
     return {"ok": True}
 
 
-# ── "Report this question" (spec §13 A113; GitHub #695) ────────────────────
+# ── "Report this question" (spec §13 A113, A123; GitHub #695) ──────────────
 #
 # A check item's key comes from a classmate's upload and no instructor reviews
 # it, so a student can report a question they were posed: wrong answer, unclear
 # or not from my course (enums only). The report is recorded first (the
 # database decides, under the item's lock, whether it is the
-# ITEM_REPORT_RETIRE_MIN_REPORTERS-th distinct reporter); then the item stops
+# ITEM_REPORT_QUARANTINE_MIN_REPORTERS-th distinct reporter); then the item stops
 # being served to the reporter: every selection excludes
 # loop_state_store.reported_hashes, and the item is taken off the surface it was
 # reported from (the loop session's current check; the review session's open
-# entry). The report that reaches the threshold retires the item course-wide
-# through check_item_service's A23 retire path. Evidence already written stays.
+# entry). The report that reaches the threshold QUARANTINES the item
+# course-wide (A123): every selection excludes it for every student
+# (item_reports.withheld_hashes), nothing is deleted and no evidence changes,
+# until staff approve it (restored) or retire it (deleted, evidence voided) in
+# the admin queue. A report never deletes anything.
 
 _REPORTED = "learn.check_item_reported"
-_RETIRED = "learn.check_item_retired"
-_RETIRE_ERROR = "RetireError"
+_QUARANTINED = "learn.check_item_quarantined"
 _WITHDRAWN_ITEM = "check item withdrawn"
 
 
@@ -3887,46 +3915,6 @@ def _clear_reported_current(session_id: str, question_hash: str, now: float) -> 
     _update_loop_state(session_id, withdraw)
 
 
-def _retire_reported(
-    item: CheckItem, *, user_id: str, request_id: str, decided_by: str, reporters: int | None
-) -> int | None:
-    """Retire the course item now (the decision is already recorded): rows
-    deleted, or None when the delete failed — logged at ERROR and counted as
-    learn.check_items_failed (RetireError); the admin queue lists the item as
-    retire-pending until an admin's retire finishes it."""
-    try:
-        retired = retire_course_item(item.course_id, item.question_hash)
-    except Exception:
-        logger.error(
-            "check item retire FAILED (course=%s hash=%s); it stays served until retired",
-            item.course_id,
-            item.question_hash,
-            exc_info=True,
-        )
-        events_service.log_event(
-            "learn.check_items_failed",
-            category="error",
-            user_id=user_id,
-            request_id=request_id,
-            payload={"document_id": None, "course_id": item.course_id, "reason": _RETIRE_ERROR},
-        )
-        return None
-    events_service.log_event(
-        _RETIRED,
-        category="audit",
-        user_id=user_id,
-        request_id=request_id,
-        payload={
-            "course_id": item.course_id,
-            "question_hash": item.question_hash,
-            "decided_by": decided_by,
-            "reporters": reporters,
-            "items": retired,
-        },
-    )
-    return retired
-
-
 @router.post("/report", dependencies=_RATE_LIMITED)
 def report_item(body: LoopReportBody, request: Request) -> dict:
     """POST /api/learn/loop/report (spec §13 A113; GitHub #695): the student
@@ -3934,10 +3922,12 @@ def report_item(body: LoopReportBody, request: Request) -> dict:
     (`surface: loop`, the session's step by `question_hash`) or on Study's
     review queue (`surface: review`, today's review session's item by
     `item_id`). The reason is an enum; nothing else the student writes is
-    stored. Idempotent: a repeat records nothing new. Runs no model but is
-    rate-limited (A20); require_self, the gate's 404, the `item_reports`
-    flag's 404 and the owner checks run first. 503 when the report could not
-    be recorded (nothing changed; retry)."""
+    stored. Idempotent: a repeat records nothing new. The report that reaches
+    ITEM_REPORT_QUARANTINE_MIN_REPORTERS quarantines the course item (A123:
+    `quarantined`, withheld from every student until staff decide; nothing is
+    deleted). Runs no model but is rate-limited (A20); require_self, the gate's
+    404, the `item_reports` flag's 404 and the owner checks run first. 503
+    when the report could not be recorded (nothing changed; retry)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
@@ -3980,17 +3970,19 @@ def report_item(body: LoopReportBody, request: Request) -> dict:
             "reporters": outcome.reporters,
         },
     )
-    retired = outcome.retire and (
-        _retire_reported(
-            item,
+    if outcome.quarantine:
+        events_service.log_event(
+            _QUARANTINED,
+            category="audit",
             user_id=body.user_id,
             request_id=request_id,
-            decided_by=item_reports.DECIDED_BY_REPORTS,
-            reporters=outcome.reporters,
+            payload={
+                "course_id": item.course_id,
+                "question_hash": item.question_hash,
+                "reporters": outcome.reporters,
+            },
         )
-        is not None
-    )
-    return {"reported": True, "first": outcome.first, "retired": retired}
+    return {"reported": True, "first": outcome.first, "quarantined": outcome.quarantine}
 
 
 # ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23, A112, A113) ─
@@ -4030,8 +4022,8 @@ def posttest_item(items: list, excluded: set[str]):
     Never an excluded (seen, revealed or reported) item. Within each rule the
     item-flaw lint decides first (A113: clean, then never linted, then
     flagged) — the reserve itself is chosen that way (posttest_reserve_hash) —
-    so a flagged item is posed only when the concept has nothing else. A
-    retired item is gone from `items` (deleted), so it is never posed."""
+    so a flagged item is posed only when the concept has nothing else. An item
+    the course withholds (A123: quarantined or retired) is not in `items`."""
     reserve = posttest_reserve_hash(items)
     if reserve is not None and reserve not in excluded:
         return next(i for i in items if i.question_hash == reserve)
@@ -4258,7 +4250,8 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     answered yet — each window is posed at most once per student, concept and
     window, and a window the student was away for is skipped. The item is the
     concept's reserve unless seen or revealed (A23), never an item the student
-    reported or one retired, and a lint-clean item first (A113, posttest_item);
+    reported or one the course withholds (A123: quarantined or retired), and a
+    lint-clean item first (A113, posttest_item);
     an unanswered pose's item stays bound to the node while it is fresh (A93) —
     never once reported (A113: an open pose of a reported item counts as no
     pose, like a withdrawn one). Open poses first, then the earliest-opened
@@ -4287,10 +4280,17 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
             due[node] = window
     if not due:
         return {"items": []}
-    by_key = items_for_concepts(body.course_id, sorted({nodes[n] for n in due}))
+    # A123: an item the course withholds (quarantined or retired) is not in the
+    # bank: an open or bound pose of it counts as no pose, and the reserve is
+    # chosen among the items served
+    withheld = withheld_hashes(body.course_id)
+    by_key = {
+        key: [i for i in items if i.question_hash not in withheld]
+        for key, items in items_for_concepts(body.course_id, sorted({nodes[n] for n in due})).items()
+    }
     # A113: read once — an item the student reported is never posed again: an
     # open pose of it counts as no pose, a bound one is excluded (posttest_item
-    # excludes it too; a retired item is gone from the course's items)
+    # excludes it too)
     reported = set(reported_hashes(body.user_id))
     plans = []  # (order, node, the open pose's item or None, the window to pose or None)
     for node, window in due.items():
@@ -4335,17 +4335,18 @@ def _posttest_node(user_id: str, node_id: str) -> dict:
     return rows[0]
 
 
-def _posttest_reported(user_id: str, question_hash: str) -> bool:
+def _posttest_reported(user_id: str, course_id: str, question_hash: str) -> bool:
     """A113 across A112's windows: an item the student reported is never posed
     again, so an open pose of it is not answerable either — /posttest/start
     replaces such a pose in its own window, but one left open in an EARLIER
     window (the next window was posed with a fresh item) would otherwise still
-    be claimable. Read before the claim: a refusal claims and records nothing.
-    An unreadable reported set refuses too (503, fail closed)."""
+    be claimable. A123: the same for an item the course withholds (quarantined
+    or retired). Read before the claim: a refusal claims and records nothing.
+    An unreadable set refuses too (503, fail closed)."""
     try:
-        return question_hash in reported_hashes(user_id)
+        return question_hash in reported_hashes(user_id) or question_hash in withheld_hashes(course_id)
     except Exception:
-        logger.warning("post-test: reported items unread; the answer is refused", exc_info=True)
+        logger.warning("post-test: reported or withheld items unread; the answer is refused", exc_info=True)
         raise HTTPException(status_code=503, detail="post-test unavailable; retry") from None
 
 
@@ -4392,7 +4393,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if item.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
-    if _posttest_reported(body.user_id, item.question_hash):
+    if _posttest_reported(body.user_id, course_id, item.question_hash):
         raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     now = _posttest_now()
     claim = str(uuid.uuid4())
@@ -4450,7 +4451,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         )
         if not answered:
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
-        changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+        try:
+            changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+        except EvidenceItemRetired:
+            # A123: staff retired the item while it was graded — nothing was
+            # written (the grade is void); the pose stays answered, and its
+            # outcome is left out of the learning gain by the void rule
+            raise HTTPException(status_code=409, detail=_RETIRED_DETAIL) from None
         _ledger(mark_graded, body.user_id, item.question_hash)
     finally:
         if not answered:
@@ -4740,7 +4747,15 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     now = _now_s()
     if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
         return {"phase": "check", "pending_grade": _pending_grade(state)}
-    if _grading_open(entry, now):
+    # A123: an open check whose item the course now withholds (quarantined or
+    # retired) is not served again: it is dropped like a withdrawn one (A23) —
+    # unless it is being graded (a live claim), which is never disturbed
+    withheld = withheld_hashes(course_id)
+
+    def serve_open(e: dict | None, qh: str | None) -> bool:
+        return _grading_open(e, now) and (qh not in withheld or bool(e.get("grading_claim")))
+
+    if serve_open(entry, active):
         item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
         if item is not None:
             return {"phase": "check", "check": _pose_payload(item)}  # idempotent
@@ -4754,12 +4769,13 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         if isinstance(cur_entry, dict) and grade_checkpoint.KEY in cur_entry:
             out["pending_grade"] = _pending_grade(st)
             return
-        if _grading_open(cur_entry, now):
+        if serve_open(cur_entry, cur):
             if cur_entry.get("check_item_id") and get_check_item(cur_entry["check_item_id"]):
                 out["qh"] = cur  # another request activated one meanwhile
                 return
         if cur:
-            # withdrawn (A23), graded, or left under a stale claim (C2): drop it; the entry stays
+            # withdrawn (A23), withheld (A123), graded, or left under a stale
+            # claim (C2): drop it; the entry stays
             st["current"] = None
         out["qh"] = _activate_next_item(body.user_id, course_id, st, now=now)
 
@@ -4932,7 +4948,11 @@ def _finish_close(session_id: str, claim: str, *, closed: bool) -> None:
 
 
 def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
-    """The decrypted transcript and this session's evidence journal rows."""
+    """The decrypted transcript and this session's evidence journal rows.
+    Spec §13 A123: a concept graded in this session against an item staff
+    retired since is left out of the close altogether — its void rows are no
+    evidence, and the recorded p_before → p_after of its other rows ran
+    through the void ones, so they no longer describe a valid trajectory."""
     msgs = table("messages").select(
         "role,content", filters={"session_id": f"eq.{session_id}"}, order="created_at.asc"
     )
@@ -4940,12 +4960,17 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
         {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))}
         for m in msgs or []
     ]
-    evidence = table("node_mastery_events").select(
-        "node_id,p_before,p_after,correct,channel",
-        filters={"session_id": f"eq.{session_id}", "event_type": "eq.evidence"},
-        order="created_at.asc,evidence_seq.asc",
+    evidence = list(
+        table("node_mastery_events").select(
+            "id,node_id,p_before,p_after,correct,channel",
+            filters={"session_id": f"eq.{session_id}", "event_type": "eq.evidence"},
+            order="created_at.asc,evidence_seq.asc",
+        )
+        or []
     )
-    return transcript, list(evidence or [])
+    voided = voided_event_ids(session_id=session_id) if evidence else set()
+    void_nodes = {e.get("node_id") for e in evidence if e.get("id") in voided}
+    return transcript, [e for e in evidence if e.get("node_id") not in void_nodes]
 
 
 def _concept_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
@@ -5550,11 +5575,15 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     else:
         skills = [s for s in fixed if isinstance(s, str) and s in states and (scope is None or s in scope)]
     items = _probe_items(body.user_id, course_id, skills)
+    # A123: an item the course withholds (quarantined or retired) is never
+    # posed — nor re-served as the open probe item — and the reserves are the
+    # ones the post-test poses among the items served
+    withheld = withheld_hashes(course_id) if items else set()
     # A113: an item the student reported is never posed again, like a revealed one
-    revealed = (revealed_hashes(body.user_id) | reported_hashes(body.user_id)) if items else set()
+    revealed = (revealed_hashes(body.user_id) | reported_hashes(body.user_id) | withheld) if items else set()
     seen = seen_hashes(body.user_id) if items else set()
     reserves = {
-        posttest_reserve_hash([it for it in items if it.node_id == n])
+        posttest_reserve_hash([it for it in items if it.node_id == n and it.question_hash not in withheld])
         for n in {it.node_id for it in items}
     } - {None}
     by_hash = {it.question_hash: it for it in items}
@@ -5597,10 +5626,14 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         }
         if isinstance(cur, dict) and cur.get("question_hash"):
             qh = cur["question_hash"]
-            if (not cur.get("grading_claim") or _claim_live(cur, now)) and qh in by_hash:
+            # a withheld item (A123) is moved past unless it is being graded
+            claimed = bool(cur.get("grading_claim"))
+            if qh in by_hash and (
+                (claimed and _claim_live(cur, now)) or (not claimed and qh not in withheld)
+            ):
                 out["item"] = by_hash[qh]  # posed and not answered: the same item again
                 return
-            # withdrawn (A23) or left under a stale claim (C2): never asked again
+            # withdrawn (A23), withheld (A123) or left under a stale claim (C2): never asked again
             if qh not in pr["unavailable"]:
                 pr["unavailable"].append(qh)
             pr["current"] = None
@@ -5876,6 +5909,8 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
 
 def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
     receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+    if receipt is _ITEM_RETIRED:  # A123: the item was retired while it was graded
+        return {"graded": False, "unavailable": True, "superseded": True, "withdrawn": True}
     if receipt is False:
         return {"graded": False, "unavailable": True, "superseded": True}
     try:
@@ -6370,6 +6405,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             _ledger(mark_graded, body.user_id, check.question_hash)
     except review.ReviewClaimRefused as exc:
         raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
+    except EvidenceItemRetired:
+        # A123: staff retired the item while it was graded: nothing was written
+        # (the grade is void) and the claim was released; the queue moves on
+        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM) from None
     except LoopStateConflict:
         raise _StateConflict() from None
     except ValueError as exc:

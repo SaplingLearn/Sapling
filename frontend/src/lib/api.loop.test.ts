@@ -342,9 +342,9 @@ describe('explicit delayed retention checks', () => {
 describe('Report this question and the review queue (spec §13 A113)', () => {
   it('POSTs the report as given: enums and ids only', async () => {
     const { reportCheckItem } = await import('./api');
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ reported: true, first: true, retired: false }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ reported: true, first: true, quarantined: false }));
     const loop = { surface: 'loop', user_id: 'u', session_id: 's1', question_hash: 'qh', reason: 'unclear' } as const;
-    expect(await reportCheckItem(loop)).toEqual({ reported: true, first: true, retired: false });
+    expect(await reportCheckItem(loop)).toEqual({ reported: true, first: true, quarantined: false });
     expect(urlOf()).toContain('/api/learn/loop/report');
     expect(initOf().method).toBe('POST');
     expect(bodyOf()).toEqual(loop);
@@ -352,7 +352,7 @@ describe('Report this question and the review queue (spec §13 A113)', () => {
   it('the admin queue reads GET /queue and decides by item id', async () => {
     const { adminApproveCheckItem, adminCheckItemQueue, adminRetireCheckItem } = await import('./api');
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(json({ items: [], count: 0, page_size: 100, retire_min_reporters: 2 }))
+      .mockResolvedValueOnce(json({ items: [], count: 0, page_size: 100, quarantine_min_reporters: 2 }))
       .mockResolvedValueOnce(json({ id: 'i/1', status: 'approved' }))
       .mockResolvedValueOnce(json({ id: 'i/1', status: 'retired', items: 1 }));
     await adminCheckItemQueue();

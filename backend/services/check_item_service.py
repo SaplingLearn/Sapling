@@ -16,11 +16,12 @@ Sources (A23): an item is drafted only from a document that is shared course
 material — `chunk_visibility.decide_visibility` decides, never re-derived
 here — and only from its SHARED chunks.
 
-Quality (A113): every stored row carries learning.item_lint's flags
+Quality (A113, A123): every stored row carries learning.item_lint's flags
 (`lint_flags`, plaintext codes — flagged items are stored, never dropped); a
-question retired for its course (ITEM_REPORT_RETIRE_MIN_REPORTERS reporters or
-an admin; learning/item_reports.py) is never stored again, and
-`retire_course_item` retires one through the same retire path as A23/A34.
+question staff retired for its course (learning/item_reports.py; reporters
+only quarantine one) is never stored again, and `retire_course_item` voids its
+evidence through the single graph writer, then deletes it through the same
+retire path as A23/A34.
 
 Alignment (A119): before a generation pass writes, every valid draft of the
 call goes through ONE alignment check (agents/check_items_verify.py) and
@@ -731,9 +732,10 @@ def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str]) -> int:
 # alignment check existed (aligned_at NULL), or every item with --reverify,
 # through the same check and the same learning.item_alignment rules as the
 # write path. Evidence is never touched: node_mastery_events keys no foreign
-# key on an item, so a re-keyed or retired item leaves every evidence row (its
-# check_item_id, node and question_hash) exactly as recorded. Reports and
-# reviews key on (course_id, question_hash), which a re-tag keeps.
+# key on an item, so a re-keyed or rejected (deleted) item leaves every
+# evidence row (its check_item_id, node and question_hash) exactly as recorded
+# — only a STAFF retire voids evidence (spec §13 A123). Reports and reviews key
+# on (course_id, question_hash), which a re-tag keeps.
 
 
 def items_to_align(
@@ -985,19 +987,38 @@ def retire_items_by_id(item_ids: Iterable[str]) -> int:
     return retired
 
 
-def retire_course_item(course_id: str, question_hash: str) -> int:
-    """A113: retire one question course-wide — every row of the course with
-    this question_hash (one per concept that holds it) — through
-    retire_items_by_id, the A23/A34 retire path. Evidence already written
-    from it stays (node_mastery_events keys no foreign key on the item), and
-    a session whose current check it was finds it withdrawn (A23). Returns
-    how many rows went; raises on a failed read or delete (the caller
-    reports it; the decision is already recorded, so a re-run finishes it)."""
+class RetireOutcome(NamedTuple):
+    """What a staff retire did (spec §13 A123)."""
+
+    items: int  # stored rows of the question deleted (one per concept that held it)
+    students: int  # students whose evidence was voided and state recomputed
+    voided: int  # evidence rows voided
+
+
+def retire_course_item(course_id: str, question_hash: str) -> RetireOutcome:
+    """A113/A123: finish a STAFF retire of one question course-wide (the
+    caller has recorded the 'retired' decision, so no new grade of it can
+    commit and nothing serves it). First every student's evidence graded
+    against it is VOIDED and their state recomputed from the rest of their
+    journal — one apply_graph_update(void_evidence) per student with non-void
+    rows left (learning.evidence_transaction.void_pending) — then every row
+    of the course with this question_hash is deleted through
+    retire_items_by_id, the A23/A34 retire path. Raises on any failure; the
+    rows stay stored until every void is done, so the admin queue lists the
+    item as retire-pending and a re-run finishes it (each void is idempotent,
+    a finished student is no longer pending)."""
+    from learning.evidence_transaction import void_pending
+    from services.graph_service import apply_graph_update
+
+    pending = void_pending(course_id, question_hash)
+    for user_id in sorted(pending):
+        apply_graph_update(user_id, {"void_evidence": {"question_hash": question_hash}}, course_id)
     rows = table(_TABLE).select(
         "id",
         filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
     )
-    return retire_items_by_id(r["id"] for r in rows or [] if r.get("id"))
+    items = retire_items_by_id(r["id"] for r in rows or [] if r.get("id"))
+    return RetireOutcome(items=items, students=len(pending), voided=sum(pending.values()))
 
 
 def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:

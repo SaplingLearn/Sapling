@@ -283,6 +283,8 @@ def record(
     check_item_id: str | None,
     wrong_key: str,
     evidence_text: str | None,
+    *,
+    question_hash: str | None = None,
 ) -> dict:
     """Insert-or-increment on (user_id, node_id, wrong_key) among OPEN rows —
     ONE atomic statement, the `misconception_record` SQL function (INSERT …
@@ -290,8 +292,13 @@ def record(
     read-then-write from here lost increments and opened duplicate rows under
     concurrency). `evidence_text` (the student's answer) is encrypted here, at
     the write boundary, and never read back. A key that is not
-    identifier-shaped is refused with nothing written. Returns {id, count};
-    {} on a refusal or a DB error. Never raises."""
+    identifier-shaped is refused with nothing written. Spec §13 A123: the
+    attempt's `question_hash` (its check item) is recorded as the row's
+    supporting attempt, so a misconception every attempt of which was graded
+    against a retired item is closed when that evidence is voided — and an
+    attempt on an item staff already retired records nothing (the function
+    checks under the item's lock). Returns {id, count}; {} on a refusal, an
+    attempt on a retired item, or a DB error. Never raises."""
     if not is_key(wrong_key):
         logger.warning("misconceptions.record: refused a key that is not identifier-shaped")
         return {}
@@ -305,6 +312,7 @@ def record(
                 "p_check_item_id": check_item_id,
                 "p_wrong_key": wrong_key,
                 "p_evidence_text": encrypt_if_present(evidence_text),
+                "p_question_hash": question_hash,
             },
         )
         return dict(rows[0]) if rows else {}

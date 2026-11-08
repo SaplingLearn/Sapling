@@ -108,6 +108,7 @@ def tables():
         "poses": {},  # (user, node, window) → pose row
         "claims": [],
         "evidence_since": [],  # A89: the node's evidence journaled after the pose
+        "withheld": set(),  # A123: the course's quarantined or retired question hashes
     }
 
     def _spans(user_id, course_id):  # the route keeps only its course's nodes itself
@@ -196,6 +197,7 @@ def tables():
             side_effect=lambda u, n, *, since: list(t["evidence_since"]),
         ),
         patch("routes.learn_loop.unscanned_since", return_value=False),
+        patch("routes.learn_loop.withheld_hashes", side_effect=lambda course_id: set(t["withheld"])),
     ):
         yield t
 
@@ -1221,6 +1223,61 @@ def test_start_never_poses_a_retired_item(gate_on, tables, freeze_now, seen_reve
     _pose(tables, qh="q1")
     (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert served["question_hash"] == "q2"
+
+
+def test_start_never_poses_an_item_the_course_withholds_and_poses_it_once_restored(
+    gate_on, tables, freeze_now, seen_revealed, reported
+):
+    """Spec §13 A123: a quarantined item (reported by enough students) is
+    withheld from EVERY student: an open pose of it counts as no pose, its
+    window is posed with a fresh item, and the reserve is chosen among the
+    items served. Once staff approve it, it is served again."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"))  # q1 would be the reserve
+    _pose(tables, qh="q1")
+    tables["withheld"].add("q1")
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"
+    assert tables["poses"][("u", "n1", W1)]["question_hash"] == "q2"
+    tables["withheld"].clear()  # approved: restored
+    tables["poses"].clear()
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q1"
+
+
+def test_an_open_pose_of_a_withheld_item_is_not_answerable(
+    gate_on, one_item, grader_says, applied
+):
+    """Quarantined after it was posed: refused before the claim (409, nothing
+    graded or recorded) — and an unreadable withheld set refuses too (503)."""
+    one_item["withheld"].add("q1")
+    grader_says(correct=True, confidence=0.9)
+    r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and r.json()["detail"] == "not a post-test item"
+    assert one_item["claims"] == [] and applied == []
+    one_item["withheld"].clear()
+    with patch("routes.learn_loop.withheld_hashes", side_effect=RuntimeError("down")):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 503 and one_item["claims"] == [] and applied == []
+
+
+def test_a_grade_refused_because_the_item_was_retired_meanwhile_is_a_409(
+    gate_on, one_item, grader_says
+):
+    """Retired while it was graded (the commit refused it under the item's
+    lock): nothing was written, the pose stays answered — its outcome is
+    excluded from the learning gain by the void rule — and the student is told."""
+    from learning.evidence_transaction import EvidenceItemRetired
+
+    grader_says(correct=True, confidence=0.9)
+    with patch(
+        "services.graph_service.apply_graph_update",
+        side_effect=EvidenceItemRetired("retired"),
+    ):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and "withdrawn" in r.json()["detail"]
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is not None and pose["claim"] is None
 
 
 def test_start_prefers_a_lint_clean_item(gate_on, tables, freeze_now, seen_revealed, reported):

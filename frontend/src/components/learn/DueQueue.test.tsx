@@ -91,7 +91,7 @@ describe("DueQueue — Report this question (spec §13 A113)", () => {
   it("reports the served check with a reason, then moves to the next item", async () => {
     flags.item_reports = "on";
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
-    mockReport.mockResolvedValue({ reported: true, first: true, retired: false });
+    mockReport.mockResolvedValue({ reported: true, first: true, quarantined: false });
     render(<DueQueue userId="u1" courseId="c1" />);
     await screen.findByTestId("review-item");
     await userEvent.click(screen.getByTestId("review-report"));
@@ -112,7 +112,7 @@ describe("DueQueue — Report this question (spec §13 A113)", () => {
     flags.item_reports = "on";
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
     mockAnswer.mockResolvedValue(graded({ correct: false, hint: "Answer: a loop" }));
-    mockReport.mockResolvedValue({ reported: true, first: true, retired: false });
+    mockReport.mockResolvedValue({ reported: true, first: true, quarantined: false });
     render(<DueQueue userId="u1" courseId="c1" />);
     await screen.findByTestId("review-item");
     await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");

@@ -166,6 +166,8 @@ def _no_review_history(monkeypatch):
 
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set(), raising=False)
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set(), raising=False)
+    # spec §13 A123: nothing withheld from the course (no quarantine, no retire)
+    monkeypatch.setattr(review, "withheld_hashes", lambda course_id: set(), raising=False)
     monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None, raising=False)
 
 
@@ -1704,13 +1706,18 @@ def test_sr_key_names_the_claim_key():
 
 def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     """Post-merge (PKG-07): review's A23 readers resolve to loop_state_store's
-    seen_hashes / revealed_hashes — and, spec §13 A113, reported_hashes — and
-    a queue build with a due concept reads them and excludes all three."""
-    from learning import loop_state_store, review
+    seen_hashes / revealed_hashes — and, spec §13 A113, reported_hashes, and
+    A123, item_reports.withheld_hashes for the course — and a queue build with
+    a due concept reads them and excludes all four."""
+    from learning import item_reports, loop_state_store, review
 
     monkeypatch.undo()  # drop the autouse "nothing excluded" stubs
     monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None)
     reads = []
+    monkeypatch.setattr(
+        item_reports, "withheld_hashes",
+        lambda course_id: reads.append(("withheld", course_id)) or {"q-withheld"},
+    )
     monkeypatch.setattr(
         loop_state_store, "seen_hashes", lambda uid: reads.append("seen") or {"q-seen"}
     )
@@ -1721,7 +1728,9 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
         loop_state_store, "reported_hashes", lambda uid: reads.append("rep") or {"q-rep"}
     )
     past = (NOW - timedelta(days=3)).isoformat()
-    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q-seen", "q-rev", "q-rep", "q-new")]
+    pool = [
+        _check_item("n1", q, "mc_reason", 2) for q in ("q-seen", "q-rev", "q-rep", "q-withheld", "q-new")
+    ]
     factory, _ = _tables(
         {
             "learner_state": [_due_row("n1", 0.5, past)],
@@ -1732,7 +1741,7 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     monkeypatch.setattr(review, "table", factory)
     monkeypatch.setattr(review, "list_items", lambda course, key: pool)
     queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={})
-    assert reads == ["seen", "rev", "rep"]
+    assert reads == [("withheld", COURSE), "seen", "rev", "rep"]
     assert [i.question_hash for i in queue] == ["q-new"] and stats["unservable"] == 0
 
 
@@ -2963,7 +2972,7 @@ def review_report(monkeypatch):
 
     def record(user_id, course_id, question_hash, *, reason, surface):
         ns.calls.append((user_id, course_id, question_hash, reason, surface))
-        return item_reports.ReportOutcome(first=True, reporters=1, retire=False)
+        return item_reports.ReportOutcome(first=True, reporters=1, quarantine=False)
 
     monkeypatch.setattr("routes.learn_loop.item_reports.record_report", record)
     yield ns
@@ -2975,7 +2984,7 @@ def test_a_served_review_item_is_reported_and_no_longer_answerable(client, monke
     with _loop():
         r = client.post("/api/learn/loop/report", json=_report())
     assert r.status_code == 200, r.text
-    assert r.json() == {"reported": True, "first": True, "retired": False}
+    assert r.json() == {"reported": True, "first": True, "quarantined": False}
     assert review_report.calls == [(USER, COURSE, "qh-1", "not_from_my_course", "review")]
     assert "n-due" not in store.state.extra.get("open", {})  # its open entry is dropped
     (event,) = [c for c in review_report.events.log_event.call_args_list if c.args[0] == "learn.check_item_reported"]

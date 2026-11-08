@@ -1604,6 +1604,63 @@ def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
     return found
 
 
+#: Spec §13 A123: the one apply_graph_update caller of the void branch — a
+#: staff retire voids each student's evidence graded against the item.
+SANCTIONED_VOID_CALLERS = frozenset({("services/check_item_service.py", "retire_course_item")})
+
+
+def _void_calls(source: str) -> list[tuple[int, str]]:
+    """(line, nearest enclosing def) for each apply_graph_update call — bare or
+    `module.apply_graph_update` — whose second positional argument is a dict
+    literal with exactly one key, the constant "void_evidence" (A123). A
+    module-level call has no def and is never returned."""
+    import ast
+
+    tree = ast.parse(source)
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+    found = []
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and len(call.args) > 1):
+            continue
+        func = call.func
+        if not (
+            (isinstance(func, ast.Name) and func.id == "apply_graph_update")
+            or (isinstance(func, ast.Attribute) and func.attr == "apply_graph_update")
+        ):
+            continue
+        payload = call.args[1]
+        if not (
+            isinstance(payload, ast.Dict)
+            and len(payload.keys) == 1
+            and isinstance(payload.keys[0], ast.Constant)
+            and payload.keys[0].value == "void_evidence"
+        ):
+            continue
+        node = parents.get(call)
+        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            node = parents.get(node)
+        if node is not None:
+            found.append((func.lineno, node.name))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('def retire_course_item(c, q):\n    apply_graph_update(u, {"void_evidence": {"question_hash": q}}, c)',
+         ["retire_course_item"]),
+        ('def retire_course_item(c, q):\n    apply_graph_update(u, {"void_evidence": v, "evidence": []}, c)', []),
+        ('def retire_course_item(c, q):\n    apply_graph_update(u, payload, c)', []),
+        ('apply_graph_update(u, {"void_evidence": v}, c)', []),
+    ],
+)
+def test_void_caller_detector(source, expected):
+    """Mutation cases for the A123 excuse in the caller scan below: only a
+    pure void literal whose nearest def is named counts, and the scan excuses
+    it only for a (file, def) in SANCTIONED_VOID_CALLERS."""
+    assert [fn for _, fn in _void_calls(source)] == expected
+
+
 _FLUSH = """
 def flush_pending(deps, course_id):
     if not deps.pending_evidence:
@@ -1668,6 +1725,10 @@ def test_no_production_caller_passes_evidence_yet():
             line
             for line, fn in _evidence_persister_calls(text)
             if (rel, fn) in SANCTIONED_EVIDENCE_PERSISTERS
+        } | {
+            line
+            for line, fn in _void_calls(text)
+            if (rel, fn) in SANCTIONED_VOID_CALLERS
         }
         for line, problem in _graph_update_payloads(text):
             callers.add(rel)
@@ -1736,7 +1797,10 @@ def test_fsrs_importers_are_sanctioned():
     is true (test_learning_flashcards_fsrs.py pins the gate-off path). PKG-08
     adds routes/learn_loop.py (GET /plan's due reviews: order_due +
     budget_select; every loop route 404s before any read when the gate is
-    false). A later package that adds an importer extends this set."""
+    false). A later package that adds an importer extends this set. Spec §13
+    A123 moved the evidence path's FSRS adapter into learning/evidence_replay.py
+    (shared with the journal replay): services/graph_service.py reaches FSRS
+    through it now, and stays sanctioned should it import FSRS directly again."""
     import ast
     import pathlib
 
@@ -1758,7 +1822,17 @@ def test_fsrs_importers_are_sanctioned():
             if "learning.fsrs" in names:
                 importers.add(rel)
     assert importers <= sanctioned, importers - sanctioned
-    assert "services/graph_service.py" in importers
+    writer = ast.parse((backend / "services" / "graph_service.py").read_text())
+    replay = ast.parse((backend / "learning" / "evidence_replay.py").read_text())
+
+    def imports(tree, module, name):
+        return any(
+            isinstance(n, ast.ImportFrom) and n.module == module and any(a.name == name for a in n.names)
+            for n in ast.walk(tree)
+        )
+
+    assert imports(writer, "learning", "evidence_replay")
+    assert imports(replay, "learning", "fsrs")
 
 
 @pytest.mark.parametrize(

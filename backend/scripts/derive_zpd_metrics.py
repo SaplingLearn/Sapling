@@ -64,7 +64,7 @@ if __name__ == "__main__":  # an operator run; importing the module (tests) load
 
 sys.path.insert(0, str(BASE))
 
-from db.connection import REST_URL, page_all, table  # noqa: E402
+from db.connection import REST_URL, page_all, pg_quote_value, table  # noqa: E402
 from learning.learner_state import opportunity_states, write_metrics  # noqa: E402
 from learning.params import (  # noqa: E402
     BAND_WINDOW,
@@ -75,6 +75,7 @@ from learning.params import (  # noqa: E402
     ZPD_IN_ZONE_MIN_GAP,
 )
 from learning.earnest_revise import earnest_revise  # noqa: E402
+from learning.void_store import voided_event_ids  # noqa: E402
 from services.check_item_service import coverage  # noqa: E402
 from services.quiz_ask import quiz_ask_session_ids  # noqa: E402
 
@@ -155,16 +156,22 @@ def compute(opps: list[dict]) -> dict:
 
 
 def _evidence(node_id: str) -> list[dict]:
-    """The node's newest evidence journal rows (node ids are per student)."""
+    """The node's newest evidence journal rows (node ids are per student) —
+    never a void one (spec §13 A123: graded against an item staff retired),
+    left out BEFORE the limit like every other non-opportunity."""
+    filters = {
+        "node_id": f"eq.{node_id}",
+        "event_type": "eq.evidence",
+        "question_hash": "not.is.null",
+    }
+    voided = voided_event_ids(node_id=node_id)
+    if voided:
+        filters["id"] = f"not.in.({','.join(pg_quote_value(v) for v in sorted(voided))})"
     return (
         table("node_mastery_events").select(
             _EVIDENCE_COLS,
             # opportunities only, BEFORE the limit (review fix round)
-            filters={
-                "node_id": f"eq.{node_id}",
-                "event_type": "eq.evidence",
-                "question_hash": "not.is.null",
-            },
+            filters=filters,
             order=_EVIDENCE_ORDER,
             limit=max(BAND_WINDOW, HTC_K_WINDOW),
         )

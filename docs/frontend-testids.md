@@ -446,6 +446,7 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
+| `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
 
 ### `admin-items`
 
@@ -464,8 +465,9 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer and the reference (`<details>`) |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
 | `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), or what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`) |
-| `admin-items-approve-{itemId}` | Approve — reviewed, OK; every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
-| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course |
+| `admin-items-quarantined-{itemId}` | learning-loop spec §13 A123: the "Quarantined — hidden from students until you decide" chip (reports from `quarantine_min_reporters` students; nothing deleted) |
+| `admin-items-approve-{itemId}` | Approve — reviewed, OK; every row of that course question leaves the queue until a newer report, and a quarantined one is restored to students ("Approve and restore"; absent on a retire-pending item) |
+| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course and voids every student's results on it (A123) |
 
 ### `admin-tab-*` / `flag`
 

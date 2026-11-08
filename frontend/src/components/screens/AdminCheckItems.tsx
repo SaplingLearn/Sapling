@@ -8,9 +8,12 @@
  * check changed (A119: a criterion dropped, a concept re-tagged) or a student
  * reported (counts by reason), worst first, with its text (decrypted by the
  * server for this page only) and two actions: Approve (reviewed, OK — it leaves
- * the queue until a newer report) and Retire (withdrawn for the whole course,
- * never drafted again; two clicks). An item whose retire did not finish is
- * marked and listed first.
+ * the queue until a newer report; a quarantined question is restored to
+ * students) and Retire (withdrawn for the whole course and never drafted again,
+ * and every student's results on it are voided and their mastery recomputed —
+ * A123; two clicks). Reports alone never delete a question: enough of them
+ * quarantine it (hidden from students) until staff decide here. An item whose
+ * retire did not finish is listed first, then the quarantined ones.
  */
 
 import React from "react";
@@ -87,8 +90,19 @@ function QueueBody() {
   const act = async (entry: AdminCheckItemEntry, action: "approve" | "retire") => {
     setBusyId(entry.id);
     try {
-      if (action === "approve") await adminApproveCheckItem(entry.id);
-      else await adminRetireCheckItem(entry.id);
+      let message: string;
+      if (action === "approve") {
+        const out = await adminApproveCheckItem(entry.id);
+        message = out.restored
+          ? "Approved — restored for students, and it leaves the queue."
+          : "Approved — it leaves the queue.";
+      } else {
+        const out = await adminRetireCheckItem(entry.id);
+        const students = out.students === 1 ? "1 student" : `${out.students} students`;
+        message = out.voided
+          ? `Retired for the whole course — results from ${students} voided.`
+          : "Retired for the whole course.";
+      }
       // the decision is per course question: every row of it leaves the queue
       setQueue((q) => {
         if (!q) return q;
@@ -97,7 +111,7 @@ function QueueBody() {
         );
         return { ...q, items: left, count: Math.max(0, q.count - (q.items.length - left.length)) };
       });
-      toast.success(action === "approve" ? "Approved — it leaves the queue." : "Retired for the whole course.");
+      toast.success(message);
     } catch (err) {
       toast.error(humanizeError(err, action === "approve" ? "Couldn't approve it." : "Couldn't retire it."));
     } finally {
@@ -132,7 +146,8 @@ function QueueBody() {
             <div data-testid="admin-items-count" style={{ color: "var(--text-muted)", fontSize: 13 }}>
               {queue.count} to review
               {queue.count > queue.items.length ? ` — showing the first ${queue.items.length}` : ""}. Reports
-              from {queue.retire_min_reporters} different students retire a question on their own.
+              from {queue.quarantine_min_reporters} different students hide a question from everyone until
+              you approve or retire it. Retiring voids every student&apos;s results on it.
             </div>
             {queue.items.map((entry) => (
               <QueueRow
@@ -170,6 +185,11 @@ function QueueRow({
         <span className="label-micro">{entry.course_id} · {entry.concept_key}</span>
         <span className="chip">{entry.format} · difficulty {entry.difficulty}</span>
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
+        {entry.quarantined && (
+          <span className="chip chip--err" data-testid={`admin-items-quarantined-${entry.id}`}>
+            Quarantined — hidden from students until you decide
+          </span>
+        )}
         {reasons.map((r) => (
           <span key={r} className="chip chip--err" data-testid={`admin-items-reports-${entry.id}-${r}`}>
             {REPORT_REASON_LABELS[r]} ×{entry.reports[r]}
@@ -217,7 +237,7 @@ function QueueRow({
             disabled={busy}
             onClick={onApprove}
           >
-            Approve
+            {entry.quarantined ? "Approve and restore" : "Approve"}
           </button>
         )}
         <button
@@ -227,7 +247,7 @@ function QueueRow({
           disabled={busy}
           onClick={retire.trigger}
         >
-          {retire.armed ? "Click again to retire for the course" : "Retire"}
+          {retire.armed ? "Click again to retire and void its results" : "Retire"}
         </button>
       </div>
     </section>
