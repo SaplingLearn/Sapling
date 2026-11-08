@@ -89,6 +89,8 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
+| Admin check-item review | `admin-items` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged or students reported, with Approve / Retire — learning-loop spec §13 A113) |
+| Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
@@ -443,6 +445,27 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+| `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
+
+### `admin-items`
+
+Added with the learning-loop check-item quality guards (spec §13 A113; GitHub
+#695). Owner: `frontend/src/components/screens/AdminCheckItems.tsx`, rendered by
+`src/app/(shell)/admin/check-items/page.tsx`; staff only (`require_admin` on every
+`/api/admin/check-items` call; a non-admin gets the refusal and no request). The
+file entered the lint block new, so there is no baselined backlog.
+
+| testid | element |
+| --- | --- |
+| `admin-items` | the queue's root |
+| `admin-items-count` | "N to review" (and "showing the first P" when the queue is longer than a page) |
+| `admin-items-empty` | nothing flagged or reported is waiting |
+| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
+| `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer and the reference (`<details>`) |
+| `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
+| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`) |
+| `admin-items-approve-{itemId}` | Approve — reviewed, OK; every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
+| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course |
 
 ### `admin-tab-*` / `flag`
 
@@ -621,6 +644,11 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
 | `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
 | `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
+| `review-report` | "Report this question" on a served check (answered or not; never on a flashcard), only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
+| `review-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
+| `review-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: review`, the item's id) and loads the next item |
+| `review-report-cancel` | closes the reasons without reporting |
+| `review-reported` | "Thanks — that question is reported…" above the next item |
 
 ### `loop`
 
@@ -680,6 +708,11 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
+| `loop-check-report` | "Report this question" on the check card, only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
+| `loop-check-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
+| `loop-check-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: loop`, the pose's `question_hash`); the card goes and "Check me" brings another |
+| `loop-check-report-cancel` | closes the reasons without reporting |
+| `loop-check-reported` | the status line after a report ("…won't be shown to you again. Use Check me for another."); cleared by the next check |
 | `loop-continue` | "Continue" after feedback — sends the next chat turn |
 | `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
