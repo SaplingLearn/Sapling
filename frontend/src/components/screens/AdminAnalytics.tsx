@@ -35,13 +35,14 @@ const CategoryBars = dynamic(() => import("../AnalyticsCharts").then((m) => m.Ca
 import {
   presetRange,
   useErrorsFeed,
+  useLearningLoopKpis,
   useLlmCost,
   useUsageByUser,
   useUsageSummary,
   type AnalyticsQuery,
   type AnalyticsRangeValue,
 } from "@/lib/useAdminAnalytics";
-import type { CostDayPoint, LlmCostGroupBy } from "@/lib/types";
+import type { CostDayPoint, LearningLoopKpisData, LlmCostGroupBy, LoopCalibrationReport } from "@/lib/types";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -157,6 +158,95 @@ function Panel<T>({ title, query, testid, children }: {
   );
 }
 
+const fmtRate = (v: number | null) => (v == null ? "—" : formatPct(v * 100));
+const fmtNum = (v: number | null, digits = 3) => (v == null ? "—" : v.toFixed(digits));
+
+/** A §10 gate: pass / fail, or "inconclusive" (null) — never a silent pass. */
+function GateChip({ label, ok, testid }: { label: string; ok: boolean | null; testid: string }) {
+  const state = ok == null ? "inconclusive" : ok ? "pass" : "fail";
+  return (
+    <span data-testid={testid} data-state={state} className={`chip ${ok === false ? "chip--err" : ""}`}
+      title={ok == null ? "No step carries the signal yet in this range." : undefined}>
+      {label}: {state}
+    </span>
+  );
+}
+
+/** BKT's predicted P(correct) against what students actually did unaided
+ *  (spec §13 A110). A well-calibrated model's 0.8 predictions come true ~80%
+ *  of the time; ECE is the bin-weighted gap. */
+function CalibrationTable({ title, report, testid }: { title: string; report: LoopCalibrationReport; testid: string }) {
+  return (
+    <div data-testid={testid}>
+      <div className="label-micro" style={{ marginBottom: 6 }}>{title}</div>
+      {report.n === 0 ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No independent observations in this range.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 8 }}>
+            <Stat label="Observations" value={report.n} />
+            <Stat label="Predicted" value={fmtRate(report.mean_predicted)} />
+            <Stat label="Observed" value={fmtRate(report.observed_rate)} />
+            <Stat label="Brier" value={fmtNum(report.brier)} />
+            <Stat label="ECE" value={fmtNum(report.ece)} />
+          </div>
+          <div style={scrollX}>
+            <table style={{ borderCollapse: "collapse", minWidth: 360 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Predicted P(correct)</th>
+                  <th style={{ ...th, textAlign: "right" }}>n</th>
+                  <th style={{ ...th, textAlign: "right" }}>Mean predicted</th>
+                  <th style={{ ...th, textAlign: "right" }}>Observed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.bins.map(b => (
+                  <tr key={`${b.lo}-${b.hi}`}>
+                    <td style={td}>{`${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`}</td>
+                    <td style={tdNum}>{b.n}</td>
+                    <td style={tdNum}>{fmtRate(b.mean_predicted)}</td>
+                    <td style={tdNum}>{fmtRate(b.observed)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
+  return (
+    <>
+      {d.truncated && <div style={{ marginBottom: 8 }}><TruncatedBadge /></div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        <GateChip label="Zero served reveals" ok={d.gates.zero_leaks} testid="admin-loop-gate-leaks" />
+        <GateChip label="Ceiling compliance ≥ 95%" ok={d.gates.ceiling_compliance_ok} testid="admin-loop-gate-ceiling" />
+        <GateChip label="Earnest-revise ≤ 5%" ok={d.gates.earnest_revise_ok} testid="admin-loop-gate-earnest" />
+      </div>
+      <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
+        <Stat label="Graded steps" value={d.steps_total} />
+        <Stat label="In-band share" value={fmtRate(d.in_band_share)} />
+        <Stat label="Unassisted next session" value={fmtRate(d.unassisted_next_session.rate)} />
+        <Stat label="Ceiling compliance" value={fmtRate(d.ceiling_compliance.rate)} />
+        <Stat label="Served reveals" value={d.served_reveals} />
+      </div>
+      <h3 className="h-serif" style={{ fontSize: 15, margin: "8px 0" }}>Are the mastery estimates right?</h3>
+      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+        BKT&apos;s predicted chance of a correct unaided answer, against what students actually did.
+        The delayed post-test (fresh item, no tutor, ≥ 7 days) is the cleanest check.
+      </p>
+      <div style={{ display: "grid", gap: 16 }}>
+        <CalibrationTable title="Delayed post-test" report={d.calibration.posttest} testid="admin-loop-calibration-posttest" />
+        <CalibrationTable title="All independent evidence" report={d.calibration.all} testid="admin-loop-calibration-all" />
+      </div>
+    </>
+  );
+}
+
 export function AdminAnalytics() {
   // The gate lives OUTSIDE the hook-owning body: hooks fire their fetches on
   // mount, and a non-admin visit must not fire four requests that 403 (each
@@ -189,6 +279,7 @@ function AnalyticsBody() {
   const byUser = useUsageByUser(range, { onBackgroundError });
   const cost = useLlmCost(range, { groupBy, bucket: "day", onBackgroundError });
   const errs = useErrorsFeed(range, { bucket: "day", onBackgroundError });
+  const loop = useLearningLoopKpis(range, { onBackgroundError });
 
   // Users-table sort: null = keep the server order (cost desc, then events).
   const [userSort, setUserSort] = React.useState<{
@@ -571,6 +662,10 @@ function AnalyticsBody() {
             </>
             );
           }}
+        </Panel>
+
+        <Panel title="Learning loop" query={loop} testid="admin-analytics-learning-loop">
+          {(d) => <LearningLoopPanelBody d={d} />}
         </Panel>
       </div>
     </div>

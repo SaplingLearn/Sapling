@@ -10,7 +10,7 @@ import type {
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
-  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
+  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData, LearningLoopKpisData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
@@ -2021,6 +2021,10 @@ export const adminErrors = (params?: {
   from?: string; to?: string; limit?: number; offset?: number; bucket?: AnalyticsBucket;
 }) =>
   fetchJSON<ErrorsPageData>(`/api/admin/analytics/errors${analyticsQuery(params)}`);
+
+// spec §10 / A110: the learning loop's KPIs, gates and BKT calibration
+export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =>
+  fetchJSON<LearningLoopKpisData>(`/api/admin/analytics/learning-loop${analyticsQuery(params)}`);
 
 // Careers
 export const submitJobApplication = async (data: {

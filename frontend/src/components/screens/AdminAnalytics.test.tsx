@@ -45,6 +45,7 @@ const api = vi.hoisted(() => ({
   adminUsageByUser: vi.fn(),
   adminLlmCost: vi.fn(),
   adminErrors: vi.fn(),
+  adminLearningLoopKpis: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -55,7 +56,7 @@ vi.mock("next/dynamic", async () =>
   (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
 );
 
-import { AdminAnalytics } from "./AdminAnalytics";
+import { AdminAnalytics, LearningLoopPanelBody } from "./AdminAnalytics";
 
 const RANGE = { from: "2026-06-30T12:00:00.000Z", to: "2026-07-30T12:00:00.000Z" };
 
@@ -103,11 +104,37 @@ const errorsFixture = {
   series: [{ date: "2026-07-15", count: 1 }],
 };
 
+const emptyCalibration = {
+  n: 0, brier: null, mean_predicted: null, observed_rate: null, ece: null,
+  bins: [0, 1, 2, 3, 4].map(i => ({ lo: i / 5, hi: (i + 1) / 5, n: 0, mean_predicted: null, observed: null })),
+};
+const loopFixture = {
+  range: RANGE,
+  steps_total: 40, banded_steps: 20, in_band: 15, in_band_share: 0.75,
+  unassisted_next_session: { sessions: 10, successes: 6, rate: 0.6, quiz_ask_excluded: 1 },
+  caught_leaks: 1, served_reveals: 0, unscanned_turns: 0,
+  ceiling_compliance: { steps: 40, compliant: 39, rate: 0.975 },
+  earnest_revise: { graded_steps: 0, earnest_blocked: 0, unmeasured_steps: 0, rate: null, gate: "inconclusive" as const },
+  gates: { zero_leaks: true, ceiling_compliance_ok: true, earnest_revise_ok: null },
+  calibration: {
+    all: {
+      n: 4, brier: 0.21, mean_predicted: 0.82, observed_rate: 0.5, ece: 0.32,
+      bins: [
+        ...emptyCalibration.bins.slice(0, 4),
+        { lo: 0.8, hi: 1, n: 4, mean_predicted: 0.82, observed: 0.5 },
+      ],
+    },
+    posttest: emptyCalibration,
+  },
+  truncated: false,
+};
+
 function primeHappyPath() {
   api.adminUsageSummary.mockResolvedValue(summaryFixture);
   api.adminUsageByUser.mockResolvedValue(byUserFixture);
   api.adminLlmCost.mockResolvedValue(costFixture);
   api.adminErrors.mockResolvedValue(errorsFixture);
+  api.adminLearningLoopKpis.mockResolvedValue(loopFixture);
 }
 
 afterEach(() => {
@@ -310,5 +337,35 @@ describe("AdminAnalytics", () => {
     expect(order()).toEqual(["u-alpha", "u-beta"]); // server order (cost desc)
     fireEvent.click(screen.getByTestId("admin-analytics-users-sort-events"));
     await waitFor(() => expect(order()).toEqual(["u-beta", "u-alpha"])); // events desc
+  });
+});
+
+
+describe("Learning loop panel (spec §10, §13 A110)", () => {
+  it("loads over the same range and shows the gates as pass / inconclusive", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    const panel = await screen.findByTestId("admin-loop-gate-leaks");
+    expect(panel.getAttribute("data-state")).toBe("pass");
+    expect(screen.getByTestId("admin-loop-gate-ceiling").getAttribute("data-state")).toBe("pass");
+    // No graded step carries the signal: inconclusive, never a silent pass.
+    expect(screen.getByTestId("admin-loop-gate-earnest").getAttribute("data-state")).toBe("inconclusive");
+    expect(api.adminLearningLoopKpis).toHaveBeenCalledWith(
+      expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
+    );
+  });
+
+  it("shows calibration bins, and an empty report as no observations rather than zeros", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const all = screen.getByTestId("admin-loop-calibration-all");
+    expect(within(all).getByText("0.8–1.0")).toBeTruthy();
+    expect(within(all).getAllByText("50%").length).toBeGreaterThan(0); // observed in the top bin
+    const post = screen.getByTestId("admin-loop-calibration-posttest");
+    expect(within(post).getByText("No independent observations in this range.")).toBeTruthy();
+  });
+
+  it("marks a failing gate", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, gates: { ...loopFixture.gates, zero_leaks: false } }} />);
+    expect(screen.getByTestId("admin-loop-gate-leaks").getAttribute("data-state")).toBe("fail");
   });
 });

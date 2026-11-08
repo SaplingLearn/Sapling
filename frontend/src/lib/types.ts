@@ -634,6 +634,51 @@ export interface ErrorEventRow {
   duration_ms: number | null;
 }
 
+/** One reliability bin of the BKT calibration report (learning/calibration.py). */
+export interface LoopCalibrationBin {
+  lo: number;
+  hi: number;
+  n: number;
+  mean_predicted: number | null;
+  observed: number | null;
+}
+
+/** BKT's predicted P(correct) against observed outcomes on independent
+ *  evidence (strong channel, unassisted, rung 0, full weight). Null rates mean
+ *  nothing to judge — never zeros (spec §13 A110). */
+export interface LoopCalibrationReport {
+  n: number;
+  brier: number | null;
+  mean_predicted: number | null;
+  observed_rate: number | null;
+  ece: number | null;
+  bins: LoopCalibrationBin[];
+}
+
+/** GET /api/admin/analytics/learning-loop — spec §10 KPIs and gates. */
+export interface LearningLoopKpisData {
+  range: { from: string; to: string };
+  steps_total: number;
+  banded_steps: number;
+  in_band: number;
+  in_band_share: number | null;
+  unassisted_next_session: { sessions: number; successes: number; rate: number | null; quiz_ask_excluded: number };
+  caught_leaks: number;
+  served_reveals: number;
+  unscanned_turns: number;
+  ceiling_compliance: { steps: number; compliant: number; rate: number | null };
+  earnest_revise: {
+    graded_steps: number;
+    earnest_blocked: number;
+    unmeasured_steps: number;
+    rate: number | null;
+    gate: 'pass' | 'fail' | 'inconclusive';
+  };
+  gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
+  calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport };
+  truncated: boolean;
+}
+
 export interface ErrorsPageData {
   range: AnalyticsRange;
   total: number;
