@@ -16,6 +16,11 @@ tiers it replaced — the no-price-increase rule) with per-task `effort`, and
 Claude Sonnet 5.5 for the conversational tutor where reasoning depth matters.
 RAG embeddings are NOT an agent and stay on Gemini (`services/rag_service.py`):
 Anthropic has no embeddings API.
+
+Every real model also retries, times out, trips a per-provider circuit
+breaker and — when the `llm_fallback` flag is on — falls back to the other
+provider (#119; see `_ResilientModelMixin` and `agents/_resilience.py`).
+`SAPLING_MODEL_FALLBACK_<TASK>` overrides a slot's fallback model name.
 """
 
 from __future__ import annotations
@@ -27,9 +32,11 @@ import logging
 import os
 import threading
 import weakref
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+import httpx
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -37,6 +44,8 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
 from config import ANTHROPIC_API_KEY, GEMINI_API_KEY
+
+from agents import _resilience
 
 if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod path
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -100,6 +109,85 @@ _DEFAULTS: dict[AgentTask, str] = {
     # when Jev is unavailable.
     "decision": "claude-haiku-5-5",
 }
+
+
+# ── Resilience tables (#119; mechanism in `_ResilientModelMixin` below) ────
+#
+# The cross-provider fallback per slot, used only when the `llm_fallback` flag
+# is on and the slot's own provider is unavailable (retries exhausted or its
+# circuit breaker open). A Claude slot falls back to the Gemini model it ran
+# on before ADR 0030 — the configuration the eval baselines were measured on —
+# and a slot pointed back at Gemini (SAPLING_MODEL_<TASK>=gemini-*) falls back
+# to its Claude default. `SAPLING_MODEL_FALLBACK_<TASK>` overrides the name,
+# the same ADR-0008 tuning knob the primary has; the flag still gates.
+_GEMINI_FALLBACKS: dict[AgentTask, str] = {
+    "topic_checklist": "gemini-2.5-flash",
+    "classifier": "gemini-2.5-flash-lite",
+    "summary": "gemini-2.5-flash-lite",
+    "concepts": "gemini-2.5-flash",
+    "syllabus": "gemini-2.5-flash",
+    "quiz": "gemini-2.5-flash-lite",
+    "chat_tutor": "gemini-2.5-pro",
+    "note_summary": "gemini-2.5-flash-lite",
+    "note_concepts": "gemini-2.5-flash-lite",
+    "note_chat": "gemini-2.5-flash",
+    "study_guide": "gemini-2.5-flash",
+    "social_summary": "gemini-2.5-flash-lite",
+    "flashcard": "gemini-2.5-flash",
+    "course_summary": "gemini-2.5-flash",
+    "quiz_context": "gemini-2.5-flash-lite",
+    "concept_scan": "gemini-2.5-flash-lite",
+    "concept_describe": "gemini-2.5-flash-lite",
+    "ocr_vision": "gemini-2.5-flash",
+    "decision": "gemini-2.5-flash-lite",
+}
+
+# Per-request timeout, seconds. On a plain request it is the TOTAL deadline
+# (plus `_DEADLINE_SLACK_S`, so the SDK's own read timeout normally fires
+# first) and the HTTP read timeout; on a STREAMED request it is only the
+# read timeout — the longest silence between two chunks, which also bounds
+# time-to-first-chunk — so a long tutor answer is never cut mid-stream by a
+# total meant for short calls. Before #119 every call had the SDK default:
+# 600 s read, no total. Generous on purpose: a timeout that fires on a slow
+# but healthy call turns into a retry that costs a second generation.
+_DEFAULT_TIMEOUT_S = 120.0
+_SLOT_TIMEOUT_S: dict[AgentTask, float] = {
+    # Long structured outputs (up to `_ANTHROPIC_MAX_TOKENS` after a think).
+    "quiz": 240.0,
+    "study_guide": 240.0,
+    "syllabus": 240.0,
+    "concepts": 180.0,
+    "course_summary": 180.0,
+    "topic_checklist": 180.0,
+    "flashcard": 180.0,
+    "note_chat": 180.0,
+    # Streamed in the SSE routes: the read (inter-chunk) bound.
+    "chat_tutor": 180.0,
+    # Latency-sensitive, short output.
+    "decision": 60.0,
+}
+# The health probe (no task) only needs a round-trip.
+_PROBE_TIMEOUT_S = 30.0
+_CONNECT_TIMEOUT_S = 5.0  # the SDKs' own default, unchanged
+_DEADLINE_SLACK_S = 5.0
+
+
+def timeout_for(task: AgentTask | None) -> float:
+    if task is None:
+        return _PROBE_TIMEOUT_S
+    return _SLOT_TIMEOUT_S.get(task, _DEFAULT_TIMEOUT_S)
+
+
+def fallback_model_name_for(task: AgentTask, primary_name: str) -> str | None:
+    """The other-provider model `task` falls back to when `primary_name`'s
+    provider is down, or None when there is none."""
+    override = (os.getenv(f"SAPLING_MODEL_FALLBACK_{task.upper()}") or "").strip()
+    if override:
+        return override
+    if provider_for_model(primary_name) == "anthropic":
+        return _GEMINI_FALLBACKS.get(task)
+    default = _DEFAULTS[task]
+    return default if provider_for_model(default) == "anthropic" else None
 
 
 # The admin `/api/gemini-test` connectivity probe has no `_DEFAULTS` task of
@@ -254,8 +342,15 @@ def _new_anthropic_provider() -> AnthropicProvider:
     """A fresh `AnthropicProvider` — a fresh `AsyncAnthropic` client over its
     OWN httpx pool (pydantic-ai's `create_async_http_client()`, not a cached
     shared one), so the per-loop cache below gets a genuinely loop-private
-    connection pool. Same dummy-key-for-import rule as `_new_provider`."""
-    return AnthropicProvider(api_key=ANTHROPIC_API_KEY or "dummy-key-for-import")
+    connection pool. Same dummy-key-for-import rule as `_new_provider`.
+
+    The SDK's own retries are OFF (#119): `_ResilientModelMixin` owns the
+    whole attempt budget (`_resilience.RETRY_ATTEMPTS`), so the two never
+    multiply and every attempt is visible to the circuit breaker. (google-genai
+    already makes a single attempt unless handed `retry_options`.)"""
+    provider = AnthropicProvider(api_key=ANTHROPIC_API_KEY or "dummy-key-for-import")
+    provider.client.max_retries = 0
+    return provider
 
 
 # ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────
@@ -411,16 +506,213 @@ class _LoopSafeProviderMixin:
         await provider.__aexit__(exc_type, exc_val, exc_tb)
 
 
-class _LoopSafeGoogleModel(_LoopSafeProviderMixin, GoogleModel):
-    """A `GoogleModel` with a per-event-loop provider (see the mixin)."""
+# ── #119: retries, timeouts, circuit breaker, cross-provider fallback ──────
+#
+# Every real model (`provider_model` builds only `_LoopSafe*` instances, and
+# `model_for` only calls it in real mode) carries `_ResilientModelMixin`, so
+# the agents, the per-request fast/smart overrides and the health probe all
+# get it with no call-site change, and function mode never meets it. The
+# primitives (classification, backoff, breaker, flag read) live in
+# `agents/_resilience.py`; this mixin wires them around pydantic-ai's
+# `request` / `request_stream`.
+#
+# Why a mixin and not pydantic-ai's FallbackModel/WrapperModel: every real
+# model stays the concrete `AnthropicModel`/`GoogleModel` it was (callers and
+# tests check `isinstance`, read `.settings`, `.client`), and with the flag off
+# the request that reaches the SDK is byte-for-byte the pre-#119 request plus
+# a `timeout`.
+#
+# What makes the fallback correct: a request handed to the FALLBACK must be
+# prepared by the fallback's profile, not ours — Claude's preparation resolves
+# native JSON output and drops the output tools, which Gemini cannot run
+# alongside function tools (and Gemini's forces a `tool_choice` Claude 5.x
+# refuses). The agent graph hands `request`/`request_stream` UNPREPARED
+# parameters (each concrete model prepares inside its own `request`; logfire's
+# `instrument_pydantic_ai()` is a capability that passes the unprepared
+# request context to the handler too — only `pydantic_ai.direct` wraps in
+# InstrumentedModel, which prepares first, and nothing here uses it), so the
+# fallback gets them as they came. `test_llm_resilience.py::test_the_fallback_
+# gets_its_own_preparation_not_claudes` pins this, instrumented and not. The
+# agent DOES merge `self.settings` (Anthropic effort/max_tokens, or Gemini's
+# flashcard settings) into every request's settings, so the fallback gets
+# them stripped back off (`_resilience.settings_without`) and adds its own
+# bottom layer in its own `request`.
 
-    def __init__(self, model_name: str, *, settings: GoogleModelSettings | None = None) -> None:
+
+class _ResilientModelMixin:
+    """Retries + timeouts + breaker (+ flag-gated fallback) around a real
+    model's `request`/`request_stream`. Mix in FIRST; call
+    `_init_resilience()` after the model's own `__init__`."""
+
+    settings: Any
+    model_name: str
+
+    def _init_resilience(
+        self, *, provider: str, task: AgentTask | None, allow_fallback: bool
+    ) -> None:
+        self._res_provider = provider
+        self._res_task = task
+        # The health probe has no task, so no fallback: it must report the
+        # real provider, not a stand-in.
+        self._res_allow_fallback = allow_fallback and task is not None
+        self._res_fallback: Any = None
+        self._res_fallback_built = False
+        self._res_fallback_lock = threading.Lock()
+
+    def _with_timeout(self, model_settings):
+        """Add this slot's HTTP timeout unless the agent or run set one
+        (`agents/ocr_vision.py` pins its own)."""
+        if model_settings and "timeout" in model_settings:
+            return model_settings
+        seconds = timeout_for(self._res_task)
+        if self._res_provider == "anthropic":
+            timeout: Any = httpx.Timeout(seconds, connect=_CONNECT_TIMEOUT_S)
+        else:
+            timeout = seconds  # GoogleModel accepts only a number
+        return {**(model_settings or {}), "timeout": timeout}
+
+    def _site(self) -> _resilience.CallSite:
+        return _resilience.CallSite(self._res_provider, self.model_name, self._res_task)
+
+    # -- fallback ---------------------------------------------------------
+
+    def _fallback_model(self) -> Any:
+        with self._res_fallback_lock:
+            if not self._res_fallback_built:
+                self._res_fallback_built = True
+                try:
+                    self._res_fallback = _build_fallback_model(self._res_task, self.model_name)
+                except Exception:
+                    _logger.error(
+                        "llm fallback for task=%s could not be built; none will be used",
+                        self._res_task, exc_info=True,
+                    )
+            return self._res_fallback
+
+    async def _fallback_for(self, exc: BaseException) -> Any:
+        """The model to retry on, or None (not eligible / flag off / none)."""
+        if not self._res_allow_fallback or not _resilience.fallback_eligible(exc):
+            return None
+        if not await _resilience.fallback_enabled():
+            return None
+        fallback = self._fallback_model()
+        if fallback is not None:
+            _logger.warning(
+                "llm fallback: task=%s %s/%s -> %s after %s",
+                self._res_task, self._res_provider, self.model_name,
+                fallback.model_name, _resilience.describe(exc),
+            )
+        return fallback
+
+    def _fallback_settings(self, model_settings):
+        return _resilience.settings_without(model_settings, self.settings)
+
+    # -- requests ---------------------------------------------------------
+
+    async def request(self, messages, model_settings, model_request_parameters):
+        send = super().request  # type: ignore[misc]
+        settings = self._with_timeout(model_settings)
+        try:
+            return await _resilience.call_with_retries(
+                self._site(),
+                lambda: send(messages, settings, model_request_parameters),
+                deadline_s=timeout_for(self._res_task) + _DEADLINE_SLACK_S,
+            )
+        except Exception as exc:
+            fallback = await self._fallback_for(exc)
+            if fallback is None:
+                raise
+            try:
+                return await fallback.request(
+                    fallback.prepare_messages(messages),
+                    self._fallback_settings(model_settings),
+                    model_request_parameters,
+                )
+            except Exception as fb_exc:
+                _logger.warning(
+                    "llm fallback failed too: task=%s %s (%s); raising the primary error",
+                    self._res_task, fallback.model_name, _resilience.describe(fb_exc),
+                )
+                raise exc
+
+    @asynccontextmanager
+    async def request_stream(
+        self, messages, model_settings, model_request_parameters, run_context=None
+    ):
+        open_stream = super().request_stream  # type: ignore[misc]
+        settings = self._with_timeout(model_settings)
+        async with AsyncExitStack() as stack:
+
+            async def _open():
+                # Retried only while OPENING (up to the first chunk): once a
+                # chunk has reached the caller a retry would duplicate text.
+                return await stack.enter_async_context(
+                    open_stream(messages, settings, model_request_parameters, run_context)
+                )
+
+            try:
+                # Streams get no total deadline — only time-to-first-chunk
+                # here, and the HTTP read timeout between chunks after it.
+                stream = await _resilience.call_with_retries(
+                    self._site(), _open, deadline_s=timeout_for(self._res_task)
+                )
+            except Exception as exc:
+                fallback = await self._fallback_for(exc)
+                if fallback is None:
+                    raise
+                try:
+                    stream = await stack.enter_async_context(
+                        fallback.request_stream(
+                            fallback.prepare_messages(messages),
+                            self._fallback_settings(model_settings),
+                            model_request_parameters,
+                            run_context,
+                        )
+                    )
+                except Exception as fb_exc:
+                    _logger.warning(
+                        "llm fallback failed too: task=%s %s (%s); raising the primary error",
+                        self._res_task, fallback.model_name, _resilience.describe(fb_exc),
+                    )
+                    raise exc
+            # A failure AFTER the first chunk is neither retried (it would
+            # duplicate text) nor seen here: pydantic-ai consumes the stream
+            # from another task, so it surfaces to the caller, not into this
+            # context. The breaker learns from stream OPENS only.
+            yield stream
+
+
+def _build_fallback_model(task: AgentTask | None, primary_name: str) -> Any:
+    """The fallback for `task` (None when it has none). It is resilient
+    itself — retries, timeouts and its own provider's breaker — but never
+    falls back again. Module-level so tests can substitute a stand-in."""
+    if task is None:
+        return None
+    name = fallback_model_name_for(task, primary_name)
+    if not name:
+        return None
+    return provider_model(name, task=task, fallback=False)
+
+
+class _LoopSafeGoogleModel(_ResilientModelMixin, _LoopSafeProviderMixin, GoogleModel):
+    """A `GoogleModel` with a per-event-loop provider (see the mixin) and
+    #119's resilience (see `_ResilientModelMixin`)."""
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        settings: GoogleModelSettings | None = None,
+        task: AgentTask | None = None,
+        fallback: bool = True,
+    ) -> None:
         # `provider=` here becomes a fixed TEMPLATE (see module comment) —
         # constructed once, never reassigned, read only for loop-independent
         # metadata. It must NEVER be read for `.client` — that's what the
         # mixin's property override is for.
         super().__init__(model_name, provider=_new_provider(), settings=settings)
         self._init_loop_safety()
+        self._init_resilience(provider="google", task=task, allow_fallback=fallback)
 
     def _new_loop_provider(self) -> GoogleProvider:
         # Module-level lookup at call time, so a test that patches
@@ -428,12 +720,18 @@ class _LoopSafeGoogleModel(_LoopSafeProviderMixin, GoogleModel):
         return _new_provider()
 
 
-class _LoopSafeAnthropicModel(_LoopSafeProviderMixin, AnthropicModel):
-    """An `AnthropicModel` with a per-event-loop provider (see the mixin) and
-    the Claude 5.x profile from `_anthropic_profile`."""
+class _LoopSafeAnthropicModel(_ResilientModelMixin, _LoopSafeProviderMixin, AnthropicModel):
+    """An `AnthropicModel` with a per-event-loop provider (see the mixin),
+    the Claude 5.x profile from `_anthropic_profile`, and #119's resilience
+    (see `_ResilientModelMixin`)."""
 
     def __init__(
-        self, model_name: str, *, settings: AnthropicModelSettings | None = None
+        self,
+        model_name: str,
+        *,
+        settings: AnthropicModelSettings | None = None,
+        task: AgentTask | None = None,
+        fallback: bool = True,
     ) -> None:
         super().__init__(
             model_name,
@@ -442,6 +740,7 @@ class _LoopSafeAnthropicModel(_LoopSafeProviderMixin, AnthropicModel):
             settings=settings,
         )
         self._init_loop_safety()
+        self._init_resilience(provider="anthropic", task=task, allow_fallback=fallback)
 
     def _new_loop_provider(self) -> AnthropicProvider:
         return _new_anthropic_provider()
@@ -795,9 +1094,13 @@ def model_name_for(task: AgentTask) -> str:
     return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
 
 
-def provider_model(name: str, *, task: AgentTask | None = None) -> "Model":
+def provider_model(
+    name: str, *, task: AgentTask | None = None, fallback: bool = True
+) -> "Model":
     """A real, loop-safe model for a bare model name, on the provider the name
-    implies, carrying `task`'s per-provider default settings when given.
+    implies, carrying `task`'s per-provider default settings when given, and
+    #119's retries/timeouts/breaker — plus, for a `task`, the flag-gated
+    cross-provider fallback unless `fallback=False` (a fallback model itself).
 
     Bypasses the per-task `_DEFAULTS`/env-override resolution `model_for`
     does — it is the per-request override path (the tutor/quiz fast/smart
@@ -807,8 +1110,12 @@ def provider_model(name: str, *, task: AgentTask | None = None) -> "Model":
     """
     bare = _bare_model_name(name)
     if provider_for_model(bare) == "anthropic":
-        return _LoopSafeAnthropicModel(bare, settings=_anthropic_settings_for(task))
-    return _LoopSafeGoogleModel(bare, settings=_google_settings_for(task))
+        return _LoopSafeAnthropicModel(
+            bare, settings=_anthropic_settings_for(task), task=task, fallback=fallback
+        )
+    return _LoopSafeGoogleModel(
+        bare, settings=_google_settings_for(task), task=task, fallback=fallback
+    )
 
 
 @functools.lru_cache(maxsize=16)
