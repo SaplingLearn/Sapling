@@ -92,7 +92,7 @@ const MARK: React.CSSProperties = { fontWeight: 600, color: '#3B4233', boxShadow
 function IngestHeading() {
   return (
     <FadeIn>
-      <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
+      <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
         Drop in the whole <em style={{ color: '#445D22' }}>course.</em>
       </h2>
     </FadeIn>

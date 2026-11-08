@@ -51,7 +51,7 @@ const CAP_BOX: React.CSSProperties = {
 };
 
 const CAP_H2: React.CSSProperties = {
-  position: 'relative', margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
+  position: 'relative', margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif",
   fontSize: 'clamp(2.4rem,4.6vw,4rem)', fontWeight: 600, lineHeight: 1.06,
   letterSpacing: '-0.02em', color: '#191F13',
   textShadow: '0 2px 26px rgba(242,244,240,0.85)',
@@ -202,7 +202,7 @@ export function ActGraph({
             />
             <h2
               style={{
-                position: 'relative', margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
+                position: 'relative', margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif",
                 fontSize: 'clamp(3rem,7vw,6.4rem)', fontWeight: 600, lineHeight: 1.02,
                 letterSpacing: '-0.025em', color: '#191F13', textShadow: '0 3px 34px rgba(242,244,240,0.85)',
               }}
@@ -277,7 +277,7 @@ export function ActGraph({
                     ×
                   </button>
                 </div>
-                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#191F13' }}>{node.label}</h4>
+                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#191F13' }}>{node.label}</h4>
                 <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.65, color: '#3B4233' }}>{node.blurb}</p>
 
                 <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -15,7 +15,7 @@
  * name in a style; use these.
  */
 
-export const FONT_DISPLAY = "var(--font-aleo), 'Aleo', Georgia, serif";
+export const FONT_DISPLAY = "var(--font-gummi), 'Gummi', Georgia, serif";
 export const FONT_SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
 export const FONT_SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 export const FONT_MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
@@ -23,14 +23,14 @@ export const FONT_MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, 
 type FontKind = 'display' | 'serif' | 'sans' | 'mono';
 
 const CSS_VAR: Record<FontKind, string> = {
-  display: '--font-aleo',
+  display: '--font-gummi',
   serif: '--font-aleo',
   sans: '--font-suse',
   mono: '--font-plex-mono',
 };
 
 const BARE: Record<FontKind, string> = {
-  display: "'Aleo', Georgia, serif",
+  display: "'Gummi', Georgia, serif",
   serif: "'Aleo', Georgia, serif",
   sans: "'SUSE', system-ui, sans-serif",
   mono: "'IBM Plex Mono', ui-monospace, monospace",
