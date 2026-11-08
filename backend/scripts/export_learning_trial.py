@@ -20,13 +20,19 @@ What it reads (read-only, PostgREST through db.connection):
     graded against an item staff retired) is no evidence and never anchors;
   - the anchor journal rows and their sessions' probe histories -> the probe
     pretest (learning.learning_gain.pretest_outcome, A112's own rule);
-  - posttest_poses, every window;
+  - posttest_poses, every window, with A126's columns (item_match,
+    item_source, answer_latency_s, hidden_count, hidden_s);
+  - posttest_skips (A126: why a due window had nothing fresh to pose);
   - check_item_reviews and check_item_reports for the posed items (A113).
 It writes one row per (student, concept, window) whose window had opened by
 `--as-of`: the assigned arm (learning.arms.variant_for under the label; the
 treatment is `--treatment-variant`), the pretest, the post-test status and its
 rung-0 outcome, an item exclusion (retired; or reported with no staff
-approval at or after the last report), and the recorded delay.
+approval at or after the last report), the recorded delay, and A126's record
+of the pose: how its item matched the pretest item and where it came from,
+the answer latency and the page-hidden stats (only for an answer given by
+`--as-of`), or the skip reason of a window that was due with nothing posed
+(only for a skip recorded by `--as-of`).
 
 De-identified: every id leaves only as a per-export salted HMAC
 (learning_trial.deidentify; the salt is drawn fresh and never written or
@@ -50,6 +56,7 @@ check the `Project:` line it prints first. Needs the A112/A113/A123 migrations
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from collections import Counter
@@ -72,7 +79,15 @@ from learning.item_alignment import concept_key  # noqa: E402
 from learning.learning_gain import posttest_outcome, pretest_outcome  # noqa: E402
 from learning.params import POSTTEST_POSE_TTL_HOURS, POSTTEST_WINDOWS_DAYS  # noqa: E402
 from learning_trial.deidentify import Pseudonymizer  # noqa: E402
-from learning_trial.table import CONTROL, STATUSES, TREATMENT, TrialRow, write_csv  # noqa: E402
+from learning_trial.table import (  # noqa: E402
+    CONTROL,
+    ITEM_MATCHES,
+    ITEM_SOURCES,
+    STATUSES,
+    TREATMENT,
+    TrialRow,
+    write_csv,
+)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
 _SUPABASE_SUFFIX = ".supabase.co"
@@ -82,7 +97,9 @@ _LABEL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 _IN_BATCH = 100
 _POSE_COLS = (
     "node_id,course_id,window_days,question_hash,posed_at,answered_at,correct,max_rung,"
-    "anchor_event_id,days_since_evidence"
+    "anchor_event_id,days_since_evidence,"
+    # spec §13 A126: how the item was chosen, and the answer's telemetry
+    "item_match,item_source,answer_latency_s,hidden_count,hidden_s"
 )
 #: the evidence journal's total order (read_planning_history's): the first row of a
 #: node in it is the node's A112 anchor (learning/loop_state_store.py::evidence_spans)
@@ -138,6 +155,8 @@ class TrialData:
     pretests: dict[str, bool]  # anchor event id -> the probe pretest outcome
     retired: set[tuple[str, str]] = field(default_factory=set)  # (course_id, question_hash)
     reported: set[tuple[str, str]] = field(default_factory=set)  # uncleared reports
+    # A126: (node id, window days) -> (skip reason, when it was recorded)
+    skips: dict[tuple[str, int], tuple[str, datetime | None]] = field(default_factory=dict)
 
 
 def _trial_students(label: str) -> list[str]:
@@ -182,6 +201,21 @@ def _anchors(user_id: str) -> dict[str, tuple[str, datetime]]:
         if at is None:
             raise ValueError("unreadable evidence journal time")
         out[str(node)] = (str(row["id"]), at)
+    return out
+
+
+def _skips(user_id: str) -> dict[tuple[str, int], tuple[str, datetime | None]]:
+    """A126: the due windows the student's start found nothing fresh to pose
+    in, and why (posttest_skips: one row per window, the latest reason)."""
+    out: dict[tuple[str, int], tuple[str, datetime | None]] = {}
+    for row in page_all(
+        table("posttest_skips"),
+        "node_id,window_days,reason,skipped_at",
+        filters={"user_id": f"eq.{user_id}"},
+        order="node_id,window_days",
+    ):
+        if row.get("node_id") and isinstance(row.get("window_days"), int) and row.get("reason"):
+            out[(str(row["node_id"]), row["window_days"])] = (str(row["reason"]), _ts(row.get("skipped_at")))
     return out
 
 
@@ -270,6 +304,7 @@ def read_trial(label: str, as_of: datetime) -> TrialData:
     nodes: list[dict] = []
     spans: dict[str, tuple[str, datetime]] = {}
     poses: dict[tuple[str, int], dict] = {}
+    skips: dict[tuple[str, int], tuple[str, datetime | None]] = {}
     for user_id in students:
         mine = _nodes(user_id)
         nodes += mine
@@ -278,6 +313,7 @@ def read_trial(label: str, as_of: datetime) -> TrialData:
         for pose in _poses(user_id):
             if pose.get("node_id") and isinstance(pose.get("window_days"), int):
                 poses[(str(pose["node_id"]), pose["window_days"])] = pose
+        skips.update(_skips(user_id))
     pretests = _pretests(anchor for anchor, _ in spans.values())
     items = {
         (str(p["course_id"]), str(p["question_hash"]))
@@ -285,10 +321,49 @@ def read_trial(label: str, as_of: datetime) -> TrialData:
         if p.get("course_id") and p.get("question_hash")
     }
     retired, reported = _item_decisions(items, as_of)
-    return TrialData(students, nodes, spans, poses, pretests, retired, reported)
+    return TrialData(students, nodes, spans, poses, pretests, retired, reported, skips)
 
 
 # ── the table (pure) ───────────────────────────────────────────────────────────
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+#: A126's enums on the pose row, as the trial table accepts them
+_MATCHES = frozenset(m for m in ITEM_MATCHES if m)
+_SOURCES = frozenset(s for s in ITEM_SOURCES if s)
+#: statuses with an answer given by the data lock (its telemetry is exported)
+_ANSWERED = frozenset({"rung0", "assisted", "unrecorded"})
+
+
+def _pose_record(pose: dict | None, status: str) -> dict:
+    """A126's record of a pose, as the trial table carries it: how its item
+    matched the pretest item and where it came from (set when it was posed),
+    and — only for an answer given by the data lock — the latency and the
+    page-hidden stats, rounded to a tenth of a second. Durations and counts
+    only, never a timestamp; an unknown or out-of-schema value is left empty."""
+    if pose is None:
+        return {}
+    out: dict = {}
+    if pose.get("item_match") in _MATCHES:
+        out["item_match"] = pose["item_match"]
+    if pose.get("item_source") in _SOURCES:
+        out["item_source"] = pose["item_source"]
+    if status in _ANSWERED:
+        latency, hidden_s = _number(pose.get("answer_latency_s")), _number(pose.get("hidden_s"))
+        count = pose.get("hidden_count")
+        if latency is not None:
+            out["answer_latency_s"] = round(latency, 1)
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            out["hidden_count"] = count
+        if hidden_s is not None:
+            out["hidden_s"] = round(hidden_s, 1)
+    return out
 
 
 def pose_status(pose: dict | None, as_of: datetime) -> str:
@@ -314,6 +389,7 @@ class ExportSummary:
     rows: int = 0
     flow: Counter = field(default_factory=Counter)  # (window, arm, status) -> rows
     excluded: Counter = field(default_factory=Counter)  # (window, arm, exclusion) -> rows
+    skipped: Counter = field(default_factory=Counter)  # (window, arm, skip reason) -> rows (A126)
     pretests: Counter = field(default_factory=Counter)  # (window, arm) -> rows with a pretest
     notes: Counter = field(default_factory=Counter)  # data-quality counts
 
@@ -334,6 +410,10 @@ class ExportSummary:
                     + f"  {self.excluded[(w, arm, 'retired_item')]:>7}  {self.excluded[(w, arm, 'reported_item')]:>8}"
                     + f"  {self.pretests[(w, arm)]:>7}"
                 )
+        if self.skipped:
+            lines += ["", "not posed, with the recorded reason (A126): " + ", ".join(
+                f"{w}d {arm} {reason} {n}" for (w, arm, reason), n in sorted(self.skipped.items())
+            )]
         if self.notes:
             lines += ["", "data notes: " + ", ".join(f"{k} {v}" for k, v in sorted(self.notes.items()))]
         return "\n".join(lines)
@@ -397,6 +477,10 @@ def build_rows(
                 "retired_item" if item in data.retired else "reported_item" if item in data.reported else ""
             )
             delay = pose.get("days_since_evidence") if pose is not None else None
+            record = _pose_record(pose, status)
+            skip = data.skips.get((node_id, w)) if status == "not_posed" else None
+            if skip is not None and (skip[1] is None or skip[1] > as_of):
+                skip = None  # recorded after the data lock (or with no readable time)
             row = TrialRow(
                 student=pseudonymize("student", user_id),
                 course=pseudonymize("course", course_id),
@@ -411,9 +495,13 @@ def build_rows(
                 days_since_evidence=round(float(delay), 1)
                 if isinstance(delay, (int, float)) and not isinstance(delay, bool)
                 else None,
+                skip_reason=skip[0] if skip is not None else "",
+                **record,
             )
             rows.append(row)
             summary.flow[(w, arm, status)] += 1
+            if row.skip_reason:
+                summary.skipped[(w, arm, row.skip_reason)] += 1
             if exclusion:
                 summary.excluded[(w, arm, exclusion)] += 1
             if pretest is not None:

@@ -85,6 +85,42 @@ def test_an_anchor_is_the_nodes_first_evidence_time(db_conn):
     assert {a, b, theirs} <= set(everyone) and no_course not in everyone
 
 
+def _evidence_id(db_conn, node, at, *, qh) -> str:
+    return db_conn.execute(
+        "INSERT INTO node_mastery_events (node_id, delta, event_type, question_hash, created_at) "
+        "VALUES (%s, 0, 'evidence', %s, %s) RETURNING id",
+        (node, qh, at),
+    ).fetchone()["id"]
+
+
+def _void(db_conn, event_id, node, at):
+    """The void record's row for a journal row (spec §13 A123), as the single
+    graph writer's void transaction writes it (raw SQL: the seed half)."""
+    db_conn.execute(
+        "INSERT INTO learning_evidence_voids (event_id, user_id, node_id, course_id, question_hash, "
+        "check_item_id, event_created_at, reason, operation_id) "
+        "VALUES (%s, %s, %s, %s, 'q-retired', 'item-retired', %s, 'item_retired', %s)",
+        (event_id, USER, node, COURSE, at, str(uuid.uuid4())),
+    )
+
+
+def test_a_void_row_never_anchors(db_conn):
+    """20261108105254 (A123 × A126): a row the void record names is no evidence,
+    so a concept's anchor is its first VALID evidence — evidence_spans' rule —
+    in the student branch and in the all-students branch, and a concept whose
+    every row is void has no anchor."""
+    node, all_void = _node(db_conn), _node(db_conn)
+    _void(db_conn, _evidence_id(db_conn, node, T0, qh="q-retired"), node, T0)
+    _event(db_conn, node, T0 + timedelta(days=1), qh="q-fine")
+    _void(db_conn, _evidence_id(db_conn, all_void, T0, qh="q-retired"), all_void, T0)
+    mine = _anchors(USER)
+    assert _at(mine[node]["anchor_at"]) == T0 + timedelta(days=1)
+    assert all_void not in mine
+    everyone = _anchors()
+    assert _at(everyone[node]["anchor_at"]) == T0 + timedelta(days=1)
+    assert all_void not in everyone
+
+
 def test_the_anchor_range_is_inclusive(db_conn):
     inside, edge, outside = _node(db_conn), _node(db_conn), _node(db_conn)
     _event(db_conn, inside, T0 + timedelta(hours=1))

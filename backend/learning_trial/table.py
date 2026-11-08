@@ -23,7 +23,24 @@ Columns (CSV header order):
     days_since_evidence  days from the concept's last evidence to the pose. It is
                          POST-randomization (the loop's own practice moves it), so
                          it is descriptive only and never a model covariate.
+    item_match           "" | exact | difficulty | format | none | no_pretest — how
+                         the posed item compares with the student's pretest item
+                         (spec §13 A126; "" when nothing was posed or the pose is
+                         from before A126)
+    item_source          "" | reserve | fallback — a protected reserve, or a fresh
+                         unprotected item (A126)
+    answer_latency_s     seconds from the item's first display to the answer
+                         (A126; "" when not answered as of the lock, or unknown)
+    hidden_count         times the answer page was hidden while the item was on
+                         screen (A126; "" when not reported)
+    hidden_s             seconds it was hidden (A126; "" when not reported)
+    skip_reason          "" | no_items | exhausted | reported — why a due window
+                         had nothing fresh to pose (A126's posttest_skips); set
+                         only on a not_posed row
     cov_<name>           optional numeric PRE-randomization covariates
+
+The A126 columns are optional on read: a table written before them reads with
+their empty values.
 
 A row is analyzable (`analyzable`) when its status is rung0, it has a post-test
 outcome and no exclusion; every other row is a missing outcome, kept so
@@ -52,6 +69,12 @@ STATUSES = ("rung0", "assisted", "unrecorded", "open", "expired", "not_posed")
 #: item-level exclusions (A113): the item was retired as broken, or it carries a
 #: student report no later staff approval cleared.
 EXCLUSIONS = ("", "retired_item", "reported_item")
+#: spec §13 A126 (learning/params.py POSTTEST_ITEM_MATCHES / _SOURCES /
+#: _SKIP_REASONS, pinned equal by tests/test_learning_trial_export.py; this
+#: package imports nothing of the app's), each with "" for not recorded
+ITEM_MATCHES = ("", "exact", "difficulty", "format", "none", "no_pretest")
+ITEM_SOURCES = ("", "reserve", "fallback")
+SKIP_REASONS = ("", "no_items", "exhausted", "reported")
 
 COLUMNS = (
     "student",
@@ -65,7 +88,15 @@ COLUMNS = (
     "exclusion",
     "item",
     "days_since_evidence",
+    "item_match",
+    "item_source",
+    "answer_latency_s",
+    "hidden_count",
+    "hidden_s",
+    "skip_reason",
 )
+#: the columns a table must carry; the A126 ones are optional on read
+REQUIRED_COLUMNS = COLUMNS[: COLUMNS.index("days_since_evidence") + 1]
 COVARIATE_PREFIX = "cov_"
 
 
@@ -86,6 +117,12 @@ class TrialRow:
     course: str = ""
     item: str = ""
     days_since_evidence: float | None = None
+    item_match: str = ""
+    item_source: str = ""
+    answer_latency_s: float | None = None
+    hidden_count: int | None = None
+    hidden_s: float | None = None
+    skip_reason: str = ""
     covariates: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
@@ -104,6 +141,21 @@ class TrialRow:
         for value in (self.pretest, self.posttest):
             if value is not None and not isinstance(value, bool):
                 raise TableError("pretest and posttest are bool or None")
+        if self.item_match not in ITEM_MATCHES:
+            raise TableError(f"item_match must be one of {ITEM_MATCHES}, got {self.item_match!r}")
+        if self.item_source not in ITEM_SOURCES:
+            raise TableError(f"item_source must be one of {ITEM_SOURCES}, got {self.item_source!r}")
+        if self.skip_reason not in SKIP_REASONS:
+            raise TableError(f"skip_reason must be one of {SKIP_REASONS}, got {self.skip_reason!r}")
+        if self.skip_reason and self.status != "not_posed":
+            raise TableError("a skip reason is recorded only for status not_posed")
+        if self.hidden_count is not None and (
+            isinstance(self.hidden_count, bool) or not isinstance(self.hidden_count, int) or self.hidden_count < 0
+        ):
+            raise TableError("hidden_count is a non-negative int or None")
+        for value in (self.answer_latency_s, self.hidden_s):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+                raise TableError("answer_latency_s and hidden_s are non-negative numbers or None")
 
     def covariate(self, name: str) -> float | None:
         for key, value in self.covariates:
@@ -149,6 +201,15 @@ def _parse_float(raw: str, column: str, line: int) -> float | None:
     return value
 
 
+def _parse_count(raw: str, column: str, line: int) -> int | None:
+    raw = raw.strip()
+    if raw == "":
+        return None
+    if not raw.isdigit():
+        raise TableError(f"line {line}: {column} must be a non-negative integer, got {raw!r}")
+    return int(raw)
+
+
 def write_csv(rows: Iterable[TrialRow], out: str | Path | IO[str]) -> int:
     """Write the long table; returns the number of rows written. Covariate
     columns are the union of every row's covariates, sorted."""
@@ -174,6 +235,12 @@ def write_csv(rows: Iterable[TrialRow], out: str | Path | IO[str]) -> int:
                     r.exclusion,
                     r.item,
                     "" if r.days_since_evidence is None else f"{r.days_since_evidence:.1f}",
+                    r.item_match,
+                    r.item_source,
+                    "" if r.answer_latency_s is None else f"{r.answer_latency_s:.1f}",
+                    "" if r.hidden_count is None else str(r.hidden_count),
+                    "" if r.hidden_s is None else f"{r.hidden_s:.1f}",
+                    r.skip_reason,
                 ]
                 + ["" if covs.get(n) is None else repr(float(covs[n])) for n in cov_names]
             )
@@ -195,7 +262,7 @@ def read_csv(source: str | Path | IO[str]) -> list[TrialRow]:
             return read_csv(io.StringIO(handle.read()))
     reader = csv.DictReader(source)
     header = reader.fieldnames or []
-    missing = [c for c in COLUMNS if c not in header]
+    missing = [c for c in REQUIRED_COLUMNS if c not in header]
     if missing:
         raise TableError(f"missing columns: {missing}")
     unknown = [c for c in header if c not in COLUMNS and not c.startswith(COVARIATE_PREFIX)]
@@ -227,6 +294,12 @@ def read_csv(source: str | Path | IO[str]) -> list[TrialRow]:
                     course=rec["course"],
                     item=rec["item"],
                     days_since_evidence=_parse_float(rec["days_since_evidence"], "days_since_evidence", line),
+                    item_match=(rec.get("item_match") or "").strip(),
+                    item_source=(rec.get("item_source") or "").strip(),
+                    answer_latency_s=_parse_float(rec.get("answer_latency_s") or "", "answer_latency_s", line),
+                    hidden_count=_parse_count(rec.get("hidden_count") or "", "hidden_count", line),
+                    hidden_s=_parse_float(rec.get("hidden_s") or "", "hidden_s", line),
+                    skip_reason=(rec.get("skip_reason") or "").strip(),
                     covariates=tuple(covs),
                 )
             )

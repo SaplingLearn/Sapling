@@ -291,8 +291,10 @@ unfinished engineering requirement.
    `learning_evidence_commit` to admit `student_confidence` — before it, a grade
    that carries a stated confidence fails its batch closed, and the admin
    learning-loop KPI scan reads the column),
-   `20261108093359_learning_posttest_outcomes.sql` (A126) and
-   `20261108103333_learning_evidence_commit_reconcile.sql` (A123 × A127). The
+   `20261108093359_learning_posttest_outcomes.sql` (A126),
+   `20261108103333_learning_evidence_commit_reconcile.sql` (A123 × A127) and
+   `20261108105254_learning_posttest_anchors_void.sql` (A123 × A126: the
+   post-test anchors leave void rows out, as `evidence_spans` does). The
    verifier's `--db-audit` requires the columns they add and the
    `posttest_anchors` function. Code ahead of the A126 migration fails
    `/posttest/start` (its pose upsert names the new columns) and leaves the

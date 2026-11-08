@@ -282,6 +282,12 @@ def test_read_trial_composes_the_reads(monkeypatch):
         "check_item_reviews": [{"course_id": COURSE, "question_hash": QH["a"], "status": "retired",
                                 "reviewed_at": _iso(_at(10))}],
         "check_item_reports": [],
+        "posttest_skips": [  # A126
+            {"user_id": U1, "node_id": N["load"], "window_days": 7, "reason": "exhausted",
+             "skipped_at": _iso(_at(9))},
+            {"user_id": U2, "node_id": N["chain"], "window_days": 7, "reason": "no_items",
+             "skipped_at": _iso(_at(9))},  # not a trial student
+        ],
     })
     monkeypatch.setattr(export, "table", db.table)
     monkeypatch.setattr(export, "page_all", db.page_all)
@@ -292,7 +298,11 @@ def test_read_trial_composes_the_reads(monkeypatch):
     assert data.pretests == {f"ev-{N['open']}": True}  # the check-item anchor is no pretest
     assert set(data.poses) == {(N["open"], 7)}
     assert data.retired == {(COURSE, QH["a"])} and data.reported == set()
-    assert not any(kind == "select" and name in ("posttest_poses", "graph_nodes") for kind, name, _ in db.calls), (
+    assert data.skips == {(N["load"], 7): ("exhausted", _at(9))}
+    assert not any(
+        kind == "select" and name in ("posttest_poses", "graph_nodes", "posttest_skips")
+        for kind, name, _ in db.calls
+    ), (
         "unbounded reads page"
     )
 
@@ -359,3 +369,74 @@ def test_reported_means_no_staff_approval_since_the_last_report(monkeypatch):
     retired, reported = export._item_decisions(items, AS_OF)
     assert retired == {(c, "qa")}
     assert reported == {(c, "qc")}  # qd reported after the lock; qe's report is another course's item
+
+
+# ── spec §13 A126: the pose record and the skip reasons ────────────────────
+
+
+def test_the_trial_table_enums_are_the_specs():
+    """learning_trial imports nothing of the app's, so its copies of A126's
+    value lists are pinned to learning/params.py here."""
+    from learning import params
+    from learning_trial import table
+
+    assert table.ITEM_MATCHES == ("", *params.POSTTEST_ITEM_MATCHES)
+    assert table.ITEM_SOURCES == ("", *params.POSTTEST_ITEM_SOURCES)
+    assert table.SKIP_REASONS == ("", *params.POSTTEST_SKIP_REASONS)
+
+
+def test_the_export_carries_the_pose_record_and_the_skip_reasons():
+    """A126's record of each pose leaves as enums, rounded durations and a count:
+    how the item matched the pretest item and where it came from, and the answer
+    latency and page-hidden stats of an answer given by the data lock (an
+    answer after it exports none). A due window with nothing posed carries the
+    skip reason recorded by the lock. No timestamp leaves, so the export stays
+    de-identified; the table reads back the same."""
+    data = _data()
+    a126 = {"item_match": "exact", "item_source": "reserve", "answer_latency_s": 12.34,
+            "hidden_count": 2, "hidden_s": 3.21, "served_at": _iso(_at(8))}
+    data.poses[(N["open"], 7)].update(a126)
+    data.poses[(N["chain"], 7)].update({**a126, "item_match": "difficulty", "item_source": "fallback"})
+    data.poses[(N["open"], 28)].update({"item_match": "bogus", "hidden_count": True})  # out of schema
+    data.skips = {
+        (N["probe"], 28): ("exhausted", _at(30)),  # recorded by the lock
+        (N["legacy"], 28): ("reported", AS_OF + timedelta(hours=1)),  # after the lock
+        (N["open"], 7): ("no_items", _at(8)),  # a pose wins: never a skip
+    }
+    p = Pseudonymizer(b"k" * 32)
+    rows, summary = export.build_rows(
+        data, label=LABEL, treatment_variant="A", as_of=AS_OF, pseudonymize=p
+    )
+    by = {(r.concept, r.window): r for r in rows}
+
+    def row(node, window):
+        return by[(p("concept", COURSE, export.concept_key(NAMES[node])), window)]
+
+    answered = row(N["open"], 7)
+    assert (answered.item_match, answered.item_source) == ("exact", "reserve")
+    assert (answered.answer_latency_s, answered.hidden_count, answered.hidden_s) == (12.3, 2, 3.2)
+    assert answered.skip_reason == ""
+    late = row(N["chain"], 7)  # answered after the lock: expired as of then
+    assert late.status == "expired" and (late.item_match, late.item_source) == ("difficulty", "fallback")
+    assert (late.answer_latency_s, late.hidden_count, late.hidden_s) == (None, None, None)
+    odd = row(N["open"], 28)
+    assert odd.item_match == "" and odd.hidden_count is None
+    assert row(N["probe"], 28).status == "not_posed" and row(N["probe"], 28).skip_reason == "exhausted"
+    assert row(N["legacy"], 28).skip_reason == ""
+    assert summary.skipped[(28, row(N["probe"], 28).arm, "exhausted")] == 1
+    buf = io.StringIO()
+    write_csv(rows, buf)
+    text = buf.getvalue()
+    _assert_nothing_raw(text)
+    _assert_nothing_raw(summary.render())
+    assert "T0" not in text and ":00" not in text  # no timestamp of any kind
+    back = {(r.concept, r.window): r for r in read_csv(io.StringIO(text))}
+    assert back[(answered.concept, 7)] == answered
+    assert back[(row(N["probe"], 28).concept, 28)].skip_reason == "exhausted"
+
+
+def test_a_table_from_before_a126_still_reads():
+    header = "student,course,concept,arm,window,pretest,posttest,status,exclusion,item,days_since_evidence"
+    (row,) = read_csv(io.StringIO(header + "\ns,c,k,treatment,7,1,1,rung0,,,9.0\n"))
+    assert (row.item_match, row.item_source, row.skip_reason) == ("", "", "")
+    assert row.answer_latency_s is None and row.hidden_count is None

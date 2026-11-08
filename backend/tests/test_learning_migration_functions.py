@@ -130,6 +130,21 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
             forbids=("c.deleted_at IS NULL",)
         ),
     },
+    ("posttest_anchors", 5): {
+        # A126: each concept's first evidence time, one row per node, keyset-paged
+        "20261108093359_learning_posttest_outcomes.sql": Change(
+            requires=(
+                "min(e.created_at)",
+                "e.event_type = 'evidence'",
+                "g.course_id IS NOT NULL",
+                "LEAST(GREATEST(coalesce(p_limit, 1000), 1), 1000)",
+            )
+        ),
+        # A123 × A126: a void row never anchors (evidence_spans' rule)
+        "20261108105254_learning_posttest_anchors_void.sql": Change(
+            requires=("AND NOT EXISTS (SELECT 1 FROM learning_evidence_voids v WHERE v.event_id = e.id)",)
+        ),
+    },
     ("checklist_budget_reconcile", None): {},  # arity filled below
 }
 
@@ -252,3 +267,11 @@ def test_the_parser_reads_signatures_and_bodies():
     stripped = _strip_comments(sql)
     found = [(m.group(1), _arity(stripped, m.end() - 1)[0]) for m in _HEAD.finditer(stripped)]
     assert found == [("f", 2), ("g", 0)]
+
+
+def test_the_post_test_anchors_leave_the_void_record_out_in_both_branches():
+    """A123 × A126: the student branch and the all-students branch of the
+    function the database runs both skip a void row, as
+    loop_state_store.evidence_spans and the trial export's anchors do."""
+    (_, last) = definitions()[("posttest_anchors", 5)][-1]
+    assert last.count("NOT EXISTS (SELECT 1 FROM learning_evidence_voids v WHERE v.event_id = e.id)") == 2
