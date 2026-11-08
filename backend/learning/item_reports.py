@@ -27,6 +27,7 @@ from collections.abc import Iterable
 from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, rpc, table
+from learning.checks import key_held_flags
 from learning.params import ITEM_REPORT_REASONS, ITEM_REPORT_RETIRE_MIN_REPORTERS
 from services.timestamps import parse_ts
 
@@ -188,12 +189,15 @@ def queue_entries(
 ) -> list[dict]:
     """The admin review queue over stored item rows (their plaintext columns:
     id, course_id, concept_key, question_hash, format, difficulty,
-    lint_flags), given `report_counts()` and `reviews()`. An item is in the
-    queue when it carries lint flags or reports and no approval at or after its
-    last report clears it — or when it is retired but still stored (the retire
-    did not finish: `retire_pending`). Ordered: retire-pending first, then the
-    most-reported (latest first), then the most-flagged; ties by course,
-    concept and id. Pure."""
+    lint_flags, canonical_verified), given `report_counts()` and `reviews()`.
+    An item is in the queue when it carries lint flags or reports and no
+    approval at or after its last report clears it — or when it is retired but
+    still stored (the retire did not finish: `retire_pending`) — or when a
+    key hold still withdraws it (`held`, spec §13 A124: listed until staff
+    confirm its key or retire it, whatever an older approval said, so a held
+    item is never stuck out of both the queue and the students' reach).
+    Ordered: retire-pending first, then held, then the most-reported (latest
+    first), then the most-flagged; ties by course, concept and id. Pure."""
     out: list[dict] = []
     for row in rows:
         key = (row.get("course_id"), row.get("question_hash"))
@@ -204,10 +208,11 @@ def queue_entries(
         reviewed_at = parse_ts(decision.get("reviewed_at"))
         last = count["last_reported_at"] if count else None
         retire_pending = status == RETIRED
+        held = key_held_flags(flags, row.get("canonical_verified"))
         cleared = status == APPROVED and (
             last is None or (reviewed_at is not None and last <= reviewed_at)
         )
-        if not retire_pending and (cleared or not (flags or count)):
+        if not (retire_pending or held) and (cleared or not (flags or count)):
             continue
         reports = {r: (count or {}).get(r, 0) for r in ITEM_REPORT_REASONS}
         out.append(
@@ -224,11 +229,14 @@ def queue_entries(
                 "status": status,
                 "reviewed_at": _iso(reviewed_at),
                 "retire_pending": retire_pending,
+                # A124: withdrawn from students until staff confirm the key
+                "held": held,
             }
         )
     out.sort(
         key=lambda e: (
             not e["retire_pending"],
+            not e["held"],
             -e["reports"]["total"],
             -(parse_ts(e["last_reported_at"]).timestamp() if e["last_reported_at"] else 0.0),
             -len(e["lint_flags"]),

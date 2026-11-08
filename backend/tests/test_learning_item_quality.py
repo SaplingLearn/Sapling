@@ -677,7 +677,7 @@ def test_every_admin_endpoint_is_admin_only(monkeypatch, method, path):
 
     monkeypatch.setattr(admin, "require_admin", _deny)
     touched = []
-    monkeypatch.setattr(admin, "get_check_item", lambda i: touched.append(i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: touched.append(i))
     monkeypatch.setattr(admin.item_reports, "report_counts", lambda: touched.append("reports"))
     from main import app
 
@@ -722,7 +722,7 @@ def test_the_queue_decrypts_only_its_page_at_the_read_boundary(admin_client, mon
 def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypatch):
     import routes.admin_check_items as admin
 
-    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
     calls = []
     monkeypatch.setattr(
         admin.item_reports,
@@ -730,9 +730,11 @@ def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypat
         lambda c, q, s, *, reviewed_by: calls.append((c, q, s, reviewed_by))
         or item_reports.Decision(previous=None, applied=True),
     )
+    # spec §13 A124: an approval confirms the key (canonical_verified), after the decision
+    monkeypatch.setattr(admin, "confirm_course_item", lambda c, q: calls.append(("confirm", c, q)))
     r = admin_client.post(f"{ADMIN}/i1/approve")
     assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved"}
-    assert calls == [("c1", "qh-1", "approved", "admin-1")]
+    assert calls == [("c1", "qh-1", "approved", "admin-1"), ("confirm", "c1", "qh-1")]
     assert admin_client.events[0]["event_type"] == "learn.check_item_approved"
     assert admin_client.events[0]["category"] == "audit"
 
@@ -740,7 +742,7 @@ def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypat
 def test_a_retired_item_cannot_be_approved(admin_client, monkeypatch):
     import routes.admin_check_items as admin
 
-    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
     monkeypatch.setattr(
         admin.item_reports,
         "decide",
@@ -754,7 +756,7 @@ def test_retire_decides_then_retires_through_the_service(admin_client, monkeypat
     import routes.admin_check_items as admin
 
     order = []
-    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
     monkeypatch.setattr(
         admin.item_reports,
         "decide",
@@ -773,7 +775,7 @@ def test_retire_decides_then_retires_through_the_service(admin_client, monkeypat
 def test_a_failed_retire_is_a_503_and_the_decision_stands(admin_client, monkeypatch):
     import routes.admin_check_items as admin
 
-    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
     monkeypatch.setattr(
         admin.item_reports, "decide", lambda *a, **k: item_reports.Decision(None, True)
     )
@@ -789,9 +791,9 @@ def test_a_failed_retire_is_a_503_and_the_decision_stands(admin_client, monkeypa
 def test_an_unknown_item_is_404_and_a_store_failure_503(admin_client, monkeypatch):
     import routes.admin_check_items as admin
 
-    monkeypatch.setattr(admin, "get_check_item", lambda i: None)
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: None)
     assert admin_client.post(f"{ADMIN}/gone/approve").status_code == 404
-    monkeypatch.setattr(admin, "get_check_item", lambda i: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
 
     def down(*a, **k):
         raise RuntimeError("rpc down")

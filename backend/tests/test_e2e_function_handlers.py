@@ -768,6 +768,85 @@ def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(monkeypatch):
     assert dict(verdicts(out)["1"].asked) == {"c1": True, "c2": True}
 
 
+def test_env_module_key_check_verifies_every_e2e_item(monkeypatch):
+    """Spec §13 A124: in function mode the key check runs on the upload's
+    request path after the alignment check, and an unavailable check stores
+    nothing — so the lane registers a handler on the check_items_solve slot,
+    and it must agree with the key of every item the check_items handler
+    drafts: each is stored VERIFIED, no free-text pair needs the key match, and
+    no E2E item is ever held. Run through the REAL agents, schema, prompt
+    builder, letters (the server's slot key), parse and comparison rules."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from agents.check_items_solve import (
+        SolveItem,
+        build_solve_prompt,
+        check_items_solve_agent,
+        solutions,
+    )
+    from agents.function_handlers_e2e import E2E_SOLVE_BASIS
+    from learning.item_keys import AGREE, compare
+    from services.check_item_service import _draft_key_subject
+
+    with check_items_agent.override(model=model_for("check_items")):
+        drafts = check_items_agent.run_sync("Concepts: e2e", deps=_deps()).output.items
+    subjects = [_draft_key_subject(d) for d in drafts]
+    items = [
+        SolveItem(str(n), s.format, s.prompt, s.options, s.answer_kind)
+        for n, s in enumerate(subjects, start=1)
+    ]
+    passages = [{"id": "c1", "text": "Gradient descent steps against the gradient."}]
+    with check_items_solve_agent.override(model=model_for("check_items_solve")):
+        out = check_items_solve_agent.run_sync(build_solve_prompt(passages, items), deps=_deps()).output
+    assert {s.basis for s in out.solutions} == {E2E_SOLVE_BASIS}
+    found = solutions(out)
+    outcomes = [compare(s, found.get(i.id)) for i, s in zip(items, subjects)]
+    assert outcomes == [AGREE] * len(drafts), list(zip([d.format for d in drafts], outcomes))
+    assert {d.format for d in drafts} == {"free", "teachback", "mc_reason"}
+    assert "check_items_solve" in providers._FUNCTION_HANDLERS
+
+
+def test_e2e_key_check_handler_never_guesses(monkeypatch):
+    """An item without the E2E marker, an option list without the E2E answer
+    or a number to compute: the handler cannot tell, so it says unsolvable
+    (the item is then held) — never a guess. The key match on the same slot
+    agrees only on the same text."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_key_match import (
+        MatchItem,
+        build_match_prompt,
+        check_items_key_match_agent,
+        matches,
+    )
+    from agents.check_items_solve import (
+        SolveItem,
+        build_solve_prompt,
+        check_items_solve_agent,
+        solutions,
+    )
+    from agents.function_handlers_e2e import E2E_MATCH_WHY
+
+    items = [
+        SolveItem("1", "free", "What is a hash table?", (), "free"),
+        SolveItem("2", "mc_reason", "Pick one.", (("A", "x"), ("B", "y")), "free"),
+        SolveItem("3", "free", "[e2e-function-model][Learning Rate][free] 4/5?", (), "numeric"),
+    ]
+    with check_items_solve_agent.override(model=model_for("check_items_solve")):
+        out = check_items_solve_agent.run_sync(build_solve_prompt([], items), deps=_deps()).output
+    assert {k: (v.solvable, v.answer) for k, v in solutions(out).items()} == {
+        "1": (False, ""),
+        "2": (False, ""),
+        "3": (False, ""),
+    }
+    pairs = [MatchItem("1", "Q?", "The Step Size", " the step  size "), MatchItem("2", "Q?", "a", "b")]
+    with check_items_key_match_agent.override(model=model_for("check_items_solve")):
+        judged = check_items_key_match_agent.run_sync(build_match_prompt(pairs), deps=_deps()).output
+    assert {m.why for m in judged.matches} == {E2E_MATCH_WHY}
+    assert matches(judged) == {"1": True, "2": False}
+
+
 # ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
 
 
