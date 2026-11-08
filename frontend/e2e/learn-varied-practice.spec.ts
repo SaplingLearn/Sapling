@@ -210,15 +210,31 @@ test("a proficient student is posed the combination once and its answer is a par
     await answerRight(context.request, seeded.session_id, combo);
 
     const rows = (await queryRaw(
-      `SELECT node_id, correct, weight, assisted, max_rung
+      `SELECT node_id, correct, weight, assisted, max_rung, multi_concept
          FROM node_mastery_events
         WHERE question_hash = $1 AND event_type = 'evidence'`,
       [combo.question_hash],
-    )) as { node_id: string; correct: boolean; weight: number; assisted: boolean; max_rung: number }[];
+    )) as {
+      node_id: string;
+      correct: boolean;
+      weight: number;
+      assisted: boolean;
+      max_rung: number;
+      multi_concept: boolean | null;
+    }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].node_id).toBe(seeded.apex_node);
     expect(rows[0].correct).toBe(true);
     expect(rows[0].weight).toBeCloseTo(Number(P.WEIGHT_MULTI_CONCEPT), 12);
+    // the journal says a combination graded the row (its own item row may go later)
+    expect(rows[0].multi_concept).toBe(true);
+    const singles = (await queryRaw(
+      `SELECT count(*)::int AS n FROM node_mastery_events
+        WHERE node_id = ANY($1::text[]) AND event_type = 'evidence'
+          AND question_hash <> $2 AND multi_concept IS NOT NULL`,
+      [[seeded.pre_node, seeded.apex_node], combo.question_hash],
+    )) as { n: number }[];
+    expect(singles[0].n).toBe(0); // every single-concept row journals NULL, as before
     // the events writer flushes in the background: poll for the served event
     const served = async () =>
       (await queryRaw(
