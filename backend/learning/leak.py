@@ -1,7 +1,7 @@
-"""Deterministic answer-leak detector + stripper (spec §3.4 LEAK_NGRAM, §13 A34). Pure.
+"""Deterministic answer-leak detector (spec §3.4 LEAK_NGRAM, §13 A34). Pure.
 
 Runs BEFORE any LLM judge on every tutor turn below H6 (research "Guardrails":
-the supervisor architecture's deterministic solution stripper). Three rules:
+the supervisor architecture's deterministic solution check). Three rules:
 
 - ngram: any LEAK_NGRAM consecutive tokens of the reference appear
   consecutively in the emitted text (a reference shorter than LEAK_NGRAM
@@ -82,16 +82,20 @@ it states it. A missing or empty final_answer is a programmer error
 (ValueError): callers hold only items that passed selection
 (checks.is_servable).
 
-The n-gram rule's tokens are ASCII alphanumeric runs, lowercased. The
-stripper widens every leaked span to whole tokens of both tokenizations and
-replaces it, so whatever it leaves the detector cannot flag; it also withholds
-the partner of a bracket the span holds unpaired when only whitespace parts
-the two, so "10^(-3)" or "$6x^{2}$" leaves no stray ")" or "}".
+The n-gram rule's tokens are ASCII alphanumeric runs, lowercased.
+
+There is no stripper. A leaking served turn is never masked in place (spec
+§13 A51, fix round 2 N1: the mask's position is itself the signal): the
+stream stops before the sentence holding the first `leak_spans` hit, and a
+final text that still leaks is replaced by the rung's fixed line
+(routes/learn_loop.py::served_model_text). The in-place masker this module
+once had (strip_leak) had no caller after that and was removed (§13 A142).
+The detector still reads a literal WITHHELD marker as one masked word, so its
+verdict on a text that holds one is what it always was.
 """
 
 from __future__ import annotations
 
-import bisect
 import math
 import os
 import re
@@ -118,10 +122,6 @@ Detector = Literal["none", "ngram", "final_answer", "option"]
 WITHHELD = "[withheld]"
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
-# Bracket pairs a withheld run keeps whole (_paired): no token of either
-# tokenization, so masking one never changes what the detector reads.
-_OPENERS = {"(": ")", "[": "]", "{": "}"}
-_CLOSERS = {closer: opener for opener, closer in _OPENERS.items()}
 # PKG-04's canonical_answer is "one number as plain decimal text" (float()-
 # parseable at write time). A sign and an e-notation exponent are not part of
 # the matched mantissa (group 1): "-3" matches a "3", "6.022e23" a "6.022";
@@ -190,9 +190,8 @@ _NOT_ENUM_AFTER = (
     r"(?![\"'`)\]*_]{0,4}\s{0,2}[,/|]\s{0,2}[\"'`(\[*_]{0,4}[A-Za-z](?![A-Za-z0-9]))"
     r"(?!\s{1,3}(?:or|and|/)\s{1,3}[A-Za-z](?![A-Za-z0-9]))"
 )
-# A masked token (_MASKED) may have been a letter: after a strip, the letter
-# it parted from another keeps its enumeration reading, so a second pass
-# finds nothing new.
+# A WITHHELD marker (read as _MASKED) may stand for a letter: the letter it
+# parts from another keeps its enumeration reading.
 _ENUM_BEFORE = re.compile(
     r"(?:(?<![A-Za-z0-9])[A-Za-z]|x{%d})[\"'`)\]*_]{0,4}\s{0,2}(?:[,/|]|\s(?:or|and))"
     r"\s{0,2}[\"'`(\[*_]{0,4}$" % len(WITHHELD)
@@ -286,16 +285,10 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
     return _OptionRule(context, label, standalone, position, upper in "AI")
 
 
-# A WITHHELD marker reads as one lowercase word: what the stripper masked was
-# a token, so the letters around a marker keep the context they had ("9.8(A)"
+# A WITHHELD marker reads as one lowercase word: it stands for a masked
+# token, so the letters around a marker keep the context they had ("9.8(A)"
 # is no bracketed "(A)", and "a [withheld]" keeps its article reading).
 _MASKED = "x" * len(WITHHELD)
-
-
-def _folded_token_spans(text: str) -> list[tuple[int, int]]:
-    """The spans (in `text`) of the alphanumeric runs the option rule reads."""
-    folded, origin = _folded(text)
-    return [(origin[m.start()], origin[m.end() - 1] + 1) for m in _TOKEN.finditer(folded)]
 
 
 def _option_folded(text: str) -> tuple[str, list[int]]:
@@ -315,10 +308,8 @@ def _option_hits(
 ) -> list[tuple[int, int]]:
     """The spans (in `text`) of the key letter in an option context — any
     standalone key letter too when `strict` — read on the folded copy, where
-    every WITHHELD marker reads as one lowercase word (_MASKED).
-    strip_leak reads it on the WHOLE text, markers and all, as detect_leak
-    does, so the two always agree. `folded`: `_option_folded(text)`, when the
-    caller has it."""
+    every WITHHELD marker reads as one lowercase word (_MASKED). `folded`:
+    `_option_folded(text)`, when the caller has it."""
     if option is None:
         return []
     folded, origin = folded if folded is not None else _option_folded(text)
@@ -401,9 +392,8 @@ def _answer_hits(toks: list[AnswerToken], answer: _Answer) -> list[tuple[int, in
                 hits.append((t.start, toks[last].end))
             elif Decimal(t.value) == answer.magnitude:
                 # The bare number counts too, whatever exponent follows it (as
-                # the mantissa rule does): masking can only cut an exponent
-                # off a number, never add one, so what the stripper leaves is
-                # clean.
+                # the mantissa rule does): a text that drops the exponent
+                # still states the value.
                 hits.append((t.start, t.end))
     return hits
 
@@ -567,7 +557,7 @@ def _numeric_hits(
 
 
 class _Rules(NamedTuple):
-    """Everything one detect/strip call checks, built once per call."""
+    """Everything one detect_leak / leak_spans call checks, built once per call."""
 
     grams: set[tuple[str, ...]]
     n: int
@@ -931,7 +921,7 @@ def detect_leak(
     given: str | None = None,
 ) -> LeakVerdict:
     """Every parameter is keyword-only (A38 fix round, m6): detect_leak and
-    strip_leak name `reference` and `emitted` in opposite orders, so a
+    leak_spans name `reference` and `emitted` in opposite orders, so a
     positional call could swap them silently. `reference` is the item's
     decrypted reference answer. `rung` is the rung the text is served at; at
     H6 the reference is the content (under gates.h6_allowed), so nothing is a
@@ -961,137 +951,3 @@ def detect_leak(
     if _option_hits(emitted, rules.option, strict=rules.strict) or _option_text_hits(toks, rules):
         return LeakVerdict(True, "option")
     return LeakVerdict(False, "none")
-
-
-def _atoms(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Disjoint, sorted unions of overlapping token spans: masking a whole
-    atom never leaves part of a token of either tokenization ("1,250" is one
-    number but two ASCII tokens; "6x" one ASCII token but two answer tokens)."""
-    merged: list[tuple[int, int]] = []
-    for start, end in sorted(spans):
-        if merged and start < merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
-def _paired(text: str, start: int, end: int) -> tuple[int, int]:
-    """The run text[start:end] widened over the partners of the brackets it
-    holds unpaired: a closer right after it (whitespace aside) for each opener
-    left open, innermost first, and an opener right before it for each closer
-    with no opener inside, so "10^(-3" takes its ")" and "x-3)^2" its "(".
-    Brackets and whitespace are no token of either tokenization, so the
-    widened run withholds no more of what the detector reads."""
-    opened: list[str] = []
-    unopened: list[str] = []
-    for ch in text[start:end]:
-        if ch in _OPENERS:
-            opened.append(ch)
-        elif ch in _CLOSERS:
-            if opened and opened[-1] == _CLOSERS[ch]:
-                opened.pop()
-            elif not opened:
-                unopened.append(ch)
-    for opener in reversed(opened):
-        at = end
-        while at < len(text) and text[at].isspace():
-            at += 1
-        if at == len(text) or text[at] != _OPENERS[opener]:
-            break
-        end = at + 1
-    for closer in unopened:
-        at = start
-        while at > 0 and text[at - 1].isspace():
-            at -= 1
-        if at == 0 or text[at - 1] != _CLOSERS[closer]:
-            break
-        start = at - 1
-    return start, end
-
-
-def _strip_segment(text: str, rules: _Rules, option_hits: list[tuple[int, int]]) -> str:
-    """`option_hits`: the option rule's hits in this segment, read on the whole text."""
-    n, grams = rules.n, rules.grams
-    ascii_spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
-    words = [text[a:b].lower() for a, b in ascii_spans]
-    hits = [
-        (ascii_spans[i][0], ascii_spans[i + n - 1][1])
-        for i in range(len(words) - n + 1)
-        if grams and tuple(words[i : i + n]) in grams
-    ]
-    toks = answer_tokens(text)
-    hits += _final_hits(text, toks, rules)
-    hits += option_hits + _option_text_hits(toks, rules)
-    if not hits:
-        return text
-    spans = ascii_spans + [(t.start, t.end) for t in toks]
-    if rules.option is not None:
-        # the option rule's own tokens too: "A¹" folds to one token "A1", so
-        # masking its "¹" alone would expose a standalone "A"
-        spans += _folded_token_spans(text)
-    atoms = _atoms(spans)
-    starts = [a for a, _ in atoms]
-
-    def widen(start: int, end: int) -> tuple[int, int]:
-        lo = max(bisect.bisect_right(starts, start) - 1, 0)
-        hi = bisect.bisect_left(starts, end)
-        covered = [atoms[i] for i in range(lo, hi) if atoms[i][1] > start]
-        return min([start] + [a for a, _ in covered]), max([end] + [b for _, b in covered])
-
-    # Maximal runs: widened hits that overlap, or that only separators part
-    # (no token between them), become ONE marker; the text between runs stays.
-    runs: list[tuple[int, int]] = []
-    for start, end in sorted(widen(a, b) for a, b in hits):
-        if runs:
-            nxt = bisect.bisect_left(starts, runs[-1][1])
-            if start <= runs[-1][1] or nxt >= len(starts) or starts[nxt] >= start:
-                runs[-1] = (runs[-1][0], max(runs[-1][1], end))
-                continue
-        runs.append((start, end))
-    out: list[str] = []
-    cursor = 0
-    # Widening a run over bracket partners never reaches another run: runs
-    # that only separators part were merged above, so a token parts them.
-    for start, end in (_paired(text, a, b) for a, b in runs):
-        out.append(text[cursor:start])
-        out.append(WITHHELD)
-        cursor = end
-    out.append(text[cursor:])
-    return "".join(out)
-
-
-def strip_leak(
-    *,
-    emitted: str,
-    reference: str,
-    final_answer: str,
-    canonical_answer: str | None = None,
-    correct_option: str | None = None,
-    strict: bool = False,
-    option_text: str | None = None,
-) -> str:
-    """Replace every maximal run of leaked text (an n-gram of the reference, a
-    final-answer run, a number of the canonical value, the key letter in an
-    option context; in strict mode also any standalone key letter, the
-    option text and a numeric answer's other notations — every parameter as
-    in detect_leak) with WITHHELD, widened to whole
-    tokens so no number or word is cut in two, and over the partner of a
-    bracket it holds unpaired when only whitespace parts them (a bracket is
-    no token, so this withholds nothing the detector reads); the text between
-    runs is otherwise untouched. One pass leaves nothing detect_leak(reference=<same>,
-    emitted=·, rung=H0, <every other parameter the same>) flags (unless the
-    reference or the final answer itself holds the word "withheld"), and a
-    second pass is a no-op: existing WITHHELD markers are never re-matched.
-    ValueError on a missing or empty final_answer, or a correct_option that is
-    not one letter."""
-    rules = _rules(reference, final_answer, canonical_answer, correct_option, strict, option_text)
-    option_hits = _option_hits(emitted, rules.option, strict=rules.strict)
-    out: list[str] = []
-    offset = 0
-    for seg in emitted.split(WITHHELD):
-        end = offset + len(seg)
-        local = [(a - offset, b - offset) for a, b in option_hits if offset <= a and b <= end]
-        out.append(_strip_segment(seg, rules, local))
-        offset = end + len(WITHHELD)
-    return WITHHELD.join(out)

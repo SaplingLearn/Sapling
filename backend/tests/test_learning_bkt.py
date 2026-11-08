@@ -115,7 +115,6 @@ SPEC_34_NAMES = (
     "LEARNER_BRIEF_LAST_CLOSES",
     "LEARNER_BRIEF_TOP_STATES",
     "LEARNER_BRIEF_MAX_MISCONCEPTIONS",
-    "LOOP_LIMITS",
     "GRADER_LIMITS",
     "GRADER_LOW_CONFIDENCE",
     "GRADER_SECOND_OPINION_CONFIDENCE",
@@ -236,7 +235,6 @@ SPEC_VALUES = {
     "LEARNER_BRIEF_LAST_CLOSES": 3,
     "LEARNER_BRIEF_TOP_STATES": 5,
     "LEARNER_BRIEF_MAX_MISCONCEPTIONS": 5,
-    "LOOP_LIMITS": {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000},
     "GRADER_LIMITS": {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000},
     "GRADER_LOW_CONFIDENCE": 0.6,
     "GRADER_SECOND_OPINION_CONFIDENCE": 0.4,
@@ -292,8 +290,22 @@ def test_ordered_pairs_are_ordered():
 
 
 def test_limits_are_plain_dicts_with_usage_limits_keys():
-    for limits in (params.LOOP_LIMITS, params.GRADER_LIMITS):
-        assert set(limits) == {"request_limit", "tool_calls_limit", "total_tokens_limit"}
+    assert set(params.GRADER_LIMITS) == {"request_limit", "tool_calls_limit", "total_tokens_limit"}
+
+
+def test_loop_limits_have_one_home_with_the_spec_value():
+    """Spec §3.4 / §13 A18: LOOP_LIMITS lives in agents/__init__.py only, at
+    request 4 / tool calls 3 / tokens 40_000. learning.params kept a stale,
+    unused 14/14/120_000 copy until §13 A142 removed it; a second copy can
+    drift again, so params must not define one."""
+    from agents import LOOP_LIMITS
+
+    assert not hasattr(params, "LOOP_LIMITS")
+    assert (
+        LOOP_LIMITS.request_limit,
+        LOOP_LIMITS.tool_calls_limit,
+        LOOP_LIMITS.total_tokens_limit,
+    ) == (4, 3, 40_000)
 
 
 def test_validate_channels_accepts_the_shipped_table():

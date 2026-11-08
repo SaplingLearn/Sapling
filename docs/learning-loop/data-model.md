@@ -113,7 +113,8 @@ section is derived from it.
   value changed; it never moves `evidence_touch_at`), and
   `backend/learning/learner_state.py::write_metrics` — an `UPDATE` of the four
   derived columns only, called only by `backend/scripts/derive_zpd_metrics.py`.
-  `write_state` exists for compatibility and has no caller.
+  There is no other writer: the unconditional `write_state` upsert was removed
+  (A142), and invariant 1 refuses any module that brings one back.
 
 ### `graph_nodes` (the mirror) and `graph_edges`
 
@@ -130,9 +131,12 @@ section is derived from it.
   and compares the exact course-local prerequisite edge list with the plan's.
   Upload edges come from `backend/services/concept_prereqs.py` behind
   `upload_prereq_edges` (A118).
-- Topology writes (new nodes and edges, colour, deletion) stay in
-  `backend/services/graph_service.py`; the mirror columns are written only by
-  the evidence and void commits.
+- Topology writes stay in `backend/services/graph_service.py`, in exactly
+  three functions (invariant 1, A142): `apply_graph_update` (new nodes and
+  edges), `delete_node` (a student's own node; `ON DELETE CASCADE` removes its
+  learner state, journal, void and misconception rows with it) and
+  `update_node_color`. The mirror columns are written only by the evidence
+  and void commits.
 
 ### `learning_evidence_operations` — commit receipts
 
@@ -197,13 +201,15 @@ Course-asset questions, created in
 | Table | One row per | Holds | Written by |
 |---|---|---|---|
 | `check_item_reviews` | course item `(course_id, question_hash)` | the current decision: `status` (`approved`, `quarantined`, `retired`), `decided_by` (`reports`, `admin`), `approved_at`; latest wins, no history | only the SQL functions `check_item_report_quarantine` and `check_item_review_decide` |
-| `check_item_reports` | `(user_id, question_hash)` | a student's report: `reason` (`wrong_answer`, `unclear`, `not_from_my_course`), `surface` (`loop`, `review`); no free text | `check_item_report_quarantine` (insert once) |
+| `check_item_reports` | `(user_id, course_id, question_hash)` — a student's report of one course's item (A142: the same question in two courses shares its hash) | a student's report: `reason` (`wrong_answer`, `unclear`, `not_from_my_course`), `surface` (`loop`, `review`); no free text | `check_item_report_quarantine` (insert once) |
 | `check_item_audits` | course item | a staff key verdict (`correct`, `wrong`, `ambiguous`) and the key status at the first audit | `check_item_service.record_item_audit` (upsert) |
 
 All three are backend-only; created by
 `backend/db/migrations/20261108041639_learning_item_quality.sql` and
 `backend/db/migrations/20261108073631_learning_item_keys.sql`, reworked for
-the quarantine by `backend/db/migrations/20261108072715_learning_evidence_void.sql`.
+the quarantine by `backend/db/migrations/20261108072715_learning_evidence_void.sql`;
+`backend/db/migrations/20261108193927_learning_report_course_key.sql` keys a
+report on the course item (A142).
 A retire is final: approving a retired item is refused.
 
 ### `check_item_draft_failures`
@@ -379,23 +385,13 @@ The ciphertext oracle checks the `check_items` columns
 (`backend/e2e_oracles/gather.py`, `_CIPHERTEXT_MANIFEST`), and invariant 9
 forbids indexing or filtering on any of them.
 
-## Where the spec's §4 is out of date
+## The spec's §4 and the migrations
 
-- §4 has no DDL for `posttest_poses`, `posttest_skips`, `learning_reveals`,
-  `quiz_evidence_claims`, `learning_evidence_operations`,
-  `learning_evidence_voids`, `misconception_attempts` or the three
-  `check_item_*` review tables, nor for the evidence-version, `evidence_touch_at`,
-  planning-observation, void-replay, lint, alignment, key-check and drafting
-  columns; their migrations (cited above) are the reference.
-- §4's `grader_backend` CHECK lists four values; the current one
-  (`backend/db/migrations/20261108050630_learning_grader_backend_claude.sql`,
-  A116) has six. §5's `Evidence.grader_backend` likewise omits `claude` and
-  `claude_second`, which the code has.
-- §4 says `loop_state` holds no free text (A38); it now carries two encrypted
-  strings (the goal text, ADR 0033, and a grade checkpoint, ADR 0038), which
-  §4's encryption list and `CLAUDE.md`'s also omit.
-- §4 says only `backend/learning/gate.py` reads `learning_loop_beta`; since the
-  cutover nothing in the app reads it.
-- §8 invariant 8 says `git log --diff-filter=M` over learning migrations is
-  empty; the test allows exactly one sanctioned edit, made before that file
-  was applied anywhere.
+§13 A142 brought §4 up to date with the code: it now lists the tables whose
+DDL lives only in their migrations, the six-value `grader_backend` CHECK
+(A116), the `check_item_reports` key, the two ciphertext values inside the
+plaintext `loop_state` (the goal text and a saved grade checkpoint), and that
+nothing has read `learning_loop_beta` since the cutover. §4's SQL block is
+still each package's record of what it wrote; for a table's current shape,
+its migrations (cited above) are the reference. §8 invariant 8 now names the
+one sanctioned edit to a learning migration (7717dc24, A123).

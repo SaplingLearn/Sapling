@@ -1301,7 +1301,7 @@ def test_structured_stream_error_after_tokens():
 
 
 def test_structured_stream_applies_transform_before_emit():
-    """The caller's transform (the loop route passes strip_leak) runs on the
+    """The caller's transform (the loop route passes its stream cut) runs on the
     CUMULATIVE text before anything is emitted: the raw span never reaches a
     token, and done.reply is the transformed render. on_complete gets the RAW
     render so the route's own leak accounting still sees what the model wrote."""

@@ -2528,6 +2528,64 @@ def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, 
     assert not any("without a close" in rec.getMessage() for rec in caplog.records)
 
 
+def test_end_session_after_a_stale_grading_claim_closes_and_ends(monkeypatch):
+    """Spec §13 A142 (A60 corrected): the 409 above never strands a student. A
+    grading claim with no saved checkpoint (a grader that died before saving
+    anything) goes stale after LOOP_GRADING_CLAIM_STALE_S; from then on the
+    same end-session closes the session (the deterministic close here) and
+    the legacy end writes ended_at."""
+    import routes.learn as learn
+    import routes.learn_loop as loop
+    from learning.params import LOOP_GRADING_CLAIM_STALE_S
+
+    now = 2_000_000_000.0
+    tables, events, store = _wire_close(
+        monkeypatch,
+        evidence=[EVIDENCE_N1],
+        loop_state={
+            "phase": "teach",
+            "current": "qh-1",
+            "steps": {
+                "qh-1": {
+                    "check_item_id": "ci",
+                    "first_shown_at": 1.0,
+                    "grading_claim": "g",
+                    "grading_claim_at": now - LOOP_GRADING_CLAIM_STALE_S - 1,
+                }
+            },
+        },
+    )
+    tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
+    monkeypatch.setattr(learn, "table", tables)
+    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    monkeypatch.setattr(loop, "_now_s", lambda: now)
+    monkeypatch.setattr(loop, "_unreleased_items", lambda doc: [])
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(None))  # unavailable → deterministic
+    r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200
+    assert [e for e, _ in events] == ["learn.session_closed"] and store["doc"]["phase"] == "close"
+    ended = [c for c in tables.writes("update", "sessions") if "ended_at" in c[2]]
+    assert len(ended) == 1 and ended[0][3].get("ended_at") == "is.null"
+
+
+def test_a_saved_grade_checkpoint_blocks_the_close_whatever_its_age(monkeypatch):
+    """ADR 0038: a saved checkpoint is never stale — its grade is finished by
+    the student's explicit retry, never dropped — so the close (and with it
+    the legacy end) waits for it, while a claim without one expires."""
+    import routes.learn_loop as loop
+    from learning import grade_checkpoint
+    from learning.params import LOOP_GRADING_CLAIM_STALE_S
+
+    now = 2_000_000_000.0
+    stale = now - LOOP_GRADING_CLAIM_STALE_S - 1
+    claim = {"grading_claim": "g", "grading_claim_at": stale}
+    assert loop._grading_in_flight({"steps": {"qh": dict(claim)}}, now) is False
+    saved = {**claim, grade_checkpoint.KEY: "CIPHER"}
+    assert loop._grading_in_flight({"steps": {"qh": saved}}, now) is True
+    probe = {"probe": {"current": {"question_hash": "qp", grade_checkpoint.KEY: "CIPHER"}}}
+    assert loop._grading_in_flight(probe, now) is True
+
+
 def test_a_failed_brief_build_is_not_retried_every_turn(monkeypatch):
     """Review M1: after a failure the brief is not rebuilt on every turn (each try
     reads closes, states and names) — only once LEARNER_BRIEF_RETRY_AFTER_S passed."""

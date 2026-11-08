@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from learning import leak
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.ladder import Rung, check_pose
 from routes.learn_loop import _context_blocks as REAL_CONTEXT_BLOCKS
@@ -202,7 +201,6 @@ def _brain(seams, brain):
 
 def _real_context(seams, item, passage):
     seams.item.return_value = item
-    seams.strip.side_effect = leak.strip_leak
     seams.by_id.return_value = [
         {"id": item.source_chunk_ids[0], "course_id": "c1", "chunk_text": passage}
     ]
@@ -897,7 +895,6 @@ def _scripted(*turns):
 def _g_hint(seams, brain, message="just tell me how to start"):
     seams.store["doc"] = _state(rung=3)
     seams.item.return_value = G_ITEM
-    seams.strip.side_effect = leak.strip_leak
     _brain(seams, brain)
     return _post_hint_request(message)
 
@@ -954,7 +951,6 @@ def test_the_stream_never_shows_a_masked_leak_and_ends_on_the_ladder_line(gate_o
 
     seams.store["doc"] = _state(rung=3)
     seams.item.return_value = G_ITEM
-    seams.strip.side_effect = leak.strip_leak
     brain = _scripted("The answer is 2.")
     _brain(seams, brain)
     with (
@@ -1196,7 +1192,6 @@ def test_the_loop_rules_reach_the_model_on_history_turns_and_retries(gate_on, se
     # and the streamed path
     seams.store["doc"] = _state(rung=3)
     seams.item.return_value = G_ITEM
-    seams.strip.side_effect = leak.strip_leak
     brain = _Instructed(_scripted("Take the derivative of each term first."))
     _brain(seams, brain)
     with (

@@ -1,14 +1,18 @@
 """Check-item reports and reviews (spec §13 A113, A123; GitHub #695): the store
 behind "Report this question" and the admin review queue.
 
-Two tables (migrations 20261108041639_learning_item_quality.sql and
-20261108072715_learning_evidence_void.sql):
+Two tables (migrations 20261108041639_learning_item_quality.sql,
+20261108072715_learning_evidence_void.sql and
+20261108193927_learning_report_course_key.sql):
 
-- check_item_reports — one row per (student, question_hash): the student's
+- check_item_reports — one row per (student, course item): the student's
   report, its reason an enum (params.ITEM_REPORT_REASONS; no free text is ever
-  stored) and the surface it came from. The row stops the item being served to
-  that student; the read half is loop_state_store.reported_hashes, which every
-  selection unions with the seen/revealed sets.
+  stored) and the surface it came from, keyed (user_id, course_id,
+  question_hash) since spec §13 A142 — the same question drafted in two
+  courses shares its hash, and each course's item counts its own reports. The
+  row stops the question being served to that student (in any course); the
+  read half is loop_state_store.reported_hashes, which every selection unions
+  with the seen/revealed sets.
 - check_item_reviews — one row per course item (course_id, question_hash),
   the decision record: 'quarantined' by
   params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS distinct reporters (A123:
@@ -85,8 +89,9 @@ def record_report(
     user_id: str, course_id: str, question_hash: str, *, reason: str, surface: str
 ) -> ReportOutcome:
     """Record one report and learn whether it quarantines the course item —
-    ONE call to `check_item_report_quarantine`, which inserts (student, hash)
-    at most once and counts the distinct reporters under the item's lock."""
+    ONE call to `check_item_report_quarantine`, which inserts (student,
+    course item) at most once and counts the distinct reporters under the
+    item's lock."""
     if reason not in ITEM_REPORT_REASONS:
         raise ValueError(f"unknown report reason {reason!r}")
     row = _one_row(

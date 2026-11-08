@@ -309,9 +309,11 @@ only inside a nonce-delimited envelope (`backend/agents/loop_tutor.py::student_e
 Two non-agent helpers matter as much as the agents:
 
 - `backend/agents/tools/check.py::grade_answer` — the single grading helper.
-  Routes call it; it is not a tool the tutor can call. It runs the
-  deterministic pre-checks, the grader through the decision seam, and appends
-  one `Evidence` to `deps.pending_evidence`. It never persists.
+  Routes call it; it is not a tool the tutor can call. It runs the grader
+  through the decision seam, then code's checks (the `mc_reason` option
+  compare and the numeric gate, A22), which can only turn a "correct" into an
+  "incorrect", and appends one `Evidence` to `deps.pending_evidence`. It
+  never persists.
 - `backend/agents/usage.py::record_agent_usage` — every run's tokens and cost
   go to `llm_usage` (with `session_id` and `course_id` where known).
 

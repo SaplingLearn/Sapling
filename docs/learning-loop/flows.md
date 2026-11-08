@@ -234,7 +234,9 @@ encrypted. Goals come from ADR 0033 and have no §13 row.
   to its post-test reserves (A130).
 - **Stop** (`probe_done`): the session cap (`PROBE_SESSION_CAP`, 12 items),
   the novice floor (enough misses or "I don't know"s), observed boundaries
-  per strand, or no item left. Posterior stability never stops the probe
+  per strand, or no item left. After a novice floor the plan starts on the
+  lowest unproficient prerequisites, because it never proposes a concept
+  above one (§3.3's novice exit is this composition, A142). Posterior stability never stops the probe
   (ADR 0033): a boundary needs independent observations.
 - **Answers** are graded evidence like any check (§3), with two differences:
   no hints are offered, and a matched misconception is recorded but never
@@ -295,8 +297,8 @@ turns) run one `_LoopTurn`:
    that would state the answer (`leak.leak_spans`), and a `retract` event
    tells the client to discard what it showed; the final text goes through
    `served_model_text`, which replaces a leaking turn with the ladder's
-   fallback line for the rung and logs `zpd.leak`. (`leak.strip_leak` exists
-   but no production path calls it.) Every relayed chunk is also **scanned**
+   fallback line for the rung and logs `zpd.leak`. Nothing is masked in
+   place (A51; the unused stripper was removed, A142). Every relayed chunk is also **scanned**
    against all the student's open posed items (`served_scan.ScanSet`, up to
    200): an item the text states is recorded as revealed at once
    (`reveal_store.record_reveals`); if the open items cannot be read, an
@@ -377,8 +379,9 @@ answer is then shown (released).
 Then: the band controller may move the row by one rung either way (A122); a
 genuine attempt in this very message floors the ceiling at H3; a reasoned
 attempt in the teach phase raises it by one (two for profic) up to a cap
-(A85). An exam-mode row (H1) exists in the policy, but no production code
-sets exam mode yet.
+(A85). An exam-mode row (H1) exists in the policy but is reserved: no
+surface enters exam mode, and a test pins that no production code sets it
+(A142; which surface turns it on waits on the owner).
 
 **Answering** is §3. After the grade, the **band controller** (A122) reads
 the concept's recent unassisted first attempts (`BAND_WINDOW` = 8, void rows
@@ -407,7 +410,11 @@ on the answer. A novice who answered wrong is offered a hint.
 delegating to `end_session`:
 
 - One close per session, by a claim on `loop_state`; a grade in flight makes
-  the close wait (409).
+  the close wait (409). The legacy end-session route passes that 409 on (and
+  a 503 for a close it could not confirm) instead of setting `ended_at`
+  (ADR 0038; A142 corrects A60). A grading claim with no saved grade goes
+  stale after `LOOP_GRADING_CLAIM_STALE_S`; a saved grade is finished by the
+  student's explicit retry; so a session can always be ended.
 - `learning/session_close.build_close` assembles a bounded draft: the last
   turns, each checked concept's change from an honest baseline (the prior is
   not a measurement, A117), check-in answers counted apart, and misconception

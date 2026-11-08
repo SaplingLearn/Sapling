@@ -140,17 +140,18 @@ def _teach(seams, *, served_at, message=CLAIM):
         patch("routes.learn_loop.loop_tutor_agent", agent),
         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
         patch("services.graph_service.apply_graph_update") as apply,
-        patch("learning.learner_state.write_state") as write_state,
+        # the only learner_state writer: the single writer's transaction RPC
+        patch("learning.evidence_transaction.commit_evidence_transaction") as commit,
     ):
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": message}
         ).json()
-    return body, apply, write_state
+    return body, apply, commit
 
 
 def test_a_teach_claim_after_120s_raises_this_turns_ceiling_and_writes_no_evidence(gate_on, seams):
     before = _routes._plan_state()
-    body, apply, write_state = _teach(seams, served_at=NOW - 120.0)
+    body, apply, commit = _teach(seams, served_at=NOW - 120.0)
     assert body["ceiling"] == int(Rung.H3)
     kw = seams.ceiling.call_args.kwargs
     assert kw["teach_attempt"] is True
@@ -158,7 +159,7 @@ def test_a_teach_claim_after_120s_raises_this_turns_ceiling_and_writes_no_eviden
     seams.flush.assert_not_called()
     seams.grade.assert_not_awaited()
     apply.assert_not_called()
-    write_state.assert_not_called()
+    commit.assert_not_called()
     doc = seams.store["doc"]
     assert doc.get("steps", {}) == before.get("steps", {}) and doc.get("current") is None
     assert doc["served_at"] == NOW  # the next turn's independent-time anchor

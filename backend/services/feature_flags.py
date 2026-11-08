@@ -82,10 +82,12 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # #695 (learning-loop spec §13 A113): "Report this question" on the loop's
     # check card and Study's review queue, and POST /api/learn/loop/report.
     # Client-visible: the frontend renders the control only when "on". Reports
-    # already made keep excluding their items whatever the flag says.
+    # already made keep excluding their items whatever the flag says. Since
+    # A123 reports quarantine an item (a reversible hold); only staff retire.
     FlagDef("item_reports", ("off", "on"),
             "Students can report a learning-loop check question (wrong answer / "
-            "unclear / not from my course); two reporters retire it course-wide.",
+            "unclear / not from my course); two reporters hold it from every "
+            "student in the course until staff approve or retire it.",
             True),
     # Learning loop spec §13 A126: the "retention check due" badge on the Study
     # nav entry and the Dashboard, and GET /api/learn/loop/posttest/due (404

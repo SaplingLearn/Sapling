@@ -287,9 +287,14 @@ class TestLearnerState:
                 with pytest.raises(ValueError):
                     ls.read_state("u1", "n1", now=NOW)
 
-    def test_write_upserts_on_user_node_and_never_names_derived_columns(self):
+    def test_state_row_names_every_stored_column_but_the_derived_ones(self):
+        """`state_row` is the one projection of a LearnerState the single
+        writer's transaction RPC (and A123's replay) stores. Spec §13 A142:
+        the unconditional upsert that once wrapped it is gone, so the module
+        has no writer of its own to call."""
         from learning import learner_state as ls
 
+        assert not hasattr(ls, "write_state")
         st = ls.LearnerState(
             user_id="u1",
             node_id="n1",
@@ -306,12 +311,8 @@ class TestLearnerState:
             htc_k=0.4,
             in_zone=False,
         )
-        t = _ls_table([])
-        with patch("learning.learner_state.table", return_value=t):
-            ls.write_state(st, now=NOW)
-            ls.write_state(ls.LearnerState(user_id="u1", node_id="n1", p_known=0.5), now=NOW)
-        full, bare = [c.args[0] for c in t.upsert.call_args_list]
-        assert t.upsert.call_args.kwargs == {"on_conflict": "user_id,node_id"}
+        full = ls.state_row(st, NOW)
+        bare = ls.state_row(ls.LearnerState(user_id="u1", node_id="n1", p_known=0.5), NOW)
         assert full["p_known"] == 0.7 and full["opps"] == 1
         assert full["max_streak_unassisted"] == 1
         assert full["updated_at"] == NOW.isoformat()
@@ -455,7 +456,7 @@ def _run_legacy(payload):
     trace: list = []
     factory = _tracing_factory({"graph_nodes": LEGACY_NODES}, trace)
     # learner_state's own `table` is traced too, so a legacy payload that
-    # reached read_states/write_state would show up in the trace.
+    # reached read_states would show up in the trace.
     with (
         patch("services.graph_service.table", side_effect=factory),
         patch("learning.learner_state.table", side_effect=factory),
@@ -1847,22 +1848,39 @@ def test_fsrs_importers_are_sanctioned():
         ('db.connection.table("learner_state").update({}, filters={})', "agents/x.py", True),
         ('table("users").insert({})', "services/x.py", False),
         ('def write_state(s):\n    table("learner_state").upsert({})', "services/x.py", True),
+        # spec §13 A142: the dead write_state upsert is no longer sanctioned
         (
             'def write_state(s):\n    table("learner_state").upsert({})',
             "learning/learner_state.py",
-            False,
+            True,
         ),
         ('def other(s):\n    table("learner_state").upsert({})', "learning/learner_state.py", True),
         (
-            'def write_state(s):\n    table("graph_nodes").upsert({})',
+            'def write_metrics(u):\n    table("learner_state").update({}, filters={})',
             "learning/learner_state.py",
+            False,
+        ),
+        ('def write_metrics(u):\n    table("learner_state").update({}, filters={})', "services/x.py", True),
+        # spec §13 A142: the writer file is scanned, function by function
+        ('def apply_graph_update(u, g):\n    table("graph_nodes").upsert({})', "services/graph_service.py", False),
+        ('def delete_node(u, n):\n    table("graph_edges").delete(filters={})', "services/graph_service.py", False),
+        ('def update_node_color(u, n, c):\n    table("graph_nodes").update({})', "services/graph_service.py", False),
+        ('def add_node(u):\n    table("graph_nodes").insert({})', "services/graph_service.py", True),
+        ('def update_node_color(u, n, c):\n    table("graph_edges").update({})', "services/graph_service.py", True),
+        ('def delete_node(u, n):\n    table("learner_state").delete(filters={})', "services/graph_service.py", True),
+        (
+            'def apply_graph_update(u, g):\n    table("node_mastery_events").insert({})',
+            "services/graph_service.py",
             True,
         ),
+        ('table("graph_nodes").delete(filters={})', "services/graph_service.py", True),
     ],
 )
 def test_inv_01_write_detector(source, rel, offends):
     """Mutation cases for inv_01's ast half: the regex half sees only a direct
-    double-quoted `.insert(`/`.update(`/`.upsert(` chain."""
+    double-quoted `.insert(`/`.update(`/`.upsert(` chain. Since spec §13 A142
+    the writer file is no blanket exemption: only its exact sanctioned
+    (table, method, def) writes pass."""
     import test_learning_loop_invariants as inv
 
     assert bool(inv._graph_table_offenders(rel, source)) is offends
@@ -1890,9 +1908,9 @@ _CALL_PRIVATE = "_apply_evidence(u, [], {}, set(), None)"
     ],
 )
 def test_inv_01_private_writer_detector(source, rel, offends):
-    """inv_01 pins write_state to the writer's functions, but _apply_evidence
-    writes learner_state, graph_nodes and node_mastery_events without naming
-    either, so it must be reachable only through apply_graph_update."""
+    """_apply_evidence writes learner_state, graph_nodes and
+    node_mastery_events (through the transaction RPC) without naming a table,
+    so it must be reachable only through apply_graph_update."""
     import test_learning_loop_invariants as inv
 
     assert bool(inv._private_writer_offenders(rel, source)) is offends

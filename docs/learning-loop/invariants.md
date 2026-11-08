@@ -35,12 +35,18 @@ mastery scores; that is exactly what this rule removes (ADR 0030).
 - The SQL itself: version checks, the owner lock and receipts
   (`backend/tests/integration/test_learning_evidence_transaction_db.py`).
 
-**Known edges.** The scan exempts all of `backend/services/graph_service.py`, which also
-holds topology writes (`delete_node`, `update_node_color`). The one
-non-evidence `learner_state` write is
-`backend/learning/learner_state.py::write_metrics` (four derived columns,
+**Sanctioned exceptions, exactly (A142).** The scan covers the writer file
+too and allows these (table, method, function) writes and no others: in
+`backend/services/graph_service.py`, `apply_graph_update`'s two topology
+upserts, `delete_node` (a student deletes their own node and its edges; the
+foreign-key cascade removes that node's learner state, journal, void and
+misconception rows with it, so no kept node loses evidence) and
+`update_node_color` (a display column); in
+`backend/learning/learner_state.py`, `write_metrics` (four derived columns,
 called only by `backend/scripts/derive_zpd_metrics.py`; `inv_20` keeps that
-script idempotent).
+script idempotent). A sanctioned entry that outlives its code fails the
+test, and no module may define, import or call a `write_state` (the dead
+unconditional upsert was removed).
 
 ## 2. Only an explicit answer is evidence, and missing is symmetric
 
@@ -326,9 +332,9 @@ worker; LLM analytics carry model, tokens and cost, never content.
   `inv_16_probe_planner_pure`); see
   [architecture.md](architecture.md#the-purity-rules).
 - The class misconception rollup is never a tutor tool (`inv_17`).
-- Any `lru_cache` under `backend/learning/` needs a clear hook registered in
-  `backend/tests/conftest.py` (`inv_10`). **This test is a skip placeholder
-  today** — no such cache exists yet — so the first cache added must make it
-  real.
+- Any `functools` cache (`lru_cache`, `cache`) under `backend/learning/`
+  needs a `clear_<name>_cache()` that `backend/tests/conftest.py::_clear_lru_caches`
+  calls (`inv_10`, an AST scan with a self-test since A142). No module caches
+  today.
 - Every model call is a Pydantic AI agent; there is no raw provider client in
   the loop (repository rule; `CLAUDE.md`).

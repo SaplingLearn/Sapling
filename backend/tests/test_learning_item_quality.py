@@ -138,6 +138,17 @@ class TestPins:
         fd = REGISTRY[item_reports.ITEM_REPORTS_FLAG]
         assert fd.variants == ("off", "on") and fd.client_visible is True
 
+    def test_the_flag_description_says_what_reports_do(self):
+        """Spec §13 A142: the admin flags page shows this text. Since A123
+        reports quarantine (hold) an item and only staff retire it; the text
+        said two reporters "retire it course-wide"."""
+        from services.feature_flags import REGISTRY
+
+        text = REGISTRY[item_reports.ITEM_REPORTS_FLAG].description
+        words = {2: "two", 3: "three", 4: "four"}
+        assert f"{words[params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS]} reporters hold it" in text
+        assert "reporters retire" not in text and "until staff approve or retire it" in text
+
     def test_the_report_body_takes_enums_only(self):
         from pydantic import ValidationError
 

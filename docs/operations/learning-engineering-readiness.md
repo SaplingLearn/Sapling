@@ -134,8 +134,10 @@ the nullable, no-default `learner_state.evidence_touch_at` fence; and the
 inventory includes checklist admit/start/read/reconcile and evidence
 snapshot/commit/receipt signatures. Column presence and a matching signature do
 not establish the budget constraints, role grants, locking, replay behavior or
-atomicity. Run the real-DB tests for those properties. JSON `turn_activity` and
-grade checkpoints live inside encrypted session state: this metadata-only audit
+atomicity. Run the real-DB tests for those properties. `turn_activity` (prose-free
+timing and fencing) and grade checkpoints live inside `sessions.loop_state`, which
+is plaintext jsonb: a grade checkpoint is a ciphertext value inside it (ADR 0038),
+as is the goal text (`goal.text_encrypted`, ADR 0033). This metadata-only audit
 does not inspect or certify their content or a resumed learner workflow.
 The evidence-touch attribute check establishes only its current nullable/no-default
 declaration. It cannot prove that historical NULLs were never backfilled. Preserve
@@ -175,8 +177,15 @@ or erase evidence to make a migration or browser test pass.
 
 The actual E2E stack is a machine singleton. Wrap the entire up/test/oracle/down
 cycle in the existing `/tmp/claude-<uid>/sapling-e2e-stack.lock` discipline from
-`CLAUDE.md`; teardown stays inside the same lock. `make e2e-up` resets its test
-database. Never point that command at the active pilot, staging or production.
+`CLAUDE.md`; teardown stays inside the same lock. `make e2e-up` applies pending
+migrations and the idempotent seeds to the local database; it does not reset it
+(a fresh replay is a separate, explicit step: drop the local stack's volumes with
+`supabase stop --no-backup`, as the `E2E_FRESH_DB=1` cycle of
+`docs/superpowers/plans/learning-loop/tools/e2e-env.macos.sh` does). Each
+Playwright test then truncates every
+mutable table and re-seeds before it runs (`frontend/e2e/support/db.ts::resetDb`),
+over a direct connection that refuses a non-local host. Never point either at the
+active pilot, staging or production.
 Keep the default and kill-switch reports separate, including skips, retries,
 oracle findings, exact source, all setup phases and teardown status.
 
@@ -408,6 +417,23 @@ unfinished engineering requirement.
    tables stay; nothing reads them but A76's release rule and the admin
    report, and rows written meanwhile keep their meaning.
 
+### Learning-loop wave-4 rollout ordering: reconciliation (A142)
+
+1. `20261108193927_learning_report_course_key.sql` (spec §13 A142) re-keys
+   `check_item_reports` on `(user_id, course_id, question_hash)` and re-creates
+   `check_item_report_quarantine` (the matching `ON CONFLICT` target) and the
+   seven-argument `misconception_record` (it records nothing on a node the
+   student does not own). It may run before or after the code: the backend's
+   calls and their arguments are unchanged, and an old backend reads the same
+   results. The new key is a superset of the old one, so no stored row changes
+   and none can conflict; the key change runs only while the old key is in
+   place, so a re-run is a no-op. Rollback needs nothing: a backend of either
+   age works on either schema. `--db-audit` reads no constraint or function
+   body; the ledger check is what shows it applied, and
+   `backend/tests/integration/test_check_item_reports_db.py` and
+   `backend/tests/integration/test_misconceptions_record_db.py` prove the
+   bodies on the local stack.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,
@@ -415,7 +441,10 @@ unfinished engineering requirement.
    goal/version and durable evidence IDs. Keep encrypted payloads private.
 2. Rehearse on isolated infrastructure first. On staging, the owner changes
    `LEARNING_LOOP_ENABLED=false` and redeploys: it is read at process startup.
-   A `hide_learn` navigation flag is not this server kill switch.
+   No navigation flag is this server kill switch: there is no `hide_learn`, and
+   `hide_tutor` only hides the Tutor nav entry — it gates no API, and
+   `/api/learn/loop` still serves quiz-ask sessions, Study's daily review and the
+   delayed post-test (`services/feature_flags.py::NAV_FEATURES_NOT_ENFORCED`).
 3. Run the authenticated status verifier with `--expect-loop disabled` and a
    browser drill of Learn and Study. Confirm the legacy tutor has no mastery
    writer; no quiz/flashcard deltas or legacy tier thresholds are restored.

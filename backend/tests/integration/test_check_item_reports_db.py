@@ -92,6 +92,58 @@ def test_a_report_is_recorded_once(db_conn, seeded_user):
     assert rows == [{"reason": "wrong_answer", "surface": "loop"}]  # the first reason stands
 
 
+def test_a_report_is_per_course_item_so_the_same_question_counts_in_each_course(
+    db_conn, seeded_user
+):
+    """Spec §13 A142 (20261108193927): the same question drafted in two courses
+    shares its question_hash. A student's report of each course's copy is a
+    first report in that course, and each course's item counts it, so the
+    second course's other students are not left with an item its reports
+    should have quarantined. Before the fix the key was (student, hash): the
+    second report was dropped and that course counted one reporter short."""
+    from learning.item_reports import record_report
+    from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS
+
+    other = "rich-course-math210"
+    qh = _qh()
+    student, classmates = seeded_user(), [
+        seeded_user() for _ in range(ITEM_REPORT_QUARANTINE_MIN_REPORTERS - 1)
+    ]
+    here = record_report(student, COURSE, qh, reason="wrong_answer", surface="loop")
+    there = record_report(student, other, qh, reason="unclear", surface="review")
+    assert (here.first, here.reporters) == (True, 1)
+    assert (there.first, there.reporters) == (True, 1), "the second course's report was dropped"
+    again = record_report(student, other, qh, reason="unclear", surface="review")
+    assert (again.first, again.reporters) == (False, 1)  # a repeat in one course still counts once
+    rows = db_conn.execute(
+        "SELECT course_id, reason, surface FROM check_item_reports "
+        "WHERE user_id = %s AND question_hash = %s ORDER BY course_id",
+        (student, qh),
+    ).fetchall()
+    assert sorted(rows, key=lambda r: r["course_id"] != COURSE) == [
+        {"course_id": COURSE, "reason": "wrong_answer", "surface": "loop"},
+        {"course_id": other, "reason": "unclear", "surface": "review"},
+    ]
+    # the other course's classmates complete ITS threshold with this report counted
+    outcomes = [
+        record_report(u, other, qh, reason="wrong_answer", surface="loop") for u in classmates
+    ]
+    assert outcomes[-1].quarantine is True
+    status = db_conn.execute(
+        "SELECT status FROM check_item_reviews WHERE course_id = %s AND question_hash = %s",
+        (other, qh),
+    ).fetchone()
+    assert status == {"status": "quarantined"}
+    assert _review(db_conn, qh) is None  # the first course's item is its own decision
+    key = db_conn.execute(
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) AS cols FROM pg_constraint c "
+        "CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) "
+        "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum "
+        "WHERE c.conrelid = 'public.check_item_reports'::regclass AND c.contype = 'p'"
+    ).fetchone()
+    assert key == {"cols": ["user_id", "course_id", "question_hash"]}
+
+
 def test_the_threshold_quarantines_once_sequentially(db_conn, seeded_user):
     from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS
 

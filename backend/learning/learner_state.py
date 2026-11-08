@@ -2,10 +2,11 @@
 
 read_* return p_known DECAYED toward BKT_L0 along the concept's FSRS
 stability (spec §3.1, "Decay at read"). Evidence row projections use state_row;
-the single graph writer commits them through the atomic transaction RPC.
-The compatibility write_state helper has no production callers; invariant 1
-forbids adding one as an unconditional-write fallback.
-write_metrics (PKG-14, spec §13 A79) is the one non-evidence write: an UPDATE of
+the single graph writer commits them through the atomic transaction RPC
+(ADR 0037), so this module has no evidence writer. The unconditional upsert
+helper it once had was never called after that RPC landed and was removed
+(spec §13 A142); invariant 1 refuses any module that brings one back.
+write_metrics (PKG-14, spec §13 A79) is the one write here: an UPDATE of
 the four derived columns only, called ONLY by scripts/derive_zpd_metrics.py
 (inv_01 pins its callers, inv_20 the script).
 Nothing here swallows: a PostgREST error or a corrupt stored row raises
@@ -154,15 +155,6 @@ def state_row(state: LearnerState, now: datetime) -> dict:
         "last_evidence_at": _iso(state.last_evidence_at),
         "updated_at": _iso(now),
     }
-
-
-def write_state(state: LearnerState, now: datetime | None = None) -> None:
-    """Compatibility helper; production evidence must use the atomic RPC."""
-    now = _aware(now) if now else datetime.now(timezone.utc)
-    table("learner_state").upsert(
-        state_row(state, now),
-        on_conflict="user_id,node_id",
-    )
 
 
 def write_metrics(
