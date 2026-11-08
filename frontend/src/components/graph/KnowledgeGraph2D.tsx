@@ -114,6 +114,38 @@ const MIN_ZOOM = 0.4;
 const MIN_SCREEN_R = 7;
 
 /** Where a line from (x1, y1) to (x2, y2) should stop to end `inset` short. */
+/** Simulation ticks run once per animation frame; d3 velocities are per tick. */
+const MS_PER_TICK = 1000 / 60;
+/** A throw faster than this (content units per tick) is clamped. */
+const MAX_FLING = 28;
+/** Held still this long before letting go = dropped, not thrown. */
+const FLING_STALE_MS = 90;
+
+/**
+ * The velocity (per simulation tick) a released node carries on with: the
+ * pointer's smoothed speed at release, clamped, or zero when the pointer had
+ * stopped or the viewer prefers reduced motion. Exported for tests.
+ */
+export function releaseVelocity(
+  fling: { t: number; vx: number; vy: number } | null,
+  now: number,
+  reducedMotion: boolean,
+): [number, number] {
+  if (!fling || reducedMotion || now - fling.t > FLING_STALE_MS) return [0, 0];
+  let vx = fling.vx * MS_PER_TICK;
+  let vy = fling.vy * MS_PER_TICK;
+  const speed = Math.hypot(vx, vy);
+  if (speed > MAX_FLING) {
+    vx *= MAX_FLING / speed;
+    vy *= MAX_FLING / speed;
+  }
+  return [vx, vy];
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
 function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -243,6 +275,9 @@ function KnowledgeGraph2DImpl({
   }, [initialZoom, initialView]);
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);
+  // The dragged node's last pointer sample and smoothed velocity (content
+  // units per ms), handed to the simulation on release as momentum.
+  const flingRef = React.useRef<{ x: number; y: number; t: number; vx: number; vy: number } | null>(null);
 
   // Per-tick position updates bypass React entirely (#111): the tick handler
   // writes node-group transforms and edge endpoints straight onto these DOM
@@ -680,6 +715,7 @@ function KnowledgeGraph2DImpl({
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     movedRef.current = false;
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
+    flingRef.current = n.x != null && n.y != null ? { x: n.x, y: n.y, t: performance.now(), vx: 0, vy: 0 } : null;
     simRef.current?.alphaTarget(0.3).restart();
     n.fx = n.x;
     n.fy = n.y;
@@ -727,6 +763,17 @@ function KnowledgeGraph2DImpl({
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       n.fx = clamp(x, (r - view.tx) / view.scale, (width - r - view.tx) / view.scale);
       n.fy = clamp(y, (r - view.ty) / view.scale, (height - r - view.ty) / view.scale);
+      const f = flingRef.current;
+      const now = performance.now();
+      if (f && now > f.t) {
+        const dt = now - f.t;
+        // Smooth over the last few moves so one jittery sample doesn't decide the throw.
+        f.vx = f.vx * 0.5 + ((n.fx - f.x) / dt) * 0.5;
+        f.vy = f.vy * 0.5 + ((n.fy - f.y) / dt) * 0.5;
+        f.x = n.fx;
+        f.y = n.fy;
+        f.t = now;
+      }
     } else if (drag.kind === "pan") {
       viewTouchedRef.current = true;
       const dx = e.clientX - drag.startX;
@@ -745,10 +792,7 @@ function KnowledgeGraph2DImpl({
     try {
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);
     } catch {}
-    if (drag.kind === "node" && legible) {
-      // Legible: nothing snaps back. The course's home becomes wherever its
-      // root has been pulled to, and each of its concepts keeps the angle it
-      // now sits at around the root.
+    if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (n) {
         // Drop it exactly where the pointer let go, not where the last tick
@@ -757,37 +801,31 @@ function KnowledgeGraph2DImpl({
           n.x = n.fx;
           n.y = n.fy;
         }
-        n.fx = null;
-        n.fy = null;
-        if (movedRef.current) {
-          const root = simNodesRef.current.find((sn) => sn.is_subject_root && sn.course_id === n.course_id);
-          if (root && root.x != null && root.y != null) {
-            rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
-            movedRootsRef.current.add(root.id);
-            for (const m of simNodesRef.current) {
-              const o = planRef.current.orbit.get(m.id);
-              if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
-              o.angle = Math.atan2(m.y - root.y, m.x - root.x);
-              // The dropped concept also keeps its new distance from the course.
-              if (m.id === n.id) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
-            }
-          }
+        if (n.is_subject_root && movedRef.current) {
+          // A dragged course moves its home: it settles where the student put
+          // it, and its concepts' rings follow it there.
+          movedRootsRef.current.add(n.id);
+          if (n.x != null && n.y != null) rootHomeRef.current.set(n.id, { x: n.x, y: n.y });
+        }
+        if (n.is_subject_root && !legible) {
+          // Classic layout: course roots stay pinned where they were dropped.
+          n.fx = n.x;
+          n.fy = n.y;
+        } else {
+          // Hand the node back to the simulation still moving: a throw carries
+          // it on, and the layout forces pull it back toward its place while
+          // its neighbours react, instead of it freezing where it was dropped.
+          n.fx = null;
+          n.fy = null;
+          const [vx, vy] = releaseVelocity(flingRef.current, performance.now(), prefersReducedMotion());
+          n.vx = vx;
+          n.vy = vy;
         }
       }
-      simRef.current?.alphaTarget(0);
-    } else if (drag.kind === "node") {
-      const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
-      if (n?.is_subject_root) {
-        // Course roots stay pinned where they were dropped; their rings follow.
-        if (movedRef.current) movedRootsRef.current.add(n.id);
-        n.fx = n.x;
-        n.fy = n.y;
-      } else if (n) {
-        // Release the pin so the simulation takes over again.
-        n.fx = null;
-        n.fy = null;
-      }
-      simRef.current?.alphaTarget(0);
+      flingRef.current = null;
+      // Reheat so the release plays out; alphaTarget 0 lets it settle again.
+      const sim = simRef.current;
+      if (sim) sim.alpha(Math.max(sim.alpha(), 0.35)).alphaTarget(0).restart();
     }
     if (svgRef.current) svgRef.current.style.cursor = "grab";
     // Restore tooltip/stroke now that dragRef cleared; reseed the tooltip
