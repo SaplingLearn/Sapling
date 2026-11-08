@@ -19,38 +19,36 @@
  * rich-user-active is enrolled in MATH210 only in spring-2026 and BIO110 only
  * in fall-2025. Every assertion is an auto-waiting expect — no timeouts.
  */
-import { expect, test } from "./support/fixtures";
+import { test } from "./support/fixtures";
+import { expectHomeCourse, openCoursesHub, waitForHome } from "./support/home";
 
 test("dashboard defaults to all semesters; picking a term scopes it; All clears", async ({
   page,
 }) => {
   await page.goto("/dashboard");
 
-  // The "My courses" key only mounts once enrollments have loaded, so waiting
-  // for it doubles as the "dashboard data arrived" gate.
-  await expect(page.getByTestId("dashboard-courses-key")).toBeVisible({ timeout: 30_000 });
+  // The Home course dropdown only mounts once enrollments have loaded, so
+  // waiting for it doubles as the "dashboard data arrived" gate.
+  await waitForHome(page);
 
-  const courseRow = (code: string) =>
-    page.getByTestId("dashboard-course-code").filter({ hasText: code });
-
-  // 1. Default = All semesters: cross-term courses are visible TOGETHER.
-  await expect(courseRow("MATH210")).toBeVisible(); // Spring 2026 only
-  await expect(courseRow("BIO110")).toBeVisible(); // Fall 2025 only
+  // 1. Default = All semesters: cross-term courses are offered TOGETHER.
+  await expectHomeCourse(page, "MATH210"); // Spring 2026 only
+  await expectHomeCourse(page, "BIO110"); // Fall 2025 only
 
   // 2. Open the Courses & Semesters hub and pick Fall 2025.
-  await page.getByTestId("dashboard-courses-manage").click();
+  await openCoursesHub(page);
   await page.getByRole("button", { name: "Fall 2025" }).click();
   await page.getByRole("button", { name: "Close" }).click();
 
   // Scoped: the Fall course stays, the Spring-only course is gone.
-  await expect(courseRow("BIO110")).toBeVisible();
-  await expect(courseRow("MATH210")).toHaveCount(0);
+  await expectHomeCourse(page, "BIO110");
+  await expectHomeCourse(page, "MATH210", false);
 
   // 3. Back to All semesters — the cross-term view is restored.
-  await page.getByTestId("dashboard-courses-manage").click();
+  await openCoursesHub(page);
   await page.getByRole("button", { name: "All semesters" }).click();
   await page.getByRole("button", { name: "Close" }).click();
 
-  await expect(courseRow("MATH210")).toBeVisible();
-  await expect(courseRow("BIO110")).toBeVisible();
+  await expectHomeCourse(page, "MATH210");
+  await expectHomeCourse(page, "BIO110");
 });
