@@ -6,13 +6,19 @@ Mode is selected by the SAPLING_EVAL_MODE env var:
   - "replay" (default): load cassettes; if a case has no cassette, raise
     so CI fails loudly instead of silently skipping.
   - "live": run live; do not record. Useful for one-off experimentation.
+
+Every mode runs without a database: the AI budget reads an empty in-memory
+store (`hermetic_budget`, below).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +27,107 @@ from agents.deps import SaplingDeps
 
 CASSETTE_DIR = Path(__file__).parent / "cassettes"
 MODE = os.getenv("SAPLING_EVAL_MODE", "replay").lower()
+
+
+# ── The AI budget's store: empty and in memory ────────────────────────────────
+#
+# `services.ai_budget.check` reads the student's `llm_usage` rows before every
+# grader, decision, close and tutor run (spec §3.5); a tutor run also reads and
+# bumps today's `ai_tutor_daily_calls` row. The eval runner has no Supabase:
+# `SUPABASE_URL` is empty, so every read failed with "Request URL is missing an
+# 'http://' or 'https://' protocol.", logged one WARNING per graded case (31 per
+# replay of the `grader` dataset, the noise in the `evals` CI job) and failed
+# open. With a developer's `backend/.env` present, `db/connection.py`'s
+# `load_dotenv()` sent the same read to whatever database that file names, so a
+# replay's budget decisions could depend on that database's rows for `eval-user`.
+#
+# `hermetic_budget()` points ai_budget's two store seams, its module-level
+# `table` and `rpc`, at `BudgetStore`: no recorded usage, so every check sees
+# what a student with no spend gets. That is the decision the failed read's
+# fail-open produced (normal, for every kind the evals reach), so no replay
+# result moves. The tutor-call bump counts in memory and the tutor-call read
+# returns that count. Any other table or function raises LookupError, so a new
+# budget read is a deliberate decision here, never a silent network call. The
+# production warning in services/ai_budget.py is unchanged. `evaluate_dataset`
+# (every dataset, from run_all.py and each module's cli_main) and
+# `grader_agreement.main` run inside it; tests/test_eval_budget_hermetic.py
+# pins both.
+
+
+class _EmptyLedger:
+    """A `db.connection.SupabaseTable` stand-in for `llm_usage`: no rows."""
+
+    def __init__(self, store: "BudgetStore", name: str):
+        self._store = store
+        self.name = name
+
+    def select(self, columns="*", filters=None, order=None, limit=None, offset=None, timeout=None):
+        self._store.reads.append((self.name, dict(filters or {})))
+        return []
+
+    def select_with_count(
+        self, columns="*", filters=None, order=None, limit=None, offset=None, timeout=None
+    ):
+        return self.select(columns, filters, order, limit, offset, timeout), 0
+
+
+def _eq(value: object) -> str:
+    text = str(value or "")
+    return text[3:] if text.startswith("eq.") else text
+
+
+class _TutorCalls(_EmptyLedger):
+    """`ai_tutor_daily_calls`: the count the in-memory bump wrote, if any."""
+
+    def select(self, columns="*", filters=None, order=None, limit=None, offset=None, timeout=None):
+        super().select(columns, filters, order, limit, offset, timeout)
+        key = (_eq((filters or {}).get("user_id")), _eq((filters or {}).get("day")))
+        calls = self._store.tutor_calls.get(key, 0)
+        return [{"calls": calls}] if calls else []
+
+
+class BudgetStore:
+    """The AI budget's store for one eval run: no usage; tutor calls counted in memory."""
+
+    def __init__(self) -> None:
+        from services import ai_budget
+
+        self._tables = {"llm_usage": _EmptyLedger, ai_budget._TUTOR_CALLS_TABLE: _TutorCalls}
+        self._bump = ai_budget._TUTOR_CALLS_RPC
+        self.reads: list[tuple[str, dict]] = []
+        self.tutor_calls: Counter[tuple[str, str]] = Counter()
+
+    def table(self, name: str):
+        if name not in self._tables:
+            raise LookupError(f"the eval budget store has no table {name!r}")
+        return self._tables[name](self, name)
+
+    def rpc(self, function_name: str, params: dict):
+        if function_name != self._bump:
+            raise LookupError(f"the eval budget store has no function {function_name!r}")
+        key = (params["p_user_id"], params["p_day"])
+        self.tutor_calls[key] += 1
+        return self.tutor_calls[key]
+
+
+@contextlib.contextmanager
+def hermetic_budget() -> Iterator[BudgetStore]:
+    """Run the block with `services.ai_budget` reading a fresh `BudgetStore`.
+
+    Clears the module's per-process caches on entry and on exit, so no decision
+    cached outside the block is used inside it or the other way round, and puts
+    the module's own `table` and `rpc` back afterwards, whatever the block raised."""
+    from services import ai_budget
+
+    store = BudgetStore()
+    saved = (ai_budget.table, ai_budget.rpc)
+    ai_budget.reset_for_tests()
+    ai_budget.table, ai_budget.rpc = store.table, store.rpc
+    try:
+        yield store
+    finally:
+        ai_budget.table, ai_budget.rpc = saved
+        ai_budget.reset_for_tests()
 
 
 def _safe_filename(name: str) -> str:
@@ -146,7 +253,8 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
     import sys
 
     dataset = make_dataset()
-    report = asyncio.run(dataset.evaluate(run_fn))
+    with hermetic_budget():
+        report = asyncio.run(dataset.evaluate(run_fn))
     if print_report:
         report.print(include_input=False, include_output=True)
 

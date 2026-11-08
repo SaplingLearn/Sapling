@@ -270,7 +270,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"INPUT_FAIL {exc}", file=sys.stderr)
         return 2
     if not args.no_grade:
-        records = asyncio.run(grade_all(records))
+        # No database here either: the grader's budget check reads the eval
+        # harness's empty store (tests/evals/_replay.py::hermetic_budget).
+        from tests.evals._replay import hermetic_budget
+
+        with hermetic_budget():
+            records = asyncio.run(grade_all(records))
     if args.out:
         args.out.write_text("".join(json.dumps(r) + "\n" for r in records))
     print("REPORT " + json.dumps(report(records), sort_keys=True))
