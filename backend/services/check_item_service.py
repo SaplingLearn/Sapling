@@ -2632,14 +2632,17 @@ _FAILURES_ON_CONFLICT = "course_id,concept_key"
 _CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
 
 
-def _drafting_version(*, varied: bool = False) -> str:
+def _drafting_version(*, varied: bool = False, combo: bool = False) -> str:
     """The drafting prompts' versions and the model, the A119 alignment
     check's prompt and model, and the A124 key check's prompts and model (each
     decides what of a draft is stored): a change to any is a new source, so a
     concept stalled under the old one is drafted again. A140: a varied run
     drafts with the varied prompts, so their versions are part of its source
     too (a concept stalled under the plain prompts is drafted again under
-    them); a plain run's version is exactly what it always was."""
+    them); a plain run's version is exactly what it always was. A141: a
+    combination is drafted by its own prompt and checked by its own alignment
+    prompt, so their versions are part of its source (a combination stalled
+    under older ones is drafted again)."""
     from agents import (
         check_items,
         check_items_key_match,
@@ -2663,19 +2666,25 @@ def _drafting_version(*, varied: bool = False) -> str:
         from agents import check_items_varied, check_items_varied_topup
 
         parts += [check_items_varied._PROMPT_HASH, check_items_varied_topup._PROMPT_HASH]
+    if combo:
+        from agents import check_items_combo, check_items_combo_verify
+
+        parts += [check_items_combo._PROMPT_HASH, check_items_combo_verify._PROMPT_HASH]
     return "|".join(parts)
 
 
-def _source_fingerprint(ranked: Iterable[dict], *, varied: bool = False) -> str:
-    """What a concept is drafted from: its ranked passages' ids and texts,
-    order-free (a re-rank of the same passages is the same source), and the
-    drafting version (_drafting_version)."""
+def _source_fingerprint(
+    ranked: Iterable[dict], *, varied: bool = False, combo: bool = False
+) -> str:
+    """What a concept (A141: a combination) is drafted from: its ranked
+    passages' ids and texts, order-free (a re-rank of the same passages is the
+    same source), and the drafting version (_drafting_version)."""
     parts = sorted(
         f"{chunk.get('id') or ''}\x1f"
         + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
         for chunk in ranked
     )
-    parts.append("version\x1f" + _drafting_version(varied=varied))
+    parts.append("version\x1f" + _drafting_version(varied=varied, combo=combo))
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -3155,7 +3164,9 @@ def generate_combos_for_document(
             continue
         todo.append((key, comp_names, ranked))
     ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
-    stalled = {key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked))}
+    stalled = {
+        key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked, combo=True))
+    }
     skipped += len(stalled)
     todo = [t for t in todo if t[0] not in stalled]
     deps = SaplingDeps(
@@ -3189,7 +3200,7 @@ def generate_combos_for_document(
                 continue
             unavailable += len(batch)
             if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
-                ledger.failed(batch[0][0], _source_fingerprint(batch[0][2]))
+                ledger.failed(batch[0][0], _source_fingerprint(batch[0][2], combo=True))
             continue
         by_label = {concept_key(label): key for label, key in labels.items()}
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
@@ -3226,7 +3237,7 @@ def generate_combos_for_document(
         for key, _, ranked in batch:
             if key not in write.stored:
                 continue
-            fp = _source_fingerprint(ranked)
+            fp = _source_fingerprint(ranked, combo=True)
             if write.stored[key].ids:
                 ledger.succeeded(key, fp)
             elif not write.stored[key].unverified:

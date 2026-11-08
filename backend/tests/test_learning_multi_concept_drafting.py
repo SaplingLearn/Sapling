@@ -218,6 +218,39 @@ def test_the_combination_run_drafts_checks_and_stores_under_the_combination(svc)
     assert all(r["canonical_verified"] is True for r in rows)  # the A124 solve ran (passthrough)
 
 
+def test_a_combinations_source_covers_its_own_prompts(svc):
+    """A41's ledger: a combination stalled under an older combination drafter
+    or alignment prompt is drafted again — their versions are its source."""
+    from agents import check_items_combo, check_items_combo_verify
+
+    assert svc._drafting_version(combo=True) == "|".join(
+        (svc._drafting_version(), check_items_combo._PROMPT_HASH, check_items_combo_verify._PROMPT_HASH)
+    )
+    factory, _ = _cached_tables(_GRAPH)
+    ledger = MagicMock()
+    ledger.return_value.stalled.return_value = False
+
+    async def draft(labels, passages, *, deps, flex):
+        return _combo_drafts()
+
+    with (
+        patch("services.check_item_service.table", side_effect=factory),
+        patch("services.check_item_service._DraftFailures", ledger),
+        patch("services.check_item_service.draft_combo_items", side_effect=draft),
+        patch("services.check_item_service.verify_combo_items", side_effect=_all_needed),
+        patch("services.check_item_service.count_items", return_value=0),
+        patch("services.check_item_service.log_event"),
+    ):
+        svc.generate_combos_for_document(
+            user_id="u1", course_id="course-1", concept_names=["Learning Rate"], chunks=_CHUNKS, flex=True
+        )
+    ranked = svc._combo_passages(["Learning Rate", "Gradient Descent"], _CHUNKS)
+    fp = svc._source_fingerprint(ranked, combo=True)
+    assert fp != svc._source_fingerprint(ranked)
+    ledger.return_value.stalled.assert_called_once_with(KEY, fp)
+    ledger.return_value.succeeded.assert_called_once_with(KEY, fp)
+
+
 def test_a_full_or_ungrounded_combination_makes_no_call(svc):
     factory, _ = _cached_tables(_GRAPH)
     draft = MagicMock()
