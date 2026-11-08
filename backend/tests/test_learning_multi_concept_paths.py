@@ -213,18 +213,22 @@ def test_the_journal_read_and_the_decision_carry_the_combination(monkeypatch):
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
 
 
+#: the student's node's concept, as the stats read embeds it (graph_nodes.concept_name)
+_NODE_NAMES = {"apex": "Learning  Rate", "pre": "Gradient Descent", "x": "Momentum"}
+
+
 def _ev(user, node, qh, correct, minute, check="ci"):
     return {
         "id": f"{user}-{qh}", "node_id": node, "question_hash": qh, "check_item_id": f"{check}-{qh}",
         "correct": correct, "assisted": False, "max_rung": 0, "same_session_recheck": False,
         "weight": 1.0, "channel": "free_response", "reason": "evidence:free_response",
         "created_at": (T0.replace(minute=minute)).isoformat(),
-        "graph_nodes": {"user_id": user, "course_id": "c1"},
+        "graph_nodes": {"user_id": user, "course_id": "c1", "concept_name": _NODE_NAMES.get(node.split("-")[-1])},
     }
 
 
-def test_multi_concept_rests_are_the_components_own_items():
-    from learning.item_stats import multi_concept_rests
+def test_a_combinations_components_come_from_its_key():
+    from learning.item_stats import multi_concept_components
 
     stored = [
         {"course_id": "c1", "concept_key": APEX, "question_hash": "a1"},
@@ -232,12 +236,20 @@ def test_multi_concept_rests_are_the_components_own_items():
         {"course_id": "c1", "concept_key": "momentum", "question_hash": "m1"},
         {"course_id": "c1", "concept_key": KEY, "question_hash": "x1"},
     ]
-    assert multi_concept_rests(stored) == {("c1", "x1"): frozenset({("c1", "a1"), ("c1", "p1")})}
-    assert multi_concept_rests(stored[:3]) == {}
+    assert multi_concept_components(stored) == {("c1", "x1"): (APEX, PRE)}
+    assert multi_concept_components(stored[:3]) == {}
+
+
+def test_a_nodes_name_meets_the_items_key_as_the_graph_writer_normalizes_it():
+    from learning.multi_concept import concept_key_of
+    from services.check_item_service import concept_key
+
+    for name in ("Learning  Rate", "  gradient\tDESCENT ", "Momentum", "", None, "Ünïcode  Ñame"):
+        assert concept_key_of(name) == concept_key(name or "")
 
 
 def test_a_combinations_discrimination_reads_its_components_and_a_concepts_leaves_it_out():
-    from learning.item_stats import item_statistics, multi_concept_rests
+    from learning.item_stats import item_statistics, multi_concept_components
 
     stored = [
         {"course_id": "c1", "concept_key": APEX, "question_hash": "a1"},
@@ -259,7 +271,7 @@ def test_a_combinations_discrimination_reads_its_components_and_a_concepts_leave
             _ev(user, f"{user}-pre", "p1", p1, 3),
             _ev(user, f"{user}-apex", "x1", x1, 4),
         ]
-    multi = multi_concept_rests(stored)
+    multi = multi_concept_components(stored)
     stats = item_statistics(rows, multi=multi)
     plain = item_statistics(rows)
     # the combination: its rest is a1, a2 AND p1 (another node), not the apex alone
@@ -301,7 +313,7 @@ def test_a_withdrawn_combination_stays_out_of_the_apex_items_rest_scores():
     rows no longer name it; the journal still does, and the apex's own items
     keep reading only each other — their numbers are the ones they had while
     it was stored."""
-    from learning.item_stats import item_statistics, journaled_combinations, multi_concept_rests
+    from learning.item_stats import item_statistics, journaled_combinations, multi_concept_components
 
     rows = _combo_rows()
     assert journaled_combinations(rows) == {("c1", "x1")}
@@ -310,8 +322,8 @@ def test_a_withdrawn_combination_stays_out_of_the_apex_items_rest_scores():
         {"course_id": "c1", "concept_key": APEX, "question_hash": "a2"},
         {"course_id": "c1", "concept_key": KEY, "question_hash": "x1"},
     ]
-    while_stored = item_statistics(rows, multi=multi_concept_rests(stored))
-    withdrawn = item_statistics(rows, multi=multi_concept_rests(stored[:2]) or None)
+    while_stored = item_statistics(rows, multi=multi_concept_components(stored))
+    withdrawn = item_statistics(rows, multi=multi_concept_components(stored[:2]) or None)
     for item in (("c1", "a1"), ("c1", "a2")):
         assert withdrawn[item] == while_stored[item]
     # the same rows with no journal flag read x1 as an apex item: what A141 forbids
@@ -335,6 +347,62 @@ def test_a_retired_combination_changes_no_apex_items_numbers():
     # a single-concept item's retire still dates its siblings' change, as A131 does
     after_single = item_statistics(rows, retired={("c1", "a2"): decided})
     assert after_single[("c1", "a1")]["numbers_changed_at"] == decided.isoformat()
+
+
+def _component_rows():
+    """The review's probe: u1..u3 each answer the apex's a1, the prerequisite's
+    p1 (their only item on that node) and the combination x1 (flagged, on the
+    apex)."""
+    rows = []
+    for user, (a1, p1, x1) in {
+        "u1": (True, True, True),
+        "u2": (False, False, False),
+        "u3": (True, False, True),
+    }.items():
+        rows += [
+            _ev(user, f"{user}-apex", "a1", a1, 1),
+            _ev(user, f"{user}-pre", "p1", p1, 3),
+            {**_ev(user, f"{user}-apex", "x1", x1, 4), "multi_concept": True, "weight": 0.5},
+        ]
+    return rows
+
+
+_COMPONENT_STORE = [
+    {"course_id": "c1", "concept_key": APEX, "question_hash": "a1"},
+    {"course_id": "c1", "concept_key": PRE, "question_hash": "p1"},
+    {"course_id": "c1", "concept_key": KEY, "question_hash": "x1"},
+]
+
+
+def test_a_retired_component_item_dates_the_combinations_change():
+    """A123: a staff retire of p1 — each student's only attempt on the
+    prerequisite — changes the combination's rest score; its
+    numbers_changed_at is the retire's decision, though no observation on
+    that node survives to date it (dated per attempt, from the void rows)."""
+    from learning.item_stats import item_statistics, multi_concept_components
+
+    rows, multi = _component_rows(), multi_concept_components(_COMPONENT_STORE)
+    before = item_statistics(rows, multi=multi)[("c1", "x1")]
+    decided = T0.replace(hour=5)
+    after = item_statistics(rows, retired={("c1", "p1"): decided}, multi=multi)[("c1", "x1")]
+    assert after["discrimination"] != before["discrimination"]  # the rest lost p1
+    assert before["numbers_changed_at"] < decided.isoformat()
+    assert after["numbers_changed_at"] == decided.isoformat()
+
+
+def test_a_withdrawn_component_item_still_counts_in_the_combinations_rest():
+    """A23: consent withdrawal deletes p1's row but not its evidence; the
+    combination's rest reads the journal (the student's prerequisite node),
+    so its numbers are the ones it had while p1 was stored — as a concept's
+    withdrawn item stays in its siblings' rest scores."""
+    from learning.item_stats import item_statistics, multi_concept_components
+
+    rows = _component_rows()
+    stored = item_statistics(rows, multi=multi_concept_components(_COMPONENT_STORE))
+    withdrawn_store = [s for s in _COMPONENT_STORE if s["question_hash"] != "p1"]
+    withdrawn = item_statistics(rows, multi=multi_concept_components(withdrawn_store))
+    assert withdrawn[("c1", "x1")] == stored[("c1", "x1")]
+    assert stored[("c1", "x1")]["discrimination_n"] == 3
 
 
 def test_the_stats_route_names_a_combinations_components(monkeypatch):

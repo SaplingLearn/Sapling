@@ -392,10 +392,13 @@ unfinished engineering requirement.
 
 ### Learning-loop wave-4 rollout ordering
 
-Wave 4 adds three migrations. Apply them in filename order, in one run:
+Wave 4 adds five migrations. Apply them in filename order, in one run:
 `20261108184825_learning_teach_prompts.sql` (A138, A139),
-`20261108185101_learning_varied_practice.sql` (A140, A141), then
-`20261108193927_learning_report_course_key.sql` (A142). Each subsection below
+`20261108185101_learning_varied_practice.sql` (A140, A141),
+`20261108193927_learning_report_course_key.sql` (A142),
+`20261108205812_learning_varied_practice_review.sql` (A141's review fixes),
+then `20261108224511_learning_varied_practice_validate.sql` (validates its
+CHECK). Each subsection below
 says whether its migration must land before the code. All four new flags ship
 off.
 
@@ -462,18 +465,22 @@ Varied practice (spec §13 A140, A141; `feat/learning-varied-practice`):
    checkpoint is in flight cannot replay it as written (older code drops the
    `multi_concept` flag, so its weight and fingerprint differ): roll forward,
    or drain grade checkpoints first.
-4. The review fixes (`fix/varied-practice-review`) add
-   `20261108205812_learning_varied_practice_review.sql`. Apply it after the
-   wave's three migrations and BEFORE that code. It replaces
-   `check_items_multi_concept_shape` with a closed version, which every
-   stored row passes. It adds `node_mastery_events.multi_concept` (nullable,
-   no default: no rewrite). It re-creates `learning_evidence_commit` to admit
-   that key. Code ahead of the migration breaks the admin item statistics
-   (`/api/admin/check-items/stats` selects the column and answers 503), and a
-   multi-concept grade would be refused. The A119 alignment backfill now reads
-   the two surface columns, so run it only after `20261108185101`.
-   `--db-audit` requires the new column. Rollback: older code never names the
-   column; the rows keep their flag.
+4. The review fixes add `20261108205812_learning_varied_practice_review.sql`
+   and `20261108224511_learning_varied_practice_validate.sql`. Apply both in
+   the wave's run, in filename order, BEFORE that code. The first replaces
+   `check_items_multi_concept_shape` with a closed version, added NOT VALID.
+   It adds `node_mastery_events.multi_concept` (nullable, no default: no
+   rewrite) and re-creates `learning_evidence_commit` to admit that key. Its
+   two ACCESS EXCLUSIVE locks are held only to its commit, and its
+   `lock_timeout` is 5s: a lock that does not come in time fails the file,
+   rolled back and safe to run again, instead of queueing grading behind it.
+   The second validates the CHECK in its own transaction, which blocks no read
+   or write; every stored row passes it. Code ahead of the first breaks the
+   admin item statistics (`/api/admin/check-items/stats` selects the column
+   and answers 503), and a multi-concept grade would be refused. The A119
+   alignment backfill reads the two surface columns, so run it only after
+   `20261108185101`. `--db-audit` requires the new column. Rollback: older
+   code never names the column; the rows keep their flag.
 
 #### Reconciliation (A142)
 

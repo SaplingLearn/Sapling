@@ -38,6 +38,23 @@
 -- Deploy order: apply before the code. The item statistics read
 -- (routes/admin_check_items.py) selects the new column; nothing else needs
 -- it while multi_concept_items is off, and older code never names it.
+--
+-- Locks (amended before any apply, the second review; sanctioned in
+-- tests/test_learning_loop_invariants.py::_AMENDED_BEFORE_ANY_APPLY). This
+-- file runs in one transaction (db/migrate.py), and every lock it takes is
+-- ACCESS EXCLUSIVE and held to its commit: check_items for the constraint,
+-- node_mastery_events for the column. Two rules keep that brief:
+--   * lock_timeout 5s: a lock that does not come within 5s fails the file
+--     (rolled back, nothing recorded; run it again), instead of queueing
+--     every learning_evidence_commit (its own lock_timeout is 2s) behind a
+--     waiting ALTER until a long reader finishes;
+--   * the CHECK is added NOT VALID, so nothing scans check_items under the
+--     lock (new and updated rows are checked at once).
+--     20261108224511_learning_varied_practice_validate.sql validates it in its
+--     own transaction, under SHARE UPDATE EXCLUSIVE, which blocks no read or
+--     write.
+
+SET LOCAL lock_timeout = '5s';
 
 ALTER TABLE public.check_items DROP CONSTRAINT IF EXISTS check_items_multi_concept_shape;
 ALTER TABLE public.check_items ADD CONSTRAINT check_items_multi_concept_shape
@@ -63,7 +80,7 @@ ALTER TABLE public.check_items ADD CONSTRAINT check_items_multi_concept_shape
                 = cardinality(component_keys) - 1
         ),
         false
-    ));
+    )) NOT VALID;
 
 ALTER TABLE public.node_mastery_events ADD COLUMN IF NOT EXISTS multi_concept boolean;
 

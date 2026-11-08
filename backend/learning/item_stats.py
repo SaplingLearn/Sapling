@@ -69,7 +69,7 @@ from pydantic import ValidationError
 from learning.evidence import Evidence, evidence_weight
 from learning.evidence_void import ItemKey, graded_item, is_void_row
 from learning.item_audit import wilson
-from learning.multi_concept import components_of
+from learning.multi_concept import components_of, concept_key_of
 from learning.params import (
     CHANNELS,
     ITEM_STATS_EASY_P,
@@ -279,6 +279,52 @@ def _void_times(
     return out
 
 
+def _node_concepts(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """node id → the concept key of the student's node a journal row was
+    graded on: its `graph_nodes` embed's concept_name, normalized as
+    graph_service normalizes it (multi_concept.concept_key_of). A node whose
+    name the rows do not carry is absent."""
+    out: dict[str, str] = {}
+    for row in rows:
+        owner = row.get("graph_nodes") if isinstance(row, Mapping) else None
+        node = row.get("node_id") if isinstance(row, Mapping) else None
+        if isinstance(owner, Mapping) and isinstance(node, str) and node:
+            key = concept_key_of(owner.get("concept_name"))
+            if key:
+                out.setdefault(node, key)
+    return out
+
+
+def _concept_void_times(
+    rows: Iterable[Mapping[str, Any]],
+    retired: Collection[ItemKey],
+    combos: Collection[ItemKey],
+    node_concept: Mapping[str, str],
+) -> dict[tuple[str, str], datetime]:
+    """Spec §13 A141: (student, concept key) → when a staff retire last removed
+    one of that student's single-concept attempts on the concept — what a
+    combination's rest score reads. Per attempt, from the void rows
+    themselves: a retire that removed a student's only attempt on a component
+    leaves no surviving observation to date it by. As _void_times otherwise
+    (decision times only; a combination's own voids never count)."""
+    if not isinstance(retired, Mapping):
+        return {}
+    out: dict[tuple[str, str], datetime] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or not is_void_row(row, retired):
+            continue
+        item = graded_item(row)
+        if item in combos:
+            continue
+        user, concept, at = _user(row), node_concept.get(row.get("node_id")), retired.get(item)
+        if user is None or not concept or not isinstance(at, datetime):
+            continue
+        key = (user, concept)
+        if key not in out or at > out[key]:
+            out[key] = at
+    return out
+
+
 def journaled_combinations(rows: Iterable[Mapping[str, Any]]) -> frozenset[ItemKey]:
     """Spec §13 A141: the course items the journal says a multi-concept item
     graded (`multi_concept` true on a row, written since the review migration
@@ -293,26 +339,21 @@ def journaled_combinations(rows: Iterable[Mapping[str, Any]]) -> frozenset[ItemK
     )
 
 
-def multi_concept_rests(stored: Iterable[Mapping[str, Any]]) -> dict[ItemKey, frozenset[ItemKey]]:
-    """Spec §13 A141: for each stored multi-concept item of the rows (their
-    plaintext columns: course_id, concept_key, question_hash), the course
-    items its rest score is read from — the single-concept items of every one
-    of its components. {} when the rows hold no multi-concept item."""
-    rows = [r for r in stored if isinstance(r, Mapping)]
-    by_concept: dict[tuple[str, str], set[ItemKey]] = defaultdict(set)
-    for row in rows:
-        if components_of(row.get("concept_key")) is None and row.get("question_hash"):
-            by_concept[(row.get("course_id"), row.get("concept_key"))].add(
-                (row.get("course_id"), row.get("question_hash"))
-            )
-    out: dict[ItemKey, frozenset[ItemKey]] = {}
-    for row in rows:
+def multi_concept_components(stored: Iterable[Mapping[str, Any]]) -> dict[ItemKey, tuple[str, ...]]:
+    """Spec §13 A141: each stored multi-concept item of the rows (their
+    plaintext columns: course_id, concept_key, question_hash) with its
+    components' concept keys, the apex first. {} when the rows hold none. Its
+    rest score is read from the journal: the student's single-concept attempts
+    on the nodes of those concepts (item_statistics), so a component item
+    withdrawn since (A23) still counts there, as a concept's withdrawn item
+    does in its siblings' rest scores."""
+    out: dict[ItemKey, tuple[str, ...]] = {}
+    for row in stored:
+        if not isinstance(row, Mapping):
+            continue
         comps = components_of(row.get("concept_key"))
         if comps and row.get("question_hash"):
-            course = row.get("course_id")
-            out[(course, row["question_hash"])] = frozenset(
-                key for comp in comps for key in by_concept.get((course, comp), ())
-            )
+            out[(row.get("course_id"), row["question_hash"])] = comps
     return out
 
 
@@ -320,7 +361,7 @@ def item_statistics(
     rows: Iterable[Mapping[str, Any]],
     *,
     retired: Collection[ItemKey] = frozenset(),
-    multi: Mapping[ItemKey, Collection[ItemKey]] | None = None,
+    multi: Mapping[ItemKey, Collection[str]] | None = None,
 ) -> dict[ItemKey, dict]:
     """(course_id, question_hash) → its statistics (module docstring), for
     every course item some student has a first unassisted attempt on.
@@ -334,23 +375,29 @@ def item_statistics(
     its students' attempts on the concept. Nothing else changes them, so a
     review decided at or after it was decided on the numbers shown.
 
-    `multi` (spec §13 A141; multi_concept_rests): the multi-concept items,
-    each with the single-concept items its rest score is read from — the
-    student's first unassisted attempts on its components' own items (its
-    evidence is its apex's, but it measures every component together). A
-    single-concept item's rest score leaves every multi-concept item out: an
-    integration item is another construct, so a concept's items are
-    discriminated against the concept's own. A combination the journal names
-    (journaled_combinations) but `multi` does not — its row withdrawn or
-    retired since — is left out the same way, and so are its voids from every
-    change time (_void_times). None (no multi-concept item, none journaled):
-    exactly the rule above."""
+    `multi` (spec §13 A141; multi_concept_components): the stored
+    multi-concept items, each with its components' concept keys. Its rest
+    score is the student's first unassisted attempts on single-concept items
+    graded on the student's nodes of those concepts (the journal's node →
+    concept, _node_concepts: its evidence is its apex's, but it measures every
+    component together), so a component item withdrawn since still counts; and
+    a retire that voided one of those attempts dates its numbers, per attempt
+    (_concept_void_times), even when it was the student's only attempt on a
+    component. A single-concept item's rest score leaves every multi-concept
+    item out: an integration item is another construct, so a concept's items
+    are discriminated against the concept's own. A combination the journal
+    names (journaled_combinations) but `multi` does not — its row withdrawn
+    or retired since — is left out the same way, and so are its voids from
+    every change time (_void_times). None (no multi-concept item, none
+    journaled): exactly the rule above."""
     rows = list(rows)
     observations = first_unassisted(rows, retired=retired)
-    combos = dict(multi or {})
+    combos: dict[ItemKey, tuple[str, ...]] = {item: tuple(c) for item, c in (multi or {}).items()}
     for item in journaled_combinations(rows):
-        combos.setdefault(item, frozenset())  # its row is gone: no rest read
+        combos.setdefault(item, ())  # its row is gone: its components unknown
     voided_at = _void_times(rows, retired, frozenset(combos))
+    node_concept = _node_concepts(rows) if multi else {}
+    concept_voided = _concept_void_times(rows, retired, frozenset(combos), node_concept) if multi else {}
     by_student_node: dict[tuple[str, str], dict[ItemKey, dict]] = defaultdict(dict)
     by_student: dict[str, dict[ItemKey, dict]] = defaultdict(dict)
     by_item: dict[ItemKey, list[dict]] = defaultdict(list)
@@ -367,9 +414,13 @@ def item_statistics(
         changed = max(ob["at"] for ob in obs)
         for ob in obs:
             student_node = (ob["user_id"], ob["node_id"])
+            comps = combos.get(item, ())
             if item in combos:
-                rest = combos[item]
-                others = [o for key, o in by_student[ob["user_id"]].items() if key in rest]
+                others = [
+                    o
+                    for key, o in by_student[ob["user_id"]].items()
+                    if key not in combos and node_concept.get(o["node_id"]) in comps
+                ]
             else:
                 others = [
                     other
@@ -382,6 +433,9 @@ def item_statistics(
             for node in {ob["node_id"], *(o["node_id"] for o in others)}:
                 if (ob["user_id"], node) in voided_at:
                     changed = max(changed, voided_at[(ob["user_id"], node)])
+            for comp in comps:  # A141: a retire of any of the student's component attempts
+                if (ob["user_id"], comp) in concept_voided:
+                    changed = max(changed, concept_voided[(ob["user_id"], comp)])
         p_value = correct / n
         discrimination = _pearson(pairs)
         out[item] = {

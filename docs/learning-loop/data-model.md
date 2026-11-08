@@ -84,14 +84,16 @@ section is derived from it.
   the total order is `created_at, evidence_seq, id`, A36);
   `planning_observation` (typed provenance on loop probe and check grades,
   ADR 0035); `retention`, `same_session_recheck` and `propagated_to` (what a
-  void's replay needs, A123).
+  void's replay needs, A123); `multi_concept` (true on a multi-concept item's
+  row, NULL on every other, A141; migration
+  `backend/db/migrations/20261108205812_learning_varied_practice_review.sql`).
 - **Ids** are derived from the operation (`uuid5(operation_id, seq)`), so a
   replayed commit cannot double-write.
-- **A multi-concept answer (A141) adds no column.** Its row sits on the
-  apex's node with the derived half `weight` journaled, so a void's replay
-  reproduces it; the item's own row (`apex_key`, `component_keys`) says what
-  it combined. Prequestions and self-explanations write no journal row at
-  all.
+- **A multi-concept answer (A141)** sits on the apex's node with the derived
+  half `weight` journaled, so a void's replay reproduces it, and with
+  `multi_concept` true, so the item statistics know it after the item's own
+  row (`apex_key`, `component_keys`, what it combined) is withdrawn or
+  retired. Prequestions and self-explanations write no journal row at all.
 - **Append-only by convention plus tests:** only the SQL function
   `learning_evidence_commit` inserts, and invariant 1's scan forbids any
   other writer. A void never edits a row. Rows disappear only by foreign-key

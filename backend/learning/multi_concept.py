@@ -84,6 +84,14 @@ def components_of(concept_key) -> tuple[str, ...] | None:
     return parts
 
 
+def concept_key_of(name) -> str:
+    """A concept's key from its node's name: graph_service._normalize_concept's
+    rule (whitespace runs collapse to one space, then casefold; a test pins the
+    two equal), so the stored check items' keys and a node's name meet. "" for
+    no name."""
+    return " ".join(str(name or "").split()).casefold()
+
+
 def is_multi_concept(item) -> bool:
     return components_of(getattr(item, "concept_key", None)) is not None
 
