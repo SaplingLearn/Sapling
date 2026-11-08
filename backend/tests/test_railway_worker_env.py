@@ -70,6 +70,7 @@ EXCLUDED = {
     "GOOGLE_CLIENT_SECRET": "OAuth (HTTP only)",
     "GOOGLE_REDIRECT_URI": "OAuth (HTTP only)",
     "PORT": "the worker serves nothing",
+    "JOBS_LEASE_SECONDS": "the worker's own setting, set on the worker service itself (worker/__main__.py); document_jobs reads the same value on both sides",
     "GIT_COMMIT_SHA": "build metadata; Railway sets RAILWAY_GIT_COMMIT_SHA per service",
     "RAILWAY_GIT_COMMIT_SHA": "Railway sets it on every service itself",
     "OCR_ASYNC_ENABLED": "the upload route's request-path choice, read by the API only",
