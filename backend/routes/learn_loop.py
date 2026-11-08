@@ -45,6 +45,7 @@ import asyncio
 import copy
 import dataclasses
 import hashlib
+import hmac
 import logging
 import re
 import threading
@@ -176,6 +177,7 @@ from learning.params import (
     CLOSE_PHASES,
     CLOSE_RUN_TIMEOUT_S,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
+    HELP_NOVELTY_DIGESTS_MAX,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
@@ -267,7 +269,7 @@ from services.academics import (
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
-from services.encryption import decrypt_if_present, decrypt_json_column
+from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
     course_has_items,
@@ -386,6 +388,18 @@ def _tutor_v2_on(user_id: str | None) -> bool:
     sees two answers. No student means off; the resolver fails closed
     (feature_flags)."""
     return bool(user_id) and flag_on(TUTOR_V2_FLAG, user_id)
+
+
+#: Spec §13 A134: the strict genuine-attempt rule's flag (services/feature_flags.py).
+HELP_GATE_STRICT_FLAG = "help_gate_strict"
+
+
+def _help_gate_strict_on(user_id: str | None) -> bool:
+    """The `help_gate_strict` flag for this student (spec §13 A134), read once
+    per request where it matters: POST /step/attempt counts an attempt by the
+    strict rule when on, and POST /hint words its time-alone denial by it. No
+    student means off; the resolver fails closed (feature_flags)."""
+    return bool(user_id) and flag_on(HELP_GATE_STRICT_FLAG, user_id)
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -5748,6 +5762,91 @@ def _attempt_hash(text: str) -> str:
     return hashlib.sha256(words.encode("utf-8")).hexdigest()[:16]
 
 
+# ── Spec §13 A133/A134: one attempt's structured signals ────────────────────
+
+#: steps[qh] key (spec §13 A134): keyed digests of the answer tokens the
+#: student's COUNTED attempts on the item held — the strict rule's novelty
+#: memory, kept whichever rule is in force so the zpd.attempt measurement
+#: (A133) sees repeats under either. A digest is HMAC-SHA256 under a key
+#: derived from ENCRYPTION_KEY, over the item's hash and the token: neither a
+#: token nor the attempt text is stored, and the same word on two items does
+#: not match.
+_ATTEMPT_TOKENS = "attempt_tokens"
+_ATTEMPT_TOKEN_KEY = derive_key("learning/attempt-tokens")
+#: hex characters kept per digest (48 bits: a chance collision among a step's
+#: HELP_NOVELTY_DIGESTS_MAX digests is about one in a billion)
+_ATTEMPT_TOKEN_HEX = 12
+
+
+def _token_digest(question_hash: str, value: str) -> str:
+    mac = hmac.new(_ATTEMPT_TOKEN_KEY, f"{question_hash}\x1f{value}".encode("utf-8"), hashlib.sha256)
+    return mac.hexdigest()[:_ATTEMPT_TOKEN_HEX]
+
+
+def _help_anchor(entry: dict) -> float | None:
+    """When the student last got help on the item: the last rung shown, else
+    the pose (the M1 rung anchor; spec §13 A134 measures time alone from it)."""
+    return entry.get("last_rung_at") if entry.get("last_rung_at") is not None else entry.get("first_shown_at")
+
+
+@dataclass(frozen=True)
+class _AttemptSignals:
+    """Spec §13 A134: what one attempt shows, measured on the attempt — never
+    its length, never the item's key. `standard` is the §3.3 rule's verdict
+    (A120's hedge tolerance included), `strict` the strict rule's."""
+
+    alone_s: float  # since the latest help on the item (the last rung shown, else the pose)
+    required_s: float  # the band's independent-time gate (variant, A5 time scale)
+    novel: bool
+    digests: frozenset[str]
+    standard: bool
+    strict: bool
+
+
+def _attempt_signals(
+    text: str, qh: str, entry: dict, check, *, standard: bool, band: str, variant: str, now: float
+) -> _AttemptSignals:
+    """The strict rule's inputs and verdict for one attempt on the step
+    `entry` (gates.attempt_novelty and gates.strict_genuine_attempt): time
+    alone since the latest help, novelty against the earlier counted attempts
+    and the item's stem. Computed whichever rule is in force."""
+    alone_s = _seconds_since(_help_anchor(entry), now)
+    novel, digests = gates.attempt_novelty(
+        text,
+        stem=getattr(check, "prompt", None),
+        seen=entry.get(_ATTEMPT_TOKENS) or (),
+        digest=lambda value: _token_digest(qh, value),
+    )
+    scale = config.LEARNING_GATE_TIME_SCALE
+    return _AttemptSignals(
+        alone_s=alone_s,
+        required_s=gates.independent_time_required(band, time_scale=scale, variant=variant),
+        novel=novel,
+        digests=digests,
+        standard=standard,
+        strict=gates.strict_genuine_attempt(
+            standard, alone_s, novel, band, time_scale=scale, variant=variant
+        ),
+    )
+
+
+def _remember_attempt_tokens(entry: dict, digests: frozenset[str]) -> None:
+    """Add a counted attempt's token digests to the step's novelty memory,
+    oldest kept first, at most HELP_NOVELTY_DIGESTS_MAX (past it a later
+    attempt is compared with what is kept: the check errs toward counting)."""
+    kept = list(entry.get(_ATTEMPT_TOKENS) or [])
+    have = set(kept)
+    for d in sorted(digests - have):
+        if len(kept) >= HELP_NOVELTY_DIGESTS_MAX:
+            break
+        kept.append(d)
+    entry[_ATTEMPT_TOKENS] = kept
+
+
+def _ms_of(seconds: float) -> int:
+    return int(round(max(0.0, seconds) * 1000))
+
+
 # crisis support: a crisis attempt stops the hint flow — nothing counts toward a hint
 @router.post(
     "/step/attempt",
@@ -5763,7 +5862,15 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     never graded. M1 (review round 3): at most ONE attempt counts per rung
     anchor (since the last rung unlock, else the pose), and only one that
     differs from every earlier attempt on the item (`attempt_hashes`), so
-    spamming the route cannot open the next rung; the route is rate-limited."""
+    spamming the route cannot open the next rung; the route is rate-limited.
+
+    Spec §13 A134: with the `help_gate_strict` flag on, an attempt counts only
+    by the strict rule (gates.strict_genuine_attempt: the band's independent
+    time alone since the latest help, and something no counted attempt on the
+    item said, not a paste of the stem). Off, the response and every step key
+    the §3.3 rule writes are exactly as before A134. Either way the step keeps
+    the counted attempts' token digests (`attempt_tokens`) and one zpd.attempt
+    records the attempt's signals (spec §13 A133)."""
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
@@ -5778,9 +5885,18 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     variant = arms.variant_for(body.user_id, node_id or "", _arm_for(body.user_id, request))
     now = _now_s()
     independent_s = _seconds_since(entry.get("first_shown_at"), now)
-    genuine = bool(
+    standard = bool(
         _genuine(body.attempt_text, independent_s, band, variant)
     ) and not _addresses_grader(body.attempt_text, check)
+    strict_on = _help_gate_strict_on(body.user_id)
+
+    def signals_of(e: dict) -> _AttemptSignals:
+        return _attempt_signals(
+            body.attempt_text, qh, e, check, standard=standard, band=band, variant=variant, now=now
+        )
+
+    signals = signals_of(entry)
+    genuine = signals.strict if strict_on else standard
     digest = _attempt_hash(body.attempt_text)
     counted: dict = {}
 
@@ -5793,13 +5909,35 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
             return  # this rung anchor already has its attempt
         if digest in (e.get("attempt_hashes") or []):
             return  # the same attempt again is no new work
+        fresh = signals_of(e)
+        if strict_on and not fresh.strict:
+            return  # A134: on the fresh document a rung or a counted attempt moved it
         _record_attempt(e, now, failed=True)  # the step stays open: a failed genuine attempt
         e["attempt_hashes"] = [*(e.get("attempt_hashes") or []), digest]
+        _remember_attempt_tokens(e, fresh.digests)  # A134's novelty memory (either rule)
         counted["yes"] = True
 
+    rung = int(entry.get("rung") or 0)
     if genuine:
         state = _update_loop_state(body.session_id, _on_step(qh, record))
         entry = _steps(state).get(qh) or entry
+    zpd_events.emit_zpd_attempt(
+        user_id=body.user_id,
+        request_id=_request_id(request),
+        session_id=body.session_id,
+        question_hash=qh,
+        concept_id=node_id,
+        band=band,
+        gate="strict" if strict_on else "standard",
+        rung=Rung(min(max(rung, int(Rung.H0)), int(Rung.H6))),
+        since_pose_ms=_ms_of(independent_s),
+        alone_ms=_ms_of(signals.alone_s),
+        gate_ms=_ms_of(signals.required_s),
+        novel=signals.novel,
+        standard=standard,
+        strict=signals.strict,
+        counted=bool(counted),
+    )
     return {
         "genuine": genuine,
         "counted": bool(counted),
@@ -5840,6 +5978,30 @@ def _rung_gate_denial(step: StepState, now: float) -> dict | None:
     return {"denied": "dwell" if attempted else "no_genuine_attempt"}
 
 
+def _hint_gate_denial(
+    body: LoopHintBody, request: Request, entry: dict, step: StepState, now: float
+) -> dict | None:
+    """`_rung_gate_denial`, worded for the strict rule (spec §13 A134). With
+    the `help_gate_strict` flag on, a step with no counted attempt since the
+    rung anchor whose time alone with that help is still short of the band's
+    independent-time gate answers "dwell" (LoopLearn: "Stay with this step a
+    little longer before the next hint.") — the time is what is missing, not
+    the attempt. Flag off: exactly `_rung_gate_denial`, and nothing more is read."""
+    denied = _rung_gate_denial(step, now)
+    if denied != {"denied": "no_genuine_attempt"} or not _help_gate_strict_on(body.user_id):
+        return denied
+    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+    node_id = _node_for_item(body.user_id, check) if check else None
+    band, _ = _band_for(body.user_id, node_id)
+    variant = arms.variant_for(body.user_id, node_id or "", _arm_for(body.user_id, request))
+    required = gates.independent_time_required(
+        band, time_scale=config.LEARNING_GATE_TIME_SCALE, variant=variant
+    )
+    if _seconds_since(_help_anchor(entry), now) < required:
+        return {"denied": "dwell"}
+    return denied
+
+
 @router.post("/hint")
 def hint(body: LoopHintBody, request: Request) -> dict:
     """Moves the active item's rung up one, behind the dwell / attempt gate, the
@@ -5860,7 +6022,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     step = _step_state(state, qh)
     now = _now_s()
     may_jump = entry.get("worked_first") is True and step.rung < Rung.H4
-    if not may_jump and (denied := _rung_gate_denial(step, now)):
+    if not may_jump and (denied := _hint_gate_denial(body, request, entry, step, now)):
         return denied
     check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
     node_id = _node_for_item(body.user_id, check) if check else None
@@ -5870,7 +6032,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     view = _learner_view(learner, band=band, prereq_proficient=prereq)
     delta = _band_ceiling_delta(state, node_id)  # spec §13 A122: the band's ceiling only
     jump = policy.worked_example_rung(view, step, worked_first=may_jump, band_delta=delta)
-    if jump is None and may_jump and (denied := _rung_gate_denial(step, now)):
+    if jump is None and may_jump and (denied := _hint_gate_denial(body, request, entry, step, now)):
         return denied  # the learner left the worked-example row: the ordinary gate
     # an empty message: showed_work comes from the step alone — the floor-at-H3 rule
     # is applied by the turn that carried the work, never by a hint request

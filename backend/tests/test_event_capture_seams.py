@@ -159,6 +159,9 @@ def test_event_taxonomy_is_pinned():
         "zpd.leak",
         "zpd.reveal",
         "zpd.rating",
+        # Spec §13 A133, A134: one hint-unlocking attempt as judged. Emit
+        # coverage lives in test_learning_help_gate.py.
+        "zpd.attempt",
         # Spec §13 A125: the integrity guard of the AI surfaces outside the loop.
         # Emit coverage lives in test_learning_outside_integrity.py.
         "learn.outside_leak",
