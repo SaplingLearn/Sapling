@@ -336,6 +336,8 @@ def seams():
         )
         ns.scope = p("_session_scope", return_value=("off-1", "c1"))
         ns.item = p("get_check_item", return_value=ITEM)
+        # spec §13 A121: the probe-phase opener's one read (check-in vs plan intro)
+        ns.has_items = p("course_has_items", return_value=True)
         ns.list_items = p("list_items", return_value=[])
         ns.node = p("_node_for_item", return_value="node-1")
         ns.prereq = p("_prereq_proficient", return_value=True)
@@ -1085,7 +1087,8 @@ def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(
         )
     done = _sse_events(r.text)[-1]["data"]
     assert (
-        done["reply"] == LADDER_FALLBACK_LINES[3]
+        # spec §13 A121: the grader's verdict line still leads, from code
+        done["reply"] == "Correct.\n\n" + LADDER_FALLBACK_LINES[3]
         and done["leak_redacted"] is True
         and done["phase"] == "feedback"
     )
@@ -1108,7 +1111,9 @@ def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(
         and leak_kw["user_id"] == "u1"
     )
     assistant_row = [c for c in seams.save_msg.call_args_list if c.args[1] == "assistant"][0]
-    assert assistant_row.args[2] == LADDER_FALLBACK_LINES[3], "the served line is what persists"
+    assert assistant_row.args[2] == "Correct.\n\n" + LADDER_FALLBACK_LINES[3], (
+        "the served line is what persists"
+    )
     assert ITEM.reference_answer not in json.dumps(seams.zpd.emit_zpd_leak.call_args.kwargs)
 
 
@@ -1678,7 +1683,10 @@ def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, se
 
     assert "[VERDICT: not_yet]" in seen["msg"] and _ANSWER_RELEASED in seen["msg"]
     assert ITEM.reference_answer not in seen["msg"], "m1: the model is never handed the answer"
-    assert body["reply"].startswith(released_lead(ITEM.reference_answer)), "served from code"
+    # spec §13 A121: the verdict first, before anything else — then the answer (m1)
+    assert body["reply"].startswith("Not yet.\n\n" + released_lead(ITEM.reference_answer)), (
+        "served from code"
+    )
     assert seams.detect.call_args.kwargs["rung"] == Rung.H6
     entry = seams.store["doc"]["steps"]["qh-1"]
     assert entry["wrong"] == 1 and entry["last_correct"] is False and entry["attempts"] == 1
@@ -2083,7 +2091,9 @@ def test_an_mc_reason_reply_is_leak_checked_with_its_correct_option(gate_on, sea
 
     assert seams.detect.call_args.kwargs["correct_option"] == "B"
     assert seams.zpd.emit_zpd_leak.call_args.kwargs["detector"] == "option"
-    assert _sse_events(r.text)[-1]["data"]["reply"] in LADDER_FALLBACK_LINES.values()
+    reply = _sse_events(r.text)[-1]["data"]["reply"]
+    assert reply.startswith("Correct.\n\n")  # spec §13 A121: the verdict line leads
+    assert reply.removeprefix("Correct.\n\n") in LADDER_FALLBACK_LINES.values()
 
 
 # ── The structured turn (PKG-07 unblock S1, lane A wiring) ────────────────
@@ -2102,11 +2112,16 @@ def test_a_model_turn_runs_with_turn_limits_and_serves_the_render(gate_on, seams
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
         ).json()
+    from learning.turn_shape import TurnTemplate
     from routes.learn_loop import released_lead
 
-    assert body["reply"] == released_lead(ITEM.reference_answer) + render_turn(out), (
-        "the released answer is served from code above the model's render (m1)"
-    )
+    # spec §13 A121: the verdict line, then the released answer (m1), from code;
+    # a feedback turn's key idea carries no "Key idea:" label (no new content)
+    assert body["reply"] == (
+        "Not yet.\n\n"
+        + released_lead(ITEM.reference_answer)
+        + render_turn(out, TurnTemplate(label=False))
+    ), "the released answer is served from code above the model's render (m1)"
     deps = seen["kw"]["deps"]
     assert deps.loop_turn == turn_limits("feedback", Rung.H3, True)
 
@@ -2152,9 +2167,12 @@ def test_the_stream_is_the_structured_stream_with_a_leak_strip_transform(gate_on
     from routes.learn_loop import LADDER_FALLBACK_LINES
 
     xf, final = got["transform"], got["transform_final"]
-    assert xf("Fine. What next?") == "Fine. What next?", "clean text passes untouched"
-    assert xf("Fine. " + ITEM.reference_answer) == "Fine.", "the stream stops before a leak"
-    assert final(ITEM.reference_answer) == LADDER_FALLBACK_LINES[3], "never masked in place"
+    # spec §13 A121: the grader's verdict line leads every streamed text, from code
+    lead = "Correct.\n\n"
+    assert xf("Fine. What next?") == lead + "Fine. What next?", "clean text passes untouched"
+    assert xf("Fine. " + ITEM.reference_answer) == lead + "Fine.", "the stream stops before a leak"
+    assert final(ITEM.reference_answer) == lead + LADDER_FALLBACK_LINES[3], "never masked in place"
+    assert xf("") == lead, "the verdict is the first thing the stream shows"
     assert got["run_kwargs"]["deps"] is got["deps"] and got["deps"].loop_turn is not None
 
 
@@ -2535,13 +2553,20 @@ def _opener_patches():
 
 
 def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
+    """Spec §13 A121: a new session opens in the probe phase, so its opener is
+    the TEMPLATE — a neutral welcome and the check-in's intro — at the normal
+    budget level too: no model run, nothing taught, no question. The lazy
+    session contract is unchanged (the model opener of a quiz-ask session,
+    which teaches from its first turn, is pinned in tests/test_quiz_ask_session.py)."""
+    from learning.turn_shape import LOOP_PROBE_OPENER
     from routes.learn_loop import PENDING_SESSIONS
 
-    agent, seen = _json_agent("Welcome. Key idea: base case. Ready to start?")
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("the probe-phase opener ran the model"))
     topic_p, offering_p, graph_p = _opener_patches()
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch("routes.learn_loop.stream_structured_turn", MagicMock(side_effect=AssertionError)),
         topic_p,
         offering_p,
         graph_p,
@@ -2553,6 +2578,8 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"session_id", "initial_message", "graph_state"}
+    assert body["initial_message"] == LOOP_PROBE_OPENER
+    assert "?" not in body["initial_message"] and "Key idea" not in body["initial_message"]
     pending = PENDING_SESSIONS.pop(body["session_id"])
     assert pending["loop"] is True and pending["assistant_reply"] == body["initial_message"]
     assert {
@@ -2566,13 +2593,11 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
         "graph_update",
     } <= set(pending)
     assert pending["course_id"] == "c1" and pending["offering_id"] == "off-1"
-    assert seams.context_policy.call_args.kwargs["opener"] is True
-    assert seams.model_tier.call_args.args[0] == "opener"
-    assert seen["kw"]["message_history"] == []
-    assert "Begin the session with a warm greeting" in seen["msg"]
-    assert re.search(r"<<student_text (\w+)>>\nRecursion\n<<end_student_text \1>>", seen["msg"]), (
-        "the topic is the student's text: it rides the envelope (review round 3, C1)"
-    )
+    assert "loop_state" not in pending  # a probe session's document starts empty
+    seams.model_tier.assert_not_called()  # a template turn is never routed
+    seams.context_policy.assert_not_called()
+    seams.ai_budget.count_tutor_call.assert_not_called()
+    # the budget is still read once: a capped student's opener carries the notice
     seams.ai_budget.check.assert_called_once_with(
         "u1",
         "tutor",
@@ -2581,9 +2606,36 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
         session_deep_requests=0,
         arm_session=False,
     )
+    seams.has_items.assert_called_once_with("c1")
     seams.save_msg.assert_not_called()  # the opener persists nothing (lazy session)
     seams.save.assert_not_called()
     seams.scope.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
+def test_a_probe_opener_for_a_course_without_check_items_introduces_the_plan(gate_on, seams, path):
+    """Spec §13 A121: a course with no check items ends its probe at once
+    (`no_check_items`), so its opener names the plan, not a check-in; an
+    unreadable item bank serves the check-in intro (the probe then reports)."""
+    from learning.turn_shape import LOOP_PLAN_OPENER, LOOP_PROBE_OPENER
+    from routes.learn_loop import PENDING_SESSIONS
+
+    for has_items, want in ((False, LOOP_PLAN_OPENER), (RuntimeError("db down"), LOOP_PROBE_OPENER)):
+        if isinstance(has_items, Exception):
+            seams.has_items.side_effect = has_items
+        else:
+            seams.has_items.return_value = has_items
+        topic_p, offering_p, graph_p = _opener_patches()
+        with topic_p, offering_p, graph_p:
+            r = client.post(path, json={"user_id": "u1", "topic": "Recursion"})
+        assert r.status_code == 200, r.text
+        if path.endswith("/stream"):
+            done = _sse_events(r.text)[-1]["data"]
+            reply, sid = done["reply"], done["session_id"]
+        else:
+            reply, sid = r.json()["initial_message"], r.json()["session_id"]
+        assert reply == want
+        assert PENDING_SESSIONS.pop(sid)["assistant_reply"] == want
 
 
 def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seams):

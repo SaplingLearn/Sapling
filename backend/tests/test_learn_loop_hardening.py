@@ -391,7 +391,8 @@ def test_released_feedback_serves_the_stored_reference_from_code(gate_on, seams)
     body = r.json()
     from tests.test_learn_loop_routes import ITEM
 
-    assert body["reply"].startswith(_FEEDBACK_ANSWER_LEAD + ITEM.reference_answer)
+    # spec §13 A121: the grader's verdict line first, then the stored reference
+    assert body["reply"].startswith("Not yet.\n\n" + _FEEDBACK_ANSWER_LEAD + ITEM.reference_answer)
     assert body["reply"].rstrip().endswith("?"), "feedback still ends on the next step"
     received = "\n".join(_prompts(brain.seen[-1]))
     assert ITEM.reference_answer not in received and _ANSWER_RELEASED in received
@@ -1059,19 +1060,18 @@ def test_at_h0_h1_the_served_key_idea_is_the_ladders_not_the_models():
     """Recorded (fix round 2, standard run 2): at a correct verdict under an
     H1 ceiling the model's key idea stated a definition ("The base case … is
     its stopping condition") — H2 content. H0/H1 add no content (RUNG_INTENT),
-    so the served key idea is code's: the verdict in feedback, the focus line
-    in a hint; the model writes the body and the question."""
+    so the served key idea is code's: the focus line in a hint, and none in a
+    correct-verdict feedback turn (spec §13 A121: the grader's verdict line,
+    served above the turn, says it); the model writes the body and the
+    question. Neither is a new-content turn, so neither carries the label."""
     from routes.learn_loop import LOW_RUNG_KEY_IDEAS, served_render
 
     out = {"key_idea": "The base case is the stopping condition.", "body": "B.", "question": "Q?"}
     for rung in (Rung.H0, Rung.H1):
         fb = served_render(out, phase="feedback", rung=rung, verdict="correct")
-        assert (
-            fb.startswith("Key idea: " + LOW_RUNG_KEY_IDEAS["feedback_correct"])
-            and "stopping" not in fb
-        )
+        assert fb == "B.\n\nQ?" and "stopping" not in fb
         hint = served_render(out, phase="hint", rung=rung)
-        assert hint.startswith("Key idea: " + LOW_RUNG_KEY_IDEAS["hint"])
+        assert hint.startswith(LOW_RUNG_KEY_IDEAS["hint"]) and "Key idea" not in hint
     assert "stopping" in served_render(out, phase="feedback", rung=Rung.H2, verdict="correct")
     assert "stopping" in served_render(out, phase="teach", rung=Rung.H1)
 
@@ -1104,7 +1104,10 @@ def test_a_sentence_the_student_offered_is_no_copy_when_the_model_picks_it(
     brain = _scripted(body)
     _brain(seams, brain)
     r = _post_hint_request(message)
-    assert r.json()["reply"] == LADDER_FALLBACK_LINES[3] and len(brain.seen) == 2
+    # a graded message (the first: no non-attempt phrase) is a feedback turn,
+    # whose grader verdict line leads it from code (spec §13 A121)
+    lead = "Correct.\n\n" if r.json()["verdict"] == "correct" else ""
+    assert r.json()["reply"] == lead + LADDER_FALLBACK_LINES[3] and len(brain.seen) == 2
 
 
 def test_the_visible_text_is_the_item_and_the_served_tutor_turns_only():

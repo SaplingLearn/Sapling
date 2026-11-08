@@ -191,7 +191,11 @@ from learning.session_close import (
 )
 from learning.turn_shape import (
     FIELD_JOIN,
+    LOOP_PLAN_OPENER,
+    LOOP_PROBE_OPENER,
+    TurnTemplate,
     clamp_model_ceiling,
+    labels_new_content,
     render_partial,
     render_turn,
     turn_limits,
@@ -317,9 +321,20 @@ _WITHDRAWN_FEEDBACK = (
     "available. You can continue with another check or end this session."
 )
 _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
-#: The session opener served at the hard budget level (A27): no model call, so
-#: a capped student can still start a session and reach the probe (§3.5).
-_LOOP_OPENER_TEMPLATE = "Let's start with a few quick questions to see where you are."
+#: The session opener served without a model (A27, A121): ALWAYS while the new
+#: session is in the probe phase — a neutral welcome and the check-in's intro,
+#: no teaching and no question (the check-in is a pretest; teaching first skews
+#: it, and a question would compete with its first item) — and at the hard
+#: budget level, so a capped student can still start a session and reach the
+#: probe (§3.5).
+_LOOP_OPENER_TEMPLATE = LOOP_PROBE_OPENER
+#: Spec §13 A121: loop_state key — True when the last SERVED turn ended with the
+#: tutor's own open question (a model teach or feedback turn that rendered its
+#: question; never a hint, a pose, a template or a turn that posed a check). The
+#: next teach-phase chat message is then the student's reply to it, and that
+#: turn opens with the verdict (`_LoopTurn._answer_check_due`). A flag only: the
+#: question's text lives in the (encrypted) message history, never here.
+OPEN_QUESTION_KEY = "open_question"
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -1051,12 +1066,12 @@ LADDER_FALLBACK_LINES: dict[int, str] = {
 }
 
 
-#: Fix round 2: the served key idea of an item turn at H0/H1 — those rungs add
-#: no content (RUNG_INTENT), so the key idea is the verdict (feedback) or the
-#: focus of a hint, from code; recorded model key ideas there stated a
-#: definition (judged H2).
+#: Fix round 2: the served key idea of a hint at H0/H1 — those rungs add no
+#: content (RUNG_INTENT), so the key idea is the focus of the hint, from code;
+#: recorded model key ideas there stated a definition (judged H2). Spec §13
+#: A121: a correct-verdict feedback turn at H0/H1 serves NO key idea — the
+#: grader's verdict line code serves first already says it.
 LOW_RUNG_KEY_IDEAS: dict[str, str] = {
-    "feedback_correct": "Your answer was graded correct.",
     "hint": "Start by pinning down what the item asks you to find.",
 }
 
@@ -1066,8 +1081,9 @@ def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
     lowest rungs may say, so code serves those fields: at an H2 hint the
     question is the ladder's (H2 is a concept pointer: reread the definition —
     recorded model questions named the item's own objects, judged H3); at
-    H0/H1 the key idea of a hint or a correct-verdict feedback turn is
-    LOW_RUNG_KEY_IDEAS'. The model writes everything else."""
+    H0/H1 the key idea of a hint is LOW_RUNG_KEY_IDEAS', and a correct-verdict
+    feedback turn's is left out (A121: its verdict line leads the turn). The
+    model writes everything else."""
     at = int(rung)
     served = dict(out)
     if phase == "hint" and at == int(Rung.H2) and "question" in out:
@@ -1076,13 +1092,69 @@ def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
         if phase == "hint":
             served["key_idea"] = LOW_RUNG_KEY_IDEAS["hint"]
         elif phase == "feedback" and verdict == "correct":
-            served["key_idea"] = LOW_RUNG_KEY_IDEAS["feedback_correct"]
+            served["key_idea"] = ""
     return served
 
 
-def served_render(out, *, phase: str, rung: Rung, verdict: str | None = None) -> str:
-    """`render_turn` of the turn as served (`_served_fields`)."""
-    return render_turn(_served_fields(out, phase=phase, rung=rung, verdict=verdict))
+def served_template(
+    *, phase: str, rung: Rung, poses_check: bool = False, answer_check: bool = False
+) -> TurnTemplate:
+    """Spec §13 A121: how this turn is served — the "Key idea:" label only on a
+    turn with new content (`labels_new_content`: teach or hint at H2+, never
+    feedback), no question of its own when it poses a check, and the verdict
+    line first when it answers the reply to the tutor's own question."""
+    return TurnTemplate(
+        label=labels_new_content(phase, int(rung)),
+        question=not poses_check,
+        answer_check=answer_check,
+    )
+
+
+def served_render(
+    out,
+    *,
+    phase: str,
+    rung: Rung,
+    verdict: str | None = None,
+    poses_check: bool = False,
+    answer_check: bool = False,
+) -> str:
+    """`render_turn` of the turn as served (`_served_fields`, `served_template`)."""
+    return render_turn(
+        _served_fields(out, phase=phase, rung=rung, verdict=verdict),
+        served_template(
+            phase=phase, rung=rung, poses_check=poses_check, answer_check=answer_check
+        ),
+    )
+
+
+def served_partial(
+    partial,
+    *,
+    phase: str,
+    rung: Rung,
+    verdict: str | None = None,
+    poses_check: bool = False,
+    answer_check: bool = False,
+) -> str:
+    """`render_partial` of a streamed partial as served — the same fields and
+    template as `served_render`, so the stream is a prefix of the final text."""
+    return render_partial(
+        _served_fields(partial, phase=phase, rung=rung, verdict=verdict),
+        served_template(
+            phase=phase, rung=rung, poses_check=poses_check, answer_check=answer_check
+        ),
+    )
+
+
+def served_lead(*, reference: str, answer_released: bool, verdict: str | None = None) -> str:
+    """What code serves ABOVE an item turn's model text: on a feedback turn the
+    grader's verdict as a plain line first (spec §13 A121: the turn opens with
+    whether the answer was right, before anything else — the hard-level
+    template's own words, `_FEEDBACK_VERDICT_LINES`), then the released answer
+    (m1, `released_lead`). "" on a hint turn."""
+    lead = _FEEDBACK_VERDICT_LINES[verdict] + FIELD_JOIN if verdict else ""
+    return lead + (released_lead(reference) if answer_released else "")
 
 
 def _item_check_kwargs(
@@ -1114,6 +1186,7 @@ def served_model_text(
     option_text: str | None = None,
     answer_released: bool = False,
     given: str = "",
+    verdict: str | None = None,
 ):
     """What the student is served for model-written `reply` against the active
     item. The check is STRICT and in SERVED MODE (`detect_leak(given=…)`,
@@ -1121,8 +1194,9 @@ def served_model_text(
     and number words / standalone letters count only in answer position. A
     reply that still leaks is NEVER masked in place (N1): it is replaced by the
     rung's LADDER_FALLBACK_LINES line (the model already had its one leak
-    retry, `deps.loop_leak`). The released answer's lead (`released_lead`)
-    goes in front when the answer is released. Returns (text, LeakVerdict)."""
+    retry, `deps.loop_leak`). Code's lead goes in front (`served_lead`): a
+    feedback turn's `verdict` line (A121), then the released answer (m1).
+    Returns (text, LeakVerdict)."""
     item = _item_check_kwargs(
         reference=reference,
         final_answer=final_answer,
@@ -1130,9 +1204,10 @@ def served_model_text(
         correct_option=correct_option,
         option_text=option_text,
     )
-    verdict = detect_leak(emitted=reply, rung=leak_rung, given=given, **item)
-    text = LADDER_FALLBACK_LINES[int(Rung(leak_rung))] if verdict.leaked else reply
-    return (released_lead(reference) + text if answer_released else text), verdict
+    leak_verdict = detect_leak(emitted=reply, rung=leak_rung, given=given, **item)
+    text = LADDER_FALLBACK_LINES[int(Rung(leak_rung))] if leak_verdict.leaked else reply
+    lead = served_lead(reference=reference, answer_released=answer_released, verdict=verdict)
+    return lead + text, leak_verdict
 
 
 _POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened
@@ -1671,6 +1746,76 @@ class _LoopTurn:
         self.reveal_unscanned = False  # A88: its open items could not be read
         self.reveal_overflow = None  # A93: posed items beyond the scan window
         self.reveal_fallback: tuple | None = None  # a failed learning_reveals write
+        # Spec §13 A121, both settled in _plan before the model runs: the turn
+        # poses the concept's next check (so it ends without its own question),
+        # and the turn opens with the verdict on the reply to the tutor's question
+        self.poses_check = False
+        self.answer_check = False
+
+    def _answer_check_due(self) -> bool:
+        """Spec §13 A121: this turn answers the student's reply to the tutor's
+        own question — a student chat message in the teach phase (no active
+        item: a check item is graded only by the grader, A16) right after a
+        served turn that ended with the tutor's open question
+        (OPEN_QUESTION_KEY). Read from loop state, never from the text."""
+        return (
+            self.kind == "chat"
+            and not self.trusted
+            and self.phase == "teach"
+            and self.item is None
+            and not self.withdrawn_feedback
+            and self.state.get(OPEN_QUESTION_KEY) is True
+        )
+
+    def _check_follows(self) -> bool:
+        """Spec §13 A121: whether this teach turn's completion poses the concept's
+        next check (A27 trigger 1: it brings `teach_turns` to
+        LOOP_TEACH_TURNS_BEFORE_CHECK) — settled BEFORE the model runs, so the
+        turn is planned and served without a question of its own (the check card
+        is the one open prompt). A read-only trial of `_activate_next_item` on a
+        copy of the loop state: the same selection `_apply_turn` then makes for
+        real (which never poses a check on a turn planned with its question). A
+        failed read plans the turn with its question."""
+        if (
+            self.kind not in ("chat", "action")
+            or self.phase != "teach"
+            or self.withdrawn_feedback
+            or not _auto_poses_checks(self.state)
+        ):
+            return False
+        trial = copy.deepcopy(self.state)
+        if self.withdrawn and trial.get("current") == self.withdrawn:
+            trial["current"] = None
+        if (
+            trial.get("current")
+            or not trial.get("concept")
+            or int(trial.get("teach_turns") or 0) + 1 < LOOP_TEACH_TURNS_BEFORE_CHECK
+        ):
+            return False
+        try:
+            return _activate_next_item(self.user_id, self.course_id, trial, now=_now_s()) is not None
+        except Exception:
+            logger.warning("check activation trial failed; the turn keeps its question", exc_info=True)
+            return False
+
+    def _reply_states_posed_answer(self) -> bool:
+        """Spec §13 A121 (no reveal): a verdict on the student's reply must never
+        confirm a check item's answer. True when the reply states the answer of
+        an item posed to this student and not yet graded (A93's scan set, read
+        strictly as served text), or when that cannot be checked — the set is
+        unreadable or the scan raises (fail closed). The turn then asks for no
+        verdict at all. Items beyond the scan window are A93's: the turn's own
+        served-text scan records the 'unscanned' marker at the window's edge,
+        so each grades with no unassisted credit."""
+        got = self._scan_set()
+        if got is None:
+            return True
+        scan, _overflow = got
+        try:
+            return bool(scan.stated(self.message))
+        except Exception:
+            logger.warning("the reply could not be scanned; no verdict this turn", exc_info=True)
+            return True
 
     def _teach_attempt(self) -> bool:
         """PKG-14 (A85): the student's teach-phase message is a genuine attempt
@@ -1760,12 +1905,18 @@ class _LoopTurn:
                 session_id=self.session_id,
             )
 
+    def _template_only(self) -> bool:
+        """A turn served from a template at every budget level (no model run):
+        the probe-phase opener (spec §13 A121, `_LoopOpener`)."""
+        return False
+
     def _plan(self, decision) -> None:
         if self.planned is decision:
             return
         self.planned = decision
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
+        self.poses_check, self.answer_check = False, False
         if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
@@ -1774,6 +1925,8 @@ class _LoopTurn:
             # This is an explicit recorded-result/withdrawal notice, not a
             # substitute model lesson. No assessment content remains servable.
             return
+        if self._template_only():
+            return  # tier "none": the template is served, nothing else is planned
         # PKG-10 (A15): a recorded misconception makes this a confronting turn
         self.confront_line = self._confront_line()
         if self.phase != "check":  # the pose never reaches the model (A17)
@@ -1818,6 +1971,14 @@ class _LoopTurn:
         nonce = new_nonce()
         history = self.history()
         self.observer_history = history
+        # N1: the provenance the served leak check reads (and the scan set's)
+        self.given = _visible_text(
+            history,
+            item_prompt=self.item.prompt if self.item is not None else "",
+        )
+        # Spec §13 A121: the turn template's two directives, from loop state
+        self.poses_check = self._check_follows()
+        self.answer_check = self._answer_check_due() and not self._reply_states_posed_answer()
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
@@ -1826,6 +1987,8 @@ class _LoopTurn:
             item_format=self.item.format if (item_phase and self.item) else None,
             answer_released=self.answer_released,
             verdict=self.verdict if self.phase == "feedback" else None,
+            poses_check=self.poses_check,
+            answer_check=self.answer_check,
         )
         if self.confront_line:
             # PKG-10: right after the phase instruction, before the context blocks
@@ -1848,17 +2011,18 @@ class _LoopTurn:
             context=context,
             item=self.item,
             learning_loop=self.loop_on,
-            loop_turn=turn_limits(self.phase, model_ceiling, self.answer_released),
+            loop_turn=turn_limits(
+                self.phase,
+                model_ceiling,
+                self.answer_released,
+                question=not self.poses_check,
+                answer_check=self.answer_check,
+            ),
             trusted=self.trusted,
             instruction=self.instruction,
             nonce=nonce,
         )
-        # N1: the provenance the served leak check reads, and the validator's guard
-        self.given = _visible_text(
-            history,
-            item_prompt=self.item.prompt if self.item is not None else "",
-        )
-        self.deps.loop_leak = self._leak_guard()
+        self.deps.loop_leak = self._leak_guard()  # N1: the validator's guard
 
     def _confront_line(self) -> str | None:
         """The confrontation line this turn may carry (PKG-10), or None. Not on
@@ -1996,8 +2160,18 @@ class _LoopTurn:
 
     def _item_leak_kwargs(self) -> dict:
         """served_model_text's item keywords: the answer forms, whether the
-        answer is released (its lead, m1) and the text the model was given."""
-        return {**self._item_answer(), "answer_released": self.answer_released, "given": self.given}
+        answer is released (its lead, m1), the text the model was given and —
+        on a feedback turn — the grader's verdict, whose line leads it (A121)."""
+        return {
+            **self._item_answer(),
+            "answer_released": self.answer_released,
+            "given": self.given,
+            "verdict": self._lead_verdict(),
+        }
+
+    def _lead_verdict(self) -> str | None:
+        """The grader verdict whose plain line code serves first: a feedback turn's."""
+        return self.verdict if self.phase == "feedback" else None
 
     def _leak_guard(self) -> _LeakGuard | None:
         """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
@@ -2017,25 +2191,40 @@ class _LoopTurn:
         text, BEFORE any token is sent: text that states the answer is never
         shown, and never masked in place (N1) — the stream stops before the
         sentence that holds it (the output validator's retry, or the final
-        ladder line, replaces it). The released answer's lead goes in front."""
+        ladder line, replaces it). Code's lead goes in front (`served_lead`: a
+        feedback turn's verdict line, A121, then the released answer, m1), so
+        the verdict is the first thing the stream shows."""
         if self.tier == "none" or self.item is None:
             return text
+        lead = served_lead(
+            reference=self.item.reference_answer,
+            answer_released=self.answer_released,
+            verdict=self._lead_verdict(),
+        )
         if self.answer_released:
-            return released_lead(self.item.reference_answer) + text
+            return lead + text
         spans = leak_spans(
             emitted=text, given=self.given, **_item_check_kwargs(**self._item_answer())
         )
-        return _cut_before_leak(text, spans) if spans else text
+        return lead + (_cut_before_leak(text, spans) if spans else text)
+
+    def _render_kwargs(self) -> dict:
+        """`served_render` / `served_partial` keywords for this turn (A121)."""
+        return {
+            "phase": self.phase,
+            "rung": self._leak_rung(),
+            "verdict": self.verdict,
+            "poses_check": self.poses_check,
+            "answer_check": self.answer_check,
+        }
 
     def render(self, out) -> str:
         """The served render of the model's structured turn (`served_render`)."""
-        return served_render(out, phase=self.phase, rung=self._leak_rung(), verdict=self.verdict)
+        return served_render(out, **self._render_kwargs())
 
     def render_partial(self, partial) -> str:
-        """The streamed partial as served (the same field override)."""
-        return render_partial(
-            _served_fields(partial, phase=self.phase, rung=self._leak_rung(), verdict=self.verdict)
-        )
+        """The streamed partial as served (the same fields and template)."""
+        return served_partial(partial, **self._render_kwargs())
 
     def serve(self, text: str) -> str:
         """stream_structured_turn's `transform_final`: the served text of the
@@ -2442,10 +2631,24 @@ class _LoopTurn:
             # A27 trigger 1: a served teach turn on the current concept; the
             # LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item
             state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
-            if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK:
+            if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK and _auto_poses_checks(state):
                 qh = _activate_next_item(self.user_id, self.course_id, state, now=self._now)
+                if qh is not None and not self.poses_check:
+                    # Spec §13 A121: this turn was planned and served WITH its own
+                    # question (its trial found nothing to pose), so it poses no
+                    # check — never two open prompts at once. The item stays
+                    # unposed for a later teach turn or "Check me"; a cursor move
+                    # the activation made on the way is kept.
+                    state["current"] = None
+                    _steps(state).pop(qh, None)
+                    qh = None
                 if qh is not None:
                     out["activated"] = state["steps"][qh]["check_item_id"]
+        # Spec §13 A121: whether the next teach-phase chat message replies to the
+        # tutor's own open question (its turn then opens with the verdict)
+        state[OPEN_QUESTION_KEY] = (
+            self.tier != "none" and self.phase in ("teach", "feedback") and not self.poses_check
+        )
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -2463,6 +2666,15 @@ class _LoopTurn:
         return extra
 
 
+def _auto_poses_checks(state: dict) -> bool:
+    """Spec §13 A121: whether a teach turn may pose the concept's next check
+    itself (A27 trigger 1). Not in a quiz-ask session (A99): its surface, the
+    quiz's "Ask about this" sheet, shows no check card, so a check posed there
+    would be an invisible second prompt that answers the student's next
+    message with its pose. "Check me" still poses one wherever a card shows."""
+    return state.get("origin") != QUIZ_ASK_ORIGIN
+
+
 def quiz_ask_state(node_id: str) -> dict:
     """PKG-14 final fix round (spec §13 A99): the loop document a quiz-ask session
     starts with — `teach` on the quiz's concept node, as /plan/approve leaves a
@@ -2477,11 +2689,26 @@ def quiz_ask_state(node_id: str) -> dict:
     }
 
 
+def _probe_opener(course_id: str | None) -> str:
+    """Spec §13 A121: the probe-phase opener — the check-in intro, or, for a
+    course with no check items (its probe ends at once, `no_check_items`), the
+    plan intro. One `limit=1` read; an unreadable bank gets the check-in intro."""
+    try:
+        has_items = _probe_course_has_items(course_id or "")
+    except Exception:
+        logger.warning("opener: check-item bank unreadable; serving the check-in intro", exc_info=True)
+        return LOOP_PROBE_OPENER
+    return LOOP_PROBE_OPENER if has_items else LOOP_PLAN_OPENER
+
+
 class _LoopOpener(_LoopTurn):
     """The session opener (spec Behaviour 15): a fresh session, `teach` with no
     item and the BKT_L0 band, the catalog context (the opener only), and the
     legacy lazy-session contract — `complete` stashes PENDING_SESSIONS and
-    persists and counts nothing (no sessions row exists yet)."""
+    persists and counts nothing (no sessions row exists yet). Spec §13 A121:
+    while the session is in the probe phase (every session but a quiz-ask one)
+    the opener is a template — a neutral welcome and the check-in's intro, no
+    model run, no teaching, no question — at every budget level."""
 
     def __init__(
         self,
@@ -2532,7 +2759,19 @@ class _LoopOpener(_LoopTurn):
     def history(self) -> list:
         return _with_goal_context([], self.state, self.user_id)
 
+    def _probing(self) -> bool:
+        """The new session opens in the probe phase (every session but a quiz-ask
+        one, which teaches from its first turn, A99)."""
+        return _loop_phase(self.state) == "probe"
+
+    def _template_only(self) -> bool:
+        # Spec §13 A121: the probe-phase opener is a template at every budget
+        # level — the check-in is a pretest, so nothing may be taught before it
+        return self._probing()
+
     def _deterministic_text(self, *, hard: bool) -> str | None:
+        if self._probing():
+            return _probe_opener(self.course_id)
         # the opener is never paused: at the hard level it is the template (A27)
         return _LOOP_OPENER_TEMPLATE if hard else None
 
@@ -4762,6 +5001,11 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             # withdrawn (A23), graded, or left under a stale claim (C2): drop it; the entry stays
             st["current"] = None
         out["qh"] = _activate_next_item(body.user_id, course_id, st, now=now)
+        if out["qh"] is not None:
+            # Spec §13 A121: the student chose the check over the tutor's last
+            # question; the card is now the one open prompt, so a later chat
+            # message is no reply to that question
+            st[OPEN_QUESTION_KEY] = False
 
     trial: dict = {}
     activate(state, trial)

@@ -1001,6 +1001,62 @@ def test_loop_phase_patterns_are_real_and_unique_phase_prompt_text():
             assert (pattern in message) == (other == phase), (phase, other)
 
 
+def _answer_check_message(student_text: str) -> tuple[str, object]:
+    """The user message of a real answer-check teach turn (spec §13 A121)."""
+    from agents.loop_tutor import assemble_turn_message, new_nonce, phase_prefix
+    from learning.turn_shape import turn_limits
+
+    prefix = phase_prefix(
+        phase="teach", band="develop", ceiling=3, poses_check=True, answer_check=True
+    )
+    message = assemble_turn_message(
+        prefix=prefix, blocks=[], nonce=new_nonce(), student_text=student_text
+    )
+    return message, turn_limits("teach", 3, False, question=False, answer_check=True)
+
+
+def test_loop_answer_check_pattern_is_real_and_unique_prompt_text():
+    """Spec §13 A121: the handler tells an answer-check turn by a verbatim piece
+    of agents/loop_tutor.py::ANSWER_CHECK_LINE that only an answer-check prefix
+    carries — never the system prompt or the output template (which name the
+    line), never another phase's prefix."""
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_CHECK_PATTERN
+    from agents.loop_tutor import ANSWER_CHECK_LINE, LOOP_OUTPUT_TEMPLATE, _LOOP_SYSTEM_PROMPT
+
+    assert E2E_LOOP_ANSWER_CHECK_PATTERN in ANSWER_CHECK_LINE
+    assert E2E_LOOP_ANSWER_CHECK_PATTERN not in _LOOP_SYSTEM_PROMPT + LOOP_OUTPUT_TEMPLATE
+    message, _ = _answer_check_message("slot 8")
+    assert E2E_LOOP_ANSWER_CHECK_PATTERN in message
+    for phase_key in _LOOP_PHASE_CASES:
+        other, _ = _loop_turn_message(phase_key)
+        assert E2E_LOOP_ANSWER_CHECK_PATTERN not in other, phase_key
+
+
+@pytest.mark.parametrize("slot", _LOOP_SLOTS)
+def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch, slot):
+    """A reply carrying E2E_LOOP_CHAT_ANSWER_TOKEN is judged correct, any other
+    reply not_an_answer (a follow-up question — the quiz sheet's), on every tier
+    slot, and the turn passes the answer-check validator with no retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    import agents.function_handlers_e2e as m
+    from agents.loop_tutor import loop_tutor_agent
+
+    for text, want in (
+        (f"working: {m.E2E_LOOP_CHAT_ANSWER_TOKEN}", m.E2E_LOOP_ANSWER_TURN),
+        ("Can you give me one more example?", m.E2E_LOOP_NOT_AN_ANSWER_TURN),
+    ):
+        message, limits = _answer_check_message(text)
+        deps = _deps()
+        deps.loop_turn = limits
+        result = loop_tutor_agent.run_sync(message, deps=deps, model=model_for(slot))
+        assert result.output == want
+        assert result.usage().requests == 1  # no output retry
+    assert m.E2E_LOOP_CHAT_ANSWER_TOKEN != m.E2E_GRADER_CORRECT_TOKEN, (
+        "the journey's chat answer must never read as a graded check answer"
+    )
+
+
 def test_loop_turn_constants_are_valid_turns_at_the_tightest_limits():
     """Every scripted loop turn passes the output validator — shape, control
     tags, LaTeX and the below-H4 invented-math provenance check — at H0 (a
@@ -1022,6 +1078,14 @@ def test_loop_turn_constants_are_valid_turns_at_the_tightest_limits():
                 phase,
                 ceiling,
             )
+    # spec §13 A121: the answer-check turns, as a turn that also poses a check
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_TURN, E2E_LOOP_NOT_AN_ANSWER_TURN
+
+    for turn in (E2E_LOOP_ANSWER_TURN, E2E_LOOP_NOT_AN_ANSWER_TURN):
+        for ceiling in (0, 1, 2, 3):
+            for question in (True, False):
+                limits = turn_limits("teach", ceiling, False, question=question, answer_check=True)
+                assert validate_turn(turn, limits, source="") == [], (ceiling, question)
 
 
 def test_loop_constants_do_not_state_a_seeded_answer():
@@ -1037,6 +1101,10 @@ def test_loop_constants_do_not_state_a_seeded_answer():
         m.E2E_LOOP_HINT_REPLY,
         m.E2E_LOOP_FEEDBACK_REPLY,
         m.E2E_LOOP_PROBE_PROMPT,
+        # spec §13 A121
+        m.E2E_LOOP_ANSWER_REPLY,
+        m.E2E_LOOP_PROBE_OPENER,
+        m.E2E_LOOP_PLAN_OPENER,
     )
     reference = answer_run(m.E2E_LOOP_REFERENCE)
     grams = {reference[i : i + LEAK_NGRAM] for i in range(len(reference) - LEAK_NGRAM + 1)}

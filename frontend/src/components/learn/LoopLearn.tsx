@@ -1895,7 +1895,8 @@ function ProbePanel({
   busy: boolean;
   /** The next item failed to load (not a pause): offer a retry, never an empty card. */
   loadFailed: boolean;
-  /** The session opener (model-written, or the hard-level template, A27). */
+  /** The session opener: in the probe phase always a template — a welcome and
+   *  the check-in's intro, no teaching and no question (spec §13 A121). */
   greeting: string | null;
   onSubmit: () => void;
   onIdk: () => void;
@@ -1917,6 +1918,7 @@ function ProbePanel({
         <DiagnosisSummary diagnosis={diagnosis} names={names} />
         {greeting && (
           <div
+            data-testid="loop-probe-greeting"
             style={{
               fontSize: 14,
               lineHeight: 1.5,

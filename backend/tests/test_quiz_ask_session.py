@@ -207,6 +207,28 @@ def test_the_loop_quiz_ask_session_starts_in_teach_on_the_quiz_concept(gate_on, 
     assert "node-1" in [c.args[1][0] for c in seams.read_states.call_args_list if c.args[1]]
 
 
+def test_the_quiz_ask_opener_is_the_one_model_opener(gate_on, seams):
+    """Spec §13 A121: the probe-phase opener is a template; a quiz-ask session
+    teaches from its first turn (A99), so its opener is the model run — with the
+    opener's context (the catalog rides it), the opener tier phase, the server's
+    greeting cue and the topic inside the student envelope (review round 3, C1)."""
+    import re
+
+    from routes.learn_loop import PENDING_SESSIONS
+
+    agent, seen = _routes._json_agent("Key idea: the base case. Which input stops it?")
+    r, _ = _opener("/api/learn/loop/start-session", agent=agent)
+    assert r.status_code == 200, r.text
+    PENDING_SESSIONS.pop(r.json()["session_id"])
+    assert seams.context_policy.call_args.kwargs["opener"] is True
+    assert seams.model_tier.call_args.args[0] == "opener"
+    assert seen["kw"]["message_history"] == []
+    assert "Begin the session with a warm greeting" in seen["msg"]
+    assert re.search(r"<<student_text (\w+)>>\nRecursion\n<<end_student_text \1>>", seen["msg"])
+    assert "[ANSWER CHECK]" not in seen["msg"]  # an opener answers no reply
+    seams.ai_budget.count_tutor_call.assert_called_once_with("u1")
+
+
 def test_the_loop_quiz_ask_stream_records_help_before_the_first_token(gate_on, seams):
     from routes.learn_loop import PENDING_SESSIONS
 

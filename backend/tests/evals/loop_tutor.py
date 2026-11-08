@@ -198,22 +198,26 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
 
 def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str, str]:
     """(raw, served, turn): production render_turn (raw); then, as the route
-    serves it (`served_render`: an H2 hint's question is the ladder's), a teach turn unchanged (no active item, m4) and a hint/feedback turn
-    through served_model_text (strict, served mode with the student-visible
-    text as `given`, at the route's leak rung — a leak is the rung's
-    ladder line, never masked; the released answer's lead in front); `turn`
-    is served minus that lead."""
-    from routes.learn_loop import released_lead, served_model_text, served_render
+    serves it (`served_render`: an H2 hint's question is the ladder's, and
+    spec §13 A121's template — the "Key idea:" label only on a teach/hint turn
+    at H2+), a teach turn with nothing stripped (no active item, m4) and a
+    hint/feedback turn through served_model_text (strict, served mode with the
+    student-visible text as `given`, at the route's leak rung — a leak is the
+    rung's ladder line, never masked; code's lead in front: a feedback turn's
+    verdict line (A121), then the released answer); `turn` is served minus
+    that lead."""
+    from routes.learn_loop import served_lead, served_model_text, served_render
 
     raw = render_turn(output)
-    if case_input[0] == "teach":
-        # spec §13 A86 (route parity): a teach turn has no active item and is
-        # served UNCHANGED (the items it states are marked revealed, never
-        # withheld) — the served text is the render
-        return raw, raw, raw
     rendered = served_render(
         output, phase=case_input[0], rung=_leak_rung(case_input, meta), verdict=meta.get("verdict")
     )
+    if case_input[0] == "teach":
+        # spec §13 A86 (route parity): a teach turn has no active item and is
+        # served with nothing stripped (the items it states are marked
+        # revealed, never withheld) — the served text is the served render
+        return raw, rendered, rendered
+    verdict = meta.get("verdict") if case_input[0] == "feedback" else None
     served, _verdict = served_model_text(
         rendered,
         leak_rung=_leak_rung(case_input, meta),
@@ -224,8 +228,9 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
         option_text=meta.get("option_text"),
         answer_released=_released(meta),
         given=_visible(case_input, meta),
+        verdict=verdict,
     )
-    lead = released_lead(meta["reference"]) if _released(meta) else ""
+    lead = served_lead(reference=meta["reference"], answer_released=_released(meta), verdict=verdict)
     return raw, served, served[len(lead) :]
 
 

@@ -34,7 +34,7 @@ import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { queryRaw, seedGoalContinuationItems } from "./support/db";
-import { decryptText } from "./support/decrypt";
+import { decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
 import { LOOP_STREAM_CAPTURE_SCRIPT, loopStreamCompleted, markLoopStream, readLoopStream, type LoopStreamTicket } from "./support/loop-streams";
@@ -49,6 +49,17 @@ const LOOP_TUTOR_REPLY =
   "Key idea: [e2e-function-model] A recursive function needs a base case it is guaranteed to reach.\n\n" +
   "Try writing the base case for factorial before anything else.\n\n" +
   "Which input should stop the recursion?";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PROBE_OPENER */
+const LOOP_PROBE_OPENER =
+  "Welcome! We'll start with a quick check-in to see where you are, then plan " +
+  "your session together.";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_ANSWER_REPLY */
+const LOOP_ANSWER_REPLY =
+  "That's right.\n\n" +
+  "[e2e-function-model] A recursive function needs a base case it is guaranteed to reach.\n\n" +
+  "Try writing the base case for factorial before anything else.";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_CHAT_ANSWER_TOKEN */
+const CHAT_ANSWER_TOKEN = "E2E_CHAT_ANSWER_RIGHT";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_HINT_BODY */
 const LOOP_HINT_BODY = "Reread the item and name the one thing it wants you to state.";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_HINT_QUESTION */
@@ -644,6 +655,72 @@ for (const action of ["retry", "end"] as const) {
   });
 }
 }
+
+test("spec §13 A121: the check-in opens without teaching, and the reply to the tutor's question gets its verdict first from the turn that poses the check without a question of its own", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_TEACH_TURNS_BEFORE_CHECK"]);
+  // the journey's second teach turn is the one that poses the concept's check
+  expect(Number(P.LOOP_TEACH_TURNS_BEFORE_CHECK)).toBe(2);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    // (1) The probe-phase opener is a template: a welcome and the check-in's
+    // intro — no model turn, nothing taught, no question before the pretest.
+    const greeting = page.getByTestId("loop-probe-greeting");
+    await expect(greeting).toContainText(LOOP_PROBE_OPENER);
+    expect(await greeting.textContent()).not.toContain("?");
+    await expect(page.getByTestId("loop-probe-item")).toBeVisible();
+    expect(await page.getByText("[e2e-function-model]").count()).toBe(0);
+
+    await walkProbeAndPlan(page, P);
+    await firstTeachTurn(page); // ends with the tutor's own question (LOOP_TUTOR_REPLY)
+    const phase = page.getByTestId("loop-phase");
+    const sessionId = await phase.getAttribute("data-session-id");
+    expect(sessionId).toBeTruthy();
+    await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
+
+    // (3) The student answers that question in chat, so the next turn opens with
+    // the verdict; (2) it is also the teach turn that poses the check, so it asks
+    // nothing itself — the check card is the one open prompt.
+    const answered = await markLoopStream(page, "/api/learn/loop/chat/stream");
+    await page.getByTestId("tutor-input").fill(`It needs an input that stops it. ${CHAT_ANSWER_TOKEN}`);
+    await page.getByTestId("tutor-send").click();
+    await expectCompletedLoopTurn(page, answered, [LOOP_ANSWER_REPLY]);
+    await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+    await expect(page.getByTestId("loop-check-prompt")).toContainText(LOOP_PROBE_PROMPT);
+    await expect(phase).toHaveAttribute("data-phase", "check");
+    await expectTurn(page, LOOP_ANSWER_REPLY);
+
+    // The persisted turns, decrypted: the opener and the verdict turn exactly as
+    // served (polled: the rows land with the turn's completion, see tutor.spec.ts).
+    let rows: { content: string }[] = [];
+    await expect
+      .poll(async () => {
+        rows = (await queryRaw(
+          "SELECT content FROM messages WHERE session_id = $1 AND role = 'assistant' ORDER BY created_at ASC",
+          [sessionId],
+        )) as { content: string }[];
+        return rows.length;
+      }, { timeout: DB_POLL_TIMEOUT_MS })
+      .toBe(4); // the opener, the first teach turn, the verdict turn, the check pose
+    const texts = await decryptTexts(rows.map((row) => row.content));
+    expect(texts[0]).toBe(LOOP_PROBE_OPENER);
+    expect(texts).toContain(LOOP_TUTOR_REPLY);
+    expect(texts).toContain(LOOP_ANSWER_REPLY);
+    const verdictTurn = texts.find((text) => text.startsWith("That's right."));
+    expect(verdictTurn).toBe(LOOP_ANSWER_REPLY);
+    expect(verdictTurn).not.toContain("?");
+    expect(verdictTurn).not.toContain("Key idea:");
+    const [session] = (await queryRaw("SELECT loop_state FROM sessions WHERE id = $1", [sessionId])) as {
+      loop_state: { current?: string | null; open_question?: boolean };
+    }[];
+    expect(session.loop_state.current).toBeTruthy();
+    expect(session.loop_state.open_question).toBe(false);
+  } finally {
+    await context.close();
+  }
+});
 
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {
   test.skip(killSwitchLane, "loop path: default lane only");

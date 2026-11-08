@@ -400,16 +400,25 @@ def test_a_failed_marker_write_falls_back_to_a_loop_state_marker(gate_on, seams)
 
 
 def _open():
+    """A MODEL opener: since spec §13 A121 only a quiz-ask session's (it teaches
+    from its first turn, A99); a probe session's opener is a template with no
+    model text to scan."""
+    from tests.test_quiz_ask_session import ASK, _tables
+
     agent, _ = _routes._json_agent("Welcome. At n == 0 the base case returns 1. Ready?")
     topic_p, offering_p, graph_p = _routes._opener_patches()
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch("services.quiz_ask.table", side_effect=_tables()),
+        patch("services.quiz_ask.record_help"),
         topic_p,
         offering_p,
         graph_p,
     ):
-        return client.post("/api/learn/loop/start-session", json={"user_id": "u1", "topic": "R"})
+        return client.post(
+            "/api/learn/loop/start-session", json={"user_id": "u1", "topic": "R", **ASK}
+        )
 
 
 def test_the_openers_reveals_are_durable_before_the_session_row_exists(gate_on, seams):

@@ -422,6 +422,11 @@ TURN_MODEL_CEILING_UNRELEASED = 5
 # isomorph worked example (spec §3.3); below it turn_shape.validate_turn retries
 # a math expression the model's inputs never wrote (review round 3)
 TURN_OWN_EXAMPLE_MIN_RUNG = 4
+# Spec §13 A121: first rung at which a teach or hint turn brings new content —
+# H2, the concept pointer (ladder.RUNG_INTENT: H0 "No new information", H1 "No
+# content") — so the first that carries the "Key idea:" label. Not a tunable:
+# it is the ladder's own definition (turn_shape.labels_new_content).
+TURN_NEW_CONTENT_MIN_RUNG = 2
 # † per-field character caps (LoopTurnOut max_length); together under
 # LOOP_MAX_VISIBLE_TOKENS at ~4 characters per token (1340 chars ≈ 335 tokens)
 TURN_KEY_IDEA_MAX_CHARS = 200
