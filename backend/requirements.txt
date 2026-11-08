@@ -63,7 +63,7 @@ ruff==0.15.18
 # output) that `agents/_providers.py` sets for Claude 5.x model names. The
 # `google` extra stays: RAG embeddings remain on Gemini (Anthropic has no
 # embeddings API) and any slot can still be pointed back at a gemini-* model.
-pydantic-ai-slim[google,anthropic]>=1.107.0,<2
+pydantic-ai-slim[google,anthropic]>=1.107.7,<2
 # <1: pydantic-ai 1.107.x's AnthropicModel is written against the 0.x SDK
 # surface; 1.107.9 itself tightens its extra to `anthropic<1`. An unpinned
 # resolve jumps to the 2.x SDK.
