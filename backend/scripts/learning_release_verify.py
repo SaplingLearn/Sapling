@@ -92,6 +92,20 @@ REQUIRED_COLUMNS = {
         # reports an array column's data_type as ARRAY); A119 adds its alignment codes
         "lint_flags": "ARRAY",
         "aligned_at": "timestamp with time zone",  # spec §13 A119: the alignment check ran
+        "key_checked_at": "timestamp with time zone",  # spec §13 A124: the blind solve ran
+    },
+    # spec §13 A124: staff's verdict on one course item's key (the stratified audit)
+    "check_item_audits": {
+        "course_id": "text",
+        "question_hash": "text",
+        "item_id": "text",
+        "concept_key": "text",
+        "format": "text",
+        "difficulty": "smallint",
+        "key_status": "text",
+        "verdict": "text",
+        "audited_by": "text",
+        "audited_at": "timestamp with time zone",
     },
     # spec §13 A113: a student's "Report this question", one row per (student, item)
     "check_item_reports": {
