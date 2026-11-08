@@ -236,6 +236,10 @@ function PlanRow({ item, primary, onSelect }: { item: PlanItem; primary: boolean
 
 /** The dashboard's two header actions. They sit in the greeting row, right-
  *  aligned, so the column below can start flush with the graph card. */
+/** Space between dashboard panels, both across (graph ↔ column) and down
+ *  the column, so the gutters read as one grid. */
+export const PANEL_GAP = 16;
+
 export function DashboardActions({ navigate }: { navigate: (href: string) => void }) {
   return (
     <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
@@ -324,7 +328,7 @@ export function TodayColumn(props: {
   ] as const).filter(([, n]) => n > 0);
 
   return (
-    <div data-testid="dashboard-today-column" style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0, minHeight: 0 }}>
+    <div data-testid="dashboard-today-column" style={{ display: "flex", flexDirection: "column", gap: PANEL_GAP, minWidth: 0, minHeight: 0 }}>
       {/* Today's plan */}
       <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
