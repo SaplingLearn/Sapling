@@ -193,19 +193,21 @@ describe("SideNav — the account footer", () => {
   const footerOf = (rail: HTMLElement) =>
     rail.querySelector<HTMLElement>("[data-sidenav-footer]")!;
 
-  it("makes the whole account block the Settings button", () => {
+  it("opens the footer with a Settings row, then the account block", () => {
     const rail = renderRail();
     const settings = screen.getByRole("link", { name: "Settings" });
     expect(settings.getAttribute("href")).toBe("/settings");
-    expect(footerOf(rail).contains(settings)).toBe(true);
-    // The avatar is inside the link, not beside it.
-    expect(settings.contains(screen.getByTestId("avatar"))).toBe(true);
+    expect(footerOf(rail).firstElementChild).toBe(settings);
+    // The account block (avatar + name + "Account") sits below, not in the link.
+    expect(settings.contains(screen.getByTestId("avatar"))).toBe(false);
+    expect(footerOf(rail).contains(screen.getByTestId("avatar"))).toBe(true);
+    expect(screen.getByText("Account")).toBeTruthy();
   });
 
   it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
-    expect(footer.style.borderTop).toBe("1px solid var(--border)");
+    expect(footer.style.borderTop).toBe("1px solid rgba(74, 90, 56, 0.22)");
 
     // The profile block (the one holding the avatar) owns no rule of its own.
     let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
@@ -220,15 +222,15 @@ describe("SideNav — the account footer", () => {
     mockUser.isAdmin = true;
     const rail = renderRail();
     const admin = screen.getByText("Admin").closest("a")!;
-    // Collapse opens the footer; Admin follows it, under the same rule.
+    // Settings opens the footer; Admin follows it, under the same rule.
     expect(footerOf(rail).firstElementChild?.nextElementSibling).toBe(admin);
     expect(admin.parentElement).toBe(footerOf(rail));
   });
 
-  it("puts the collapse toggle just under the footer rule in both widths", () => {
+  it("puts the collapse toggle just above the footer rule in both widths", () => {
     let rail = renderRail(false);
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(footerOf(rail).firstElementChild).toBe(collapse);
+    expect(footerOf(rail).previousElementSibling).toBe(collapse);
     // Wide rail: a labelled row. Narrow rail: the chevron alone (the label
     // stays mounted so it can fade, but is invisible and aria-hidden).
     const collapseLabel = within(collapse).getByText("Collapse");
@@ -236,7 +238,7 @@ describe("SideNav — the account footer", () => {
     cleanup();
     rail = renderRail(true);
     const expand = screen.getByRole("button", { name: "Expand sidebar" });
-    expect(footerOf(rail).firstElementChild).toBe(expand);
+    expect(footerOf(rail).previousElementSibling).toBe(expand);
     expect(within(expand).getByText("Collapse").style.opacity).toBe("0");
   });
 
@@ -258,20 +260,21 @@ describe("SideNav — active vs inactive", () => {
     const study = screen.getByText("Study").closest("a")!;
     const tree = screen.getByText("Tree").closest("a")!;
 
-    // The selected row is a plain neutral fill in the ink scale; an unselected one
-    // has no background at all. Asserting the TOKEN rather than a computed
-    // colour keeps this honest if the scale is retuned.
-    expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
+    // The selected row is the deeper sage fill (#C9DCB2) in bold with
+    // aria-current; an unselected one has no background at all.
+    expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    expect(study.style.background).toBe("rgb(201, 220, 178)");
+    expect(study.getAttribute("aria-current")).toBe("page");
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
-    expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
+    expect(tree.style.background).toBe("transparent");
+    expect(tree.getAttribute("aria-current")).toBeNull();
   });
 
   it("treats / and /dashboard/... as the Dashboard route", () => {
     mockedUsePathname.mockReturnValue("/");
     renderRail();
     const dashboard = screen.getByText("Dashboard").closest("a")!;
-    expect(dashboard.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
+    expect(dashboard.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
   });
 });
 
@@ -283,17 +286,17 @@ describe("SideNav — collapsed state", () => {
     renderRail(false);
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
-      expect(r.style.marginLeft).toBe("0px");
+      expect(r.style.marginLeft).toBe("10px");
       expect(r.style.paddingLeft).toBe("12px");
       expect(r.style.transition).toMatch(/padding/);
     }
     cleanup();
     renderRail(true);
-    // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
+    // 64px rail − 2×6px inset = 52px; a 20px icon centred → 16px.
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
-      expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("18.5px");
+      expect(r.style.marginLeft).toBe("6px");
+      expect(r.style.paddingLeft).toBe("16px");
     }
   });
 
@@ -313,7 +316,7 @@ describe("SideNav — collapsed state", () => {
     expect(rules).toHaveLength(3);
     for (const r of rules) expect(r.style.opacity).toBe("1");
     expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!.style.borderTop).toBe(
-      "1px solid var(--border)",
+      "1px solid rgba(74, 90, 56, 0.22)",
     );
 
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
