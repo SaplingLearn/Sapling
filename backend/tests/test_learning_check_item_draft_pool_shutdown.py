@@ -93,7 +93,9 @@ def test_the_pool_is_shut_down_before_the_event_drain_and_dbos():
         with TestClient(app):
             pass
     assert order[0] == "pool", order
-    assert order.index("pool") < order.index("events") < order.index("dbos"), order
+    # #771: DBOS is destroyed BEFORE the events worker stops (its workflows log
+    # events); the pool still goes first of all.
+    assert order.index("pool") < order.index("dbos") < order.index("events"), order
 
 
 def test_a_failing_dbos_shutdown_never_skips_the_pool():

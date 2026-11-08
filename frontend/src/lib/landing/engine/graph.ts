@@ -74,7 +74,7 @@ export function buildGraph(): BuiltGraph {
     ox: 0, oy: 0, oz: 0, r: 12,
     label: COURSE.code, root: true, hub: true,
     tier: 'learning', mastery: 0.55, blurb: COURSE.blurb,
-    final: '#0E9E5A', seed: Math.random() * 100,
+    final: '#68951F', seed: Math.random() * 100,
     spawnAt: 0, colorAt: 0,
   });
 

@@ -1,13 +1,13 @@
 {
   "assignments": [
     {
-      "description": "\u6bcf\u5468\u4e00\u6b21\u7684\u4f5c\u4e1a\u3002",
+      "description": "\u6bcf\u5468\u4e00\u6b21\u7684\u8bfe\u540e\u4f5c\u4e1a\uff0c\u6db5\u76d6\u6781\u9650\u3001\u5bfc\u6570\u3001\u79ef\u5206\u4e0e\u7ea7\u6570\u7b49\u5185\u5bb9\u3002",
       "due_date": null,
-      "title": "\u4f5c\u4e1a",
+      "title": "\u6bcf\u5468\u4f5c\u4e1a",
       "weight_pct": null
     },
     {
-      "description": "\u5b66\u671f\u672b\u8fdb\u884c\u7684\u8003\u8bd5\u3002",
+      "description": "\u5b66\u671f\u672b\u4e3e\u884c\u7684\u671f\u672b\u8003\u8bd5\u3002",
       "due_date": null,
       "title": "\u671f\u672b\u8003\u8bd5",
       "weight_pct": null

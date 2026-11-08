@@ -69,6 +69,10 @@ RUN python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock
     && pip check \
     && rm /tmp/lock-constraints.txt /tmp/cpu-index-report.json
 
+# BU SSO launches Chromium on the server; the Python wheel alone is insufficient.
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 EXPOSE 5000

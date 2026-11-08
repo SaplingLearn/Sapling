@@ -308,26 +308,50 @@ def _in_flight(user_id: str, concept_node_id: str) -> int | None:
     would tell the model about attempts the rest of the app already calls
     abandoned: a student who generated three quizzes last week and never
     opened their history would be told they have three in flight.
+
+    #760: and it applies that TTL the way `_attempt_status` does — to the
+    NEWER of `created_at` and the last recorded answer. An attempt generated
+    two days ago but answered minutes ago is being worked on; get_attempt,
+    the history list and the sweep all say in_progress, so this must too.
+    Hence two parts: the open attempts fresh by `created_at` (an exact count),
+    plus the older open ones that have an answer inside the window.
     """
     if not user_id or not concept_node_id:
         return None
     try:
         from routes.quiz import _abandon_cutoff
 
-        _rows, total = table("quiz_attempts").select_with_count(
+        cutoff = _abandon_cutoff().isoformat()
+        open_on_concept = {
+            "user_id": f"eq.{user_id}",
+            "concept_node_id": f"eq.{concept_node_id}",
+            "completed_at": "is.null",
+            "abandoned_at": "is.null",
+        }
+        _rows, fresh = table("quiz_attempts").select_with_count(
             "id",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "concept_node_id": f"eq.{concept_node_id}",
-                "completed_at": "is.null",
-                "abandoned_at": "is.null",
-                "created_at": f"gte.{_abandon_cutoff().isoformat()}",
-            },
+            filters={**open_on_concept, "created_at": f"gte.{cutoff}"},
             limit=1,
         )
         # The exact count, not `len(rows)` under a cap: a saturated page would
         # report "20" as though it were a fact about the student.
-        return total
+        old_ids = sorted({
+            r["id"] for r in (table("quiz_attempts").select(
+                "id", filters={**open_on_concept, "created_at": f"lt.{cutoff}"},
+            ) or []) if r.get("id")
+        })
+        if not old_ids:
+            return fresh
+        # Only answers inside the window can make an old attempt live (an
+        # answer is never older than its attempt), so the read stays small.
+        active = table("quiz_responses").select(
+            "attempt_id",
+            filters={
+                "attempt_id": f"in.({','.join(old_ids)})",
+                "answered_at": f"gte.{cutoff}",
+            },
+        ) or []
+        return fresh + len({r["attempt_id"] for r in active if r.get("attempt_id")})
     except Exception:
         logger.debug("quiz signals: in-flight read failed", exc_info=True)
         return None

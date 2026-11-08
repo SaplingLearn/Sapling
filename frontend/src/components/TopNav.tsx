@@ -19,7 +19,7 @@
  *  - Click on a group label is also valid (keyboard / touch parity).
  *  - Mobile (≤768px) collapses everything into a hamburger that drops a
  *    panel grouped the same way.
- *  - Right-side cluster (settings / admin / avatar) unchanged.
+ *  - Right-side cluster contains settings, report, admin and account.
  */
 
 import React from "react";
@@ -27,6 +27,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
+import { ShellActions } from "./ShellActions";
+import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
@@ -38,6 +40,7 @@ export const TOP_NAV_HEIGHT = 56;
 
 function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
+  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -124,43 +127,9 @@ export function TopNav() {
         </div>
       )}
 
-      {/* Logo — ported verbatim from the pre-revamp Navbar
-          (main@929658f:frontend/src/components/Navbar.tsx:213-231):
-          /sapling-icon.svg + Spectral "Sapling" with a soft green
-          text-shadow. */}
-      <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "2px", textDecoration: "none" }}>
-        <img
-          src="/sapling-icon.svg"
-          alt="Sapling"
-          width={32}
-          height={32}
-          decoding="async"
-          style={{
-            width: "32px",
-            height: "32px",
-            marginTop: "-7px",
-            marginBottom: "-3px",
-            marginLeft: "-2px",
-            marginRight: "-4px",
-            alignSelf: "center",
-            flexShrink: 0,
-          }}
-        />
-        <div style={{ display: "flex", flexDirection: "column", gap: "1px", alignItems: "center", textAlign: "center" }}>
-          <span
-            style={{
-              fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-              fontWeight: 700,
-              fontSize: isMobile ? "17px" : "20px",
-              color: "var(--brand-forest)",
-              letterSpacing: "-0.02em",
-              textShadow: "0 0 12px rgba(26, 92, 42, 0.2)",
-              lineHeight: 1.1,
-            }}
-          >
-            Sapling
-          </span>
-        </div>
+      {/* Logo — the approved wordmark (#728). */}
+      <Link href="/dashboard" aria-label="Sapling — home" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+        <SaplingWordmark width={isMobile ? 88 : 104} decorative />
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
@@ -169,21 +138,7 @@ export function TopNav() {
       <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
         {isAuthenticated && (
           <>
-            <Link
-              href="/settings"
-              aria-label="Settings"
-              title="Settings"
-              style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 44, height: 44, borderRadius: "var(--r-sm)",
-                color: pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)"; }}
-            >
-              <Icon name="cog" size={16} />
-            </Link>
+            <ShellActions />
             {isAdmin && (
               <Link
                 href="/admin"

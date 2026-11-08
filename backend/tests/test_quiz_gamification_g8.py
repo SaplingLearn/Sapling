@@ -138,6 +138,8 @@ class GamificationWorld:
                 "total_xp": self.total_xp,
                 "level": self.level,
                 "streak_count": self.streak,
+                # Active today, so effective_streak (#767) reports the count.
+                "last_active_date": datetime.now(timezone.utc).date().isoformat(),
                 "longest_streak": LONGEST_STREAK,
                 "daily_goal_xp": DAILY_GOAL_XP,
             }]

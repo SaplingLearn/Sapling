@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planMessageRealtimeAction } from './Social';
+import { mergeLatestMessages, planMessageRealtimeAction } from './Social';
 
 /**
  * #124: room_messages realtime payloads carry ciphertext `text`. The component
@@ -39,5 +39,41 @@ describe('planMessageRealtimeAction (#124)', () => {
   it('ignores malformed events (no row / no id)', () => {
     expect(planMessageRealtimeAction('INSERT', null, ME)).toEqual({ type: 'ignore' });
     expect(planMessageRealtimeAction('UPDATE', { user_id: THEM }, ME)).toEqual({ type: 'ignore' });
+  });
+});
+
+/**
+ * #764: a foreign realtime insert used to call load(), which REPLACED the
+ * list with the latest page and dropped every earlier page the user had
+ * loaded. The refetch now merges.
+ */
+describe('mergeLatestMessages (#764)', () => {
+  const msg = (id: string, minute: number, text = id) => ({
+    id, text, created_at: `2026-06-13T00:${String(minute).padStart(2, '0')}:00Z`,
+  });
+
+  it('keeps earlier loaded pages and appends the new message', () => {
+    const prev = [msg('old1', 1), msg('old2', 2), msg('a', 10), msg('b', 11)];
+    const latest = [msg('a', 10), msg('b', 11), msg('c', 12)];
+    expect(mergeLatestMessages(prev, latest).map(m => m.id))
+      .toEqual(['old1', 'old2', 'a', 'b', 'c']);
+  });
+
+  it('takes the server row inside the latest window (foreign edit/delete)', () => {
+    const prev = [msg('old1', 1), msg('a', 10, 'before')];
+    const latest = [msg('a', 10, 'after')];
+    const merged = mergeLatestMessages(prev, latest);
+    expect(merged.map(m => [m.id, m.text])).toEqual([['old1', 'old1'], ['a', 'after']]);
+  });
+
+  it('keeps unsent optimistic rows at the end', () => {
+    const prev = [msg('a', 10), msg('tmp_1', 30)];
+    const latest = [msg('a', 10), msg('c', 12)];
+    expect(mergeLatestMessages(prev, latest).map(m => m.id)).toEqual(['a', 'c', 'tmp_1']);
+  });
+
+  it('an empty refetch leaves the list alone', () => {
+    const prev = [msg('a', 10)];
+    expect(mergeLatestMessages(prev, [])).toBe(prev);
   });
 });

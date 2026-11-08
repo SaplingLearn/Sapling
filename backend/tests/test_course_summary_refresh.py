@@ -506,6 +506,10 @@ def test_every_other_failed_course_context_refresh_is_logged_not_raised(
     with (
         _world(db, _agent()),
         patch("services.academics.resolve_offering", return_value="off-a"),
+        # #766: delete_course drops ONE term's enrollments; every offering here
+        # is in the current term, so all of them are dropped and refreshed.
+        patch("services.academics.current_term", return_value={"id": "term-now"}),
+        patch("services.academics.term_for_offering", return_value={"id": "term-now"}),
         patch(
             "services.course_context_service.update_course_context",
             side_effect=RuntimeError("DB down"),

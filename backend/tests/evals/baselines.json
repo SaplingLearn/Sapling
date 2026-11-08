@@ -35,10 +35,10 @@
   "document_classification": {
     "CategoryEvaluator": 0.862069,
     "ShareabilityEvaluator": 1.0,
-    "SyllabusFlagEvaluator": 0.896552
+    "SyllabusFlagEvaluator": 0.965517
   },
   "document_summary": {
-    "AbstractLengthEvaluator": 0.933333,
+    "AbstractLengthEvaluator": 1.0,
     "HeadlineLengthEvaluator": 1.0,
     "KeyPointsCountEvaluator": 1.0,
     "NoMarkdownLeakEvaluator": 1.0

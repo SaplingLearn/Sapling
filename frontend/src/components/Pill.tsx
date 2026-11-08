@@ -8,6 +8,7 @@ export function Pill({
   icon,
   color,
   testId,
+  size = "sm",
 }: {
   children: React.ReactNode;
   active?: boolean;
@@ -15,7 +16,11 @@ export function Pill({
   icon?: React.ReactNode;
   color?: string;
   testId?: string;
+  /** `sm` (default) is the filter-row pill everywhere else; `md` sits beside
+   *  body-size text, as quiz home's course pills do. */
+  size?: "sm" | "md";
 }) {
+  const md = size === "md";
   return (
     <button
       data-testid={testId}
@@ -26,9 +31,9 @@ export function Pill({
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        padding: "5px 11px",
+        padding: md ? "7px 15px" : "5px 11px",
         borderRadius: "var(--r-full)",
-        fontSize: 12,
+        fontSize: md ? 14 : 12,
         background: active ? (color || "var(--accent-soft)") : "transparent",
         color: active ? (color ? "#fff" : "var(--accent)") : "var(--text-dim)",
         border: `1px solid ${active ? (color || "var(--accent-border)") : "var(--border)"}`,

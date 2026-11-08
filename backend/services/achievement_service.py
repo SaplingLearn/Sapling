@@ -3,12 +3,15 @@ Achievement checker service.
 Called synchronously after events to grant achievements when thresholds are met.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
 from services.session_modes import NOT_REVIEW
 from services import gradebook_service
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
+
+logger = logging.getLogger(__name__)
 
 
 def _count_rows(table_name: str, filters: dict) -> int:
@@ -45,6 +48,12 @@ def get_user_stat(user_id: str, trigger_type: str) -> int:
 def _get_user_stat(user_id: str, trigger_type: str) -> int:
     """Evaluate the current value for a trigger type."""
     if trigger_type == "login_streak":
+        # Deliberately the STORED count, not streak_service.effective_streak
+        # (#767). Readers that DISPLAY "your streak" must use the effective
+        # value, but a badge asks "did you ever reach N days", and a lapsed
+        # stored count is a streak that genuinely happened. login_streak is
+        # only dispatched at session end and sign-in, so a streak built from
+        # quizzes/uploads and then broken would otherwise never earn its badge.
         user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
         if user:
             return user[0].get("streak_count", 0) or 0
@@ -343,10 +352,25 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 
     # Get user's existing achievements to avoid re-granting
     existing = table("user_achievements").select(
-        "achievement_id",
+        "achievement_id,earned_at",
         filters={"user_id": f"eq.{user_id}"},
-    )
-    existing_ids = {row["achievement_id"] for row in existing} if existing else set()
+    ) or []
+    existing_ids = {row["achievement_id"] for row in existing}
+
+    # Self-heal this event's badges that were granted RECENTLY (#767): a grant
+    # is insert → XP → cosmetics over separate writes, so one that died after
+    # the insert left the badge "earned" with its reward never paid, and
+    # nothing retried it because the badge is skipped from then on. Bounded to
+    # HEAL_WINDOW so the steady state costs no extra reads, and so raising a
+    # badge's xp_reward or linking a new cosmetic never pays out retroactively
+    # to everyone who already holds it.
+    event_ids = {t["achievement_id"] for t in triggers}
+    recent_cutoff = datetime.now(timezone.utc) - HEAL_WINDOW
+    _heal_grants(user_id, {
+        row["achievement_id"] for row in existing
+        if row["achievement_id"] in event_ids
+        and _earned_since(row.get("earned_at"), recent_cutoff)
+    })
 
     # Drop already-earned triggers BEFORE evaluating the stat. Several stats
     # are expensive (course_grade_a walks every enrollment's assignments,
@@ -389,13 +413,27 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
         if row.get("status") != "live":
             continue
 
-        table("user_achievements").insert({
-            "user_id": user_id,
-            "achievement_id": achievement_id,
-            "earned_at": datetime.now(timezone.utc).isoformat(),
-            "is_featured": False,
-        })
+        # ON CONFLICT DO NOTHING on the (user_id, achievement_id) PK (#767).
+        # A plain insert raised on the conflict — from a second trigger for the
+        # same badge in this loop, or a concurrent check that won the race —
+        # and the exception aborted every grant after it. An empty
+        # representation means the row already existed: someone else granted
+        # it, so it is not reported as newly earned here.
+        inserted = table("user_achievements").upsert(
+            {
+                "user_id": user_id,
+                "achievement_id": achievement_id,
+                "earned_at": datetime.now(timezone.utc).isoformat(),
+                "is_featured": False,
+            },
+            on_conflict="user_id,achievement_id",
+            ignore_duplicates=True,
+        )
+        existing_ids.add(achievement_id)
 
+        # Reward + cosmetics run even when the row was already there: both are
+        # idempotent (xp_events' idempotency key, user_cosmetics' PK), so this
+        # is free when the winner finished and the repair when it didn't.
         reward = int(row.get("xp_reward") or 0)
         if reward:
             award_xp_safe(
@@ -403,11 +441,142 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
                 source_type="achievement", source_id=achievement_id,
                 amount=reward,
             )
-        newly_earned.append({"slug": row["slug"], "name": row["name"], "xp": reward})
+        if inserted:
+            newly_earned.append({"slug": row["slug"], "name": row["name"], "xp": reward})
 
-        grant_linked_cosmetics(user_id, achievement_id)
+        # The badge is committed; a cosmetics failure must not abort the
+        # badges after it. _heal_grants re-attempts it on a later check.
+        try:
+            grant_linked_cosmetics(user_id, achievement_id)
+        except Exception:
+            logger.exception(
+                "linked cosmetics failed user=%s achievement=%s", user_id, achievement_id,
+            )
 
     return newly_earned
+
+
+# How long after a grant its missing XP/cosmetics are still re-attempted. A
+# half-grant is a request that died between the badge insert and its payouts,
+# so the student's next qualifying event almost always lands well inside this.
+# Past it, a missing payout is indistinguishable from an admin change made
+# after the grant (a raised xp_reward, a newly linked cosmetic), which must
+# NOT be paid out retroactively to every past holder.
+HEAL_WINDOW = timedelta(hours=24)
+
+
+def _earned_since(raw: str | None, cutoff: datetime) -> bool:
+    """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
+    an unknown grant time is treated as old, so it is never healed."""
+    try:
+        ts = _parse_ts(raw)
+        if ts is None:
+            return False
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts > cutoff
+    except (TypeError, ValueError):
+        return False
+
+
+def _heal_grants(user_id: str, achievement_ids: set) -> None:
+    """Re-attempt the XP reward and linked cosmetics of badges granted within
+    HEAL_WINDOW that never received them (#767). Never raises — it runs ahead
+    of the event's real work.
+
+    The grant-time reward and cosmetic set are not recorded, so the CURRENT
+    values are used — which is why the caller only passes recent grants: an
+    admin edit can then at most affect a badge earned in the last day, never
+    the whole back catalogue of holders.
+
+    Only LIVE badges are healed: a badge demoted to draft keeps its grant row
+    (hidden from display, see routes/admin.py::update_achievement) but pays
+    nothing more until it is published again.
+
+    Cost: nothing unless the event's badges include a recent grant; then one
+    read of the badges, one of their achievement_unlocked ledger rows (only if
+    any pays XP), one of their cosmetic links, and one of the user's cosmetics
+    (only if any are linked). Writes happen only when something is missing.
+    """
+    if not achievement_ids:
+        return
+    try:
+        ids = sorted(achievement_ids)
+        badges = table("achievements").select(
+            "id,xp_reward,status", filters={"id": f"in.({','.join(ids)})"},
+        ) or []
+        live = {b["id"]: int(b.get("xp_reward") or 0)
+                for b in badges if b.get("status") == "live"}
+        if not live:
+            return
+
+        paying = sorted(a for a, reward in live.items() if reward)
+        if paying:
+            paid = {
+                r.get("source_id") for r in table("xp_events").select(
+                    "source_id",
+                    filters={
+                        "user_id": f"eq.{user_id}",
+                        "rule_key": "eq.achievement_unlocked",
+                        "source_type": "eq.achievement",
+                        "source_id": f"in.({','.join(paying)})",
+                    },
+                ) or []
+            }
+            for achievement_id in paying:
+                if achievement_id not in paid:
+                    logger.warning(
+                        "healing unpaid achievement XP user=%s achievement=%s",
+                        user_id, achievement_id,
+                    )
+                    award_xp_safe(
+                        user_id, "achievement_unlocked",
+                        source_type="achievement", source_id=achievement_id,
+                        amount=live[achievement_id],
+                    )
+
+        links = table("achievement_cosmetics").select(
+            "achievement_id,cosmetic_id",
+            filters={"achievement_id": f"in.({','.join(sorted(live))})"},
+        ) or []
+        if not links:
+            return
+        wanted = sorted({lc["cosmetic_id"] for lc in links})
+        owned = {
+            r["cosmetic_id"] for r in table("user_cosmetics").select(
+                "cosmetic_id",
+                filters={"user_id": f"eq.{user_id}",
+                         "cosmetic_id": f"in.({','.join(wanted)})"},
+            ) or []
+        }
+        for cosmetic_id in wanted:
+            if cosmetic_id not in owned:
+                logger.warning(
+                    "healing missing achievement cosmetic user=%s cosmetic=%s",
+                    user_id, cosmetic_id,
+                )
+                try:
+                    _unlock_cosmetic(user_id, cosmetic_id)
+                except Exception:
+                    logger.exception(
+                        "cosmetic heal failed user=%s cosmetic=%s", user_id, cosmetic_id,
+                    )
+    except Exception:
+        logger.exception("achievement grant heal failed user=%s", user_id)
+
+
+def _unlock_cosmetic(user_id: str, cosmetic_id: str) -> None:
+    """Idempotent: ON CONFLICT DO NOTHING on the (user_id, cosmetic_id) PK, so
+    a re-grant or a heal of an already-owned cosmetic is a no-op, not a 409."""
+    table("user_cosmetics").upsert(
+        {
+            "user_id": user_id,
+            "cosmetic_id": cosmetic_id,
+            "unlocked_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="user_id,cosmetic_id",
+        ignore_duplicates=True,
+    )
 
 
 def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
@@ -428,9 +597,13 @@ def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     linked_cosmetics = table("achievement_cosmetics").select(
         "cosmetic_id", filters={"achievement_id": f"eq.{achievement_id}"}
     )
+    failed = None
     for lc in linked_cosmetics or []:
-        table("user_cosmetics").insert({
-            "user_id": user_id,
-            "cosmetic_id": lc["cosmetic_id"],
-            "unlocked_at": datetime.now(timezone.utc).isoformat(),
-        })
+        # One bad link (e.g. a dangling cosmetic_id, which has no FK on
+        # achievement_cosmetics) must not stop the others; re-raised after.
+        try:
+            _unlock_cosmetic(user_id, lc["cosmetic_id"])
+        except Exception as exc:
+            failed = exc
+    if failed is not None:
+        raise failed

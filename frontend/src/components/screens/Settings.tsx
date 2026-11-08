@@ -12,7 +12,6 @@ import { SettingsFormSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import {
-  fetchSettings,
   updateSettings,
   deleteAccount,
   updateProfile,
@@ -27,24 +26,61 @@ import {
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
+import { useLatestRequest } from "@/lib/useLatestRequest";
+import { readAccountSettings } from "@/lib/accountSettings";
+import {
+  getAnalyticsState,
+  getServerAnalyticsState,
+  chooseAnalytics,
+  subscribeAnalytics,
+  type AnalyticsState,
+} from "@/lib/analytics";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/**
+ * The settings on/off switch: a real `<button role="switch">`, so it is
+ * focusable, keyboard-operable and announces its state. Name it with
+ * `ariaLabelledBy` (the id of its visible label).
+ */
+function Toggle({
+  on,
+  onChange,
+  disabled = false,
+  ariaLabelledBy,
+  testId,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  ariaLabelledBy?: string;
+  testId?: string;
+}) {
   return (
-    <div
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-labelledby={ariaLabelledBy}
+      data-testid={testId}
+      disabled={disabled}
       onClick={() => onChange(!on)}
       style={{
+        flexShrink: 0,
         width: 36,
         height: 20,
+        padding: 0,
+        border: "none",
         borderRadius: "var(--r-full)",
         background: on ? "var(--accent)" : "var(--bg-soft)",
         position: "relative",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         transition: "all var(--dur) var(--ease)",
       }}
     >
-      <div
+      <span
+        aria-hidden
         style={{
           position: "absolute",
           top: 2,
@@ -57,11 +93,17 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
           transition: "all var(--dur) var(--ease)",
         }}
       />
-    </div>
+    </button>
   );
 }
 
-type UsernameState = { status: "idle" | "checking" | "available" | "taken" | "invalid"; message?: string };
+// `checked` = the exact (normalised) draft this verdict is about (#769), so
+// save-on-blur can refuse a verdict that belongs to an earlier draft.
+type UsernameState = {
+  status: "idle" | "checking" | "available" | "taken" | "invalid";
+  message?: string;
+  checked?: string;
+};
 
 export function Settings() {
   const toast = useToast();
@@ -69,7 +111,29 @@ export function Settings() {
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
-  const [saving, setSaving] = React.useState(false);
+  // Per-field in-flight saves (#769): a count per settings key, so the
+  // "saving…" chip stays up until the LAST overlapping save settles (one
+  // shared boolean was cleared by whichever finished first) and a field's own
+  // control can tell its save is still running.
+  const [savingFields, setSavingFields] = React.useState<Record<string, number>>({});
+  const saving = Object.keys(savingFields).length > 0;
+  const trackSaving = React.useCallback((keys: string[], delta: 1 | -1) => {
+    setSavingFields(prev => {
+      const next = { ...prev };
+      for (const k of keys) {
+        const n = (next[k] ?? 0) + delta;
+        if (n > 0) next[k] = n;
+        else delete next[k];
+      }
+      return next;
+    });
+  }, []);
+  // Rollback bookkeeping for patch() (#769). `confirmed` = the last value the
+  // server accepted per key; `fieldSeq` = the latest save per key, so only
+  // the newest save to a field may roll it back.
+  const confirmedRef = React.useRef<Partial<UserSettings>>({});
+  const fieldSeq = React.useRef<Record<string, number>>({});
+  const usernameReq = useLatestRequest();
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<UserProfile | null>(null);
   const [usernameDraft, setUsernameDraft] = React.useState<string>("");
@@ -84,8 +148,11 @@ export function Settings() {
     // Seed those fields from the public profile as a fallback so the inputs
     // reflect what's actually stored. The profile fetch is best-effort — a
     // failure there must not block settings from loading.
+    // readAccountSettings shares one in-flight GET with the UserProvider's
+    // analytics read and feeds `analytics_opt_out` to the analytics switch
+    // below (lib/accountSettings.ts), so the form and the switch agree.
     Promise.all([
-      fetchSettings(userId),
+      readAccountSettings(userId),
       fetchPublicProfile(userId).catch(() => null),
     ])
       .then(([s, profile]) => {
@@ -98,6 +165,7 @@ export function Settings() {
           website: s.website || profile?.website || null,
         };
         setSettings(seeded);
+        confirmedRef.current = { ...seeded };
         setUsernameDraft(seeded.username || "");
         if (seeded.accent_color) {
           document.documentElement.style.setProperty("--accent", seeded.accent_color);
@@ -106,17 +174,61 @@ export function Settings() {
       .catch((e) => console.error("settings load", e));
   }, [userReady, userId]);
 
+  // Optimistic, with rollback (#769): the control flips at once; if the save
+  // fails, each field this save still owns (no newer save to it since) goes
+  // back to the last value the server accepted, and the student is told.
   const patch = async (updates: Partial<UserSettings>) => {
     if (!userId || !settings) return;
-    const next = { ...settings, ...updates };
-    setSettings(next);
-    setSaving(true);
+    const keys = Object.keys(updates) as (keyof UserSettings)[];
+    const mySeq: Record<string, number> = {};
+    for (const k of keys) mySeq[k] = fieldSeq.current[k] = (fieldSeq.current[k] ?? 0) + 1;
+    setSettings(prev => (prev ? { ...prev, ...updates } : prev));
+    trackSaving(keys, 1);
     try {
       await updateSettings(userId, updates);
+      Object.assign(confirmedRef.current, updates);
     } catch (err) {
       console.error("settings save", err);
+      const owned = keys.filter(k => fieldSeq.current[k] === mySeq[k]);
+      if (owned.length > 0) {
+        const revert: Partial<UserSettings> = {};
+        for (const k of owned) Object.assign(revert, { [k]: confirmedRef.current[k] });
+        setSettings(prev => (prev ? { ...prev, ...revert } : prev));
+        if ("accent_color" in revert) {
+          // The accent is painted straight onto :root at pick time.
+          if (revert.accent_color) document.documentElement.style.setProperty("--accent", revert.accent_color);
+          else document.documentElement.style.removeProperty("--accent");
+        }
+        toast.error("Couldn't save that setting, so it's been changed back. Please try again.");
+      }
     } finally {
-      setSaving(false);
+      trackSaving(keys, -1);
+    }
+  };
+
+  // Product analytics. The account flag is the single source of truth, for
+  // this browser's pageviews and the backend's PostHog mirror alike, so it
+  // is saved whether or not this browser sends anything. Opting out stops
+  // capture here at once, then saves; opting in saves FIRST and only then
+  // starts capture. The switch is disabled while a save is in flight, so
+  // toggles cannot overlap (chooseAnalytics also refuses).
+  const [analyticsSaving, setAnalyticsSaving] = React.useState(false);
+  const setAnalyticsPreference = async (enabled: boolean) => {
+    if (!userId || analyticsSaving) return;
+    setAnalyticsSaving(true);
+    try {
+      const result = await chooseAnalytics(userId, enabled, (optOut) =>
+        updateSettings(userId, { analytics_opt_out: optOut }),
+      );
+      if (result === "failed") {
+        toast.error(
+          enabled
+            ? "Couldn't turn product analytics back on. Please try again."
+            : "Couldn't save that to your account, so it's off in this browser for this visit only — retry from Settings → Data.",
+        );
+      }
+    } finally {
+      setAnalyticsSaving(false);
     }
   };
 
@@ -176,14 +288,16 @@ export function Settings() {
 
   const patchProfile = async (updates: { username?: string; display_name?: string; bio?: string; location?: string; website?: string }) => {
     if (!userId || !settings) return;
-    setSaving(true);
+    const keys = Object.keys(updates);
+    trackSaving(keys, 1);
     try {
       await updateProfile(userId, updates);
       setSettings(prev => prev ? { ...prev, ...updates } : prev);
+      Object.assign(confirmedRef.current, updates);
     } catch (err) {
       toast.error(`Couldn't save: ${String(err)}`);
     } finally {
-      setSaving(false);
+      trackSaving(keys, -1);
     }
   };
 
@@ -191,22 +305,30 @@ export function Settings() {
     if (usernameTimer.current) clearTimeout(usernameTimer.current);
     const next = usernameDraft.trim().toLowerCase();
     if (!next || next === (settings?.username || "")) {
+      usernameReq.cancel();
       setUsernameState({ status: "idle" });
       return;
     }
     setUsernameState({ status: "checking" });
+    // Clearing the debounce timer doesn't stop a check already in flight: a
+    // late reply for an older draft used to mark THIS draft available (#769).
+    const run = usernameReq.begin();
     usernameTimer.current = setTimeout(async () => {
       try {
         const r = await checkUsername(next, userId || undefined);
-        if (r.available) setUsernameState({ status: "available", message: "Available" });
-        else if (r.reason === "invalid") setUsernameState({ status: "invalid", message: "3–24 chars, lowercase letters, digits, or _" });
-        else setUsernameState({ status: "taken", message: "Already taken" });
+        if (!run.isCurrent()) return;
+        if (r.available) setUsernameState({ status: "available", message: "Available", checked: next });
+        else if (r.reason === "invalid") setUsernameState({ status: "invalid", message: "3–24 chars, lowercase letters, digits, or _", checked: next });
+        else setUsernameState({ status: "taken", message: "Already taken", checked: next });
       } catch {
-        setUsernameState({ status: "idle" });
+        if (run.isCurrent()) setUsernameState({ status: "idle" });
       }
     }, 400);
-    return () => { if (usernameTimer.current) clearTimeout(usernameTimer.current); };
-  }, [usernameDraft, settings?.username, userId]);
+    return () => {
+      if (usernameTimer.current) clearTimeout(usernameTimer.current);
+      usernameReq.cancel();
+    };
+  }, [usernameDraft, settings?.username, userId, usernameReq]);
 
   const openPreview = async () => {
     if (!userId) return;
@@ -289,7 +411,11 @@ export function Settings() {
                       onChange={e => setUsernameDraft(e.target.value)}
                       onBlur={async () => {
                         const v = usernameDraft.trim().toLowerCase();
-                        if (v && v !== (settings.username || "") && usernameState.status === "available") {
+                        // Save only the draft that was actually verified (#769).
+                        if (
+                          v && v !== (settings.username || "")
+                          && usernameState.status === "available" && usernameState.checked === v
+                        ) {
                           await patchProfile({ username: v });
                         } else if (!v && settings.username) {
                           setUsernameDraft(settings.username || "");
@@ -533,8 +659,14 @@ export function Settings() {
                     borderBottom: "1px solid var(--border)",
                   }}
                 >
-                  <div style={{ fontSize: 13 }}>{label}</div>
-                  <Toggle on={Boolean(settings[key])} onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)} />
+                  <div style={{ fontSize: 13 }} id={`settings-toggle-${key}-label`}>{label}</div>
+                  <Toggle
+                    on={Boolean(settings[key])}
+                    onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                    disabled={Boolean(savingFields[key])}
+                    ariaLabelledBy={`settings-toggle-${key}-label`}
+                    testId={`settings-toggle-${key}`}
+                  />
                 </div>
               ))}
             </div>
@@ -571,6 +703,17 @@ export function Settings() {
                 </button>
               </div>
 
+              <AnalyticsPreference
+                onChange={(enabled) => void setAnalyticsPreference(enabled)}
+                onRetry={() => void setAnalyticsPreference(false)}
+                onReload={() => {
+                  // Feeds the switch through lib/accountSettings.ts; a failure
+                  // shows as `unreadable` again, with this button.
+                  if (userId) readAccountSettings(userId).catch(() => {});
+                }}
+                saving={analyticsSaving}
+              />
+
               <div
                 className="h-serif"
                 style={{ fontSize: 18, margin: "28px 0 12px", color: "var(--err)" }}
@@ -600,6 +743,7 @@ export function Settings() {
           {tabs.map((t) => (
             <button
               key={t}
+              data-testid={`settings-tab-${t}`}
               onClick={() => setTab(t)}
               style={{
                 display: "block",
@@ -648,6 +792,114 @@ export function Settings() {
         <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
       )}
     </FullHeightScreen>
+  );
+}
+
+/** The status line under the analytics switch, per state — what is actually true. */
+const ANALYTICS_NOTES: Record<AnalyticsState, string> = {
+  unknown: "Loading your saved setting…",
+  unreadable: "We couldn't load your saved setting, so we can't show it yet.",
+  unset:
+    "No choice is saved to your account yet, so this browser sends no page views. Switch it on to share usage data.",
+  on: "On — saved to your account, so it applies wherever you sign in. Nothing about it is stored in your browser.",
+  on_browser_blocked:
+    "On — saved to your account. Your browser's Do Not Track or Global Privacy Control signal is on, so this browser sends no page views and we share no actions from its requests, but some background processing on your documents can still be shared; switch this off to opt out of everything, wherever you sign in.",
+  on_not_running:
+    "On — saved to your account. Page views couldn't start in this browser (a blocker may have stopped them).",
+  off: "Off — saved to your account, so none of this is shared, wherever you sign in.",
+  off_unsaved:
+    "Off in this browser for this visit only — we couldn't save it to your account, so our servers may still share usage data, and it will be back on next visit.",
+};
+
+/**
+ * Product-analytics opt-out (PostHog). It follows the signed-in student's
+ * ACCOUNT (`analytics_opt_out`), which governs both this browser's pageviews
+ * and the backend's own PostHog mirror (#677) — so the switch is usable as
+ * soon as the account has answered, whether or not this build sends
+ * pageviews, the admin `product_analytics` flag is on, or DNT/GPC is set
+ * (src/lib/analytics.ts). It is disabled only until that answer arrives (with
+ * a "Try again" after a failed read) and while a save is in flight. After a
+ * failed opt-out save it shows "off in this browser for this visit only"
+ * with a retry, never "saved".
+ */
+function AnalyticsPreference({
+  onChange,
+  onRetry,
+  onReload,
+  saving,
+}: {
+  onChange: (enabled: boolean) => void;
+  onRetry: () => void;
+  onReload: () => void;
+  saving: boolean;
+}) {
+  const state = React.useSyncExternalStore(
+    subscribeAnalytics,
+    getAnalyticsState,
+    getServerAnalyticsState,
+  );
+  const on = state === "on" || state === "on_browser_blocked" || state === "on_not_running";
+  const loaded = state !== "unknown" && state !== "unreadable";
+
+  return (
+    <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }} id="settings-analytics-label">
+            Product analytics
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            Share how you use Sapling with PostHog, our analytics provider, so we can see what to
+            improve: the app pages you view (with basic browser and device details, but not your IP
+            address), actions you take (like starting a quiz, messaging the
+            tutor or uploading a document), the AI model, token counts and cost behind each AI
+            response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
+            never your name or email, and never what you type or the text of your notes, documents,
+            messages or AI replies. Turning it off stops all of this within about a minute.{" "}
+            <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
+            {ANALYTICS_NOTES[state]}
+            {state === "unreadable" && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  data-testid="settings-analytics-reload"
+                  onClick={onReload}
+                  style={{ marginLeft: 4 }}
+                >
+                  Try again
+                </button>
+              </>
+            )}
+            {state === "off_unsaved" && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  data-testid="settings-analytics-retry"
+                  disabled={saving}
+                  onClick={onRetry}
+                  style={{ marginLeft: 4 }}
+                >
+                  Retry saving
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <Toggle
+          on={on}
+          onChange={onChange}
+          disabled={!loaded || saving}
+          ariaLabelledBy="settings-analytics-label"
+          testId="settings-analytics-toggle"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -942,7 +1194,7 @@ function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () 
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(19,38,16,0.45)",
+        background: "rgba(25, 37, 11,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: 24,
       }}

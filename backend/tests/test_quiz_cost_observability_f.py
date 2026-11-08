@@ -116,6 +116,58 @@ class TestGenerateRateLimit:
         ):
             assert _generate().status_code == 200
 
+    def test_a_failed_attempt_insert_refunds_and_is_countable(self):
+        """#760: the insert runs AFTER the (billed) generation. An unhandled
+        failure there lost the quiz, spent the slot, and emitted nothing —
+        the student saw a 500 no admin could count."""
+        from services import request_limits
+
+        def factory(name):
+            mock = _factory()(name)
+            if name == "quiz_attempts":
+                mock.insert.side_effect = RuntimeError("PostgREST down")
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
+            patch("routes.quiz.events_service.log_event") as log_event,
+        ):
+            r = _generate()
+
+        assert r.status_code == 502
+        assert r.json()["error"]["code"] == "QUIZ_GENERATION_FAILED"
+        assert request_limits._rate_state.get("quiz_generate:user_andres") == []
+        failed = [c for c in log_event.call_args_list
+                  if c.args and c.args[0] == "quiz.generation_failed"]
+        assert len(failed) == 1
+        assert failed[0].kwargs["payload"]["reason"] == "attempt_insert_failed"
+
+    def test_refund_returns_this_requests_slot_not_a_concurrent_one(self):
+        """#760: refunding "the newest" slot handed back a concurrent
+        request's slot. Simulate one: another request claims a slot while
+        this one's generation is running, then this one fails."""
+        from services import request_limits
+
+        key = "quiz_generate:user_andres"
+        concurrent = {}
+
+        async def _fail(*a, **k):
+            concurrent["slot"] = request_limits.claim_rate_limit(
+                key, limit=100, window_sec=300,
+            ).slot
+            raise RuntimeError("boom")
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory()),
+            patch("routes.quiz.quiz_agent.run", new=AsyncMock(side_effect=_fail)),
+        ):
+            r = _generate()
+
+        assert r.status_code == 502
+        assert request_limits._rate_state[key] == [concurrent["slot"]]
+
     def test_limit_is_per_user(self):
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
@@ -227,6 +279,25 @@ class TestDailySpendGuard:
         assert r.status_code == 429
         assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
         run.assert_not_called()
+
+    def test_a_spend_cap_refusal_does_not_consume_a_rate_limit_slot(self):
+        """#760: the cap 429 generated nothing, so it must hand back the slot
+        it claimed — and only that one, not a concurrent request's."""
+        from services import request_limits
+        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+
+        key = "quiz_generate:user_andres"
+        other = request_limits.claim_rate_limit(key, limit=100, window_sec=300).slot
+        spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD + 1.0}]
+        with (
+            patch("routes.quiz.table", side_effect=_factory(spend_rows=spent)),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
+        ):
+            r = _generate()
+        assert r.status_code == 429
+        assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
+        assert request_limits._rate_state[key] == [other]
 
     def test_under_budget_passes(self):
         from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD

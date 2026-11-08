@@ -51,7 +51,6 @@ vi.mock("@/components/TopBar", () => ({ TopBar: () => null }));
 vi.mock("@/components/Gradebook/AssignmentList", () => ({ AssignmentList: () => null }));
 vi.mock("@/components/Gradebook/GradescopeSyncModal", () => ({ GradescopeSyncModal: () => null }));
 vi.mock("@/components/Gradebook/GradePredictorPanel", () => ({ GradePredictorPanel: () => null }));
-vi.mock("@/components/Gradebook/AmbientOrbs", () => ({ AmbientOrbs: () => null }));
 
 import { CurveSettingsModal } from "./Course";
 import type { GradebookCourse } from "@/lib/types";

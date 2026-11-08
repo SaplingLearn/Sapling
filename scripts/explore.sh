@@ -403,6 +403,11 @@ do_up() {
   # lane). Spec §13 A5: the E2E env scales the ZPD gate seconds; e2e-up.sh
   # defaults it, set here so the explorer's stack is visibly the lane's.
   export LEARNING_GATE_TIME_SCALE=0.01
+  # ADR 0028: never send exploration traffic to PostHog: no project token,
+  # no client. e2e-up.sh blanks both too; set here as well so the explore
+  # lane does not depend on it.
+  export POSTHOG_PROJECT_TOKEN=
+  export POSTHOG_PERSONAL_API_KEY=   # erasure is not gated by capture
   # Unconditional (matches CI's unconditional dummy, #439): the below-seam RAG
   # path can still bill a real key even in function mode, and an ambient real
   # key routinely stays exported in dev shells. This only exports into this
@@ -410,6 +415,9 @@ do_up() {
   # operator's actual shell — so there is nothing of the operator's to
   # preserve by deferring to `${GEMINI_API_KEY:-...}` here.
   export GEMINI_API_KEY=e2e-dummy-key-no-billing
+  # Same for the agents' provider (ADR 0030): function mode never dials Claude;
+  # the dummy makes sure a slip in this local-only harness can't bill either.
+  export ANTHROPIC_API_KEY=e2e-dummy-key-no-billing
   # SEED_RICH defaults to 1 in e2e-up.sh, but an ambient SEED_RICH=0 in the
   # operator's shell would silently defeat it — this harness requires the
   # rich dataset (mint_storage_state below dies late otherwise).

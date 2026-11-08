@@ -15,6 +15,7 @@ return only rows matching the `in.(...)` filter the route builds, so a route
 that forgot to scope its reads would fail these tests rather than pass on a mock
 that ignores filters.
 """
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -24,6 +25,10 @@ from main import app
 from services import academics
 
 client = TestClient(app)
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -226,7 +231,8 @@ class TestPayloadShape:
         peers = {"user_maya"}
         factory, _ = _route_tables(
             settings_rows=[],
-            all_users=[{"id": "user_maya", "streak_count": 9}],
+            all_users=[{"id": "user_maya", "streak_count": 9,
+                        "last_active_date": _today()}],
             # Same abstract course via two offerings → one deduped entry.
             all_enrollments=[
                 _enrollment("user_maya", "Calculus II"),
@@ -245,6 +251,22 @@ class TestPayloadShape:
         assert row["courses"] == ["Calculus II", "Linear Algebra"]
         assert row["streak"] == 9
         assert row["name"] == "Maya"
+
+    def test_a_lapsed_streak_reads_zero(self):
+        """#767: the stored count survives a broken streak until the next
+        activity, so the roster must not show it."""
+        peers = {"user_maya"}
+        factory, _ = _route_tables(
+            settings_rows=[],
+            all_users=[{"id": "user_maya", "streak_count": 9,
+                        "last_active_date": "2020-01-01"}],
+            all_enrollments=[],
+        )
+        with patch.object(social.academics, "school_peer_user_ids", return_value=peers), \
+             patch.object(social, "table", factory), \
+             patch.object(social, "get_display_names", return_value={"user_maya": "Maya"}):
+            r = client.get("/api/social/students")
+        assert r.json()["students"][0]["streak"] == 0
 
     def test_never_reads_graph_nodes(self):
         # Mastery is gone entirely — the route must not touch graph_nodes.

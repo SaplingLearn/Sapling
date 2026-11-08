@@ -727,17 +727,29 @@ def test_shutdown_drains_bounded_records_finished_rows_and_logs_the_dropped(seam
 
 
 def test_the_lifespan_drains_shadows_and_closes_jev_before_the_event_flush():
-    import ast
-    import pathlib
+    """PKG-15 R1 (minor 7), on #771's exit stack: the in-flight shadows drain,
+    then the Jev clients close, then the events worker flushes their rows."""
+    from unittest.mock import AsyncMock, patch
 
-    src = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text()
-    fn = next(
-        n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_lifespan"
-    )
-    body = ast.unparse(fn)
-    after = body[body.index("yield") :]
-    assert "shutdown_shadows(" in after and "aclose_clients(" in after
-    assert after.index("shutdown_shadows(") < after.index("aclose_clients(") < after.index("events_service.shutdown()")
+    from fastapi.testclient import TestClient
+
+    order: list[str] = []
+    with (
+        patch("services.learning_decisions.shutdown_shadows",
+              new=AsyncMock(side_effect=lambda: order.append("shadows"))),
+        patch("agents._jev.aclose_clients",
+              new=AsyncMock(side_effect=lambda: order.append("jev"))),
+        patch("services.events_service.shutdown",
+              side_effect=lambda *a, **k: order.append("events")),
+        patch("main.start_sweeper"),
+        patch("main.stop_sweeper", new=AsyncMock()),
+        patch("main.ensure_bucket_exists", new=AsyncMock()),
+    ):
+        from main import app
+
+        with TestClient(app):
+            pass
+    assert order.index("shadows") < order.index("jev") < order.index("events"), order
 
 
 def test_aclose_clients_closes_this_loops_client(monkeypatch):

@@ -7,7 +7,7 @@
  *   1. Every destination renders, grouped under its 4 section labels
  *   2. Nav rows never drop below the 36px interactive floor — in BOTH the
  *      expanded and collapsed states (the whole point of the density pass)
- *   3. The single foot rule sits ABOVE Settings, and the profile block
+ *   3. The single foot rule sits ABOVE the account controls, and the profile block
  *      carries no rule of its own
  *   4. Active is marked (weight + brand color), inactive is not
  *   5. Collapsed swaps section labels for separator rules and keeps the
@@ -72,10 +72,14 @@ function renderRail(collapsed = false) {
 /** Every nav row is an <a> inside the rail. The logo is the one <a> that is
  *  not a nav row (it keeps its aria-label in both states, so filter on that
  *  rather than on text — the wordmark is dropped when collapsed). */
+// Destination rows only: the logo and the account block (the Settings button
+// in the footer) are links too, but neither is a nav row.
+const isNavRow = (a: Element) =>
+  a.getAttribute("aria-label") !== "Sapling — home" &&
+  a.getAttribute("data-testid") !== "nav-link-settings";
+
 function navRows(rail: HTMLElement): HTMLElement[] {
-  return Array.from(rail.querySelectorAll("a")).filter(
-    (a) => a.getAttribute("aria-label") !== "Sapling — home",
-  ) as HTMLElement[];
+  return Array.from(rail.querySelectorAll("a")).filter(isNavRow) as HTMLElement[];
 }
 
 beforeEach(() => {
@@ -92,7 +96,7 @@ afterEach(() => {
 
 describe("SideNav — structure", () => {
   it("exposes the two shell widths ShellFrame lays out against", () => {
-    expect(SIDE_NAV_EXPANDED).toBe(232);
+    expect(SIDE_NAV_EXPANDED).toBe(200);
     expect(SIDE_NAV_COLLAPSED).toBe(64);
   });
 
@@ -108,9 +112,10 @@ describe("SideNav — structure", () => {
     for (const label of ["Learn", "Organize", "Community", "Tools"]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
-    for (const item of ["Dashboard", "Tutor", "Quiz", "Tree", "Study", "Library", "Calendar", "Social", "Achievements", "Grades", "Notetaker", "Course Planner", "Settings"]) {
+    for (const item of ["Dashboard", "Tutor", "Tree", "Study", "Library", "Calendar", "Social", "Achievements", "Grades", "Notetaker", "Course Planner"]) {
       expect(screen.getByText(item)).toBeTruthy();
     }
+    expect(screen.queryByRole("link", { name: "Quiz" })).toBeNull();
     // Admin is gated on the flag.
     expect(screen.queryByText("Admin")).toBeNull();
   });
@@ -164,16 +169,43 @@ describe("SideNav — interactive row height floor", () => {
   });
 });
 
+describe("SideNav — the logo", () => {
+  const symbolOf = (rail: HTMLElement) =>
+    rail.querySelector<HTMLElement>("[data-sidenav-symbol]")!;
+
+  it("shows the wordmark wide and the Sapling symbol narrow, both as a live home link", () => {
+    let rail = renderRail(false);
+    let home = screen.getByRole("link", { name: "Sapling — home" });
+    expect(home.getAttribute("href")).toBe("/dashboard");
+    expect(symbolOf(rail).style.opacity).toBe("0");
+    cleanup();
+    rail = renderRail(true);
+    home = screen.getByRole("link", { name: "Sapling — home" });
+    expect(symbolOf(rail).style.opacity).toBe("1");
+    expect(home.contains(symbolOf(rail))).toBe(true);
+    // Reachable in the narrow rail too: it is the only logo left on screen.
+    expect(home.getAttribute("tabindex")).toBeNull();
+    expect(home.style.pointerEvents).toBe("");
+  });
+});
+
 describe("SideNav — the account footer", () => {
   const footerOf = (rail: HTMLElement) =>
     rail.querySelector<HTMLElement>("[data-sidenav-footer]")!;
 
-  it("opens the footer with one full-width rule directly above Settings", () => {
+  it("makes the whole account block the Settings button", () => {
+    const rail = renderRail();
+    const settings = screen.getByRole("link", { name: "Settings" });
+    expect(settings.getAttribute("href")).toBe("/settings");
+    expect(footerOf(rail).contains(settings)).toBe(true);
+    // The avatar is inside the link, not beside it.
+    expect(settings.contains(screen.getByTestId("avatar"))).toBe(true);
+  });
+
+  it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
     expect(footer.style.borderTop).toBe("1px solid var(--border)");
-    // Settings is the footer's first row: nothing sits between it and the rule.
-    expect(footer.firstElementChild).toBe(screen.getByText("Settings").closest("a"));
 
     // The profile block (the one holding the avatar) owns no rule of its own.
     let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
@@ -187,17 +219,16 @@ describe("SideNav — the account footer", () => {
   it("keeps Admin below the same single rule when the user is an admin", () => {
     mockUser.isAdmin = true;
     const rail = renderRail();
-    const settings = screen.getByText("Settings").closest("a")!;
     const admin = screen.getByText("Admin").closest("a")!;
-    // Admin follows Settings directly — no second rule between them.
-    expect(settings.nextElementSibling).toBe(admin);
+    // Collapse opens the footer; Admin follows it, under the same rule.
+    expect(footerOf(rail).firstElementChild?.nextElementSibling).toBe(admin);
     expect(admin.parentElement).toBe(footerOf(rail));
   });
 
-  it("puts the collapse toggle directly above the footer rule in both widths", () => {
+  it("puts the collapse toggle just under the footer rule in both widths", () => {
     let rail = renderRail(false);
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(footerOf(rail).previousElementSibling).toBe(collapse);
+    expect(footerOf(rail).firstElementChild).toBe(collapse);
     // Wide rail: a labelled row. Narrow rail: the chevron alone (the label
     // stays mounted so it can fade, but is invisible and aria-hidden).
     const collapseLabel = within(collapse).getByText("Collapse");
@@ -205,7 +236,7 @@ describe("SideNav — the account footer", () => {
     cleanup();
     rail = renderRail(true);
     const expand = screen.getByRole("button", { name: "Expand sidebar" });
-    expect(footerOf(rail).previousElementSibling).toBe(expand);
+    expect(footerOf(rail).firstElementChild).toBe(expand);
     expect(within(expand).getByText("Collapse").style.opacity).toBe("0");
   });
 
@@ -215,23 +246,23 @@ describe("SideNav — the account footer", () => {
     const scroller = rail.querySelector<HTMLElement>("[data-sidenav-scroll]")!;
     expect(scroller.style.overflowY).toBe("auto");
     expect(scroller.getAttribute("style") || "").toMatch(/scrollbar-width:\s*none/);
-    expect(scroller.contains(screen.getByText("Quiz"))).toBe(true);
+    expect(scroller.contains(screen.getByText("Tutor"))).toBe(true);
     expect(scroller.contains(footerOf(rail))).toBe(false);
   });
 });
 
 describe("SideNav — active vs inactive", () => {
-  it("marks only the current route", () => {
+  it("marks Study active while a quiz is open", () => {
     mockedUsePathname.mockReturnValue("/quiz");
     renderRail();
-    const quiz = screen.getByText("Quiz").closest("a")!;
+    const study = screen.getByText("Study").closest("a")!;
     const tree = screen.getByText("Tree").closest("a")!;
 
     // The selected row is a plain neutral fill in the ink scale; an unselected one
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
-    expect(quiz.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(quiz.getAttribute("style") || "").toMatch(/--bg-soft/);
+    expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
+    expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
     expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
   });
@@ -248,7 +279,7 @@ describe("SideNav — collapsed state", () => {
   it("centres rows by padding, never justify-content, so the move can tween", () => {
     const rows = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-app-sidenav] a[href^='/']"))
-        .filter((a) => a.getAttribute("aria-label") !== "Sapling — home");
+        .filter(isNavRow);
     renderRail(false);
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
@@ -288,7 +319,7 @@ describe("SideNav — collapsed state", () => {
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     // Each row still carries its label as an accessible name.
-    expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toBeTruthy();
   });
 
   it("shows the collapse affordance when expanded", () => {

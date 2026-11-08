@@ -105,8 +105,9 @@ def test_never_raises_on_broken_result(sink, caplog):
     assert "PRIVATE_USAGE_CAPTURE_CONTENT" not in caplog.text
 
 
+# The zero-token warning moved onto the one llm_usage write path
+# (events_service._warn_zero_token_usage, #689): only the retry hook is left here.
 @pytest.mark.parametrize("hook,stage", [
-    ("_warn_zero_token_run", "agent_zero_token_check"),
     ("_log_recovered_retries", "agent_retry_observability"),
 ])
 def test_diagnostic_hook_failure_warns_privately_without_losing_usage(sink, monkeypatch, caplog, hook, stage):
@@ -139,11 +140,16 @@ def test_diagnostic_hook_failure_warns_privately_without_losing_usage(sink, monk
 # resolved genai-prices 0.1.x, so prod/staging recorded zeros while every
 # local backend (older genai-prices) recorded real counts.
 #
-# This drives the production model object (`model_for`, a _LoopSafeGoogleModel)
-# over a canned GenerateContentResponse shaped like Gemini's real reply —
+# This drives the production model object (`model_for` on a gemini-* slot, a
+# _LoopSafeGoogleModel — the slot is pinned there because Claude is the
+# default since ADR 0030; the Claude twin follows) over a canned
+# GenerateContentResponse shaped like Gemini's real reply —
 # including `promptTokensDetails`, the field that trips the extraction — and
 # asserts the ledger row carries the tokens. Patched at `AsyncModels.
 # generate_content`, above the hermetic transport guard.
+
+
+_GEMINI_SLOT = "gemini-2.5-flash-lite"
 
 
 def _gemini_reply():
@@ -156,7 +162,7 @@ def _gemini_reply():
                 finish_reason=types.FinishReason.STOP,
             )
         ],
-        model_version=model_name_for("concept_describe"),
+        model_version=_GEMINI_SLOT,
         response_id="resp-689",
         usage_metadata=types.GenerateContentResponseUsageMetadata(
             prompt_token_count=199,
@@ -177,7 +183,7 @@ def test_real_gemini_response_records_nonzero_tokens(sink, monkeypatch):
     from pydantic_ai import Agent
 
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    monkeypatch.delenv("SAPLING_MODEL_CONCEPT_DESCRIBE", raising=False)
+    monkeypatch.setenv("SAPLING_MODEL_CONCEPT_DESCRIBE", _GEMINI_SLOT)
 
     async def _fake_generate_content(self, *args, **kwargs):
         return _gemini_reply()
@@ -197,12 +203,75 @@ def test_real_gemini_response_records_nonzero_tokens(sink, monkeypatch):
     events_service.flush_now()
 
     row = sink[0][1][0]
-    assert row["model"] == model_name_for("concept_describe")
+    assert row["model"] == _GEMINI_SLOT
+    assert row["provider"] == "gemini"
     assert (row["prompt_tokens"], row["completion_tokens"], row["total_tokens"]) == (
         199,
         38,
         237,
     ), "Gemini reported 199/38 tokens; the llm_usage row must carry them (#689)"
+    assert (row["cost_usd"] or 0) > 0
+
+
+def _claude_reply(model: str):
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
+
+    return BetaMessage(
+        id="msg-689",
+        type="message",
+        role="assistant",
+        model=model,
+        content=[BetaTextBlock(type="text", text="A blurb.")],
+        stop_reason="end_turn",
+        usage=BetaUsage(
+            input_tokens=150,
+            output_tokens=38,
+            cache_read_input_tokens=40,
+            cache_creation_input_tokens=9,
+        ),
+    )
+
+
+def test_real_claude_response_records_nonzero_tokens(sink, monkeypatch):
+    """ADR 0030 twin: genai-prices is pydantic-ai's usage extractor for the
+    Anthropic response too, so the #689 pairing break would zero Claude's
+    ledger the same way. Drives the default (Claude) slot over a canned
+    Messages reply, patched at the SDK's async beta `messages.create` — the
+    one call pydantic-ai makes — above the hermetic transport guard."""
+    import asyncio
+
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from pydantic_ai import Agent
+
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.delenv("SAPLING_MODEL_CONCEPT_DESCRIBE", raising=False)
+    slot = model_name_for("concept_describe")
+    assert slot.startswith("claude-")
+
+    async def _fake_create(self, **kwargs):
+        return _claude_reply(slot)
+
+    monkeypatch.setattr(AsyncMessages, "create", _fake_create)
+
+    agent = Agent(model_for("concept_describe"))
+
+    async def _run():
+        async with agent:
+            return await agent.run("Describe photosynthesis.")
+
+    result = asyncio.run(_run())
+    record_agent_usage(result, feature="graph", task="concept_describe")
+    events_service.flush_now()
+
+    row = sink[0][1][0]
+    assert row["model"] == slot
+    assert row["provider"] == "anthropic"
+    # pydantic-ai folds cache reads and writes into input: 150 + 40 + 9.
+    assert (row["prompt_tokens"], row["completion_tokens"], row["total_tokens"]) == (
+        199,
+        38,
+        237,
+    ), "Claude reported 199/38 tokens; the llm_usage row must carry them (#689)"
     assert (row["cost_usd"] or 0) > 0
 
 
@@ -231,14 +300,28 @@ class _ZeroResult(_FakeResult):
 
 def test_real_run_reporting_zero_tokens_warns(sink, monkeypatch, caplog):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
+    # Exactly once: the check lives in log_llm_usage, which record_agent_usage
+    # writes through, so it must not ALSO warn on its own.
+    assert sum("reported 0 tokens" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_direct_llm_usage_writer_reporting_zero_tokens_warns(sink, monkeypatch, caplog):
+    """Writers that bypass record_agent_usage (services/decisions.py's Jev
+    row) are covered too: the check sits on the llm_usage write itself."""
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    with caplog.at_level("WARNING"):
+        events_service.log_llm_usage(
+            feature="tutor", task="decision", model="jev-1", usage={},
+            provider="typesafe", requests=1,
+        )
     assert any("reported 0 tokens" in r.getMessage() for r in caplog.records)
 
 
 def test_function_mode_zero_tokens_stay_quiet(sink, monkeypatch, caplog):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
     assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)
 
@@ -252,6 +335,6 @@ def test_real_run_with_tokens_stays_quiet(sink, monkeypatch, caplog):
             return _Usage()
 
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_Result(), feature="graph", task="concept_describe")
     assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)

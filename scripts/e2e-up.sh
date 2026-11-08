@@ -15,7 +15,7 @@
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.
 #
 # First-time setup on a new machine (same as scripts/local-up.sh):
-#   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY
+#   cp backend/.env.local.example backend/.env       # then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY
 #   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   cd frontend && npm ci
 #
@@ -172,7 +172,7 @@ echo "▶ Preflight…"
 command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
-  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY)"; exit 1; }
 # PKG-14b (spec §11.4): the E2E lane is chosen in the SHELL. load_dotenv() would
 # fill an unset LEARNING_LOOP_ENABLED from backend/.env for the backend while
 # Playwright (this shell) sees it unset, so the two halves would disagree.
@@ -303,6 +303,19 @@ echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (s
 export FEATURE_FLAGS_SNAPSHOT_TTL_S=0
 export FEATURE_FLAGS_ROLES_TTL_S=0
 echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this stack (ADR 0029)"
+# ADR 0028: this stack must never send to PostHog, whatever backend/.env
+# holds. The seam is also off under any non-real SAPLING_MODEL_MODE, but this
+# script does NOT force function mode (it only prints a notice when it is
+# unset) and runs APP_ENV=local — so say it explicitly rather than rely on
+# that inference: blank the project token, and no PostHog client is built.
+# Erasure is not capture (account deletion still calls PostHog's bulk_delete
+# when a personal key is configured), so blank the personal key too: an E2E
+# account-deletion journey must never reach a real PostHog project. Exported
+# empty, each beats backend/.env (python-dotenv never overrides an existing
+# variable). Unconditional: there is no reason to send from a local lane.
+export POSTHOG_PROJECT_TOKEN=
+export POSTHOG_PERSONAL_API_KEY=
+echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

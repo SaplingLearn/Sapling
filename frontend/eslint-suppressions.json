@@ -14,11 +14,6 @@
       "count": 1
     }
   },
-  "src/components/DocumentUploadModal.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/FeedbackFlow.tsx": {
     "react/no-unescaped-entities": {
       "count": 1
@@ -32,11 +27,6 @@
   "src/components/Gradebook/AssignmentModal.tsx": {
     "no-restricted-syntax": {
       "count": 12
-    }
-  },
-  "src/components/Gradebook/SyllabusUploadFlow.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
     }
   },
   "src/components/SessionFeedbackGlobal.tsx": {
@@ -67,11 +57,6 @@
       "count": 12
     }
   },
-  "src/components/graph/KnowledgeGraph3D.test.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/marketing/SignInModal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -92,7 +77,7 @@
   },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
-      "count": 19
+      "count": 13
     },
     "react/no-unescaped-entities": {
       "count": 2
@@ -116,6 +101,11 @@
       "count": 2
     }
   },
+  "src/components/screens/Settings.tsx": {
+    "no-restricted-syntax": {
+      "count": 15
+    }
+  },
   "src/components/screens/Social.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9
@@ -126,7 +116,7 @@
       "count": 1
     },
     "no-restricted-syntax": {
-      "count": 8
+      "count": 7
     }
   },
   "src/lib/api.test.ts": {
@@ -136,7 +126,7 @@
   },
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 23
+      "count": 21
     }
   },
   "src/lib/useActiveSemester.ts": {

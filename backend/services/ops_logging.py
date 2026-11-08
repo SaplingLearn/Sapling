@@ -16,7 +16,8 @@ import logfire
 _STAGES = {
     "sapling.agents.usage": (
         "agent_usage_capture",
-        "agent_zero_token_check",
+        # (agent_zero_token_check is gone: the #689 zero-token warning lives on the
+        # one llm_usage write path, events_service._warn_zero_token_usage)
         "agent_retry_observability",
     ),
     "services.chat_stream": ("legacy_stream_usage", "structured_stream_usage"),

@@ -79,7 +79,6 @@ def test_real_agent_usage_capture_failure_exports_metadata_and_returns_the_same_
         def usage(self):
             raise RuntimeError("PRIVATE_PROVIDER_USAGE student@example.invalid")
 
-    monkeypatch.setattr(agent_usage, "_warn_zero_token_run", lambda *_a: None)
     monkeypatch.setattr(agent_usage, "_log_recovered_retries", lambda *_a: None)
     result = Run()
     assert agent_usage.record_agent_usage(result, feature="PRIVATE_FEATURE") is result

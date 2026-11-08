@@ -45,9 +45,6 @@ vi.mock("@/lib/api", () => ({
 
 // Presentational children — stubbed so the test only exercises the landing's
 // own term resolution.
-vi.mock("@/components/Gradebook/AmbientOrbs", () => ({
-  AmbientOrbs: () => null,
-}));
 vi.mock("@/components/Gradebook/SyllabusUploadFlow", () => ({
   SyllabusUploadFlow: () => null,
 }));
@@ -151,6 +148,25 @@ describe("GradebookLanding semester chips", () => {
 
       const chip = await screen.findByRole("button", { name: "Fall 2024" });
       expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
+      expect(chip.getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preselects the SERVER's current term over the browser clock (#766)", async () => {
+    // The browser clock sits in Fall 2024; the server says Spring 2025.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2024, 9, 1));
+    try {
+      mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS, current_term_id: "spring-2025" });
+      mockedGetCourses.mockResolvedValue({
+        courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")],
+      });
+
+      render(<GradebookLanding />);
+
+      const chip = await screen.findByRole("button", { name: "Spring 2025" });
       expect(chip.getAttribute("aria-pressed")).toBe("true");
     } finally {
       vi.useRealTimers();
@@ -375,6 +391,47 @@ describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
     });
 
     expect(chipLabels()).toEqual(["Fall 2024"]);
+    expect(mockedGetSummary).not.toHaveBeenCalledWith("u2", "Spring 2025");
+  });
+
+  it("drops a previous identity's loaded term and GPA when the identity changes", async () => {
+    // u1's terms and summary have fully landed (Spring 2025, GPA 3.70). On a
+    // switch to u2, u1's selection must not be summarised under u2's id, and
+    // u1's Term GPA must not sit next to u2's loading skeleton.
+    let releaseU2: () => void = () => {};
+    mockedGetCourses.mockImplementation((uid) => {
+      if (uid === "u2") {
+        return new Promise((resolve) => {
+          releaseU2 = () => resolve({ courses: [course("psy", "Fall 2024")] });
+        });
+      }
+      return Promise.resolve({ courses: [course("bio", "Spring 2025")] });
+    });
+    mockedGetSummary.mockImplementation((uid, term) =>
+      Promise.resolve({
+        courses: [summaryCourse(uid === "u1" ? "bio" : "psy", term)],
+        gpa: uid === "u1" ? 3.7 : null,
+        semester: term,
+      }),
+    );
+
+    const { rerender } = render(<GradebookLanding />);
+    expect((await screen.findByTestId("gradebook-term-gpa")).textContent).toContain("3.70");
+    expect(mockedGetSummary).toHaveBeenCalledWith("u1", "Spring 2025");
+
+    mockUser.userId = "u2";
+    rerender(<GradebookLanding />);
+    await waitFor(() => expect(mockedGetCourses).toHaveBeenCalledWith("u2"));
+
+    expect(screen.queryByTestId("gradebook-term-gpa")).toBeNull();
+    expect(screen.queryByRole("link", { name: /bio/i })).toBeNull();
+    expect(mockedGetSummary).not.toHaveBeenCalledWith("u2", "Spring 2025");
+
+    await act(async () => {
+      releaseU2();
+    });
+    await screen.findByRole("link", { name: /psy/i });
+    expect(mockedGetSummary).toHaveBeenCalledWith("u2", "Fall 2024");
     expect(mockedGetSummary).not.toHaveBeenCalledWith("u2", "Spring 2025");
   });
 

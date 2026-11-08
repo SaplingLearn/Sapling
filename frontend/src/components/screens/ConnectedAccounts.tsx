@@ -10,6 +10,8 @@ import {
   deleteGradescopeCredentials,
   type GradescopeStatus,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
+import { gradescopeConnectionState } from "@/components/Gradebook/gradescopeState";
 
 /**
  * Connected Accounts — settings surface for managing third-party
@@ -24,17 +26,26 @@ export function ConnectedAccounts() {
   const [status, setStatus] = React.useState<GradescopeStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [connectOpen, setConnectOpen] = React.useState(false);
+  const [reconnect, setReconnect] = React.useState(false);
 
+  // Latest-wins: the mount load and the post-dialog / post-disconnect
+  // reloads can overlap, and an older answer must not repaint the card.
+  const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async () => {
     if (!userId) return;
+    const seq = ++refreshSeq.current;
     try {
       const s = await getGradescopeStatus(userId);
+      if (seq !== refreshSeq.current) return;
       setStatus(s);
     } catch (e: unknown) {
-      toast.error(`Couldn't load Gradescope status: ${e instanceof Error ? e.message : ""}`);
-      setStatus({ has_credentials: false, auth_mode: null, last_synced_at: null });
+      if (seq !== refreshSeq.current) return;
+      toast.error(`Couldn't load Gradescope status: ${humanizeError(e, "Try again.")}`);
+      // Unknown, not "disconnected": a failed read says nothing about the
+      // connection, and Connect over saved credentials would be misleading.
+      setStatus(null);
     } finally {
-      setLoading(false);
+      if (seq === refreshSeq.current) setLoading(false);
     }
   }, [userId, toast]);
 
@@ -44,13 +55,13 @@ export function ConnectedAccounts() {
 
   async function onDisconnect() {
     if (!userId) return;
-    if (!window.confirm("Disconnect Gradescope from Sapling?")) return;
+    if (!window.confirm("Disconnect Gradescope from Sapling? Your course links are kept, so reconnecting resumes syncing.")) return;
     try {
       await deleteGradescopeCredentials(userId);
       toast.info("Gradescope disconnected.");
       await refresh();
     } catch (e: unknown) {
-      toast.error(`Couldn't disconnect: ${e instanceof Error ? e.message : ""}`);
+      toast.error(`Couldn't disconnect: ${humanizeError(e, "Try again.")}`);
     }
   }
 
@@ -76,7 +87,7 @@ export function ConnectedAccounts() {
         <header style={{ marginBottom: 32 }}>
           <h1
             style={{
-              fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
               fontWeight: 500,
               fontSize: "clamp(28px, 3.6vw, 40px)",
               lineHeight: 1.05,
@@ -89,7 +100,7 @@ export function ConnectedAccounts() {
           </h1>
           <p
             style={{
-              fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+              fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
               fontSize: 15,
               lineHeight: 1.6,
               color: "var(--text-dim)",
@@ -108,14 +119,15 @@ export function ConnectedAccounts() {
           domain="gradescope.com"
           loading={loading}
           status={status}
-          onConnect={() => setConnectOpen(true)}
-          onReconnect={() => setConnectOpen(true)}
+          onConnect={() => { setReconnect(false); setConnectOpen(true); }}
+          onReconnect={() => { setReconnect(true); setConnectOpen(true); }}
           onDisconnect={onDisconnect}
         />
       </main>
 
       <GradescopeSyncModal
         open={connectOpen}
+        reconnect={reconnect}
         userId={userId}
         onClose={() => {
           setConnectOpen(false);
@@ -125,6 +137,15 @@ export function ConnectedAccounts() {
     </>
   );
 }
+
+// Copy for the last sync attempt's failure code (routes/gradescope.py). An
+// auth failure isn't listed: it surfaces as the needs-reauth state instead.
+const SYNC_ERROR_COPY: Record<NonNullable<GradescopeStatus["last_sync_error"]>, string | null> = {
+  auth_failed: null,
+  fetch_failed: "Gradescope was unavailable",
+  write_failed: "grades couldn't be saved",
+  partial_write: "some grades couldn't be saved",
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // ProviderCard — one row per integration. Same shape regardless of
@@ -147,9 +168,16 @@ function ProviderCard({
   onReconnect: () => void;
   onDisconnect: () => void;
 }) {
-  const connected = !!status?.has_credentials;
+  // #770: "has a credentials row" is not "connected". Rejected credentials are
+  // their own state (reconnect), and a failed status read is unknown.
+  const state = status ? gradescopeConnectionState(status) : null;
+  const connected = state === "connected" || state === "needs_reauth"; // credentials saved
+  const needsReauth = state === "needs_reauth";
   const modeLabel =
     status?.auth_mode === "cookies" ? "session cookies (SSO)" : "password";
+  const syncProblem = state === "connected" && status?.last_sync_error
+    ? SYNC_ERROR_COPY[status.last_sync_error]
+    : null;
   return (
     <section
       style={{
@@ -175,7 +203,7 @@ function ProviderCard({
           <h2
             style={{
               fontFamily:
-                "var(--font-display), 'Playfair Display', Georgia, serif",
+                "var(--font-display), 'Aleo', Georgia, serif",
               fontWeight: 500,
               fontSize: 22,
               letterSpacing: "-0.01em",
@@ -204,21 +232,27 @@ function ProviderCard({
             textTransform: "uppercase",
             color: loading
               ? "var(--text-muted)"
-              : connected
-                ? "var(--sap-600)"
-                : "var(--text-muted)",
+              : needsReauth
+                ? "var(--err)"
+                : connected
+                  ? "var(--sap-600)"
+                  : "var(--text-muted)",
             marginBottom: 6,
           }}
         >
           {loading
             ? "Checking…"
-            : connected
-              ? `Connected · ${modeLabel}`
-              : "Not connected"}
+            : state === null
+              ? "Couldn't check status"
+              : needsReauth
+                ? "Sign-in expired · reconnect needed"
+                : connected
+                  ? `Credentials saved · ${modeLabel}`
+                  : "Not connected"}
         </div>
         <p
           style={{
-            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
             fontSize: 13,
             lineHeight: 1.55,
             color: "var(--text-dim)",
@@ -227,8 +261,8 @@ function ProviderCard({
           }}
         >
           Pulls assignments and grades from your enrolled courses. For SSO
-          (BU and other Shibboleth schools), pick the &ldquo;session cookies&rdquo;
-          option when connecting.
+          use BU SSO + Duo or paste session cookies. Credentials are verified
+          when you open the sync setup or pull grades.
         </p>
         {connected && status?.last_synced_at && (
           <div
@@ -243,6 +277,15 @@ function ProviderCard({
             Last sync · {new Date(status.last_synced_at).toLocaleString()}
           </div>
         )}
+        {syncProblem && (
+          <div
+            className="mono"
+            style={{ fontSize: 11, color: "var(--err)", marginTop: 4, letterSpacing: "-0.01em" }}
+          >
+            Last attempt · {syncProblem}
+            {status?.last_attempt_at ? ` · ${new Date(status.last_attempt_at).toLocaleString()}` : ""}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -250,7 +293,7 @@ function ProviderCard({
           <>
             <button
               type="button"
-              className="btn"
+              className={needsReauth ? "btn btn--primary" : "btn"}
               onClick={onReconnect}
               style={{ padding: "8px 14px", fontSize: 13 }}
             >

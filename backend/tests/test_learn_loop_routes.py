@@ -49,6 +49,9 @@ def legacy_owner_guard_for_delegation_fixtures(monkeypatch):
     # loop state has no legacy sessions row; #709 ownership remains exercised
     # without this mock by the dedicated session-ownership suite.
     monkeypatch.setattr("routes.learn.require_session_owner", lambda *args, **kwargs: None)
+    # #761's open-session check reads that same absent row; its 409/404 contract
+    # is pinned by tests/test_tutor_session_lifecycle.py.
+    monkeypatch.setattr("routes.learn.require_session_open", lambda *args, **kwargs: None)
 
 
 T0 = 1_790_000_000.0  # when the active item was first shown (float seconds, PKG-06's store)
@@ -2952,20 +2955,25 @@ def test_legacy_route_is_untouched_when_gate_false(handler, path, body):
 
 
 def test_legacy_end_session_pass_through_and_override():
+    # #761: the pending store is services.tutor_sessions' (discard_pending pops it)
+    pending = {"s1": {"user_id": "u1"}}
     with (
         patch("routes.learn.learning_loop_for_request", return_value=True),
         patch("routes.learn_loop.end_session", return_value=None),
-        patch("routes.learn.PENDING_SESSIONS", {"s1": {"user_id": "u1"}}),
+        patch("routes.learn.PENDING_SESSIONS", pending),
+        patch("services.tutor_sessions.PENDING_SESSIONS", pending),
     ):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": "u1"})
     assert r.status_code == 200 and r.json()["summary"]["time_spent_minutes"] == 0, (
         "None → legacy body runs"
     )
+    # A fresh session: "s1" now carries #761's "ended" tombstone, which (rightly)
+    # short-circuits a repeat end before any delegation.
     with (
         patch("routes.learn.learning_loop_for_request", return_value=True),
         patch("routes.learn_loop.end_session", return_value={"summary": {"loop": True}}),
     ):
-        r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": "u1"})
+        r = client.post("/api/learn/end-session", json={"session_id": "s2", "user_id": "u1"})
     assert r.json() == {"summary": {"loop": True}}
 
 
@@ -3042,7 +3050,8 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
         learn.action,
     ):
         src = inspect.getsource(fn)
-        auth = src.index("require_self(")
+        # #756: `await guard_off_loop(require_self, ...)` — the guard off the event loop
+        auth = src.index("guard_off_loop(require_self,")
         gate = src.index("learning_loop_for_request(")
         assert auth < gate < src.index("_loop_delegate("), fn.__name__
         assert src.count("_loop_delegate(") == 1

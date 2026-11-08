@@ -10,13 +10,13 @@ if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 
 /**
  * The Study screen's framer-motion subtree, split out so the library stays
- * out of Study's initial bundle (#111) — Study.tsx loads it
+ * out of Study's initial bundle (#111) — StudyTabs.tsx loads it
  * via next/dynamic (the MarkdownChat pattern); the mode-switch fade is
  * plain CSS (`study-mode-enter`) so pane content never waits on this chunk.
  */
 
-/** Sliding highlight behind the active Study Guide / Flashcards toggle
- *  button (spring layout animation between the two buttons). */
+/** Sliding highlight behind the active Study Guide / Flashcards / Quiz toggle
+ *  button (spring layout animation between the buttons). */
 export function StudyToggleHighlight() {
   return (
     <motion.span
@@ -26,6 +26,7 @@ export function StudyToggleHighlight() {
         position: "absolute",
         inset: 0,
         background: "var(--accent-soft)",
+        borderRadius: "inherit",
         zIndex: -1,
       }}
     />

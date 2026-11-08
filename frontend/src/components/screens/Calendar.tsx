@@ -257,7 +257,7 @@ export function Calendar() {
         </>
       )}
       <button className="btn btn--sm" onClick={() => setUploadOpen(true)}>
-        <Icon name="up" size={12} /> Import syllabus
+        <Icon name="upload" size={12} /> Import syllabus
       </button>
       {googleConnected ? (
         <>
@@ -417,7 +417,7 @@ function GoogleEventsModal({
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(19,38,16,0.45)",
+        background: "rgba(25, 37, 11,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       }}
     >

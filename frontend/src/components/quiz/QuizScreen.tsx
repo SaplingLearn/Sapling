@@ -14,9 +14,10 @@
  * `components/quiz/**` (R-1); everything else is a class over tokens.
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
+import { StudyTabs } from "../StudyTabs";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
@@ -51,7 +52,15 @@ export function QuizScreen() {
 
   // `entry` rides along so the home hook can describe the concept the CARD will
   // show, which a deep link overrides (§5 B1.2).
-  const home = useQuizHome(userId ?? "", semesterHydrated ? activeSemester : null, entry);
+  // A concept picked off the home's topic list. QuizHome owns the choice; it
+  // is mirrored here so the hook describes it and the accent follows it.
+  const [pickedConceptId, setPickedConceptId] = useState<string | null>(null);
+  const home = useQuizHome(
+    userId ?? "",
+    semesterHydrated ? activeSemester : null,
+    entry,
+    pickedConceptId,
+  );
   const { session, pending, config, actions } = useQuizSession(userId ?? "", entry);
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
@@ -65,10 +74,10 @@ export function QuizScreen() {
   // The concept the screens are about: whatever the session is running, else the
   // deep link, else the proposal on offer.
   const activeNode = useMemo(() => {
-    const wanted = session.conceptId || selection.conceptId;
+    const wanted = session.conceptId || pickedConceptId || selection.conceptId;
     const byId = wanted ? home.nodes.find(n => n.id === wanted) : undefined;
     return byId ?? home.primary?.node ?? null;
-  }, [home.nodes, home.primary, session.conceptId, selection.conceptId]);
+  }, [home.nodes, home.primary, session.conceptId, pickedConceptId, selection.conceptId]);
 
   const activeCourse = useMemo(
     () => home.courses.find(c => c.course_id === activeNode?.course_id) ?? null,
@@ -185,6 +194,7 @@ export function QuizScreen() {
         entry={entry}
         session={session}
         actions={actions}
+        onPickedChange={setPickedConceptId}
       />
     );
   };
@@ -198,7 +208,7 @@ export function QuizScreen() {
   return (
     <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
-      <TopBar title="Quiz" subtitle="Test what you know." actions={<AIDisclaimerChip />} />
+      <TopBar title="Study" subtitle="Test what you know." actions={<><AIDisclaimerChip /><StudyTabs mode="quiz" /></>} />
       <div className={`quiz-body quiz-body--${layout}`}>
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`

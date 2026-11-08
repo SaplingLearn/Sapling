@@ -107,9 +107,12 @@ class TestMasterySnapshotPersisted:
             })
 
         assert r.status_code == 200
-        final = [d for d in update_calls if "score" in d]
-        assert len(final) == 1
-        row = final[0]
+        assert len([d for d in update_calls if "score" in d]) == 1
+        # #760: the score lands first and alone; the mastery snapshot is its
+        # own write after the graph update.
+        snapshot = [d for d in update_calls if "mastery_after" in d]
+        assert len(snapshot) == 1
+        row = snapshot[0]
         assert row["mastery_before"] == 0.5
         assert row["mastery_after"] == r.json()["mastery_after"]
 
@@ -165,7 +168,7 @@ class TestMasterySnapshotPersisted:
             })
 
         assert r.status_code == 200
-        stored = [d for d in update_calls if "score" in d][0]
+        stored = [d for d in update_calls if "mastery_after" in d][0]
         assert stored["mastery_after"] == 0.9
         assert r.json()["mastery_after"] == 0.9
 
@@ -334,10 +337,16 @@ class TestAbandonSweep:
         def factory(name):
             mock = MagicMock()
             if name == "quiz_attempts":
+                # #760: the sweep reads its candidates first, then exempts the
+                # ones with recent answers before writing.
+                mock.select.return_value = [{"id": "stale1"}]
+
                 def _update(data, filters=None, *, prefer_return_minimal=False):
                     update_calls.append((data, filters, prefer_return_minimal))
                     return []
                 mock.update.side_effect = _update
+            elif name == "quiz_responses":
+                mock.select.return_value = []
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):

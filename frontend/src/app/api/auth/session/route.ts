@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
+import { signSession, tokenTypeOf, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from '@/lib/sessionToken';
 import { sanitizeCookieDomain } from '@/lib/cookieDomain';
 import { resolveFrontendEnv } from '@/lib/deployGuard';
 
@@ -15,6 +15,24 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 const COOKIE_DOMAIN = sanitizeCookieDomain(
   resolveFrontendEnv(process.env as Record<string, string | undefined>).cookieDomain,
 );
+
+/**
+ * A PR preview (`*-frontend-staging.saplinglearn.workers.dev`) runs with
+ * DEPLOY_ENV=staging, but the browser drops a `.staging.saplinglearn.com`
+ * cookie set from that host. Scope to COOKIE_DOMAIN only when this host is
+ * inside it; anywhere else the cookie is host-only.
+ */
+function cookieDomainFor(request: NextRequest): string | undefined {
+  if (!COOKIE_DOMAIN) return undefined;
+  const host = request.nextUrl.hostname.toLowerCase();
+  const bare = COOKIE_DOMAIN.replace(/^\./, '');
+  return host === bare || host.endsWith(`.${bare}`) ? COOKIE_DOMAIN : undefined;
+}
+
+function domainAttr(request: NextRequest): { domain?: string } {
+  const domain = cookieDomainFor(request);
+  return domain ? { domain } : {};
+}
 
 /**
  * CSRF defense beyond SameSite=Lax (#190): reject cross-origin requests to the
@@ -34,6 +52,25 @@ function isCrossOrigin(request: NextRequest): boolean {
   }
 }
 
+/**
+ * Deploy-order transition (#756 review): a backend that predates the `typ`
+ * claim mints its OAuth handoff token untyped, so a frontend deployed first
+ * would refuse every sign-in. An untyped token is therefore still exchanged
+ * when it is SHORT-LIVED — remaining lifetime no more than the backend's
+ * handoff ceiling (`_clamp_redirect_ttl`: 600 s) plus clock skew. A 30-day
+ * session can't pass, so a live session still can't be re-minted. Safe to
+ * delete once every backend mints `typ` (and pre-#756 cookies have expired).
+ */
+// Not exported: a route module may only export its handlers (next build).
+const LEGACY_HANDOFF_MAX_REMAINING_S = 600 + 60;
+
+/**
+ * The user id of a valid OAuth HANDOFF token (the backend's 300 s redirect
+ * token, `typ=handoff`), or null. #756: a session token — typed, or an
+ * untyped one with more than LEGACY_HANDOFF_MAX_REMAINING_S left — is
+ * refused, so a session can never be re-minted into a fresh 30-day one and
+ * extended forever; only a real sign-in mints a session.
+ */
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
   const dot = token.lastIndexOf('.');
@@ -67,8 +104,14 @@ async function verifyAuthToken(token: string): Promise<string | null> {
     if (!valid) return null;
 
     const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(payloadB64)));
-    if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp < now) return null;
     if (typeof payload.user_id !== 'string') return null;
+    if (payload.typ === undefined) {
+      // A pre-#756 backend's handoff (see LEGACY_HANDOFF_MAX_REMAINING_S).
+      return payload.exp - now <= LEGACY_HANDOFF_MAX_REMAINING_S ? payload.user_id : null;
+    }
+    if (tokenTypeOf(payload) !== 'handoff') return null;
     return payload.user_id;
   } catch {
     return null;
@@ -104,13 +147,13 @@ export async function POST(request: NextRequest) {
   try {
     const token = await signSession(verifiedUserId);
     const response = NextResponse.json({ ok: true });
-    response.cookies.set('sapling_session', token, {
+    response.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: SESSION_MAX_AGE,
-      ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+      ...domainAttr(request),
     });
     return response;
   } catch {
@@ -124,13 +167,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set('sapling_session', '', {
+  response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: 0,
-    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+    ...domainAttr(request),
   });
   return response;
 }

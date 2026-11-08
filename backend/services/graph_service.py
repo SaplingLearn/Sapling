@@ -22,7 +22,7 @@ from learning.params import (
     FSRS_RETENTION_DEFAULT,
     FSRS_S0_GOOD,
 )
-from services.streak_service import touch_streak_safe
+from services.streak_service import effective_streak, touch_streak_safe
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +221,13 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
     avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
-    user_rows = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user_rows[0]["streak_count"] if user_rows else 0
+    # The STORED streak_count is only reset on the student's next activity, so
+    # a lapsed streak would still display; effective_streak reads it as of
+    # today (#767).
+    user_rows = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"},
+    )
+    streak = effective_streak(user_rows[0] if user_rows else None)
 
     stats = {
         "total_nodes": len(nodes),
@@ -551,13 +556,52 @@ def update_node_color(user_id: str, node_id: str, color: str | None) -> dict:
     return {"updated": True}
 
 
-def delete_course(user_id: str, course_id: str) -> dict:
+def delete_course(user_id: str, course_id: str, term: str | None = None) -> dict:
     """
-    Unenroll a user from a course (delete their enrollment(s) for the abstract
-    course's offerings). Graph nodes are kept for potential re-enrollment.
+    Drop ONE term's enrollment in an abstract course (#766).
+
+    ``term`` is a semester label (or term id) — the tab the student removed the
+    course from. Omitted, it means the current term. Only enrollments in that
+    term's offerings are deleted: an enrollment row cascades to its
+    assignments, grades, gradescope links and topic checklists (0021/0027 and
+    later), so deleting every term's enrollment — the old behavior — erased a
+    student's PAST terms' gradebooks to drop this term's class.
+
+    Graph nodes are never touched: the knowledge graph lives on the abstract
+    course and mastery is cumulative across terms, so the nodes stay for any
+    remaining enrollment and for a later re-enrollment.
+
+    Returns ``{"deleted": bool}``; ``{"deleted": False, "error": ...}`` when the
+    term label doesn't resolve, or when no term was given and the student holds
+    this course only in other terms (the caller must name which one to drop).
+    Nothing to delete in the targeted term is an idempotent ``deleted: False``.
     """
-    from services.academics import user_offering_ids_for_course
-    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    from services.academics import (
+        current_term,
+        term_for_offering,
+        term_id_for_label,
+        user_offering_ids_for_course,
+    )
+    if term:
+        term_id = term_id_for_label(term)
+        if not term_id:
+            return {"deleted": False, "error": f"Unknown term: {term}"}
+    else:
+        cur = current_term()
+        term_id = cur["id"] if cur else None
+    held = user_offering_ids_for_course(user_id, course_id)
+    offering_ids = [
+        oid for oid in held
+        if term_id and (term_for_offering(oid) or {}).get("id") == term_id
+    ]
+    if not offering_ids:
+        if held and not term:
+            return {
+                "deleted": False,
+                "error": "Not enrolled in this course in the current term; "
+                         "pass the term to drop",
+            }
+        return {"deleted": False}
     for offering_id in offering_ids:
         table("enrollments").delete(
             {"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}

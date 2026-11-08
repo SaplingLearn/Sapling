@@ -66,10 +66,10 @@ const eslintConfig = [
       "src/components/quiz/QuizScreen.tsx",
       "src/components/quiz/home/QuizHome.tsx",
       "src/components/quiz/home/AdjustDialog.tsx",
-      "src/components/quiz/home/ConceptDialog.tsx",
-      "src/components/quiz/home/PickList.tsx",
+      "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
       "src/components/quiz/question/QuizQuestion.tsx",
+      "src/components/quiz/question/WrittenAnswer.tsx",
       "src/components/quiz/question/AskPanel.tsx",
       "src/components/quiz/question/LeaveDialog.tsx",
       "src/components/quiz/results/QuizResults.tsx",
@@ -118,6 +118,14 @@ const eslintConfig = [
       // Admin "Feature flags" tab (#620). New file, no baselined backlog.
       "src/components/screens/admin/FeatureFlags.tsx",
       "src/components/screens/admin/FlagPanel.tsx",
+      // Admin "Allowlist" + "Email" tabs (waitlist bulk approve, Resend broadcasts).
+      // New files, no baselined backlog.
+      "src/components/screens/admin/AllowlistTab.tsx",
+      "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Settings (#675 Data tab): NOT a no-backlog file — its pre-existing
+      // controls are baselined in eslint-suppressions.json, so the rule
+      // covers new elements only. Shrink that baseline as testids are added.
+      "src/components/screens/Settings.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

@@ -532,9 +532,13 @@ LOOP_QUESTIONS = [
 # node, the snapshot write, the quiz-context node read. Recorded against the
 # pre-series route (base a1a416b) by the PKG-11 review; the flag-off path must
 # not add a table to it.
+# The pre-series route's tables in #760's order: the attempt load, the concept
+# node read (BEFORE the claim, so a missing node never strands an attempt), the
+# claim, the graded responses, the score write, the mastery snapshot write, and
+# the concept-name re-read.
 LEGACY_SUBMIT_TABLES = [
-    "quiz_attempts", "quiz_attempts", "quiz_responses",
-    "graph_nodes", "quiz_attempts", "graph_nodes",
+    "quiz_attempts", "graph_nodes", "quiz_attempts", "quiz_responses",
+    "quiz_attempts", "quiz_attempts", "graph_nodes",
 ]
 
 
@@ -606,9 +610,9 @@ class TestLearningLoopEvidencePath:
         )
         assert r.status_code == 200, r.text
         # owner decision 2 (A94, A100): plus ONE claim of the attempt's hashes (the
-        # farm guard), right after the concept node read
+        # farm guard), after the score write (#760: the score lands first)
         expected = list(LEGACY_SUBMIT_TABLES)
-        expected.insert(expected.index("graph_nodes") + 1, "quiz_evidence_claims")
+        expected.insert(5, "quiz_evidence_claims")
         assert tables == expected
 
     def test_gate_on_submits_one_evidence_per_question(self):

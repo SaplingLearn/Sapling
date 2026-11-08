@@ -1825,9 +1825,12 @@ def _legacy_end_session_tables(loop_state=None):
                 m.select.return_value = [
                     {"user_id": UID, "started_at": started, "loop_state": loop_state}
                 ]
+                # #761: the end is a conditional update; returning the row means
+                # THIS call closed the session (PostgREST return=representation).
+                m.update.return_value = [{"id": "s1"}]
             else:
                 m.select.return_value = []
-            m.update.return_value = []
+                m.update.return_value = []
             tables[name] = m
         return tables[name]
 

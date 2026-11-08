@@ -223,6 +223,187 @@ def record_contributors(chunk_ids: Iterable[str], user_id: str) -> None:
         )
 
 
+def record_sources(chunk_ids: Iterable[str], doc_id: str) -> None:
+    """Record `doc_id` as a source document of each chunk id (#758).
+
+    Every chunk a real `documents` row produced, shared AND private: this is
+    the ledger `withdraw_document_chunks` reads to find a document's rows, and
+    `match_course_chunks` refuses a chunk whose every source is deleted. Only
+    `services/document_indexing.py` calls it — a fixture `doc_id` that names no
+    document must stay unsourced, or retrieval would read it as deleted.
+
+    Best-effort, like `record_contributors`: the chunks are already upserted.
+    A lost row leaves that chunk findable only through `course_chunks.doc_id`
+    (its last writer) when the document is deleted, and outside the
+    retrieval-side check — logged, not swallowed.
+    """
+    ids = [c for c in dict.fromkeys(chunk_ids) if c]
+    if not ids or not doc_id:
+        return
+    rows = [{"chunk_id": cid, "doc_id": doc_id} for cid in ids]
+    try:
+        for i in range(0, len(rows), _ID_BATCH):
+            table("course_chunk_sources").upsert(
+                rows[i : i + _ID_BATCH], on_conflict="chunk_id,doc_id"
+            )
+    except Exception:
+        logger.warning(
+            "[RAG] could not record %s source row(s) for doc %s — deleting it "
+            "may leave those chunks in retrieval (#758)",
+            len(rows), doc_id, exc_info=True,
+        )
+
+
+def withdraw_document_chunks(doc_id: str, user_id: str) -> dict:
+    """Take a deleted document's contributions out of `course_chunks` (#758).
+
+    Called when a document is deleted, and by the indexer when it finds the
+    document was deleted while it ran. For each chunk the document produced:
+
+    * the uploader's contributor row goes, unless another of their LIVE
+      documents still produces the same text;
+    * the chunk itself goes once nobody holds it — no contributor left and no
+      live source document. That covers every private-namespace row (they never
+      have contributors, see the module docstring) and a shared row whose last
+      contributor this was;
+    * a shared row that survives is re-judged by the #629 rule, since the
+      contributor that kept it shared may have been the one who just left.
+
+    Idempotent and never raises: it runs after the delete is already recorded,
+    so an exception would fail a request whose effect has happened. A failure
+    is logged at ERROR; `match_course_chunks` already refuses chunks whose
+    every source document is deleted, and re-running (or
+    `scripts/backfill_course_chunk_sources.py`) finishes the job.
+    """
+    try:
+        return _withdraw_document_chunks(doc_id, user_id)
+    except Exception:
+        logger.error(
+            "[RAG] withdrawing the chunks of deleted doc %s FAILED — retrieval "
+            "still excludes them through their sources; re-run to clean up (#758)",
+            doc_id, exc_info=True,
+        )
+        return {"considered": 0, "chunks_deleted": 0, "contributors_removed": 0,
+                "to_private": 0, "failed": True}
+
+
+def _batched_rows(name: str, columns: str, key: str, ids: list[str], order: str):
+    for i in range(0, len(ids), _ID_BATCH):
+        yield from page_all(
+            table(name), columns,
+            filters={key: _in_list(ids[i : i + _ID_BATCH])}, order=order,
+        )
+
+
+def _withdraw_document_chunks(doc_id: str, user_id: str) -> dict:
+    """`withdraw_document_chunks` without the error boundary."""
+    # Where to look: the source ledger, plus `doc_id` on the chunk row itself —
+    # the only attribution for rows written before the ledger existed, and the
+    # fallback when a ledger write was lost. Catalog rows are never a
+    # document's (and `doc_id` on them is NULL anyway).
+    candidates = dict.fromkeys(
+        r["chunk_id"] for r in page_all(
+            table("course_chunk_sources"), "chunk_id",
+            filters={"doc_id": f"eq.{doc_id}"}, order="chunk_id",
+        )
+    )
+    candidates.update(dict.fromkeys(
+        r["id"] for r in page_all(
+            table("course_chunks"), "id",
+            filters={"doc_id": f"eq.{doc_id}", "category": "neq.catalog"},
+            order="id",
+        )
+    ))
+    ids = [c for c in candidates if c]
+    counts = {"considered": 0, "chunks_deleted": 0, "contributors_removed": 0,
+              "to_private": 0}
+    if not ids:
+        return counts
+
+    present = {
+        r["id"]: r for r in _batched_rows(
+            "course_chunks", "id,visibility,category", "id", ids, "id")
+        if r.get("category") != "catalog"
+    }
+    ids = [c for c in ids if c in present]
+    counts["considered"] = len(ids)
+    if not ids:
+        return counts
+
+    sources: dict[str, set[str]] = {}
+    for r in _batched_rows("course_chunk_sources", "chunk_id,doc_id", "chunk_id",
+                           ids, "chunk_id,doc_id"):
+        sources.setdefault(r["chunk_id"], set()).add(r["doc_id"])
+    other_docs = sorted({d for docs in sources.values() for d in docs} - {doc_id})
+    # Live documents only, and their owners: a source naming a deleted (or
+    # vanished) document holds nothing up.
+    live_owner: dict[str, str] = {}
+    for i in range(0, len(other_docs), _ID_BATCH):
+        for r in table("documents").select(
+            "id,user_id",
+            filters={"id": _in_list(other_docs[i : i + _ID_BATCH]),
+                     "deleted_at": "is.null"},
+        ) or []:
+            live_owner[r["id"]] = r.get("user_id")
+
+    contributors: dict[str, set[str]] = {}
+    for r in _batched_rows("course_chunk_contributors", "chunk_id,user_id",
+                           "chunk_id", ids, "chunk_id,user_id"):
+        contributors.setdefault(r["chunk_id"], set()).add(r["user_id"])
+
+    drop_contributor: list[str] = []
+    drop_chunk: list[str] = []
+    rejudge: dict[str, set[str]] = {}
+    for cid in ids:
+        holders = {live_owner[d] for d in sources.get(cid, ()) if d in live_owner}
+        users = set(contributors.get(cid, ()))
+        if user_id in users and user_id not in holders:
+            drop_contributor.append(cid)
+            users.discard(user_id)
+            if users:
+                rejudge[cid] = users
+        if not users and not holders:
+            drop_chunk.append(cid)
+
+    for i in range(0, len(drop_contributor), _ID_BATCH):
+        table("course_chunk_contributors").delete(filters={
+            "chunk_id": _in_list(drop_contributor[i : i + _ID_BATCH]),
+            "user_id": f"eq.{user_id}",
+        })
+    counts["contributors_removed"] = len(drop_contributor)
+
+    # DELETE, not a visibility flip (same reason as
+    # scripts/backfill_document_shareability.py): a flipped row stays
+    # reachable through `uploader_id` and the contributor clause. The FKs
+    # cascade its contributor and source rows.
+    for i in range(0, len(drop_chunk), _ID_BATCH):
+        table("course_chunks").delete(filters={"id": _in_list(drop_chunk[i : i + _ID_BATCH])})
+    counts["chunks_deleted"] = len(drop_chunk)
+
+    if rejudge:
+        flags = _share_flags({u for users in rejudge.values() for u in users})
+        to_private = [
+            cid for cid, users in rejudge.items()
+            if (present[cid].get("visibility") or SHARED) == SHARED
+            and not any(flags.get(u, True) for u in users)
+        ]
+        for i in range(0, len(to_private), _ID_BATCH):
+            table("course_chunks").update(
+                {"visibility": PRIVATE},
+                filters={"id": _in_list(to_private[i : i + _ID_BATCH])},
+                prefer_return_minimal=True,
+            )
+        counts["to_private"] = len(to_private)
+
+    logger.info(
+        "[RAG] withdrew deleted doc %s: %s chunk(s) deleted, %s contributor "
+        "row(s) removed, %s flipped private (of %s)",
+        doc_id, counts["chunks_deleted"], counts["contributors_removed"],
+        counts["to_private"], counts["considered"],
+    )
+    return counts
+
+
 def _in_list(values: list[str]) -> str:
     """A PostgREST ``in.(…)`` operand list, each value quoted.
 

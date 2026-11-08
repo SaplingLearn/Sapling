@@ -10,8 +10,9 @@ storage layer keys enrollments and class artifacts on a **course_offering**
 - enrollments / gradebook / analytics resolve to an ``offering_id`` per term.
 
 "Current term" is date-derived: the term whose ``[start_date, end_date]``
-contains today. When today falls outside every seeded range we fall back to the
-latest term by ``sort_key`` so resolution never dead-ends.
+contains today. When today falls in a gap we fall back to the most recently
+started term (or, before every term, the soonest one) so resolution never
+dead-ends — see :func:`current_term`.
 """
 from __future__ import annotations
 
@@ -36,8 +37,17 @@ _OFFERING_SCAN_LIMIT = 200
 def current_term(today: date | None = None) -> dict | None:
     """The current term row, or None if no terms are seeded.
 
-    Date-derived: today ∈ [start_date, end_date]. Falls back to the most recent
-    term (highest sort_key) so a date in a gap between terms still resolves.
+    Date-derived: today ∈ [start_date, end_date] (highest sort_key on overlap).
+    In a gap between terms it is the most recently STARTED term — the one that
+    just ended — never the highest sort_key, which is often a FUTURE term
+    seeded ahead of time: onboarding and every create=True write resolve here,
+    and landed a mid-gap enrollment in a semester that hadn't begun (#766).
+    Before every seeded term it is the soonest upcoming one.
+
+    The frontend takes this answer from ``GET /api/semesters``
+    (``current_term_id``) rather than recomputing it from the browser clock;
+    ``frontend/src/lib/semesters.ts::currentTerm`` mirrors these rules only as
+    its offline fallback.
     """
     d = (today or date.today()).isoformat()
     rows = table("terms").select(
@@ -48,8 +58,16 @@ def current_term(today: date | None = None) -> dict | None:
     )
     if rows:
         return rows[0]
-    latest = table("terms").select("*", order="sort_key.desc", limit=1)
-    return latest[0] if latest else None
+    started = table("terms").select(
+        "*",
+        filters={"start_date": f"lte.{d}"},
+        order="start_date.desc,sort_key.desc",
+        limit=1,
+    )
+    if started:
+        return started[0]
+    upcoming = table("terms").select("*", order="start_date.asc,sort_key.asc", limit=1)
+    return upcoming[0] if upcoming else None
 
 
 def list_terms() -> list[dict]:
@@ -310,6 +328,28 @@ def user_enrollment_ids(user_id: str) -> list[dict]:
     return table("enrollments").select(
         "id,offering_id", filters={"user_id": f"eq.{user_id}"}
     ) or []
+
+
+def scoped_user_enrollments(
+    user_id: str, *, course_id: str | None = None, term_id: str | None = None,
+) -> list[dict]:
+    """The user's enrollments (``{id, offering_id}`` rows), narrowed to one
+    abstract course and/or one term.
+
+    ``None`` means "don't filter on that axis", so a caller holding a semester
+    label that didn't resolve must short-circuit itself — passing ``None`` on
+    would widen the answer to every term. Offering → course / term go through
+    the cached immutable mappings, so this costs one ``enrollments`` read.
+    """
+    rows = user_enrollment_ids(user_id)
+    if course_id is not None:
+        rows = [e for e in rows if offering_course_id(e.get("offering_id")) == course_id]
+    if term_id is not None:
+        rows = [
+            e for e in rows
+            if (term_for_offering(e.get("offering_id")) or {}).get("id") == term_id
+        ]
+    return rows
 
 
 def school_peer_user_ids(user_id: str) -> set[str]:

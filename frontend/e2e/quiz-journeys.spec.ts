@@ -700,7 +700,7 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   await expect(proposal).toContainText(`${Math.min(csDue.length, QUEUE_MAX)} concepts due`);
   await expect(proposal).toContainText(`${QUEUE_COUNT} questions each`);
 
-  // (c) The dashboard's "Review what's due".
+  // (c) Existing dashboard-origin due-review links remain supported.
   await openQuizHome(page, "/quiz?scope=due&from=dashboard");
   proposal = page.getByTestId("quiz-proposal");
   await expect(proposal).toContainText("Review everything due");

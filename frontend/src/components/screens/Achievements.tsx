@@ -108,6 +108,22 @@ export function Achievements() {
   const [loading, setLoading] = React.useState(true);
   const [openAchievement, setOpenAchievement] = React.useState<AchType | null>(null);
 
+  // Showcase edit state (#767). `featuredRef` is the list the user is looking
+  // at, readable synchronously so edits never compute from a stale closure;
+  // `savedRef` is the last list the server confirmed, which a failed save
+  // rolls back to. `editSeq` counts edits (a load that started before one
+  // must not overwrite it) and `savesInFlight` keeps a window-focus reload
+  // from clobbering an edit still being saved.
+  const featuredRef = React.useRef<string[]>([]);
+  const savedRef = React.useRef<string[]>([]);
+  const editSeq = React.useRef(0);
+  const savedSeq = React.useRef(0);
+  const savesInFlight = React.useRef(0);
+  const showFeatured = React.useCallback((ids: string[]) => {
+    featuredRef.current = ids;
+    setFeaturedIds(ids);
+  }, []);
+
   const detectUnlocks = React.useCallback((next: UserAchievement[]) => {
     if (typeof window === "undefined") return;
     const seen = new Set<string>(JSON.parse(window.localStorage.getItem(SEEN_KEY) || "[]"));
@@ -121,12 +137,20 @@ export function Achievements() {
 
   const load = React.useCallback(async () => {
     if (!userId) return;
+    const seqAtStart = editSeq.current;
     try {
       const d = await fetchAchievements(userId);
       const e = d.earned || [];
       setEarned(e);
       setAvailable(d.available || []);
-      setFeaturedIds(e.filter(u => u.is_featured).map(u => u.achievement.id));
+      // Only adopt the server's showcase when no edit happened since this
+      // load started and none is still saving — otherwise the focus refetch
+      // would overwrite the user's unsaved reorder/removal.
+      if (editSeq.current === seqAtStart && savesInFlight.current === 0) {
+        const serverFeatured = e.filter(u => u.is_featured).map(u => u.achievement.id);
+        savedRef.current = serverFeatured;
+        showFeatured(serverFeatured);
+      }
       detectUnlocks(e);
     } catch (err) {
       console.error("achievements load", err);
@@ -143,7 +167,7 @@ export function Achievements() {
     } catch (err) {
       console.error("gamification me load", err);
     }
-  }, [userId, detectUnlocks]);
+  }, [userId, detectUnlocks, showFeatured]);
 
   React.useEffect(() => {
     if (userReady && userId) load();
@@ -156,39 +180,53 @@ export function Achievements() {
     return () => window.removeEventListener("focus", onFocus);
   }, [userId, load]);
 
-  const persistFeatured = async (ids: string[]) => {
+  // Show the edit, then save it. Deliberately NOT inside a setState updater:
+  // React may run an updater twice (StrictMode does), which sent the save
+  // request — and its failure toast — twice.
+  const commitFeatured = async (next: string[]) => {
     if (!userId) return;
+    const seq = ++editSeq.current;
+    showFeatured(next);
+    savesInFlight.current += 1;
     try {
-      await setFeaturedAchievements(userId, ids);
+      await setFeaturedAchievements(userId, next);
+      // Each save sends the whole list, so the newest confirmed one is what
+      // the server holds; an older save confirming late must not replace it.
+      if (seq > savedSeq.current) {
+        savedSeq.current = seq;
+        savedRef.current = next;
+      }
     } catch (err) {
-      toast.error(`Couldn't save showcase: ${String(err)}`);
+      // Roll back only if no newer edit superseded this one — that edit's
+      // own save decides the final state.
+      if (seq === editSeq.current) {
+        showFeatured(savedRef.current);
+        toast.error(`Couldn't save showcase: ${String(err)}`);
+      }
+    } finally {
+      savesInFlight.current -= 1;
     }
   };
 
   const toggleFeature = (id: string) => {
-    setFeaturedIds(prev => {
-      const isIn = prev.includes(id);
-      const next = isIn ? prev.filter(x => x !== id) : (prev.length < MAX_FEATURED ? [...prev, id] : prev);
-      if (!isIn && prev.length >= MAX_FEATURED) {
-        toast.warn(`Showcase is full (max ${MAX_FEATURED}). Remove one first.`);
-        return prev;
-      }
-      persistFeatured(next);
-      return next;
-    });
+    const prev = featuredRef.current;
+    const isIn = prev.includes(id);
+    if (!isIn && prev.length >= MAX_FEATURED) {
+      toast.warn(`Showcase is full (max ${MAX_FEATURED}). Remove one first.`);
+      return;
+    }
+    void commitFeatured(isIn ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const reorder = (sourceId: string, targetId: string) => {
-    setFeaturedIds(prev => {
-      const from = prev.indexOf(sourceId);
-      const to = prev.indexOf(targetId);
-      if (from < 0 || to < 0 || from === to) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      persistFeatured(next);
-      return next;
-    });
+    const prev = featuredRef.current;
+    const from = prev.indexOf(sourceId);
+    const to = prev.indexOf(targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...prev];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    void commitFeatured(next);
   };
 
   const earnedById = React.useMemo(() => new Map(earned.map(u => [u.achievement.id, u])), [earned]);

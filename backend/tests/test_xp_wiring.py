@@ -283,7 +283,8 @@ def _session_table_factory(user_id: str):
             }]
         else:
             mock.select.return_value = []
-        mock.update.return_value = []
+        # A conditional end (#761) reports the row it closed.
+        mock.update.return_value = [{"id": "closed"}] if name == "sessions" else []
         return mock
     return factory
 

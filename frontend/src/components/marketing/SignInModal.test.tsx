@@ -7,18 +7,19 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 
 const replace = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }));
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace, push }) }));
 
 const setActiveUser = vi.fn();
-const confirmApproved = vi.fn();
 vi.mock('@/context/UserContext', () => ({
-  useUser: () => ({ setActiveUser, confirmApproved }),
+  useUser: () => ({ setActiveUser }),
 }));
 
 import SignInModal from './SignInModal';
+import { PENDING_TOKEN_KEY } from '@/lib/pendingToken';
 
 const channels: FakeChannel[] = [];
 class FakeChannel {
@@ -91,10 +92,100 @@ describe('#715 popup sign-in routing', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
+  it('starts sign-in with this origin as return_to so a PR preview gets the user back', () => {
+    render(<SignInModal open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    const url = new URL(vi.mocked(window.open).mock.calls[0][0] as string, window.location.href);
+    expect(url.pathname).toBe('/api/auth/google');
+    expect(url.searchParams.get('return_to')).toBe(window.location.origin);
+    expect(url.searchParams.get('popup_id')).toBe(channels[0].name.replace('sapling_signin:', ''));
+  });
+
   it('does not ask when the account is already onboarded', async () => {
     const fetchMock = stubLocalSeed(200, { state: 'pending' });
     await signInThroughPopup(true);
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('#741 an unapproved popup sign-in goes to /pending', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    channels.length = 0;
+    sessionStorage.clear();
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ closed: false, focus() {}, close() {} }) as unknown as Window,
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function deliver(data: Record<string, unknown>) {
+    const onClose = vi.fn();
+    render(<SignInModal open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    channels[0].onmessage?.({ data: { type: 'sapling_signin', ...data } } as MessageEvent);
+    return onClose;
+  }
+
+  it('stashes the relayed token, closes the modal and routes to /pending', () => {
+    const onClose = deliver({ success: false, error: 'not_approved', pendingToken: 'pt-1' });
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBe('pt-1');
+    expect(onClose).toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith('/pending');
+    expect(screen.queryByTestId('signin-error')).toBeNull();
+  });
+
+  it('without a token keeps the pending-approval error in the modal', async () => {
+    const onClose = deliver({ success: false, error: 'not_approved' });
+    expect((await screen.findByTestId('signin-error')).textContent).toContain('pending approval');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
+  });
+});
+
+describe('#756 sign-in error copy', () => {
+  beforeEach(() => {
+    channels.length = 0;
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ closed: false, focus() {}, close() {} }) as unknown as Window,
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('explains a deleted account instead of the generic error', () => {
+    render(<SignInModal open onClose={() => {}} errorCode="account_deleted" />);
+    const error = screen.getByTestId('signin-error').textContent ?? '';
+    expect(error).toContain('This account was deleted.');
+    expect(error).toContain('contact support');
+  });
+
+  it('shows a popup sign-in refused as account_deleted', () => {
+    render(<SignInModal open onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    act(() => {
+      channels[0].onmessage?.({
+        data: { type: 'sapling_signin', success: false, error: 'account_deleted' },
+      } as MessageEvent);
+    });
+    expect(screen.getByTestId('signin-error').textContent).toContain('This account was deleted.');
+  });
+
+  it("hides the landing's error once the student tries again", () => {
+    render(<SignInModal open onClose={() => {}} errorCode="session_expired" />);
+    expect(screen.queryByTestId('signin-error')).not.toBeNull();
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    expect(screen.queryByTestId('signin-error')).toBeNull();
   });
 });

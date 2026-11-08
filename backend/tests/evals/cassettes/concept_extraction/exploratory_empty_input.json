@@ -1,9 +1,9 @@
 {
   "concepts": [
     {
-      "description": "The provided document is empty, so no concepts can be extracted.",
-      "importance": 1.0,
-      "name": "Empty Document"
+      "description": "The submitted document is empty, so no concepts could be extracted from it. Please provide the student document to generate knowledge graph concepts.",
+      "importance": 0.0,
+      "name": "No Content Provided"
     }
   ]
 }

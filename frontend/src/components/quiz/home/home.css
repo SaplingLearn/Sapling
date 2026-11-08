@@ -1,4 +1,4 @@
-/* Quiz home (§5 B1) — the proposal card, the alternatives, the pick list and
+/* Quiz home (§5 B1) — the proposal, the "Choose a topic" list beside it, and
  * the two settings dialogs.
  *
  * R-1: class names only, tokens only. Every geometry constant the design draws
@@ -26,56 +26,81 @@
   /* ── Measures ─────────────────────────────────────────────────────── */
   /* The definition paragraph is set to a reading measure rather than the
      column, exactly as the design draws it. */
-  --quiz-home-def-width: 380px;
-  --quiz-home-dialog-def-width: 340px;
-  --quiz-home-pick-width: 620px;
-  --quiz-home-card-min: 340px;
-  --quiz-home-dialog-card-min: 280px;
+  --quiz-home-def-width: 460px;
+  /* The proposal column; the topic list takes the rest. */
+  --quiz-home-lead-w: 500px;
   --quiz-home-setting-label-w: 96px;
 
   /* ── Display sizes the --fs-* ramp has no step for ────────────────── */
   /* Pinned here rather than bolted onto the global scale (that scale is
      documented as derived from an audit, not invented — see globals.css). */
-  --quiz-home-name-fs: 28px;
-  --quiz-home-dialog-name-fs: 22px;
-  --quiz-home-pick-title-fs: 24px;
-  --quiz-home-def-fs: 13.5px;
+  --quiz-home-name-fs: 34px;
+  --quiz-home-def-fs: 15px;
+  --quiz-home-config-fs: 18px;
 
-  /* ── The card's rhythm ────────────────────────────────────────────── */
-  --quiz-home-card-gap: 24px;
+  /* ── The two columns ──────────────────────────────────────────────── */
+  --quiz-home-grid-gap: 56px;
+  /* Below this the columns stack: the proposal first, the list under it. */
+  --quiz-home-stack-gap: 32px;
+
+  /* ── The proposal's rhythm ────────────────────────────────────────── */
   --quiz-home-head-gap: 16px;
-  --quiz-home-name-gap: 14px;
-  --quiz-home-name-top: 16px;
-  --quiz-home-meta-top: 12px;
+  --quiz-home-name-top: 14px;
+  --quiz-home-meta-top: 6px;
   --quiz-home-rationale-top: 2px;
-  --quiz-home-def-top: 14px;
-  --quiz-home-config-top: 16px;
+  --quiz-home-def-top: 16px;
+  /* The placeholder's lines sit where the paragraph's will (15px at 1.55). */
+  --quiz-home-def-line-gap: 10px;
+  --quiz-home-def-line-pad: 4px;
+  --quiz-home-config-top: 32px;
+  --quiz-home-frame-top: 14px;
+  --quiz-home-frame-border: 3px;
+  /* The live neighbourhood window. The graph fills it and is measured. */
+  --quiz-home-graph-h: 340px;
   --quiz-home-actions-gap: 18px;
   --quiz-home-actions-top: 28px;
   --quiz-home-skeleton-gap: 12px;
 
-  /* ── Sections and rows ────────────────────────────────────────────── */
-  --quiz-home-rule-top: 36px;
-  --quiz-home-rule-bottom: 26px;
-  --quiz-home-eyebrow-gap: 6px;
-  --quiz-home-row-pad: 13px 8px;
-  --quiz-home-row-bleed: -8px;
-  --quiz-home-row-gap: 12px;
-  --quiz-home-pick-open-top: 18px;
+  /* ── The topic list ───────────────────────────────────────────────── */
+  --quiz-home-topics-top: 18px;
+  --quiz-home-toolbar-top: 14px;
+  --quiz-home-toolbar-gap: 12px;
+  --quiz-home-pill-gap: 6px;
+  /* The search pill copies the course pills' box (`Pill size="md"`: 7px 15px,
+     14px text) so the two sit at one height whatever the line metrics. */
+  --quiz-home-pill-pad: 7px 15px;
+  --quiz-home-pill-fs: 14px;
+  /* The eyebrows here sit over 34px and 18px type; `.label-micro`'s 10px
+     read as a footnote beside them. */
+  --quiz-home-eyebrow-fs: 12px;
+  --quiz-home-search-w: 240px;
+  --quiz-home-search-min: 160px;
+  --quiz-home-course-dot: 8px;
+  --quiz-home-due-top: 16px;
 
-  /* ── The pick list ────────────────────────────────────────────────── */
-  --quiz-home-pick-eyebrow-top: 24px;
-  --quiz-home-pick-title-top: 12px;
+  /* ── The swap (a picked concept becoming the card) ────────────────── */
+  --quiz-home-fade-dur: 280ms;
+  --quiz-home-enter-dur: 320ms;
+  --quiz-home-enter-rise: 6px;
+  --quiz-home-returned-dur: 1400ms;
+  --quiz-home-enter-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The fade over the list's last rows, saying there is more below. */
+  --quiz-home-scroll-fade: 28px;
+  --quiz-home-scroll-top: 18px;
+  /* The list never shrinks below this, however short the proposal is; when
+     the columns stack it is capped here instead of at the proposal. */
+  --quiz-home-topics-min: 360px;
+  --quiz-home-topics-stacked-max: 440px;
+  --quiz-home-row-pad: 14px 8px;
+  --quiz-home-row-bleed: -8px;
+  --quiz-home-row-gap: 14px;
   --quiz-home-group-gap: 8px;
-  --quiz-home-group-top: 34px;
+  --quiz-home-group-top: 26px;
   --quiz-home-group-bottom: 2px;
 
   /* ── The dialogs ──────────────────────────────────────────────────── */
-  --quiz-home-dialog-gap: 22px;
-  --quiz-home-dialog-main-top: 4px;
   --quiz-home-dialog-subtitle-top: 4px;
   --quiz-home-dialog-subtitle-gap: 18px;
-  --quiz-home-dialog-meta-top: 8px;
   --quiz-home-settings-top: 20px;
   --quiz-home-setting-gap: 8px;
   --quiz-home-setting-pad: 12px 0 4px;
@@ -84,15 +109,10 @@
   --quiz-home-footer-top: 20px;
   --quiz-home-footer-pad: 18px;
 
-  /* The review-due row has no mastery, so its dot is the one mark drawn in CSS
-     rather than by <ConceptNode> (whose diameters are props, not tokens). The
-     ring is an 8px circle centred in the 11px box the other row dots occupy,
-     as the design draws it (r=4 in an 11-wide viewBox). */
-  --quiz-home-dot-sm: 11px;
-  --quiz-home-dot-hollow: 8px;
+  /* The topic rows' dot (`TopicList`'s ROW_DOT); a stacked row's meta line
+     indents past it. */
+  --quiz-home-dot-sm: 14px;
 
-  /* The inline course code on a row is tracked tighter than `.label-micro`. */
-  --quiz-home-code-tracking: 0.08em;
 }
 
 /* ── Shell ──────────────────────────────────────────────────────────── */
@@ -109,40 +129,169 @@
    `InlineBanner` brings its own `12px var(--pad-xl)` padding and bottom rule —
    nothing here restyles it. */
 
-.quiz-home__rule {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: var(--quiz-home-rule-top) 0 var(--quiz-home-rule-bottom);
+/* ── The two columns ────────────────────────────────────────────────── */
+
+.quiz-home__grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, var(--quiz-home-lead-w)) 1px minmax(0, 1fr);
+  gap: var(--quiz-home-grid-gap);
 }
 
-.quiz-home__rule--tight {
-  margin: var(--quiz-home-rule-bottom) 0 0;
+/* Cancel (§5 B1.8) sits in the grid's top-right corner, level with the
+   eyebrows: beside "Choose a topic" on two columns, beside "Ready for you"
+   once they stack — at the top of the screen either way. */
+.quiz-home__grid-cancel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  line-height: 1;
 }
 
-/* The eyebrow of a section that follows a rule; `.quiz-eyebrow`'s own gap is
-   the app's, the design's is tighter. */
-.quiz-home__section-eyebrow {
-  margin-bottom: var(--quiz-home-eyebrow-gap);
+/* The vertical hairline between the columns. */
+.quiz-home__grid-divider {
+  background: var(--border-strong);
 }
 
-/* ── The proposal card ──────────────────────────────────────────────── */
-
-.quiz-home__card {
+/* The topic column is exactly as tall as the proposal beside it: `contain:
+   size` takes its own content out of the row's height, the grid stretches it
+   to the proposal's, and the list scrolls inside. */
+.quiz-home__topics-col {
+  min-width: 0;
+  min-height: var(--quiz-home-topics-min);
   display: flex;
-  align-items: stretch;
-  gap: var(--quiz-home-card-gap);
+  flex-direction: column;
+  contain: size;
 }
 
-.quiz-home__card-main {
-  flex: 1;
-  min-width: var(--quiz-home-card-min);
+/* One row over the list: course pills left, search right, centred on a
+   shared line; it wraps (search under the pills) when the column is narrow. */
+.quiz-home__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--quiz-home-toolbar-gap);
+  margin-top: var(--quiz-home-toolbar-top);
+  flex-shrink: 0;
 }
 
-/* The eyebrow and Cancel span the WHOLE column, not just the card's text, so
-   Cancel sits at the top-right of the screen (§5 B1.8) rather than floating in
-   the gutter between the text and the neighbourhood. The row renders in every
-   state — proposal, loading, empty, error — so Cancel is never unreachable and
-   nothing below it shifts as the state resolves. */
+.quiz-home__courses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--quiz-home-pill-gap);
+}
+
+.quiz-home__course-dot {
+  width: var(--quiz-home-course-dot);
+  height: var(--quiz-home-course-dot);
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+}
+
+/* The search, drawn as a pill so it reads as one of the toolbar's controls
+   rather than a form field dropped into the list. */
+.quiz-home__search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--quiz-home-pill-gap);
+  /* Shrinks before the toolbar wraps; on its own line it stays this wide. */
+  flex: 1 1 var(--quiz-home-search-min);
+  max-width: var(--quiz-home-search-w);
+  min-width: var(--quiz-home-search-min);
+  margin-left: auto;
+  padding: var(--quiz-home-pill-pad);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text-muted);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.quiz-home__search:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.quiz-home__search-input {
+  /* Zero basis: an input's default ~20ch width would otherwise be the
+     search's minimum and wrap the toolbar long before the pills fill it. */
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--quiz-home-pill-fs);
+}
+
+.quiz-home__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The native clear button is a second, unstyled control inside the pill;
+   Escape clears instead. */
+.quiz-home__search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* The rows bleed past the column (`--quiz-home-row-bleed`); the scroller is
+   widened by the same amount so the bleed fits inside it rather than adding a
+   horizontal scrollbar. */
+.quiz-home__topics-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: var(--quiz-home-scroll-top) var(--quiz-home-row-bleed) 0;
+  padding: 0 calc(-1 * var(--quiz-home-row-bleed));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* No scrollbar. A visible one took its width out of the rows, so their
+     meta lines stopped short of the toolbar's right edge — by a different
+     amount per platform (0 where scrollbars overlay). The fade over the last
+     rows is the "there is more" cue instead, and the bottom padding lets the
+     final row scroll clear of it. */
+  padding-bottom: var(--quiz-home-scroll-fade);
+  scrollbar-width: none;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--quiz-home-scroll-fade)), transparent);
+}
+
+.quiz-home__topics-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.quiz-home__topics-empty {
+  margin: var(--quiz-home-topics-top) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .quiz-home__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--quiz-home-stack-gap);
+  }
+
+  .quiz-home__grid-divider {
+    height: 1px;
+  }
+
+  /* Stacked, there is no proposal beside the list to match: it sizes to its
+     content up to a cap, and scrolls past that. */
+  .quiz-home__topics-col {
+    contain: none;
+    min-height: 0;
+  }
+
+  .quiz-home__topics-scroll {
+    flex: none;
+    max-height: var(--quiz-home-topics-stacked-max);
+  }
+}
+
+/* The Cancel-only row the empty, no-course and error states draw (§5 B1.8). */
 .quiz-home__card-head {
   display: flex;
   align-items: baseline;
@@ -150,33 +299,44 @@
   gap: var(--quiz-home-head-gap);
 }
 
-.quiz-home__card-head .quiz-eyebrow {
-  flex: 1;
-  min-width: 0;
+.quiz-home__topics-col > .quiz-eyebrow {
   margin-bottom: 0;
 }
 
-.quiz-home__name {
-  display: flex;
-  align-items: center;
-  gap: var(--quiz-home-name-gap);
-  margin-top: var(--quiz-home-name-top);
+.quiz-home .quiz-eyebrow,
+.quiz-home__pick-group .label-micro {
+  font-size: var(--quiz-home-eyebrow-fs);
 }
 
-.quiz-home__name-text {
+/* ── The proposal ───────────────────────────────────────────────────── */
+
+.quiz-home__proposal .quiz-eyebrow {
+  margin-bottom: 0;
+}
+
+/* The eyebrow, and once a concept is picked, the way back to the suggestion. */
+.quiz-home__eyebrow-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--quiz-home-head-gap);
+}
+
+.quiz-home__name {
+  margin-top: var(--quiz-home-name-top);
   font-size: var(--quiz-home-name-fs);
+  line-height: 1.15;
   color: var(--text);
 }
 
 .quiz-home__meta {
   margin: var(--quiz-home-meta-top) 0 0;
-  font-size: var(--fs-md);
-  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
 }
 
 .quiz-home__rationale {
   margin: var(--quiz-home-rationale-top) 0 0;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -184,15 +344,38 @@
   margin: var(--quiz-home-def-top) 0 0;
   max-width: var(--quiz-home-def-width);
   font-size: var(--quiz-home-def-fs);
-  line-height: 1.6;
-  color: var(--text-dim);
+  line-height: 1.55;
+  color: var(--text);
   text-wrap: pretty;
 }
 
 .quiz-home__config {
   margin: var(--quiz-home-config-top) 0 0;
-  font-size: var(--fs-base);
-  color: var(--text-dim);
+  font-size: var(--quiz-home-config-fs);
+  color: var(--text);
+}
+
+/* The neighbourhood, framed. The canvas is drawn at fixed proportions and
+   scales to the column, so a narrow window shrinks it instead of clipping it. */
+/* The live neighbourhood, framed. The graph is measured to fill the frame
+   (`LiveNeighbourhood`), and pans and zooms inside it. */
+.quiz-home__neighbourhood {
+  position: relative;
+  height: var(--quiz-home-graph-h);
+  margin-top: var(--quiz-home-frame-top);
+  overflow: hidden;
+  border: var(--quiz-home-frame-border) solid
+    color-mix(in srgb, var(--brand-forest-bright) 55%, transparent);
+  border-radius: var(--r-sm);
+}
+
+
+/* "Or review everything due": the other quiz on offer, under the card's own
+   actions — a link, so it never competes with Start. */
+.quiz-home__due {
+  display: block;
+  margin-top: var(--quiz-home-due-top);
+  text-align: left;
 }
 
 .quiz-home__actions {
@@ -202,19 +385,7 @@
   margin-top: var(--quiz-home-actions-top);
 }
 
-/* The vertical hairline between the card and its neighbourhood. */
-.quiz-home__card-divider {
-  width: 1px;
-  flex-shrink: 0;
-  background: var(--border);
-}
-
-.quiz-home__neighbourhood {
-  flex-shrink: 0;
-  align-self: center;
-}
-
-/* ── Rows: alternatives, review-due, pick list ──────────────────────── */
+/* ── The topic list ─────────────────────────────────────────────────── */
 
 .quiz-home__row {
   display: flex;
@@ -222,7 +393,7 @@
   gap: var(--quiz-home-row-gap);
   padding: var(--quiz-home-row-pad);
   /* The rows bleed 8px past the column so their hover/focus surface extends
-     under the text, exactly as the design draws it. */
+     under the text. */
   margin: 0 var(--quiz-home-row-bleed);
   width: calc(100% - 2 * var(--quiz-home-row-bleed));
   border: 0;
@@ -237,45 +408,15 @@
   background: color-mix(in srgb, var(--text) 3%, transparent);
 }
 
-/* A ruled row keeps its radius: the hover surface stays rounded against the
-   rule, which is what the design draws. */
-.quiz-home__row--ruled {
-  border-bottom: 1px solid var(--border);
-}
-
 .quiz-home__row-mark {
   flex-shrink: 0;
   align-self: center;
   display: inline-flex;
 }
 
-/* The review-due row has no mastery to draw, so its dot is an outline — an 8px
-   ring centred in the same 11px box the other row dots fill. */
-.quiz-home__row-mark--hollow {
-  width: var(--quiz-home-dot-sm);
-  height: var(--quiz-home-dot-sm);
-  align-items: center;
-  justify-content: center;
-}
-
-.quiz-home__row-mark--hollow::before {
-  content: "";
-  width: var(--quiz-home-dot-hollow);
-  height: var(--quiz-home-dot-hollow);
-  border: 1px solid var(--text-muted);
-  border-radius: var(--r-full);
-}
-
 .quiz-home__row-name {
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
   color: var(--text);
-}
-
-.quiz-home__row-code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  letter-spacing: var(--quiz-home-code-tracking);
-  color: var(--text-muted);
 }
 
 .quiz-home__row-spacer {
@@ -283,32 +424,31 @@
 }
 
 .quiz-home__row-meta {
-  font-size: var(--fs-md);
-  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
   text-align: right;
 }
 
-.quiz-home__pick-open {
-  margin-top: var(--quiz-home-pick-open-top);
+/* On a phone the meta line drops under the name, aligned with it, instead of
+   squeezing both into two-line wraps. */
+@media (max-width: 560px) {
+  .quiz-home__row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .quiz-home__row-spacer {
+    display: none;
+  }
+
+  .quiz-home__row-meta {
+    flex-basis: 100%;
+    padding-left: calc(var(--quiz-home-dot-sm) + var(--quiz-home-row-gap));
+    text-align: left;
+  }
 }
 
-/* ── Pick something specific ────────────────────────────────────────── */
-
-.quiz-home__pick {
-  max-width: var(--quiz-home-pick-width);
-}
-
-.quiz-home__pick-title {
-  margin: var(--quiz-home-pick-title-top) 0 0;
-  font-size: var(--quiz-home-pick-title-fs);
-  line-height: 1.3;
-  color: var(--text);
-}
-
-.quiz-home__pick-eyebrow {
-  margin-top: var(--quiz-home-pick-eyebrow-top);
-}
-
+/* A course heading, drawn only when the list spans more than one course. */
 .quiz-home__pick-group {
   display: flex;
   align-items: center;
@@ -316,26 +456,21 @@
   margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
 }
 
-/* ── Empty, loading and error ───────────────────────────────────────── */
-
-.quiz-home__skeleton {
-  display: flex;
-  align-items: stretch;
-  gap: var(--quiz-home-card-gap);
+.quiz-home__topics > section:first-child .quiz-home__pick-group {
+  margin-top: var(--quiz-home-group-bottom);
 }
 
-.quiz-home__skeleton-main {
-  flex: 1;
-  min-width: var(--quiz-home-card-min);
+/* ── Loading ────────────────────────────────────────────────────────── */
+
+.quiz-home__skeleton-main,
+.quiz-home__skeleton-rows {
   display: flex;
   flex-direction: column;
   gap: var(--quiz-home-skeleton-gap);
 }
 
-.quiz-home__skeleton-name {
-  display: flex;
-  align-items: center;
-  gap: var(--quiz-home-name-gap);
+.quiz-home__skeleton-rows {
+  margin-top: var(--quiz-home-topics-top);
 }
 
 /* ── The two dialogs ────────────────────────────────────────────────── */
@@ -353,45 +488,11 @@
   color: var(--text-muted);
 }
 
-.quiz-home-dialog__card {
-  display: flex;
-  align-items: stretch;
-  gap: var(--quiz-home-dialog-gap);
-}
 
-.quiz-home-dialog__main {
-  flex: 1;
-  min-width: var(--quiz-home-dialog-card-min);
-  padding-top: var(--quiz-home-dialog-main-top);
-}
 
-.quiz-home-dialog__name {
-  margin: 0;
-  font-size: var(--quiz-home-dialog-name-fs);
-  line-height: 1.2;
-  color: var(--text);
-}
 
-.quiz-home-dialog__meta {
-  margin: var(--quiz-home-dialog-meta-top) 0 0;
-  font-size: var(--fs-md);
-  color: var(--text-muted);
-}
 
-.quiz-home-dialog__rationale {
-  margin: var(--quiz-home-rationale-top) 0 0;
-  font-size: var(--fs-md);
-  color: var(--text-muted);
-}
 
-.quiz-home-dialog__definition {
-  margin: var(--quiz-home-def-top) 0 0;
-  max-width: var(--quiz-home-dialog-def-width);
-  font-size: var(--quiz-home-def-fs);
-  line-height: 1.6;
-  color: var(--text-dim);
-  text-wrap: pretty;
-}
 
 .quiz-home-dialog__note {
   min-height: var(--quiz-home-note-min);
@@ -432,7 +533,77 @@
   padding: var(--quiz-home-setting-pad);
 }
 
+/* The line under the format row explaining "Mixed". Visible, unlike the
+   question screen's `.quiz-question__hint` it used to borrow (a 1px clip). */
+.quiz-home-settings__note {
+  margin: 0;
+  padding-bottom: var(--quiz-home-setting-gap);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
 .quiz-home-settings__label {
   width: var(--quiz-home-setting-label-w);
   flex-shrink: 0;
+}
+
+/* ── The swap ───────────────────────────────────────────────────────────
+   Picking a concept makes it the card (QuizHome.choose): the card fades up
+   into place, and the row the old card's concept returns to is tinted once. */
+@keyframes quiz-home-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--quiz-home-enter-rise));
+  }
+}
+
+.quiz-home__proposal[data-entering="true"] {
+  animation: quiz-home-enter var(--quiz-home-enter-dur) var(--quiz-home-enter-ease);
+}
+
+/* The definition's placeholder while its sentence is fetched: three lines at
+   the paragraph's measure, so nothing shifts when the text lands. */
+.quiz-home__definition-pending {
+  display: grid;
+  gap: var(--quiz-home-def-line-gap);
+  max-width: var(--quiz-home-def-width);
+  margin-top: var(--quiz-home-def-top);
+  padding: var(--quiz-home-def-line-pad) 0;
+}
+
+/* The fetched sentence arriving in place of the placeholder. */
+@keyframes quiz-home-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.quiz-home__definition {
+  animation: quiz-home-fade-in var(--quiz-home-fade-dur) ease-out;
+}
+
+/* The row a swapped-out concept returned to: a tint that fades, so the eye
+   finds where the old card went. */
+@keyframes quiz-home-returned {
+  from {
+    background: var(--accent-soft);
+  }
+}
+
+.quiz-home__row[data-returned="true"] {
+  animation: quiz-home-returned var(--quiz-home-returned-dur) ease-out;
+}
+
+/* A row answers the press before the swap starts. */
+.quiz-home__row:active {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-home__proposal[data-entering="true"],
+  .quiz-home__definition,
+  .quiz-home__row[data-returned="true"] {
+    animation: none;
+  }
 }

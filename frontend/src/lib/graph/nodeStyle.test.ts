@@ -11,6 +11,8 @@ import {
   shadeFor,
   tierFor,
   truncateLabel,
+  MASTERY_PALETTE,
+  masteryFillFor,
 } from "./nodeStyle";
 
 /**
@@ -41,9 +43,8 @@ describe("shadeFor", () => {
     expect(shadeFor("#7a874f", "n1")).toMatch(/^hsl\(/);
   });
 
-  it("never returns the space-separated hsl() form for the 3D renderer", () => {
+  it("never returns the space-separated hsl() form in hex mode", () => {
     // Three.js's Color.setStyle rejects `hsl(h s% l%)` and paints BLACK
-    // (KnowledgeGraph3D documents this at its old local copy).
     for (const { base, id } of SHADE_GOLDEN) {
       expect(shadeFor(base, id, "hex")).toMatch(/^#[0-9a-f]{6}$/);
     }
@@ -171,5 +172,22 @@ describe("the mark's constants", () => {
   it("keeps the resting stroke opacity and the glow geometry the tree uses", () => {
     expect(NODE_STROKE_OPACITY).toBe(0.4);
     expect(GLOW).toEqual({ pad: 8, opacity: 0.15, blur: 3 });
+  });
+});
+
+describe("masteryFillFor", () => {
+  it("maps each server tier to its palette colour and hubs to hub brown", () => {
+    expect(masteryFillFor({ mastery_tier: "mastered" })).toBe(MASTERY_PALETTE.mastered);
+    expect(masteryFillFor({ mastery_tier: "learning" })).toBe(MASTERY_PALETTE.learning);
+    expect(masteryFillFor({ mastery_tier: "struggling" })).toBe(MASTERY_PALETTE.struggling);
+    expect(masteryFillFor({ mastery_tier: "unexplored" })).toBe(MASTERY_PALETTE.unexplored);
+    expect(masteryFillFor({ is_subject_root: true, mastery_tier: "mastered" })).toBe(MASTERY_PALETTE.hub);
+  });
+
+  it("reads an unknown or missing tier as unexplored", () => {
+    expect(masteryFillFor({ mastery_tier: "subject_root" })).toBe(MASTERY_PALETTE.unexplored);
+    expect(masteryFillFor({ mastery_tier: "toString" })).toBe(MASTERY_PALETTE.unexplored);
+    expect(masteryFillFor({ mastery_tier: null })).toBe(MASTERY_PALETTE.unexplored);
+    expect(masteryFillFor({})).toBe(MASTERY_PALETTE.unexplored);
   });
 });

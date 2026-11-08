@@ -1009,7 +1009,9 @@ def test_seam_callers_are_only_grade_answer():
     # PKG-15 R1 (minor 7): main.py's lifespan drains the shadows at shutdown, nothing else
     assert importers == ["agents/_jev.py", "agents/tools/check.py", "main.py"]
     main_src = (BACKEND / "main.py").read_text()
-    assert re.findall(r"learning_decisions\.(\w+)\(", main_src) == ["shutdown_shadows"]
+    # #771: teardowns are registered on the lifespan's exit stack, not called inline
+    assert re.findall(r"learning_decisions\.(\w+)", main_src) == ["shutdown_shadows"]
+    assert "stack.push_async_callback(learning_decisions.shutdown_shadows)" in main_src
     jev = (BACKEND / "agents" / "_jev.py").read_text()
     assert not any(f"decisions.{n}(" in jev for n in DECISION_NAMES_FOR_PIN)
 

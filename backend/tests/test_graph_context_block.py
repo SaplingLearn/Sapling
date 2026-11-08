@@ -178,7 +178,7 @@ def _prepare(user_message="What is the chain rule?", course_id="c1", **overrides
         message_history=[],
         use_shared_context=True,
         request_id="r1",
-        model_pref="fast",  # skip _build_pro_model_settings
+        model_pref="fast",  # skip _build_deep_turn_model_settings
     )
     kwargs.update(overrides)
     return _prepare_chat_run(**kwargs)
@@ -249,7 +249,7 @@ def test_chat_route_saves_raw_body_message():
 
     with (
         patch("routes.learn._chat_via_agent", side_effect=fake_chat_via_agent),
-        patch("routes.learn.require_session_owner"),
+        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
         patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
         patch("routes.learn._get_session_offering_id", return_value=""),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -291,7 +291,7 @@ def test_stream_route_saves_raw_body_message():
         patch("routes.learn.stream_agent_turn", fake_stream),
         patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn.require_session_owner"),
+        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
         patch("routes.learn._get_session_offering_id", return_value=""),
         patch("routes.learn._load_message_history", return_value=[]),
         patch("routes.learn.events_service"),

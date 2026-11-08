@@ -236,7 +236,7 @@ from services.academics import (
 )
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
-from services.auth_guard import get_session_user_id, require_self
+from services.auth_guard import get_session_user_id, guard_off_loop, require_self
 from services.encryption import decrypt_if_present, decrypt_json_column
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
@@ -3189,7 +3189,7 @@ def list_open_sessions(
 
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
@@ -3200,7 +3200,7 @@ async def chat(body: ChatBody, request: Request):
 
 @router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(body: ChatBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
@@ -3731,7 +3731,7 @@ def _submission_turn(
 
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
@@ -3743,7 +3743,7 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
 
 @router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
@@ -4058,8 +4058,8 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     outage or the grade cap releases it too and is a 503 with nothing recorded
     for either outcome (invariant 28)."""
     if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    loop_on = _gate(body.user_id, request)
+        body.user_id = await guard_off_loop(get_session_user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     node = _posttest_node(body.user_id, body.node_id)
     course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
     items = items_for_concepts(course_id, [key]).get(key) or []
@@ -4344,7 +4344,7 @@ async def action(body: ActionBody, request: Request):
     """An "[ACTION: ...]" turn: in the check phase a hint at the item's current
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
@@ -4370,7 +4370,7 @@ async def action(body: ActionBody, request: Request):
 
 @router.post("/start-session", dependencies=_RATE_LIMITED)
 async def start_session(body: StartSessionBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     result = await _json_turn(
         lambda: _LoopOpener(body=body, request=request, loop_on=loop_on),
         "loop start-session agent",
@@ -4387,7 +4387,7 @@ async def start_session(body: StartSessionBody, request: Request):
 
 @router.post("/start-session/stream", dependencies=_RATE_LIMITED)
 async def start_session_stream(body: StartSessionBody, request: Request):
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     return _sse(_LoopOpener(body=body, request=request, loop_on=loop_on))
 
 
@@ -4805,8 +4805,8 @@ async def close(body: CloseBody, request: Request) -> dict:
     (spec §9: "inline where only some bodies run one"), so a gate-off student
     gets the 404 and a zero-evidence close always works."""
     if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    _gate(body.user_id, request)
+        body.user_id = await guard_off_loop(get_session_user_id, request)
+    await guard_off_loop(_gate, body.user_id, request)
     return await close_session(
         body.session_id, body.user_id, request_id=_request_id(request), rate_limit="raise"
     )
@@ -5608,7 +5608,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     (A20); the rate limit is the one model-cost guard here (spec §9), checked
     inline AFTER the gate (PKG-12's pattern) so a gate-off student gets the
     404, never a 429."""
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     ai_budget.enforce_rate_limit_for(body.user_id)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
@@ -5968,7 +5968,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     write), a flashcard through PKG-11's FSRS path. The item, its node (A2) and
     its reference are re-loaded here. Grading is a claim (A52): a second submit of
     the same served item is a 409 and is never graded or written twice."""
-    loop_on = _gate(body.user_id, request)
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
     if body.kind == "check":  # the one review body that runs a model (the grader)
         ai_budget.enforce_rate_limit_for(body.user_id)
     _review_course(body.user_id, body.course_id)

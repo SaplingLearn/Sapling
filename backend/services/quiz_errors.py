@@ -155,7 +155,17 @@ def error_content(
             status_code, legacy_detail, request_id,
             code=code, message=message, machine_detail=machine_detail,
         )
-    return {"detail": legacy_detail, "request_id": request_id}
+    content = {"detail": legacy_detail, "request_id": request_id}
+    if isinstance(code, str) and code:
+        # A non-quiz raise site that attached a typed code (e.g. the tutor's
+        # SESSION_ENDED 409, #761) gets the same `error` object the quiz
+        # envelope carries — additive: the legacy keys are unchanged.
+        content["error"] = {
+            "code": str(getattr(code, "value", code)),
+            "message": message or (legacy_detail if isinstance(legacy_detail, str) else ""),
+            "request_id": request_id,
+        }
+    return content
 
 
 def validation_error_code(errors: list[dict]) -> tuple["QuizErrorCode", str | None]:

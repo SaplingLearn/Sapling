@@ -71,7 +71,8 @@ class _Tables:
             m.select.return_value = []
         m.insert.return_value = []
         m.upsert.return_value = []
-        m.update.return_value = []
+        # A conditional end (#761) reports the row it closed.
+        m.update.return_value = [{"id": SESSION}] if name == "sessions" else []
         m.delete.return_value = []
         self.mocks[name] = m
         return m

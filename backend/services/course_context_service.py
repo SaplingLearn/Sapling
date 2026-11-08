@@ -26,8 +26,11 @@ students on and off the loop, so a per-user gate cannot pick):
 import copy
 import json
 import hashlib
+import random
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
-from functools import lru_cache
 
 import config
 from db.connection import table
@@ -108,39 +111,56 @@ def _generate_summary_with_gemini(
         )
 
 
-@lru_cache(maxsize=512)
-def _get_course_context_cached(offering_id: str) -> dict:
-    try:
-        # Get the offering summary
-        summary_rows = table("offering_summary").select(
-            "*",
-            filters={"offering_id": f"eq.{offering_id}"},
-        )
-        if not summary_rows:
-            return {}
+#: Upper bound on how stale a cached course context can be (#771). The clear
+#: hook below only reaches THIS process: another worker's
+#: `update_course_context` used to leave this one serving its old copy for
+#: as long as the process lived. Each entry expires on its own clock, at a
+#: jittered 90-100% of this TTL from when it was read, so every worker
+#: converges within one TTL without all offerings refetching at the same
+#: instant; a same-process update still clears at once.
+COURSE_CONTEXT_TTL_S = 60.0
+_TTL_JITTER = 0.1
+#: Entries kept per process; expired entries go first, then least recently used.
+COURSE_CONTEXT_CACHE_MAX = 512
 
-        summary = summary_rows[0]
+# offering_id -> (expires_at monotonic, context). LRU order, newest last.
+_cache: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+_cache_lock = threading.Lock()
+#: Bumped by every clear: a read that began before a clear must not store its
+#: (pre-update) result after it.
+_cache_generation = 0
 
-        # Get concept stats for this offering
-        stats_rows = table("offering_concept_stats").select(
-            "*",
-            filters={"offering_id": f"eq.{offering_id}"},
-        )
 
-        return {
-            "course_summary": {
-                "offering_id": summary["offering_id"],
-                "student_count": summary["student_count"],
-                "avg_class_mastery": summary["avg_class_mastery"],
-                "top_struggling_concepts": summary.get("top_struggling_concepts", []),
-                "top_mastered_concepts": summary.get("top_mastered_concepts", []),
-                "summary_text": summary.get("summary_text", ""),
-                "updated_at": summary["updated_at"],
-            },
-            "concept_stats": stats_rows or [],
-        }
-    except Exception:
+def _read_course_context(offering_id: str) -> dict:
+    """Uncached read. Raises on a store error (the caller answers {} and
+    caches nothing, so a transient failure never pins an empty context)."""
+    summary_rows = table("offering_summary").select(
+        "*",
+        filters={"offering_id": f"eq.{offering_id}"},
+    )
+    if not summary_rows:
         return {}
+
+    summary = summary_rows[0]
+
+    # Get concept stats for this offering
+    stats_rows = table("offering_concept_stats").select(
+        "*",
+        filters={"offering_id": f"eq.{offering_id}"},
+    )
+
+    return {
+        "course_summary": {
+            "offering_id": summary["offering_id"],
+            "student_count": summary["student_count"],
+            "avg_class_mastery": summary["avg_class_mastery"],
+            "top_struggling_concepts": summary.get("top_struggling_concepts", []),
+            "top_mastered_concepts": summary.get("top_mastered_concepts", []),
+            "summary_text": summary.get("summary_text", ""),
+            "updated_at": summary["updated_at"],
+        },
+        "concept_stats": stats_rows or [],
+    }
 
 
 def get_course_context(offering_id: str) -> dict:
@@ -148,19 +168,52 @@ def get_course_context(offering_id: str) -> dict:
     Return the cached class context for an offering: summary + concept stats.
     Offering-scoped (one class instance in one term). Returns {} if not found.
 
-    Cached per-process (#98) and invalidated by ``update_course_context`` (which
-    runs after graph updates). Returns a deep copy so callers can't mutate the
-    shared cached value.
+    Cached per-process (#98), invalidated by ``update_course_context`` (which
+    runs after graph updates) in this process and by COURSE_CONTEXT_TTL_S in
+    every other (#771). Returns a deep copy so callers can't mutate the shared
+    cached value. A failed read returns {} and is not cached.
     """
     if not offering_id:
         return {}
-    return copy.deepcopy(_get_course_context_cached(offering_id))
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(offering_id)
+        if hit is not None and hit[0] > now:
+            _cache.move_to_end(offering_id)
+            return copy.deepcopy(hit[1])
+        generation = _cache_generation
+    try:
+        value = _read_course_context(offering_id)
+    except Exception:
+        return {}
+    ttl = COURSE_CONTEXT_TTL_S * (1.0 - random.uniform(0.0, _TTL_JITTER))
+    with _cache_lock:
+        if generation == _cache_generation:
+            _cache[offering_id] = (time.monotonic() + ttl, value)
+            _cache.move_to_end(offering_id)
+            _evict_locked()
+    return copy.deepcopy(value)
+
+
+def _evict_locked() -> None:
+    """Hold the size bound: drop expired entries, then the least recently
+    used. Caller holds _cache_lock."""
+    if len(_cache) <= COURSE_CONTEXT_CACHE_MAX:
+        return
+    now = time.monotonic()
+    for key in [k for k, (exp, _) in _cache.items() if exp <= now]:
+        del _cache[key]
+    while len(_cache) > COURSE_CONTEXT_CACHE_MAX:
+        _cache.popitem(last=False)
 
 
 def clear_course_context_cache() -> None:
     """Drop the per-process course-context cache. Called whenever the underlying
     aggregates change (``update_course_context``) and from test setup."""
-    _get_course_context_cached.cache_clear()
+    global _cache_generation
+    with _cache_lock:
+        _cache.clear()
+        _cache_generation += 1
 
 
 def update_course_context(offering_id: str) -> None:

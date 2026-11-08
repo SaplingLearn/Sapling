@@ -125,15 +125,22 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
 });
 
 /**
- * Journey (#164): the Dashboard "Where you left off" card deep-links into the
+ * Journey (#164): the Dashboard's Today's-plan resume item deep-links into the
  * exact session with its history hydrated. The bug being pinned: Learn read
  * only `topic`/`mode`/`course`/`suggest` off the URL, so the `?resume=` the
- * card pushes (and Tree's session rows, now unified on the same param) was
- * silently dropped — the card landed on the "Start a session" picker, a dead
- * button in effect. Entry is via the REAL dashboard card, not a direct URL,
+ * dashboard pushes (and Tree's session rows, now unified on the same param) was
+ * silently dropped — the click landed on the "Start a session" picker, a dead
+ * button in effect. Entry is via the REAL dashboard item, not a direct URL,
  * so the whole caller → param → resume wiring is on the hook.
+ *
+ * The plan offers only the LATEST session (it replaced the 3-row "Where you
+ * left off" card): `rich-sess-math-vectors` is seeded after
+ * `rich-sess-cs-recursion` (db/seed_local_rich.py `_SESSIONS` order), so it
+ * carries the later `started_at` and sorts first under `started_at.desc`.
  */
-test("dashboard 'Where you left off' card resumes the exact session (#164)", async ({
+const LATEST_SESSION_ID = "rich-sess-math-vectors";
+
+test("dashboard plan's resume item resumes the exact session (#164)", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -141,20 +148,20 @@ test("dashboard 'Where you left off' card resumes the exact session (#164)", asy
   });
 
   await page.goto("/dashboard");
-  await page.getByTestId(`dashboard-resume-${SESSION_ID}`).click();
-  await expect(page).toHaveURL(/\/learn\?/);
+  await page.getByTestId(`dashboard-resume-${LATEST_SESSION_ID}`).click();
+  await expect(page).toHaveURL(new RegExp(`/learn\\?resume=${LATEST_SESSION_ID}`));
 
-  // The seeded conversation hydrates — both an early and a late seeded turn,
-  // proving the full history loaded rather than a fresh chat on the topic.
+  // The seeded conversation hydrates — both seeded turns, proving the
+  // history loaded rather than a fresh chat on the topic.
   const log = page.getByTestId("tutor-messages");
-  await expect(log).toContainText("Can you explain recursion?");
+  await expect(log).toContainText("What is a dot product?");
   await expect(log).toContainText(
-    "The base case is the condition where the function stops calling itself.",
+    "The dot product of two vectors is the sum of the products of their",
   );
 
   // And it's the chat view, not the session picker the bug used to strand
   // users on (the picker's resume row only exists on the entry screen).
-  await expect(page.getByTestId(`tutor-session-resume-${SESSION_ID}`)).toHaveCount(0);
+  await expect(page.getByTestId(`tutor-session-resume-${LATEST_SESSION_ID}`)).toHaveCount(0);
 });
 
 /**

@@ -7,6 +7,9 @@ from learning.params import PROBE_PLAN_READS_PER_MIN
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Every agent slot defaults to Claude (ADR 0030); GEMINI_API_KEY stays required
+# for RAG embeddings, which have no Anthropic equivalent.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/api/calendar/callback")
@@ -122,6 +125,21 @@ AUTH_SCOPES = [
 ]
 
 
+# Transactional + broadcast email over Resend (services/email_service.py).
+# RESEND_API_KEY unset/empty is the kill switch: every send is still recorded in
+# `email_sends` (status `skipped`) and logged at INFO, but nothing leaves the
+# process. Tests, E2E and local dev run without it and never touch the network.
+# email_service reads these off this module at call time, so a test can patch them.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or "Sapling <hello@saplinglearn.com>"
+EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
+# Where the emails' header image loads from ({base}/email/header.jpg, built by
+# frontend/scripts/build-email-header.mjs into frontend/public/email/). Defaults to
+# FRONTEND_URL; staging sets it to the public prod site, since its own
+# frontend sits behind Cloudflare Access and a recipient couldn't load them.
+EMAIL_ASSET_BASE_URL = os.getenv("EMAIL_ASSET_BASE_URL", "").strip()
+
+
 STORAGE_BUCKET: str = "avatars"
 MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
 
@@ -131,7 +149,7 @@ def validate_config() -> None:
 
     Without this the app boots with empty secrets and fails opaquely later:
     a "" SUPABASE_URL builds a malformed REST URL on the first DB call, a
-    missing GEMINI_API_KEY surfaces only mid-request, and — worst — an empty
+    missing GEMINI_API_KEY / ANTHROPIC_API_KEY surfaces only mid-request, and — worst — an empty
     SESSION_SECRET silently disables HMAC signing and drops session/OAuth
     state into an unsigned in-memory fallback. Raise one clear error naming
     every missing key instead.
@@ -139,7 +157,7 @@ def validate_config() -> None:
     SESSION_SECRET is required outside local dev (IS_LOCAL) and must be a
     strong secret — a whitespace-only or short value would silently become a
     weak HMAC signing key. We require >= 32 bytes after stripping, matching the
-    frontend (lib/sessionToken.ts). The other three are always required
+    frontend (lib/sessionToken.ts). The other four are always required
     (CI/tests supply dummy values).
     """
     missing = []
@@ -149,6 +167,8 @@ def validate_config() -> None:
         missing.append("SUPABASE_SERVICE_KEY")
     if not GEMINI_API_KEY:
         missing.append("GEMINI_API_KEY")
+    if not ANTHROPIC_API_KEY:
+        missing.append("ANTHROPIC_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")
     if missing:
@@ -206,3 +226,68 @@ def build_commit() -> str:
     generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
     raw = railway or generic
     return raw[:7].lower() or "unknown"
+
+
+# ── PostHog (optional product analytics, ADR 0028) ──────────────────────────
+#
+# All of these are OPTIONAL and deliberately absent from `validate_config`: unset
+# means the PostHog seam (services/posthog_client.py) is fully inert — no
+# client, no threads, no network. Whether a set token is actually USED is
+# decided there (`disabled_reason`), not here: it is also forced off under
+# pytest, APP_ENV=test and any non-"real" SAPLING_MODEL_MODE; the runtime
+# switch is the product_analytics feature flag. Read at call time, not import
+# time (like `canopy_metrics_token`), so tests need no reload.
+
+POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com"  # US cloud ingestion
+
+
+def posthog_project_token() -> str:
+    """The project (public, write-only) token events are captured with."""
+    return (os.getenv("POSTHOG_PROJECT_TOKEN") or "").strip()
+
+
+def posthog_host() -> str:
+    """Ingestion host. Defaults to US cloud."""
+    return (os.getenv("POSTHOG_HOST") or POSTHOG_DEFAULT_HOST).strip().rstrip("/")
+
+
+def posthog_personal_api_key() -> str:
+    """Personal API key (scope `person:write`) — used ONLY by the account-
+    deletion person delete, never handed to the capture client (a personal key
+    there would start feature-flag polling, i.e. background network)."""
+    return (os.getenv("POSTHOG_PERSONAL_API_KEY") or "").strip()
+
+
+def posthog_project_id() -> str:
+    """Numeric project id for the private REST API (person deletion)."""
+    return (os.getenv("POSTHOG_PROJECT_ID") or "").strip()
+
+
+#: The ONLY ingestion hosts an API host is ever derived from. The personal API
+#: key (`person:write`) is sent to whatever posthog_api_host() returns, so a
+#: derivation must never be able to point it at a host that is not PostHog's
+#: own app: a string rewrite of an arbitrary POSTHOG_HOST (a reverse proxy, a
+#: typo, a self-hosted ingest) would hand the key to that host.
+_POSTHOG_INGEST_TO_API_HOST = {
+    "https://us.i.posthog.com": "https://us.posthog.com",
+    "https://eu.i.posthog.com": "https://eu.posthog.com",
+    # The app hosts also accept ingestion; they ARE the API hosts.
+    "https://us.posthog.com": "https://us.posthog.com",
+    "https://eu.posthog.com": "https://eu.posthog.com",
+}
+
+
+def posthog_api_host() -> str | None:
+    """Private REST API host for the personal-key calls (person deletion), or
+    None when it cannot be determined safely.
+
+    The ingestion host (`us.i.posthog.com`) does not serve `/api/projects/...`;
+    the app host does. POSTHOG_API_HOST, when set, is used as-is (self-hosted
+    or proxied setups must name their API host explicitly). Otherwise it is
+    derived ONLY from the PostHog-cloud hosts (us/eu, ingestion or app); any other
+    POSTHOG_HOST returns None and the caller WARNs and skips rather than
+    guessing where to send the key."""
+    explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return _POSTHOG_INGEST_TO_API_HOST.get(posthog_host().lower())

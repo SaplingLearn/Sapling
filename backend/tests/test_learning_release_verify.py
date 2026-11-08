@@ -321,7 +321,6 @@ def test_logs_export_only_category_counts_and_absence_is_not_delivery_proof(tmp_
 ACCOUNTING_HOOK_SOURCES = {
     "agents/usage.py": (
         "agent_usage_capture",
-        "agent_zero_token_check",
         "agent_retry_observability",
     ),
     "services/chat_stream.py": (

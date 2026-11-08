@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from db.connection import SUPABASE_KEY, SUPABASE_URL, table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
-from services.auth_guard import get_session_user_id
+from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import encrypt_if_present
 from services.request_limits import read_within_limit
 from services.tutor_sessions import session_owned_by
@@ -90,7 +90,7 @@ async def upload_issue_screenshot(request: Request, file: UploadFile = File(...)
     public URL); the path is stored in issue_reports.screenshot_urls and reviewed
     via the dashboard / a signed URL.
     """
-    user_id = get_session_user_id(request)  # 401 if unauthenticated
+    user_id = await guard_off_loop(get_session_user_id, request)  # 401 if unauthenticated
     if (file.content_type or "") not in ALLOWED_SCREENSHOT_TYPES:
         raise HTTPException(
             status_code=415,

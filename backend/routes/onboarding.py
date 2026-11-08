@@ -57,19 +57,24 @@ def search_courses(request: Request, q: str = Query("", min_length=0)):
 
 @router.post("/profile")
 def save_onboarding_profile(body: OnboardingBody, request: Request):
-    """Save the onboarding form data for an existing user."""
+    """Save the onboarding form data for an existing user — once.
+
+    #757: onboarding is a one-way gate. A replay by an already-onboarded user
+    is a 409 (it used to overwrite the profile and add enrollments), and
+    `onboarding_completed` is written LAST, so a failure part-way leaves the
+    account un-onboarded and retryable instead of "onboarded" with no profile.
+    Every write before the flag is idempotent (profile upsert, enrollment
+    existence check), which is what makes that retry safe.
+    """
     require_self(body.user_id, request)
 
-    # Verify user exists
-    user = table("users").select("id", filters={"id": f"eq.{body.user_id}"})
+    user = table("users").select(
+        "id,onboarding_completed", filters={"id": f"eq.{body.user_id}"},
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
-    # onboarding_completed is an auth/status flag and stays on `users`.
-    table("users").update(
-        {"onboarding_completed": True},
-        filters={"id": f"eq.{body.user_id}"},
-    )
+    if user[0].get("onboarding_completed"):
+        raise HTTPException(status_code=409, detail="Onboarding is already complete.")
 
     # Profile fields moved to user_profiles in migration 0024 (one source of truth).
     # name/first_name/last_name are 🔒-encrypted; the rest are plaintext.
@@ -119,6 +124,13 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
             })
 
         enrolled_ids.append(course_id)  # response still reports abstract course ids
+
+    # onboarding_completed is an auth/status flag and stays on `users`. Last,
+    # and only from false: a concurrent submit that got here first wins.
+    table("users").update(
+        {"onboarding_completed": True},
+        filters={"id": f"eq.{body.user_id}", "onboarding_completed": "is.false"},
+    )
 
     return {
         "user_id": body.user_id,

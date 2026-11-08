@@ -7,6 +7,8 @@ export interface CustomSelectOption<T extends string = string> {
   label: React.ReactNode;
   description?: React.ReactNode;
   disabled?: boolean;
+  /** `data-testid` on this option's row in the open listbox. */
+  testId?: string;
 }
 
 interface CustomSelectProps<T extends string = string> {
@@ -20,6 +22,8 @@ interface CustomSelectProps<T extends string = string> {
   align?: "left" | "right";
   className?: string;
   style?: React.CSSProperties;
+  /** Merged over the trigger button's own style (e.g. a pill radius). */
+  triggerStyle?: React.CSSProperties;
   /** E2E surface (docs/frontend-testids.md): `data-testid` on the trigger
    *  button; each option gets `<testId>-option-<value>`. Omitted: no testids. */
   testId?: string;
@@ -36,6 +40,7 @@ export function CustomSelect<T extends string = string>({
   align = "left",
   className,
   style,
+  triggerStyle,
   testId,
 }: CustomSelectProps<T>) {
   const [open, setOpen] = useState(false);
@@ -141,6 +146,7 @@ export function CustomSelect<T extends string = string>({
           opacity: disabled ? 0.6 : 1,
           textAlign: "left",
           transition: "border-color var(--dur-fast) var(--ease)",
+          ...triggerStyle,
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -180,7 +186,8 @@ export function CustomSelect<T extends string = string>({
             return (
               <li
                 key={opt.value}
-                data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
+                // An option's own testId wins; otherwise `<testId>-option-<value>`.
+                data-testid={opt.testId ?? (testId ? `${testId}-option-${opt.value}` : undefined)}
                 role="option"
                 aria-selected={isSelected}
                 aria-disabled={opt.disabled}

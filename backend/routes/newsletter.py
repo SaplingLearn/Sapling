@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 from db.connection import table
+from services import email_service
 
 logger = logging.getLogger("newsletter")
 
@@ -22,7 +23,7 @@ class SubscribeRequest(BaseModel):
 
 
 @router.post("/subscribe")
-def subscribe(body: SubscribeRequest):
+def subscribe(body: SubscribeRequest, background_tasks: BackgroundTasks):
     try:
         table("newsletter_emails").upsert(
             {"email": body.email},
@@ -37,4 +38,7 @@ def subscribe(body: SubscribeRequest):
             status_code=500,
             detail="Could not process subscription. Please try again later.",
         )
+    # "You're on the list". Deduped per address in email_sends, so signing up
+    # twice (or a re-submit) never sends it twice; runs after the response.
+    email_service.queue_waitlist_confirmation(background_tasks, body.email)
     return {"ok": True}

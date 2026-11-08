@@ -1,6 +1,6 @@
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import logfire
@@ -29,15 +29,23 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_email import router as admin_email_router
+from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from services import ai_budget, quiz_config, quiz_errors
+from services.feature_flags import nav_feature_gate
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.ops_logging import install_accounting_logfire_bridge
 from services.ai_trace_privacy import content_free_tracer_provider
 from services import otel_fastapi_compat
-from services.request_context import RequestIDMiddleware, current_request_id
+from services.request_context import (
+    RequestIDMiddleware,
+    current_request_id,
+    privacy_signal_in,
+)
+from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -51,6 +59,7 @@ from services.local_seed_watcher import (
     stop_watcher as stop_local_seed_watcher,
 )
 from services import typesafe_client
+from services import posthog_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -98,11 +107,41 @@ install_accounting_logfire_bridge()
 # list below only takes effect on buckets this code creates. Environments whose
 # bucket predates the change (staging/prod) need a one-off bucket update to add
 # image/svg+xml before SVG icon uploads will work there.
+#
+# Lifecycle shape (#771): every started resource registers its teardown on an
+# AsyncExitStack the moment it starts, so a startup failure part-way through
+# still tears down what already started, and shutdown unwinds in REVERSE start
+# order. Sinks (PostHog, the events worker) start first so they stop LAST —
+# after every producer that can still log_event (the seed watcher, the
+# sweeper, DBOS workflows, upload post-roll work, tutor-router decisions) has
+# stopped or drained. Add a new resource by starting it AND registering its
+# teardown on the next line, at the position that keeps that order.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # #771: the model mode is fixed for the life of the process from here on,
+    # so the import-time agents and every per-call gate agree on it.
+    from agents._providers import freeze_model_mode
+    freeze_model_mode()
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
+    # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
+    # and writes the real environment can never decrypt.
+    verify_encryption_key()
+    async with AsyncExitStack() as stack:
+        await _start(stack)
+        yield
+
+
+async def _start(stack: AsyncExitStack) -> None:
+    """Start everything, registering each teardown as it starts (#771)."""
+    # ADR 0028: optional; builds nothing (no threads, no network) when the
+    # token is unset, under pytest/APP_ENV=test, or in function mode.
+    # Drained, then its SDK flushed, LAST: every sink-feeding producer below
+    # has stopped by then.
+    posthog_client.initialize_posthog()
+    stack.callback(posthog_client.shutdown_posthog)
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -116,52 +155,61 @@ async def _lifespan(_app: FastAPI):
         allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES),
     )
     # #116/#118: start the fire-and-forget observability drain thread so LLM
-    # usage + event rows flush off the request path.
+    # usage + event rows flush off the request path. Stopped (and the queue
+    # flushed) after every producer below, just before PostHog.
     from services import events_service
     events_service.start_worker()
+    stack.callback(events_service.shutdown)
+    # The decision seam's pooled Jev client (#642) for this loop: closed after
+    # the tutor-router drain below, whose decisions still use it.
+    stack.push_async_callback(typesafe_client.aclose_clients)
+    # Let in-flight tutor-router decisions finish before the client and the
+    # events worker close: each one emits a decision.made row (bounded by the
+    # router's own backstop).
+    from services import tutor_router
+    stack.push_async_callback(tutor_router.drain_inflight)
     # ADR 0011 / #154: construct + launch DBOS when DBOS_ENABLED=true; no-op
     # passthrough otherwise. Fails loudly (raises) if the operator opted in
-    # and launch fails — see services/durable.py::init_dbos.
+    # and launch fails — see services/durable.py::init_dbos. Destroyed BEFORE
+    # the events worker stops: its workflows log events. Registered BEFORE
+    # init: a launch that raises part-way still gets destroyed (a no-op when
+    # nothing launched).
+    stack.callback(shutdown_dbos)
     init_dbos()
+    # #759: let in-flight upload post-roll tasks (indexing, course context)
+    # finish — bounded by drain_post_roll's own timeout. They log events and
+    # may touch DBOS-decorated code, so they drain before DBOS is destroyed
+    # (registered after it: the stack unwinds in reverse).
+    from routes.documents import drain_post_roll
+    stack.push_async_callback(drain_post_roll)
     # #482: drain the document indexing queue. Without this, a document whose
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    stack.push_async_callback(stop_sweeper)
     # #715: on a developer's LOCAL stack only, copy the rich sample dataset
     # onto each Google account that signs in. Not started anywhere else.
     start_local_seed_watcher()
+    stack.push_async_callback(stop_local_seed_watcher)
     # #672: the decision seam's backends moved from env vars to the
     # decision_router flag; say so if a deployment still sets the old ones.
     from services import decisions
     decisions.warn_removed_env()
-    yield
-    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
-    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
-    # First (A38 fix round, m8): before the event drain stops, so no drafting
-    # starts after it, and before any other step whose failure could skip it.
-    shutdown_draft_pool()
-    await stop_local_seed_watcher()
-    await stop_sweeper()
-    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded) so
-    # their decision.shadow + llm_usage rows reach the event drain below, then close the
-    # Jev clients. Both are no-ops when Jev never ran (JEV_ENABLED=false).
+    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded)
+    # so their decision.shadow + llm_usage rows reach the event drain, then close
+    # the Jev clients. Registered after the events worker and the tutor-router
+    # drain, so both run before either of those stops. No-ops when Jev never ran
+    # (JEV_ENABLED=false).
     from agents import _jev
     from services import learning_decisions
-
-    await learning_decisions.shutdown_shadows()
-    await _jev.aclose_clients()
-
-    # Let in-flight tutor-router decisions finish first: each one emits a
-    # decision.made row through the Jev client and the events worker closed
-    # below (bounded by the router's own backstop).
-    from services import tutor_router
-    await tutor_router.drain_inflight()
-    # The decision seam's pooled Jev client (#642) for this loop.
-    await typesafe_client.aclose_clients()
-    # Stop the drain thread and flush anything still queued so the last batch
-    # of usage rows isn't lost on shutdown.
-    events_service.shutdown()
-    shutdown_dbos()
+    stack.push_async_callback(_jev.aclose_clients)
+    stack.push_async_callback(learning_decisions.shutdown_shadows)
+    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
+    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
+    # Registered LAST so it runs FIRST (A38 fix round, m8): before the event
+    # drain stops, so no drafting starts after it; the stack still runs every
+    # later teardown if an earlier one raises.
+    stack.callback(shutdown_draft_pool)
 
 
 def _drop_request_arguments(_request, _attributes):
@@ -302,6 +350,19 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    # ADR 0028: PostHog error tracking — queued, consent-checked on the
+    # PostHog worker like every event. No-op when PostHog is off; message
+    # redacted and no frame locals (posthog_client._scrub_event). The user is
+    # whatever auth_guard stamped on request.state (#117 1b) — a users.id or
+    # None. This handler runs in ServerErrorMiddleware, OUTSIDE
+    # RequestIDMiddleware, whose per-request DNT/GPC contextvar is already
+    # reset by now — so the signal is read off the request's own headers.
+    posthog_client.capture_exception(
+        exc,
+        user_id=getattr(request.state, "user_id", None),
+        request_id=rid,
+        privacy_signal=privacy_signal_in(getattr(request, "headers", None) or {}),
+    )
     content = quiz_errors.error_content(
         request.url.path, 500, "Internal server error.", rid,
     )
@@ -314,19 +375,22 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # PKG-06b (spec §3.5, A20): an over-budget model call answers 429 {"detail": "ai budget reached", "reset_at": …}.
 app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
 
+# #771: a hidden nav feature (`hide_<feature>` "on") 404s on its API too, not
+# just in the nav. Which routers each flag gates — and the paths another
+# visible surface still needs — is services/feature_flags.py::NAV_FEATURE_API.
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 # Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
 app.include_router(learn_loop.router, prefix="/api/learn/loop")
-app.include_router(quiz.router,        prefix="/api/quiz")
-app.include_router(calendar.router,    prefix="/api/calendar")
-app.include_router(social.router,      prefix="/api/social")
+app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
+app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
+app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social"))
 app.include_router(extract.router,     prefix="/api/extract")
 app.include_router(auth.router,        prefix="/api/auth")
 app.include_router(documents.router,   prefix="/api/documents")
-app.include_router(flashcards.router,  prefix="/api/flashcards")
-app.include_router(study_guide.router, prefix="/api/study-guide")
+app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
+app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
@@ -338,12 +402,16 @@ app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
+app.include_router(admin_email_router, prefix="/api/admin/email")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
-app.include_router(gradebook.router,   prefix="/api/gradebook")
+# Public, no session: the unsubscribe page linked from every email (and the
+# RFC 8058 one-click POST). Token-authenticated; see routes/email.py.
+app.include_router(email_router,       prefix="/api/email")
+app.include_router(gradebook.router,   prefix="/api/gradebook", dependencies=nav_feature_gate("/api/gradebook"))
 app.include_router(gradescope.router,  prefix="/api/gradescope")
-app.include_router(notes.router,       prefix="/api/notes")
+app.include_router(notes.router,       prefix="/api/notes", dependencies=nav_feature_gate("/api/notes"))
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
-app.include_router(gamification.router, prefix="/api/gamification")
+app.include_router(gamification.router, prefix="/api/gamification", dependencies=nav_feature_gate("/api/gamification"))
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
 app.include_router(internal_metrics_router, prefix="/api/internal")
@@ -372,11 +440,13 @@ def health():
 
 @app.get("/api/gemini-test")
 def gemini_test(request: Request):
-    """Admin-only Gemini connectivity check. Shows a clear error if the API
-    key is missing/wrong.
+    """Admin-only LLM connectivity check. Shows a clear error if the API
+    key is missing/wrong. The path predates the Anthropic swap (ADR 0030); it
+    now probes the agents' provider (`HEALTH_PROBE_MODEL`, a Claude model) and
+    keeps its name for existing callers.
 
     Gated behind `require_admin` (#198): every hit makes a real, billable
-    agent round-trip, so an unauthenticated caller could burn Gemini quota at
+    agent round-trip, so an unauthenticated caller could burn model quota at
     will and use the `{"ok": ...}` response as an oracle for whether the API
     key is configured. Only admins may trigger LLM spend here.
     """
@@ -388,7 +458,7 @@ def gemini_test(request: Request):
     try:
         result = record_agent_usage(
             run_agent_sync(
-                health_probe_agent.run('Reply with exactly the text: Gemini OK')
+                health_probe_agent.run('Reply with exactly the text: LLM OK')
             ),
             feature="health",
         )

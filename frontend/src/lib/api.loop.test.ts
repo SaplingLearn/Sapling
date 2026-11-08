@@ -212,7 +212,10 @@ describe('streamLoopChat', () => {
       onLearnerState: (s) => seen.push(`state:${s.node_id}:${s.p_known}`),
       onBudget: (b) => seen.push(`budget:${b.level}:${b.reset_at}:${b.session_capped}`),
     });
-    expect(seen).toEqual(['phase:check', 'token:Hi', 'check:qh', 'offer:1', 'state:n:0.5', 'budget:hard:2026-09-27T00:00:00Z:false']);
+    // Tokens type out through the stream pacer (its own chunking and timing);
+    // every other event dispatches in arrival order.
+    expect(seen.filter((x) => !x.startsWith('token:'))).toEqual(['phase:check', 'check:qh', 'offer:1', 'state:n:0.5', 'budget:hard:2026-09-27T00:00:00Z:false']);
+    expect(seen.filter((x) => x.startsWith('token:')).map((x) => x.slice(6)).join('')).toBe('Hi');
     expect(res.reply).toBe('Hi [redacted]');
     expect(res.leak_redacted).toBe(true);
     expect(urlOf()).toContain('/api/learn/loop/chat/stream');
@@ -231,7 +234,13 @@ describe('streamLoopChat', () => {
       onToken: (d) => seen.push(`token:${d}`),
       onRetract: (r) => seen.push(`retract:${r}`),
     });
-    expect(seen).toEqual(['token:The answer is 4', `retract:${reason}`, 'token:Think about it.']);
+    // Tokens type out through the stream pacer: the retract DROPS whatever was
+    // still queued (never released after it), and only the retried text follows.
+    // Anything released before the retract arrived is the UI's to clear (onRetract).
+    expect(seen.filter((x) => x.startsWith('retract:'))).toEqual([`retract:${reason}`]);
+    const after = seen.slice(seen.indexOf(`retract:${reason}`) + 1);
+    expect(after.every((x) => x.startsWith('token:'))).toBe(true);
+    expect(after.map((x) => x.slice(6)).join('')).toBe('Think about it.');
   });
 
   it('a budget event without session_capped reads as false (A39)', async () => {

@@ -2,6 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
+import { StudyTabs } from "../StudyTabs";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -15,20 +16,6 @@ const MarkdownChat = dynamic(
   { ssr: false, loading: () => null },
 );
 
-// Lazy-load the framer-motion subtree the same way (#111) — the library is
-// only needed for the toggle highlight + mode crossfade, so it stays out of
-// Study's initial bundle. Fallbacks keep the resting visuals identical while
-// the chunk loads: an identically-styled static pill, and the same flex
-// wrapper minus the crossfade.
-const StudyToggleHighlight = dynamic(
-  () => import("./StudyMotion").then((m) => m.StudyToggleHighlight),
-  {
-    ssr: false,
-    loading: () => (
-      <span style={{ position: "absolute", inset: 0, background: "var(--accent-soft)", zIndex: -1 }} />
-    ),
-  },
-);
 // The mode transition wraps the pane CONTENT, so it must not depend on the
 // motion chunk (#490 review): a lazy wrapper either gates the panes behind
 // the chunk fetch (next/dynamic's fallback can't carry children) or remounts
@@ -55,6 +42,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import {
   getCourses,
   getStudyGuideExams,
@@ -135,36 +123,7 @@ export function Study() {
   const actions = (
     <>
       <AIDisclaimerChip />
-      <div
-        style={{
-          position: "relative",
-          display: "flex",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          overflow: "hidden",
-          isolation: "isolate",
-        }}
-      >
-        {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setMode(v)}
-            style={{
-              position: "relative",
-              padding: "6px 14px",
-              fontSize: 12,
-              fontWeight: 600,
-              background: "transparent",
-              color: mode === v ? "var(--accent)" : "var(--text-dim)",
-              transition: "color 220ms cubic-bezier(.2,.85,.35,1)",
-              zIndex: 1,
-            }}
-          >
-            {mode === v && <StudyToggleHighlight />}
-            {label}
-          </button>
-        ))}
-      </div>
+      <StudyTabs mode={mode} onChange={setMode} />
     </>
   );
 
@@ -172,7 +131,9 @@ export function Study() {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <TopBar
         title="Study"
-        subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
+        // Every Study tool carries a one-line description (Flashcards here, Quiz
+        // in QuizScreen) so the header doesn't jump when switching between them.
+        subtitle={mode === "guide" ? "Exam-ready guides built from your course materials" : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
       <StudyModePanel mode={mode}>
@@ -227,6 +188,11 @@ function GuideMode({
   const [guideProblem, setGuideProblem] = React.useState<GuideProblem | null>(null);
   // "" = resolved unscoped. See loadGuide.
   const [loadedTerm, setLoadedTerm] = React.useState<string>("");
+  // Latest-request-wins slots (#769): one for the exam list, one shared by
+  // loadGuide + regenerate (both write the displayed guide, so whichever was
+  // started last owns it).
+  const examsReq = useLatestRequest();
+  const guideReq = useLatestRequest();
 
   const loadRecent = React.useCallback(async () => {
     if (!userId) return;
@@ -287,16 +253,24 @@ function GuideMode({
   // viewing" as one thing across list + loads — a #475 change, not this one.
   React.useEffect(() => {
     setExams([]);
-    if (!courseId || !userId || !semesterReady) return;
+    if (!courseId || !userId || !semesterReady) {
+      setLoadingExams(false);
+      return;
+    }
+    // A course/term switch mid-flight drops the old list's reply (#769), so a
+    // slow course-A response can't land in course B's picker.
+    const run = examsReq.begin();
     setLoadingExams(true);
     getStudyGuideExams(userId, courseId, semester || undefined)
-      .then(r => setExams(r.exams || []))
+      .then(r => { if (run.isCurrent()) setExams(r.exams || []); })
       .catch(err => {
+        if (!run.isCurrent()) return;
         console.error("study exams load failed", err);
         toast.error(humanizeError(err, "Couldn't load the exams for this course."));
       })
-      .finally(() => setLoadingExams(false));
-  }, [courseId, userId, toast, semester, semesterReady]);
+      .finally(() => { if (run.isCurrent()) setLoadingExams(false); });
+    return examsReq.cancel;
+  }, [courseId, userId, toast, semester, semesterReady, examsReq]);
 
   // A pending recent-open's OWN term (#475 F1), consumed by exactly one load:
   // null = no pending recent open; "" = the entry has no term label, open
@@ -309,10 +283,14 @@ function GuideMode({
     // recent entries open as their own term (#475 F1) and retries replay the
     // term that failed. Without it, the active selector applies.
     const term = termOverride !== undefined ? (termOverride || undefined) : (semester || undefined);
+    // Switching exams quickly must show the LAST pick's guide (#769): every
+    // write below is gated on this run still being the latest.
+    const run = guideReq.begin();
     setLoadingGuide(true);
     setGuideProblem(null);
     try {
       const r = await getStudyGuide(userId, cid, eid, term);
+      if (!run.isCurrent()) return;
       setGuide(r.guide);
       // The term this guide was actually resolved under — which is the entry's
       // own term on a recent-open, not the active selector's (#475 F1).
@@ -323,6 +301,7 @@ function GuideMode({
       setCached(r.cached);
       if (!r.cached) loadRecent();
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("study guide load failed", err);
       setGuide(null);
       if (isNotFound(err)) {
@@ -342,9 +321,11 @@ function GuideMode({
         toast.error(message);
       }
     } finally {
-      setLoadingGuide(false);
+      // Only the latest run owns the spinner — an older run finishing must
+      // not clear it while a newer one is still in flight.
+      if (run.isCurrent()) setLoadingGuide(false);
     }
-  }, [userId, toast, loadRecent, semester]);
+  }, [userId, toast, loadRecent, semester, guideReq]);
 
   React.useEffect(() => {
     if (courseId && examId) {
@@ -353,8 +334,13 @@ function GuideMode({
       const recentTerm = recentTermRef.current;
       recentTermRef.current = null;
       loadGuide(courseId, examId, recentTerm ?? undefined);
+    } else {
+      // Selection cleared (course/term switch): an in-flight load or
+      // regenerate for the old exam must not land on the empty selection.
+      guideReq.cancel();
+      setLoadingGuide(false);
     }
-  }, [courseId, examId, loadGuide]);
+  }, [courseId, examId, loadGuide, guideReq]);
 
   const openRecent = (entry: StudyGuideCacheEntry) => {
     // #475 F1: the entry's guide row keys on ITS offering/term, which need
@@ -370,6 +356,7 @@ function GuideMode({
     // Regeneration is meaningless without a target exam, and the endpoint
     // 400s on a blank one — bail before the request.
     if (!userId || !courseId || !examId) return;
+    const run = guideReq.begin();
     setRegenerating(true);
     setGuideProblem(null);
     try {
@@ -378,15 +365,21 @@ function GuideMode({
       // active selector safely only because the button was unreachable on the
       // recent-open path — the one path where the two differ.
       const r = await regenerateStudyGuide(userId, courseId, examId, loadedTerm || undefined);
+      // Picked another exam meanwhile: the rebuilt guide belongs to the old
+      // one (persisted server-side either way), so don't paint it here.
+      if (!run.isCurrent()) return;
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(false);
       await loadRecent();
       toast.success("Study guide regenerated.");
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("study guide regenerate failed", err);
       toast.error(humanizeError(err, "Couldn't regenerate that study guide."));
     } finally {
+      // Unconditional: at most one regenerate runs (the button is disabled
+      // while it does), and a superseding guide load never owns this flag.
       setRegenerating(false);
     }
   };
@@ -624,6 +617,18 @@ function FlashcardsMode({
   // A failed status read is not an inactive learning loop: retain the legacy
   // flashcards and offer a retry so the student can still reach due reviews.
   const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
+  // Review-session state (#769). `rating` is the in-flight guard: one rating
+  // per card, however many times the button/key fires while it's saving
+  // (the ref closes the same-tick gap before the state re-renders). `done`
+  // is the explicit end-of-deck state — rating the last card used to wrap
+  // silently back to card 1.
+  const [rating, setRating] = React.useState(false);
+  const ratingRef = React.useRef(false);
+  const [done, setDone] = React.useState(false);
+  // Card id to re-anchor on after a reload that must keep the reviewer's
+  // place (generate): indexes shift when cards are added, ids don't.
+  const anchorRef = React.useRef<string | null>(null);
+  const cardsReq = useLatestRequest();
 
   React.useEffect(() => {
     if (!userId) return;
@@ -632,20 +637,29 @@ function FlashcardsMode({
       .catch(() => setDocs([]));
   }, [userId]);
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (keepCardId?: string) => {
     if (!userId) return;
+    // A term switch or a reload racing an older one: latest wins (#769).
+    const run = cardsReq.begin();
     setLoading(true);
     try {
       const res = await getFlashcards(userId, undefined, semester || undefined);
+      if (!run.isCurrent()) return;
       setCards(res.flashcards || []);
-      setIdx(0);
-      setFlipped(false);
+      if (keepCardId) {
+        anchorRef.current = keepCardId;
+      } else {
+        setIdx(0);
+        setFlipped(false);
+        setDone(false);
+      }
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("flashcards load failed", err);
     } finally {
-      setLoading(false);
+      if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, semester]);
+  }, [userId, semester, cardsReq]);
 
   React.useEffect(() => {
     if (semesterReady) load();
@@ -673,18 +687,48 @@ function FlashcardsMode({
     setFlipped(false);
   }, [filtered.length, idx]);
 
+  // Re-anchor after a keep-position reload (generate): declared after the
+  // overflow reset above so its setIdx wins within the same commit.
+  React.useEffect(() => {
+    const id = anchorRef.current;
+    if (!id) return;
+    anchorRef.current = null;
+    const at = filtered.findIndex(c => c.id === id);
+    if (at >= 0) setIdx(at);
+  }, [filtered]);
+
+  // A different deck (course/topic filter) is a fresh review, not a finished one.
+  React.useEffect(() => { setDone(false); }, [courseId, topicFilter]);
+
   const card = filtered[idx];
 
   const rate = React.useCallback(async (r: number) => {
-    if (!card) return;
+    if (!card || ratingRef.current) return;
+    ratingRef.current = true;
+    setRating(true);
     try {
       await rateFlashcard(userId, card.id, r);
     } catch (err) {
+      // On failure the card does NOT advance (#769): it stays up and
+      // flipped, so pressing the rating again retries it. Advancing would
+      // silently drop the review from the student's schedule.
       console.error("rate failed", err);
+      toast.error(humanizeError(err, "Couldn't save that rating. Try again."));
+      return;
+    } finally {
+      ratingRef.current = false;
+      setRating(false);
     }
     setFlipped(false);
-    setIdx(i => (filtered.length === 0 ? 0 : (i + 1) % filtered.length));
-  }, [card, userId, filtered.length]);
+    if (idx >= filtered.length - 1) setDone(true);
+    else setIdx(idx + 1);
+  }, [card, userId, idx, filtered.length, toast]);
+
+  const restart = () => {
+    setDone(false);
+    setIdx(0);
+    setFlipped(false);
+  };
 
   const remove = React.useCallback(async () => {
     if (!card) return;
@@ -703,15 +747,17 @@ function FlashcardsMode({
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      // A held key auto-repeats: one physical press = one action.
+      if (e.repeat) return;
       if (e.code === "Space") { e.preventDefault(); setFlipped(f => !f); return; }
-      if (!flipped || !card) return;
+      if (!flipped || !card || done) return;
       if (e.key === "1") rate(1);
       else if (e.key === "2") rate(2);
       else if (e.key === "3") rate(3);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flipped, rate, card]);
+  }, [flipped, rate, card, done]);
 
   const generate = async () => {
     if (!userId) return;
@@ -727,7 +773,12 @@ function FlashcardsMode({
       // Term-scoped generation context: the selected term's course documents.
       const r = await generateFlashcards(userId, topic, 5, semester || undefined);
       setDocsUsed(r.context_used?.documents_found ?? 0);
-      await load();
+      // Keep the reviewer's place (#769): mid-deck, stay on the current card;
+      // past the end, continue at the first new card. Only an empty deck
+      // starts over at card 1.
+      const keepId: string | undefined = done ? r.flashcards[0]?.id : card?.id;
+      if (done && keepId) setDone(false);
+      await load(keepId);
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
     } catch (err) {
       console.error("flashcard generate failed", err);
@@ -771,7 +822,7 @@ function FlashcardsMode({
             onClick={() => setImportOpen(true)}
             disabled={!userId}
           >
-            <Icon name="up" size={12} /> Import
+            <Icon name="upload" size={12} /> Import
           </button>
           <button
             className="btn btn--sm btn--primary"
@@ -795,7 +846,19 @@ function FlashcardsMode({
             </div>
           )}
 
-          {filtered.length > 0 && card && (
+          {done && filtered.length > 0 && !loading && (
+            <div style={{ textAlign: "center", padding: "40px 0" }}>
+              <div className="h-serif" style={{ fontSize: 20 }}>Deck complete</div>
+              <div style={{ fontSize: 13, marginTop: 6, color: "var(--text-muted)" }}>
+                You reviewed all {filtered.length} card{filtered.length === 1 ? "" : "s"}.
+              </div>
+              <button className="btn btn--sm btn--primary" style={{ marginTop: 16 }} onClick={restart}>
+                Review again
+              </button>
+            </div>
+          )}
+
+          {filtered.length > 0 && card && !done && (
             <>
               <div style={{ width: "100%", maxWidth: 620 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
@@ -820,7 +883,7 @@ function FlashcardsMode({
                   <button
                     key={r.n}
                     onClick={() => rate(r.n)}
-                    disabled={!flipped}
+                    disabled={!flipped || rating}
                     title={`${r.label} (press ${r.hint})`}
                     style={{
                       padding: "10px 20px", borderRadius: "var(--r-sm)",

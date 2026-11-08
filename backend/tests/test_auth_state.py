@@ -176,7 +176,8 @@ class TestCallbackStateValidation:
 
     def test_popup_id_missing_when_cookie_missing(self, monkeypatch):
         # When cookie is missing, popup_id is unknown so failure goes through
-        # the non-popup branch (fallback path /auth) and doesn't include popup_id.
+        # the non-popup branch (the landing, `/?error=` — #756; the frontend
+        # has no /auth page) and doesn't include popup_id.
         monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
         monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
         state_param = auth_module._encode_state({"action": "signin", "n": "any"})
@@ -185,7 +186,7 @@ class TestCallbackStateValidation:
             follow_redirects=False,
         )
         assert "popup_id" not in r.headers["location"]
-        assert "/auth?" in r.headers["location"]
+        assert r.headers["location"].endswith("/?error=invalid_state")
 
     def test_tampered_cookie_redirects_with_invalid_state(self, monkeypatch):
         monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")

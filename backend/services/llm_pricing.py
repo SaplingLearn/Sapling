@@ -27,11 +27,22 @@ logger = logging.getLogger("sapling.llm_pricing")
 
 
 # Per-1,000-token USD prices as ``(input_rate, output_rate)``. Sourced from
-# Google Gemini API list pricing (and TypeSafe's, for Jev); kept deliberately small and editable. A model
+# Anthropic and Google Gemini API list pricing (and TypeSafe's, for Jev); kept
+# deliberately small and editable. A model
 # missing here is not an error — its usage is still recorded, just with
 # ``cost_usd = NULL``. Update this map (not the call sites) when prices change
 # or a new model ships.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # Anthropic first-party list prices (ADR 0030). Haiku 5.5's row is its
+    # ≤100K-token-prompt card; longer prompts bill at the
+    # `_LONG_PROMPT_PRICING` card below. Thinking tokens arrive inside
+    # output_tokens, so they are priced as output — which is what they bill as.
+    # Prompt caching (enabled on the tool-loop slots, agents/_providers.py)
+    # bills cache reads/writes at multiples of the input rate — see
+    # `_CACHE_MULTIPLIERS`.
+    "claude-haiku-5-5": (0.0001, 0.0005),
+    "claude-sonnet-5-5": (0.002, 0.010),
+    "claude-opus-5-5": (0.004, 0.020),
     "gemini-2.5-pro": (0.00125, 0.010),
     "gemini-2.5-flash": (0.0003, 0.0025),
     "gemini-2.5-flash-lite": (0.0001, 0.0004),
@@ -65,7 +76,41 @@ CACHED_INPUT_PRICING: dict[str, float] = {
 #: prices the family, not the build; a new rate gets its own exact entry.
 MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
     ("jev-", (0.000042, 0.0)),
+    # The same guard for Claude: a served id that carries a dated snapshot
+    # suffix (`claude-haiku-5-5-2026xxxx`) must not NULL-cost every call.
+    ("claude-haiku-5-5", (0.0001, 0.0005)),
+    ("claude-sonnet-5-5", (0.002, 0.010)),
+    ("claude-opus-5-5", (0.004, 0.020)),
 )
+
+#: Models whose rate card switches above a prompt-length threshold:
+#: model -> (threshold_prompt_tokens, (input_rate, output_rate)). Anthropic
+#: applies the card PER REQUEST, while a usage row is a whole agent run — a
+#: tool loop of five ~25K-token requests sums to 125K. So the card is chosen on
+#: the run's MEAN prompt per request (`requests`, from RunUsage): exact for a
+#: single-request run, and for a loop it can only misprice a run whose
+#: requests straddle the threshold, never 5x a run that never crossed it.
+_LONG_PROMPT_PRICING: dict[str, tuple[int, tuple[float, float]]] = {
+    "claude-haiku-5-5": (100_000, (0.0005, 0.0025)),
+}
+
+#: Prompt-cache pricing as ``(read_multiplier, write_multiplier)`` of the input
+#: rate, by model-family prefix. Anthropic: reads 0.1x, 5-minute writes 1.25x
+#: (the agents use the default 5-minute TTL; a 1-hour TTL writes at 2x and
+#: would need its own entry). Families without an entry bill cached input at
+#: their `CACHED_INPUT_PRICING` rate (spec §13 A21: Gemini's implicit cache at
+#: 10% of input), or at the full input rate when they have none.
+_CACHE_MULTIPLIERS: tuple[tuple[str, tuple[float, float]], ...] = (
+    ("claude-", (0.1, 1.25)),
+)
+
+# pydantic-ai RunUsage names ONLY. Its `input_tokens` INCLUDES cache reads and
+# writes, which is what `cost_usd` assumes. A raw Anthropic SDK `Usage`
+# (`cache_read_input_tokens` / `cache_creation_input_tokens`) reports
+# `input_tokens` EXCLUDING them, so accepting those names here would price it
+# wrong — deliberately unsupported; nothing in the app logs raw SDK usage.
+_CACHE_READ_FIELDS = ("cache_read_tokens",)
+_CACHE_WRITE_FIELDS = ("cache_write_tokens",)
 
 #: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
 #: (migration 20261016063803_llm_cost_precision.sql, shipped with this seam). Six (the old NUMERIC(12,6)) rounded the
@@ -128,6 +173,22 @@ def normalize_usage(usage: Any) -> dict[str, int]:
     }
 
 
+def request_count(usage: Any) -> int:
+    """Model requests in the run (pydantic-ai ``RunUsage.requests``); 1 when
+    the source doesn't say — a single request is the conservative reading."""
+    return max(_read_int(usage, ("requests",)), 1) if usage is not None else 1
+
+
+def cache_usage(usage: Any) -> tuple[int, int]:
+    """``(cache_read_tokens, cache_write_tokens)`` from a pydantic-ai
+    ``RunUsage`` (or a dict with its field names) — both already INCLUDED in
+    its ``input_tokens`` (uncached + read + write). ``(0, 0)`` when the source
+    reports none."""
+    if usage is None:
+        return 0, 0
+    return _read_int(usage, _CACHE_READ_FIELDS), _read_int(usage, _CACHE_WRITE_FIELDS)
+
+
 def _canonical_model(model: str) -> str:
     """Strip a provider qualifier so 'google-gla:gemini-2.5-flash' matches.
 
@@ -137,12 +198,42 @@ def _canonical_model(model: str) -> str:
     return model.rsplit(":", 1)[-1].strip() if model else model
 
 
-def _rates_for(model: str) -> tuple[float, float] | None:
+def usage_provider(model: str) -> str:
+    """The ``llm_usage.provider`` label for a served model name.
+
+    ``anthropic`` / ``gemini`` / ``typesafe`` (Jev) by name, ``function`` for
+    the SAPLING_MODEL_MODE=function seam's free stand-ins, ``unknown``
+    otherwise. Until ADR 0030 every agent row was hard-labelled ``gemini``;
+    deriving the label from the model keeps it honest when a slot is moved
+    between providers by an env flip.
+    """
+    if model and model.startswith("function:"):
+        return "function"
+    canonical = _canonical_model(model or "")
+    if canonical.startswith("claude-"):
+        return "anthropic"
+    if canonical.startswith("gemini-"):
+        return "gemini"
+    if canonical.startswith("jev-"):
+        return "typesafe"
+    return "unknown"
+
+
+def _rates_for(
+    model: str, prompt_tokens: int = 0, requests: int = 1,
+) -> tuple[float, float] | None:
     """Exact price entry first (raw, then provider-stripped), then the
-    model's family prefix."""
+    model's family prefix. A model with a long-prompt card switches to it
+    when the run's mean prompt per request exceeds that card's threshold."""
     if not model:
         return None
     canonical = _canonical_model(model)
+    long_card = next(
+        (card for prefix, card in _LONG_PROMPT_PRICING.items() if canonical.startswith(prefix)),
+        None,
+    )
+    if long_card is not None and prompt_tokens / max(requests, 1) > long_card[0]:
+        return long_card[1]
     rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(canonical)
     if rates is not None:
         return rates
@@ -157,14 +248,29 @@ def cost_usd(
     prompt_tokens: int,
     completion_tokens: int,
     cached_tokens: int | None = None,
+    *,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    requests: int = 1,
 ) -> float | None:
-    """Compute USD cost, or None for an unknown model.
+    """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
-    Round to COST_SCALE decimal places to preserve micro-dollar decision costs.
-    Cached input is included in prompt_tokens and billed at the cached rate,
-    clamped to the actual prompt count.
+    Cached input is part of ``prompt_tokens``. Two sources report it:
+    ``cache_read_tokens`` / ``cache_write_tokens`` (pydantic-ai ``RunUsage``,
+    the parts served from / written to the provider's prompt cache) and
+    ``cached_tokens`` (spec §13 A21: the run site's measured cached input).
+    For a family in ``_CACHE_MULTIPLIERS`` (Claude) reads and writes are
+    re-priced at its multiples of the input rate; otherwise the cached input
+    (the larger of the two reports, clamped to the prompt) bills at the
+    model's ``CACHED_INPUT_PRICING`` rate, or at the full input rate when it
+    has none. ``requests`` (model requests in the run) picks a per-request rate
+    card — see ``_LONG_PROMPT_PRICING``.
+
+    Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
+    ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
+    and warns once.
     """
-    rates = _rates_for(model)
+    rates = _rates_for(model, int(prompt_tokens), int(requests or 1))
     if rates is None:
         # SAPLING_MODEL_MODE=function runs (the e2e/CI seam) report the model
         # as 'function:<task>' — a deliberate free stand-in, not an unpriced
@@ -184,11 +290,27 @@ def cost_usd(
 
     in_rate, out_rate = rates
     canonical = model if model in MODEL_PRICING else _canonical_model(model)
-    cached = min(max(int(cached_tokens or 0), 0), int(prompt_tokens))
-    cached_rate = CACHED_INPUT_PRICING.get(canonical, in_rate)
+    prompt = int(prompt_tokens)
+    read = max(int(cache_read_tokens or 0), int(cached_tokens or 0), 0)
+    write = max(int(cache_write_tokens or 0), 0)
+    in_rate_d = Decimal(str(in_rate))
+    multipliers = next(
+        (m for prefix, m in _CACHE_MULTIPLIERS if _canonical_model(model).startswith(prefix)), None
+    )
+    if multipliers is not None:
+        read_mult, write_mult = multipliers
+        uncached = max(prompt - read - write, 0)
+        input_cost = (
+            in_rate_d * Decimal(uncached)
+            + in_rate_d * Decimal(str(read_mult)) * Decimal(read)
+            + in_rate_d * Decimal(str(write_mult)) * Decimal(write)
+        )
+    else:
+        cached = min(read, prompt)
+        cached_rate = Decimal(str(CACHED_INPUT_PRICING.get(canonical, in_rate)))
+        input_cost = in_rate_d * Decimal(prompt - cached) + cached_rate * Decimal(cached)
     cost = (
-        Decimal(str(in_rate)) * Decimal(int(prompt_tokens) - cached)
-        + Decimal(str(cached_rate)) * Decimal(cached)
+        input_cost
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
     return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))

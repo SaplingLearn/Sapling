@@ -8,11 +8,10 @@ import {
   COURSE_CARD_GRID_GAP,
   COURSE_CARD_HEIGHT,
 } from "@/components/Gradebook/CourseCard";
-import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
 import { courseTermLabels, currentTerm } from "@/lib/semesters";
-import { now } from "@/lib/testMode";
+import { IS_TEST_MODE, now } from "@/lib/testMode";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { TranscriptModal } from "@/components/Gradebook/TranscriptModal";
@@ -105,7 +104,13 @@ export function GradebookLanding() {
   const [termGpa, setTermGpa] = React.useState<number | null>(null);
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
-  const [termsReady, setTermsReady] = React.useState(false);
+  // Whose terms `semesters`/`selected` currently hold: null while they load,
+  // else the userId they were loaded for ('' = the logged-out preview). On an
+  // identity change the summary effect runs in the same commit as the reset,
+  // still seeing the old selection; comparing owners keeps it from summarising
+  // the previous identity's term under the new id.
+  const [termsFor, setTermsFor] = React.useState<string | null>(null);
+  const termsReady = termsFor !== null && termsFor === (userId ?? "");
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [transcriptOpen, setTranscriptOpen] = React.useState(false);
 
@@ -132,21 +137,26 @@ export function GradebookLanding() {
     let stale = false;
     setSemesters([]);
     setSelected("");
-    setTermsReady(false);
+    setCourses([]);
+    setTermGpa(null);
+    setColorMap({});
+    setTermsFor(null);
     setLoading(true);
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
       setSemesters(SAMPLE_SEMESTERS);
       setSelected(SAMPLE_SEMESTERS[0]);
-      setTermsReady(true);
+      setTermsFor("");
       return;
     }
     Promise.all([
       getCourses(userId),
       // The chips still work off the course terms alone if this 404s or the
       // project has no terms seeded — sort_key just stops informing the order.
-      getSemesters().catch(() => ({ semesters: [] })),
+      // A failed fetch leaves no server current term: currentTerm falls back
+      // to the local date rule.
+      getSemesters().catch(() => ({ semesters: [], current_term_id: null })),
     ])
       .then(([coursesRes, semestersRes]) => {
         if (stale) return;
@@ -156,9 +166,15 @@ export function GradebookLanding() {
         setSemesters(labels);
         const preferred = labels.includes(requestedTerm)
           ? requestedTerm
-          : // Thread the test-mode clock (frozen under NEXT_PUBLIC_TEST_MODE,
-            // #426) — currentTerm's default `today` is the real wall clock.
-            currentTerm(terms, new Date(now()))?.label;
+          : // The server's current term wins (#766) — except under the frozen
+            // test-mode clock (#426), which must stay authoritative so every
+            // page agrees on "now"; currentTerm's default `today` is the real
+            // wall clock, hence threading now().
+            currentTerm(
+              terms,
+              new Date(now()),
+              IS_TEST_MODE ? null : semestersRes.current_term_id,
+            )?.label;
         setSelected(preferred && labels.includes(preferred) ? preferred : labels[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {
@@ -172,7 +188,7 @@ export function GradebookLanding() {
         setSelected("");
       })
       .finally(() => {
-        if (!stale) setTermsReady(true);
+        if (!stale) setTermsFor(userId);
       });
     // An identity that changes mid-load must not have the old identity's
     // terms applied over it.
@@ -282,7 +298,6 @@ export function GradebookLanding() {
           flex: "1 0 auto",
         }}
       >
-        <AmbientOrbs />
         <div style={{ position: "relative", zIndex: 1 }}>
         <div
           style={{

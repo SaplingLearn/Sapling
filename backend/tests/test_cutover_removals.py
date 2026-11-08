@@ -131,7 +131,8 @@ def test_every_legacy_model_route_reads_the_rate_limit_once_after_require_self(p
     assert ai_budget.enforce_rate_limit not in deps, path
     body = inspect.getsource(route.endpoint)
     assert body.count("ai_budget.enforce_rate_limit_for(body.user_id)") == 1, path
-    assert body.index("require_self(body.user_id, request)") < body.index(
+    # #756: the guard runs off the event loop (`guard_off_loop(require_self, ...)`)
+    assert body.index("guard_off_loop(require_self, body.user_id, request)") < body.index(
         "ai_budget.enforce_rate_limit_for(body.user_id)"
     ), path
 

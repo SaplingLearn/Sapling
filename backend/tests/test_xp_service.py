@@ -33,12 +33,26 @@ def _tables(rule_rows=RULE, user_rows=None, insert=None, ledger=None):
         events.append({"amount": data["amount"]})
         return [data]
 
+    def _cas_update(data, filters=None, **_kw):
+        # The cache write is a compare-and-set on total_xp (#767): it matches
+        # (and returns the row) only while the cache still holds the value the
+        # award read. Reads `select.return_value` at call time so tests that
+        # swap the cache between awards stay in charge of it.
+        current = handles["users"].select.return_value
+        if not current:
+            return []
+        want = (filters or {}).get("total_xp")
+        have = current[0].get("total_xp")
+        if want is not None and want != ("is.null" if have is None else f"eq.{have}"):
+            return []
+        return [{**current[0], **data}]
+
     handles["xp_rules"].select.return_value = rule_rows
     handles["xp_events"].insert.side_effect = insert or _insert
     handles["xp_events"].select_with_count.side_effect = \
         lambda *a, **k: (list(events), len(events))
     handles["users"].select.return_value = user_rows
-    handles["users"].update.return_value = []
+    handles["users"].update.side_effect = _cas_update
     return lambda name: handles[name], handles
 
 
@@ -242,3 +256,102 @@ class TestLedgerRecompute:
             "users.total_xp"
         )
         assert handles["xp_events"].select_with_count.call_count == 2
+
+
+def _level(total):
+    """A toy curve: one level per 50 XP."""
+    return 1 + total // 50
+
+
+class TestConcurrentAwards:
+    """#767: the ledger insert and the users cache write are separate
+    statements. The cache write is a compare-and-set on total_xp, so a stale
+    sum can never overwrite a newer one and each level-up is reported once."""
+
+    def test_the_cache_write_is_conditioned_on_the_total_it_read(self):
+        tbl, handles = _tables(user_rows=[{"total_xp": 40, "level": 1}])
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", side_effect=_level):
+            from services.xp_service import award_xp
+            award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1")
+        filters = handles["users"].update.call_args.kwargs["filters"]
+        assert filters == {"id": "eq.u1", "total_xp": "eq.40"}
+
+    def test_a_null_cache_is_matched_with_is_null(self):
+        tbl, handles = _tables(user_rows=[{"total_xp": None, "level": None}])
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", side_effect=_level):
+            from services.xp_service import award_xp
+            result = award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1")
+        assert result.total_xp == 30
+        assert handles["users"].update.call_args.kwargs["filters"]["total_xp"] == "is.null"
+
+    def test_a_concurrent_award_that_already_landed_our_xp_is_not_overwritten(self):
+        """We read the cache at 40/L1 and summed the ledger to 70; meanwhile a
+        concurrent award (ledger now 70 + 30 = 100) wrote 100/L3 and reported
+        the level-up. Our CAS on total_xp=40 must miss, and the retry must find
+        the cache already current — no write, no second level-up report, and
+        the cache never regresses to 70."""
+        tbl, handles = _tables(user_rows=[{"total_xp": 40, "level": 1}])
+        cas = handles["users"].update.side_effect
+        state = {"raced": False}
+
+        def racing_update(data, filters=None, **kw):
+            if not state["raced"]:
+                state["raced"] = True
+                # The competitor's ledger row and its cache write land first.
+                handles["xp_events"].insert.side_effect({"amount": 30})
+                handles["users"].select.return_value = [{"total_xp": 100, "level": 3}]
+            return cas(data, filters=filters, **kw)
+        handles["users"].update.side_effect = racing_update
+
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", side_effect=_level):
+            from services.xp_service import award_xp
+            result = award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1")
+
+        assert handles["users"].update.call_count == 1      # only the lost CAS
+        assert handles["users"].select.return_value == [{"total_xp": 100, "level": 3}]
+        assert (result.total_xp, result.level) == (100, 3)
+        assert result.leveled_up is False                   # the competitor reported it
+
+    def test_a_lost_cas_retries_from_the_new_cache_and_reports_its_own_level_up(self):
+        """The competitor wrote a cache that does NOT yet include our XP. Our
+        retry CASes from the competitor's state, and the level-up our XP
+        causes is ours to report."""
+        tbl, handles = _tables(user_rows=[{"total_xp": 0, "level": 1}], ledger=[10])
+        cas = handles["users"].update.side_effect
+        state = {"raced": False}
+
+        def racing_update(data, filters=None, **kw):
+            if not state["raced"]:
+                state["raced"] = True
+                # A competitor's cache write (its own sum: 10, pre-our-row).
+                handles["users"].select.return_value = [{"total_xp": 10, "level": 1}]
+            result = cas(data, filters=filters, **kw)
+            if result:
+                handles["users"].select.return_value = [result[0]]
+            return result
+        handles["users"].update.side_effect = racing_update
+
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", side_effect=_level):
+            from services.xp_service import award_xp
+            result = award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1",
+                              amount=45)
+
+        assert handles["users"].update.call_count == 2
+        assert handles["users"].update.call_args.kwargs["filters"]["total_xp"] == "eq.10"
+        assert (result.total_xp, result.level, result.leveled_up) == (55, 2, True)
+
+    def test_endless_contention_gives_up_without_raising(self):
+        from services.xp_service import _CACHE_CAS_ATTEMPTS
+        tbl, handles = _tables(user_rows=[{"total_xp": 0, "level": 1}])
+        handles["users"].update.side_effect = lambda *a, **k: []
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", side_effect=_level):
+            from services.xp_service import award_xp
+            result = award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1")
+        assert handles["users"].update.call_count == _CACHE_CAS_ATTEMPTS
+        assert result.awarded == 30
+        assert result.leveled_up is False
