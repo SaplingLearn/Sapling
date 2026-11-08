@@ -38,6 +38,25 @@ def reservation():
     return checklist_budget.Reservation(uuid4(), "owner", "enrollment", "a" * 64, 1)
 
 
+class ManualClockLoop(asyncio.SelectorEventLoop):
+    """The default Unix loop, but only the test can move its clock past a deadline.
+
+    `asyncio.wait_for` arms its deadline from `loop.time()`, so skipping this
+    clock ahead decides exactly when the deadline expires: wall-clock speed
+    (a busy machine, a slow thread hop) never does.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.skipped = 0.0
+
+    def time(self):
+        return super().time() + self.skipped
+
+    def advance(self, seconds):
+        self.skipped += seconds
+
+
 def run(handler, reservation):
     with topic_checklist_agent.override(model=wrap_topic_checklist_model(FunctionModel(handler))):
         return asyncio.run(svc._generate(PAYLOAD, "owner", reservation))
@@ -100,22 +119,42 @@ def test_reported_token_backstop_rejects_overshoot_without_losing_known_usage(re
 
 
 @pytest.mark.parametrize("after_response", [False, True])
-def test_outer_timeout_tracks_unanswered_dispatch_independently(monkeypatch, reservation, after_response):
+def test_outer_timeout_tracks_unanswered_dispatch_independently(reservation, after_response):
+    # What this proves: when `_generate`'s outer `asyncio.wait_for` deadline
+    # (GENERATION_TIMEOUT_SECONDS) expires while a model request is dispatched
+    # but unanswered, the request is cancelled and the run still counts it.
+    # `ChecklistDispatches` counts a dispatch before its handler runs, so
+    # `dispatched` includes the cancelled request; SDK usage and `responses`
+    # hold only answered ones. In [True] the first answer is invalid, so the
+    # retry is the request left hanging, and that billed answer's usage must
+    # survive the timeout. Settlement relies on the gap between the two counts.
+    #
+    # The deadline is the production value on a clock the test controls. The
+    # handler skips the clock past it only once it is inside the unanswered
+    # dispatch. So the deadline cannot fire during setup, during the first
+    # answer's validation, or before the retry is dispatched, however slow
+    # the machine is.
     calls, cancellations = [], []
-    monkeypatch.setattr(svc, "GENERATION_TIMEOUT_SECONDS", 0.02)
     async def handler(_messages, info):
         calls.append(info)
         if after_response and len(calls) == 1:
             return response(info, output(source="invalid"))
+        asyncio.get_running_loop().advance(svc.GENERATION_TIMEOUT_SECONDS)
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancellations.append(True)
             raise
-    result = run(handler, reservation)
+    async def generate():
+        result = await svc._generate(PAYLOAD, "owner", reservation)
+        # Checked before asyncio.run's teardown, which cancels any task still
+        # pending: the deadline itself must have cancelled the request.
+        assert cancellations == [True]
+        return result
+    with topic_checklist_agent.override(model=wrap_topic_checklist_model(FunctionModel(handler))):
+        result = asyncio.run(generate(), loop_factory=ManualClockLoop)
     assert isinstance(result.error, TimeoutError)
     assert len(calls) == result.dispatches.dispatched == 1 + int(after_response)
-    assert cancellations == [True]
     assert result.usage.requests == len(result.dispatches.responses) == int(after_response)
     assert result.usage.input_tokens == (41 if after_response else 0)
     assert result.usage.output_tokens == (13 if after_response else 0)
