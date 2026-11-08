@@ -857,3 +857,23 @@ MULTI_CONCEPT_GATE_MIN_STRONG = 1
 # † multi-concept items posed per concept per session: the ideas-combined dial
 # moves one step a session, and the concept's other checks stay single-concept.
 MULTI_CONCEPT_PER_CONCEPT_SESSION = 1
+
+# ── The quiz in the learning system (spec §13 A143–A147) ────────────────────
+# A144: the quiz's three difficulty names, easiest first. A difficulty the
+# learner model chooses is the loop's: the band's LOOP_CHECK_DIFFICULTY_BY_BAND
+# level (1-3) names the quiz difficulty at that position, so the quiz targets
+# the level an in-session check would. Equal to services/quiz_config.py's
+# CONCRETE_DIFFICULTIES (pinned by test).
+QUIZ_DIFFICULTY_NAMES = ("easy", "medium", "hard")
+# † A144: the misconception keys one planned quiz names to the writing model —
+# the student's open keys on the concept first, then the concept's vetted bank
+# keys. Enough to give a ten-question quiz's multiple-choice items a target
+# each and leave keys to tag the other distractors with; bounds the prompt.
+QUIZ_MISCONCEPTION_KEYS_MAX = 8
+# † A143: the most concepts the quiz plan returns. The quiz home shows three
+# and queues QUEUE_MAX (frontend lib/quiz/session.ts); this only bounds the
+# response.
+QUIZ_PLAN_MAX_CONCEPTS = 50
+# † A147: the smallest skill-meter change the quiz results list. The meter is
+# shown in whole percent, so a change under half a point reads unchanged.
+QUIZ_RESULTS_MIN_CHANGE = 0.005
