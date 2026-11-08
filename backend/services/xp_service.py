@@ -105,6 +105,41 @@ def _ledger_total(user_id: str) -> int:
     )
 
 
+def record_ledger_row(
+    user_id: str,
+    rule_key: str,
+    *,
+    source_type: str | None,
+    source_id: str | None,
+    amount: int,
+    created_at: str | None = None,
+) -> bool:
+    """Insert one xp_events row. True when written; False when this student's
+    ledger already holds the key (the 409 from the per-student unique index).
+
+    Only the ledger write: callers refresh the users cache afterwards. award_xp
+    does that per award; scripts/backfill_achievement_xp.py writes a student's
+    repayments back-dated (`created_at`) and refreshes once.
+    """
+    row = {
+        "user_id": user_id,
+        "rule_key": rule_key,
+        "amount": amount,
+        "source_type": source_type,
+        "source_id": source_id,
+        "idempotency_key": idempotency_key(rule_key, source_type, source_id),
+    }
+    if created_at is not None:
+        row["created_at"] = created_at
+    try:
+        table("xp_events").insert(row)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+        return False
+    return True
+
+
 def award_xp(
     user_id: str,
     rule_key: str,
@@ -119,19 +154,9 @@ def award_xp(
         total_xp, level = _user_state(user_id)
         return XpAward(awarded=0, total_xp=total_xp, level=level, leveled_up=False)
 
-    key = idempotency_key(rule_key, source_type, source_id)
-    try:
-        table("xp_events").insert({
-            "user_id": user_id,
-            "rule_key": rule_key,
-            "amount": value,
-            "source_type": source_type,
-            "source_id": source_id,
-            "idempotency_key": key,
-        })
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 409:
-            raise
+    if not record_ledger_row(
+        user_id, rule_key, source_type=source_type, source_id=source_id, amount=value,
+    ):
         # Already paid out — report current state without touching the cache.
         total_xp, level = _user_state(user_id)
         return XpAward(awarded=0, total_xp=total_xp, level=level,
@@ -145,6 +170,15 @@ def award_xp(
         awarded=value, total_xp=total_xp, level=level,
         leveled_up=leveled_up,
     )
+
+
+def settle_ledger_writes(user_id: str) -> tuple[int, int, bool]:
+    """Refresh the users cache from the ledger and run the XP-driven
+    achievement dispatch ONCE, after rows written by record_ledger_row
+    directly. Returns (total_xp, level, leveled_up)."""
+    total_xp, level, leveled_up = _refresh_cache(user_id)
+    _dispatch_xp_achievements(user_id, leveled_up=leveled_up)
+    return total_xp, level, leveled_up
 
 
 # Compare-and-set attempts before giving up on refreshing the cache. Each

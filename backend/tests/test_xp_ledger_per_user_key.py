@@ -9,9 +9,15 @@ the conflict, which award_xp reports as "already paid" (`duplicate=True`,
 `awarded=0`). The badge row was granted; the XP silently never was.
 
 A MagicMock ledger cannot see that, because the bug lives in the schema. So the
-ledger fake here enforces exactly the UNIQUE constraints the migrations leave on
+ledger fake here enforces the NAMED UNIQUE constraints the migrations declare on
 xp_events, replayed from the migration files in filename order. If a later
-migration (or a revert) puts a user-blind unique key back, these fail.
+migration (or a revert) declares a user-blind unique key again, these fail.
+
+What this replay does NOT model, and so does not cover: conditionals (an
+`ADD CONSTRAINT` inside a guarded DO block counts as having run), and the
+migration's defensive loops that drop a drifted environment's differently
+named unique constraint or bare unique index on idempotency_key. Those run
+against real Postgres in tests/integration/test_xp_ledger_per_user_db.py.
 """
 from __future__ import annotations
 
@@ -34,13 +40,15 @@ def _cols(raw: str) -> tuple[str, ...]:
     return tuple(c.strip().strip('"') for c in raw.split(","))
 
 
-def xp_events_unique_keys() -> dict[str, tuple[str, ...]]:
-    """Replay the UNIQUE DDL on xp_events across every migration, in order.
+def declared_unique_keys() -> dict[str, tuple[str, ...]]:
+    """Replay the NAMED unique-constraint DDL on xp_events, in filename order.
 
-    Models the three shapes this table's history uses: an inline column
-    `UNIQUE` in the CREATE TABLE (Postgres names it `xp_events_<col>_key`),
-    `ADD CONSTRAINT <name> UNIQUE (<cols>)`, and `DROP CONSTRAINT [IF EXISTS]
-    <name>`. Returns {constraint name: columns}.
+    Models exactly three textual shapes: an inline column `UNIQUE` in the
+    CREATE TABLE (Postgres names it `xp_events_<col>_key`), `ADD CONSTRAINT
+    <name> UNIQUE (<cols>)` (treated as unconditional, even inside a guarded DO
+    block), and `DROP CONSTRAINT [IF EXISTS] <name>` with a literal name.
+    Dynamic DDL (`EXECUTE format(...)`) and bare unique indexes are invisible
+    to it. Returns {constraint name: columns}.
     """
     keys: dict[str, tuple[str, ...]] = {}
     for path in sorted(MIG_DIR.glob("*.sql")):
@@ -119,17 +127,17 @@ def _award_badge(tbl, user_id, achievement_id="badge-1", reward=50):
         )
 
 
-class TestSchemaKeysTheLedgerPerStudent:
-    def test_no_unique_key_on_xp_events_is_blind_to_the_user(self):
+class TestDeclaredConstraintsKeyTheLedgerPerStudent:
+    def test_no_declared_unique_key_on_xp_events_is_blind_to_the_user(self):
         """Every key builder omits the user, so any UNIQUE without user_id is
         a cross-student collision waiting on a shared source id."""
-        keys = xp_events_unique_keys()
+        keys = declared_unique_keys()
         assert keys, "replay found no UNIQUE constraint on xp_events"
         blind = {name: cols for name, cols in keys.items() if "user_id" not in cols}
         assert not blind, f"user-blind unique keys on xp_events: {blind}"
 
-    def test_a_per_student_idempotency_key_is_still_enforced(self):
-        assert ("user_id", "idempotency_key") in xp_events_unique_keys().values()
+    def test_a_per_student_idempotency_key_is_still_declared(self):
+        assert ("user_id", "idempotency_key") in declared_unique_keys().values()
 
     def test_the_e2e_award_helper_conflicts_on_a_real_unique_key(self):
         """frontend/e2e/support/db.ts ports award_xp with ON CONFLICT; Postgres
@@ -138,12 +146,12 @@ class TestSchemaKeysTheLedgerPerStudent:
             r"INSERT INTO xp_events.*?ON CONFLICT \(([^)]*)\)", E2E_DB_HELPER.read_text(), re.S,
         )
         assert target, "awardXp's ON CONFLICT clause moved — update this test"
-        assert _cols(target.group(1)) in xp_events_unique_keys().values()
+        assert _cols(target.group(1)) in declared_unique_keys().values()
 
 
 class TestTwoStudentsEarnTheSameBadge:
     def test_both_are_paid(self):
-        tbl, events = _ledger_tables(xp_events_unique_keys().values())
+        tbl, events = _ledger_tables(declared_unique_keys().values())
         first = _award_badge(tbl, "u1")
         second = _award_badge(tbl, "u2")
         assert (first.awarded, first.duplicate) == (50, False)
@@ -153,7 +161,7 @@ class TestTwoStudentsEarnTheSameBadge:
         assert sorted(e["user_id"] for e in events) == ["u1", "u2"]
 
     def test_one_student_is_still_paid_once(self):
-        tbl, events = _ledger_tables(xp_events_unique_keys().values())
+        tbl, events = _ledger_tables(declared_unique_keys().values())
         _award_badge(tbl, "u1")
         again = _award_badge(tbl, "u1")
         assert (again.awarded, again.duplicate) == (0, True)
