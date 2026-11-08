@@ -35,8 +35,8 @@ class _FakeTable:
             return sval <= target
         if op == "like":
             return fnmatch.fnmatch(sval, target)
-        if op == "in":
-            return sval in target.strip("()").split(",")
+        if op == "in":  # values may be pg_quote_value-quoted
+            return sval in [v.strip('"') for v in target.strip("()").split(",")]
         raise AssertionError(f"unsupported op in test fake: {op}")
 
     def _filtered(self, filters):
@@ -504,3 +504,156 @@ def test_the_evidence_scan_reads_the_calibration_columns(monkeypatch):
     assert client.get(URL, params=RANGE).status_code == 200
     cols = dict(calls)["node_mastery_events"].split(",")
     assert {"channel", "p_before", "weight"} <= set(cols)
+
+
+# ── spec §13 A112: the pre/post learning gain per fixed post-test window ──────
+
+W1, W2 = params.POSTTEST_WINDOWS_DAYS
+
+
+def _anchor(event_id, *, session, qh, correct, node="n1"):
+    """A concept's first evidence row as the single graph writer journals it,
+    with the REAL planning envelope (a probe or an in-session check grade)."""
+    from learning.evidence import Evidence, planning_observation
+
+    ev = Evidence(
+        node_id=node, channel="free_response", correct=correct, session_id=session,
+        check_item_id=f"item-{qh}", question_hash=qh,
+        planning_provenance={"check_item_id": f"item-{qh}", "difficulty": 2,
+                             "synthetic_idk": False, "previously_seen": False},
+    )
+    return {
+        "id": event_id, "node_id": node, "event_type": "evidence", "session_id": session,
+        "question_hash": qh, "check_item_id": ev.check_item_id, "channel": ev.channel,
+        "correct": ev.correct, "assisted": ev.assisted, "max_rung": ev.max_rung,
+        "reason": "evidence:free_response", "planning_observation": planning_observation(ev),
+    }  # no created_at: outside the evidence scan, read only by id
+
+
+def _answered(node, window, *, correct, anchor, rung=0, days=10.0):
+    return {
+        "user_id": "u1", "node_id": node, "window_days": window, "correct": correct,
+        "max_rung": rung, "anchor_event_id": anchor, "days_since_evidence": days,
+        "answered_at": "2026-07-20T00:00:00+00:00",
+    }
+
+
+def test_learning_gain_is_empty_not_zero_without_post_tests(monkeypatch):
+    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    gain = client.get(URL, params=RANGE).json()["learning_gain"]
+    assert gain["delayed_min_days"] == params.POSTTEST_DELAYED_MIN_DAYS
+    assert [w["window_days"] for w in gain["windows"]] == list(params.POSTTEST_WINDOWS_DAYS)
+    for w in gain["windows"]:
+        assert w["n"] == 0 and w["posttests"] == 0
+        assert w["pre_correct_rate"] is None and w["post_correct_rate"] is None
+        assert w["paired_difference"] is None and w["delayed"]["n"] == 0
+
+
+def test_learning_gain_pairs_the_probe_pretest_with_each_window(monkeypatch):
+    """Only an anchor its session's PROBE history names is a pretest (a check
+    after teaching carries planning provenance too); only an unassisted post-test
+    is an outcome; the delayed stratum needs ≥ delayed_min_days without evidence."""
+    anchors = [
+        _anchor("ev-a", session="s1", qh="qa", correct=False, node="na"),
+        _anchor("ev-b", session="s1", qh="qb", correct=True, node="nb"),
+        _anchor("ev-c", session="s2", qh="qc", correct=False, node="nc"),  # a check
+    ]
+    sessions = [
+        {"id": "s1", "history": [{"question_hash": "qa"}, {"question_hash": "qb"}]},
+        {"id": "s2", "history": [{"question_hash": "q-something-else"}]},
+    ]
+    poses = [
+        _answered("na", W1, correct=True, anchor="ev-a", days=9.0),  # improved, delayed
+        _answered("nb", W1, correct=True, anchor="ev-b", days=0.5),  # same, recently practised
+        _answered("nc", W1, correct=True, anchor="ev-c"),  # no pretest: anchored on a check
+        _answered("na", W2, correct=False, anchor="ev-a", rung=params.RUNG_NO_CREDIT_MIN),
+        {**_answered("nb", W2, correct=False, anchor="ev-b"), "answered_at": "2026-09-01"},
+    ]
+    _serve(monkeypatch, {"events": [], "node_mastery_events": anchors, "sessions": sessions,
+                         "posttest_poses": poses})
+    b = client.get(URL, params=RANGE).json()
+    gain = {w["window_days"]: w for w in b["learning_gain"]["windows"]}
+    first = gain[W1]
+    assert first["posttests"] == 3 and first["n"] == 2
+    assert first["pre_correct_rate"] == pytest.approx(0.5)
+    assert first["post_correct_rate"] == pytest.approx(1.0)
+    assert first["paired_difference"] == pytest.approx(0.5)
+    assert (first["improved"], first["same"], first["worse"]) == (1, 1, 0)
+    assert first["delayed"]["n"] == 1 and first["delayed"]["improved"] == 1
+    second = gain[W2]  # a no-credit grade is no outcome; September is outside the range
+    assert second["posttests"] == 0 and second["n"] == 0 and second["pre_correct_rate"] is None
+    assert b["calibration"]["all"]["n"] == 0  # the anchors are not in-range evidence rows
+
+
+def test_the_pretest_reads_are_bounded_to_the_anchors_and_their_sessions(monkeypatch):
+    calls = []
+    store = {
+        "node_mastery_events": [_anchor("ev-a", session="s1", qh="qa", correct=False)],
+        "sessions": [{"id": "s1", "history": [{"question_hash": "qa"}]}],
+        "posttest_poses": [
+            _answered("n1", W1, correct=True, anchor="ev-a"),
+            _answered("n2", W1, correct=True, anchor="ev-z", rung=1),  # no outcome: never read
+        ],
+    }
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            super().__init__(store.get(name, []))
+            self.name = name
+
+        def select(self, columns="*", filters=None, order=None, limit=None):
+            calls.append((self.name, columns, dict(filters or {})))
+            return super().select(columns, filters, order, limit)
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    assert client.get(URL, params=RANGE).status_code == 200
+    reads = {name: f for name, _, f in calls if "id" in f}
+    assert reads["node_mastery_events"]["id"] == 'in.("ev-a")'
+    assert reads["sessions"]["id"] == 'in.("s1")'
+    (columns,) = [c for n, c, f in calls if n == "sessions" and "id" in f]
+    assert "loop_state->probe->history" in columns  # the probe history only, not all of loop_state
+
+
+def test_no_pretest_read_without_an_unassisted_outcome(monkeypatch):
+    calls = []
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            rows = [_answered("n1", W1, correct=True, anchor="ev-a", rung=4)]
+            super().__init__(rows if name == "posttest_poses" else [])
+            self.name = name
+
+        def select(self, columns="*", filters=None, order=None, limit=None):
+            calls.append((self.name, dict(filters or {})))
+            return super().select(columns, filters, order, limit)
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    assert client.get(URL, params=RANGE).status_code == 200
+    assert not [c for c in calls if "id" in c[1]]
+
+
+def test_the_pose_scan_bounds_answered_at_and_counts_toward_truncation(monkeypatch):
+    calls = []
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            super().__init__([])
+            self.name = name
+
+        def select_with_count(self, columns="*", filters=None, **kw):
+            calls.append((self.name, columns, filters, kw.get("order")))
+            return [], 0
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    assert client.get(URL, params=RANGE).status_code == 200
+    (scan,) = [c for c in calls if c[0] == "posttest_poses"]
+    assert scan[2]["answered_at"] == [f"gte.{RANGE['from']}", f"lte.{RANGE['to']}"]
+    assert {"window_days", "correct", "max_rung", "anchor_event_id", "days_since_evidence"} <= set(
+        scan[1].split(",")
+    )
+    assert scan[3].startswith("answered_at.asc")
+    monkeypatch.setattr(analytics, "_SCAN_CAP", 1)
+    monkeypatch.setattr(analytics, "_PAGE", 1)
+    two = [_answered("n1", W1, correct=True, anchor="a"), _answered("n2", W1, correct=True, anchor="b")]
+    _serve(monkeypatch, {"posttest_poses": two})
+    assert client.get(URL, params=RANGE).json()["truncated"] is True

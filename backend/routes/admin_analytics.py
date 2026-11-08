@@ -23,9 +23,10 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
 from learning.earnest_revise import earnest_revise
+from learning.learning_gain import learning_gain, posttest_outcome, pretest_outcome
 from learning.params import (
     ACQ_TARGET_HI,
     ACQ_TARGET_LO,
@@ -209,6 +210,9 @@ _NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
     extra_filters: dict | None = None,
+    *,
+    time_column: str = "created_at",
+    order: str | None = None,
 ) -> tuple[list[dict], bool]:
     """Fetch every row in [from, to] for a table, paging via select_with_count.
 
@@ -217,16 +221,18 @@ def _scan_range(
     server's default row cap. Returns ``(rows, truncated)``: a range large
     enough to hit _SCAN_CAP stops the scan early, logs a warning, and sets
     ``truncated=True`` so callers can surface the partial aggregation.
+    `time_column` is the timestamp the range bounds (``created_at`` unless a
+    table has none); `order` defaults to it, ascending.
     """
     out: list[dict] = []
     offset = 0
     truncated = False
     while True:
-        filters: dict = {"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"]}
+        filters: dict = {time_column: [f"gte.{from_iso}", f"lte.{to_iso}"]}
         if extra_filters:
             filters.update(extra_filters)
         rows, total = table(table_name).select_with_count(
-            columns, filters=filters, order="created_at.asc", limit=_PAGE, offset=offset,
+            columns, filters=filters, order=order or f"{time_column}.asc", limit=_PAGE, offset=offset,
         )
         out.extend(rows)
         if len(out) >= total or not rows:
@@ -598,6 +604,33 @@ class Calibration(BaseModel):
     posttest: CalibrationReport  # rung 3: fresh reserve item, tool-free, delayed
 
 
+class GainSummary(BaseModel):
+    """Pre/post outcomes over (student, concept) pairs (learning/learning_gain.py,
+    spec §13 A112): the probe's unassisted pretest against the unassisted
+    post-test. Observed outcomes only — never p_known. None rates: n = 0."""
+
+    n: int
+    pre_correct_rate: float | None
+    post_correct_rate: float | None
+    paired_difference: float | None  # mean(post − pre) over the pairs, in [−1, 1]
+    improved: int  # pretest wrong → post-test right
+    same: int
+    worse: int  # pretest right → post-test wrong
+
+
+class GainWindow(GainSummary):
+    window_days: int  # a POSTTEST_WINDOWS_DAYS window
+    posttests: int  # unassisted post-test outcomes in the window, paired or not
+    delayed: GainSummary  # the pairs with no evidence for ≥ delayed_min_days before the pose
+
+
+class LearningGain(BaseModel):
+    """Post-tests answered in the range, per fixed window (A112)."""
+
+    delayed_min_days: int
+    windows: list[GainWindow]
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -615,6 +648,7 @@ class LearningLoopKpis(BaseModel):
     earnest_revise: EarnestRevise
     gates: Gates
     calibration: Calibration
+    learning_gain: LearningGain
     truncated: bool = False
 
 
@@ -770,6 +804,71 @@ def _next_session_rate(evidence_rows: list[dict], quiz_ask: set[str] | frozenset
     }
 
 
+#: spec §13 A112: an answered post-test pose — its window, its recorded outcome,
+#: its anchor (the concept's first evidence row) and the delay it had
+_POSE_COLS = (
+    "user_id,node_id,window_days,answered_at,correct,max_rung,anchor_event_id,days_since_evidence"
+)
+#: an anchor row, with what learning_gain.pretest_outcome binds its envelope to
+_ANCHOR_COLS = (
+    "id,node_id,session_id,question_hash,check_item_id,channel,correct,assisted,max_rung,"
+    "reason,planning_observation"
+)
+#: ids per `in.(…)` read, so a GET URL stays well under common proxy limits
+_IN_BATCH = 100
+
+
+def _in(values: list[str]) -> str:
+    return f"in.({','.join(pg_quote_value(v) for v in values)})"
+
+
+def _batches(values: list[str]):
+    for start in range(0, len(values), _IN_BATCH):
+        yield values[start : start + _IN_BATCH]
+
+
+def _pretests(poses: list[dict]) -> dict[str, bool]:
+    """A112: anchor event id → the concept's pretest outcome
+    (learning_gain.pretest_outcome), for the poses with an unassisted outcome.
+    Two bounded reads: their anchor rows (each concept's first evidence) by id,
+    then the probe histories of those rows' sessions — planning provenance tags
+    the loop's in-session checks too, so only the session's probe history says
+    a row was a probe grade."""
+    ids = sorted(
+        {
+            str(p["anchor_event_id"])
+            for p in poses
+            if p.get("anchor_event_id") and posttest_outcome(p) is not None
+        }
+    )
+    anchors: list[dict] = []
+    for batch in _batches(ids):
+        anchors += (
+            table("node_mastery_events").select(
+                _ANCHOR_COLS, filters={"id": _in(batch), "event_type": "eq.evidence"}
+            )
+            or []
+        )
+    sessions = sorted({str(r["session_id"]) for r in anchors if r.get("session_id")})
+    probed: dict[str, set[str]] = {}
+    for batch in _batches(sessions):
+        for row in table("sessions").select(
+            "id,history:loop_state->probe->history", filters={"id": _in(batch)}
+        ) or []:
+            history = row.get("history") if isinstance(row.get("history"), list) else []
+            probed[str(row.get("id"))] = {
+                h["question_hash"]
+                for h in history
+                if isinstance(h, dict) and isinstance(h.get("question_hash"), str)
+            }
+    out: dict[str, bool] = {}
+    for row in anchors:
+        outcome = pretest_outcome(row, probed.get(str(row.get("session_id")), set()))
+        if outcome is not None and row.get("id"):
+            out[str(row["id"])] = outcome
+    return out
+
+
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
     n = ok = 0
     for row in steps:
@@ -790,8 +889,9 @@ def learning_loop_kpis(
     to: str | None = Query(None),
 ) -> LearningLoopKpis:
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
-    and the zero-leak, ceiling-compliance and earnest-revise (A109) gates;
-    `truncated: true` means a
+    and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
+    BKT calibration (A110) and the pre/post learning gain of the post-tests
+    answered in the range, per fixed window (A112); `truncated: true` means a
     scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
@@ -809,6 +909,14 @@ def learning_loop_kpis(
         from_iso,
         to_iso,
         extra_filters={"event_type": "eq.evidence"},
+    )
+    poses, poses_truncated = _scan_range(  # A112: post-test outcomes answered in the range
+        "posttest_poses",
+        _POSE_COLS,
+        from_iso,
+        to_iso,
+        time_column="answered_at",
+        order="answered_at.asc,user_id.asc,node_id.asc,window_days.asc",
     )
     quiz_ask = quiz_ask_session_ids(table("sessions"), to_iso=to_iso)  # A106
     steps = [e for e in events if e.get("event_type") == _STEP_EVENT]
@@ -839,5 +947,6 @@ def learning_loop_kpis(
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         calibration=Calibration(**bkt_calibration(evidence)),
-        truncated=events_truncated or evidence_truncated,
+        learning_gain=LearningGain(**learning_gain(poses, _pretests(poses))),
+        truncated=events_truncated or evidence_truncated or poses_truncated,
     )

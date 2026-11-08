@@ -108,6 +108,22 @@ const emptyCalibration = {
   n: 0, brier: null, mean_predicted: null, observed_rate: null, ece: null,
   bins: [0, 1, 2, 3, 4].map(i => ({ lo: i / 5, hi: (i + 1) / 5, n: 0, mean_predicted: null, observed: null })),
 };
+const emptyGain = {
+  n: 0, pre_correct_rate: null, post_correct_rate: null, paired_difference: null,
+  improved: 0, same: 0, worse: 0,
+};
+const learningGain = {
+  delayed_min_days: 7,
+  windows: [
+    {
+      window_days: 7, posttests: 6,
+      n: 5, pre_correct_rate: 0.4, post_correct_rate: 0.8, paired_difference: 0.4,
+      improved: 2, same: 3, worse: 0,
+      delayed: { n: 2, pre_correct_rate: 0.5, post_correct_rate: 1, paired_difference: 0.5, improved: 1, same: 1, worse: 0 },
+    },
+    { window_days: 28, posttests: 0, ...emptyGain, delayed: emptyGain },
+  ],
+};
 const loopFixture = {
   range: RANGE,
   steps_total: 40, banded_steps: 20, in_band: 15, in_band_share: 0.75,
@@ -126,6 +142,7 @@ const loopFixture = {
     },
     posttest: emptyCalibration,
   },
+  learning_gain: learningGain,
   truncated: false,
 };
 
@@ -367,5 +384,42 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
   it("marks a failing gate", () => {
     render(<LearningLoopPanelBody d={{ ...loopFixture, gates: { ...loopFixture.gates, zero_leaks: false } }} />);
     expect(screen.getByTestId("admin-loop-gate-leaks").getAttribute("data-state")).toBe("fail");
+  });
+
+  it("shows the pre/post gain per fixed window, with the delayed stratum under each (spec §13 A112)", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const week = screen.getByTestId("admin-loop-gain-7");
+    expect(within(week).getByText("7 days")).toBeTruthy();
+    expect(within(week).getByText("6")).toBeTruthy(); // post-tests, paired or not
+    expect(within(week).getByText("5")).toBeTruthy(); // pairs
+    expect(within(week).getByText("40%")).toBeTruthy(); // pre-test correct
+    expect(within(week).getByText("80%")).toBeTruthy(); // post-test correct
+    expect(within(week).getByText("+40.0 pp")).toBeTruthy(); // paired change
+    expect(within(week).getByText("2 / 3 / 0")).toBeTruthy();
+    const delayed = screen.getByTestId("admin-loop-gain-7-delayed");
+    expect(within(delayed).getByText("↳ no practice in the 7 days before")).toBeTruthy();
+    expect(within(delayed).getByText("+50.0 pp")).toBeTruthy();
+    expect(within(delayed).getByText("100%")).toBeTruthy();
+  });
+
+  it("shows an empty window as dashes rather than zero rates", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const month = screen.getByTestId("admin-loop-gain-28");
+    expect(within(month).getAllByText("—").length).toBe(3); // pre, post, paired change
+    expect(within(month).queryByText("0%")).toBeNull();
+    expect(within(month).getByText("0 / 0 / 0")).toBeTruthy();
+  });
+
+  it("says so when no unaided post-test was answered in the range", () => {
+    const none = {
+      ...loopFixture,
+      learning_gain: {
+        delayed_min_days: 7,
+        windows: [7, 28].map(window_days => ({ window_days, posttests: 0, ...emptyGain, delayed: emptyGain })),
+      },
+    };
+    render(<LearningLoopPanelBody d={none} />);
+    expect(screen.getByTestId("admin-loop-gain").textContent).toContain("No unaided post-test outcomes in this range.");
+    expect(screen.queryByTestId("admin-loop-gain-7")).toBeNull();
   });
 });

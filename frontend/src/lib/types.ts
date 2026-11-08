@@ -655,6 +655,29 @@ export interface LoopCalibrationReport {
   bins: LoopCalibrationBin[];
 }
 
+/** Pre/post outcomes over (student, concept) pairs: the concept's probe
+ *  pretest against its unassisted delayed post-test (spec §13 A112). Observed
+ *  answers only, never p_known; null rates mean n = 0 — never zeros. */
+export interface LoopGainSummary {
+  n: number;
+  pre_correct_rate: number | null;
+  post_correct_rate: number | null;
+  /** mean(post − pre) over the pairs, in [−1, 1] */
+  paired_difference: number | null;
+  improved: number;
+  same: number;
+  worse: number;
+}
+
+/** One fixed post-test window (backend POSTTEST_WINDOWS_DAYS). */
+export interface LoopGainWindow extends LoopGainSummary {
+  window_days: number;
+  /** unassisted post-test outcomes in the window, paired with a pretest or not */
+  posttests: number;
+  /** the pairs whose concept had no evidence for ≥ delayed_min_days before the pose */
+  delayed: LoopGainSummary;
+}
+
 /** GET /api/admin/analytics/learning-loop — spec §10 KPIs and gates. */
 export interface LearningLoopKpisData {
   range: { from: string; to: string };
@@ -676,6 +699,8 @@ export interface LearningLoopKpisData {
   };
   gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
   calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport };
+  /** post-tests answered in the range, per fixed window (spec §13 A112) */
+  learning_gain: { delayed_min_days: number; windows: LoopGainWindow[] };
   truncated: boolean;
 }
 
