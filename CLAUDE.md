@@ -141,6 +141,7 @@ make explore                       # Chapter 2: bounded AI exploration of the ru
 - For the current architecture overview, see `docs/architecture.md`.
 - For agent-building patterns, run `/sync-context` at session start.
 - For E2E testing (Chapter 1 scripted journeys + Chapter 2 AI exploration, oracles, triage, promotion), see `docs/e2e-exploration.md`.
+- For the AI learning loop end to end (module map, flows, data model, invariants, operations, the §13 amendment index), start at `docs/learning-loop/README.md`.
 
 ## Gotchas
 
