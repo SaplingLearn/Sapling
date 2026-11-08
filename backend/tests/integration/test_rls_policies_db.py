@@ -57,6 +57,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "job_applications", "encryption_key_check", "schema_migrations", "jobs",
         "document_uploads",
         "llm_budgets",
+        "rate_limit_hits", "feature_flags_version",  # #117
     }),
 }
 

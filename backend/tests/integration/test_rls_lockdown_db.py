@@ -376,6 +376,7 @@ BACKEND_RPCS = frozenset({
     "canopy_metrics",                # routes/internal_metrics.py (METRICS_RPC)
     "claim_documents_for_indexing",  # services/index_sweeper.py
     "claim_jobs",                    # services/jobs.py (#116)
+    "claim_rate_limit",              # services/request_limits.py (#117, stateless_rate_limit)
     "complete_job",                  # services/jobs.py (#116)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
