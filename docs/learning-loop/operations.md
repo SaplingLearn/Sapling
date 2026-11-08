@@ -59,7 +59,7 @@ percentage rollout → stored default. Reads come from a 30-second snapshot
 | `crisis_support` | A message stating suicidal ideation, self-harm or acute danger gets a fixed resources card instead of a model turn, on every tutor, loop and notes surface. | no | Owner, after reviewing the copy (`docs/safety/crisis-support.md`). |
 | `quiz_concept_plan` | The quiz home proposes concepts from the learner model — FSRS-due reviews first, then open misconceptions, then the ready fringe — and "Review everything due" is the FSRS-due set (`GET /api/quiz/plan`, 404 off; A143). Reads only. | yes | Owner, any time: no model call, no write. |
 | `quiz_planned_questions` | Code chooses each quiz question's difficulty and misconception target; the planned writer (`backend/agents/quiz_planned.py`) only writes them, tagging distractors with the named keys (A144). | no | Only after `backend/tests/evals/quiz_generation_planned.py` is recorded live and passes (then it joins `run_all.py`). |
-| `quiz_item_gates` | Each generated quiz question passes A119's concept check and A124's blind solve on `quiz_check` before it is served; a misaligned or disputed one is never served, and only a verified one is evidence (A145). Two to three model calls per quiz. | no | After a live smoke of the checks on quiz questions and a measured cost (`quiz.items_gated`; the cost projection's quiz section). Before or with `quiz_planned_questions`. |
+| `quiz_item_gates` | Each generated quiz question passes A119's concept check and A124's blind solve on `quiz_check` before it is served; a misaligned or disputed one is never served, and only a verified one is evidence (A145). Two to three model calls per quiz. | no | After the live smoke of the checks on quiz questions (`backend/tests/evals/quiz_item_gates.py`) is recorded and passes, and the cost is measured (`quiz.items_gated`; the cost projection's quiz section). Before or with `quiz_planned_questions`. |
 | `quiz_misconceptions` | A "Sure" wrong answer on a verified quiz question's tagged distractor records that misconception; a correct, unassisted first answer to a verified question listing an open key closes it (A146). | no | After `quiz_planned_questions` and `quiz_item_gates` are on (it acts only on questions generated under both) and the tag yield is measured. |
 | `quiz_results_routing` | The quiz results show each skill meter that moved, what is due, and the next step: the review queue, or Learn on the weakest ready concept (A147). Reads only. | no | Owner, any time. |
 | `decision_router` | Main's observe-only tutor router (ADR 0027). Not part of the loop; acts on nothing. | no | — |
@@ -293,7 +293,7 @@ function mode and the offline tests until the owner approves the spend, and
 each flag waits on its recording. The same holds for the quiz's planned
 writer (`backend/tests/evals/quiz_generation_planned.py`, cases and
 evaluators ready, no cassette) and for the A119/A124 agents on quiz
-questions on `quiz_check`. The quiz journeys with the quiz flags on are in
+questions on `quiz_check` (`backend/tests/evals/quiz_item_gates.py`). The quiz journeys with the quiz flags on are in
 `frontend/e2e/quiz-learning.spec.ts`; the flag-off pins are
 `backend/tests/test_quiz_learning_flags_off.py`.
 

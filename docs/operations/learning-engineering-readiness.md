@@ -495,8 +495,9 @@ id `quiz:<question_hash>`. `REQUIRED_COLUMNS` does not change.
    when its condition holds:
    - `quiz_concept_plan` and `quiz_results_routing`: reads only, no model
      call — the owner's call, any time.
-   - `quiz_item_gates`: after a live smoke of the A119 and A124 agents on quiz
-     questions on the `quiz_check` slot and a measured cost (`quiz.items_gated`,
+   - `quiz_item_gates`: after the live smoke of the A119 and A124 agents on quiz
+     questions on the `quiz_check` slot (`backend/tests/evals/quiz_item_gates.py`,
+     recorded and passing; it then joins `run_all.py`) and a measured cost (`quiz.items_gated`,
      `llm_usage` features `quiz_check_*`; the offline estimate is in the cost
      projection). `quiz_check` must resolve to a model other than `quiz`'s, or
      no key is verified (every gated question is then practice). Decide the

@@ -1,6 +1,7 @@
-"""The planned quiz writer's eval dataset (learning-loop spec §13 A144),
-offline: its cases are the route's own messages, its evaluators score the
-plan's contract, and it stays out of run_all.py until it is recorded live."""
+"""The quiz flags' eval datasets, offline: the planned writer's (spec §13
+A144) and the item gates' live smoke (A145). Their cases are the route's own
+messages, their evaluators score the contract, and each stays out of
+run_all.py until it is recorded live."""
 
 from __future__ import annotations
 
@@ -69,3 +70,44 @@ def test_the_evaluators_score_the_plans_contract():
         _mc(n, options=("no", "the much longer correct answer here", "nah", "nope"), key=1) for n in (1, 2, 3, 4)
     ]
     assert ds.EvidenceYieldEvaluator().evaluate(_ctx(case, longest_key)) == 0.0
+
+
+# ── the item gates' live smoke (A145) ───────────────────────────────────────
+
+import quiz_item_gates as gates_ds  # noqa: E402
+
+from agents.check_items_solve import Solution, Solutions  # noqa: E402
+from agents.check_items_verify import AlignmentChecks, ConceptCheck  # noqa: E402
+
+
+def test_the_gate_smoke_joins_run_all_only_once_recorded():
+    assert gates_ds.DATASET not in run_all.DATASETS
+    cassettes = Path(__file__).resolve().parent / "evals" / "cassettes" / gates_ds.DATASET
+    assert not cassettes.exists(), "recorded: add it to run_all.DATASETS and drop this pin"
+    assert {c.metadata["kind"] for c in gates_ds.CASES} == {"verify", "solve"}
+    for case in gates_ds.CASES:
+        assert "ITEM q1" in case.inputs
+        if case.metadata["kind"] == "solve":
+            assert "> A hash table's load factor" in case.inputs
+
+
+def test_the_gate_smoke_evaluators_score_a_correct_check():
+    by_name = {c.name: c for c in gates_ds.CASES}
+    concept, solve = gates_ds.ConceptEvaluator(), gates_ds.SolveEvaluator()
+
+    def verify_out(name):
+        return AlignmentChecks(criteria=[], concepts=[ConceptCheck(item="q1", asks="x", concept=name)])
+
+    def solve_out(solvable, answer):
+        return Solutions(solutions=[Solution(item="q1", basis="x", solvable=solvable, answer=answer)])
+
+    def score(evaluator, name, output):
+        return evaluator.evaluate(SimpleNamespace(metadata=by_name[name].metadata, output=output))
+
+    assert score(concept, "verify_aligned_load_factor", verify_out("Load Factor")) == 1.0
+    assert score(concept, "verify_aligned_load_factor", verify_out("none")) == 0.0
+    assert score(solve, "solve_agrees_mc", solve_out(True, "C")) == 1.0
+    assert score(solve, "solve_agrees_mc", solve_out(True, "B")) == 0.0
+    assert score(solve, "solve_numeric", solve_out(True, "0.750")) == 1.0
+    assert score(solve, "solve_not_settled_by_the_passage", solve_out(False, "")) == 1.0
+    assert score(solve, "solve_not_settled_by_the_passage", solve_out(True, "1953")) == 0.0

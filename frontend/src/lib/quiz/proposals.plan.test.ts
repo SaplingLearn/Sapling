@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
-import { dueFromPlan, planReasonCopy, rankFromPlan, skillPercent } from "./proposals";
+import { courseQueueFromPlan, dueFromPlan, planReasonCopy, rankFromPlan, skillPercent } from "./proposals";
 import type { QuizPlan } from "./types";
 
 function node(id: string, course: string | null, over: Partial<GraphNode> = {}): GraphNode {
@@ -53,6 +53,15 @@ describe("rankFromPlan", () => {
     ]);
     expect(ranked[2].plan).toEqual({ reason: "misconception", pKnown: 0.4 });
     expect(ranked[0].course?.course_code).toBe("CS 111");
+  });
+});
+
+describe("courseQueueFromPlan", () => {
+  it("is the course's proposed concepts in the plan's order, never one the plan leaves out", () => {
+    const ranked = rankFromPlan(PLAN, NODES, COURSES, []);
+    expect(courseQueueFromPlan(ranked, "cs1")).toEqual(["due1", "mix", "ready"]);
+    expect(courseQueueFromPlan(ranked, "ma1")).toEqual(["due2"]);
+    expect(courseQueueFromPlan(ranked, "none")).toEqual([]);
   });
 });
 

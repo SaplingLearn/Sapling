@@ -35,6 +35,7 @@ import type { SessionConfig } from "@/lib/quiz/machine";
 import { savePrefs } from "@/lib/quiz/prefs";
 import {
   colorFor,
+  courseQueueFromPlan,
   entrySelection,
   latestCompletedAttempt,
   metaLine,
@@ -112,8 +113,12 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   }, [home.status, selection.unresolved, toast]);
 
   const courseQueue = React.useMemo(
-    () => (entry.course ? queueFor("course", home.nodes, entry.course) : []),
-    [entry.course, home.nodes],
+    () => (entry.course
+      ? home.planned
+        ? courseQueueFromPlan(home.candidates, entry.course)
+        : queueFor("course", home.nodes, entry.course)
+      : []),
+    [entry.course, home.nodes, home.planned, home.candidates],
   );
   // The tier ranking's due queue, or with `quiz_concept_plan` the learner
   // model's (spec §13 A143): the hook decides, so the card and the queue agree.
@@ -218,7 +223,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
 
   const meta =
     mode === "course"
-      ? `${courseQueue.length} concepts due`
+      ? `${courseQueue.length} concepts ${home.planned ? "to practise" : "due"}`
       : mode === "due"
         ? `${home.due.count} concepts across ${home.due.courseCount} courses · starting with the ${Math.min(home.due.count, QUEUE_MAX)} ${home.planned ? "most overdue" : "weakest"}`
         : card

@@ -27,6 +27,7 @@ import { cachedDescription, loadDescription } from "./conceptDescriptions";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
+  courseQueueFromPlan,
   dueFromPlan,
   dueSet,
   entrySelection,
@@ -374,7 +375,9 @@ export function useQuizHome(
       const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
       if (resolved) return { conceptId: resolved, describable: true };
     } else if (entry?.course) {
-      const first = queueFor("course", scopedNodes, entry.course)[0];
+      const first = (plan
+        ? courseQueueFromPlan(candidates, entry.course)
+        : queueFor("course", scopedNodes, entry.course))[0];
       if (first) return { conceptId: first, describable: false };
     } else if (entry?.scope === "due") {
       const first = dueQueue[0];
@@ -383,7 +386,7 @@ export function useQuizHome(
     // An entry that resolved to nothing lands here too, so an unusable
     // `?course=` degrades to an ordinary primary card — description and all.
     return { conceptId: primary?.node.id ?? null, describable: true };
-  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue]);
+  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, candidates]);
   const cardConceptId = card.conceptId;
   const describable = card.describable;
 

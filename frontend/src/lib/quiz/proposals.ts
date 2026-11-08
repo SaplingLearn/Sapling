@@ -360,6 +360,16 @@ export function rankFromPlan(
   return out;
 }
 
+/** "Practice this course" from the plan: the course's proposed concepts in
+ *  the plan's order, capped at `QUEUE_MAX` — never a concept the learner model
+ *  does not propose (not ready, or proficient and not yet due). */
+export function courseQueueFromPlan(candidates: Candidate[], courseId: string): string[] {
+  return candidates
+    .filter(c => c.plan && c.node.course_id === courseId)
+    .slice(0, QUEUE_MAX)
+    .map(c => c.node.id);
+}
+
 /** "Review everything due" from the plan: the concepts whose FSRS review is
  *  due, in the plan's (overdue-first) order, over the scoped graph. */
 export function dueFromPlan(
