@@ -479,7 +479,20 @@ Python 3.13 venv installed from `requirements.lock` and function mode:
     `check_items`, `misconceptions`, and others) left in the persistent local DB
     by the unmerged learning-loop branch. None of them come from this stack, and
     CI's fresh database passed the same check on #817.
-- **run 3** (stack top `c9c0c007`): _pending. The orchestrator fills this in._
+- **run 3** (stack top `c9c0c007`, everything except this docs PR): **all green.**
+  `make e2e-up` ok. Integration lane **235 passed / 0 failed**: the cross-user
+  matrix in `off` and in `enforce`, the RLS lockdown and policy tests, and the jobs
+  queue. The bucket-completeness check was deselected locally only, because of the
+  stray learning-loop tables described above; CI's fresh database still runs it.
+  Playwright **105 passed / 14 skipped / 0 failed**. Oracles **0 findings**.
+  `make e2e-down` clean. The backend venv was built from `requirements.lock` on
+  Python 3.13, as in CI, so the run exercised #815's re-lock.
+- Run 1 never booted. The encryption canary refused the worktree's
+  `.env.local.example` key against the persistent local DB, which was written under
+  the primary checkout's key. That is the canary working as designed; the worktree
+  then used the primary's local `ENCRYPTION_KEY`. Note: these runs applied this
+  stack's migrations (RLS 2a/2b/2c and jobs) to your **local** Supabase DB. They are
+  additive, so switching back to `main` locally is fine.
 <!-- /FINAL-PASS-RESULTS -->
 
 ---
