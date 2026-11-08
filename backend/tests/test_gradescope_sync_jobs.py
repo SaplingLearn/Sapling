@@ -1116,3 +1116,11 @@ def test_status_reports_an_abandoned_inline_run_as_failed():
     r = _status([_sync_row("inline", ago=gj.INLINE_STALE_SECONDS + 60)])
     assert r.status_code == 502
     assert r.json()["detail"] == "Gradescope sync failed. Please retry."
+
+
+def test_stage_sync_retries_when_the_conflicting_sync_ended_before_the_read():
+    t = MagicMock()
+    t.return_value.insert.side_effect = [RuntimeError("23505"), [{"id": "s2"}]]
+    t.return_value.select.return_value = []  # the active sync finished meanwhile
+    with patch.object(gj, "table", t):
+        assert gj.stage_sync(**_STAGE_KW) == gj.Staged(id="s2", fresh=True)

@@ -398,7 +398,7 @@ def stage_sync(
         "gradescope_course_id": gradescope_course_id,
         "stage": QUEUED,
     }
-    for _ in range(2):
+    for attempt in range(2):
         try:
             rows = table("gradescope_syncs").insert(row)
             return Staged(id=str(rows[0]["id"]), fresh=True)
@@ -406,6 +406,8 @@ def stage_sync(
             # The partial unique index: a sync of this course is in flight.
             existing = _active_row(user_id, enrollment_id)
             if existing is None:
+                if attempt == 0:
+                    continue  # it ended between the insert and the read: retry
                 raise
         if not _abandoned(existing):
             return Staged(id=str(existing["id"]), fresh=False)
