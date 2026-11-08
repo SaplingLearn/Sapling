@@ -1,0 +1,20 @@
+{
+  "_comment": "Phase 4 (#118) ratchet: ceilings for today's offenders. Entries may only be lowered or deleted (python scripts/code_size_ratchet.py --shrink). Enforced by tests/test_code_size_ratchet.py.",
+  "complexity": {
+    "services/achievement_service.py::_get_user_stat": 26,
+    "services/graph_service.py::apply_graph_update": 28
+  },
+  "route_file_lines": {
+    "routes/admin.py": 1005,
+    "routes/admin_analytics.py": 660,
+    "routes/auth.py": 1173,
+    "routes/documents.py": 1468,
+    "routes/flashcards.py": 658,
+    "routes/gradebook.py": 649,
+    "routes/gradescope.py": 826,
+    "routes/learn.py": 2001,
+    "routes/profile.py": 933,
+    "routes/quiz.py": 3145,
+    "routes/social.py": 1122
+  }
+}
