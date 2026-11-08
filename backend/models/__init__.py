@@ -380,14 +380,19 @@ class AnswerQuestionBody(BaseModel):
     for one question. `question_id` is the guard against confusing them:
     send the id you displayed and the route rejects a mismatch instead of
     silently grading the neighbouring question (which the idempotency rule
-    would then lock in). The response echoes both either way."""
+    would then lock in). The response echoes both either way.
+
+    `confidence` (learning-loop spec §13 A132) is the student's optional
+    stated confidence, A127's label ("guessing" / "fairly_sure" / "sure");
+    any other value, a number included, is a 422. Absent = skipped (stored as
+    absent, never as a default level); an idk written answer states none."""
 
     question_index: int = Field(ge=0)
     selected_index: Optional[int] = Field(default=None, ge=0)
     answer_text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
-    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confidence: Optional[StudentConfidence] = None
 
     @model_validator(mode="after")
     def one_answer(self):

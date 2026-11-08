@@ -502,7 +502,9 @@ class TestConcurrency:
 # Fixture questions carry the STORED wire shape (`question` + option `text`,
 # routes/quiz.py::_agent_question_to_wire). Q1 carries a stored
 # question_hash (post-E5 row); Q2 does not (pre-E5 row) so the recompute
-# branch of wire_question_hash is exercised too.
+# branch of wire_question_hash is exercised too. Both lint clean (spec §13
+# A132: an item-flaw code such as correct_longest would keep an answer out of
+# the evidence these tests count), so the options are alike in length.
 
 LOOP_QUESTIONS = [
     {
@@ -519,7 +521,7 @@ LOOP_QUESTIONS = [
         "id": 2,
         "question": "What is a function?",
         "options": [
-            {"label": "C", "text": "a loop", "correct": False},
+            {"label": "C", "text": "a repeating loop", "correct": False},
             {"label": "D", "text": "a reusable block", "correct": True},
         ],
         "explanation": "D.",
@@ -645,7 +647,7 @@ class TestLearningLoopEvidencePath:
         assert [e["correct"] for e in ev] == [True, False]
         assert ev[0]["question_hash"] == "deadbeefdeadbeef"          # stored hash trusted
         assert ev[1]["question_hash"] == question_hash(                # recomputed
-            "What is a function?", ["a loop", "a reusable block"],
+            "What is a function?", ["a repeating loop", "a reusable block"],
         )
 
     def test_gate_on_snapshot_spans_first_before_to_last_after(self):
