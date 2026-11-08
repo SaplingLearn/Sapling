@@ -29,7 +29,7 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
+import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -911,7 +911,7 @@ export function Dashboard() {
           {suggestBlock}
           <div
             style={{
-              display: "grid", gap: 16,
+              display: "grid", gap: PANEL_GAP,
               gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
               alignItems: "stretch", flex: 1, minHeight: 0,
             }}
