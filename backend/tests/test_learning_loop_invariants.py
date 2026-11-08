@@ -937,9 +937,17 @@ def test_inv_07_learning_tables_only_via_connection():
 #: The migration ledger keys on basename, so an edit AFTER an apply is what
 #: inv_08 exists to stop. Never add an entry for a migration that any
 #: environment has applied.
+#: The second (spec §13 A141, the second review): 2889732f set a lock_timeout
+#: and made the CHECK NOT VALID in 20261108205812_learning_varied_practice_review.sql
+#: (the brief-lock fix; 20261108224511 validates the CHECK). That migration
+#: had been applied only to throwaway local databases, no environment and no
+#: ledger row, when the edit was made.
 _AMENDED_BEFORE_ANY_APPLY = {
     "7717dc247bbc9150e469ab1960130d61425e1ffa": frozenset(
         {"20261108072715_learning_evidence_void.sql"}
+    ),
+    "2889732f72413c527643277cb3c24078a1081839": frozenset(
+        {"20261108205812_learning_varied_practice_review.sql"}
     ),
 }
 
