@@ -149,6 +149,56 @@ export type SubmitGamification =
   | (SubmitAward & GamificationMe)
   | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
 
+/** Learning-loop spec §13 A143 (`quiz_concept_plan`): why the learner model
+ *  proposes a concept — an FSRS review is due, the student holds an open
+ *  misconception on it, or everything it builds on is proficient. */
+export type PlanReason = "due" | "misconception" | "ready";
+
+/** The skill bands of the learner model (`learning/bkt.py::band`). */
+export type SkillBand = "novice" | "develop" | "profic";
+
+/** One concept of `GET /api/quiz/plan`, in the learner model's order. */
+export interface PlannedConcept {
+  node_id: string;
+  concept_name: string;
+  course_id: string | null;
+  reason: PlanReason;
+  /** Decayed BKT p_known, 0–1: the skill meter. */
+  p_known: number;
+  band: SkillBand;
+  due_at: string | null;
+  open_misconceptions: number;
+}
+
+export interface QuizPlan {
+  concepts: PlannedConcept[];
+}
+
+/** Learning-loop spec §13 A147 (`quiz_results_routing`): what the quiz did to
+ *  the learner model, in the submit reply. Absent while the flag is off. */
+export interface QuizLearning {
+  /** Each skill meter that moved (the quizzed concept first, then the
+   *  prerequisites and dependents its evidence reached). */
+  changes: {
+    concept_id: string;
+    concept_name: string;
+    before: number;
+    after: number;
+    band_before: SkillBand;
+    band_after: SkillBand;
+  }[];
+  review: {
+    /** Concepts of the course due for review now. */
+    due_count: number;
+    /** When the quizzed concept is next due, or null when it has no schedule. */
+    next_due_at: string | null;
+  };
+  /** The server's next step: review what is due, practise in Learn, or none. */
+  next_step: "review" | "learn" | "none";
+  /** The weakest concept the student is ready to learn, when there is one. */
+  learn: { concept_id: string; concept_name: string; course_id: string | null } | null;
+}
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -156,6 +206,8 @@ export interface SubmitResult {
   mastery_after: number;
   /** PKG-14b: `mastery_after − mastery_before` of the evidence the submit applied. */
   p_delta?: number;
+  /** Spec §13 A147: present only with `quiz_results_routing` on. */
+  learning?: QuizLearning;
   results: {
     question_id: string;
     selected: string;

@@ -20,6 +20,7 @@ import type {
   AttemptsPage,
   GenerateResult,
   QuizConfig,
+  QuizPlan,
   SubmitResult,
 } from "./types";
 
@@ -167,6 +168,17 @@ export const listAttempts = (
   if (p.offset !== undefined) params.set("offset", String(p.offset));
   return fetchJSON<AttemptsPage>(`/api/quiz/attempts?${params.toString()}`);
 };
+
+/**
+ * `GET /api/quiz/plan` — learning-loop spec §13 A143: the concepts the learner
+ * model proposes, in its order (reviews due by FSRS first, then open
+ * misconceptions, then concepts ready to learn), each with its reason and skill
+ * meter. 404 while the `quiz_concept_plan` flag is off, so call it only when
+ * `useFlag("quiz_concept_plan")` is on; any failure leaves the home on its own
+ * ranking.
+ */
+export const getQuizPlan = (userId: string): Promise<QuizPlan> =>
+  fetchJSON<QuizPlan>(`/api/quiz/plan?${new URLSearchParams({ user_id: userId }).toString()}`);
 
 /** `GET /api/quiz/attempts/{id}` — resume. A completed or abandoned attempt
  *  answers 200 with `resumable: false` and `questions: []`, so this is not a
