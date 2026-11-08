@@ -692,6 +692,29 @@ ITEM_LINT_LONGEST_MARGIN = 0.25
 # the item-writing cues a test-wise student uses without knowing the content)
 ITEM_LINT_STEM_OVERLAP_MARGIN = 2
 
+# ── Empirical item statistics (spec §13 A131; learning/item_stats.py) ──────
+# Classical item analysis over students' first unassisted attempts, shown to
+# staff in the review queue. It flags; it never writes lint_flags or a hold.
+# † the fewest students behind a statistic before it may flag an item — the
+# p-value's n for too_easy / too_hard, the item–rest correlation's n for the
+# discrimination flags. At 30 a p-value near 0.9 or 0.1 carries a Wilson 95%
+# interval of about ±0.11 (the arithmetic behind ITEM_AUDIT_SAMPLE_DEFAULT)
+# and a correlation near 0 a standard error of about 1/√30 ≈ 0.18: enough to
+# point staff at an item, not to judge it — staff decide.
+ITEM_STATS_MIN_N = 30
+# † conventional classical-test-theory cut-points, not validated for this
+# loop: an item more than 90% of students get right on their first unaided
+# try says little about who has learned the concept; under 20% it is beyond
+# the material or its key is wrong; an item–rest correlation under 0.20
+# separates students poorly (the bottom of Ebel's discrimination bands), and
+# a negative one favours the students who do worse on the concept's other
+# items — the classic sign of a miskeyed or misleading item.
+ITEM_STATS_EASY_P = 0.90
+ITEM_STATS_HARD_P = 0.20
+ITEM_STATS_LOW_DISCRIMINATION = 0.20
+# The flags, in the order they are listed (the admin page labels each).
+ITEM_STATS_FLAGS = ("too_easy", "too_hard", "low_discrimination", "negative_discrimination")
+
 # ── Check-item alignment (spec §13 A119) ────────────────────────────────────
 # † items per check_items_verify call (agents/check_items_verify.py): one
 # drafting call returns at most CHECK_ITEM_CONCEPTS_PER_CALL x

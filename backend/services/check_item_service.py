@@ -1250,6 +1250,15 @@ def audit_population(course_id: str) -> list[dict]:
     return out
 
 
+def course_item_rows(course_id: str) -> list[dict]:
+    """Every stored item of the course by its plaintext columns
+    (_QUEUE_COLUMNS), held ones included — what the spec §13 A131 item
+    statistics are shown against. Nothing is decrypted. Paged."""
+    return list(
+        page_all(table(_TABLE), _QUEUE_COLUMNS, filters={"course_id": f"eq.{course_id}"}, order="id")
+    )
+
+
 def course_audit_rows(course_id: str) -> list[dict]:
     """Every recorded audit verdict of the course (check_item_audits), paged."""
     return list(

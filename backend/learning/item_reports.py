@@ -219,6 +219,39 @@ def _iso(stamp) -> str | None:
     return stamp.isoformat() if stamp is not None else None
 
 
+def review_entry(
+    row: dict,
+    counts: dict[tuple[str, str], dict],
+    decisions: dict[tuple[str, str], dict],
+) -> dict:
+    """One stored item row as staff review it — its plaintext columns, its
+    report counts by reason and its review decision, retire-pending and held
+    — whether or not it belongs in the queue (`queue_entries` decides that;
+    spec §13 A131's "flagged by data" view lists items it would not). Pure."""
+    key = (row.get("course_id"), row.get("question_hash"))
+    count = counts.get(key)
+    decision = decisions.get(key) or {}
+    flags = list(row.get("lint_flags") or [])
+    status = decision.get("status")
+    reports = {r: (count or {}).get(r, 0) for r in ITEM_REPORT_REASONS}
+    return {
+        "id": row.get("id"),
+        "course_id": key[0],
+        "concept_key": row.get("concept_key"),
+        "question_hash": key[1],
+        "format": row.get("format"),
+        "difficulty": row.get("difficulty"),
+        "lint_flags": flags,
+        "reports": {**reports, "total": sum(reports.values())},
+        "last_reported_at": _iso(count["last_reported_at"] if count else None),
+        "status": status,
+        "reviewed_at": _iso(parse_ts(decision.get("reviewed_at"))),
+        "retire_pending": status == RETIRED,
+        # A124, A123: withdrawn from every student until staff decide
+        "held": held_flags(flags, row.get("canonical_verified")),
+    }
+
+
 def queue_entries(
     rows: Iterable[dict],
     counts: dict[tuple[str, str], dict],
@@ -239,39 +272,17 @@ def queue_entries(
     course, concept and id. Pure."""
     out: list[dict] = []
     for row in rows:
-        key = (row.get("course_id"), row.get("question_hash"))
+        entry = review_entry(row, counts, decisions)
+        key = (entry["course_id"], entry["question_hash"])
         count = counts.get(key)
-        decision = decisions.get(key) or {}
-        flags = list(row.get("lint_flags") or [])
-        status = decision.get("status")
-        reviewed_at = parse_ts(decision.get("reviewed_at"))
         last = count["last_reported_at"] if count else None
-        retire_pending = status == RETIRED
-        held = held_flags(flags, row.get("canonical_verified"))
-        cleared = status == APPROVED and (
+        reviewed_at = parse_ts((decisions.get(key) or {}).get("reviewed_at"))
+        cleared = entry["status"] == APPROVED and (
             last is None or (reviewed_at is not None and last <= reviewed_at)
         )
-        if not (retire_pending or held) and (cleared or not (flags or count)):
+        if not (entry["retire_pending"] or entry["held"]) and (cleared or not (entry["lint_flags"] or count)):
             continue
-        reports = {r: (count or {}).get(r, 0) for r in ITEM_REPORT_REASONS}
-        out.append(
-            {
-                "id": row.get("id"),
-                "course_id": key[0],
-                "concept_key": row.get("concept_key"),
-                "question_hash": key[1],
-                "format": row.get("format"),
-                "difficulty": row.get("difficulty"),
-                "lint_flags": flags,
-                "reports": {**reports, "total": sum(reports.values())},
-                "last_reported_at": _iso(last),
-                "status": status,
-                "reviewed_at": _iso(reviewed_at),
-                "retire_pending": retire_pending,
-                # A124, A123: withdrawn from every student until staff decide
-                "held": held,
-            }
-        )
+        out.append(entry)
     out.sort(
         key=lambda e: (
             not e["retire_pending"],
