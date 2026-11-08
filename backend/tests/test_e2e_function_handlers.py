@@ -278,6 +278,99 @@ def test_quiz_handler_supports_written_format_browser_journeys(monkeypatch, form
         assert _agent_question_to_wire(question, i + 1) is not None
 
 
+_PLANNED_PROMPT = (
+    "[WRITE QUIZ]\nCONCEPT: Gradient Descent\nFORMAT: {fmt}\n"
+    "QUESTION 1: difficulty medium. TARGET: rate_is_loss_value\n"
+    "QUESTION 2: difficulty medium.\nQUESTION 3: difficulty medium.\nQUESTION 4: difficulty medium.\n"
+    "MISCONCEPTIONS (keys a wrong option may be tagged with):\n"
+    "- rate_is_loss_value: Treats the learning rate as the loss.\n"
+    "- rate_is_iteration_count: Confuses the rate with iterations.\n"
+)
+
+
+def test_the_planned_quiz_handler_writes_one_item_per_plan_line(monkeypatch):
+    """Spec §13 A144: the planned agent rides the quiz slot, told apart by its
+    schema; one item per QUESTION line, the correct option at E2E_QUIZ_CORRECT
+    _LABELS' position (cycling), its stem carrying the concept marker the quiz
+    checks read, distractors tagged only with listed keys — and every item
+    lints clean (A132), so its answers can be evidence."""
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER, E2E_QUIZ_CORRECT_LABELS
+    from agents.quiz_planned import quiz_planned_agent
+    from learning import quiz_evidence
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        result = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="multiple_choice"), deps=_deps())
+    items = result.output.questions
+    assert [q.slot for q in items] == [1, 2, 3, 4]
+    labels = [*E2E_QUIZ_CORRECT_LABELS, E2E_QUIZ_CORRECT_LABELS[0]]
+    for q, label in zip(items, labels):
+        assert q.options["ABCD".index(label)] == E2E_CHECK_ITEM_FINAL_ANSWER == q.correct_answer
+        assert "[e2e-function-model][Gradient Descent]" in q.question
+        tags = [t for t in q.option_misconceptions if t]
+        assert set(tags) == {"rate_is_iteration_count", "rate_is_loss_value"}
+        assert q.option_misconceptions["ABCD".index(label)] == ""
+        wire = _agent_question_to_wire(
+            quiz_planned_to_plain(q), 1
+        )
+        assert wire is not None and quiz_evidence.lint_question(wire) == []
+
+
+def quiz_planned_to_plain(q):
+    from agents.quiz import QuizQuestion
+
+    return QuizQuestion(
+        question=q.question, type=q.type, difficulty="medium", options=q.options,
+        accepted_answers=q.accepted_answers, correct_answer=q.correct_answer,
+        explanation=q.explanation, concept="Gradient Descent",
+    )
+
+
+def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(monkeypatch):
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
+    from agents.quiz_planned import quiz_planned_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        mixed = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="mixed"), deps=_deps()).output.questions
+    assert [q.type for q in mixed] == ["multiple_choice", "short_answer", "multiple_choice", "short_answer"]
+    written = mixed[1]
+    assert written.options == [] and written.option_misconceptions == []
+    assert written.correct_answer == E2E_CHECK_ITEM_FINAL_ANSWER
+    assert _agent_question_to_wire(quiz_planned_to_plain(written), 1) is not None
+
+
+def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_question(monkeypatch):
+    """Spec §13 A145: one handler for the quiz_check slot — the concept check
+    (a marked question tests its marker's concept, an unmarked one the first
+    listed: the quizzed concept) and the blind solve."""
+    from agents.check_items_solve import SolveItem, build_solve_prompt, check_items_solve_agent
+    from agents.check_items_verify import VerifyItem, build_verify_prompt, check_items_verify_agent
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    items = [
+        VerifyItem("q1", "mc_reason", "Plain question?", "x", ("y", "z", "w"), ()),
+        VerifyItem("q2", "mc_reason", "[e2e-function-model][Loops] Marked?", "x", ("y",), ()),
+    ]
+    out = check_items_verify_agent.run_sync(
+        build_verify_prompt(["Recursion", "Loops"], items), deps=_deps(), model=model_for("quiz_check")
+    ).output
+    assert {(c.item, c.concept) for c in out.concepts} == {("q1", "Recursion"), ("q2", "Loops")}
+    solve = check_items_solve_agent.run_sync(
+        build_solve_prompt(
+            [],
+            [SolveItem("q1", "mc_reason", "Q?", (("A", "other"), ("B", E2E_CHECK_ITEM_FINAL_ANSWER)), "free")],
+        ),
+        deps=_deps(),
+        model=model_for("quiz_check"),
+    ).output
+    assert [(s.item, s.solvable, s.answer) for s in solve.solutions] == [("q1", True, "B")]
+
+
 def test_quiz_resolve_model_pref_returns_none_in_function_mode(monkeypatch):
     """The quiz half of the same bypass fixed in routes/learn.py: a fast/smart
     pref must not produce a live GoogleModel override in any non-real mode.

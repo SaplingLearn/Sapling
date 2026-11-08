@@ -165,6 +165,13 @@ def _quiz_handler(messages, info) -> ModelResponse:
         part.content for message in messages for part in message.parts
         if getattr(part, "part_kind", None) == "user-prompt" and isinstance(part.content, str)
     )
+    tool = info.output_tools[0]
+    if "PlannedQuestion" in ((tool.parameters_json_schema or {}).get("$defs") or {}):
+        # Spec §13 A144: the planned agent (agents/quiz_planned.py) rides this
+        # slot with its own schema, told apart by it.
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=tool.name, args={"questions": _e2e_planned(prompt)})]
+        )
     requested = re.search(r"question_format: (short_answer|numeric|symbolic|mixed)\.", prompt)
     questions = _E2E_QUIZ_QUESTIONS
     if requested:
@@ -188,6 +195,74 @@ def _quiz_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("quiz", _quiz_handler)
+
+
+# ── Planned quiz questions (spec §13 A144, flag `quiz_planned_questions`) ──
+#
+# The planned agent rides the quiz slot (above, told apart by its schema). One
+# item per `QUESTION <n>:` line of the message, so the count follows the plan.
+# A multiple-choice item's correct option is E2E_CHECK_ITEM_FINAL_ANSWER, at
+# the position E2E_QUIZ_CORRECT_LABELS gives slot n (B, C, A, B, ...), and its
+# stem carries the `[e2e-function-model][<CONCEPT>]` marker: so the quiz
+# checks' handlers (quiz_check, below) find the concept the item tests and
+# solve it to its key, and every planned E2E item is VERIFIED. Its three
+# distractors are E2E check items' own (E2E_CHECK_ITEM_OPTIONS[1:]), each
+# tagged with its misconception key when the message lists that key — the
+# keys the E2E course's check items carry, which the plan names. A written
+# item (FORMAT short_answer, or mixed: slot 2) answers
+# E2E_CHECK_ITEM_FINAL_ANSWER too, so the solve agrees with it in code.
+# Contract: tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_PLANNED_STEM = "E2E planned question {n} [e2e-function-model][{concept}]: what does the learning rate control?"
+E2E_PLANNED_WRITTEN_STEM = (
+    "E2E planned written question {n} [e2e-function-model][{concept}]: name what the learning "
+    "rate controls."
+)
+E2E_PLANNED_EXPLANATION = "Scripted planned fixture: the learning rate sets the size of each update step."
+_PLANNED_SLOT_RE = re.compile(r"^QUESTION (\d+): difficulty (\w+)\.", re.M)
+_PLANNED_CONCEPT_RE = re.compile(r"^CONCEPT: (.+)$", re.M)
+_PLANNED_FORMAT_RE = re.compile(r"^FORMAT: (\w+)$", re.M)
+
+
+def _e2e_planned(prompt: str) -> list[dict]:
+    concept_m = _PLANNED_CONCEPT_RE.search(prompt)
+    concept = concept_m.group(1).strip() if concept_m else "Recursion"
+    fmt_m = _PLANNED_FORMAT_RE.search(prompt)
+    fmt = fmt_m.group(1) if fmt_m else "multiple_choice"
+    listed = set(re.findall(r"^- ([a-z0-9_]+): ", prompt, re.M))
+    distractors = E2E_CHECK_ITEM_OPTIONS[1:]
+    items = []
+    for slot_text, _difficulty in _PLANNED_SLOT_RE.findall(prompt):
+        n = int(slot_text)
+        written = fmt in ("short_answer", "numeric", "symbolic") or (fmt == "mixed" and n % 2 == 0)
+        if written:
+            items.append({
+                "slot": n,
+                "question": E2E_PLANNED_WRITTEN_STEM.format(n=n, concept=concept),
+                "type": "short_answer",
+                "options": [],
+                "option_misconceptions": [],
+                "accepted_answers": [],
+                "correct_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
+                "explanation": E2E_PLANNED_EXPLANATION,
+            })
+            continue
+        correct_at = "ABCD".index(E2E_QUIZ_CORRECT_LABELS[(n - 1) % len(E2E_QUIZ_CORRECT_LABELS)])
+        options = [d["text"] for d in distractors]
+        tags = [d["misconception_key"] if d["misconception_key"] in listed else "" for d in distractors]
+        options.insert(correct_at, E2E_CHECK_ITEM_FINAL_ANSWER)
+        tags.insert(correct_at, "")
+        items.append({
+            "slot": n,
+            "question": E2E_PLANNED_STEM.format(n=n, concept=concept),
+            "type": "multiple_choice",
+            "options": options,
+            "option_misconceptions": tags,
+            "accepted_answers": [],
+            "correct_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
+            "explanation": E2E_PLANNED_EXPLANATION,
+        })
+    return items
 
 
 # ── Document upload pipeline (#387) ─────────────────────────────────────────
@@ -701,6 +776,39 @@ def _solve_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("check_items_solve", _solve_handler)
+
+
+# ── The quiz's item gates (spec §13 A145, flag `quiz_item_gates`) ─────────
+#
+# The A119 concept check, the A124 blind solve and the key match run on
+# generated quiz questions on the `quiz_check` slot (the agents above, on
+# another model). One handler for the slot, told apart by the output tool's
+# schema: `concepts` → the alignment handler, otherwise the solve / match
+# handler — the same answers they give check items (a question's concept is
+# its `[e2e-function-model][<concept>]` marker; a multiple-choice question is
+# solved to the option reading E2E_CHECK_ITEM_FINAL_ANSWER, anything else is
+# unsolvable). One difference: a quiz question WITHOUT the marker (the plain
+# E2E quiz's) tests the quizzed concept, the FIRST name the check lists
+# (services/quiz_learning.py lists it first), so a plain quiz under the gates
+# is served — as practice, its key unsolved and ungrounded — never dropped.
+
+_CONCEPT_LINE_RE = re.compile(r"^- (.+)$", re.M)
+
+
+def _quiz_check_handler(messages, info) -> ModelResponse:
+    properties = (info.output_tools[0].parameters_json_schema or {}).get("properties", {})
+    if "concepts" not in properties:
+        return _solve_handler(messages, info)
+    response = _verify_handler(messages, info)
+    listed = _CONCEPT_LINE_RE.findall(_last_user_prompt_text(messages))
+    call = response.parts[0]
+    for row in call.args.get("concepts", []):
+        if row["concept"] == "none" and listed:
+            row["concept"] = listed[0].strip()
+    return response
+
+
+register_function_handler("quiz_check", _quiz_check_handler)
 
 
 # ── Learning loop grader (PKG-05) ───────────────────────────────────────────
