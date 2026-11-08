@@ -32,17 +32,25 @@
 -- second sync of the same course while one is in flight attaches to it
 -- instead of starting another login + scrape.
 --
+-- Retention: prune_gradescope_syncs(p_older_than_days, p_limit) -> integer
+-- deletes terminal (done / failed / inline) rows whose updated_at is older
+-- than p_older_than_days (floored at 1), one bounded batch per call (p_limit
+-- capped at 10000; oldest first; SKIP LOCKED), like prune_jobs. Never touches
+-- queued/running rows. Meant for the worker's `jobs.prune` upkeep
+-- (services/jobs.py) in a bounded loop; idempotent. service_role only.
+--
 -- Access: service-only (RLS bucket E, docs/security/rls-step2-plan.md): RLS
 -- on, no policies, nothing granted to anon/authenticated. Only the backend
 -- (service_role) reads or writes it. Rows go with the account (users CASCADE)
 -- and with the enrollment (an admin wipe deletes enrollments; CASCADE).
 --
--- Idempotent (IF NOT EXISTS / guarded DO blocks), additive, touches no
+-- Idempotent (IF NOT EXISTS / OR REPLACE / guarded DO blocks), additive, touches no
 -- existing data.
 --
 -- Reverse (by hand, as the migration role). Turn `jobs_queue` off first and
 -- let in-flight syncs finish:
 --   SELECT stage, count(*) FROM public.gradescope_syncs GROUP BY 1;
+--   DROP FUNCTION IF EXISTS public.prune_gradescope_syncs(integer, integer);
 --   DROP TABLE IF EXISTS public.gradescope_syncs;
 -- (Only sync bookkeeping is lost; the synced grades live in `assignments` and
 -- the last outcome on `gradescope_credentials`.)
@@ -102,5 +110,51 @@ BEGIN
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
         GRANT ALL ON TABLE public.gradescope_syncs TO service_role;
+    END IF;
+END $$;
+
+-- ── retention: prune_gradescope_syncs ───────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.prune_gradescope_syncs(
+    p_older_than_days INTEGER,
+    p_limit           INTEGER
+)
+RETURNS INTEGER
+LANGUAGE sql
+VOLATILE
+SET search_path = ''
+AS $$
+    WITH doomed AS (
+        SELECT s.id
+          FROM public.gradescope_syncs s
+         WHERE s.stage IN ('done', 'failed', 'inline')
+           AND s.updated_at < now() - make_interval(
+                   days => greatest(coalesce(p_older_than_days, 30), 1))
+         ORDER BY s.updated_at
+         LIMIT least(greatest(coalesce(p_limit, 1000), 0), 10000)
+         FOR UPDATE SKIP LOCKED
+    ),
+    gone AS (
+        DELETE FROM public.gradescope_syncs g
+         USING doomed
+         WHERE g.id = doomed.id
+           AND g.stage IN ('done', 'failed', 'inline')
+        RETURNING 1
+    )
+    SELECT count(*)::integer FROM gone;
+$$;
+
+DO $$
+DECLARE
+    r TEXT;
+BEGIN
+    REVOKE ALL ON FUNCTION public.prune_gradescope_syncs(integer, integer) FROM PUBLIC;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('REVOKE ALL ON FUNCTION public.prune_gradescope_syncs(integer, integer) FROM %I', r);
+        END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT EXECUTE ON FUNCTION public.prune_gradescope_syncs(integer, integer) TO service_role;
     END IF;
 END $$;

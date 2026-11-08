@@ -138,3 +138,61 @@ def test_only_the_service_role_can_touch_it(conn, role):
                             "WHERE user_id = %s", (U,)).fetchone()["n"] == 1
     finally:
         conn.execute("RESET ROLE")
+
+
+# ── retention: prune_document_uploads ───────────────────────────────────────
+
+
+def _age(conn, upload_id, days):
+    # The updated_at trigger is BEFORE UPDATE: disable it so the back-date sticks.
+    conn.execute("ALTER TABLE public.document_uploads DISABLE TRIGGER trg_document_uploads_updated_at")
+    conn.execute("UPDATE public.document_uploads SET updated_at = now() - make_interval(days => %s) "
+                 "WHERE id = %s", (days, upload_id))
+    conn.execute("ALTER TABLE public.document_uploads ENABLE TRIGGER trg_document_uploads_updated_at")
+
+
+def _prune(conn, days=30, limit=1000) -> int:
+    return conn.execute("SELECT public.prune_document_uploads(%s, %s) AS n",
+                        (days, limit)).fetchone()["n"]
+
+
+def test_prune_deletes_only_old_terminal_rows_in_bounded_batches(conn):
+    old = []
+    for i, stage in enumerate(("done", "failed", "inline", "done")):
+        uid = _stage(conn, request_id=f"old-{i}", stage=stage, file_data=None)
+        _age(conn, uid, 40)
+        old.append(uid)
+    recent = _stage(conn, request_id="recent", stage="done", file_data=None)
+    _age(conn, recent, 3)
+    active = {}
+    for stage in ("queued", "extracting", "saving"):
+        active[stage] = _stage(conn, request_id=f"act-{stage}", stage=stage)
+        _age(conn, active[stage], 90)
+
+    assert _prune(conn, days=30, limit=3) == 3
+    assert _prune(conn, days=30, limit=3) == 1
+    assert _prune(conn, days=30, limit=3) == 0  # idempotent
+    left = {r["id"] for r in conn.execute(
+        "SELECT id FROM public.document_uploads WHERE user_id = %s", (U,)).fetchall()}
+    assert not set(old) & left
+    assert {recent, *active.values()} <= left
+    # 0 is floored to one day: the 3-day-old receipt goes now, nothing else.
+    assert _prune(conn, days=0) == 1 and _prune(conn, days=0) == 0
+    assert _prune(conn, days=30, limit=0) == 0
+
+
+def test_document_id_lookups_are_indexed(conn):
+    idx = conn.execute(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+        "AND tablename = 'document_uploads' AND indexname = 'idx_document_uploads_document'"
+    ).fetchone()
+    assert idx and "(document_id)" in idx["indexdef"]
+
+
+@pytest.mark.parametrize("role", ["anon", "authenticated"])
+def test_only_the_service_role_can_prune(conn, role):
+    fn = "public.prune_document_uploads(integer, integer)"
+    assert not conn.execute("SELECT has_function_privilege(%s, %s, 'EXECUTE') AS ok",
+                            (role, fn)).fetchone()["ok"]
+    assert conn.execute("SELECT has_function_privilege('service_role', %s, 'EXECUTE') AS ok",
+                        (fn,)).fetchone()["ok"]

@@ -41,19 +41,39 @@
 -- it to `queued` with the re-sent file (compare-and-swap on the stage).
 --
 -- (user_id, request_id) is unique: the request id is the idempotency key, as
--- it is for `documents` (0018).
+-- it is for `documents` (0018). That UNIQUE index also serves every per-user
+-- lookup and the users ON DELETE CASCADE (user_id leads it), so there is no
+-- separate user_id index. document_id has its own index: the documents
+-- ON DELETE SET NULL would otherwise seq-scan this table per deleted document.
+--
+-- Retention. Terminal rows (done / failed / inline) are kept only as a
+-- short-lived receipt for the SSE stream and the X-Request-ID retry:
+--   * the app MUST clear `result` (encrypted derived content) as well as
+--     `file_data` once the stream has delivered the outcome, so a terminal
+--     row holds ids, counts and a fixed error code only. That is
+--     services/document_jobs.py's job (the table cannot tell "delivered"
+--     from "not yet read"), not a constraint here;
+--   * prune_document_uploads(p_older_than_days, p_limit) -> integer deletes
+--     terminal rows whose updated_at is older than p_older_than_days
+--     (floored at 1) in one bounded batch (p_limit capped at 10000; oldest
+--     first; SKIP LOCKED), like prune_jobs. Non-terminal rows are never
+--     touched. Meant for the worker's `jobs.prune` upkeep (services/jobs.py),
+--     in a bounded loop like prune_jobs; idempotent. service_role only. No index on updated_at on purpose: every progress
+--     write bumps updated_at, and an index on it would make each one a
+--     non-HOT update; retention keeps the table small enough to scan.
 --
 -- Access: service-only (RLS bucket E, docs/security/rls-step2-plan.md): RLS
 -- on, no policies, nothing granted to anon/authenticated. Only the backend
 -- (service_role) reads or writes it.
 --
--- Idempotent (IF NOT EXISTS / guarded DO blocks), additive, touches no
+-- Idempotent (IF NOT EXISTS / OR REPLACE / guarded DO blocks), additive, touches no
 -- existing data.
 --
 -- Reverse (by hand, as the migration role). Turn `jobs_queue` off first and
 -- let in-flight uploads finish:
 --   SELECT stage, count(*) FROM public.document_uploads GROUP BY 1;
---   DROP TABLE IF EXISTS public.document_uploads;
+--   DROP FUNCTION IF EXISTS public.prune_document_uploads(integer, integer);
+--   DROP TABLE IF EXISTS public.document_uploads;   -- drops its indexes too
 -- (Only staged uploads and their encrypted outcomes are lost; every finished
 -- upload is a `documents` row.)
 
@@ -89,7 +109,10 @@ COMMENT ON TABLE public.document_uploads IS
 COMMENT ON COLUMN public.document_uploads.progress IS
     'Plaintext: counts and the category label only, never document content.';
 
-CREATE INDEX IF NOT EXISTS idx_document_uploads_user ON public.document_uploads (user_id);
+-- The documents ON DELETE SET NULL looks rows up by document_id.
+CREATE INDEX IF NOT EXISTS idx_document_uploads_document
+    ON public.document_uploads (document_id)
+    WHERE document_id IS NOT NULL;
 
 DO $$
 BEGIN
@@ -118,5 +141,51 @@ BEGIN
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
         GRANT ALL ON TABLE public.document_uploads TO service_role;
+    END IF;
+END $$;
+
+-- ── retention: prune_document_uploads ───────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.prune_document_uploads(
+    p_older_than_days INTEGER,
+    p_limit           INTEGER
+)
+RETURNS INTEGER
+LANGUAGE sql
+VOLATILE
+SET search_path = ''
+AS $$
+    WITH doomed AS (
+        SELECT d.id
+          FROM public.document_uploads d
+         WHERE d.stage IN ('done', 'failed', 'inline')
+           AND d.updated_at < now() - make_interval(
+                   days => greatest(coalesce(p_older_than_days, 30), 1))
+         ORDER BY d.updated_at
+         LIMIT least(greatest(coalesce(p_limit, 1000), 0), 10000)
+         FOR UPDATE SKIP LOCKED
+    ),
+    gone AS (
+        DELETE FROM public.document_uploads u
+         USING doomed
+         WHERE u.id = doomed.id
+           AND u.stage IN ('done', 'failed', 'inline')
+        RETURNING 1
+    )
+    SELECT count(*)::integer FROM gone;
+$$;
+
+DO $$
+DECLARE
+    r TEXT;
+BEGIN
+    REVOKE ALL ON FUNCTION public.prune_document_uploads(integer, integer) FROM PUBLIC;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('REVOKE ALL ON FUNCTION public.prune_document_uploads(integer, integer) FROM %I', r);
+        END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT EXECUTE ON FUNCTION public.prune_document_uploads(integer, integer) TO service_role;
     END IF;
 END $$;

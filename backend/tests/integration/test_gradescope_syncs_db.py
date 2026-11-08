@@ -138,3 +138,49 @@ def test_only_the_service_role_can_touch_it(conn, role):
                             "WHERE user_id = %s", (U,)).fetchone()["n"] == 1
     finally:
         conn.execute("RESET ROLE")
+
+
+# ── retention: prune_gradescope_syncs ───────────────────────────────────────
+
+
+def _age(conn, sync_id, days):
+    # The updated_at trigger is BEFORE UPDATE: disable it so the back-date sticks.
+    conn.execute("ALTER TABLE public.gradescope_syncs DISABLE TRIGGER trg_gradescope_syncs_updated_at")
+    conn.execute("UPDATE public.gradescope_syncs SET updated_at = now() - make_interval(days => %s) "
+                 "WHERE id = %s", (days, sync_id))
+    conn.execute("ALTER TABLE public.gradescope_syncs ENABLE TRIGGER trg_gradescope_syncs_updated_at")
+
+
+def _prune(conn, days=30, limit=1000) -> int:
+    return conn.execute("SELECT public.prune_gradescope_syncs(%s, %s) AS n",
+                        (days, limit)).fetchone()["n"]
+
+
+def test_prune_deletes_only_old_terminal_rows_in_bounded_batches(conn):
+    old = []
+    for stage in ("done", "failed", "inline"):
+        sid = _stage(conn, stage=stage)
+        _age(conn, sid, 40)
+        old.append(sid)
+    recent = _stage(conn, stage="done")
+    _age(conn, recent, 3)
+    active = _stage(conn, stage="running")  # at most one active per enrollment
+    _age(conn, active, 90)
+
+    assert _prune(conn, days=30, limit=2) == 2
+    assert _prune(conn, days=30, limit=2) == 1
+    assert _prune(conn, days=30, limit=2) == 0  # idempotent
+    left = {r["id"] for r in conn.execute(
+        "SELECT id FROM public.gradescope_syncs WHERE user_id = %s", (U,)).fetchall()}
+    assert not set(old) & left
+    assert {recent, active} <= left
+    assert _prune(conn, days=30, limit=-1) == 0
+
+
+@pytest.mark.parametrize("role", ["anon", "authenticated"])
+def test_only_the_service_role_can_prune(conn, role):
+    fn = "public.prune_gradescope_syncs(integer, integer)"
+    assert not conn.execute("SELECT has_function_privilege(%s, %s, 'EXECUTE') AS ok",
+                            (role, fn)).fetchone()["ok"]
+    assert conn.execute("SELECT has_function_privilege('service_role', %s, 'EXECUTE') AS ok",
+                        (fn,)).fetchone()["ok"]
