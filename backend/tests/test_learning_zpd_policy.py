@@ -628,6 +628,61 @@ def test_recover_keeps_the_exam_cap_of_a_malformed_step():
         assert LoopState.recover({"steps": {qh: raw}}).steps[qh].exam_mode is False
 
 
+def _exam_mode_setters(source: str) -> list[int]:
+    """Lines that SET a step's exam flag: an `exam_mode=` keyword, an
+    `"exam_mode"` dict key, a `["exam_mode"] =` item or a `.exam_mode =`
+    attribute assignment. Reads (`step.exam_mode`) are not setters."""
+    import ast
+
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.keyword) and node.arg == "exam_mode":
+            lines.append(node.value.lineno)
+        elif isinstance(node, ast.Dict):
+            lines += [k.lineno for k in node.keys if isinstance(k, ast.Constant) and k.value == "exam_mode"]
+        elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Attribute) and t.attr == "exam_mode":
+                    lines.append(t.lineno)
+                elif (
+                    isinstance(t, ast.Subscript)
+                    and isinstance(t.slice, ast.Constant)
+                    and t.slice.value == "exam_mode"
+                ):
+                    lines.append(t.lineno)
+    return sorted(lines)
+
+
+def test_exam_mode_is_reserved_no_production_code_sets_it():
+    """Spec §3.3's first ceiling row (exam mode → H1, A4) and h6_allowed's
+    `not exam_mode` are implemented and unit-tested above, but RESERVED (spec
+    §13 A142): no surface enters exam mode yet, so no production code sets a
+    step's flag — only learning/policy.py's LoopState parser and serializer
+    carry a stored value through (and fail it closed). The post-test has its
+    own stricter H0 ceiling (CeilingReason.POSTTEST); the probe and review
+    serve no hint before the attempt. The tests that set `exam_mode=True`
+    exercise the reserved row directly. The owner decision this waits on:
+    which surface (a timed practice exam, an exam-proximity rule) turns it
+    on. When one does, its amendment updates this test."""
+    import test_learning_loop_invariants as inv
+
+    allowed = {"learning/policy.py"}
+    setters = {
+        rel: lines
+        for rel, path in inv._application_py_files()
+        if rel not in allowed and "exam_mode" in (text := path.read_text())
+        and (lines := _exam_mode_setters(text))
+    }
+    assert setters == {}, f"a step's exam_mode is set outside the policy parser: {setters}"
+    # the scan sees each form it claims to see
+    probe = (
+        'StepState(q, exam_mode=True)\nd = {"exam_mode": True}\n'
+        'd["exam_mode"] = True\nstep.exam_mode = True\nok = step.exam_mode\n'
+    )
+    assert _exam_mode_setters(probe) == [1, 2, 3, 4]
+
+
 def test_recover_keeps_a_malformed_steps_foreign_keys():
     """A step that fails validation restarts fresh (PKG-06 fields at their
     defaults, a finite first_shown_at kept) but keeps every key a later package

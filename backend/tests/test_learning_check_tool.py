@@ -1293,14 +1293,13 @@ def test_grade_answer_never_reaches_the_database(check, monkeypatch):
     alone misses every module that binds `table` at import (graph_service,
     learner_state and ~40 more), so watch the one place all of them land: the
     `db.connection._client` the autouse hermetic fixture replaced with a
-    recording MagicMock. The two persisters fail loudly if reached at all.
+    recording MagicMock. The one persister fails loudly if reached at all
+    (learner_state has no writer of its own since spec §13 A142).
     (inv_14 is the static half: check.py imports nothing under `db`.)"""
     import db.connection as dbconn
-    import learning.learner_state as learner_state
     import services.graph_service as gs
 
     monkeypatch.setattr(gs, "apply_graph_update", lambda *a, **k: pytest.fail("persisted"))
-    monkeypatch.setattr(learner_state, "write_state", lambda *a, **k: pytest.fail("wrote state"))
     for answer in (_answer(), _answer(idk=True)):
         _run(check, _deps(), answer)
     assert dbconn._client.mock_calls == []

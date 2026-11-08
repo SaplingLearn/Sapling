@@ -265,17 +265,39 @@ RPC_SCOPE = {
     "learning_evidence_void_snapshot": VOID_TRANSACTION_ENTRY,
     "learning_evidence_void_commit": VOID_TRANSACTION_ENTRY,
 }
+# spec §13 A142: inside the writer file, the sanctioned graph-table writes are
+# exactly these (table, method, enclosing def) — never "anything in the file".
+# Evidence, the journal, learner_state and voids are written only by the
+# transaction RPCs behind apply_graph_update (pinned above), which name no
+# table() at all, so no table() write of node_mastery_events or learner_state
+# is sanctioned here.
+GRAPH_WRITER_SANCTIONED = frozenset({
+    # the single writer's topology upserts
+    ("graph_nodes", "upsert", "apply_graph_update"),
+    ("graph_edges", "upsert", "apply_graph_update"),
+    # a student deletes one of their own concept nodes (owner-scoped): its
+    # edges, then the node. ON DELETE CASCADE removes that node's
+    # learner_state, journal, void and misconception rows in the same
+    # statement, so no kept node ever loses evidence and nothing is left
+    # half-written.
+    ("graph_edges", "delete", "delete_node"),
+    ("graph_nodes", "delete", "delete_node"),
+    # the per-node colour override: a display column no learning reader reads
+    ("graph_nodes", "update", "update_node_color"),
+})
 # learning/learner_state.py is the learner_state table-access module (spec §2).
-# Its one write, table("learner_state").upsert inside write_state, runs only
-# through write_state, and the second half of inv_01 pins every write_state
-# call to GRAPH_WRITER_FUNCS. Nothing else in that module may write.
+# It has no evidence writer: the unconditional write_state upsert was never
+# called after ADR 0037's transaction RPC and was removed (spec §13 A142).
+# PKG-14 (spec §13 A79): its one write — an UPDATE of the four derived columns
+# inside write_metrics, called only by the nightly metrics script (the last
+# block of inv_01 pins its callers). Nothing else in that module may write.
 LEARNER_STATE_MODULE = "learning/learner_state.py"
-LEARNER_STATE_WRITE = ("learner_state", "upsert", "write_state")  # table, method, enclosing def
-# PKG-14 (spec §13 A79): the one non-evidence learner_state write — an UPDATE of
-# the four derived columns inside write_metrics, called only by the nightly
-# metrics script (the last block of inv_01 pins its callers).
 LEARNER_STATE_METRICS_WRITE = ("learner_state", "update", "write_metrics")
-LEARNER_STATE_SANCTIONED = (LEARNER_STATE_WRITE, LEARNER_STATE_METRICS_WRITE)
+LEARNER_STATE_SANCTIONED = (LEARNER_STATE_METRICS_WRITE,)
+#: (file, table, method, enclosing def) for every sanctioned graph-table write
+SANCTIONED_GRAPH_WRITES = {
+    (GRAPH_WRITER, *w) for w in GRAPH_WRITER_SANCTIONED
+} | {(LEARNER_STATE_MODULE, *w) for w in LEARNER_STATE_SANCTIONED}
 METRICS_SCRIPT = "scripts/derive_zpd_metrics.py"
 GRAPH_TABLE_READ_METHODS = ("select", "select_with_count")
 INV01_EXEMPT_PREFIXES = ("tests/", "venv/", "db/archive/", "db/e2e_checks/")
@@ -292,17 +314,22 @@ def _application_py_files():
         yield rel, path
 
 
-def _write_state_call_lines(path: pathlib.Path) -> list[int]:
-    tree = ast.parse(path.read_text())
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and (
+def _write_state_lines(source: str) -> list[int]:
+    """Every def of, call to, or import of a `write_state` (spec §13 A142: the
+    unconditional learner_state upsert was dead code and is gone; evidence
+    reaches learner_state only through the single writer's transaction RPC)."""
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "write_state":
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Call) and (
             (isinstance(node.func, ast.Attribute) and node.func.attr == "write_state")
             or (isinstance(node.func, ast.Name) and node.func.id == "write_state")
-        )
-    ]
+        ):
+            lines.append(node.lineno)
+        elif isinstance(node, ast.alias) and node.name.rsplit(".", 1)[-1] == "write_state":
+            lines.append(node.lineno)
+    return lines
 
 
 def _canonical_page_all(tree: ast.Module, parents: dict[ast.AST, ast.AST]) -> bool:
@@ -400,13 +427,14 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
 
 
 def _graph_table_offenders(rel: str, source: str) -> list[str]:
-    """inv_01's ast half for one non-writer file: every graph-table handle
-    must be a direct read, except learner_state.py's write_state upsert."""
+    """inv_01's ast half for one file, the writer file included: every
+    graph-table handle must be a direct read, except the exact
+    SANCTIONED_GRAPH_WRITES (file, table, method, enclosing def)."""
     offenders = []
     for line, tbl, method, enclosing in _graph_table_uses(source):
         if method in GRAPH_TABLE_READ_METHODS:
             continue
-        if rel == LEARNER_STATE_MODULE and (tbl, method, enclosing) in LEARNER_STATE_SANCTIONED:
+        if (rel, tbl, method, enclosing) in SANCTIONED_GRAPH_WRITES:
             continue
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
@@ -628,44 +656,33 @@ def test_inv_01_the_void_record_is_written_by_no_python_module():
 
 def test_inv_01_single_graph_writer():
     offenders: list[str] = []
+    sanctioned_chains = {(f, t, m) for f, t, m, _ in SANCTIONED_GRAPH_WRITES}
     for rel, path in _application_py_files():
         text = path.read_text()
         offenders += _transaction_writer_offenders(rel, text)
         if any(name in text for name in GRAPH_PRIVATE_WRITERS):
             offenders += _private_writer_offenders(rel, text)
-        if rel != GRAPH_WRITER:
-            for m in _WRITE_CHAIN.finditer(text):
-                if rel == LEARNER_STATE_MODULE and (m.group(1), m.group(2)) in {
-                    w[:2] for w in LEARNER_STATE_SANCTIONED
-                }:
-                    continue  # write_state's upsert / write_metrics' update; the ast half pins each to its def
-                line = text.count("\n", 0, m.start()) + 1
-                offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
-            offenders += _graph_table_offenders(rel, text)
-        if rel not in (GRAPH_WRITER, LEARNER_STATE_MODULE) and "write_state" in text:
-            offenders.append(f"{rel} references learner_state.write_state")
+        # spec §13 A142: the writer file is scanned too; only its exact
+        # sanctioned (table, method, def) writes pass (the ast half pins each
+        # to its def; the regex half sees a direct double-quoted chain)
+        for m in _WRITE_CHAIN.finditer(text):
+            if (rel, m.group(1), m.group(2)) in sanctioned_chains:
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
+        offenders += _graph_table_offenders(rel, text)
+        # Evidence must use the atomic RPC, never an unconditional scalar write
+        offenders += [f"{rel}:{line} defines, imports or calls write_state" for line in _write_state_lines(text)]
     assert offenders == [], "\n".join(offenders)
 
-    # Inside the writer file, write_state may only be called from the two
-    # named functions — the evidence path is a branch of apply_graph_update,
-    # not a second entry point.
-    writer = BACKEND / GRAPH_WRITER
-    tree = ast.parse(writer.read_text())
-    allowed = [
-        (fn.lineno, fn.end_lineno)
-        for fn in tree.body
-        if isinstance(fn, ast.FunctionDef) and fn.name in GRAPH_WRITER_FUNCS
-    ]
-    calls = _write_state_call_lines(writer)
-    assert calls == [], "Evidence must use the atomic RPC, never unconditional scalar writes"
-    for line in calls:
-        assert any(lo <= line <= hi for lo, hi in allowed), (
-            f"{GRAPH_WRITER}:{line} calls write_state outside {GRAPH_WRITER_FUNCS}"
-        )
-    # learner_state.py defines write_state and must not call it itself.
-    assert _write_state_call_lines(BACKEND / LEARNER_STATE_MODULE) == [], (
-        f"{LEARNER_STATE_MODULE} calls write_state; only {GRAPH_WRITER_FUNCS} may"
-    )
+    # Every sanctioned write still exists where it is sanctioned: an entry that
+    # outlives its code would be a silent exemption for whatever comes next.
+    present = {
+        (rel, tbl, method, enclosing)
+        for rel in (GRAPH_WRITER, LEARNER_STATE_MODULE)
+        for _line, tbl, method, enclosing in _graph_table_uses((BACKEND / rel).read_text())
+    }
+    assert SANCTIONED_GRAPH_WRITES <= present, sorted(SANCTIONED_GRAPH_WRITES - present)
 
     # PKG-11: the two routes on the loop path never write graph tables
     # directly; the quiz route reaches the graph only through apply_graph_update.
@@ -689,6 +706,8 @@ def test_inv_01_single_graph_writer():
         LEARNER_STATE_MODULE,
         METRICS_SCRIPT,
         "tests/test_learning_loop_invariants.py",
+        # inv_01's write-detector mutation cases (spec §13 A142)
+        "tests/test_learning_evidence_apply.py",
         "tests/integration/test_learning_evidence_transaction_db.py",
     } | {c for c in callers if c.startswith("tests/test_learning_zpd_metrics")}
     assert set(callers) == expected, (
@@ -985,8 +1004,142 @@ def test_inv_09_no_unique_or_eq_on_encrypted_learning_columns():
     assert not offenders, f"PostgREST filter on an encrypted column in: {offenders}"
 
 
+_CACHE_DECORATORS = frozenset({"lru_cache", "cache"})
+
+
+def _functools_cache_names(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """(names bound to functools.lru_cache/cache, names bound to functools)."""
+    direct: set[str] = set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "functools":
+            direct |= {a.asname or a.name for a in node.names if a.name in _CACHE_DECORATORS}
+        elif isinstance(node, ast.Import):
+            modules |= {a.asname or a.name for a in node.names if a.name == "functools"}
+    return direct, modules
+
+
+def _cache_offenders(rel: str, source: str, hook_calls: set[str]) -> list[str]:
+    """inv_10 for one module: every function cached by functools.lru_cache /
+    functools.cache (bare or called decorator, any import alias) has a
+    module-level `clear_<name>_cache()` (leading underscores dropped) that calls
+    `<name>.cache_clear()`, and `hook_calls` (the hooks conftest's
+    _clear_lru_caches calls) names it. A cache built any other way (not as a
+    decorator) cannot be tied to a hook, so it offends outright."""
+    tree = ast.parse(source)
+    direct, modules = _functools_cache_names(tree)
+
+    def is_cache(expr: ast.AST) -> bool:
+        target = expr.func if isinstance(expr, ast.Call) else expr
+        if isinstance(target, ast.Name):
+            return target.id in direct
+        return (
+            isinstance(target, ast.Attribute)
+            and target.attr in _CACHE_DECORATORS
+            and isinstance(target.value, ast.Name)
+            and target.value.id in modules
+        )
+
+    decorators = set()
+    cached = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                if is_cache(dec):
+                    cached.append(node.name)
+                    decorators |= {id(n) for n in ast.walk(dec)}
+    offenders = []
+    for node in ast.walk(tree):
+        if id(node) in decorators:
+            continue
+        if (isinstance(node, ast.Name) and node.id in direct) or (
+            isinstance(node, ast.Attribute)
+            and node.attr in _CACHE_DECORATORS
+            and isinstance(node.value, ast.Name)
+            and node.value.id in modules
+        ):
+            offenders.append(f"{rel}:{node.lineno} builds a functools cache outside a decorator")
+    hooks = {
+        fn.name: fn for fn in tree.body if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for name in cached:
+        hook = f"clear_{name.lstrip('_')}_cache"
+        body = hooks.get(hook)
+        clears = body is not None and any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "cache_clear"
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == name
+            for n in ast.walk(body)
+        )
+        if not clears:
+            offenders.append(f"{rel}: {name} is cached but no {hook}() calls {name}.cache_clear()")
+        elif hook not in hook_calls:
+            offenders.append(f"{rel}: tests/conftest.py::_clear_lru_caches never calls {hook}()")
+    return offenders
+
+
+def _conftest_hook_calls() -> set[str]:
+    """The functions tests/conftest.py::_clear_lru_caches calls (by name)."""
+    tree = ast.parse((BACKEND / "tests" / "conftest.py").read_text())
+    [fixture] = [
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_clear_lru_caches"
+    ]
+    return {
+        (n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", ""))
+        for n in ast.walk(fixture)
+        if isinstance(n, ast.Call)
+    }
+
+
 def test_inv_10_lru_cache_has_clear_hook():
-    pytest.skip("asserted by the first package that adds an lru_cache under backend/learning/")
+    """Spec §8 invariant 10, implemented (spec §13 A142; it was a skip
+    placeholder): any functools lru_cache/cache under backend/learning/ has a
+    clear_<name>_cache() hook that tests/conftest.py::_clear_lru_caches calls,
+    so a cached read never leaks between tests. No module caches today; the
+    scan runs over every learning module all the same, and the self-test below
+    proves it would see one."""
+    hook_calls = _conftest_hook_calls()
+    offenders = []
+    for path in sorted(LEARNING.rglob("*.py")):
+        rel = path.relative_to(BACKEND).as_posix()
+        offenders += _cache_offenders(rel, path.read_text(), hook_calls)
+    assert offenders == [], "\n".join(offenders)
+
+
+@pytest.mark.parametrize(
+    "source,offends",
+    [
+        ("from functools import lru_cache\n@lru_cache\ndef f(x): return x\n", True),
+        ("from functools import lru_cache\n@lru_cache(maxsize=8)\ndef f(x): return x\n", True),
+        ("from functools import cache as memo\n@memo\ndef _f(x): return x\n", True),
+        ("import functools as ft\n@ft.lru_cache()\ndef f(x): return x\n", True),
+        # a hook that clears the wrong function, or none at all
+        (
+            "from functools import lru_cache\n@lru_cache\ndef f(x): return x\n"
+            "def clear_f_cache(): g.cache_clear()\n",
+            True,
+        ),
+        # a hook conftest never calls
+        (
+            "from functools import lru_cache\n@lru_cache\ndef g(x): return x\n"
+            "def clear_g_cache(): g.cache_clear()\n",
+            True,
+        ),
+        # a cache built outside a decorator
+        ("from functools import lru_cache\nf = lru_cache(maxsize=4)(len)\n", True),
+        # hooked, and conftest calls the hook (the stand-in set below)
+        (
+            "from functools import lru_cache\n@lru_cache\ndef _f(x): return x\n"
+            "def clear_f_cache(): _f.cache_clear()\n",
+            False,
+        ),
+        ("def f(cache): return cache\n", False),  # a parameter named cache is no cache
+    ],
+)
+def test_inv_10_scan_self_test(source, offends):
+    assert bool(_cache_offenders("learning/x.py", source, {"clear_f_cache"})) is offends
 
 
 @pytest.mark.parametrize(
