@@ -345,6 +345,25 @@ function KnowledgeGraph2DImpl({
   const movedRootsRef = React.useRef(new Set<string>());
   // Legible: where each free course root settles back to.
   const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
+  // Released concepts still moving: their orbit target follows them each tick
+  // (the "coast" force) so the layout doesn't pull them back while they drift.
+  const coastingRef = React.useRef(new Set<string>());
+  // Make a course's current arrangement its new resting layout: its root's
+  // home becomes where the root is now, and each of its concepts keeps the
+  // angle it now sits at (the dropped one also keeps its distance). After a
+  // drag nothing springs back to where it was planned.
+  const adoptLayoutAround = React.useCallback((rootId: string | null, droppedId?: string) => {
+    const root = rootId ? simNodesRef.current.find((sn) => sn.id === rootId) : undefined;
+    if (!root || root.x == null || root.y == null) return;
+    rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
+    movedRootsRef.current.add(root.id);
+    for (const m of simNodesRef.current) {
+      const o = planRef.current.orbit.get(m.id);
+      if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
+      o.angle = Math.atan2(m.y - root.y, m.x - root.x);
+      if (m.id === droppedId) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
+    }
+  }, []);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
@@ -462,6 +481,26 @@ function KnowledgeGraph2DImpl({
               : 20 + (d.mastery_score || 0) * 6,
         ),
       )
+      .force("coast", (alpha: number) => {
+        // A released concept drifts on its own momentum: retarget its orbit
+        // to wherever it is each tick so the orbit force (next) exerts no
+        // pull. Once it has slowed down, its resting spot becomes its home.
+        for (const id of coastingRef.current) {
+          const n = nodeById.get(id);
+          const o = planRef.current.orbit.get(id);
+          if (!n || !o || n.x == null || n.y == null) {
+            coastingRef.current.delete(id);
+            continue;
+          }
+          const c = centerOf(o.rootId);
+          o.angle = Math.atan2(n.y - c.y, n.x - c.x);
+          o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
+          if (Math.hypot(n.vx ?? 0, n.vy ?? 0) < 0.1 || alpha < 0.02) {
+            coastingRef.current.delete(id);
+            adoptLayoutAround(o.rootId, id);
+          }
+        }
+      })
       .force(
         "orbit",
         forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55, 0.12, {
@@ -813,13 +852,17 @@ function KnowledgeGraph2DImpl({
           n.fy = n.y;
         } else {
           // Hand the node back to the simulation still moving: a throw carries
-          // it on, and the layout forces pull it back toward its place while
-          // its neighbours react, instead of it freezing where it was dropped.
+          // it on and its neighbours react. Nothing pulls it back to where it
+          // was planned — a concept coasts until it slows, then stays there.
           n.fx = null;
           n.fy = null;
           const [vx, vy] = releaseVelocity(flingRef.current, performance.now(), prefersReducedMotion());
           n.vx = vx;
           n.vy = vy;
+          if (!n.is_subject_root && movedRef.current) {
+            adoptLayoutAround(planRef.current.orbit.get(n.id)?.rootId ?? null, n.id);
+            coastingRef.current.add(n.id);
+          }
         }
       }
       flingRef.current = null;
