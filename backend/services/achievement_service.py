@@ -464,18 +464,25 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 HEAL_WINDOW = timedelta(hours=24)
 
 
+def parse_utc(raw: str | None) -> datetime | None:
+    """A stored timestamp as an aware UTC datetime; None when missing or
+    unparseable. A naive value is taken as UTC. Shared with
+    scripts/backfill_achievement_xp.py so it reads grant times exactly as the
+    heal window does."""
+    try:
+        ts = _parse_ts(raw)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
 def _earned_since(raw: str | None, cutoff: datetime) -> bool:
     """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
     an unknown grant time is treated as old, so it is never healed."""
-    try:
-        ts = _parse_ts(raw)
-        if ts is None:
-            return False
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts > cutoff
-    except (TypeError, ValueError):
-        return False
+    ts = parse_utc(raw)
+    return ts is not None and ts > cutoff
 
 
 def _heal_grants(user_id: str, achievement_ids: set) -> None:
