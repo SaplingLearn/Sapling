@@ -25,6 +25,7 @@ from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self, guard_off_loop
+from services import llm_budget
 from services.llm_budget import LLMBudgetExceeded
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
@@ -3035,9 +3036,12 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # `quiz.context_write_failed` analytics event, and a re-raise in
         # local/test envs so a regression fails CI instead of going quiet.
         try:
+            # #119: post-response work — the per-user LLM budget never refuses
+            # it (services/llm_budget.py); its tokens still count.
+            with llm_budget.background_work():
+                run = run_agent_sync(quiz_context_agent.run(prompt))
             result = record_agent_usage(
-                run_agent_sync(quiz_context_agent.run(prompt)),
-                feature="quiz", task="quiz_context", user_id=uid,
+                run, feature="quiz", task="quiz_context", user_id=uid,
             )
             save_quiz_context(uid, node_id, result.output.model_dump())
         except UnregisteredHandlerError:

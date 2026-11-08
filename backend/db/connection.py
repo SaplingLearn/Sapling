@@ -473,16 +473,18 @@ def page_all(
         offset += page
 
 
-def rpc(function_name: str, params: dict) -> list:
-    """Call a Supabase Postgres function via /rest/v1/rpc/{function_name}."""
+def rpc(function_name: str, params: dict, *, timeout: float | None = None) -> list:
+    """Call a Supabase Postgres function via /rest/v1/rpc/{function_name}.
+    `timeout` (seconds) bounds this call instead of the client default."""
     url = f"{REST_URL}/rpc/{function_name}"
     target = f"rpc/{function_name}"
     read_only = function_name in SHADOW_READ_RPCS
     scoped = _scope_headers(target, None if read_only else "rpc", data=params)
+    extra = {} if timeout is None else {"timeout": timeout}
     if scoped is None:
-        r = _client.post(url, json=params)
+        r = _client.post(url, json=params, **extra)
     else:
-        r = _client.post(url, json=params, headers=scoped)
+        r = _client.post(url, json=params, headers=scoped, **extra)
     _raise_for_status(r, scoped, target, "rpc")
     rows = r.json()
     if scoped is None and read_only:

@@ -4,19 +4,38 @@ Budgets live in `llm_budgets` (migration 20261108213311): a global default row,
 plus role (roles.slug) and per-user overrides, edited at /api/admin/llm. The
 SQL function `llm_budget_status(user)` resolves the user's limit (user row ->
 the most generous of their role rows -> default) and sums today's (UTC)
-`llm_usage.total_tokens` for them in one indexed round trip.
+`llm_usage.total_tokens` for them in one indexed round trip. Usage rows are
+attributed to the acting user even when the caller names nobody
+(events_service.log_llm_usage), so the upload pipeline, concept scans and
+vision OCR count too.
 
 Enforcement is at the LLM chokepoint: `agents/_providers.py`'s resilient
 models call :func:`check_before_request` before every model request, and it
 refuses — with :class:`LLMBudgetExceeded`, a 429 — only when ALL hold:
 
-* there is a session user (``request_context.current_session_user``). Work
-  with no user — the index sweeper, the job worker, scripts, evals — is never
-  budgeted;
-* the request STARTS a run (:func:`starts_run`): a tool loop's later requests
-  and pydantic-ai's output-validation retries are let through, so a run that
-  began under budget is never cut off halfway (one run of overshoot is the
-  price of never failing a turn after its tools wrote);
+* there is an acting user (``request_context.current_acting_user``): the
+  request's session user, or the student a job handler runs for
+  (``request_context.acting_for`` — the upload pipeline and the Gradescope
+  sync on the job queue). Work with no user — the index sweeper, scripts,
+  evals — is never budgeted;
+* the work is FOREGROUND: code inside :func:`background_work` (post-response
+  BackgroundTasks such as quiz submit's context update, the observe-only
+  tutor router) is never refused;
+* the request STARTS a run (:func:`starts_run`): a tool loop's later requests,
+  pydantic-ai's output-validation retries and its re-send after an empty
+  response are let through, so a run that began under budget is never cut
+  off halfway (one run of overshoot is the price of never failing a turn
+  after its tools wrote);
+* the unit of work has not decided yet. **The budget is decided ONCE per
+  unit of work** — one HTTP request, or one job handler run — by the first
+  run that reaches the gate, and recorded on the work's shared state (the
+  request's ``scope["state"]``, which its handler, threadpool Depends,
+  detached tasks and BackgroundTasks all share; or the ``acting_for`` scope).
+  Every later run in the same unit reuses that decision without another
+  read: learn.py's textless-turn continuation, a second agent in the same
+  pipeline, the vision OCR's next page, a background task after an allowed
+  foreground. So a turn the gate let start is never refused half-way through
+  its own continuations; a unit that was refused stays refused;
 * the `llm_budget` flag is on for that user (per user: role rules and
   rollouts apply);
 * the user's resolved limit is not NULL (unlimited) and today's usage has
@@ -27,10 +46,10 @@ resilient model, so it never meets this module. A fallback model is not
 checked again — it is the same run.
 
 Fails OPEN, like the quiz spend cap (#544 F1): an unreadable flag, a status
-read that errors or takes longer than ``STATUS_TIMEOUT_S`` lets the run
-through with a warning. This is a cost control, not an authorization gate,
-and denying every student because a usage read blipped is worse than the
-spend it would save.
+read that errors or takes longer than ``STATUS_TIMEOUT_S`` (the RPC's own
+per-call timeout, so no thread outlives it) lets the run through with a
+warning. This is a cost control, not an authorization gate, and denying every
+student because a usage read blipped is worse than the spend it would save.
 
 Caching (CLAUDE.md, #98): a per-process, per-user TTL cache of the status —
 ``STATUS_TTL_S`` (never past the user's reset time), ``FAILURE_TTL_S`` for a
@@ -43,12 +62,14 @@ approximate by a few seconds plus the TTL either way.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import logging
 import math
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -64,8 +85,9 @@ ERROR_CODE = "LLM_BUDGET_EXCEEDED"
 STATUS_TTL_S = 30.0
 #: How long a FAILED status read is remembered (the run fails open meanwhile).
 FAILURE_TTL_S = 10.0
-#: Bound on one status read; past it the run fails open.
-STATUS_TIMEOUT_S = 2.5
+#: Bound on one status read (the RPC's per-call HTTP timeout); past it the
+#: run fails open.
+STATUS_TIMEOUT_S = 2.0
 #: Cache size bound (oldest entries go first).
 _CACHE_MAX = 4096
 
@@ -81,7 +103,8 @@ class LLMBudgetExceeded(HTTPException):
     "the tutor had trouble". The SSE tutor maps it to a terminal `error`
     event (services/chat_stream.py)."""
 
-    def __init__(self, *, limit: int, used: int, reset_at: datetime, source: str = ""):
+    def __init__(self, *, limit: int | None, used: int | None, reset_at: datetime,
+                 source: str = ""):
         self.limit = limit
         self.used = used
         self.reset_at = reset_at
@@ -97,6 +120,23 @@ class LLMBudgetExceeded(HTTPException):
     @property
     def reset_at_iso(self) -> str:
         return self.reset_at.astimezone(timezone.utc).isoformat()
+
+    def __reduce__(self):
+        # Keyword-only __init__: the default reduce would call it with
+        # HTTPException's positional args. Pickled across the job worker /
+        # DBOS boundary like _resilience's ForcedOutageError.
+        return _rebuild_budget_error, (self.limit, self.used, self.reset_at, self.source)
+
+
+def _rebuild_budget_error(limit, used, reset_at, source) -> LLMBudgetExceeded:
+    return LLMBudgetExceeded(limit=limit, used=used, reset_at=reset_at, source=source)
+
+
+def next_reset(now: datetime | None = None) -> datetime:
+    """The next UTC midnight — when every daily budget resets (the same
+    boundary `llm_budget_status` reports)."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
 
 def user_message(reset_at: datetime, *, now: datetime | None = None) -> str:
@@ -168,11 +208,12 @@ def parse_status(payload: Any) -> BudgetStatus:
 
 
 @runs_as_service  # #115: llm_usage / llm_budgets are service-only (bucket E)
-def read_status(user_id: str) -> BudgetStatus:
-    """One `llm_budget_status` round trip. Raises on any failure."""
+def read_status(user_id: str, *, timeout: float | None = None) -> BudgetStatus:
+    """One `llm_budget_status` round trip, bounded by `timeout` (None: the
+    client default). Raises on any failure."""
     from db.connection import rpc
 
-    return parse_status(rpc("llm_budget_status", {"p_user_id": user_id}))
+    return parse_status(rpc("llm_budget_status", {"p_user_id": user_id}, timeout=timeout))
 
 
 _cache: dict[str, tuple[float, BudgetStatus | None]] = {}
@@ -220,9 +261,10 @@ async def status_for(user_id: str) -> BudgetStatus | None:
     if hit:
         return status
     try:
-        status = await asyncio.wait_for(
-            asyncio.to_thread(read_status, user_id), timeout=STATUS_TIMEOUT_S
-        )
+        # Bounded by the RPC's own timeout, not asyncio.wait_for around the
+        # thread: a wait_for would return on time but leave the thread (and
+        # its HTTP call) running past it, one leaked thread per slow read.
+        status = await asyncio.to_thread(read_status, user_id, timeout=STATUS_TIMEOUT_S)
     except Exception as exc:
         logger.warning(
             "llm budget status unreadable for user=%s (%s); allowing the run",
@@ -245,9 +287,15 @@ def starts_run(messages: Any) -> bool:
 
     try:
         last = messages[-1] if messages else None
+        earlier = len(messages) > 1
     except Exception:
         return True
     parts = getattr(last, "parts", None) or ()
+    if not parts and earlier:
+        # pydantic-ai's re-send after an empty model response is an EMPTY
+        # ModelRequest(parts=[]) appended to the run's own messages: the same
+        # run asking again, not a new one.
+        return False
     return not any(isinstance(p, (BaseToolReturnPart, RetryPromptPart)) for p in parts)
 
 
@@ -257,33 +305,70 @@ async def _flag_on(user_id: str) -> bool:
     try:
         from services import feature_flags
 
-        resolution = feature_flags.cached_explain(FLAG_KEY, user_id)
-        if resolution is None:
-            resolution = await asyncio.to_thread(feature_flags.explain, FLAG_KEY, user_id)
+        resolution = await feature_flags.explain_off_loop(FLAG_KEY, user_id)
         return resolution.variant == "on"
     except Exception:
         logger.warning("llm_budget flag unreadable; treating as off", exc_info=True)
         return False
 
 
-async def check_before_request(messages: Any) -> None:
-    """Raise :class:`LLMBudgetExceeded` when this request would start a run
-    for a user who has spent today's budget (see the module docstring for
-    every condition). Otherwise return; never raises anything else."""
-    from services.request_context import current_session_user
+#: Set inside :func:`background_work`: nothing there is ever refused.
+_BACKGROUND: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "sapling_llm_budget_background", default=False,
+)
+#: Key of the one-per-unit-of-work decision on the work's shared state:
+#: (user_id, None) = allowed, (user_id, BudgetStatus) = refused.
+_DECISION_KEY = "llm_budget_decision"
 
-    user_id = current_session_user()
+
+@contextlib.contextmanager
+def background_work():
+    """Mark the block as post-response / background LLM work: the budget never
+    refuses it (only foreground work is refused — a refusal after the
+    response has gone has nobody to tell, and would only lose the write the
+    student's foreground work paid for). Its tokens still count."""
+    token = _BACKGROUND.set(True)
+    try:
+        yield
+    finally:
+        _BACKGROUND.reset(token)
+
+
+def _refusal(status: BudgetStatus) -> LLMBudgetExceeded:
+    return LLMBudgetExceeded(
+        limit=status.limit, used=status.used, reset_at=status.reset_at, source=status.source,
+    )
+
+
+async def check_before_request(messages: Any) -> None:
+    """Raise :class:`LLMBudgetExceeded` when this request would start a
+    foreground run for a user who has spent today's budget, deciding at most
+    once per unit of work (see the module docstring for every condition).
+    Otherwise return; never raises anything else."""
+    from services.request_context import current_acting_user, current_work_state
+
+    if _BACKGROUND.get():
+        return
+    user_id = current_acting_user()
     if not user_id or not starts_run(messages):
         return
-    if not await _flag_on(user_id):
-        return
-    status = await status_for(user_id)
-    if status is None or not status.exceeded:
+    state = current_work_state()
+    prior = state.get(_DECISION_KEY) if state is not None else None
+    if isinstance(prior, tuple) and len(prior) == 2 and prior[0] == user_id:
+        if prior[1] is None:
+            return  # this request/job already passed the gate
+        raise _refusal(prior[1])
+    refused: BudgetStatus | None = None
+    if await _flag_on(user_id):
+        status = await status_for(user_id)
+        if status is not None and status.exceeded:
+            refused = status
+    if state is not None:
+        state[_DECISION_KEY] = (user_id, refused)
+    if refused is None:
         return
     logger.warning(
         "llm budget reached: user=%s used=%d limit=%d source=%s; refusing the run",
-        user_id, status.used, status.limit, status.source,
+        user_id, refused.used, refused.limit, refused.source,
     )
-    raise LLMBudgetExceeded(
-        limit=status.limit, used=status.used, reset_at=status.reset_at, source=status.source,
-    )
+    raise _refusal(refused)

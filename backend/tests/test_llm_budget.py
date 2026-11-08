@@ -50,10 +50,11 @@ def status(monkeypatch):
     """Script `read_status`: set `.value` (a BudgetStatus, or an exception to
     raise); `.calls` counts reads."""
     box = SimpleNamespace(value=BudgetStatus(limit=1000, used=0, source="default", reset_at=RESET),
-                          calls=[])
+                          calls=[], timeouts=[])
 
-    def fake(user_id):
+    def fake(user_id, *, timeout=None):
         box.calls.append(user_id)
+        box.timeouts.append(timeout)
         if isinstance(box.value, BaseException):
             raise box.value
         return box.value
@@ -135,10 +136,11 @@ def test_under_budget_and_unlimited_runs_go_through(status):
     fn, calls = _counting()
     with session_user():
         assert asyncio.run(Agent(_ResilientFn(fn)).run("hi")).output == "ok"
-        status.value = BudgetStatus(limit=None, used=10**9, source="role:admin", reset_at=RESET)
-        llm_budget.clear_llm_budget_cache()
+    status.value = BudgetStatus(limit=None, used=10**9, source="role:admin", reset_at=RESET)
+    llm_budget.clear_llm_budget_cache()
+    with session_user():
         assert asyncio.run(Agent(_ResilientFn(fn)).run("hi")).output == "ok"
-    assert calls["n"] == 2
+    assert calls["n"] == 2 and len(status.calls) == 2
 
 
 def test_no_session_user_is_never_budgeted(status):
@@ -195,8 +197,8 @@ def test_a_run_that_started_under_budget_is_never_cut_off(status):
     with session_user():
         assert asyncio.run(agent.run("hi")).output == "answer"
         assert calls["n"] == 2
-        with pytest.raises(LLMBudgetExceeded):  # ...but the NEXT run is refused
-            asyncio.run(agent.run("again"))
+    with session_user(), pytest.raises(LLMBudgetExceeded):  # ...but the NEXT request is
+        asyncio.run(agent.run("again"))
 
 
 def test_fallback_models_and_the_health_probe_are_not_budgeted(status):
@@ -230,38 +232,51 @@ def test_function_mode_never_meets_the_budget(status, monkeypatch):
 def test_an_unreadable_status_fails_open_and_is_remembered_briefly(status):
     status.value = RuntimeError("db down")
     fn, calls = _counting()
-    with session_user():
-        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
-        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    for _ in range(2):  # two requests
+        with session_user():
+            asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
     assert calls["n"] == 2
     assert len(status.calls) == 1  # the failure is cached (FAILURE_TTL_S), not retried per run
 
 
-def test_a_slow_status_read_fails_open(status, monkeypatch):
-    import time
+def test_a_slow_status_read_fails_open(status):
+    """The read is bounded by the RPC's own per-call timeout (no wait_for
+    around the thread, so no thread outlives it); a timeout fails open."""
+    import httpx
 
-    monkeypatch.setattr(llm_budget, "STATUS_TIMEOUT_S", 0.05)
-
-    def slow(user_id):
-        time.sleep(0.3)
-        return _over()
-
-    monkeypatch.setattr(llm_budget, "read_status", slow)
+    status.value = httpx.ReadTimeout("slow")
     fn, calls = _counting()
     with session_user():
         assert asyncio.run(Agent(_ResilientFn(fn)).run("hi")).output == "ok"
+    assert status.timeouts == [llm_budget.STATUS_TIMEOUT_S]
+
+
+def test_status_for_leaves_no_thread_behind(monkeypatch):
+    """#838 review: asyncio.wait_for(to_thread(...)) returned on time but
+    left the read running; now the timeout lives in the read itself."""
+    seen = {}
+
+    def fake_rpc(name, params, *, timeout=None):
+        seen["timeout"] = timeout
+        return {"limit": 1, "used": 0, "source": "default", "reset_at": RESET.isoformat()}
+
+    from db import connection
+
+    monkeypatch.setattr(connection, "rpc", fake_rpc)
+    assert asyncio.run(llm_budget.status_for(USER)).limit == 1
+    assert seen["timeout"] == llm_budget.STATUS_TIMEOUT_S <= 2.0
 
 
 def test_status_is_cached_per_user_until_cleared(status):
     fn, _ = _counting()
-    with session_user():
-        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
-        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
-        assert len(status.calls) == 1
-        status.value = _over()
-        llm_budget.clear_llm_budget_cache(USER)  # what the admin write does
-        with pytest.raises(LLMBudgetExceeded):
+    for _ in range(2):  # two requests
+        with session_user():
             asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    assert len(status.calls) == 1
+    status.value = _over()
+    llm_budget.clear_llm_budget_cache(USER)  # what the admin write does
+    with session_user(), pytest.raises(LLMBudgetExceeded):
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
     assert len(status.calls) == 2
 
 
@@ -284,7 +299,7 @@ def test_read_status_calls_the_rpc_as_service(monkeypatch):
 
     seen = {}
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, *, timeout=None):
         seen.update(name=name, params=params, service=scope.in_service_scope())
         return {"limit": 1, "used": 0, "source": "default", "reset_at": RESET.isoformat()}
 

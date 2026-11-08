@@ -333,6 +333,18 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
     return updated[0] if updated else {"id": document_id, **updates}
 
 
+def _budget_failed_frames(e: LLMBudgetExceeded, request_id: str | None) -> list[str]:
+    """#119: the upload stream's terminal pair for a per-user LLM budget
+    refusal (services/llm_budget.py) — the budget's own message and code."""
+    return [
+        sapling_event_to_sse(SaplingEvent(
+            type="error", step="failed", message=e.detail,
+            data={"request_id": request_id, "code": e.code, "reset_at": e.reset_at_iso},
+        )),
+        sapling_event_to_sse(SaplingEvent(type="status", step="done", message="Failed.")),
+    ]
+
+
 def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) -> str:
     """Run synchronous text extraction. Convert any failure into a clean
     HTTP 422 with a friendly detail instead of a bubbled-up 500.
@@ -343,6 +355,8 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
     """
     try:
         text = extract_text_from_file(file_bytes, filename, content_type)
+    except LLMBudgetExceeded:
+        raise  # #119: vision OCR refused by the per-user LLM budget -> the 429
     except Exception:
         logger.exception("Text extraction failed for '%s'", filename)
         raise HTTPException(
@@ -1000,6 +1014,11 @@ async def upload_document(
                         extract_text_from_file, file_bytes, filename,
                         file.content_type or "",
                     )
+                except LLMBudgetExceeded as e:
+                    # #119: vision OCR refused by the per-user LLM budget.
+                    for frame in _budget_failed_frames(e, request_id):
+                        yield frame
+                    return
                 except Exception:
                     logger.exception(
                         "Async text extraction failed for '%s'", filename,
@@ -1128,14 +1147,8 @@ async def upload_document(
             # #119: the per-user LLM budget refused the pipeline before any
             # model call; nothing was persisted. Same terminal tail, with the
             # budget's own message instead of "please try again".
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="failed", message=e.detail,
-                data={"request_id": request_id, "code": e.code, "reset_at": e.reset_at_iso},
-            ))
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="done",
-                message="Failed.",
-            ))
+            for frame in _budget_failed_frames(e, request_id):
+                yield frame
             return
         except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
             # Terminal (#151b): `step="fallback"` left the SSE vocabulary
