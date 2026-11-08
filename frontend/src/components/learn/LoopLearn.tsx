@@ -11,7 +11,7 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -84,6 +84,7 @@ import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 import { ConfidenceControl } from "./ConfidenceControl";
+import { useRadioGroup } from "./useRadioGroup";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -199,6 +200,20 @@ const hasDeepLink = (d: DeepLink) => !!(d.resume || d.topic || d.course || d.mod
 /** The phase GET /status reports for a document, in the UI's vocabulary. */
 const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.phase : st.loop_phase);
 
+// ── Keyboard focus (spec §13 A135) ────────────────────────────────────────
+/** A modal dialog (the AI notice, the crisis-support card) owns focus while it
+ *  is open: nothing on the screen behind it may take it. */
+const modalOpen = () => typeof document !== "undefined" && document.querySelector('[aria-modal="true"]') !== null;
+/** Focus the first answer control of a check-in or check card: the textarea, or
+ *  the options' tab stop (each is marked `data-answer-start`). */
+const focusAnswerStart = (card: HTMLElement | null) => card?.querySelector<HTMLElement>("[data-answer-start]")?.focus();
+/** Where focus goes once an action settles without new content of its own (see
+ *  `focusAfter` in LoopLearn): after an answer (Continue, else the card's
+ *  answer, else Check me), after a tutor turn (the chat composer), after Check
+ *  me found nothing (Check me), after the plan is approved ("Start with …", else
+ *  the composer), and after a check-in answer that left the item up (its answer). */
+type FocusAfter = "answered" | "turn" | "check-me" | "teaching" | "probe-answer";
+
 export function LoopLearn() {
   const { userId } = useUser();
   const toast = useToast();
@@ -313,6 +328,13 @@ export function LoopLearn() {
   const earnedHint = useRef<{ sessionId: string; questionHash: string; rung: number } | null>(null);
   const mounted = useRef(true);
   const graphRequest = useRef(0);
+  // spec §13 A135: where keyboard focus goes once an action settles (FocusAfter)
+  const focusAfter = useRef<FocusAfter | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const continueRef = useRef<HTMLButtonElement>(null);
+  const checkMeRef = useRef<HTMLButtonElement>(null);
+  const teachStartRef = useRef<HTMLButtonElement>(null);
   const invalidateHint = useCallback(() => {
     ++hintEpoch.current;
     earnedHint.current = null;
@@ -862,6 +884,7 @@ export function LoopLearn() {
 
   const submitProbe = async (idk: boolean) => {
     if (!sessionId || !probeItem || probeBusy || pendingGrade) return;
+    focusAfter.current = "probe-answer"; // a new item, the answer or the plan takes focus first
     ++turnEpoch.current;
     const g = gen.current;
     // an idk states no confidence (spec §13 A127)
@@ -939,6 +962,7 @@ export function LoopLearn() {
   // ── Plan ───────────────────────────────────────────────────────────────
   const approvePlan = async () => {
     if (!sessionId || !plan || plan.length === 0 || planBusy) return;
+    focusAfter.current = "teaching";
     const g = gen.current;
     setPlanBusy(true);
     try {
@@ -1112,6 +1136,7 @@ export function LoopLearn() {
     // the support card (docs/safety/crisis-support.md). Anything else the pause
     // answers with no reply, and the message goes back into the composer.
     if (!sessionId || starting || scopeLoading || pendingGrade) return;
+    focusAfter.current = "turn"; // a check the turn poses takes focus first
     setPlanJustApproved(false);
     const userMsg = asMsg("user", text);
     setMessages((prev) => [...prev, userMsg]);
@@ -1135,6 +1160,7 @@ export function LoopLearn() {
 
   const submitAttempt = async (idk: boolean) => {
     if (!sessionId || !item || attemptBusy || pendingGrade) return;
+    focusAfter.current = "answered";
     const g = gen.current;
     // an idk states no confidence (spec §13 A127)
     const a: LoopCheckAnswer = idk ? { idk: true } : draftAnswer(attempt, item.format);
@@ -1158,6 +1184,7 @@ export function LoopLearn() {
     const sid = sessionId;
     const saved = pendingGrade;
     const g = gen.current;
+    focusAfter.current = saved.kind === "check" ? "answered" : "probe-answer";
     if (saved.kind === "check") {
       setAttemptBusy(true);
       const result = await runTurn(
@@ -1273,6 +1300,7 @@ export function LoopLearn() {
       }
     }
     if (g !== gen.current) return true;
+    focusAfter.current = "check-me"; // the card goes; "Check me" brings another
     invalidateHint();
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "teach" });
@@ -1284,6 +1312,7 @@ export function LoopLearn() {
 
   const checkMe = async () => {
     if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading || pendingGrade) return;
+    focusAfter.current = "check-me"; // a posed check, or a new plan, takes focus first
     const g = gen.current;
     const epoch = ++turnEpoch.current;
     setCheckBusy(true);
@@ -1389,16 +1418,53 @@ export function LoopLearn() {
   const teaching = TEACHING.includes(state.phase);
   const stepIndex = STEPS.findIndex((s) => s.phases.includes(state.phase));
   const streaming = streamingText !== null;
-  // The card shows the current pose and hint; the log hides those rows while
-  // the item is current (live and after a reload alike), so nothing renders twice.
-  const visibleMessages = useMemo(() => {
+  // The card shows the current pose and hint, so the log does not paint those
+  // rows while the item is current (live and after a reload alike) — nothing
+  // renders twice. They stay IN the log, visually hidden (spec §13 A135): the
+  // log is a live region, so a screen reader hears the pose and the hint when
+  // they arrive, and reads them in order later; un-hiding them after the grade
+  // adds no node, so nothing is announced twice.
+  const logMessages = useMemo(() => {
     const inCard = new Set<string>();
     if (item?.prompt) inCard.add(item.prompt);
     if (item && hint && "reply" in hint) inCard.add(hint.reply);
     return inCard.size === 0
       ? messages
-      : messages.filter((m) => !(m.role === "assistant" && inCard.has(m.content)));
+      : messages.map((m) => (m.role === "assistant" && inCard.has(m.content) ? { ...m, visuallyHidden: true } : m));
   }, [messages, item, hint]);
+
+  // spec §13 A135: apply `focusAfter` once the screen has settled — no reply
+  // streaming, the target rendered and enabled. Only a lost focus (left on the
+  // page itself when the control that started the action was disabled or
+  // removed) moves: new content that took focus first — a posed check, the
+  // plan's heading, a dialog — keeps it.
+  useEffect(() => {
+    const want = focusAfter.current;
+    if (!want) return;
+    if (modalOpen()) {
+      focusAfter.current = null;
+      return;
+    }
+    if (streaming) return;
+    // Lost: on the page itself, or still on the control the action disabled.
+    const active = document.activeElement;
+    const lost = !active || active === document.body || active.matches(":disabled");
+    const answer = rootRef.current?.querySelector<HTMLElement>("[data-answer-start]") ?? null;
+    const composer = composerRef.current;
+    const target =
+      want === "answered" ? continueRef.current ?? answer ?? checkMeRef.current
+        : want === "turn" ? composer
+          : want === "check-me" ? checkMeRef.current
+            : want === "teaching" ? teachStartRef.current ?? composer
+              : answer;
+    if (!target) {
+      if (!lost) focusAfter.current = null; // the target is gone and focus is held elsewhere: settled
+      return;
+    }
+    if (target.matches(":disabled") || target.getAttribute("aria-disabled") === "true") return;
+    focusAfter.current = null;
+    if (lost) target.focus();
+  });
   const topicOffer =
     deepLink.topic && sessionId && teaching && !starting && openSessions !== null ? deepLink.topic : null;
 
@@ -1497,7 +1563,14 @@ export function LoopLearn() {
       }}
     >
       <span className="label-micro" style={{ flexShrink: 0 }}>Open sessions</span>
-      <div data-testid="loop-session-picker" role="list" style={{ display: "flex", gap: 6, flex: 1, minWidth: 0 }}>
+      {/* A list only while it lists something: an empty role="list", or one
+          holding the "None yet" line, has no listitem (spec §13 A135). */}
+      <div
+        data-testid="loop-session-picker"
+        role={openSessions && openSessions.length > 0 ? "list" : undefined}
+        aria-label={openSessions && openSessions.length > 0 ? "Open sessions" : undefined}
+        style={{ display: "flex", gap: 6, flex: 1, minWidth: 0 }}
+      >
         {(openSessions ?? []).map((s) => {
           const current = s.session_id === sessionId;
           return (
@@ -1544,11 +1617,19 @@ export function LoopLearn() {
     messages[messages.length - 1]?.crisisSupport != null;
   const showPreparing = noCheckItems === "preparing" && !crisisOnScreen;
   const showMaterialsNote = materialsNote && !crisisOnScreen;
-  const notices = (
+  const hasNotices = !!(
     paused || noCheckItems === "none" || showPreparing || showMaterialsNote || topicOffer ||
     practiceUnavailable.length > 0
-  ) && (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
+  );
+  // Always in the DOM (spec §13 A135): a notice is announced when it is added to
+  // this polite region; one inserted together with its own region is not
+  // reliably read out.
+  const notices = (
+    <div
+      aria-live="polite"
+      data-testid="loop-notices"
+      style={hasNotices ? { display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" } : undefined}
+    >
       {paused && (
         <BudgetPausedBanner
           testId="loop-budget-paused"
@@ -1824,6 +1905,7 @@ export function LoopLearn() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {state.phase === "feedback" && (
               <button
+                ref={continueRef}
                 data-testid="loop-continue"
                 className="btn btn--sm btn--primary"
                 onClick={() => send(CONTINUE_MESSAGE)}
@@ -1833,6 +1915,7 @@ export function LoopLearn() {
               </button>
             )}
             <button
+              ref={checkMeRef}
               data-testid="loop-check-me"
               className="btn btn--sm"
               onClick={() => void checkMe()}
@@ -1844,6 +1927,7 @@ export function LoopLearn() {
             {feedbackPending && !streaming && !checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{FEEDBACK_PENDING_COPY}</span>}
             {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
               <button
+                ref={teachStartRef}
                 data-testid="loop-teach-start"
                 className="btn btn--sm btn--ghost"
                 onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
@@ -1852,15 +1936,19 @@ export function LoopLearn() {
                 Start with {firstConcept.concept_name}
               </button>
             )}
-            {checkNote && (
-              <span
-                role="status"
-                data-testid={checkNote === REPORTED_COPY ? "loop-check-reported" : undefined}
-                style={{ fontSize: 13, color: "var(--text-muted)" }}
-              >
-                {checkNote}
-              </span>
-            )}
+            {/* Always in the DOM: a live region inserted with its text already in
+                it is not reliably announced (spec §13 A135). */}
+            <span aria-live="polite">
+              {checkNote && (
+                <span
+                  role="status"
+                  data-testid={checkNote === REPORTED_COPY ? "loop-check-reported" : undefined}
+                  style={{ fontSize: 13, color: "var(--text-muted)" }}
+                >
+                  {checkNote}
+                </span>
+              )}
+            </span>
           </div>
         )}
         {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
@@ -1869,7 +1957,8 @@ export function LoopLearn() {
     body = (
       <div data-testid="loop-messages" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <ChatPanel
-          messages={visibleMessages}
+          messages={logMessages}
+          composerRef={composerRef}
           onSend={send}
           header={chatHeader}
           streamingText={streamingText}
@@ -1890,6 +1979,7 @@ export function LoopLearn() {
       <DisclaimerModal />
       {crisisDialog}
       <div
+        ref={rootRef}
         data-testid="loop-phase"
         data-phase={state.phase}
         data-session-id={sessionId ?? ""}
@@ -1991,30 +2081,46 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
   );
 }
 
+/** The served options of an `mc_reason` item, in stored order; the UI never
+ *  marks one correct (A22). A radio group (spec §13 A135) named by the question
+ *  (`labelledBy`): one tab stop, the arrow keys move and choose, Home / End
+ *  choose the ends (`useRadioGroup`, shared with ConfidenceControl). Its tab
+ *  stop carries `data-answer-start`, so a new question focuses it. */
 function OptionList({
   options,
   selected,
   onSelect,
   testIdPrefix,
+  labelledBy,
   disabled,
 }: {
   options: { letter: string; text: string }[];
   selected: string;
   onSelect: (letter: string) => void;
   testIdPrefix: string;
+  labelledBy: string;
   disabled?: boolean;
 }) {
-  // Served options in stored order; the UI never marks one correct (A22).
+  const letters = useMemo(() => options.map((o) => o.letter), [options]);
+  const group = useRadioGroup(letters, selected || null, onSelect);
   return (
-    <div role="radiogroup" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {options.map((o) => {
+    <div
+      role="radiogroup"
+      aria-labelledby={labelledBy}
+      data-testid={`${testIdPrefix}s`}
+      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+    >
+      {options.map((o, i) => {
         const on = selected === o.letter;
+        const radio = group.optionProps(i);
         return (
           <button
             key={o.letter}
+            {...radio}
             type="button"
-            role="radio"
-            aria-checked={on}
+            // "B. It writes …": the letter and the text read as one name
+            aria-label={`${o.letter}. ${o.text}`}
+            data-answer-start={radio.tabIndex === 0 ? "" : undefined}
             data-testid={`${testIdPrefix}-${o.letter}`}
             disabled={disabled}
             onClick={() => onSelect(o.letter)}
@@ -2065,11 +2171,45 @@ function ProbePanel({
 }) {
   const mc = item?.format === "mc_reason";
   const canSubmit = !!item && !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const ids = useId();
+  const promptId = `${ids}-prompt`;
+  const headingId = `${ids}-question`;
+  const cardRef = useRef<HTMLElement>(null);
+  const referenceRef = useRef<HTMLDivElement>(null);
+  // spec §13 A135: a new question takes focus — its answer box, described by
+  // the question (or the options' tab stop, named by it) — so a screen reader
+  // reads the question and the student can answer at once.
+  const questionHash = item?.question_hash;
+  useEffect(() => {
+    if (!questionHash || modalOpen()) return;
+    focusAnswerStart(cardRef.current);
+  }, [questionHash]);
+  // ...and the answer shown after a miss takes focus, so it is read out.
+  useEffect(() => {
+    if (reference === null || modalOpen()) return;
+    referenceRef.current?.focus();
+  }, [reference]);
+  const referenceBlock = (
+    <div
+      ref={referenceRef}
+      tabIndex={-1}
+      data-testid="loop-probe-reference"
+      style={{
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        fontSize: 14,
+        ...(item ? { padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--bg-soft)" } : null),
+      }}
+    >
+      <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
+      {reference}
+    </div>
+  );
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
       <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
-          <div className="h-serif" style={{ fontSize: 22 }}>Quick check-in</div>
+          <h2 className="h-serif" style={{ margin: 0, fontSize: 22 }}>Quick check-in</h2>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
             A few questions so the tutor knows where to start. Answer what you can — &ldquo;I don&apos;t know&rdquo; is a
             fine answer.
@@ -2095,10 +2235,7 @@ function ProbePanel({
         {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
         {!item && reference !== null && (
           <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
-            <div data-testid="loop-probe-reference" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 14 }}>
-              <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
-              {reference}
-            </div>
+            {referenceBlock}
             <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy} onClick={onNext}>
               Next
             </button>
@@ -2113,15 +2250,17 @@ function ProbePanel({
           </div>
         )}
         {item && (
-          <div
+          <section
+            ref={cardRef}
+            aria-labelledby={headingId}
             data-testid="loop-probe-item"
             data-question-hash={item.question_hash}
             data-difficulty={item.difficulty}
             className="card"
             style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}
           >
-            <div className="label-micro">Question {count + (reference === null ? 1 : 0)}</div>
-            <div style={{ fontSize: 16, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+            <h3 id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>Question {count + (reference === null ? 1 : 0)}</h3>
+            <p id={promptId} style={{ margin: 0, fontSize: 16, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</p>
             {reference === null ? (
               <>
                 {mc ? (
@@ -2131,6 +2270,7 @@ function ProbePanel({
                       selected={draft.option}
                       onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
                       testIdPrefix="loop-probe-option"
+                      labelledBy={promptId}
                       disabled={busy}
                     />
                     <input
@@ -2146,7 +2286,9 @@ function ProbePanel({
                 ) : (
                   <textarea
                     data-testid="loop-probe-input"
+                    data-answer-start=""
                     aria-label="Check-in answer"
+                    aria-describedby={promptId}
                     style={FIELD_STYLE}
                     rows={3}
                     placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
@@ -2175,19 +2317,7 @@ function ProbePanel({
               </>
             ) : (
               <>
-                <div
-                  data-testid="loop-probe-reference"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: "var(--r-md)",
-                    background: "var(--bg-soft)",
-                    fontSize: 14,
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
-                  {reference}
-                </div>
+                {referenceBlock}
                 <button
                   data-testid="loop-probe-next"
                   className="btn btn--primary"
@@ -2199,7 +2329,7 @@ function ProbePanel({
                 </button>
               </>
             )}
-          </div>
+          </section>
         )}
         {note && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{note}</div>}
       </div>
@@ -2218,6 +2348,12 @@ function PlanPanel({
   onApprove: () => void;
   onRetry: () => void;
 }) {
+  // spec §13 A135: the plan replaces the check-in (or its retry), so its heading
+  // takes focus — read out, and the place Tab continues from.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!modalOpen()) headingRef.current?.focus();
+  }, []);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
       <div
@@ -2225,7 +2361,9 @@ function PlanPanel({
         style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 14 }}
       >
         <div>
-          <div className="h-serif" style={{ fontSize: 22 }}>Today&apos;s plan</div>
+          <h2 ref={headingRef} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>
+            Today&apos;s plan
+          </h2>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
             Built from your check-in: anything due for review first, then what&apos;s next to learn.
           </p>
@@ -2244,7 +2382,7 @@ function PlanPanel({
           <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Nothing to plan right now — ask the tutor anything.</div>
         )}
         {plan && plan.length > 0 && (
-          <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <ol aria-label="Concepts in today's plan" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {plan.map((c, i) => {
               const kind = KIND_LABEL[c.kind];
               return (
@@ -2308,8 +2446,26 @@ function CheckCard({
 }) {
   const mc = item.format === "mc_reason";
   const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const ids = useId();
+  const headingId = `${ids}-heading`;
+  const promptId = `${ids}-prompt`;
+  const cardRef = useRef<HTMLElement>(null);
+  // spec §13 A135: a posed check takes focus — its answer box, described by the
+  // question (or the options' tab stop, named by it): a screen reader is told a
+  // question appeared, and the student can answer at once. The pose and the
+  // hint also stay in the conversation log (visually hidden while the card
+  // shows them), so they are announced as they arrive.
+  useEffect(() => {
+    if (modalOpen()) return;
+    focusAnswerStart(cardRef.current);
+  }, [item.question_hash]);
+  // While a hint loads the Hint button keeps focus (aria-disabled, not
+  // disabled: a disabled control drops focus to the page).
+  const hintUnavailable = hintBusy || busy;
   return (
-    <div
+    <section
+      ref={cardRef}
+      aria-labelledby={headingId}
       className="card"
       style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderColor: "var(--accent-border)" }}
     >
@@ -2319,8 +2475,8 @@ function CheckCard({
         data-format={item.format}
         style={{ display: "flex", flexDirection: "column", gap: 4 }}
       >
-        <div className="label-micro">Check your understanding</div>
-        <div style={{ fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+        <h2 id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>Check your understanding</h2>
+        <p id={promptId} style={{ margin: 0, fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</p>
       </div>
       {mc ? (
         <>
@@ -2329,6 +2485,7 @@ function CheckCard({
             selected={draft.option}
             onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
             testIdPrefix="loop-attempt-option"
+            labelledBy={promptId}
             disabled={busy}
           />
           <input
@@ -2344,7 +2501,9 @@ function CheckCard({
       ) : (
         <textarea
           data-testid="loop-attempt-input"
+          data-answer-start=""
           aria-label="Your answer"
+          aria-describedby={promptId}
           style={FIELD_STYLE}
           rows={2}
           placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer — this is what gets checked"}
@@ -2370,20 +2529,31 @@ function CheckCard({
           I don&apos;t know
         </button>
         <div style={{ flex: 1 }} />
-        <button data-testid="loop-hint-button" className="btn btn--sm" disabled={hintBusy || busy} onClick={onHint}>
+        <button
+          data-testid="loop-hint-button"
+          className="btn btn--sm"
+          aria-disabled={hintUnavailable}
+          style={hintUnavailable ? { cursor: "not-allowed" } : undefined}
+          onClick={() => {
+            if (!hintUnavailable) onHint();
+          }}
+        >
           {hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
         </button>
       </div>
-      {hint && "denied" in hint && (
-        <div
-          data-testid="loop-hint-denied"
-          data-reason={hint.denied}
-          role="status"
-          style={{ fontSize: 13, color: "var(--text-muted)" }}
-        >
-          {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
-        </div>
-      )}
+      {/* Always in the DOM, so a refusal is announced when it appears. */}
+      <div aria-live="polite">
+        {hint && "denied" in hint && (
+          <div
+            data-testid="loop-hint-denied"
+            data-reason={hint.denied}
+            role="status"
+            style={{ fontSize: 13, color: "var(--text-muted)" }}
+          >
+            {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
+          </div>
+        )}
+      </div>
       {hint && "reply" in hint && (
         <div
           data-testid="loop-hint-reply"
@@ -2399,7 +2569,7 @@ function CheckCard({
         </div>
       )}
       {onReport && <ReportQuestion testIdPrefix="loop-check-report" disabled={busy} onReport={onReport} />}
-    </div>
+    </section>
   );
 }
 
@@ -2438,11 +2608,22 @@ function ClosePanel({
   names: Map<string, string>;
   courseId: string | null;
 }) {
+  // spec §13 A135: the wrap-up replaces the lesson (and the End session button
+  // that asked for it), so once it is there its heading — or the note that the
+  // session was closed elsewhere — takes focus and is read out.
+  const focusTarget = useRef<HTMLElement | null>(null);
+  const setFocusTarget = (el: HTMLElement | null) => {
+    focusTarget.current = el;
+  };
+  const ready = close !== null || note !== null;
+  useEffect(() => {
+    if (ready && !modalOpen()) focusTarget.current?.focus();
+  }, [ready]);
   if (!close) {
     if (!note) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
     return (
       <CenteredCard testId="loop-close-done">
-        <p style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
+        <p ref={setFocusTarget} tabIndex={-1} style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
         <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
           Review what&apos;s due
         </Link>
@@ -2456,7 +2637,7 @@ function ClosePanel({
         className="card"
         style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 16 }}
       >
-        <div className="h-serif" style={{ fontSize: 22 }}>Session wrap-up</div>
+        <h2 ref={setFocusTarget} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>Session wrap-up</h2>
         <p data-testid="loop-close-summary" style={{ margin: 0, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
           {rec.summary}
         </p>

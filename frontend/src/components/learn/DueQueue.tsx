@@ -19,6 +19,14 @@
 // "How sure are you?" (spec §13 A127): an optional Guessing / Fairly sure / Sure
 // on a check (never a flashcard — its forgot / hard / easy rating already says how
 // it went). Sent with the answer only when chosen; it never holds up "Check".
+//
+// Keyboard and screen reader (spec §13 A135): every action whose button goes
+// away moves focus to what it produced — Check / a rating to the result line,
+// "Show answer" to the card's back, Next (or a report) to the next item's first
+// control or the line saying none is due — so a screen reader reads it and the
+// keyboard continues from there. The panel's first load moves nothing: Study
+// owns focus when the page opens. The answer box is described by the question,
+// the options are a radio group named by it.
 import React from "react";
 import {
   answerReview,
@@ -92,6 +100,15 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // an answer to an item the panel has since moved past) is dropped, never attached
   // to the newer item.
   const seq = React.useRef(0);
+  // spec §13 A135: where focus goes once the action in flight settles (see header).
+  const focusNext = React.useRef<"result" | "back" | "item" | null>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  const resultRef = React.useRef<HTMLDivElement>(null);
+  const backRef = React.useRef<HTMLDivElement>(null);
+  const flipRef = React.useRef<HTMLButtonElement>(null);
+  const statusRef = React.useRef<HTMLDivElement>(null);
+  const errorRef = React.useRef<HTMLDivElement>(null);
+  const promptId = React.useId();
 
   // The summary only feeds the banner: re-read with EVERY load (a mount-time
   // read went stale as the student reviewed), a failure keeps the last one.
@@ -143,8 +160,29 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // moves past it (lib/feedbackPacing.ts).
   useFeedbackHold(item !== null);
 
+  // spec §13 A135: apply `focusNext` once nothing is in flight and its target is
+  // on screen. A dialog (the crisis-support card) keeps focus.
+  React.useEffect(() => {
+    const want = focusNext.current;
+    if (!want || busy) return;
+    if (document.querySelector('[aria-modal="true"]')) {
+      focusNext.current = null;
+      return;
+    }
+    // A failed call shows its error instead: that line takes focus.
+    const target =
+      errorRef.current ?? (
+        want === "result" ? resultRef.current
+          : want === "back" ? backRef.current
+            : panelRef.current?.querySelector<HTMLElement>("[data-answer-start]") ?? flipRef.current ?? statusRef.current);
+    if (!target) return;
+    focusNext.current = null;
+    target.focus();
+  });
+
   const submit = async (extra: { rating?: number } = {}) => {
     if (!next || !item || busy) return;
+    focusNext.current = "result";
     const mine = seq.current;
     setBusy(true);
     setError(null);
@@ -225,6 +263,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       return false;
     }
     if (mine !== seq.current) return true;
+    focusNext.current = "item";
     await load();
     setReported(true);
     return true;
@@ -242,6 +281,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   return (
     <div
+      ref={panelRef}
       data-testid="review-due-panel"
       className="card"
       style={{ margin: "14px 32px 0", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
@@ -268,20 +308,23 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         <BudgetPausedBanner testId="review-budget-paused" resetAt={null} message={pausedConceptsMessage(pausedConcepts)} />
       ) : null}
 
-      {error && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
-      {reported && (
-        <div data-testid="review-reported" role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          Thanks — that question is reported and won&apos;t be shown to you again.
-        </div>
-      )}
+      {error && <div ref={errorRef} tabIndex={-1} role="alert" style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
+      {/* Always in the DOM, so the confirmation is announced when it appears. */}
+      <div aria-live="polite">
+        {reported && (
+          <div data-testid="review-reported" role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+            Thanks — that question is reported and won&apos;t be shown to you again.
+          </div>
+        )}
+      </div>
 
       {next && !item && next.due_total > 0 && (
-        <div data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+        <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
           That&apos;s today&apos;s review time. {next.due_total} more due — they&apos;ll wait for tomorrow.
         </div>
       )}
       {next && !item && next.due_total === 0 && (
-        <div data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+        <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
           All caught up — nothing is due right now.
         </div>
       )}
@@ -293,14 +336,15 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               {item.concept_name && (
                 <span className="chip" style={{ alignSelf: "flex-start" }}>{item.concept_name}</span>
               )}
-              <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+              <div id={promptId} style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
               {item.format === "mc_reason" ? (
                 <>
-                  <div role="radiogroup" aria-label="Review answer options" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {(item.options ?? []).map((o) => (
+                  <div role="radiogroup" aria-labelledby={promptId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {(item.options ?? []).map((o, i) => (
                       <label key={o.letter} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
                         <input
                           data-testid={`review-option-${o.letter}`}
+                          data-answer-start={(choice ? choice === o.letter : i === 0) ? "" : undefined}
                           type="radio"
                           name={`review-${item.id}`}
                           value={o.letter}
@@ -325,7 +369,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               ) : (
                 <textarea
                   data-testid="review-answer-input"
+                  data-answer-start=""
                   aria-label="Review answer"
+                  aria-describedby={promptId}
                   placeholder="Your answer"
                   value={answer}
                   disabled={answered}
@@ -362,7 +408,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.front}</div>
               {flipped ? (
                 <>
-                  <div style={{ fontSize: 15, whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{item.back}</div>
+                  <div ref={backRef} tabIndex={-1} style={{ fontSize: 15, whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{item.back}</div>
                   {!answered && (
                     <div style={{ display: "flex", gap: 8 }}>
                       {RATINGS.map((r) => (
@@ -381,10 +427,14 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                 </>
               ) : (
                 <button
+                  ref={flipRef}
                   data-testid="review-flip"
                   className="btn btn--sm"
                   style={{ alignSelf: "flex-start" }}
-                  onClick={() => setFlipped(true)}
+                  onClick={() => {
+                    focusNext.current = "back";
+                    setFlipped(true);
+                  }}
                 >
                   Show answer
                 </button>
@@ -393,7 +443,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
           )}
 
           {result && (
-            <div data-testid="review-hint" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
+            <div ref={resultRef} tabIndex={-1} data-testid="review-hint" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
               {result.refused
                 ? "Answer in your own words — that read as instructions to the grader."
                 : result.unavailable
@@ -408,7 +458,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
           )}
 
           {alreadyGraded && !result && (
-            <div data-testid="review-graded" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+            <div ref={resultRef} tabIndex={-1} data-testid="review-graded" style={{ fontSize: 14, color: "var(--text-muted)" }}>
               Your answer is already recorded.
             </div>
           )}
@@ -419,7 +469,10 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               className="btn btn--sm"
               style={{ alignSelf: "flex-start" }}
               disabled={busy}
-              onClick={() => load()}
+              onClick={() => {
+                focusNext.current = "item";
+                void load();
+              }}
             >
               Next
             </button>

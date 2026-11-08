@@ -8,15 +8,17 @@
 // maps the label onto the §3.3 misconception rule's scale and keeps it with the
 // evidence for the admin's calibration report.
 //
-// Accessibility: a labelled radio group (the WAI-ARIA radio pattern). One tab
-// stop — the chosen level, or the first while none is — the arrow keys move
-// AND choose (wrapping; Home / End for the ends), Space / Enter chooses the
+// Accessibility: a labelled radio group (the WAI-ARIA radio pattern, shared
+// with the multiple-choice options through `useRadioGroup`). One tab stop —
+// the chosen level, or the first while none is — the arrow keys move AND
+// choose (wrapping; Home / End for the ends), Space / Enter chooses the
 // focused level, and every level shows a focus ring (`.option:focus-visible`).
 // "Clear" takes a choice back, so skipping stays possible after a click. Every
 // testid is `${testIdPrefix}…`, written at the call site.
 import React from "react";
 import type { StudentConfidence } from "@/lib/api";
 import styles from "./ConfidenceControl.module.css";
+import { useRadioGroup } from "./useRadioGroup";
 
 /** The three levels, in scale order (backend params.STUDENT_CONFIDENCE_LEVELS). */
 export const CONFIDENCE_LEVELS: readonly { level: StudentConfidence; label: string }[] = [
@@ -25,7 +27,7 @@ export const CONFIDENCE_LEVELS: readonly { level: StudentConfidence; label: stri
   { level: "sure", label: "Sure" },
 ];
 
-const LAST = CONFIDENCE_LEVELS.length - 1;
+const LEVELS = CONFIDENCE_LEVELS.map((o) => o.level);
 
 export function ConfidenceControl({
   testIdPrefix,
@@ -40,39 +42,7 @@ export function ConfidenceControl({
   disabled?: boolean;
 }) {
   const labelId = React.useId();
-  const options = React.useRef<(HTMLButtonElement | null)[]>([]);
-  const chosen = CONFIDENCE_LEVELS.findIndex((o) => o.level === value);
-  const tabStop = chosen >= 0 ? chosen : 0;
-
-  const choose = (index: number) => {
-    const i = index < 0 ? LAST : index > LAST ? 0 : index;
-    onChange(CONFIDENCE_LEVELS[i].level);
-    options.current[i]?.focus();
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let target: number;
-    switch (event.key) {
-      case "ArrowRight":
-      case "ArrowDown":
-        target = index + 1;
-        break;
-      case "ArrowLeft":
-      case "ArrowUp":
-        target = index - 1;
-        break;
-      case "Home":
-        target = 0;
-        break;
-      case "End":
-        target = LAST;
-        break;
-      default:
-        return; // Tab, Space and Enter keep their native behaviour
-    }
-    event.preventDefault();
-    choose(target);
-  };
+  const group = useRadioGroup(LEVELS, value, onChange);
 
   return (
     <div className={styles.row}>
@@ -83,18 +53,12 @@ export function ConfidenceControl({
         {CONFIDENCE_LEVELS.map((o, i) => (
           <button
             key={o.level}
-            ref={(el) => {
-              options.current[i] = el;
-            }}
+            {...group.optionProps(i)}
             type="button"
-            role="radio"
-            aria-checked={value === o.level}
-            tabIndex={i === tabStop ? 0 : -1}
             data-testid={`${testIdPrefix}-${o.level}`}
             className={styles.option}
             disabled={disabled}
             onClick={() => onChange(o.level)}
-            onKeyDown={(e) => onKeyDown(e, i)}
           >
             {o.label}
           </button>
@@ -108,7 +72,7 @@ export function ConfidenceControl({
           disabled={disabled}
           onClick={() => {
             onChange(null);
-            options.current[0]?.focus(); // the button goes: keep the keyboard in the group
+            group.focusFirst(); // the button goes: keep the keyboard in the group
           }}
         >
           Clear
