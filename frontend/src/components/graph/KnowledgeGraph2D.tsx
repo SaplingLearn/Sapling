@@ -104,13 +104,7 @@ type Props = {
 // together.
 
 type DragState =
-  | {
-      kind: "node";
-      nodeId: string;
-      pointerId: number;
-      /** Legible: the whole course moves with the pointer, from this point. */
-      group?: { courseId: string; lastX: number; lastY: number };
-    }
+  | { kind: "node"; nodeId: string; pointerId: number }
   | { kind: "pan"; pointerId: number; startX: number; startY: number; originTx: number; originTy: number }
   | null;
 
@@ -313,6 +307,8 @@ function KnowledgeGraph2DImpl({
   const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map() });
   // Course roots the student dragged keep their spot across re-plans.
   const movedRootsRef = React.useRef(new Set<string>());
+  // Legible: where each free course root settles back to.
+  const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
@@ -347,17 +343,24 @@ function KnowledgeGraph2DImpl({
     const nextNodes: SimNode[] = nodes.map((n) => {
       const prev = byId.get(n.id);
       const center = plan.centers.get(n.id);
+      if (center && !movedRootsRef.current.has(n.id)) rootHomeRef.current.set(n.id, center);
       if (prev) {
         // Keep position + velocity; refresh mutable data fields (mastery, color).
         Object.assign(prev, n);
-        if (center && !movedRootsRef.current.has(n.id)) {
+        if (center && legibleRef.current) {
+          // Legible: a course root is free, held near its home by a spring,
+          // so dragging its concepts can pull it along.
+          prev.fx = null;
+          prev.fy = null;
+        } else if (center && !movedRootsRef.current.has(n.id)) {
           prev.fx = center.x;
           prev.fy = center.y;
         }
         return prev;
       }
       if (center) {
-        return { ...n, x: center.x, y: center.y, fx: center.x, fy: center.y, vx: 0, vy: 0, index: undefined } as SimNode;
+        const pin = legibleRef.current ? {} : { fx: center.x, fy: center.y };
+        return { ...n, x: center.x, y: center.y, ...pin, vx: 0, vy: 0, index: undefined } as SimNode;
       }
       const o = plan.orbit.get(n.id);
       const c = (o?.rootId && plan.centers.get(o.rootId)) || { x: width / 2, y: height / 2 };
@@ -423,7 +426,30 @@ function KnowledgeGraph2DImpl({
               : 20 + (d.mastery_score || 0) * 6,
         ),
       )
-      .force("orbit", forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55));
+      .force(
+        "orbit",
+        forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55, 0.12, {
+          // Legible: concepts tug their course root (elastic dragging).
+          reaction: legibleRef.current ? 0.35 : 0,
+          pushRoot: (rootId, dvx, dvy) => {
+            const root = nodeById.get(rootId);
+            if (!root || root.fx != null) return;
+            root.vx = (root.vx ?? 0) + dvx;
+            root.vy = (root.vy ?? 0) + dvy;
+          },
+        }),
+      )
+      .force("home", (alpha: number) => {
+        // Legible: each free course root drifts back toward its home (where
+        // it was planned, or where the student last left it).
+        if (!legibleRef.current) return;
+        for (const [id, home] of rootHomeRef.current) {
+          const root = nodeById.get(id);
+          if (!root || root.fx != null || root.x == null || root.y == null) continue;
+          root.vx = (root.vx ?? 0) + (home.x - root.x) * 0.1 * alpha;
+          root.vy = (root.vy ?? 0) + (home.y - root.y) * 0.1 * alpha;
+        }
+      });
 
     // Test mode rides the reduced-motion path: the simulation settles
     // synchronously (fixed tick count) instead of animating on rAF, so
@@ -480,7 +506,12 @@ function KnowledgeGraph2DImpl({
   React.useEffect(() => {
     if (zoomSeq == null || !zoomCourse) return;
     const rootId = planned.rootOfCourse.get(zoomCourse);
-    const c = rootId ? planned.plan.centers.get(rootId) : undefined;
+    // Where the course is now (it may have been dragged), else where planned.
+    const live = rootId ? simNodesRef.current.find((n) => n.id === rootId) : undefined;
+    const c =
+      live && live.x != null && live.y != null
+        ? { x: live.x, y: live.y }
+        : rootId ? planned.plan.centers.get(rootId) : undefined;
     if (!rootId || !c) return;
     const reach = (planned.outer.get(rootId) ?? 60) + 50;
     // Fit the course, but never so far out that its labels are still faded.
@@ -641,20 +672,6 @@ function KnowledgeGraph2DImpl({
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     movedRef.current = false;
-    if (legible) {
-      // Legible: dragging any node of a course moves the whole course, and it
-      // stays where it is dropped; nothing is pinned, so nothing snaps back.
-      const at = clientToSvg(e.clientX, e.clientY);
-      dragRef.current = {
-        kind: "node",
-        nodeId: n.id,
-        pointerId: e.pointerId,
-        group: { courseId: n.course_id, lastX: at.x, lastY: at.y },
-      };
-      simRef.current?.alphaTarget(0.08).restart();
-      forceRerender();
-      return;
-    }
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     simRef.current?.alphaTarget(0.3).restart();
     n.fx = n.x;
@@ -693,25 +710,7 @@ function KnowledgeGraph2DImpl({
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
-    if (drag.kind === "node" && drag.group) {
-      const { x, y } = clientToSvg(e.clientX, e.clientY);
-      const dx = x - drag.group.lastX;
-      const dy = y - drag.group.lastY;
-      drag.group.lastX = x;
-      drag.group.lastY = y;
-      for (const m of simNodesRef.current) {
-        if (m.course_id !== drag.group.courseId || m.x == null || m.y == null) continue;
-        m.x += dx;
-        m.y += dy;
-        if (m.fx != null && m.fy != null) {
-          // The course root: re-pin where it now is, and keep it there.
-          m.fx += dx;
-          m.fy += dy;
-          movedRootsRef.current.add(m.id);
-        }
-      }
-      applyPositions();
-    } else if (drag.kind === "node") {
+    if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
       const { x, y } = clientToSvg(e.clientX, e.clientY);
@@ -739,7 +738,35 @@ function KnowledgeGraph2DImpl({
     try {
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);
     } catch {}
-    if (drag.kind === "node" && drag.group) {
+    if (drag.kind === "node" && legible) {
+      // Legible: nothing snaps back. The course's home becomes wherever its
+      // root has been pulled to, and each of its concepts keeps the angle it
+      // now sits at around the root.
+      const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
+      if (n) {
+        // Drop it exactly where the pointer let go, not where the last tick
+        // had got to.
+        if (n.fx != null && n.fy != null) {
+          n.x = n.fx;
+          n.y = n.fy;
+        }
+        n.fx = null;
+        n.fy = null;
+        if (movedRef.current) {
+          const root = simNodesRef.current.find((sn) => sn.is_subject_root && sn.course_id === n.course_id);
+          if (root && root.x != null && root.y != null) {
+            rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
+            movedRootsRef.current.add(root.id);
+            for (const m of simNodesRef.current) {
+              const o = planRef.current.orbit.get(m.id);
+              if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
+              o.angle = Math.atan2(m.y - root.y, m.x - root.x);
+              // The dropped concept also keeps its new distance from the course.
+              if (m.id === n.id) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
+            }
+          }
+        }
+      }
       simRef.current?.alphaTarget(0);
     } else if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);

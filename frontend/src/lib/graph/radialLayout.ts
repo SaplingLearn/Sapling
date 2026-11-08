@@ -220,6 +220,15 @@ export function forceOrbit<N extends Positioned>(
   centerOf: (rootId: string | null) => { x: number; y: number },
   strength = 0.6,
   anglePull = 0.12,
+  {
+    pushRoot,
+    reaction = 0,
+  }: {
+    /** Apply the opposite tug to the course root (velocity deltas). */
+    pushRoot?: (rootId: string, dvx: number, dvy: number) => void;
+    /** Share of each concept's pull handed back to its root (0 = root fixed). */
+    reaction?: number;
+  } = {},
 ) {
   let nodes: N[] = [];
   const force = (alpha: number) => {
@@ -232,14 +241,17 @@ export function forceOrbit<N extends Positioned>(
       const dy = n.y - c.y || 1e-6;
       const len = Math.hypot(dx, dy);
       const k = ((o.radius - len) * strength * alpha) / len;
-      n.vx = (n.vx ?? 0) + dx * k;
-      n.vy = (n.vy ?? 0) + dy * k;
       // A gentler pull toward the planned angle, so link forces can't drag a
       // whole course round to one side of its centre.
       const tx = c.x + Math.cos(o.angle) * o.radius;
       const ty = c.y + Math.sin(o.angle) * o.radius;
-      n.vx += (tx - n.x) * anglePull * alpha;
-      n.vy += (ty - n.y) * anglePull * alpha;
+      const ax = dx * k + (tx - n.x) * anglePull * alpha;
+      const ay = dy * k + (ty - n.y) * anglePull * alpha;
+      n.vx = (n.vx ?? 0) + ax;
+      n.vy = (n.vy ?? 0) + ay;
+      // Equal and opposite, in part: a concept pulled far from its course
+      // tugs the course after it, and the course carries its other concepts.
+      if (reaction && pushRoot && o.rootId) pushRoot(o.rootId, -ax * reaction, -ay * reaction);
     }
   };
   force.initialize = (ns: N[]) => {
