@@ -1,0 +1,14 @@
+/* Hover states from Sapling Home v2 (`style-hover` in the design source). */
+.link { color: #445D22; text-decoration: none; }
+.link:hover { color: #597536; }
+.linkBlue { color: #2E5F96; text-decoration: none; }
+.linkBlue:hover { color: #4A7DB5; }
+.pillExam { background: #F6E3E1; color: #8E2F29; }
+.pillExam:hover { background: #F0D4D1; color: #8E2F29; }
+.pillDeadline { background: #FBF1DC; color: #8A6420; }
+.pillDeadline:hover { background: #F7E6BF; color: #8A6420; }
+.noteLink { color: #1A1814; text-decoration: none; }
+.noteLink:hover .noteTitle { color: #445D22; }
+.option:hover { background: #F2F6EE !important; }
+.primary:hover { background: #597536 !important; }
+.focusRing:focus-visible { outline: 2px solid #597536; outline-offset: 2px; border-radius: 6px; }
