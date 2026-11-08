@@ -19,9 +19,11 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A137, but **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A142. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
-repository cites those numbers). There are 127 rows.
+repository cites those numbers; since A142 the spec's table says so where
+they would be), and A138–A141 are wave 4's (below). There are 128 rows on
+this page; with wave 4, 132.
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
 
@@ -64,7 +66,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A1 | BKT | "I don't know" is a flag on the item's channel, not a channel of its own | `backend/learning/bkt.py::update` |
 | A7 | FSRS | FSRS rating-map additions; exam retention beats large-set retention; never-reviewed recall is 1.0 | `backend/learning/fsrs.py::rating_for` |
 | A10 | quiz | Quiz evidence is the `mc` channel: a quiz answer carries no reason | `backend/routes/quiz.py` |
-| A22 | grading | Deterministic pre-checks (option letter, numeric answer) never give a sole "correct"; a second-opinion slot | `backend/agents/tools/check.py` |
+| A22 | grading | Code checks (option letter, numeric answer), run after the grader, can only veto a "correct" (A142); a second-opinion slot | `backend/agents/tools/check.py` |
 | A28 | FSRS | FSRS-6 reference guards (same-day reviews, stability floors) ratified | `backend/learning/fsrs.py::next_state` |
 | A30 | BKT | Belief is capped at 0.999 so contrary evidence can always lower it | `backend/learning/bkt.py::update` |
 | A36 | evidence write | Journal rows carry their apply order (`evidence_seq`) | `backend/db/migrations/20260927182054_learning_mastery_event_seq.sql` |
@@ -194,7 +196,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A111 | providers | The loop slots are Claude-ready; their defaults stay on Gemini until a live Claude eval passes | `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` |
 | A137 | cost | Cost readiness for the Claude move, and the loop's cost per learning gain | `backend/learning/cost_per_gain.py::cost_per_gain` |
 
-### Operations and process (20)
+### Operations and process (21)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -218,6 +220,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A128 | degraded mode | Degraded mode is honest: failed retrieval, embeddings breaker, unsourced items, "preparing", slot guard | `backend/agents/_providers.py::check_slot_guards` |
 | A135 | a11y | The student UI is accessible, and an axe lane keeps it so | `frontend/e2e/a11y.spec.ts` |
 | A136 | schema | Every float the backend reads through PostgREST is exact | `backend/db/migrations/20261108162223_learning_exact_floats.sql` |
+| A142 | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) | `backend/db/migrations/20261108193927_learning_report_course_key.sql` |
 
 ## In A-number order
 
@@ -244,7 +247,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A19 | Cost and model routing | brief | Stable prompt prefix: the learner brief is built once per session and stored encrypted |
 | A20 | Cost and model routing | budget | Per-student AI budget: caps, a degradation ladder and a rate limit |
 | A21 | Cost and model routing | usage | `llm_usage` records cached and thinking tokens; pricing knows the cached-input rate |
-| A22 | Evidence and the learner model | grading | Deterministic pre-checks (option letter, numeric answer) never give a sole "correct"; a second-opinion slot |
+| A22 | Evidence and the learner model | grading | Code checks (option letter, numeric answer), run after the grader, can only veto a "correct" (A142); a second-opinion slot |
 | A23 | Item quality | economy | Item economy, peer-material sourcing, the seen and revealed exclusion sets, and withdrawal |
 | A24 | Cost and model routing | decision seam | A typed decision seam now, the Jev backend later (the loop's seam was split off by ADR 0032) |
 | A25 | Cost and model routing | close | No close model call for a session with no evidence or at the hard cap: a deterministic close |
@@ -350,83 +353,38 @@ files, which the row lists. A dash means the row has no code of its own.
 | A135 | Operations and process | a11y | The student UI is accessible, and an axe lane keeps it so |
 | A136 | Operations and process | schema | Every float the backend reads through PostgREST is exact |
 | A137 | Cost and model routing | cost | Cost readiness for the Claude move, and the loop's cost per learning gain |
+| A142 | Operations and process | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) |
 
 ## Where the spec and the code disagree
 
-Checked against the code at `f9eca612`. The code is the truth; each item
-names the spec text and the code. Schema-level gaps between §4/§5 and the
-migrations are listed in [data-model.md](data-model.md#where-the-specs-4-is-out-of-date).
+The list this guide first published (fourteen items, checked at `f9eca612`)
+was settled by §13 A142: each was fixed in the code with tests, corrected in
+the spec or the docs, or recorded as intended — read the row for each
+resolution and the test that proves it. The spec's earlier sections were
+corrected in place where they were simply wrong; amendment rows were not
+rewritten, and A142 says which row each correction supersedes. Schema notes
+are in [data-model.md](data-model.md#the-specs-4-and-the-migrations).
 
-1. **The loop's decision seam was renamed.** §2, §3.6 and A24 name
-   `backend/services/decisions.py`, `backend/agents/decision.py` and the task `decision`. The
-   loop uses `backend/services/learning_decisions.py`,
-   `backend/agents/learning_decision.py` and the task `learning_decision`
-   ([ADR 0032](../decisions/0032-separate-learning-decisions-from-tutor-observation.md));
-   `decision` is now main's observe-only router. Consequently §3.5's
-   `STUDENT_DAILY_GRADES` counts `decision` runs, while
-   `backend/services/ai_budget.py::GRADE_TASKS` counts `learning_decision` and
-   excludes `decision`; and §8 invariant 25 names the generic seam,
-   while its test checks the learning seam.
-2. **Invariant 1 has a sanctioned file, not a sanctioned function.** §8 says
-   nothing writes the graph tables outside `apply_graph_update`; the scan
-   exempts all of `backend/services/graph_service.py`, which also holds the
-   topology writers `delete_node` and `update_node_color`. §8 says
-   `learner_state.write_state` is called only from the writer; it has no
-   caller at all (the commit RPC writes state).
-3. **§5's evidence path.** §5 says evidence is persisted only through
-   `flush_pending`; the quiz (`backend/routes/quiz.py`) and the review queue
-   (`backend/learning/review.py::grade_review`) call `apply_graph_update`
-   directly with the same payload. §5 says a payload without evidence takes
-   the legacy `updated_nodes` path byte-identically; `apply_graph_update` now
-   raises on `updated_nodes`. §5's `grader_backend` values lack `claude` and
-   `claude_second` (A116 added them).
-4. **A22's "pre-checks" run after the model.** In
-   `backend/agents/tools/check.py::grade_answer` the option letter is
-   compared after the reason grade, and the numeric gate runs after the
-   grader; both can only veto a "correct", as A22 intends.
-5. **The probe does not stop on posterior stability.** §3.4's
-   `PROBE_STOP_DELTA` ("stop when the last two posteriors move less than
-   this") is not used to stop the probe: `backend/learning/probe.py::probe_done`
-   stops on the session cap, the novice floor, observed boundaries or an
-   exhausted bank (ADR 0033: stability does not establish a boundary). No §13
-   row records the change.
-6. **The novice exit.** §3.3 says three misses at difficulty 1 or repeated
-   "I don't know" means "exit probe; novice step format on the lowest
-   prerequisite". `backend/learning/probe.py::novice_floor` stops the probe;
-   we found no code that routes the plan to the lowest prerequisite
-   (a negative finding: not verified beyond a search).
-7. **Exam mode is never set.** §3.3's first ceiling row (exam mode → H1) and
-   A4 are implemented in `backend/learning/policy.py::ceiling_with_reason`,
-   but no production code sets a step's `exam_mode`, so the row cannot fire.
-8. **Routes the spec does not list.** §9's route table predates `POST /goal`
-   (ADR 0033), `POST /report` (A113), `POST /posttest/shown` and
-   `GET /posttest/due` (A126). §10's single post-test endpoint is two handlers in the code,
-   `backend/routes/learn_loop.py::posttest_start` and `posttest_answer`.
-   Goals (`backend/learning/goals.py`, an encrypted goal text inside
-   `loop_state`) have no §13 row; ADRs 0033–0035 describe them.
-9. **`strip_leak` is not on the served path.** §2 and A17 describe a leaking
-   payload falling back "with `strip_leak`"; no production code calls
-   `backend/learning/leak.py::strip_leak`. A served turn is cut before a
-   leaking sentence on the stream and replaced by the ladder's fallback line
-   if its final text leaks (`backend/routes/learn_loop.py::served_model_text`).
-10. **Ending a session while a grade is in flight.** A60 (and the first
-    sentence of `backend/routes/learn_loop.py::end_session`'s docstring) say
-    the session ends without a close, with a warning. The code re-raises the
-    close's 409, so the legacy end-session route does not set `ended_at`.
-11. **Reports quarantine; the flag text still says retire.** A113(c)'s
-    retire-by-two-reporters was superseded by A123's reversible quarantine,
-    which the code implements; the `item_reports` description in
-    `backend/services/feature_flags.py::REGISTRY` (shown in the admin flags
-    page) still says two reporters "retire it course-wide".
-12. **Drafting is always Flex.** A23 says in-session top-ups run on the
-    standard tier; there is no in-session drafting, and every production
-    caller of the drafting pipeline passes `flex=True`.
-13. **A stale constant.** `backend/learning/params.py::LOOP_LIMITS` still
-    holds the pre-amendment 14 / 14 / 120,000 limits and is unused; the
-    limits in force are `backend/agents/__init__.py::LOOP_LIMITS`
-    (4 requests, 3 tool calls, 40,000 tokens).
-14. **Two invariants are weaker than the spec says.** §8 invariant 10 (an
-    `lru_cache` under `backend/learning/` needs a clear hook) is a skip
-    placeholder until the first such cache exists. §8 invariant 8 says the
-    `git log` of modified learning migrations is empty; the test allows one
-    sanctioned commit, made before that migration was applied anywhere.
+Two questions remain open. Each is a product decision that the code does
+not make on its own; what the code does meanwhile is stated with each:
+
+1. **The novice exit's step format on an untested prerequisite** (§3.3, A142
+   (d)). After a novice floor the probe ends and the plan starts on the
+   lowest unproficient prerequisites (`backend/learning/probe.py::novice_floor`,
+   `backend/learning/planner.py::prerequisite_ready`; the test
+   `backend/tests/test_learning_goals.py::test_a_novice_floor_exits_the_probe_onto_the_lowest_prerequisite`).
+   Each concept is taught in its own band's format, so a prerequisite the
+   probe did not reach starts at the prior (`BKT_L0` = 0.35, the develop
+   band) until its first graded answer. **Waits on the owner:** whether a
+   novice exit should carry the novice format (worked example first) to such
+   a concept, which would add a session-level input to the ceiling's typed
+   state.
+2. **Which surface enters exam mode** (§3.3's first ceiling row, A4, A142
+   (e)). The row is implemented
+   (`backend/learning/policy.py::ceiling_with_reason`,
+   `backend/learning/gates.py::h6_allowed`) and reserved: no production code
+   sets a step's `exam_mode`, which
+   `backend/tests/test_learning_zpd_policy.py::test_exam_mode_is_reserved_no_production_code_sets_it`
+   pins. **Waits on the owner:** a timed practice exam, an exam-proximity
+   rule beside A13's retention target, or neither; that amendment updates the
+   test.

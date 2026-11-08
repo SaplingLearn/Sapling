@@ -173,7 +173,10 @@ fails when a path or name it cites stops existing.
 ## Status
 
 The guide describes the code at commit `f9eca612` (the tip of
-`feat/learning-loop-wave4`, PR #801), through §13 A137.
+`feat/learning-loop-wave4`, PR #801), through §13 A137, and the
+reconciliation of the spec, these pages and the code recorded as §13 A142
+([amendments.md](amendments.md#where-the-spec-and-the-code-disagree) lists
+the two questions still open).
 
 **Wave 4 (in progress):** A138 (segment prequestion), A139 (self-explanation
 prompts), A140 (surface-varied isomorphs) and A141 (multi-concept items) are
