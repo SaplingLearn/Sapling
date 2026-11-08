@@ -28,6 +28,7 @@ import { onboardingRedirect } from "@/lib/localSeed";
 import SignInModal from "@/components/marketing/SignInModal";
 import { statusOf } from "@/lib/errorMessage";
 import { OnboardingGraph, type GraphPhase, type GraphZoom } from "@/components/onboarding/OnboardingGraph";
+import { setGraphStage } from "@/components/onboarding/chapterLayer";
 import { CakeArt, FEATURES, TourArt } from "@/components/onboarding/illustrations";
 import { LEGAL_UPDATED, PRIVACY, TERMS } from "@/components/onboarding/legalCopy";
 import "@/components/onboarding/onboarding.css";
@@ -248,6 +249,18 @@ export function Onboarding({ takeover = false }: {
     return () => window.removeEventListener("resize", apply);
   }, []);
 
+  // Over the landing, the landing hero's own canvas is the graph: hand it the
+  // camera and chapter state instead of drawing a second one.
+  const stageChapter = SCREENS[draft.screen].ch;
+  useEffect(() => {
+    if (!takeover) return;
+    setGraphStage({ active: true, phase, zoom, activeChapter: stageChapter, completed: draft.done });
+  }, [takeover, phase, zoom, stageChapter, draft.done]);
+  useEffect(() => {
+    if (!takeover) return;
+    return () => setGraphStage({ active: false, phase: "idle", zoom: "rest", activeChapter: 0, completed: [] });
+  }, [takeover]);
+
   const set = useCallback(<K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft(prev => ({ ...prev, [key]: value }));
   }, []);
@@ -404,9 +417,9 @@ export function Onboarding({ takeover = false }: {
   const consentDef = CONNECTIONS.find(c => c.key === consent);
 
   return (
-    <div ref={rootRef} className="ob-root" data-testid="onboarding-gate">
-      <div className="ob-beam" />
-      <OnboardingGraph phase={phase} zoom={zoom} activeChapter={screen.ch} completed={draft.done} />
+    <div ref={rootRef} className={`ob-root${takeover ? " ob-root--takeover" : ""}`} data-testid="onboarding-gate">
+      {!takeover && <div className="ob-beam" />}
+      {!takeover && <OnboardingGraph phase={phase} zoom={zoom} activeChapter={screen.ch} completed={draft.done} />}
       <div className="ob-scrim" aria-hidden="true" style={{ opacity: phase === "idle" || (phase === "out" && zoom === "rest") ? 0 : 1 }} />
 
       <div className="ob-logo">

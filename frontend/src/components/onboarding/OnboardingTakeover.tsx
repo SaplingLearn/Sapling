@@ -2,9 +2,10 @@
 
 /**
  * Landing → onboarding hand-off, as the original animated onboarding did it
- * (pre-#292): Get Started doesn't navigate. Onboarding mounts over the landing
- * and fades in, so the landing's nodes cross-fade into the onboarding graph's
- * original colors, then the intro plays and the graph zooms in.
+ * (pre-#292): Get Started doesn't navigate and spawns no second graph. The
+ * rest of the landing fades out under a veil, the landing hero's own canvas
+ * stays on top of it, and onboarding drives that canvas (chapterLayer's
+ * graphStage): the intro plays and the same nodes zoom in.
  *
  * Everyone who clicks Get Started is treated as a new student: signed in or
  * not, onboarded or not, the flow plays. A guest signs in at Finish.
@@ -35,10 +36,16 @@ export function OnboardingTakeover() {
     return () => { html.style.overflow = prev; };
   }, []);
 
-  if (!Screen) return null;
+  // The veil fades the landing out from under its hero canvas, which the hero
+  // lifts above it (z 150) so the same nodes stay on screen and zoom in.
   return (
-    <div className="ob-takeover" data-testid="onboarding-takeover">
-      <Screen takeover />
-    </div>
+    <>
+      <div className="ob-veil" aria-hidden="true" />
+      {Screen && (
+        <div className="ob-takeover" data-testid="onboarding-takeover">
+          <Screen takeover />
+        </div>
+      )}
+    </>
   );
 }

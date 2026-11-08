@@ -5,6 +5,7 @@ import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
+import { createChapterLayer, graphStage, onGraphStage, type ChapterState } from '@/components/onboarding/chapterLayer';
 
 // Node palettes, hardcoded because they feed canvas fillStyle where CSS var()
 // doesn't resolve. They are the onboarding graph's colors (Claude Design
@@ -62,6 +63,14 @@ export function Hero({
     let width = 0, height = 0;
     let rotAngle = 0;
     let animId = 0;
+    // Get Started zooms into these same nodes (no second graph): while the
+    // onboarding takeover is up, the stage drives this canvas's zoom and
+    // chapter clusters, and the canvas is lifted above the veil that fades
+    // the rest of the landing.
+    const layer = createChapterLayer();
+    const AT_REST: ChapterState = { phase: 'idle', zoom: 'rest', activeChapter: 0, completed: [] };
+    let lastMs = 0;
+    let lifted = false;
 
     const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
     // Test mode parks the loop on its single deterministic frame, same
@@ -129,8 +138,22 @@ export function Hero({
       if (!ctx) return;
       ctx.clearRect(0, 0, width, height);
       rotAngle += 0.0008;
-      const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
-      const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const nowMs = now();
+      const dtF = lastMs ? Math.min(4, (nowMs - lastMs) / 16.667) : 1;
+      lastMs = nowMs;
+      const staged = graphStage.active;
+      if (staged !== lifted) {
+        lifted = staged;
+        canvas!.style.position = staged ? 'fixed' : '';
+        canvas!.style.zIndex = staged ? '150' : '';
+        canvas!.style.pointerEvents = staged ? 'none' : '';
+      }
+      const { zoom, clusterProgress } = layer.step(nowMs, dtF, staged ? graphStage : AT_REST);
+      const linkFade = Math.max(0, 1 - clusterProgress);
+      const fl = 1000, cx = width / 2, cy = height / 2, t = nowMs * 0.001;
+      // The onboarding camera is centred and still: no mouse drift or parallax.
+      const mx = staged ? 0 : mouseRef.current.x, my = staged ? 0 : mouseRef.current.y;
+      const py = staged ? 0 : parallaxYRef.current;
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -139,7 +162,7 @@ export function Hero({
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
+        return { x: x * sc * zoom + cx, y: y2 * sc * zoom + cy - py, z, sc: sc * zoom, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -150,11 +173,11 @@ export function Hero({
       // out of the inner loop, reject on |dx|/|dy| before multiplying, and
       // compare squared distances so the sqrt only runs for pairs that
       // actually draw a link.
-      for (let i = 0; i < proj.length; i++) {
+      for (let i = 0; linkFade > 0 && i < proj.length; i++) {
         const p1 = proj[i];
         const maxD = 70 * p1.sc;
         const maxD2 = maxD * maxD;
-        const aScale = 0.15 * Math.min(1, p1.sc);
+        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade;
         for (let j = i + 1; j < proj.length; j++) {
           const p2 = proj[j];
           const dx = p1.x - p2.x;
@@ -184,6 +207,7 @@ export function Hero({
         }
       });
       ctx.globalAlpha = 1;
+      layer.draw(ctx, nowMs, t, rotAngle, cx, cy - py);
 
       if (animating) animId = requestAnimationFrame(draw);
     }
@@ -198,9 +222,12 @@ export function Hero({
       draw();
     };
     reduceMotion.addEventListener('change', onMotionPrefChange);
+    // A parked loop still repaints when the onboarding stage changes.
+    const offStage = onGraphStage(() => { if (!animating) draw(); });
 
     draw();
     return () => {
+      offStage();
       window.removeEventListener('resize', resize);
       reduceMotion.removeEventListener('change', onMotionPrefChange);
       cancelAnimationFrame(animId);

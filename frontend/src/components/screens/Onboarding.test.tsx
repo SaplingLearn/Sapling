@@ -46,6 +46,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }));
 
 import { Onboarding, onboardingDraftKey, ageOn, GUEST_OWNER } from "./Onboarding";
+import { graphStage } from "@/components/onboarding/chapterLayer";
 import { ApiError } from "@/lib/api";
 
 const CONNECT = 8; // index of the last screen
@@ -293,6 +294,25 @@ describe("Onboarding over the landing (Get Started)", () => {
     await screen.findByTestId("onboarding-name");
     await new Promise(r => setTimeout(r, 20));
     expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("draws no graph of its own: it drives the landing's canvas, and lets go on exit", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    const view = render(<Onboarding takeover />);
+    await screen.findByTestId("onboarding-name");
+    expect(view.container.querySelector("canvas")).toBeNull();
+    await waitFor(() => expect(graphStage.active).toBe(true));
+    expect(graphStage.phase).toBe("active");
+    view.unmount();
+    expect(graphStage.active).toBe(false);
+  });
+
+  it("the /onboarding route keeps its own graph", async () => {
+    render(<Onboarding />);
+    await screen.findByTestId("onboarding-name");
+    expect(document.querySelector("canvas.ob-canvas")).not.toBeNull();
+    expect(graphStage.active).toBe(false);
   });
 
   it("the /onboarding route picks up a guest draft after a same-tab sign-in", async () => {

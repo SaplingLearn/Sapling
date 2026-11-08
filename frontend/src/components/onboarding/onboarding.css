@@ -60,7 +60,12 @@
 
 /* Landing → onboarding: the takeover fades in over the landing so its nodes
  * cross-fade into the graph's colors before the intro zoom. */
-.ob-takeover { position: fixed; inset: 0; z-index: 200; animation: obFade 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* Landing → onboarding: the veil fades the landing out from under its hero
+ * canvas (lifted to z 150 by the hero while the stage is active), and the
+ * onboarding UI sits on top with no background or canvas of its own. */
+.ob-veil { position: fixed; inset: 0; z-index: 140; background: #F6F8F4; animation: obFade 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.ob-takeover { position: fixed; inset: 0; z-index: 200; }
+.ob-root.ob-root--takeover { background: transparent; }
 
 /* ── Stage layers ─────────────────────────────────────────────── */
 .ob-beam {
