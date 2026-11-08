@@ -72,7 +72,7 @@
   },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
-      "count": 16
+      "count": 13
     },
     "react/no-unescaped-entities": {
       "count": 2
@@ -111,7 +111,7 @@
       "count": 1
     },
     "no-restricted-syntax": {
-      "count": 8
+      "count": 7
     }
   },
   "src/lib/api.test.ts": {

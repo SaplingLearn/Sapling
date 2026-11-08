@@ -47,10 +47,22 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/**
+ * Flagged features that are NOT their own nav row: they live inside another
+ * destination (Quiz is reached from Study since #753) but keep a `hide_*`
+ * flag that hides their pages. `section` is the nav group they belong to, so
+ * the admin flags tab files them there.
+ */
+export const NESTED_NAV_FEATURES: (NavItem & { flag: string; section: string })[] = [
+  { href: "/quiz", label: "Quiz", icon: "study", flag: "hide_quiz", section: "Learn" },
+];
+
 /** The `hide_*` flag guarding `pathname` (segment-boundary match), or null. */
 export function navFlagForPath(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
-  if (pathname === "/quiz" || pathname.startsWith("/quiz/")) return "hide_quiz";
+  for (const item of NESTED_NAV_FEATURES) {
+    if (pathname === item.href || pathname.startsWith(item.href + "/")) return item.flag;
+  }
   for (const section of NAV_SECTIONS) {
     for (const item of section.items) {
       if (item.flag && (pathname === item.href || pathname.startsWith(item.href + "/"))) {
