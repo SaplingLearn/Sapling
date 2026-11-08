@@ -58,6 +58,10 @@
 .ob-root input::placeholder { color: rgba(97, 114, 106, .7); }
 .ob-root :focus-visible { outline: 2px solid var(--ob-acc); outline-offset: 2px; }
 
+/* Landing → onboarding: the takeover fades in over the landing so its nodes
+ * cross-fade into the graph's colors before the intro zoom. */
+.ob-takeover { position: fixed; inset: 0; z-index: 200; animation: obFade 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
 /* ── Stage layers ─────────────────────────────────────────────── */
 .ob-beam {
   position: absolute; inset: 0; pointer-events: none;
@@ -298,6 +302,7 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-chapter-label {
   font: 600 calc(clamp(14px, 1.7vw, 24px) * var(--uiz))/1.25 'Momo Trust Sans', sans-serif;
   text-shadow: var(--ob-tsh); white-space: nowrap; overflow: visible;
+  min-height: 1.25em; /* an empty (upcoming) label keeps its row, so every bar lines up */
 }
 /* The active segment is at least as wide as its label, and the finished and
  * upcoming ones shrink to share the rest, so a long label ("Connect your

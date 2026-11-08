@@ -1,6 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useUser } from '@/context/UserContext';
+import { getMe } from '@/lib/api';
+import { OnboardingTakeover } from '@/components/onboarding/OnboardingTakeover';
 import SignInModal from '@/components/marketing/SignInModal';
 import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
@@ -38,6 +42,25 @@ export default function LandingPage() {
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
+
+  // Get Started plays onboarding over the landing (the original zoom-in
+  // hand-off). Signed out: sign in first; a new account then lands on
+  // /onboarding, which opens with the same intro. Already onboarded: the app.
+  const router = useRouter();
+  const { userReady, isAuthenticated } = useUser();
+  const [onboarding, setOnboarding] = useState(false);
+  const getStarted = useCallback(async () => {
+    if (!userReady) return;
+    if (!isAuthenticated) { setSignInOpen(true); return; }
+    try {
+      const me = await getMe();
+      if (me.onboarding_completed) { router.push('/dashboard'); return; }
+    } catch {
+      // Can't tell; onboarding itself hands an onboarded account to the
+      // dashboard (409), so starting it is the safe side.
+    }
+    setOnboarding(true);
+  }, [userReady, isAuthenticated, router]);
 
   // The document scrollbar is hidden while the landing is mounted: the page
   // is a guided scroll cinema and the bar reads as stray chrome against the
@@ -87,8 +110,10 @@ export default function LandingPage() {
         theme={navTheme}
         onLogoClick={actions.scrollTop}
         onSignIn={() => setSignInOpen(true)}
-        onGetStarted={() => actions.scrollToId('cta')}
+        onGetStarted={() => void getStarted()}
       />
+
+      {onboarding && <OnboardingTakeover />}
 
       <SignInModal
         open={signInOpen || signInError !== null}
