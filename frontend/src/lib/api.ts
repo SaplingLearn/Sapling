@@ -1977,11 +1977,82 @@ export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, 
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
-  fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
-    { method: 'POST' },
+/** A Gradescope sync still running on the job queue (#116, `jobs_queue` on):
+ *  POST /sync answers 202 with this once it outlasts the server's wait, and
+ *  so does GET /sync/{course}/status until the sync ends. */
+export interface GradescopeSyncPending {
+  pending: true;
+  sync_id: string;
+  stage: string;
+  detail?: string;
+}
+
+export const isGradescopeSyncPending = (value: unknown): value is GradescopeSyncPending =>
+  typeof value === 'object' && value !== null && (value as { pending?: unknown }).pending === true;
+
+const gradescopeSyncPath = (userId: string, saplingCourseId: string, semester?: string, suffix = '') =>
+  `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}${suffix}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`;
+
+/** The latest queued sync of a course: pending while it runs, then exactly
+ *  what the POST would have answered (the counts, or the same typed error). */
+export const getGradescopeSyncStatus = (userId: string, saplingCourseId: string, semester?: string) =>
+  fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+    gradescopeSyncPath(userId, saplingCourseId, semester, '/status'),
   );
+
+export const GRADESCOPE_SYNC_POLL_MS = 3000;
+/** ~10 minutes of polling before giving up with the "still running" error. */
+const GRADESCOPE_SYNC_MAX_POLLS = 200;
+
+export interface GradescopeSyncOptions {
+  /** Called once when the server says the sync is still running (a 202, or
+   *  its 504 "still running" answer); polling for the outcome follows. */
+  onPending?: () => void;
+  pollMs?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sync a linked course. Inline (flag off) this is one POST, unchanged. A
+ *  queued sync that outlasts the server's wait answers 202 (or 504); the sync
+ *  keeps running, so this polls the status route until it ends and resolves
+ *  or rejects exactly as the POST would have. */
+export async function syncGradescopeCourse(
+  userId: string,
+  saplingCourseId: string,
+  semester?: string,
+  options: GradescopeSyncOptions = {},
+): Promise<GradescopeSyncResult> {
+  let stillRunning: ApiError;
+  try {
+    const res = await fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+      gradescopeSyncPath(userId, saplingCourseId, semester),
+      { method: 'POST' },
+    );
+    if (!isGradescopeSyncPending(res)) return res;
+    const detail = res.detail || 'This Gradescope sync is taking longer than usual.';
+    stillRunning = new ApiError(JSON.stringify({ detail }), 504, { body: { detail } });
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 504) throw err;
+    stillRunning = err;
+  }
+  options.onPending?.();
+  const pollMs = options.pollMs ?? GRADESCOPE_SYNC_POLL_MS;
+  for (let i = 0; i < GRADESCOPE_SYNC_MAX_POLLS; i++) {
+    await sleep(pollMs);
+    let status: GradescopeSyncResult | GradescopeSyncPending;
+    try {
+      status = await getGradescopeSyncStatus(userId, saplingCourseId, semester);
+    } catch (err) {
+      if (!(err instanceof ApiError)) continue; // a network blip: poll again
+      // Nothing staged (a proxy timeout on the inline path): keep the 504.
+      if (err.status === 404) throw stillRunning;
+      throw err; // the sync's own outcome, answered as the POST would have
+    }
+    if (!isGradescopeSyncPending(status)) return status;
+  }
+  throw stillRunning;
+}
 
 // ── Notes ──────────────────────────────────────────────────────────────────
 
