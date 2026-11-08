@@ -93,9 +93,9 @@ The `course_chunks` SELECT mirrors `match_course_chunks` exactly (parity, not ti
 
 `schools, terms, courses, course_offerings, achievements, achievement_triggers, achievement_cosmetics, cosmetics, roles, role_cosmetics, growth_stages, xp_rules`: SELECT `U IS NOT NULL`, grant SELECT only. All writes svc (admin portal, `academics.resolve_offering` creating an offering on demand, seeds, `ingest_catalog`). Unauthenticated catalog routes (`GET /api/semesters`, `GET /api/onboarding/courses`) run svc (section 3).
 
-### 1.6 Bucket E: service-only (11 tables + ledger)
+### 1.6 Bucket E: service-only (12 tables + ledger)
 
-`events, llm_usage, feature_flags, feature_flag_targets, admin_audit_log, email_broadcasts, email_sends, email_suppressions, newsletter_emails, job_applications, encryption_key_check`, plus `schema_migrations`. No grants to `authenticated`, no policies; #807's state is already correct. `routes/quiz.py`'s one `llm_usage` read must run inside `service_scope()`.
+`events, llm_usage, feature_flags, feature_flag_targets, admin_audit_log, email_broadcasts, email_sends, email_suppressions, newsletter_emails, job_applications, encryption_key_check, jobs`, plus `schema_migrations`. No grants to `authenticated`, no policies; #807's state is already correct. (`jobs` is the #116 job queue; its migration, `20261108095241_jobs_queue.sql`, enables RLS and revokes anon/authenticated itself.) `routes/quiz.py`'s one `llm_usage` read must run inside `service_scope()`.
 
 ### 1.7 Gaps in #807 to close in step 2a
 
