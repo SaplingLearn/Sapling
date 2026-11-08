@@ -5,14 +5,17 @@
  * What's pinned here:
  *   - `/meta` loads on open and the environment badge names it (PRODUCTION
  *     in the danger style), with the selected major's course codes listed;
- *   - every action stays disabled until the account's email is typed
- *     (case-insensitive); an undecryptable row confirms by user id;
- *   - seed sends the chosen major, wipe calls wipe, and both toast a summed
- *     row count and close;
- *   - copy is a muted note when sync isn't configured, two direction buttons
- *     naming the peer when it is, and disabled + "unreachable" when the peer
- *     is null;
- *   - a failed action toasts the humanized error and keeps the dialog open.
+ *   - the action list never runs anything: Seed / Wipe / Copy open a review
+ *     that reads `/summary` (or `/copy-preview`) and calls no mutation;
+ *   - the review says what will be deleted in plain words with real counts
+ *     ("4 courses, 31 assignments, …, 1,250 XP"), the current course codes,
+ *     and what replaces it; an empty account says nothing will be deleted;
+ *   - the final button names the action and its size and stays disabled
+ *     until the account's email is typed (case-insensitive; the user id for
+ *     an undecryptable row); only it calls the mutation, then toasts + closes;
+ *   - a copy whose destination (or source) account doesn't exist is blocked;
+ *   - Back returns to the action list; a failed summary offers a retry; a
+ *     failed action toasts, stays open and re-reads the summary.
  */
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +32,8 @@ vi.mock("../../ToastProvider", () => ({
 
 const api = vi.hoisted(() => ({
   adminAccountsMeta: vi.fn(),
+  adminAccountSummary: vi.fn(),
+  adminCopyPreview: vi.fn(),
   adminSeedAccount: vi.fn(),
   adminWipeAccount: vi.fn(),
   adminCopyAccount: vi.fn(),
@@ -67,15 +72,54 @@ const META = {
   sync: { configured: false, peer_env: null },
 };
 
+const FULL = {
+  exists: true,
+  courses: [
+    { code: "CAS CS 111", name: "Intro to CS 1", term_id: "fall-2026" },
+    { code: "CAS MA 123", name: "Calculus I", term_id: "fall-2026" },
+  ],
+  counts: {
+    enrollments: 4, assignments: 31, graph_nodes: 40, notes: 8, documents: 8, flashcards: 33,
+    quiz_attempts: 9, sessions: 4, study_guides: 1, xp_events: 57, user_achievements: 0,
+  },
+  total_xp: 1250,
+  empty: false,
+};
+// 4 + 31 + 40 + 8 + 8 + 33 + 9 + 4 + 1 (xp_events are shown as the XP total)
+const FULL_ITEMS = "138 items";
+const FULL_SENTENCE =
+  "4 courses, 31 assignments, 40 concepts, 8 notes, 8 documents, 33 flashcards, 9 quizzes, " +
+  "4 tutor chats, 1 study guide, 1,250 XP";
+
+const EMPTY = {
+  exists: true, courses: [],
+  counts: { enrollments: 0, notes: 0, xp_events: 0 },
+  total_xp: 0, empty: true,
+};
+
+const SMALL = {
+  exists: true,
+  courses: [{ code: "CAS BI 107", name: "Biology 1", term_id: "fall-2026" }],
+  counts: { enrollments: 1, notes: 1, quiz_attempts: 1 },
+  total_xp: 0,
+  empty: false,
+};
+
 const onClose = vi.fn();
 
 beforeEach(() => {
   api.adminAccountsMeta.mockResolvedValue(META);
+  api.adminAccountSummary.mockResolvedValue(FULL);
+  api.adminCopyPreview.mockResolvedValue({
+    direction: "push",
+    source: { env: "staging", summary: SMALL },
+    destination: { env: "production", summary: FULL },
+  });
   api.adminSeedAccount.mockResolvedValue({
     major: "biology", wiped: { notes: 2 }, created: { notes: 8, flashcards: 24, documents: 8 },
   });
   api.adminWipeAccount.mockResolvedValue({ wiped: { notes: 8, flashcards: 24 } });
-  api.adminCopyAccount.mockResolvedValue({ direction: "push", peer_env: "staging", counts: { notes: 3, sessions: 1 } });
+  api.adminCopyAccount.mockResolvedValue({ direction: "push", peer_env: "production", counts: { notes: 3, sessions: 1 } });
 });
 
 afterEach(() => {
@@ -92,6 +136,20 @@ const confirm = (text = "ada@BU.edu") =>
   fireEvent.change(screen.getByTestId("admin-account-confirm-input"), { target: { value: text } });
 
 const btn = (id: string) => screen.getByTestId(id) as HTMLButtonElement;
+
+const noMutation = () => {
+  expect(api.adminSeedAccount).not.toHaveBeenCalled();
+  expect(api.adminWipeAccount).not.toHaveBeenCalled();
+  expect(api.adminCopyAccount).not.toHaveBeenCalled();
+};
+
+/** Open an action's review and wait for its counts to load. */
+const review = async (id: string) => {
+  fireEvent.click(btn(id));
+  await screen.findByTestId("admin-account-review-confirm");
+};
+
+const SYNCED = { ...META, env: "staging", sync: { configured: true, peer_env: "production" } };
 
 describe("AccountToolsDialog", () => {
   it("renders nothing without a user", () => {
@@ -116,35 +174,77 @@ describe("AccountToolsDialog", () => {
     expect(screen.getByTestId("admin-account-major-courses").textContent).not.toContain("CAS CS 111");
   });
 
-  it("keeps every action disabled until the account's email is typed (case-insensitive)", async () => {
-    api.adminAccountsMeta.mockResolvedValue({ ...META, sync: { configured: true, peer_env: "staging" } });
+  it("opens a review instead of acting, for every action", async () => {
+    api.adminAccountsMeta.mockResolvedValue(SYNCED);
     await open();
-    for (const id of ["admin-account-seed", "admin-account-wipe", "admin-account-copy-push", "admin-account-copy-pull"]) {
-      expect(btn(id).disabled).toBe(true);
-    }
-    confirm("ada@bu.ed");
-    expect(btn("admin-account-wipe").disabled).toBe(true);
-
-    confirm("  ADA@bu.edu ");
+    // No email gate on the list: the buttons only open the review.
     for (const id of ["admin-account-seed", "admin-account-wipe", "admin-account-copy-push", "admin-account-copy-pull"]) {
       expect(btn(id).disabled).toBe(false);
     }
-    expect(api.adminSeedAccount).not.toHaveBeenCalled();
-    expect(api.adminWipeAccount).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("admin-account-confirm-input")).toBeNull();
+
+    await review("admin-account-seed");
+    expect(screen.getByTestId("admin-account-review").getAttribute("data-action")).toBe("seed");
+    expect(api.adminAccountSummary).toHaveBeenCalledWith("u-ada");
+    fireEvent.click(btn("admin-account-review-back"));
+
+    await review("admin-account-copy-pull");
+    expect(api.adminCopyPreview).toHaveBeenCalledWith("u-ada", "pull");
+    noMutation();
   });
 
-  it("confirms an undecryptable account by its user id", async () => {
-    await open({ ...ADA, email: null });
-    confirm("u-ada");
-    expect(btn("admin-account-wipe").disabled).toBe(false);
-  });
-
-  it("seeds with the chosen major, toasts a row count, and closes", async () => {
+  it("seed review: what will be deleted in plain words, current courses, and what replaces it", async () => {
     await open();
     fireEvent.change(screen.getByTestId("admin-account-major"), { target: { value: "biology" } });
-    confirm();
-    fireEvent.click(btn("admin-account-seed"));
+    await review("admin-account-seed");
 
+    expect(screen.getByTestId("admin-account-review-target-badge").textContent).toBe("PRODUCTION");
+    const del = screen.getByTestId("admin-account-review-delete");
+    expect(del.textContent).toContain("Will delete from PRODUCTION");
+    expect(screen.getByTestId("admin-account-review-delete-counts").textContent).toBe(FULL_SENTENCE);
+    const current = screen.getByTestId("admin-account-review-delete-courses");
+    expect(current.textContent).toContain("CAS CS 111");
+    expect(current.querySelectorAll("li")).toHaveLength(2);
+
+    const add = screen.getByTestId("admin-account-review-add");
+    expect(add.textContent).toContain("Biology");
+    expect(screen.getByTestId("admin-account-review-add-courses").querySelectorAll("li")).toHaveLength(4);
+    expect(btn("admin-account-review-confirm").textContent).toBe(`Delete ${FULL_ITEMS} and seed Biology`);
+    noMutation();
+  });
+
+  it("pluralizes singular counts", async () => {
+    api.adminAccountSummary.mockResolvedValue(SMALL);
+    await open();
+    await review("admin-account-wipe");
+    expect(screen.getByTestId("admin-account-review-delete-counts").textContent).toBe("1 course, 1 note, 1 quiz");
+    expect(btn("admin-account-review-confirm").textContent).toBe("Wipe 3 items");
+  });
+
+  it("says nothing will be deleted for an empty account", async () => {
+    api.adminAccountSummary.mockResolvedValue(EMPTY);
+    await open();
+    await review("admin-account-seed");
+    expect(screen.getByTestId("admin-account-review-delete-empty").textContent).toBe(
+      "This account has no study data yet — nothing will be deleted.",
+    );
+    expect(screen.queryByTestId("admin-account-review-delete-counts")).toBeNull();
+    expect(btn("admin-account-review-confirm").textContent).toBe("Seed Computer Science");
+  });
+
+  it("gates the final confirm on the typed email, then seeds, toasts and closes", async () => {
+    await open();
+    fireEvent.change(screen.getByTestId("admin-account-major"), { target: { value: "biology" } });
+    await review("admin-account-seed");
+
+    expect(btn("admin-account-review-confirm").disabled).toBe(true);
+    confirm("ada@bu.ed");
+    expect(btn("admin-account-review-confirm").disabled).toBe(true);
+    confirm("  ADA@bu.edu ");
+    expect(btn("admin-account-review-confirm").disabled).toBe(false);
+    noMutation();
+
+    fireEvent.click(btn("admin-account-review-confirm"));
     await waitFor(() => expect(api.adminSeedAccount).toHaveBeenCalledWith("u-ada", "biology"));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toastSpies.success).toHaveBeenCalledWith(
@@ -152,28 +252,133 @@ describe("AccountToolsDialog", () => {
     );
   });
 
-  it("wipes, toasts the removed row count, and closes", async () => {
-    await open();
-    confirm();
-    fireEvent.click(btn("admin-account-wipe"));
+  it("confirms an undecryptable account by its user id", async () => {
+    await open({ ...ADA, email: null });
+    await review("admin-account-wipe");
+    confirm("u-ada");
+    expect(btn("admin-account-review-confirm").disabled).toBe(false);
+  });
 
+  it("wipe review reminds what is kept; confirming wipes, toasts and closes", async () => {
+    await open();
+    await review("admin-account-wipe");
+    expect(screen.getByTestId("admin-account-review-kept").textContent).toMatch(/profile, settings, roles/);
+    expect(screen.queryByTestId("admin-account-review-add")).toBeNull();
+    expect(btn("admin-account-review-confirm").textContent).toBe(`Wipe ${FULL_ITEMS}`);
+
+    confirm();
+    fireEvent.click(btn("admin-account-review-confirm"));
     await waitFor(() => expect(api.adminWipeAccount).toHaveBeenCalledWith("u-ada"));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toastSpies.success).toHaveBeenCalledWith("Wiped Ada Lovelace's data: removed 32 rows.");
   });
 
-  it("disables every action while one runs", async () => {
+  it("Back returns to the action list without acting and forgets the typed email", async () => {
+    await open();
+    await review("admin-account-wipe");
+    confirm();
+    fireEvent.click(btn("admin-account-review-back"));
+
+    expect(screen.queryByTestId("admin-account-review")).toBeNull();
+    expect(screen.getByTestId("admin-account-env-badge").textContent).toBe("PRODUCTION");
+    expect(btn("admin-account-wipe")).toBeTruthy();
+    noMutation();
+
+    await review("admin-account-wipe");
+    expect((screen.getByTestId("admin-account-confirm-input") as HTMLInputElement).value).toBe("");
+  });
+
+  it("copy review shows what the destination has (deleted) beside what replaces it", async () => {
+    api.adminAccountsMeta.mockResolvedValue(SYNCED);
+    await open();
+    expect(btn("admin-account-copy-push").textContent).toBe("Copy to production…");
+    await review("admin-account-copy-push");
+
+    expect(api.adminCopyPreview).toHaveBeenCalledWith("u-ada", "push");
+    // A push from staging writes to production: the danger badge names it.
+    expect(screen.getByTestId("admin-account-review-target").getAttribute("data-env")).toBe("production");
+    const dest = screen.getByTestId("admin-account-review-destination");
+    expect(dest.textContent).toMatch(/PRODUCTION currently has \(will be deleted\)/);
+    expect(screen.getByTestId("admin-account-review-destination-counts").textContent).toBe(FULL_SENTENCE);
+    expect(screen.getByTestId("admin-account-review-source").textContent).toMatch(/from STAGING/);
+    expect(screen.getByTestId("admin-account-review-source-counts").textContent).toBe("1 course, 1 note, 1 quiz");
+    expect(btn("admin-account-review-confirm").textContent).toBe(
+      `Overwrite production's ${FULL_ITEMS} with staging's data`,
+    );
+
+    confirm();
+    fireEvent.click(btn("admin-account-review-confirm"));
+    await waitFor(() => expect(api.adminCopyAccount).toHaveBeenCalledWith("u-ada", "push"));
+    await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith("Copied Ada Lovelace to production: 4 rows."));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("blocks a copy whose destination account doesn't exist", async () => {
+    api.adminAccountsMeta.mockResolvedValue(SYNCED);
+    api.adminCopyPreview.mockResolvedValue({
+      direction: "push",
+      source: { env: "staging", summary: SMALL },
+      destination: { env: "production", summary: { ...EMPTY, exists: false } },
+    });
+    await open();
+    await review("admin-account-copy-push");
+
+    const missing = screen.getByTestId("admin-account-review-missing");
+    expect(missing.textContent).toMatch(/hasn't signed in on production yet/);
+    expect(btn("admin-account-review-confirm").disabled).toBe(true);
+    expect(screen.queryByTestId("admin-account-confirm-input")).toBeNull();
+    noMutation();
+  });
+
+  it("shows a retry when the summary fails to load", async () => {
+    api.adminAccountSummary.mockRejectedValueOnce(new Error("boom"));
+    await open();
+    fireEvent.click(btn("admin-account-wipe"));
+    await screen.findByTestId("admin-account-review-error");
+    expect(screen.queryByTestId("admin-account-review-confirm")).toBeNull();
+    expect(screen.queryByTestId("admin-account-confirm-input")).toBeNull();
+
+    fireEvent.click(btn("admin-account-review-retry"));
+    expect((await screen.findByTestId("admin-account-review-delete-counts")).textContent).toBe(FULL_SENTENCE);
+    expect(api.adminAccountSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables everything while the action runs", async () => {
     let resolveWipe: (v: unknown) => void = () => {};
     api.adminWipeAccount.mockReturnValue(new Promise((r) => { resolveWipe = r; }));
     await open();
+    await review("admin-account-wipe");
     confirm();
-    fireEvent.click(btn("admin-account-wipe"));
+    fireEvent.click(btn("admin-account-review-confirm"));
 
-    await waitFor(() => expect(btn("admin-account-wipe").textContent).toBe("Wiping…"));
-    expect(btn("admin-account-seed").disabled).toBe(true);
-    expect(btn("admin-account-close").disabled).toBe(true);
+    await waitFor(() => expect(btn("admin-account-review-confirm").textContent).toBe("Wiping…"));
+    expect(btn("admin-account-review-confirm").disabled).toBe(true);
+    expect(btn("admin-account-review-back").disabled).toBe(true);
+    expect((screen.getByTestId("admin-account-confirm-input") as HTMLInputElement).disabled).toBe(true);
     resolveWipe({ wiped: {} });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("keeps the review open, toasts the backend's sentence and re-reads the summary on error", async () => {
+    api.adminWipeAccount.mockRejectedValue(
+      Object.assign(new Error('{"detail":"An operation is already running for this account."}'), {
+        status: 409,
+        body: { detail: "An operation is already running for this account." },
+      }),
+    );
+    await open();
+    await review("admin-account-wipe");
+    confirm();
+    fireEvent.click(btn("admin-account-review-confirm"));
+
+    await waitFor(() =>
+      expect(toastSpies.error).toHaveBeenCalledWith("An operation is already running for this account."),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(toastSpies.success).not.toHaveBeenCalled();
+    expect(screen.getByTestId("admin-account-review")).toBeTruthy();
+    await waitFor(() => expect(api.adminAccountSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(btn("admin-account-review-confirm").disabled).toBe(false));
   });
 
   it("shows a muted note instead of copy buttons when sync isn't configured", async () => {
@@ -183,47 +388,13 @@ describe("AccountToolsDialog", () => {
     expect(screen.queryByTestId("admin-account-copy-pull")).toBeNull();
   });
 
-  it("offers push and pull naming the peer when sync is configured", async () => {
-    api.adminAccountsMeta.mockResolvedValue({ ...META, env: "staging", sync: { configured: true, peer_env: "production" } });
-    await open();
-    expect(btn("admin-account-copy-push").textContent).toBe("Copy to production");
-    expect(btn("admin-account-copy-pull").textContent).toBe("Copy from production");
-
-    api.adminCopyAccount.mockResolvedValue({ direction: "pull", peer_env: "production", counts: { notes: 3, sessions: 1 } });
-    confirm();
-    fireEvent.click(btn("admin-account-copy-pull"));
-    await waitFor(() => expect(api.adminCopyAccount).toHaveBeenCalledWith("u-ada", "pull"));
-    await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith("Copied Ada Lovelace from production: 4 rows."));
-  });
-
   it("disables copy and says so when the peer is unreachable", async () => {
     api.adminAccountsMeta.mockResolvedValue({ ...META, sync: { configured: true, peer_env: null } });
     await open();
-    confirm();
     expect(screen.getByTestId("admin-account-copy-unreachable")).toBeTruthy();
     expect(btn("admin-account-copy-push").disabled).toBe(true);
     expect(btn("admin-account-copy-pull").disabled).toBe(true);
     expect(btn("admin-account-wipe").disabled).toBe(false);
-  });
-
-  it("keeps the dialog open and toasts the backend's sentence on error", async () => {
-    api.adminWipeAccount.mockRejectedValue(
-      Object.assign(new Error('{"detail":"An operation is already running for this account."}'), {
-        status: 409,
-        body: { detail: "An operation is already running for this account." },
-      }),
-    );
-    await open();
-    confirm();
-    fireEvent.click(btn("admin-account-wipe"));
-
-    await waitFor(() =>
-      expect(toastSpies.error).toHaveBeenCalledWith("An operation is already running for this account."),
-    );
-    expect(onClose).not.toHaveBeenCalled();
-    expect(toastSpies.success).not.toHaveBeenCalled();
-    expect(screen.getByTestId("admin-account-tools")).toBeTruthy();
-    await waitFor(() => expect(btn("admin-account-wipe").disabled).toBe(false));
   });
 
   it("shows a retry when meta fails to load", async () => {

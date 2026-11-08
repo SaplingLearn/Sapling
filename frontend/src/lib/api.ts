@@ -8,7 +8,7 @@ import type {
   AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
-  AdminCopyAccountResult, AccountCopyDirection,
+  AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -1265,9 +1265,20 @@ export const adminRemoveUserAccess = (userId: string) =>
 // Admin — account tools (backend routes/admin_accounts.py; spec
 // docs/superpowers/specs/2026-11-08-admin-account-tools-design.md). Each write
 // sends the action word as `confirm` — the backend 400s without it; the UI
-// additionally makes the admin type the account's email before calling these.
+// first shows a review (summary / copy-preview: what will be deleted) and
+// makes the admin type the account's email before calling these.
 export const adminAccountsMeta = () =>
   fetchJSON<AdminAccountsMeta>('/api/admin/accounts/meta');
+
+/** Read-only: what the account holds on this environment (the seed/wipe review). 404 unknown. */
+export const adminAccountSummary = (userId: string) =>
+  fetchJSON<AdminAccountSummary>(`/api/admin/accounts/${encodeURIComponent(userId)}/summary`);
+
+/** Read-only: both sides of a copy (the copy review). 503 unconfigured, 502 peer down. */
+export const adminCopyPreview = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyPreview>(
+    `/api/admin/accounts/${encodeURIComponent(userId)}/copy-preview?direction=${direction}`,
+  );
 
 /** Wipe-then-seed the account with `major`'s mock semester (replaces, never stacks). */
 export const adminSeedAccount = (userId: string, major: string) =>

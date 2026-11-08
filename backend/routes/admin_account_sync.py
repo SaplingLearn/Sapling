@@ -11,6 +11,9 @@ Body `{"direction": "push" | "pull", "confirm": "COPY"}` →
 The transfer itself is `services/account_sync_client.py`; what moves (and
 how it is re-encrypted and remapped) is `services/account_bundle.py`.
 
+`GET /api/admin/accounts/{user_id}/copy-preview?direction=push|pull` is the
+read-only review the UI shows before the copy: both sides' account summaries.
+
 Errors (the spec's contract): 400 bad confirm/direction or a bundle the
 target cannot apply, 403 not an admin, 404 unknown account here or on the
 peer, 409 another operation running for the account (here or on the peer) or
@@ -28,6 +31,7 @@ import config
 from services import account_bundle, account_sync_client
 from services.account_bundle import AccountNotFound, BundleError
 from services.account_ops_lock import AccountBusy, account_op
+from services.account_summary import summarize_account
 from services.account_sync_client import PeerError
 from services.account_wipe import AccountWipeIncomplete
 from services.admin_audit import log_admin_action
@@ -40,6 +44,38 @@ router = APIRouter()
 
 CONFIRM_WORD = "COPY"
 DIRECTIONS = ("push", "pull")
+
+
+@router.get("/{user_id}/copy-preview")
+def copy_preview(user_id: str, request: Request, direction: str | None = None) -> dict:
+    """What a copy would overwrite, for the UI's review step. Read-only.
+
+    `{"direction", "source": {"env", "summary"}, "destination": {"env", "summary"}}`
+    — push: source = here, destination = the peer; pull: the reverse. A
+    summary with `exists=False` means the account has never signed in on that
+    environment and the copy itself would 404.
+
+    Errors as the copy's: 400 bad direction, 404 unknown account here, 503 not
+    configured, and the peer's failures mapped by `account_sync_client`
+    (409 self-copy, 502 unreachable / peer error).
+    """
+    require_admin(request)
+    if direction not in DIRECTIONS:
+        raise HTTPException(status_code=400, detail="direction must be 'push' or 'pull'")
+    if not account_sync_client.is_configured():
+        raise HTTPException(status_code=503, detail="account sync is not configured")
+    local = summarize_account(user_id)
+    if not local["exists"]:
+        raise HTTPException(
+            status_code=404, detail=f"account does not exist on {config.APP_ENV}",
+        )
+    try:
+        remote = account_sync_client.peer_summary(user_id)
+    except PeerError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from None
+    here = {"env": config.APP_ENV, "summary": local}
+    source, destination = (here, remote) if direction == "push" else (remote, here)
+    return {"direction": direction, "source": source, "destination": destination}
 
 
 @router.post("/{user_id}/copy")

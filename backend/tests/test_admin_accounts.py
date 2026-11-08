@@ -24,6 +24,14 @@ USER = "user_target"
 ADMIN = "user_admin"
 
 
+SUMMARY = {
+    "courses": [{"code": "CAS CS 111", "name": "Intro to CS 1", "term_id": "fall-2026"}],
+    "counts": {"enrollments": 1, "notes": 2},
+    "total_xp": 120,
+    "empty": False,
+}
+
+
 @pytest.fixture
 def state(monkeypatch):
     app = FastAPI()
@@ -54,6 +62,9 @@ def state(monkeypatch):
         return {"notes": 2, "documents": 1}
 
     monkeypatch.setattr(admin_accounts, "wipe_account_data", wipe_account_data)
+    monkeypatch.setattr(admin_accounts, "summarize_account", lambda uid: (
+        {**SUMMARY, "exists": True} if uid in st.users else {**SUMMARY, "exists": False}
+    ))
     monkeypatch.setitem(sys.modules, "services.account_sync_client", types.SimpleNamespace(
         peer_status=lambda: {"configured": True, "peer_env": "production"},
     ))
@@ -71,6 +82,7 @@ def _deny(request):
     ("get", f"{BASE}/meta", None),
     ("post", f"{BASE}/{USER}/seed", {"major": PACK.key, "confirm": "SEED"}),
     ("post", f"{BASE}/{USER}/wipe", {"confirm": "WIPE"}),
+    ("get", f"{BASE}/{USER}/summary", None),
 ])
 def test_every_endpoint_is_admin_only(state, monkeypatch, method, path, body):
     monkeypatch.setattr(admin_accounts, "require_admin", _deny)
@@ -316,3 +328,25 @@ def test_wipe_unexpected_error_is_audited_and_reraised(state, monkeypatch):
     [audit] = state.audits
     assert audit["payload"] == {"outcome": "failed", "reason": "error"}
     assert not is_busy(USER)
+
+
+# ── summary (the review step) ────────────────────────────────────────────────
+
+
+def test_summary_returns_the_account_summary(state):
+    r = state.client.get(f"{BASE}/{USER}/summary")
+    assert r.status_code == 200
+    assert r.json() == {**SUMMARY, "exists": True}
+    # Read-only: nothing ran, nothing audited, no lock left behind.
+    assert state.seeds == [] and state.wipes == []
+    assert state.audits == [] and state.events == []
+
+
+def test_summary_unknown_or_soft_deleted_is_404(state):
+    r = state.client.get(f"{BASE}/user_nobody/summary")
+    assert r.status_code == 404
+
+
+def test_summary_is_not_refused_while_an_operation_runs(state):
+    with account_op(USER):
+        assert state.client.get(f"{BASE}/{USER}/summary").status_code == 200

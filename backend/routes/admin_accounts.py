@@ -1,4 +1,5 @@
-"""/api/admin/accounts — admin account tools: seed by major, wipe.
+"""/api/admin/accounts — admin account tools: seed by major, wipe, and the
+read-only summary the UI's review step shows before either runs.
 
 Contract: docs/superpowers/specs/2026-11-08-admin-account-tools-design.md.
 
@@ -27,6 +28,7 @@ import config
 from services.account_bundle import account_exists
 from services.account_ops_lock import AccountBusy, account_op
 from services.account_seed import seeder
+from services.account_summary import summarize_account
 from services.account_wipe import AccountWipeIncomplete, wipe_account_data
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin
@@ -98,6 +100,17 @@ def account_tools_meta(request: Request):
         for pack in seeder.packs().values()
     ]
     return {"env": config.APP_ENV, "majors": majors, "sync": _sync_status()}
+
+
+@router.get("/{user_id}/summary")
+def account_summary(user_id: str, request: Request):
+    """What the account holds now — the review step shown before Seed / Wipe
+    (`services/account_summary.py`). Read-only: no lock, no audit row."""
+    require_admin(request)
+    summary = summarize_account(user_id)
+    if not summary["exists"]:
+        raise HTTPException(status_code=404, detail="User not found")
+    return summary
 
 
 @router.post("/{user_id}/seed")

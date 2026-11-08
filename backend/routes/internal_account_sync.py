@@ -1,6 +1,6 @@
 """Server-to-server half of the cross-environment account copy.
 
-`/api/internal/account-sync/{ping,export,import}` are called ONLY by the other
+`/api/internal/account-sync/{ping,summary,export,import}` are called ONLY by the other
 environment's backend (`services/account_sync_client.py`), never by a browser.
 There is no `sapling_session` on the other end — just a shared bearer token,
 `ACCOUNT_SYNC_INBOUND_TOKEN` (`config.account_sync_inbound_token`), checked
@@ -34,6 +34,7 @@ import config
 from services import account_bundle
 from services.account_bundle import AccountNotFound, BundleError
 from services.account_ops_lock import AccountBusy, account_op
+from services.account_summary import summarize_account
 from services.account_sync_client import ACCOUNT_NOT_FOUND
 from services.account_wipe import AccountWipeIncomplete
 from services.events_service import log_event
@@ -96,6 +97,23 @@ def export(
                  "tables": {name: len(rows) for name, rows in bundle["tables"].items()}},
     )
     return bundle
+
+
+@router.get("/summary", include_in_schema=False)
+def summary(
+    user_id: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """What the account holds here (`services/account_summary.summarize_account`):
+    counts, courses and XP only, never content. Feeds the copy review on the
+    other environment. Read-only — no lock and no audit row; 404
+    `account_not_found` when the account does not exist here."""
+    _authorize(authorization)
+    user_id = _require_user_id(user_id)
+    result = summarize_account(user_id)
+    if not result["exists"]:
+        raise HTTPException(status_code=404, detail=ACCOUNT_NOT_FOUND)
+    return result
 
 
 def _import_locked(user_id: str, bundle: dict) -> dict:

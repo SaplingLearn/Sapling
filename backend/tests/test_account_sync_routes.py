@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 import routes.admin_account_sync as admin_sync
 import routes.internal_account_sync as internal_sync
-from services import account_bundle, account_sync_client
+from services import account_bundle, account_summary, account_sync_client
 from services.account_bundle import AccountNotFound, BundleError
 from services.account_ops_lock import account_op
 from services.account_wipe import AccountWipeIncomplete
@@ -62,6 +62,7 @@ def _auth(token: str = TOKEN) -> dict:
 
 @pytest.mark.parametrize("method,path", [
     ("get", "/ping"), ("get", f"/export?user_id={UID}"), ("post", f"/import?user_id={UID}"),
+    ("get", f"/summary?user_id={UID}"),
 ])
 def test_internal_routes_404_when_inbound_token_unset(client, monkeypatch, method, path):
     monkeypatch.delenv("ACCOUNT_SYNC_INBOUND_TOKEN", raising=False)
@@ -81,6 +82,7 @@ def test_internal_blank_token_is_unset(client, monkeypatch):
 ])
 @pytest.mark.parametrize("method,path", [
     ("get", "/ping"), ("get", f"/export?user_id={UID}"), ("post", f"/import?user_id={UID}"),
+    ("get", f"/summary?user_id={UID}"),
 ])
 def test_internal_routes_one_generic_401(client, inbound, method, path, headers):
     resp = getattr(client, method)(INTERNAL + path, headers=headers)
@@ -437,3 +439,165 @@ def test_peer_status_on_401(configured, monkeypatch):
         return httpx.Response(401, json={"detail": "Unauthorized"}, request=httpx.Request("GET", url))
     monkeypatch.setattr(account_sync_client.httpx, "get", unauthorized)
     assert account_sync_client.peer_status() == {"configured": True, "peer_env": None}
+
+
+# ── review step: internal summary, peer_summary, copy-preview ───────────────
+
+SUMMARY = {
+    "exists": True,
+    "courses": [{"code": "CAS CS 111", "name": "Intro to CS 1", "term_id": "fall-2026"}],
+    "counts": {"enrollments": 1, "notes": 2},
+    "total_xp": 120,
+    "empty": False,
+}
+
+
+def test_internal_summary_returns_counts_without_audit(client, inbound, monkeypatch, events):
+    monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
+    resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+    assert resp.status_code == 200 and resp.json() == SUMMARY
+    assert events == []  # a read-only count is not an audited event
+
+
+def test_internal_summary_unknown_account_is_account_not_found(client, inbound, monkeypatch):
+    monkeypatch.setattr(internal_sync, "summarize_account",
+                        lambda uid: account_summary.empty_summary())
+    resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == account_sync_client.ACCOUNT_NOT_FOUND
+
+
+def test_internal_summary_requires_user_id(client, inbound):
+    assert client.get(f"{INTERNAL}/summary", headers=_auth()).status_code == 400
+
+
+def test_internal_summary_is_not_refused_while_busy(client, inbound, monkeypatch):
+    monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
+    with account_op(UID):
+        resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+    assert resp.status_code == 200
+
+
+def test_peer_summary_success(configured, monkeypatch):
+    peer = Peer(monkeypatch, get=(200, SUMMARY))
+    assert account_sync_client.peer_summary(UID) == {"env": "production", "summary": SUMMARY}
+    method, url, headers, params = peer.calls[-1]
+    assert url == f"{PEER}/api/internal/account-sync/summary"
+    assert headers == {"Authorization": f"Bearer {PEER_TOKEN}"} and params == {"user_id": UID}
+
+
+def test_peer_summary_unknown_account_is_an_answer_not_an_error(configured, monkeypatch):
+    Peer(monkeypatch, get=(404, {"detail": account_sync_client.ACCOUNT_NOT_FOUND}))
+    out = account_sync_client.peer_summary(UID)
+    assert out["env"] == "production"
+    assert out["summary"] == account_summary.empty_summary(exists=False)
+
+
+@pytest.mark.parametrize("status,body,expected", [
+    (404, {"detail": "Not Found"}, 502),  # an old peer without the route
+    (500, {"detail": "boom"}, 502),
+    (200, ["not", "a", "summary"], 502),
+    (200, {"counts": {}}, 502),  # no `exists`
+])
+def test_peer_summary_failures(configured, monkeypatch, status, body, expected):
+    Peer(monkeypatch, get=(status, body))
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.peer_summary(UID)
+    assert exc.value.status == expected
+
+
+def test_peer_summary_self_and_unreachable(configured, monkeypatch):
+    Peer(monkeypatch, env="staging")
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.peer_summary(UID)
+    assert exc.value.status == 409
+    Peer(monkeypatch, env=httpx.ConnectError("nope"))
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.peer_summary(UID)
+    assert exc.value.status == 502
+
+
+def test_peer_summary_not_configured(monkeypatch):
+    monkeypatch.delenv("ACCOUNT_SYNC_PEER_URL", raising=False)
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.peer_summary(UID)
+    assert exc.value.status == 503
+
+
+LOCAL = {**SUMMARY, "counts": {"enrollments": 4, "notes": 8}, "total_xp": 900}
+
+
+def _preview(client, direction="push"):
+    return client.get(f"{ADMIN}/{UID}/copy-preview", params={"direction": direction})
+
+
+@pytest.fixture
+def local_summary(monkeypatch):
+    monkeypatch.setattr(admin_sync, "summarize_account", lambda uid: dict(LOCAL))
+
+
+def test_copy_preview_is_admin_only(client, configured, local_summary, monkeypatch):
+    def deny(request):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    monkeypatch.setattr(admin_sync, "require_admin", deny)
+    assert _preview(client).status_code == 403
+    # Even a bad direction: admin is checked first.
+    assert _preview(client, "sideways").status_code == 403
+
+
+def test_copy_preview_push_sources_here(client, configured, local_summary, monkeypatch, audits,
+                                        events):
+    Peer(monkeypatch, get=(200, SUMMARY))
+    monkeypatch.setattr(account_sync_client, "push", lambda uid: pytest.fail("pushed"))
+    resp = _preview(client, "push")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "direction": "push",
+        "source": {"env": "staging", "summary": LOCAL},
+        "destination": {"env": "production", "summary": SUMMARY},
+    }
+    assert audits == [] and events == []  # a preview changes and audits nothing
+
+
+def test_copy_preview_pull_sources_the_peer(client, configured, local_summary, monkeypatch):
+    Peer(monkeypatch, get=(200, SUMMARY))
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+    body = _preview(client, "pull").json()
+    assert body["source"] == {"env": "production", "summary": SUMMARY}
+    assert body["destination"] == {"env": "staging", "summary": LOCAL}
+
+
+def test_copy_preview_peer_without_the_account(client, configured, local_summary, monkeypatch):
+    Peer(monkeypatch, get=(404, {"detail": account_sync_client.ACCOUNT_NOT_FOUND}))
+    resp = _preview(client, "push")
+    assert resp.status_code == 200
+    assert resp.json()["destination"]["summary"]["exists"] is False
+
+
+@pytest.mark.parametrize("direction", [None, "", "sideways"])
+def test_copy_preview_bad_direction_400(client, configured, local_summary, direction):
+    params = {} if direction is None else {"direction": direction}
+    assert client.get(f"{ADMIN}/{UID}/copy-preview", params=params).status_code == 400
+
+
+def test_copy_preview_not_configured_503(client, local_summary, monkeypatch):
+    monkeypatch.delenv("ACCOUNT_SYNC_PEER_URL", raising=False)
+    assert _preview(client).status_code == 503
+
+
+def test_copy_preview_unknown_local_account_404(client, configured, monkeypatch):
+    monkeypatch.setattr(admin_sync, "summarize_account",
+                        lambda uid: account_summary.empty_summary())
+    resp = _preview(client)
+    assert resp.status_code == 404 and "staging" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("peer_kw,status", [
+    ({"env": "staging"}, 409),
+    ({"env": httpx.ConnectError("nope")}, 502),
+    ({"get": (500, {"detail": "boom"})}, 502),
+])
+def test_copy_preview_peer_errors(client, configured, local_summary, monkeypatch, peer_kw,
+                                  status):
+    Peer(monkeypatch, **peer_kw)
+    assert _preview(client).status_code == status

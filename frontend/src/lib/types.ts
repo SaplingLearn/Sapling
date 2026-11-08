@@ -566,6 +566,42 @@ export interface AdminCopyAccountResult {
   counts: AccountTableCounts;
 }
 
+/** One enrolled course in an account summary. */
+export interface AdminAccountSummaryCourse {
+  code: string;
+  name: string;
+  term_id: string | null;
+}
+
+/**
+ * What an account holds on one environment (backend
+ * `services/account_summary.py`) — the review step's "will be deleted".
+ * `counts` keys are table names (`enrollments`, `assignments`, `graph_nodes`,
+ * `notes`, `documents`, `flashcards`, `quiz_attempts`, `sessions`,
+ * `study_guides`, `xp_events`, `user_achievements`).
+ */
+export interface AdminAccountSummary {
+  /** False: the account has never signed in on that environment. */
+  exists: boolean;
+  courses: AdminAccountSummaryCourse[];
+  counts: AccountTableCounts;
+  total_xp: number;
+  /** No counted rows and no XP. */
+  empty: boolean;
+}
+
+export interface AdminCopyPreviewSide {
+  env: string;
+  summary: AdminAccountSummary;
+}
+
+/** push: source = this env, destination = the peer; pull: the reverse. */
+export interface AdminCopyPreview {
+  direction: AccountCopyDirection;
+  source: AdminCopyPreviewSide;
+  destination: AdminCopyPreviewSide;
+}
+
 export interface LinkedConcept {
   id: string;
   concept_name: string;

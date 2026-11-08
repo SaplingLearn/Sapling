@@ -89,6 +89,18 @@ prod)**, from the admin dashboard, for a chosen existing account:
   pull = we GET peer's export and import locally. The bundle is plaintext JSON
   in transit only (HTTPS), decrypted on the source, re-encrypted on the target.
   Self-copy refused (peer reports the same `APP_ENV` → 409).
+- **Deployment (user decision, 2026-11-08): one-way, driven from prod.** Only
+  prod holds `ACCOUNT_SYNC_PEER_URL`/`_PEER_TOKEN` (pointing at staging); only
+  staging holds `ACCOUNT_SYNC_INBOUND_TOKEN`. Data still flows both ways — prod's
+  "Copy to staging" pushes, "Copy from staging" pulls — but staging can never
+  start a connection to prod, so a staging compromise cannot read or overwrite
+  prod accounts. The code stays symmetric; this is configuration only.
+- **Review before destroy (user decision, 2026-11-08).** Seed / Wipe / Copy
+  never act on the first click: a review step shows what will be deleted (real
+  per-table counts + current courses, from `GET /{id}/summary`, or for copy both
+  sides from `GET /{id}/copy-preview`, which reads the peer's token-guarded
+  `/api/internal/account-sync/summary`) and what replaces it, then the typed
+  email + a final button labelled with the action and size.
 - **Catalog remap on import**: offerings by the EXACT `(course_code, term_id,
   section)` (that exact offering created if absent — never
   `resolve_offering`'s any-section match; two enrollments that would land on one
@@ -126,12 +138,17 @@ All under `/api/admin/accounts`, `require_admin` first.
 - `POST /{user_id}/copy` body `{"direction": "push"|"pull", "confirm": "COPY"}`
   → `{"direction": "push", "peer_env": "production", "counts": {<table>: n}}`
 
+- `GET /{user_id}/summary` → `{"exists", "courses": [{"code","name","term_id"}],
+  "counts": {<table>: n}, "total_xp", "empty"}` (read-only; drives the review step)
+- `GET /{user_id}/copy-preview?direction=push|pull` →
+  `{"direction", "source": {"env","summary"}, "destination": {"env","summary"}}`
+
 Errors: 400 bad confirm/major, 404 unknown user (local or peer), 409 operation
 already running for that user / self-copy, 502 peer error, 503 sync not
 configured.
 
 Internal (token, never `auth_guard`, `include_in_schema=False`) under
-`/api/internal/account-sync`: `GET /ping`, `GET /export?user_id=`,
+`/api/internal/account-sync`: `GET /ping`, `GET /summary?user_id=`, `GET /export?user_id=`,
 `POST /import` (body = bundle).
 
 ## Components

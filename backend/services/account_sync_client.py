@@ -8,6 +8,8 @@ exception) and stays this small.
 
 - `push(user_id)`: export here, POST the bundle to the peer's import.
 - `pull(user_id)`: GET the peer's export, import it here.
+- `peer_summary(user_id)`: GET the peer's read-only account summary (the
+  copy review's "what the destination holds now").
 
 Both probe the peer first (`ping`) to learn which environment it is: a peer
 that reports OUR `APP_ENV` is a misconfiguration pointing at ourselves, and is
@@ -26,6 +28,7 @@ import httpx
 
 import config
 from services import account_bundle
+from services.account_summary import empty_summary
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,8 @@ _PING_TIMEOUT = httpx.Timeout(3.0)
 # Export/import of a full account walks ~20 tables over PostgREST on the far
 # side and can take tens of seconds.
 _TRANSFER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+# A summary is a dozen count queries on the far side.
+_SUMMARY_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 # The internal routes' "no such account" detail. Distinguishes that 404 from
 # the bare 404 a disabled (token-unset) or unrouted peer answers.
@@ -126,6 +131,36 @@ def _raise_for_peer(resp: httpx.Response, peer_env: str, *, missing: str) -> Non
         # as the same 400 a local BundleError gets, with the peer's detail.
         raise PeerError(400, f"{peer_env}: {detail[:300] or 'the bundle was refused'}")
     raise PeerError(502, f"{peer_env} answered {resp.status_code}: {detail[:300]}".rstrip(": "))
+
+
+def peer_summary(user_id: str) -> dict[str, Any]:
+    """`{"env": peer_env, "summary": <account_summary shape>}` for the copy review.
+
+    The peer's 404 `account_not_found` is an answer, not an error: the summary
+    comes back `exists=False` so the review can say the account hasn't signed
+    in there (and the copy would fail). Every other failure raises `PeerError`
+    with the same mapping as a transfer (an old peer without the route → its
+    bare 404 → 502).
+    """
+    url, token, peer_env = _peer()
+    try:
+        resp = httpx.get(
+            f"{url}{SYNC_PATH}/summary", params={"user_id": user_id},
+            headers=_headers(token), timeout=_SUMMARY_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        raise PeerError(502, f"{peer_env} summary failed: {type(exc).__name__}") from exc
+    if resp.status_code == 404 and _peer_detail(resp) == ACCOUNT_NOT_FOUND:
+        return {"env": peer_env, "summary": empty_summary(exists=False)}
+    _raise_for_peer(resp, peer_env, missing=f"account does not exist on {peer_env}")
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise PeerError(502, f"{peer_env} summary was not JSON") from exc
+    if not isinstance(body, dict) or not isinstance(body.get("exists"), bool) \
+            or not isinstance(body.get("counts"), dict):
+        raise PeerError(502, f"{peer_env} summary had an unexpected shape")
+    return {"env": peer_env, "summary": body}
 
 
 def push(user_id: str) -> dict[str, Any]:
