@@ -564,3 +564,11 @@ ITEM_LINT_LONGEST_MARGIN = 0.25
 # words than the distractor that repeats the most ("clang association", one of
 # the item-writing cues a test-wise student uses without knowing the content)
 ITEM_LINT_STEM_OVERLAP_MARGIN = 2
+
+# ── Check-item alignment (spec §13 A119) ────────────────────────────────────
+# † items per check_items_verify call (agents/check_items_verify.py): one
+# drafting call returns at most CHECK_ITEM_CONCEPTS_PER_CALL x
+# CHECK_ITEM_INITIAL_PER_CONCEPT drafts, so one verify call covers a whole
+# drafting call; a longer list (a model that over-returns, the backfill's
+# stored items) is verified in calls of this many.
+CHECK_ITEM_VERIFY_MAX_ITEMS = CHECK_ITEM_CONCEPTS_PER_CALL * CHECK_ITEM_INITIAL_PER_CONCEPT

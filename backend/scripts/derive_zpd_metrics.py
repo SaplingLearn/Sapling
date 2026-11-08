@@ -90,6 +90,7 @@ _EVENT_COLS = "id,event_type,user_id,request_id,payload,created_at"
 _REPORT_EVENTS = ("zpd.step", "ai.budget_capped", "learn.session_closed", "chat.message_sent")
 SERIES_SLOTS = (  # spec §8 invariant 6
     "check_items",
+    "check_items_verify",  # spec §13 A119: the drafted items' alignment check
     "grader",
     "grader_second",
     "learning_decision",
@@ -98,7 +99,9 @@ SERIES_SLOTS = (  # spec §8 invariant 6
     "loop_tutor_deep",
     "session_close",
 )
-_COURSE_ASSET_SLOT = "check_items"  # course assets, not a student's session
+# Course assets, not a student's session: drafting the items and (A119)
+# checking them before they are stored — reported together as check_items_usd.
+_COURSE_ASSET_SLOTS = frozenset({"check_items", "check_items_verify"})
 _UNKNOWN = "unknown"
 
 
@@ -211,7 +214,9 @@ def report(
             bands[(step["user_id"], step["request_id"])].add(band)
 
     loop_rows = [
-        r for r in usage if r.get("task") in SERIES_SLOTS and r.get("task") != _COURSE_ASSET_SLOT
+        r
+        for r in usage
+        if r.get("task") in SERIES_SLOTS and r.get("task") not in _COURSE_ASSET_SLOTS
     ]
     per_band: dict[str, float] = defaultdict(float)
     for r in loop_rows:
@@ -221,7 +226,7 @@ def report(
     out: dict = {
         "cost_per_band": dict(sorted(per_band.items())),
         "check_items_usd": sum(
-            _usd(r.get("cost_usd")) for r in usage if r.get("task") == _COURSE_ASSET_SLOT
+            _usd(r.get("cost_usd")) for r in usage if r.get("task") in _COURSE_ASSET_SLOTS
         ),
         "tier_mix": _count(
             p["tier"] for p in ((s.get("payload") or {}) for s in steps) if "tier" in p

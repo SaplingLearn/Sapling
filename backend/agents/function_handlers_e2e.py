@@ -483,6 +483,51 @@ register_function_handler(
 )
 
 
+# ── Check-item alignment check (spec §13 A119) ────────────────────────────
+#
+# Request-path in function mode like the drafting above: every drafting call's
+# valid drafts go through the check_items_verify agent before they are stored,
+# and an unavailable check drops them (fail closed) — so the lane needs a
+# handler or no item would ever be stored. It keeps every E2E item exactly as
+# drafted: every CRITERION line of every ITEM block is asked, and the concept
+# each item tests is the one its question names in its
+# `[e2e-function-model][<concept>]` marker (E2E_CHECK_ITEM_PROMPT_TEMPLATE) —
+# the concept it was drafted for, one of the upload's E2E_DOC_CONCEPTS. An item
+# without the marker tests "none" (the handler cannot tell, so it says so).
+# Content-driven only in that way; ids come off the message's `ITEM <id>` /
+# `CRITERION <id>:` lines (agents/check_items_verify.py::build_verify_prompt).
+# Emits through the OUTPUT tool → the real schema validates. Contract:
+# tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_VERIFY_WHY = "[e2e-function-model] The question asks for this."
+E2E_VERIFY_ASKS = "[e2e-function-model] What the question asks."
+_ITEM_HEAD_RE = re.compile(r"^ITEM (\S+)$", re.M)
+_CRITERION_RE = re.compile(r"^CRITERION (\S+):", re.M)
+_E2E_CONCEPT_RE = re.compile(r"\[e2e-function-model\]\[([^\]\n]+)\]")
+
+
+def _verify_handler(messages, info) -> ModelResponse:
+    text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    heads = list(_ITEM_HEAD_RE.finditer(text))
+    criteria, concepts = [], []
+    for n, head in enumerate(heads):
+        block = text[head.end() : heads[n + 1].start() if n + 1 < len(heads) else len(text)]
+        item = head.group(1)
+        criteria += [
+            {"item": item, "criterion": cid, "why": E2E_VERIFY_WHY, "asked": True}
+            for cid in _CRITERION_RE.findall(block)
+        ]
+        marked = _E2E_CONCEPT_RE.search(block)
+        concepts.append(
+            {"item": item, "asks": E2E_VERIFY_ASKS, "concept": marked.group(1) if marked else "none"}
+        )
+    args = {"criteria": criteria, "concepts": concepts}
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+
+
+register_function_handler("check_items_verify", _verify_handler)
+
+
 # ── Learning loop grader (PKG-05) ───────────────────────────────────────────
 #
 # grade_answer (a route helper, spec §13 A16) runs grader_agent as its OWN

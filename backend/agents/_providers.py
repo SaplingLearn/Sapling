@@ -55,6 +55,8 @@ AgentTask = Literal[
     "topic_checklist",
     # Learning loop series (spec §2 slots): check-item generation (PKG-04).
     "check_items",
+    # The drafted items' alignment check: rubric vs question, concept tag (§13 A119).
+    "check_items_verify",
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
     "grader", "grader_second",
     # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
@@ -119,6 +121,14 @@ _DEFAULTS: dict[AgentTask, str] = {
     # Ingest-time check-item drafting (PKG-04): single-shot structured
     # generation off the request path; SAPLING_MODEL_CHECK_ITEMS overrides.
     "check_items": "gemini-2.5-flash-lite",
+    # The drafted items' alignment check (spec §13 A119): per item, does the
+    # question ask for each rubric criterion, and which listed concept does it
+    # test. On Claude from the start, and NOT pending: the pending set guards
+    # quality gates recorded on Gemini, and this slot was born after ADR 0030
+    # with no gate on either provider — its baseline is recorded on Claude.
+    # A different model family from the check_items default, so the check is
+    # not the drafter grading itself.
+    "check_items_verify": "claude-haiku-5-5",
     # The rubric grader (PKG-05): short per-item binary judgments (spec §2).
     "grader": "gemini-2.5-flash-lite",
     # One second opinion on a DIFFERENT model, same agent and prompt (spec
@@ -197,6 +207,9 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     # check_items authors the assessment items themselves, so it takes the
     # quality-side level despite its Flash-Lite origin.
     "check_items": "medium",
+    # A119: closed yes/no judgments per criterion and a pick from a listed set —
+    # the grader's and the decision seam's kind of work, so their level.
+    "check_items_verify": "low",
     "grader": "low",
     "grader_second": "medium",
     "learning_decision": "low",

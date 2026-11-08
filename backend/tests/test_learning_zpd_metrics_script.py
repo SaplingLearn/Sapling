@@ -325,6 +325,18 @@ def test_report_bands_mixes_and_caps():
     assert out["cap_hits"] == {"daily_usd/soft": 2}
 
 
+def test_the_alignment_check_is_course_asset_spend():
+    """Spec §13 A119: checking the drafted items is part of authoring them —
+    counted with the drafting in check_items_usd, never in a student's band."""
+    usage = USAGE + [_usage("r1", "check_items_verify", "0.002")]
+    out = _script().report(usage, STEPS, CAPS, sessions_by_request={})
+    assert out["check_items_usd"] == pytest.approx(0.052)
+    assert out["cost_per_band"] == {
+        "develop": pytest.approx(0.011),
+        "unknown": pytest.approx(0.030),
+    }
+
+
 def test_report_null_cost_counts_as_zero():
     out = _script().report([_usage("r1", "grader", None)], STEPS, [], sessions_by_request={})
     assert out["cost_per_band"] == {"develop": 0.0}
@@ -397,6 +409,7 @@ def test_series_slots_are_invariant_6():
 
     assert set(_script().SERIES_SLOTS) == {
         "check_items",
+        "check_items_verify",  # spec §13 A119
         "grader",
         "grader_second",
         "learning_decision",

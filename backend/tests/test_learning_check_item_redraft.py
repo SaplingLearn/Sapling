@@ -21,6 +21,16 @@ _CHUNK = {"id": "c1", "chunk_index": 0, "chunk_text": "learning rate text", "doc
 _OTHER = {"id": "c2", "chunk_index": 1, "chunk_text": "learning rate, revised", "doc_id": "doc-2"}
 
 
+@pytest.fixture(autouse=True)
+def _alignment_passes_every_draft(monkeypatch):
+    """Spec §13 A119: every draft passes the alignment check as drafted; the
+    ledger's A119 cases (an unavailable check counts for no concept) are
+    tests/test_learning_item_alignment.py's."""
+    from tests.alignment_fakes import install_passthrough
+
+    install_passthrough(monkeypatch)
+
+
 def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_learning_check_item_draft_failures.sql"))
     assert len(hits) == 1, hits
