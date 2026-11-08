@@ -1300,11 +1300,24 @@ export interface LoopCheckNext extends LoopLearningScope {
 export interface LoopHintResponse { denied?: string; rung?: number; intent?: string }
 export interface LoopAttemptResult { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
 /** A60: `close_json` as stored — no student answer to `self_eval`/`if_then`. */
+/** Spec §13 A117 (backend learning/session_close.py::Baseline): where a concept's
+ *  reported change starts. `pre_session` — the estimate it had before the session;
+ *  `check_in` / `teaching` — no evidence before the session, so its first
+ *  measurement this session (never the BKT prior). */
+export type LoopCloseBaseline = 'pre_session' | 'check_in' | 'teaching';
+export interface LoopCloseConcept {
+  node_id: string;
+  /** Where the reported change starts (see `baseline`). */
+  p_before: number;
+  p_after: number;
+  /** Absent on a close stored before A117: read it as `pre_session`. */
+  baseline?: LoopCloseBaseline;
+}
 export interface LoopCloseRecord {
   summary: string;
   self_eval: string;
   if_then: string;
-  concepts: { node_id: string; p_before: number; p_after: number }[];
+  concepts: LoopCloseConcept[];
   misconceptions: string[];
   model_written: boolean;
 }

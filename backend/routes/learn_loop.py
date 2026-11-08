@@ -185,6 +185,7 @@ from learning.session_close import (
     CloseRecord,
     build_close,
     fallback_close,
+    session_probe_hashes,
     store_close,
 )
 from learning.turn_shape import (
@@ -4612,11 +4613,40 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
         for m in msgs or []
     ]
     evidence = table("node_mastery_events").select(
-        "node_id,p_before,p_after,correct,channel",
+        # A117: the columns learning.session_close.is_probe_row binds a row's
+        # planning envelope to, so the close counts check-in answers apart
+        "node_id,p_before,p_after,correct,channel,session_id,question_hash,check_item_id,"
+        "assisted,max_rung,reason,planning_observation",
         filters={"session_id": f"eq.{session_id}", "event_type": "eq.evidence"},
         order="created_at.asc,evidence_seq.asc",
     )
     return transcript, list(evidence or [])
+
+
+def _measured_before(user_id: str, session_id: str, evidence: list[dict]) -> set[str]:
+    """Spec §13 A117: the nodes of this session's evidence that the journal
+    measured BEFORE this session did — the node's first evidence row (journal
+    order, owner-scoped) belongs to another session or to none (a quiz, a
+    post-test). They report their change from the estimate before the session;
+    every other node was first measured here and starts at that measurement,
+    never at the BKT prior. Propagation is never journaled, so it measures
+    nothing. One limit-1 read per node (idx_node_mastery_events_node); a failed
+    read propagates (the close is retried, like the evidence read)."""
+    out: set[str] = set()
+    for node_id in dict.fromkeys(e.get("node_id") for e in evidence or [] if e.get("node_id")):
+        first = table("node_mastery_events").select(
+            "session_id,graph_nodes!inner(user_id)",
+            filters={
+                "graph_nodes.user_id": f"eq.{user_id}",
+                "node_id": f"eq.{node_id}",
+                "event_type": "eq.evidence",
+            },
+            order="created_at.asc,evidence_seq.asc",
+            limit=1,
+        )
+        if first and first[0].get("session_id") != session_id:
+            out.add(node_id)
+    return out
 
 
 def _concept_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
@@ -4714,7 +4744,7 @@ async def close_session(
             raise HTTPException(status_code=404, detail="Session not found")
         PENDING_SESSIONS.pop(session_id, None)
         phase = "close"
-        record = fallback_close(build_close([], [], [], {}))
+        record = fallback_close(build_close([], [], [], measured_before=()))
         row_defaults = {
             "mode": pending.get("mode"),
             "topic": pending.get("topic"),
@@ -4747,7 +4777,10 @@ async def close_session(
                 transcript,
                 evidence,
                 _close_misconception_keys(user_id, evidence),
-                {},
+                # A117: honest baselines, and check-in answers counted apart
+                # (the probe history is the claimed document's)
+                measured_before=_measured_before(user_id, session_id, evidence),
+                probe_hashes=session_probe_hashes(doc),
                 concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
             )
             items = _unreleased_items(doc)

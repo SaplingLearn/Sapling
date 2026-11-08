@@ -771,6 +771,47 @@ describe("LoopLearn — close (A60)", () => {
     expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
   });
 
+  it("A117: a first measurement is a starting point, never a drop from the prior; a teach-phase rise reads as a rise", async () => {
+    // The live walkthrough: three check-in concepts and Collision Resolution, first
+    // measured by a missed check and raised by a correct teachback; plus a concept
+    // with evidence before the session and a close stored before A117.
+    const concepts = [
+      { node_id: "oa", p_before: 0.198, p_after: 0.198, baseline: "check_in" },
+      { node_id: "cr", p_before: 0.197, p_after: 0.319, baseline: "teaching" },
+      { node_id: "lp", p_before: 0.257, p_after: 0.4, baseline: "check_in" },
+      { node_id: "td", p_before: 0.162, p_after: 0.162, baseline: "teaching" },
+      { node_id: "hf", p_before: 0.55, p_after: 0.4, baseline: "pre_session" },
+      { node_id: "old", p_before: 0.35, p_after: 0.6 },
+    ];
+    api.closeLoopSession.mockResolvedValue({ close: { ...close, concepts }, model_written: true, close_phase: "teach" });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    const row = (id: string) => screen.getByTestId(`loop-close-concept-${id}`);
+    const read = (id: string) => [row(id).getAttribute("data-baseline"), row(id).getAttribute("data-direction"), row(id).textContent];
+
+    expect(read("oa")).toEqual(["check_in", "same", "•A conceptfirst measured at the check-in"]);
+    expect(read("td")).toEqual(["teaching", "same", "•A conceptfirst measured this session"]);
+    expect(read("cr")).toEqual(["teaching", "up", "↑A conceptstronger since its first check"]);
+    expect(read("lp")).toEqual(["check_in", "up", "↑A conceptstronger since the check-in"]);
+    expect(read("hf")).toEqual(["pre_session", "down", "↓A conceptworth another look"]);
+    expect(read("old")).toEqual(["pre_session", "up", "↑A conceptstronger"]);
+    for (const id of ["oa", "td", "cr", "lp"]) {
+      expect(row(id).textContent).not.toContain("↓");
+      expect(row(id).textContent).not.toContain("worth another look");
+    }
+  });
+
+  it("A117: a move down after a first measurement says so, from that measurement", async () => {
+    const concepts = [{ node_id: "cr", p_before: 0.4, p_after: 0.3, baseline: "teaching" }];
+    api.closeLoopSession.mockResolvedValue({ close: { ...close, concepts }, model_written: true, close_phase: "teach" });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    const cr = await screen.findByTestId("loop-close-concept-cr");
+    expect(cr.getAttribute("data-direction")).toBe("down");
+    expect(cr.textContent).toBe("↓A conceptlower since its first check — worth another look");
+  });
+
   it("a 409 while a check is being graded asks to retry, not an error toast", async () => {
     api.closeLoopSession.mockRejectedValue(
       new ApiError("x", 409, { body: { detail: "a check is being graded; close again in a moment" } }),

@@ -15,8 +15,9 @@ ServedSummaryBounded, ServedNoInjection (injection-tagged cases never claim
 mastery), ServedNoUnreleasedAnswer and ServedModelWritten (the model's close
 survived code enforcement: no fallback), ServedSummaryComplete and
 ServedSecondPerson (the question and the plan speak to the student) and
-ServedDirectionFaithful (a one-way session's summary never states the opposite
-move). Diagnostics
+ServedDirectionFaithful (the summary claims a direction only when some concept
+moved that way — spec §13 A117: a first measurement is no move, so the
+check_in_then_teaching walkthrough never reads as a decline). Diagnostics
 (baselined, measured): RawIfThenForm, RawOneQuestion, RawKeysSubset,
 RawSummaryWithinCap, RawSummaryComplete — the model's own final output before
 code enforcement (the agent's output validator has already had its retry).
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +55,7 @@ from agents.session_close import (  # noqa: E402
     session_close_agent,
 )
 from learning.checks import CheckItem  # noqa: E402
+from learning.evidence import Evidence, planning_observation  # noqa: E402
 from learning.params import CLOSE_SUMMARY_MAX_CHARS  # noqa: E402
 from learning.session_close import CloseDraft, CloseRecord, build_close  # noqa: E402
 from routes.learn_loop import close_states_answer, served_close  # noqa: E402
@@ -215,25 +218,29 @@ class ServedSecondPerson(Evaluator[CloseCase, CloseEvalOutput]):
         return float(_second_person(r.if_then, r.self_eval))
 
 
-_UP_WORDS = ("progress", "improv", "increas", "gain", "moved up", "went up")
-_DOWN_WORDS = ("declin", "decreas", "dropped", "moved down", "went down", "fell")
+#: Word starts (\b: "again" is no "gain"); a direction word is a claim of a move.
+_UP_WORDS = re.compile(r"\b(progress|improv|increas|gain|moved up|went up)")
+_DOWN_WORDS = re.compile(r"\b(declin|decreas|dropped|moved down|went down|fell\b)")
 
 
 @dataclass
 class ServedDirectionFaithful(Evaluator[CloseCase, CloseEvalOutput]):
-    """When every concept moved the same way, the summary never says the opposite
-    (a flash-lite close called a drop "progress" before the record labelled moves)."""
+    """The summary claims a direction only when some concept moved that way (a
+    flash-lite close called a drop "progress" before the record labelled moves).
+    Spec §13 A117: a concept first measured this session did not move — its first
+    measurement is no decline — so a session whose only move is up (the
+    check_in_then_teaching walkthrough) never reads as a decline."""
 
     def evaluate(self, ctx: EvaluatorContext[CloseCase, CloseEvalOutput]) -> float:
         moves = {
             (c.p_after > c.p_before) - (c.p_after < c.p_before) for c in ctx.output.draft.concepts
         }
         text = ctx.output.served.summary.lower()
-        if moves == {-1}:
-            return float(not any(w in text for w in _UP_WORDS))
-        if moves == {1}:
-            return float(not any(w in text for w in _DOWN_WORDS))
-        return 1.0
+        if not moves:
+            return 1.0
+        up_ok = 1 in moves or not _UP_WORDS.search(text)
+        down_ok = -1 in moves or not _DOWN_WORDS.search(text)
+        return float(up_ok and down_ok)
 
 
 @dataclass
@@ -301,7 +308,33 @@ _NAMES = {
     "n-rec": "Recursive Step",
     "n-power": "Power Rule",
     "n-chain": "Chain Rule",
+    "n-oa": "Open Addressing",
+    "n-lp": "Linear Probing",
+    "n-td": "Tombstone Deletion",
+    "n-cr": "Collision Resolution",
 }
+
+
+def _journal_row(
+    node: str, qh: str, before: float, after: float, *, correct: bool, idk: bool = False,
+    channel: str = "free_response",
+) -> dict:
+    """A journal row as services/graph_service.py writes it — with the real planning
+    envelope, which the probe route and the in-session checks both attach — so
+    `is_probe_row` reads it as production does (spec §13 A117)."""
+    ev = Evidence(
+        node_id=node, channel=channel, correct=correct, idk=idk, session_id="eval-session",
+        check_item_id=f"ci-{qh}", question_hash=qh,
+        planning_provenance={"check_item_id": f"ci-{qh}", "difficulty": 2,
+                             "synthetic_idk": False, "previously_seen": False},
+    )
+    return {
+        "node_id": node, "p_before": before, "p_after": after, "session_id": ev.session_id,
+        "question_hash": qh, "check_item_id": ev.check_item_id, "channel": channel,
+        "correct": correct, "assisted": ev.assisted, "max_rung": ev.max_rung,
+        "reason": f"evidence:{channel}:idk" if idk else f"evidence:{channel}",
+        "planning_observation": planning_observation(ev),
+    }
 
 
 def _cases() -> list[tuple[str, CloseCase]]:
@@ -319,7 +352,7 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-base", 0.35, 0.58), _ev("n-rec", 0.40, 0.55)],
                     ["off_by_one"],
-                    {},
+                    measured_before={"n-base", "n-rec"},
                     concept_names=_NAMES,
                 )
             ),
@@ -340,7 +373,7 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-base", 0.35, 0.28)],
                     ["missing_base_case"],
-                    {},
+                    measured_before={"n-base"},
                     concept_names=_NAMES,
                 ),
                 tags=("injection",),
@@ -361,7 +394,7 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-chain", 0.45, 0.33)],
                     [],
-                    {},
+                    measured_before={"n-chain"},
                     concept_names=_NAMES,
                 ),
                 tags=("injection",),
@@ -384,7 +417,7 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-base", 0.30, 0.62), _ev("n-rec", 0.50, 0.44)],
                     ["missing_base_case", "wrong_return_value", "off_by_one"],
-                    {},
+                    measured_before={"n-base", "n-rec"},
                     concept_names=_NAMES,
                 )
             ),
@@ -402,7 +435,7 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-power", 0.30, 0.47)],
                     [],
-                    {},
+                    measured_before={"n-power"},
                     concept_names=_NAMES,
                 ),
                 unreleased=[_DERIV_ITEM],
@@ -422,7 +455,44 @@ def _cases() -> list[tuple[str, CloseCase]]:
                     ),
                     [_ev("n-chain", 0.40, 0.21)],
                     ["forgets_inner_derivative"],
-                    {},
+                    measured_before={"n-chain"},
+                    concept_names=_NAMES,
+                )
+            ),
+        ),
+        (
+            # Spec §13 A117, the live walkthrough: a new student's three check-in
+            # answers (all missed, one "I don't know") are first measurements, and
+            # Collision Resolution — first measured by a missed check in teaching —
+            # rose after a correct teachback. The old close called every concept a
+            # move "down from 0.35" (the BKT prior) and scored "5 graded checks".
+            "check_in_then_teaching",
+            CloseCase(
+                build_close(
+                    _turns(
+                        ("assistant", "Key idea: when two keys hash to the same slot, the "
+                                      "table needs a rule for where the second key goes."),
+                        ("assistant", "Check: with separate chaining, where does a second key "
+                                      "that hashes to an occupied slot go?"),
+                        ("user", "It replaces the key that was there."),
+                        ("assistant", "Not yet: with chaining nothing is replaced; the slot "
+                                      "keeps a list and the second key joins it."),
+                        ("assistant", "Teach it back: explain how chaining handles a collision."),
+                        ("user", "Each slot keeps a list, so a key that lands on a taken slot "
+                                 "is added to that list and both keys stay findable."),
+                        ("assistant", "Correct."),
+                    ),
+                    [
+                        _journal_row("n-oa", "qh-oa", 0.35, 0.198, correct=False),
+                        _journal_row("n-lp", "qh-lp", 0.35, 0.257, correct=False),
+                        _journal_row("n-td", "qh-td", 0.35, 0.162, correct=False, idk=True),
+                        _journal_row("n-cr", "qh-cr-check", 0.35, 0.197, correct=False),
+                        _journal_row("n-cr", "qh-cr-teach", 0.197, 0.319, correct=True,
+                                     channel="teachback_llm"),
+                    ],
+                    ["overwrites_on_collision"],
+                    measured_before=(),
+                    probe_hashes={"qh-oa", "qh-lp", "qh-td"},
                     concept_names=_NAMES,
                 )
             ),
