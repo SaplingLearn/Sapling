@@ -330,6 +330,22 @@ FSRS_RATING_EASY = 4  # never emitted in v1 (§3.2)
 # "< 0.65" is PRACTICE_TARGET_LO above).
 BAND_CONTROL_HI = 0.90
 BAND_CONTROL_STOP_WINDOWS = 2
+# † spec §13 A122 (the band controller wired into the check-feedback path):
+# §3.3 "item difficulty +1 step" (HARDER) and "difficulty down freely"
+# (EASIER_CHECK_PREREQS) move the concept's next item this many
+# CHECK_ITEM_DIFFICULTIES levels from the graded item's, clamped to the bank.
+# Down is "free" in that no minimum window gates it (HARDER alone needs
+# BAND_CONTROL_HARDER_MIN_ATTEMPTS), so consecutive low verdicts walk it down.
+BAND_CONTROL_DIFFICULTY_STEP = 1
+# spec §13 A122: §3.3 band control's "ceiling −1 rung" (HARDER) and "ceiling +1
+# rung" (EASIER_CHECK_PREREQS) — the band's ceiling moves this many rungs,
+# clamped to the ladder; no gate moves with it (policy.ceiling_with_reason).
+BAND_CONTROL_CEILING_STEP = 1
+# † spec §13 A122: §3.3 STOP_PRACTICE's "belief stable" — the concept's newest
+# graded opportunity moved p_known by less than this. The spec's one named
+# stability threshold (PROBE_STOP_DELTA: "the last two posteriors move less
+# than this"), so the probe and band control read stability alike.
+BAND_CONTROL_STABLE_DELTA = PROBE_STOP_DELTA
 # §3.3 ceiling: profic "H3 after 2 failed genuine attempts"; develop "H6 after ≥ 2".
 CEILING_PROFIC_ESCALATE_FAILS = 2
 # † A110 (c): a profic belief needs this many strong unassisted observations

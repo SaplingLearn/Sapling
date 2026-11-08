@@ -1,8 +1,8 @@
 /**
  * Journeys (learning loop, PKG-13) — the launch UI (spec §11.3, §13 A26):
- *  1. a loop user walks probe → plan → teach/check (explicit submission, gated
- *     hint) → feedback → close, and every belief change lands in the database
- *     through apply_graph_update;
+ *  1. a loop user walks probe → plan → teach/check (explicit submission, the
+ *     worked example first then a gated hint, spec §13 A122) → feedback → close,
+ *     and every belief change lands in the database through apply_graph_update;
  *  2. a reload mid-session resumes the same session and calls no probe route;
  *  3. a capped user (today's spend past the novice allowance) sees tutor chat
  *     paused on /learn while review still serves and grades on /study;
@@ -202,17 +202,35 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   await firstTeachTurn(page);
   // spec §13 A27: PKG-07 activates the concept's next item after LOOP_TEACH_TURNS_BEFORE_CHECK
   // teach turns, or on "Check me" (POST /check/next, no model call).
+  // spec §13 A122: the diagnostic leaves this learner a NOVICE on Binary Numbers, a
+  // concept with no prerequisite edge — its prerequisite status is unknown, never
+  // proficient — so §3.3's "novice, prerequisite not known" row puts the worked
+  // example FIRST: the pose says `worked_first` and the client asks for it at once
+  // (/hint grants H4 with no attempt before it; the hint turn serves it).
   const check = page.getByTestId("loop-check-prompt");
+  const hintButton = page.getByTestId("loop-hint-button");
+  const hintReply = page.getByTestId("loop-hint-reply");
+  const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
+  const workedGrant = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/hint");
+  const workedTurn = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/action");
   await page.getByTestId("loop-check-me").click();
+  expect((await (await posed).json()).check).toMatchObject({ worked_first: true });
   await expect(check).toBeVisible();
   await expect(phase).toHaveAttribute("data-phase", "check");
   // The check pose is a template (spec §13 A17): the seeded item prompt, no model reply.
   await expect(check).toContainText(LOOP_PROBE_PROMPT);
   const checkHash = await check.getAttribute("data-question-hash");
   expect(checkHash).toBeTruthy();
+  expect(await (await workedGrant).json()).toMatchObject({ rung: 4 });
+  expect((await workedTurn).status()).toBe(200);
+  // No same-shape sibling is seeded, so the deep tier writes H4 (spec §3.5) under
+  // the served leak guards (the oracle below re-reads the transcript for leaks).
+  await expect(hintReply).toContainText(LOOP_HINT_BODY);
+  await expect(hintButton).toBeEnabled();
 
-  // Hint before any attempt → denied with a reason from learning/gates.py.
-  await page.getByTestId("loop-hint-button").click();
+  // Nothing after the worked example is free: H5 keeps the attempt gate, so a hint
+  // with no attempt since → denied with a reason from learning/gates.py.
+  await hintButton.click();
   const denied = page.getByTestId("loop-hint-denied");
   await expect(denied).toBeVisible();
   await expect(denied).toHaveAttribute("data-reason", "no_genuine_attempt");
@@ -224,8 +242,6 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // timer exists to skip it; the bound below is the UNSCALED gate, so the poll is
   // honest whatever the lane scale is.
   await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
-  const hintButton = page.getByTestId("loop-hint-button");
-  const hintReply = page.getByTestId("loop-hint-reply");
   await expect
     .poll(
       async () => {
@@ -249,7 +265,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
       async () =>
         (await sessionRows()).some((r) => {
           const step = r.loop_state?.steps?.[checkHash!];
-          return (step?.attempted_at?.length ?? 0) >= 1 && (step?.rung ?? 0) >= 1;
+          // H4 (the worked example, first) then H5, earned with the attempt
+          return (step?.attempted_at?.length ?? 0) >= 1 && (step?.rung ?? 0) >= 5;
         }),
       { timeout: DB_POLL_TIMEOUT_MS },
     )
@@ -290,13 +307,56 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_QUESTION);
   await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
   // The diagnostic deliberately includes independent misses, so the initial
-  // prior is no longer this check's baseline. Even assisted correct evidence
-  // must improve the checked concept from its actual pre-submission belief.
+  // prior is no longer this check's baseline. Spec §3.3's evidence mapping: a
+  // correct answer after H4–H6 is NO upward BKT evidence (weight 0, FSRS Again,
+  // an isomorph re-asked) — the worked example came first, so this item earns
+  // the concept nothing; the near-transfer item after it is where credit comes.
   const learner = page.getByTestId("loop-learner-state");
   await expect(learner).toBeVisible();
   await expect(learner).toHaveAttribute("data-node-id", checkedNodeId);
-  await expect.poll(async () => Number(await learner.getAttribute("data-p-known"))).toBeGreaterThan(beforeCheckKnown);
   const afterCheckKnown = Number(await learner.getAttribute("data-p-known"));
+  expect(afterCheckKnown).toBeCloseTo(beforeCheckKnown, 2); // read-time decay only
+  const [checkEvidence] = (await queryRaw(
+    `SELECT e.max_rung, e.assisted, e.weight, e.p_before, e.p_after
+       FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+      WHERE g.user_id = $1 AND e.event_type = 'evidence' AND e.question_hash = $2`,
+    [USER_LOOP, checkHash],
+  )) as { max_rung: number; assisted: boolean; weight: number; p_before: number; p_after: number }[];
+  expect(Number(checkEvidence.max_rung)).toBeGreaterThanOrEqual(4);
+  expect(checkEvidence.assisted).toBe(true);
+  expect(Number(checkEvidence.weight)).toBe(0);
+  expect(Number(checkEvidence.p_after)).toBeCloseTo(Number(checkEvidence.p_before), 10);
+  // Spec §13 A122: band control ran on this grade. The concept's unassisted
+  // first-attempt rate is below PRACTICE_TARGET_LO (the probe's misses and this
+  // helped answer), so it checks prerequisites — Binary Numbers has none to
+  // repair — steps the next item's difficulty down and raises the concept's
+  // ceiling one rung (§3.3 "ceiling +1 rung").
+  await expect
+    .poll(
+      async () =>
+        (await queryRaw(`SELECT payload FROM events WHERE user_id = $1 AND event_type = 'zpd.band_adjust'`, [
+          USER_LOOP,
+        ])) as { payload: Record<string, unknown> }[],
+      { timeout: DB_POLL_TIMEOUT_MS },
+    )
+    .toEqual([
+      {
+        payload: expect.objectContaining({
+          direction: "easier_check_prereqs",
+          trigger: "low",
+          ceiling_delta: 1,
+          window_stats: expect.objectContaining({ repair: false }),
+        }),
+      },
+    ]);
+  // The verdict is stored on the graded step with the ceiling it leaves the
+  // concept's next item: a novice whose prerequisite is unknown sits on the
+  // worked-example-first row (H4), one rung up → H5.
+  const [stored] = (await queryRaw(
+    `SELECT loop_state->'steps'->$2->'band_control' AS verdict FROM sessions WHERE id = $1`,
+    [checkedSessionId, checkHash],
+  )) as { verdict: Record<string, unknown> | null }[];
+  expect(stored.verdict).toMatchObject({ action: "easier_check_prereqs", ceiling_delta: 1, ceiling: 5 });
 
   // A15/A16/A26: no loop request carried a model preference, and the answer never went
   // through the chat route.
@@ -321,7 +381,9 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(states.length).toBeGreaterThan(0);
   const checkedState = states.find((s) => s.node_id === checkedNodeId);
   expect(checkedState, "the explicitly checked concept is persisted").toBeDefined();
-  expect(Number(checkedState!.p_known)).toBeGreaterThan(beforeCheckKnown);
+  // No upward evidence after the worked example (spec §3.3): the stored
+  // posterior moved only by the read-time decay the grade applied to it.
+  expect(Number(checkedState!.p_known)).toBeCloseTo(beforeCheckKnown, 2);
   // The DB stores the posterior; UI reads intentionally apply elapsed-time
   // decay. Allow that tiny read-time difference while checking the same node.
   expect(Number(checkedState!.p_known)).toBeCloseTo(afterCheckKnown, 5);
@@ -800,8 +862,15 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await walkProbeAndPlan(page, P);
   await firstTeachTurn(page);
+  const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
   await page.getByTestId("loop-check-me").click();
   await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+  if ((await (await posed).json()).check?.worked_first) {
+    // spec §13 A122: the worked example is asked for first; read it before answering
+    // (a learner does — and the answer's feedback turn then never races its turn)
+    await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
+    await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
+  }
   await page.getByRole("textbox", { name: "Your answer", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
   await page.getByTestId("loop-attempt-submit").click();
   await expect(phase).toHaveAttribute("data-phase", "feedback");
@@ -966,8 +1035,11 @@ test("an earned hint arriving late cannot reopen a graded check in the same sess
     await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
     await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
     const hint = page.getByTestId("loop-hint-button");
-    // The real attempt/dwell gate must grant the hint. Only its later text
-    // response is held, modeling an in-flight action rather than bypassing help.
+    // The server must grant the hint — for this novice on a concept with no
+    // prerequisite edge that is the worked example, granted first and asked for
+    // by the client at once (spec §13 A122); otherwise the real attempt/dwell
+    // gate. Only its later text response is held, modeling an in-flight action
+    // rather than bypassing help.
     await expect.poll(async () => {
       if (!actionStarted && await hint.isEnabled()) await hint.click();
       return actionStarted;

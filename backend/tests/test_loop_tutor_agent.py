@@ -223,7 +223,9 @@ def test_phase_prefix_has_no_reference_parameter():
         "item_format",
         "answer_released",
         "verdict",
+        "attempt_first",  # spec §13 A122: a bool selecting the novice format, nothing more
     }
+    assert params["attempt_first"].annotation in (bool, "bool")
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
 
 

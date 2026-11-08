@@ -742,6 +742,28 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
   });
 
+  it("an item that opens on its worked example asks for it at once, before any attempt (spec §13 A122)", async () => {
+    api.requestLoopHint.mockResolvedValue({ rung: 4, intent: "Worked example on an isomorph." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: "Here is a similar problem, worked.", phase: "hint" }));
+    await withCheckItem({ ...pose, worked_first: true });
+    expect((await screen.findByTestId("loop-hint-reply")).textContent).toContain("Here is a similar problem, worked.");
+    expect(api.postLoopAttempt).not.toHaveBeenCalled(); // the example comes FIRST: no attempt is posted
+    expect(api.requestLoopHint).toHaveBeenCalledTimes(1);
+    expect(api.requestLoopHint).toHaveBeenCalledWith("s2", "u1", "qh7");
+    expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(1);
+    // re-renders never ask twice for the same posed item
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "my try" } });
+    await waitFor(() => expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false));
+    expect(api.requestLoopHint).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ordinary pose asks for no hint until the learner does", async () => {
+    await withCheckItem();
+    await waitFor(() => expect(screen.getByTestId("loop-check-prompt")).toBeTruthy());
+    expect(api.requestLoopHint).not.toHaveBeenCalled();
+    expect(api.requestLoopHintTurn).not.toHaveBeenCalled();
+  });
+
   it("a learner_state event fills loop-learner-state", async () => {
     api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onLearnerState?: (s: object) => void }) => {
       h.onLearnerState?.({ node_id: "n1", p_known: 0.42, band: "develop" });

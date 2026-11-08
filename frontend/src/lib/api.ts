@@ -1224,6 +1224,10 @@ export interface LoopCheckItem {
   difficulty: number;
   prompt?: string;
   options?: LoopOption[] | null;
+  /** Spec §13 A122: the item opens on its worked example (a novice without the
+   *  prerequisite) and it is still owed — ask for it at once: /hint grants H4
+   *  with no attempt first, the hint turn serves it. Present only when true. */
+  worked_first?: boolean;
 }
 export interface LoopProbeItem extends LoopCheckItem {
   check_item_id: string;

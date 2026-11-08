@@ -9,7 +9,9 @@ or tutor text into the plaintext events table), is dropped with a log line.
 The payload's `request_id` (zpd.leak) is exempt from the length cap: it is the
 same value as the events row's request_id column (request_context accepts up
 to 128 chars). Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call
-them. zpd.step's `earnest_blocked` key (spec §13 A109) is read by
+them; zpd.band_adjust and zpd.wheelspin are emitted by the check route's
+graded-check path (spec §13 A122: routes/learn_loop.py::_emit_band_verdict).
+zpd.step's `earnest_blocked` key (spec §13 A109) is read by
 `learning.earnest_revise`, outside this layer (the admin KPI and the nightly
 metrics script must not import a PKG-06 module). The leak family's one event
 outside zpd.*, learn.outside_leak (spec §13 A125: the integrity guard of the AI
@@ -26,14 +28,14 @@ from learning.evidence import Channel, GraderBackend  # spec §5 (A22/A24, A116)
 from learning.ladder import Rung
 from learning.leak import Detector
 from learning.arms import Variant
-from learning.policy import Band, BandAction, CeilingReason, Tier
+# BandTrigger: policy's (spec §13 A122), the one list policy.BAND_TRIGGERS maps verdicts onto
+from learning.policy import Band, BandAction, BandTrigger, CeilingReason, Tier
 from services.events_service import log_event
 
 logger = logging.getLogger("sapling.learning.zpd_events")
 
 Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttest"]  # A8: posttest
 Rating = Literal["too_easy", "appropriate", "too_hard"]
-BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
 
 
 def _is_plain(value: object) -> bool:
@@ -162,18 +164,24 @@ def emit_zpd_band_adjust(
     direction: BandAction,
     trigger: BandTrigger,
     window_stats: dict,
+    ceiling_delta: int | None = None,
 ) -> None:
-    _emit(
-        "zpd.band_adjust",
-        "usage",
-        user_id,
-        request_id,
-        lambda: {
+    """`ceiling_delta` (spec §13 A122): the rungs the verdict's ceiling clause
+    moves the concept's band ceiling (−1 HARDER, +1 EASIER_CHECK_PREREQS, 0
+    otherwise); present whenever the band controller emits, omitted only by a
+    caller that has none."""
+
+    def build() -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "direction": BandAction(direction).value,
             "trigger": trigger,
             "window_stats": dict(window_stats),
-        },
-    )
+        }
+        if ceiling_delta is not None:
+            payload["ceiling_delta"] = int(ceiling_delta)
+        return payload
+
+    _emit("zpd.band_adjust", "usage", user_id, request_id, build)
 
 
 def emit_zpd_wheelspin(
