@@ -41,7 +41,7 @@ from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, table
 from learning import params
-from learning.policy import LoopState
+from learning.policy import WINDOW_KEEP, LoopState, Opportunity
 
 logger = logging.getLogger("sapling.learning.loop_state")
 
@@ -222,6 +222,48 @@ def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | N
             "shape": shapes.get(row.get("check_item_id")),
         }
         for row in rows or []
+    ]
+
+
+def _number_or_none(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def opportunity_window(user_id: str, node_id: str) -> list[Opportunity] | None:
+    """Spec §13 A122: the concept's band-control window — its newest
+    WINDOW_KEEP graded opportunities (evidence rows that name their item, the
+    rows scripts/derive_zpd_metrics.py reads), newest LAST, across sessions
+    and surfaces, as policy.Opportunity. Read in the journal's order
+    (created_at, evidence_seq, id) and owner-scoped through the
+    graph_nodes!inner embed. Propagation is never journaled, so it is never an
+    opportunity. None when the read failed (never raises): the caller then
+    has no verdict to apply, never an invented one."""
+    try:
+        rows = table("node_mastery_events").select(
+            "correct,assisted,max_rung,p_before,p_after,graph_nodes!inner(user_id)",
+            filters={
+                "graph_nodes.user_id": f"eq.{user_id}",
+                "node_id": f"eq.{node_id}",
+                "event_type": "eq.evidence",
+                "question_hash": "not.is.null",
+            },
+            order="created_at.desc,evidence_seq.desc.nullslast,id.desc",
+            limit=WINDOW_KEEP,
+        )
+    except Exception as exc:
+        logger.warning("opportunity_window read failed: %s", type(exc).__name__)
+        return None
+    return [
+        Opportunity(
+            correct=row.get("correct") is True,
+            assisted=row.get("assisted") is not False,  # unknown help is never unassisted
+            max_rung=int(row.get("max_rung") or 0),
+            p_before=_number_or_none(row.get("p_before")),
+            p_after=_number_or_none(row.get("p_after")),
+        )
+        for row in reversed(rows or [])
     ]
 
 

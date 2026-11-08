@@ -1149,6 +1149,20 @@ export function LoopLearn() {
     }
   };
 
+  // Spec §13 A122: an item that opens on its worked example (a novice without
+  // the prerequisite — the server's `worked_first`) asks for it at once, before
+  // any attempt: the same /hint + hint turn as the button, once per posed item.
+  // The server still decides — /hint grants H4 with no attempt only while the
+  // example is owed — and the example is a leak-checked turn like any hint.
+  const workedAsked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionId || !item?.worked_first || hintBusy || attemptBusy || feedbackPending || pendingGrade) return;
+    const key = `${sessionId}:${item.question_hash}`;
+    if (workedAsked.current === key) return;
+    workedAsked.current = key;
+    void askHint();
+  });
+
   /** "Report this question" (spec §13 A113): the server records the reason and
    *  takes the check off this session — it is never served to this student
    *  again — so the card goes and "Check me" brings another. */

@@ -285,6 +285,19 @@ _BAND_FORMATS: dict[Band, str] = {
     ),
 }
 
+#: Spec §3.3 "novice and prerequisite not known → worked example FIRST (H4),
+#: then H5, then near-transfer" (§13 A122): the novice format when the route's
+#: `policy.attempt_first` says no — selected by `phase_prefix(attempt_first=)`,
+#: never by this module (it imports nothing of the policy layer).
+NOVICE_WORKED_FIRST_FORMAT = (
+    "Band format (novice, worked example first): this student lacks a "
+    "prerequisite, so the example comes before any attempt: (1) walk through a "
+    "worked example in small chunks on an ISOMORPH — different numbers or "
+    "wording, same structure — never on the target itself; (2) then a "
+    "completion problem with the last step(s) left for the student; (3) then a "
+    "near-transfer problem they attempt, with step-level hints."
+)
+
 #: What the rung ceiling means for each field of the structured turn (PKG-07
 #: Task 9: the rung judge reads the key_idea and the question too, and every
 #: slot wrote a concept key idea or a next-step question under an H1 ceiling).
@@ -408,6 +421,7 @@ def phase_prefix(
     item_format: str | None = None,
     answer_released: bool = False,
     verdict: Verdict | None = None,
+    attempt_first: bool = True,
 ) -> str:
     """Render the per-turn instruction block prefixed onto the user message.
 
@@ -415,7 +429,9 @@ def phase_prefix(
     reference answer: the prefix cannot leak one by construction. `verdict`
     is required in feedback and illegal elsewhere; `answer_released` is legal
     only in feedback (spec §3.3: a wrong or idk attempt gets corrective
-    feedback with the answer).
+    feedback with the answer). `attempt_first` is the route's
+    `policy.attempt_first` (spec §13 A122): False selects the novice
+    worked-example-first format, and is legal only in the novice band.
     """
     if phase not in LOOP_PHASES:
         raise ValueError(
@@ -424,6 +440,8 @@ def phase_prefix(
         )
     if band not in _BANDS:
         raise ValueError(f"unknown band {band!r}")
+    if not attempt_first and band != "novice":
+        raise ValueError("only the novice band has a worked-example-first format")
     if (verdict is not None) != (phase == "feedback"):
         raise ValueError("verdict is required in the feedback phase and illegal elsewhere")
     if verdict is not None and verdict not in _VERDICTS:
@@ -437,7 +455,7 @@ def phase_prefix(
     lines = [
         f"[LOOP PHASE: {phase}]",
         _PHASE_RULES[phase],
-        _BAND_FORMATS[band],
+        _BAND_FORMATS[band] if attempt_first else NOVICE_WORKED_FIRST_FORMAT,
         (
             f"Turn shape (at most {STEP_MAX_SENTENCES} sentences in all): "
             "key_idea: one declarative sentence naming the single idea of "

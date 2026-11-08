@@ -185,8 +185,38 @@ def ceiling(learner: LearnerView, step: StepState) -> Rung:
 
 
 def attempt_first(learner: LearnerView) -> bool:
-    """False only for a novice without the prerequisite: worked example first."""
+    """False only for a novice without the prerequisite: worked example first.
+
+    The ONE decision point for the §3.3 novice rows (spec §13 A122): the
+    route's band format (agents.loop_tutor.phase_prefix), which item opens on
+    the worked example (`opens_on_worked_example`) and the first hint's rung
+    (`worked_example_rung`) all read it. `prereq_proficient` is False for a
+    prerequisite status that is NOT_PROFICIENT or UNKNOWN (no prerequisite
+    edge): "not known" is the row (`prerequisite_status`)."""
     return not (learner.band == "novice" and not learner.prereq_proficient)
+
+
+def opens_on_worked_example(learner: LearnerView, *, shown_on_concept: bool) -> bool:
+    """Spec §3.3 "novice and prerequisite not known → worked example FIRST (H4),
+    then H5, then near-transfer" (§13 A122): a newly posed item opens on the
+    worked example when `attempt_first` says no and no worked example was shown
+    on its concept earlier in the session. The item after that one is the
+    near-transfer: posed attempt-first, its hints climbing the ladder as usual."""
+    return not attempt_first(learner) and not shown_on_concept
+
+
+def worked_example_rung(
+    learner: LearnerView, step: StepState, *, worked_first: bool
+) -> Rung | None:
+    """The rung the next hint on an item that opens on the worked example
+    unlocks (§13 A122): H4 — with no genuine attempt and no dwell before it,
+    since the example comes FIRST — while the step is below H4, `attempt_first`
+    still says no and the step's ceiling admits H4 (exam mode's H1 does not).
+    None: the ordinary ladder (gates.rung_unlock, one rung at a time). H5 and
+    every later rung keep the attempt + dwell gate."""
+    if not worked_first or attempt_first(learner) or step.rung >= Rung.H4:
+        return None
+    return Rung.H4 if ceiling(learner, step) >= Rung.H4 else None
 
 
 # ── evidence mapping (spec §3.3 EVIDENCE MAPPING) ────────────────────────────
@@ -273,6 +303,193 @@ def wheelspin(opps: int, ever_streak3: bool, unassisted_next: float | None) -> b
         and opps >= params.WHEELSPIN_OPPS_EARLY
         and unassisted_next < params.WHEELSPIN_UNASSISTED_MAX
     )
+
+
+# ── the controller after a graded check (spec §3.3, §13 A122) ────────────────
+# The route reads the concept's evidence window and learner state after the
+# check's evidence is flushed, asks `band_verdict`, stores the verdict on the
+# graded step, and applies it when the feedback turn is served: the next item's
+# difficulty (`next_difficulty`), the plan cursor (`cursor_move`) and the
+# prerequisite repair (`repair_target`). It chooses WHAT is posed next — never
+# how much help: the ceiling, the gates and the leak guards are untouched.
+
+BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
+
+#: zpd.band_adjust's `trigger` for each verdict that adjusts something (spec §6).
+BAND_TRIGGERS: dict[BandAction, BandTrigger] = {
+    BandAction.HARDER: "high",
+    BandAction.STOP_PRACTICE: "stable_high",
+    BandAction.EASIER_CHECK_PREREQS: "low",
+    BandAction.WHEELSPIN: "wheelspin",
+}
+
+
+class Opportunity(NamedTuple):
+    """One graded opportunity on a concept: a node_mastery_events evidence row
+    that names its item (a question_hash) — the rows the nightly
+    scripts/derive_zpd_metrics.py derives unassisted_next and htc_k from."""
+
+    correct: bool
+    assisted: bool
+    max_rung: int
+    p_before: float | None = None
+    p_after: float | None = None
+
+
+def unassisted_first(op: Opportunity) -> bool:
+    """The outcome §3.3's window holds (the ZPD report's STATE block:
+    "first-attempt correct with zero hints"): correct, unassisted, at H0 —
+    the nightly metric's `_unassisted_zero`, so the live rate and the stored
+    learner_state.unassisted_next read one definition."""
+    return op.correct and not op.assisted and op.max_rung == Rung.H0
+
+
+def hints_to_criterion(opportunities: Sequence[Opportunity]) -> float | None:
+    """htc_k (the ZPD report's STATE block): the mean max_rung over the CORRECT
+    opportunities among the newest HTC_K_WINDOW, None when none is correct —
+    derive_zpd_metrics.compute's definition, on the live window."""
+    recent = list(opportunities)[-params.HTC_K_WINDOW :]
+    rungs = [op.max_rung for op in recent if op.correct]
+    return sum(rungs) / len(rungs) if rungs else None
+
+
+def stable_belief(opportunities: Sequence[Opportunity]) -> bool:
+    """§3.3 STOP_PRACTICE's "belief stable": the newest opportunity moved the
+    concept's p_known by less than BAND_CONTROL_STABLE_DELTA. No opportunity,
+    or a newest one without both posteriors, is not stable (fail closed:
+    practice is never stopped on an unknown)."""
+    if not opportunities:
+        return False
+    newest = opportunities[-1]
+    if newest.p_before is None or newest.p_after is None:
+        return False
+    return abs(newest.p_after - newest.p_before) < params.BAND_CONTROL_STABLE_DELTA
+
+
+class BandVerdict(NamedTuple):
+    action: BandAction
+    rate: float | None  # unassisted_next: the newest BAND_WINDOW's unassisted share
+    n: int  # outcomes in that window
+    full_windows: int  # complete BAND_WINDOWs read (≤ BAND_CONTROL_STOP_WINDOWS)
+    stable: bool
+    wheelspin: bool
+    htc_k: float | None
+
+
+def band_verdict(
+    opportunities: Sequence[Opportunity],
+    *,
+    p_known: float,
+    opps: int,
+    max_streak_unassisted: int,
+) -> BandVerdict:
+    """The §3.3 band controller after a graded check, on typed state only.
+
+    `opportunities` is ONE concept's newest-last window (only the newest
+    WINDOW_KEEP are read), `p_known` its decayed belief after the check, `opps`
+    and `max_streak_unassisted` its learner_state counters (A3: ever_streak3 =
+    max_streak_unassisted ≥ BKT_MASTERED_MIN_STRONG). wheelspin's
+    unassisted_next is the window's LIVE rate — the number band_control acts
+    on — never the nightly column, which lags by up to a day."""
+    ops = list(opportunities)[-WINDOW_KEEP:]
+    window = [unassisted_first(op) for op in ops]
+    rate = unassisted_rate(window)
+    ever_streak3 = max_streak_unassisted >= params.BKT_MASTERED_MIN_STRONG
+    spinning = wheelspin(opps, ever_streak3, rate)
+    stable = stable_belief(ops)
+    return BandVerdict(
+        action=band_control(window, p_known, stable, wheelspin=spinning),
+        rate=rate,
+        n=len(window[-params.BAND_WINDOW :]),
+        full_windows=len(window) // params.BAND_WINDOW,
+        stable=stable,
+        wheelspin=spinning,
+        htc_k=hints_to_criterion(ops),
+    )
+
+
+def next_difficulty(action: BandAction, difficulty: int) -> int | None:
+    """The target difficulty of the concept's next item after a verdict on an
+    item of `difficulty` (§3.3): HARDER one BAND_CONTROL_DIFFICULTY_STEP up,
+    EASIER_CHECK_PREREQS one step down — "down freely": nothing gates it,
+    whereas HARDER needs BAND_CONTROL_HARDER_MIN_ATTEMPTS outcomes, so
+    consecutive low verdicts walk it down to the easiest — clamped to
+    CHECK_ITEM_DIFFICULTIES. None for every other verdict: the target stands."""
+    levels = params.CHECK_ITEM_DIFFICULTIES
+    if action is BandAction.HARDER:
+        step = params.BAND_CONTROL_DIFFICULTY_STEP
+    elif action is BandAction.EASIER_CHECK_PREREQS:
+        step = -params.BAND_CONTROL_DIFFICULTY_STEP
+    else:
+        return None
+    return min(max(difficulty + step, min(levels)), max(levels))
+
+
+class PrerequisiteStatus(str, Enum):
+    PROFICIENT = "proficient"
+    NOT_PROFICIENT = "not_proficient"
+    UNKNOWN = "unknown"
+
+
+class Prerequisite(NamedTuple):
+    """One prerequisite parent of a concept (a `prerequisite` graph edge,
+    oriented by EDGE_PREREQ_SOURCE_IS_PREREQ) and its decayed belief."""
+
+    node_id: str
+    p_known: float
+
+
+def prerequisite_status(prerequisites: Sequence[Prerequisite]) -> PrerequisiteStatus:
+    """The §3.3 ceiling's prerequisite input (spec §13 A122). PROFICIENT when
+    every parent is in the profic band (p_known ≥ BAND_DEVELOP_MAX, the band the
+    ceiling table reads); NOT_PROFICIENT when one is below it; UNKNOWN when the
+    concept has no prerequisite edge — no edge is no evidence either way (a
+    course graph without prerequisite edges, or a concept whose prerequisites
+    the graph does not hold), so it never reads as proficient. UNKNOWN takes the
+    "prerequisite not known" row: `LearnerView.prereq_proficient` is True only
+    for PROFICIENT."""
+    if not prerequisites:
+        return PrerequisiteStatus.UNKNOWN
+    if all(p.p_known >= params.BAND_DEVELOP_MAX for p in prerequisites):
+        return PrerequisiteStatus.PROFICIENT
+    return PrerequisiteStatus.NOT_PROFICIENT
+
+
+def repair_target(prerequisites: Sequence[Prerequisite]) -> Prerequisite | None:
+    """§3.3 prerequisite repair: the WEAKEST unproficient prerequisite parent
+    (the lowest p_known below BAND_DEVELOP_MAX; ties by node id), else None —
+    every parent is proficient, or the concept has none (UNKNOWN repairs
+    nothing: there is no edge to follow)."""
+    weak = [p for p in prerequisites if p.p_known < params.BAND_DEVELOP_MAX]
+    return min(weak, key=lambda p: (p.p_known, p.node_id)) if weak else None
+
+
+class CursorMove(str, Enum):
+    STAY = "stay"  # the concept keeps its plan slot; LOOP_CHECKS_PER_CONCEPT decides
+    ADVANCE = "advance"  # the concept leaves the session now
+    REPAIR_RETURN = "repair_return"  # the prerequisite first, then the concept again
+    REPAIR_REPLACE = "repair_replace"  # the prerequisite instead; the concept does not return
+
+
+def cursor_move(action: BandAction, *, repair_available: bool) -> CursorMove:
+    """What a verdict does to the plan cursor (§3.3 band control, §13 A122).
+    STOP_PRACTICE: stop practice, hand the concept to the scheduler (FSRS
+    already holds it) → ADVANCE. WHEELSPIN: stop more-of-the-same — no more
+    checks on the concept this session — and repair the weakest prerequisite in
+    its place when there is one (REPAIR_REPLACE), else ADVANCE. "Flag
+    instructor" is the zpd.wheelspin error event: there is no instructor role.
+    EASIER_CHECK_PREREQS: check prerequisites — a weak one is taught first and
+    the concept comes back after it (REPAIR_RETURN), else the easier next item
+    is the whole adjustment (STAY). HARDER and HOLD: STAY. `repair_available`:
+    a repair target exists and this concept has not sent the student to it
+    already this session."""
+    if action is BandAction.STOP_PRACTICE:
+        return CursorMove.ADVANCE
+    if action is BandAction.WHEELSPIN:
+        return CursorMove.REPAIR_REPLACE if repair_available else CursorMove.ADVANCE
+    if action is BandAction.EASIER_CHECK_PREREQS and repair_available:
+        return CursorMove.REPAIR_RETURN
+    return CursorMove.STAY
 
 
 # ── tutor tier routing (spec §3.5 LOOP_MODEL_TIER, §13 A15) ──────────────────

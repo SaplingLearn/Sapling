@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 
 from collections import Counter
 from collections.abc import Callable
-from typing import get_args
+from typing import NamedTuple, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic_ai import capture_run_messages
@@ -130,6 +130,7 @@ from learning.loop_state_store import (
     LoopSessionClosed,
     evidence_spans,
     load_loop_state,
+    opportunity_window,
     recent_evidence,
     reported_hashes,
     revealed_hashes,
@@ -147,7 +148,6 @@ from learning.help_ledger import (
 )
 from learning.params import (
     LOOP_SCAN_POSED_MAX,
-    BAND_DEVELOP_MAX,
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
@@ -740,20 +740,32 @@ def _band_for(user_id: str, node_id: str | None) -> tuple[str, float]:
     return _band_of(_learner_state(user_id, node_id))
 
 
-def _prereq_proficient(user_id: str, node_id: str) -> bool:
-    """Every prerequisite parent of the node has a decayed p_known ≥
-    BAND_DEVELOP_MAX; True when it has none. Parents come from the read helper
-    PKG-03's propagation uses (graph_service._prerequisite_edges), with the same
-    EDGE_PREREQ_SOURCE_IS_PREREQ direction."""
-    parents = []
+def _prerequisites(user_id: str, node_id: str) -> list[policy.Prerequisite]:
+    """The node's prerequisite parents with their decayed p_known (BKT_L0 for a
+    parent with no learner_state row); [] when it has none. Parents come from
+    the read helper PKG-03's propagation uses (graph_service._prerequisite_edges),
+    with the same EDGE_PREREQ_SOURCE_IS_PREREQ direction."""
+    parents: list[str] = []
     for src, tgt in _prerequisite_edges(user_id, node_id):
         prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
-        if dependent == node_id and prereq != node_id:
+        if dependent == node_id and prereq != node_id and prereq not in parents:
             parents.append(prereq)
     if not parents:
-        return True
+        return []
     states = read_states(user_id, parents)
-    return all((states[p].p_known if p in states else BKT_L0) >= BAND_DEVELOP_MAX for p in parents)
+    return [
+        policy.Prerequisite(p, states[p].p_known if p in states else BKT_L0) for p in parents
+    ]
+
+
+def _prereq_proficient(user_id: str, node_id: str) -> bool:
+    """The ceiling's prerequisite input (spec §3.3): True only when the status is
+    PROFICIENT — every prerequisite parent in the profic band (p_known ≥
+    BAND_DEVELOP_MAX). A node with NO prerequisite edge is UNKNOWN, never
+    proficient (spec §13 A122): it takes the "prerequisite not known" row, so a
+    novice there gets the worked example first."""
+    status = policy.prerequisite_status(_prerequisites(user_id, node_id))
+    return status is policy.PrerequisiteStatus.PROFICIENT
 
 
 def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: bool) -> LearnerView:
@@ -1653,9 +1665,11 @@ class _LoopTurn:
         self.answer_released = self.item is not None and self.phase == "feedback" and self.verdict != "correct"
         self.rung = self.step.rung if self.phase == "hint" else Rung.H0
         prereq = _prereq_proficient(self.user_id, self.concept_node) if self.concept_node else True
+        # spec §13 A122: the band format reads policy.attempt_first off this view
+        self.learner_view = _learner_view(learner, band=self.band, prereq_proficient=prereq)
         self.ceiling, self.ceiling_reason = _ceiling_for(
             step=self.step,
-            learner=_learner_view(learner, band=self.band, prereq_proficient=prereq),
+            learner=self.learner_view,
             message=self.message,
             independent_s=_seconds_since(self.step.first_shown_at, _now_s()),
             variant=self.variant,
@@ -1826,6 +1840,9 @@ class _LoopTurn:
             item_format=self.item.format if (item_phase and self.item) else None,
             answer_released=self.answer_released,
             verdict=self.verdict if self.phase == "feedback" else None,
+            # §3.3 novice rows (spec §13 A122): worked example first when the
+            # prerequisite is not known — policy.attempt_first decides
+            attempt_first=policy.attempt_first(self.learner_view),
         )
         if self.confront_line:
             # PKG-10: right after the phase instruction, before the context blocks
@@ -2135,7 +2152,12 @@ class _LoopTurn:
         check = None
         if out.get("activated"):
             item = get_check_item(out["activated"])
-            check = _pose_payload(item) if item is not None else None
+            # A122: an item that opens on the worked example says so — the client asks for it now
+            check = (
+                _pose_payload(item, worked_first=bool(out.get("worked_first")))
+                if item is not None
+                else None
+            )
             if item is not None:  # A93: posed — in the scan set until graded
                 _ledger(record_posed, self.user_id, item.question_hash, source="loop", session_id=self.session_id)
         if self.persist_user_row:
@@ -2413,10 +2435,13 @@ class _LoopTurn:
             entry["feedback_given"] = True
             if state.get("current") == self.active:
                 state["current"] = None
-            # A27: one more graded check on the concept; the cursor advances at the cap
+            # A27: one more graded check on the concept; the cursor advances at the
+            # cap — unless the band controller's verdict on this grade (spec §13
+            # A122) already moved it: stop practice, wheel-spin, prerequisite repair
             state["concept_checks"] = int(state.get("concept_checks") or 0) + 1
             state["teach_turns"] = 0
-            if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
+            moved = _apply_band_control(state, entry)
+            if not moved and state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
         if self.reveal_fallback is not None:  # A88: a failed learning_reveals write
@@ -2446,6 +2471,7 @@ class _LoopTurn:
                 qh = _activate_next_item(self.user_id, self.course_id, state, now=self._now)
                 if qh is not None:
                     out["activated"] = state["steps"][qh]["check_item_id"]
+                    out["worked_first"] = state["steps"][qh].get("worked_first") is True
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -2664,6 +2690,126 @@ def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
     return True
 
 
+# ── Band control on the plan (spec §3.3, §13 A122) ──────────────────────────
+#: loop_state key: node id → the target difficulty band control set for that
+#: concept's next item this session (ids → ints only; read by activation)
+_BAND_DIFFICULTY = "band_difficulty"
+#: the graded step's key holding the verdict _finish_check_checkpoint stored
+_BAND_CONTROL = "band_control"
+
+
+def _repaired(plan: dict, concept: str, prereq: str) -> bool:
+    """This concept already sent the student to this prerequisite in the
+    session (`plan["repairs"]`): each (concept, prerequisite) repair runs at
+    most once a session, so repairs never cycle."""
+    return any(
+        isinstance(r, dict) and r.get("for") == concept and r.get("node_id") == prereq
+        for r in plan.get("repairs") or []
+    )
+
+
+def _repair_cursor(
+    state: dict, prereq: str, action: policy.BandAction, *, replace: bool
+) -> None:
+    """Prerequisite repair (§3.3): teaching moves to `prereq` NOW — it takes the
+    plan slot at the cursor, so activation, the band and the ceiling follow it.
+    REPAIR_RETURN (`replace` False) puts the concept right after it, to be
+    practised again once the prerequisite's checks are done; REPAIR_REPLACE
+    (wheel-spin: stop more-of-the-same) drops the concept from the rest of the
+    session, and a goal session records it attempted, as _advance_cursor would.
+    A later occurrence of `prereq` in the plan moves up to here. Recorded in
+    `plan["repairs"]` (ids and the enum only)."""
+    plan = state["plan"]
+    approved = [n for n in plan.get("approved") or [] if isinstance(n, str)]
+    cursor = int(plan.get("cursor") or 0)
+    concept = state["concept"]
+    ahead = [n for n in approved[cursor + 1 :] if n != prereq]
+    plan["approved"] = approved[:cursor] + [prereq] + ([] if replace else [concept]) + ahead
+    plan["repairs"] = [
+        *(plan.get("repairs") or []),
+        {"node_id": prereq, "for": concept, "action": action.value},
+    ]
+    if replace and state.get("goal"):
+        # an exhausted session frontier is an attempt, never a claim of proficiency
+        plan["attempted"] = list(dict.fromkeys([*attempted_nodes(state), concept]))
+        plan["checked_nodes"] = list(
+            dict.fromkeys([*(plan.get("checked_nodes") or []), concept])
+        )
+    set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
+    state["concept"] = prereq
+    state["teach_turns"] = 0
+    state["concept_checks"] = 0
+
+
+def _apply_band_control(state: dict, entry: dict) -> bool:
+    """Apply the band controller's verdict on the graded step `entry` (spec §3.3,
+    §13 A122) as its feedback turn is served — inside that turn's
+    compare-and-set mutate, from the stored verdict alone (no reads). The next
+    item's difficulty: `state["band_difficulty"][node]` (activation reads it).
+    The cursor: policy.cursor_move — STOP_PRACTICE leaves the concept,
+    WHEELSPIN stops more-of-the-same (repairing the weakest unproficient
+    prerequisite in its place when there is one), EASIER_CHECK_PREREQS repairs
+    a weak prerequisite first and comes back. True when the cursor moved, so
+    the per-concept check count does not move it again. A verdict on a concept
+    the cursor has left, or a session without a plan, moves nothing."""
+    verdict = entry.get(_BAND_CONTROL)
+    if not isinstance(verdict, dict):
+        return False
+    try:
+        action = policy.BandAction(verdict.get("action"))
+    except ValueError:
+        return False
+    node = entry.get("node_id")
+    if not isinstance(node, str) or not node:
+        return False
+    target = verdict.get("difficulty")
+    if type(target) is int and target in CHECK_ITEM_DIFFICULTIES:
+        targets = state.get(_BAND_DIFFICULTY)
+        state[_BAND_DIFFICULTY] = {**(targets if isinstance(targets, dict) else {}), node: target}
+    plan = state.get("plan")
+    if node != state.get("concept") or not isinstance(plan, dict):
+        return False
+    prereq = verdict.get("repair")
+    available = (
+        isinstance(prereq, str) and bool(prereq) and prereq != node
+        and not _repaired(plan, node, prereq)
+    )
+    move = policy.cursor_move(action, repair_available=available)
+    if move is policy.CursorMove.STAY:
+        return False
+    if move is policy.CursorMove.ADVANCE:
+        _advance_cursor(state)
+    else:
+        _repair_cursor(state, prereq, action, replace=move is policy.CursorMove.REPAIR_REPLACE)
+    return True
+
+
+def _target_difficulty(state: dict, node_id: str, band: str) -> int:
+    """The difficulty an activated item on the concept targets (select_item falls
+    back to the nearest): the band controller's target for the concept this
+    session when a verdict set one (spec §13 A122: HARDER one step up,
+    EASIER_CHECK_PREREQS one step down from the graded item's), else the band's
+    LOOP_CHECK_DIFFICULTY_BY_BAND."""
+    targets = state.get(_BAND_DIFFICULTY)
+    target = targets.get(node_id) if isinstance(targets, dict) else None
+    if type(target) is int and target in CHECK_ITEM_DIFFICULTIES:
+        return target
+    return LOOP_CHECK_DIFFICULTY_BY_BAND[band]
+
+
+def _worked_example_shown(state: dict, node_id: str) -> bool:
+    """A worked example was already shown on this concept this session: one of
+    its steps opened on the worked example AND reached H4 (spec §13 A122's
+    near-transfer rule — the next item is attempted, not shown worked)."""
+    return any(
+        isinstance(e, dict)
+        and e.get("node_id") == node_id
+        and e.get("worked_first") is True
+        and int(e.get("rung") or 0) >= int(Rung.H4)
+        for e in (state.get("steps") or {}).values()
+    )
+
+
 def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set):
     """PKG-10 (spec §3.3 "unknown → re-ask an isomorph"; §13 A27): when the
     session's last attempt on this concept was `unknown`, the isomorph of that
@@ -2712,16 +2858,18 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             if state.get("goal"):
                 raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
             raise
+        learner = None
         if items:
             item = _isomorph_after_unknown(state, concept, items, exclude)
-            band, _ = _band_for(user_id, concept)
+            learner = _learner_state(user_id, concept)
+            band, _ = _band_of(learner)
             rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
             formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
             for fmt in formats if item is None else ():
                 item = select_item(
                     items,
                     format=fmt,
-                    difficulty=LOOP_CHECK_DIFFICULTY_BY_BAND[band],
+                    difficulty=_target_difficulty(state, concept, band),
                     exclude_hashes=exclude,
                 )
                 if item is not None:
@@ -2729,7 +2877,7 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
         if item is not None:
             qh = item.question_hash
             state["current"] = qh
-            _steps(state)[qh] = {
+            step = {
                 "rung": int(Rung.H0),
                 "attempts": 0,
                 "wrong": 0,
@@ -2740,6 +2888,17 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
                 # the H6 predicate (spec §3.3, A32): taught earlier in this session
                 "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
             }
+            # spec §13 A122: a novice without the prerequisite (policy.attempt_first
+            # says no) gets the worked example FIRST on the concept's first item of
+            # the session; the item after it is the near-transfer, attempted
+            view = _learner_view(
+                learner, band=band, prereq_proficient=_prereq_proficient(user_id, concept)
+            )
+            if policy.opens_on_worked_example(
+                view, shown_on_concept=_worked_example_shown(state, concept)
+            ):
+                step["worked_first"] = True
+            _steps(state)[qh] = step
             return qh
         if not _advance_cursor(state, no_items=True):
             return None
@@ -2784,20 +2943,44 @@ def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_i
         raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
 
 
-def _pose_payload(item) -> dict:
+def _pose_payload(item, *, worked_first: bool = False) -> dict:
     """The check pose the client renders (A17: the prompt verbatim; A22: an
     mc_reason item's stored options, never rebuilt, never marked correct, no
-    wrong_key). Never the reference."""
+    wrong_key). Never the reference. `worked_first` (spec §13 A122): the item
+    opens on the worked example and it has not been unlocked yet — the client
+    asks for it at once (/hint grants H4 with no attempt before it, the hint
+    turn serves it); the key is present only when true."""
     options = None
     if item.format == "mc_reason" and item.options:
         options = [{"letter": o.letter, "text": o.text} for o in item.options]
-    return {
+    pose = {
         "question_hash": item.question_hash,
         "format": item.format,
         "difficulty": item.difficulty,
         "prompt": ladder.check_pose(item.prompt),
         "options": options,
     }
+    if worked_first:
+        pose["worked_first"] = True
+    return pose
+
+
+def _worked_example_owed(user_id: str, state: dict, qh: str | None) -> bool:
+    """Whether item `qh`'s next hint is its worked example (spec §13 A122): its
+    step opened on it, is still below H4, and policy.worked_example_rung —
+    re-read on the learner's state NOW — still grants it. Reads only for such a
+    step (the common pose reads nothing more)."""
+    entry = (state.get("steps") or {}).get(qh) if qh else None
+    if not isinstance(entry, dict) or entry.get("worked_first") is not True:
+        return False
+    node_id = entry.get("node_id")
+    if not node_id or int(entry.get("rung") or 0) >= int(Rung.H4):
+        return False
+    learner = _learner_state(user_id, node_id)
+    band, _ = _band_of(learner)
+    view = _learner_view(learner, band=band, prereq_proficient=_prereq_proficient(user_id, node_id))
+    step = _step_state(state, qh)
+    return policy.worked_example_rung(view, step, worked_first=True) is not None
 
 
 def _ms(seconds: float) -> int:
@@ -3090,8 +3273,13 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         "pending_grade": pending_grade,
         # PKG-13 reopen: the open item's pose, so a resuming client restores the
         # check READ-ONLY (POST /check/next may activate — write — another item).
-        # Only while the item takes answers; never the reference (A17/A22).
-        "check": _pose_payload(item) if item is not None and phase == "check" else None,
+        # Only while the item takes answers; never the reference (A17/A22). A122:
+        # it still says so when its worked example is owed (the client asks for it).
+        "check": (
+            _pose_payload(item, worked_first=_worked_example_owed(user_id, state, active))
+            if item is not None and phase == "check"
+            else None
+        ),
         "band": band,
         "ceiling": int(ceiling),
         "active_question_hash": active if item is not None else None,
@@ -3510,7 +3698,9 @@ async def _grade_submission(
         # its claim or call the grader again while that uncertainty exists.
         checkpointed = True
         _save_grade_checkpoint(checkpoint)
-        return _finish_check_checkpoint(checkpoint, scope, request, loop_on=loop_on, deps=deps)
+        return _finish_check_checkpoint(
+            checkpoint, scope, request, loop_on=loop_on, deps=deps, difficulty=item.difficulty
+        )
     except BaseException as exc:
         if not checkpointed:
             try:
@@ -3637,7 +3827,133 @@ def _committed_grade_observation(checkpoint, receipt, node_id):
         raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
 
 
-def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
+class _BandOutcome(NamedTuple):
+    """One graded check's band-control verdict (spec §13 A122). `stored` is
+    what the graded step keeps for its feedback turn to apply (ids, the enum,
+    an int) — None for HOLD, which adjusts nothing; the rest feeds the events."""
+
+    stored: dict | None
+    verdict: policy.BandVerdict
+    p_known: float
+    opps: int
+    difficulty: int | None
+    prerequisite_ids: list[str]
+
+
+def _graded_difficulty(difficulty: int | None, checkpoint) -> int | None:
+    """The graded item's difficulty: the grading request's (it holds the item),
+    else — a saved grade recovered by a later request — the item's, read once
+    by its id in the checkpoint's evidence; None when it cannot be read."""
+    if type(difficulty) is int:
+        return difficulty
+    ids = [
+        row.get("check_item_id")
+        for row in checkpoint.evidence
+        if row.get("question_hash") == checkpoint.question_hash and row.get("check_item_id")
+    ]
+    try:
+        item = get_check_item(ids[0]) if ids else None
+    except Exception:
+        logger.warning("graded item unreadable; band control takes no difficulty step")
+        return None
+    return item.difficulty if item is not None else None
+
+
+def _band_verdict(user_id: str, node_id: str, difficulty: int | None) -> _BandOutcome | None:
+    """Spec §3.3 band control after ONE graded check (§13 A122), read after its
+    evidence is flushed so the window holds it: the concept's opportunity window
+    (loop_state_store.opportunity_window: unassisted first-attempt outcomes,
+    newest last, across sessions), its decayed learner_state (p_known, opps, the
+    A3 max streak) and — for a verdict that checks prerequisites
+    (EASIER_CHECK_PREREQS, WHEELSPIN) — its prerequisite parents, from which
+    policy.repair_target picks the weakest unproficient one. Typed state in
+    (policy.band_verdict, invariant 4); never the student's text. None when a
+    read failed: the grade stands, no verdict is applied — never an invented
+    one — and the next graded check decides again from the durable journal."""
+    window = opportunity_window(user_id, node_id)
+    if window is None:
+        return None
+    try:
+        state = read_states(user_id, [node_id]).get(node_id) or LearnerState(
+            user_id=user_id, node_id=node_id
+        )
+        verdict = policy.band_verdict(
+            window,
+            p_known=state.p_known,
+            opps=state.opps,
+            max_streak_unassisted=state.max_streak_unassisted,
+        )
+        checks_prereqs = verdict.action in (
+            policy.BandAction.EASIER_CHECK_PREREQS,
+            policy.BandAction.WHEELSPIN,
+        )
+        prerequisites = _prerequisites(user_id, node_id) if checks_prereqs else []
+    except Exception as exc:
+        logger.warning("band control skipped for this grade: %s", type(exc).__name__)
+        return None
+    target = policy.repair_target(prerequisites)
+    stored = None
+    if verdict.action is not policy.BandAction.HOLD:
+        stored = {
+            "action": verdict.action.value,
+            "difficulty": (
+                policy.next_difficulty(verdict.action, difficulty)
+                if difficulty is not None
+                else None
+            ),
+            "repair": target.node_id if target is not None else None,
+        }
+    return _BandOutcome(
+        stored=stored,
+        verdict=verdict,
+        p_known=state.p_known,
+        opps=state.opps,
+        difficulty=difficulty,
+        prerequisite_ids=sorted(p.node_id for p in prerequisites),
+    )
+
+
+def _emit_band_verdict(user_id: str, request_id: str, node_id: str, band: _BandOutcome) -> None:
+    """Spec §6 (§13 A122): zpd.band_adjust for every verdict that adjusts
+    something (HOLD adjusts nothing), with direction, trigger and window_stats
+    (numbers and bools only); and on WHEELSPIN zpd.wheelspin (category error) —
+    the spec's "flag instructor": Sapling has no instructor role, so this error
+    event IS the flag. The emitters never raise into the request."""
+    verdict = band.verdict
+    trigger = policy.BAND_TRIGGERS.get(verdict.action)
+    if trigger is None:
+        return
+    stored = band.stored or {}
+    zpd_events.emit_zpd_band_adjust(
+        user_id=user_id,
+        request_id=request_id,
+        direction=verdict.action,
+        trigger=trigger,
+        window_stats={
+            "rate": verdict.rate,
+            "n": verdict.n,
+            "full_windows": verdict.full_windows,
+            "stable": verdict.stable,
+            "p_known": band.p_known,
+            "opps": band.opps,
+            "difficulty": band.difficulty,
+            "next_difficulty": stored.get("difficulty"),
+            "repair": stored.get("repair") is not None,
+        },
+    )
+    if verdict.action is policy.BandAction.WHEELSPIN:
+        zpd_events.emit_zpd_wheelspin(
+            user_id=user_id,
+            request_id=request_id,
+            concept_id=node_id,
+            opps=band.opps,
+            unassisted_next=verdict.rate,
+            htc_k=verdict.htc_k,
+            prerequisite_ids=list(band.prerequisite_ids),
+        )
+
+
+def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, difficulty=None):
     receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
     if receipt is False:
         raise HTTPException(status_code=409, detail="Newer learning activity was recorded. Select another check to continue.")
@@ -3648,6 +3964,12 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
     if graded.get("goal_observation") is not None:
         graded["goal_observation"].update(committed)
     now = graded["graded_at"]
+    # spec §13 A122: the band controller's verdict on the concept, read now that
+    # the journal holds this grade; stored on the step under the claim below and
+    # applied when its feedback turn is served
+    band = _band_verdict(
+        checkpoint.user_id, graded["node_id"], _graded_difficulty(difficulty, checkpoint)
+    )
     def record_grade(e: dict) -> None:
         if genuine:
             _record_attempt(e, now, failed=not correct)
@@ -3670,6 +3992,8 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
         under(doc)
         if held["last"]:
             _steps(doc)[qh]["graded_operation_id"] = claim
+            if band is not None and band.stored is not None:
+                _steps(doc)[qh][_BAND_CONTROL] = dict(band.stored)
         if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
             carry(doc, diagnosis)
             # PKG-14 (spec §3.4): one more flushed check toward the zpd.rating prompt,
@@ -3683,6 +4007,8 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
     state = _update_loop_state(checkpoint.session_id, record_grade_and_diagnosis, require_open=True, require_existing=True)
     if not held["last"]:
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+    if band is not None:  # after the save that recorded it under OUR claim: once per grade
+        _emit_band_verdict(checkpoint.user_id, _request_id(request), graded["node_id"], band)
     if held["last"]:
         # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
         # after the ONE flush and the save that recorded the grade under OUR
@@ -4607,12 +4933,25 @@ def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict
         logger.warning("earnest_blocked not recorded for %s", qh, exc_info=True)
 
 
+def _rung_gate_denial(step: StepState, now: float) -> dict | None:
+    """gates.rung_unlock's denial for /hint — "dwell" when a genuine attempt
+    came since the rung anchor, else "no_genuine_attempt" — or None (open)."""
+    if gates.rung_unlock(step, now, time_scale=config.LEARNING_GATE_TIME_SCALE):
+        return None
+    anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
+    attempted = any(t > anchor for t in step.attempted_at)
+    return {"denied": "dwell" if attempted else "no_genuine_attempt"}
+
+
 @router.post("/hint")
 def hint(body: LoopHintBody, request: Request) -> dict:
     """Moves the active item's rung up one, behind the dwell / attempt gate, the
     ceiling and — at H6 — the item predicates (A32). The hint TEXT is the next
     `[ACTION: hint]` turn's (PKG-13), deterministic when a leak-clean payload
-    exists. No model call."""
+    exists. No model call. Spec §13 A122: on an item that opens on the worked
+    example (`worked_first`, set at activation), the first hint unlocks H4
+    with no attempt and no dwell before it while policy.worked_example_rung
+    grants it — the example comes FIRST; every later rung keeps the gate."""
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
@@ -4623,24 +4962,22 @@ def hint(body: LoopHintBody, request: Request) -> dict:
         return {"denied": "no_active_item"}
     step = _step_state(state, qh)
     now = _now_s()
-    if not gates.rung_unlock(step, now, time_scale=config.LEARNING_GATE_TIME_SCALE):
-        anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
-        attempted = any(t > anchor for t in step.attempted_at)
-        return {"denied": "dwell" if attempted else "no_genuine_attempt"}
+    may_jump = entry.get("worked_first") is True and step.rung < Rung.H4
+    if not may_jump and (denied := _rung_gate_denial(step, now)):
+        return denied
     check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
     node_id = _node_for_item(body.user_id, check) if check else None
     learner = _learner_state(body.user_id, node_id)
     band, _ = _band_of(learner)
     prereq = _prereq_proficient(body.user_id, node_id) if node_id else True
+    view = _learner_view(learner, band=band, prereq_proficient=prereq)
+    jump = policy.worked_example_rung(view, step, worked_first=may_jump)
+    if jump is None and may_jump and (denied := _rung_gate_denial(step, now)):
+        return denied  # the learner left the worked-example row: the ordinary gate
     # an empty message: showed_work comes from the step alone — the floor-at-H3 rule
     # is applied by the turn that carried the work, never by a hint request
-    ceiling, _ = _ceiling_for(
-        step=step,
-        learner=_learner_view(learner, band=band, prereq_proficient=prereq),
-        message="",
-        independent_s=0.0,
-    )
-    next_rung = int(step.rung) + 1
+    ceiling, _ = _ceiling_for(step=step, learner=view, message="", independent_s=0.0)
+    next_rung = int(jump) if jump is not None else int(step.rung) + 1
     if next_rung > int(ceiling):
         _mark_earnest_blocked(body.session_id, qh, step, entry)
         return {"denied": "ceiling"}
@@ -4742,8 +5079,9 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         return {"phase": "check", "pending_grade": _pending_grade(state)}
     if _grading_open(entry, now):
         item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-        if item is not None:
-            return {"phase": "check", "check": _pose_payload(item)}  # idempotent
+        if item is not None:  # idempotent (A122: a worked example still owed says so)
+            pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, state, active))
+            return {"phase": "check", "check": pose}
 
     def activate(st: dict, out: dict) -> None:
         out.clear()
@@ -4793,7 +5131,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
         return out
     item = get_check_item(saved["steps"][qh]["check_item_id"])
-    pose = _pose_payload(item)
+    # A122: an item that opens on the worked example says so (the client asks for it)
+    pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, saved, qh))
     _ledger(record_posed, body.user_id, qh, source="loop", session_id=body.session_id)  # A93
     save_message(body.session_id, "assistant", pose["prompt"])
     return {"phase": "check", "check": pose}
