@@ -2231,6 +2231,56 @@ export const adminAuditCheckItem = (itemId: string, verdict: CheckItemAuditVerdi
     { method: 'POST', body: JSON.stringify({ verdict }) },
   );
 
+// Admin — empirical item statistics (spec §13 A131;
+// backend/learning/item_stats.py): classical item analysis of one course's
+// check items over students' FIRST unassisted attempts. A flag asks staff to
+// look; nothing is written to the item.
+export type ItemStatsFlag = 'too_easy' | 'too_hard' | 'low_discrimination' | 'negative_discrimination';
+export interface ItemStats {
+  /** Students whose first attempt on the question was unassisted. */
+  n: number;
+  correct: number;
+  /** correct / n — the share who got it right (high = easy); null at n = 0. */
+  p_value: number | null;
+  p_ci_low: number | null;
+  p_ci_high: number | null;
+  /** The corrected item–rest point-biserial over the students who also
+   *  answered another question of the concept; null when either side is constant. */
+  discrimination: number | null;
+  discrimination_n: number;
+  flags: ItemStatsFlag[];
+  last_observed_at: string | null;
+}
+export interface AdminItemStatsRow extends ItemStats {
+  id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+}
+export interface AdminItemStatsFlagged extends AdminCheckItemEntry {
+  stats: ItemStats;
+}
+export interface AdminItemStatsReport {
+  course_id: string;
+  /** Students a statistic needs before it may flag (ITEM_STATS_MIN_N). */
+  min_n: number;
+  easy_p: number;
+  hard_p: number;
+  low_discrimination: number;
+  rows_scanned: number;
+  /** The read hit its scan cap: the newest attempts are not counted. */
+  truncated: boolean;
+  /** Every stored question of the course. */
+  items: AdminItemStatsRow[];
+  /** The questions the data flags (worst first), the first `page_size` with their text. */
+  flagged: AdminItemStatsFlagged[];
+  flagged_count: number;
+  page_size: number;
+}
+export const adminCheckItemStats = (courseId: string) =>
+  fetchJSON<AdminItemStatsReport>(`/api/admin/check-items/stats?course_id=${encodeURIComponent(courseId)}`);
+
 // Careers
 export const submitJobApplication = async (data: {
   position: string;
