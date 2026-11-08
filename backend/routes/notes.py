@@ -27,6 +27,7 @@ from services.notes_service import (
     delete_note,
     get_note,
     link_concept,
+    link_prechecked_concepts,
     list_linked_concepts,
     list_notes,
     save_summary,
@@ -286,6 +287,8 @@ async def link_concept_route(
         user_id=body.user_id,
         concept_node_id=body.concept_node_id,
     )
+    # One 404 for an unowned note, an unowned node, and a node that does not
+    # exist or vanished mid-request (#115: no existence oracle).
     if not ok:
         raise HTTPException(status_code=404, detail="Note not found.")
     return {"linked": True}
@@ -407,12 +410,13 @@ async def extract_concepts(
     nodes = await _lookup_concept_nodes_by_name(
         user_id=body.user_id, course_id=course_id, names=names
     )
-    for n in nodes:
-        await link_concept(
-            note_id=note_id, user_id=body.user_id,
-            concept_node_id=n["id"],
-        )
-    return {"concepts": names, "linked": len(nodes)}
+    # Both sides are already proven the student's: get_note above is
+    # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
+    # idempotent write replaces link_concept's per-node re-checks.
+    linked = await link_prechecked_concepts(
+        note_id=note_id, node_ids=[n["id"] for n in nodes]
+    )
+    return {"concepts": names, "linked": linked}
 
 
 class NoteChatBody(BaseModel):

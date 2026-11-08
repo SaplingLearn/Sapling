@@ -315,10 +315,10 @@ class TestLinkConceptRoute:
                     return [{"id": nid}] if graph.get(nid) == uid else []
                 raise AssertionError(self.name)
 
-            def insert(self, data, **kw):
+            def upsert(self, data, **kw):
                 assert self.name == "note_concepts"
-                inserted.append(data)
-                return [data]
+                inserted.extend(data)
+                return list(data)
 
         with patch("services.notes_service.table", side_effect=_T):
             r = client.post(
@@ -455,16 +455,17 @@ class TestExtractConceptsRoute:
         async def fake_lookup(user_id, course_id, names):
             return [{"id": f"g_{n}", "concept_name": n} for n in names]
         linked: list[tuple[str, str]] = []
-        async def fake_link(note_id, user_id, concept_node_id):
-            linked.append((note_id, concept_node_id))
-            return True
+        async def fake_link(note_id, node_ids):
+            linked.extend((note_id, i) for i in node_ids)
+            return len(node_ids)
 
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
              patch("routes.notes.get_note", side_effect=fake_get_note()), \
              patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
              patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup), \
-             patch("routes.notes.link_concept", side_effect=fake_link):
+             patch("routes.notes.link_prechecked_concepts", side_effect=fake_link), \
+             patch("routes.notes.link_concept", side_effect=AssertionError("per-node path")):
             r = client.post(
                 "/api/notes/n1/extract-concepts",
                 json={"user_id": "u1"},
@@ -474,6 +475,7 @@ class TestExtractConceptsRoute:
         assert body["concepts"] == ["Photosynthesis", "Calvin Cycle"]
         assert merged == ["Photosynthesis", "Calvin Cycle"]
         assert {n[1] for n in linked} == {"g_Photosynthesis", "g_Calvin Cycle"}
+        assert body["linked"] == 2
 
     def test_agent_run_receives_worker_limits(self, client):
         """#329: the single-shot concepts worker must run under WORKER_LIMITS."""
