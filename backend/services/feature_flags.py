@@ -79,6 +79,14 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # #119: cross-provider LLM fallback (agents/_providers.py). Resolved
+    # GLOBALLY (user_id=None — the model layer never sees a student), so only
+    # the stored default and SAPLING_FLAG_LLM_FALLBACK (the kill switch)
+    # apply; per-user/role rules and rollouts are ignored. Server-only.
+    FlagDef("llm_fallback", ("off", "on"),
+            "When an agent's LLM provider is down (retries exhausted or its "
+            "circuit breaker open), retry the call on the other provider's "
+            "model. Global: per-user rules and rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
