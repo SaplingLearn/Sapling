@@ -496,6 +496,7 @@ export function Dashboard() {
       </div>
       <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
         <KnowledgeGraph
+          legible
           nodes={nodes}
           edges={edges}
           width={size.w}
@@ -989,6 +990,7 @@ function FullscreenGraph({
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
       <KnowledgeGraph
+        legible
         nodes={nodes}
         edges={edges}
         width={size.w}

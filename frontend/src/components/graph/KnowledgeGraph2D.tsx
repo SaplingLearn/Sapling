@@ -991,9 +991,11 @@ function KnowledgeGraph2DImpl({
           data-testid="graph-course-legend"
           onPointerLeave={() => setLegendFocus(null)}
           style={{
+            // Top-left, under the wrapper's Mastery colors toggle: the
+            // bottom-right corner belongs to the app's bug-report button.
             position: "absolute",
-            right: 12,
-            bottom: 12,
+            left: 12,
+            top: 44,
             display: "flex",
             flexDirection: "column",
             gap: 2,

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { KnowledgeGraph2D } from "@/components/graph/KnowledgeGraph2D";
+import { KnowledgeGraph } from "@/components/graph/KnowledgeGraph";
 import { paletteFor, type GraphEdge, type GraphNode } from "@/lib/data";
 
 // "Name < A, B" = A and B are prerequisites of Name.
@@ -151,7 +151,6 @@ function Toggle<T extends string | number | boolean>({
 export default function GraphPreview() {
   const [courseCount, setCourseCount] = React.useState<1 | 3>(3);
   const [links, setLinks] = React.useState(true);
-  const [colorMode, setColorMode] = React.useState<"course" | "mastery">("course");
   const [legible, setLegible] = React.useState(true);
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const [size, setSize] = React.useState({ w: 1200, h: 800 });
@@ -181,20 +180,19 @@ export default function GraphPreview() {
           options={[{ v: true, text: "On" }, { v: false, text: "Off (today's data)" }]} />
         <Toggle label="Obsidian legibility" value={legible} onChange={setLegible}
           options={[{ v: true, text: "On" }, { v: false, text: "Off" }]} />
-        <Toggle label="Colour" value={colorMode} onChange={setColorMode}
-          options={[{ v: "course", text: "Course" }, { v: "mastery", text: "Mastery" }]} />
         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {conceptCount} concepts · {linkCount} concept links · hover a concept · scroll to zoom · dev only, made-up data
         </span>
       </div>
       <div ref={wrapRef} style={{ flex: 1, minHeight: 0 }}>
-        <KnowledgeGraph2D
+        {/* The same wrapper the Tree and Dashboard mount (Mastery colors
+            toggle, crash boundary), not the bare 2D renderer. */}
+        <KnowledgeGraph
           key={`${courseCount}-${links}-${legible}`}
           nodes={data.nodes}
           edges={data.edges}
           width={size.w}
           height={size.h}
-          colorMode={colorMode}
           legible={legible}
         />
       </div>
