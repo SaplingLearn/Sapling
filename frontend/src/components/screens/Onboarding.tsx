@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
@@ -13,6 +13,7 @@ import {
   type OnboardingProfilePayload,
 } from "@/lib/api";
 import { onboardingRedirect } from "@/lib/localSeed";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { statusOf } from "@/lib/errorMessage";
 
 type LearningStyleId = OnboardingProfilePayload["learning_style"];
@@ -448,19 +449,25 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OnboardingCourse[]>([]);
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Latest query wins (#769, as in ManageCoursesModal). The debounce only
+  // stops a search that hasn't been SENT: a student who pauses after "fe"
+  // fires that broad search, and if it lands after "fe 223" it replaced the
+  // right results with twenty unrelated courses.
+  const searchReq = useLatestRequest();
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+    const run = searchReq.begin();
+    const t = setTimeout(() => {
       setLoading(true);
       onboardingCoursesSearch(query)
-        .then(r => setResults(r.courses ?? []))
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
+        .then(r => { if (run.isCurrent()) setResults(r.courses ?? []); })
+        .catch(() => { if (run.isCurrent()) setResults([]); })
+        .finally(() => { if (run.isCurrent()) setLoading(false); });
     }, 200);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query]);
+    return () => {
+      clearTimeout(t);
+      searchReq.cancel();
+    };
+  }, [query, searchReq]);
 
   const cacheMap = useMemo(() => new Map(selectedCache.map(c => [c.id, c])), [selectedCache]);
 
