@@ -53,8 +53,9 @@ export const NAV_SECTIONS: NavSection[] = [
  * flag that hides their pages. `section` is the nav group they belong to, so
  * the admin flags tab files them there.
  */
-export const NESTED_NAV_FEATURES: (NavItem & { flag: string; section: string })[] = [
-  { href: "/quiz", label: "Quiz", icon: "study", flag: "hide_quiz", section: "Learn" },
+export type NestedNavFeature = { href: string; label: string; flag: string; section: string };
+export const NESTED_NAV_FEATURES: NestedNavFeature[] = [
+  { href: "/quiz", label: "Quiz", flag: "hide_quiz", section: "Learn" },
 ];
 
 /** The `hide_*` flag guarding `pathname` (segment-boundary match), or null. */

@@ -53,9 +53,17 @@ NAV_FEATURES: tuple[tuple[str, str], ...] = (
     ("course_planner", "Course Planner"),
 )
 
+#: Features that are no longer their own nav row but keep a hide flag: Quiz
+#: is a tab under Study since #753 (frontend twin: NESTED_NAV_FEATURES).
+_NESTED_NAV_DESCRIPTIONS: dict[str, str] = {
+    "quiz": "Hide Quiz (a tab under Study); its pages redirect to /dashboard.",
+}
+
 REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     *(FlagDef(f"hide_{slug}", ("off", "on"),
-              f"Hide {label} from the nav; its pages redirect to /dashboard.", True)
+              _NESTED_NAV_DESCRIPTIONS.get(
+                  slug, f"Hide {label} from the nav; its pages redirect to /dashboard."),
+              True)
       for slug, label in NAV_FEATURES),
     # #672 (ADR 0027): which decision-seam backends the observe-only tutor
     # router runs for a student. Server-only: the router acts on nothing, so
