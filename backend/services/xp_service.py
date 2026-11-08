@@ -7,8 +7,8 @@ append-only `xp_events` ledger and then refreshes the `users.total_xp` /
 Idempotency is the reason this is a service and not three inline inserts: a
 retried quiz submit, a re-delivered background task or a double-clicked upload
 must not pay out twice. Each event carries a deterministic key backed by a
-UNIQUE index; a 409 from Postgres means "already paid" and is a clean no-op,
-not an error.
+UNIQUE (user_id, idempotency_key) index; a 409 from Postgres means "already
+paid" and is a clean no-op, not an error.
 """
 
 from __future__ import annotations
@@ -35,6 +35,14 @@ class XpAward:
 
 
 def idempotency_key(rule_key: str, source_type: str | None, source_id: str | None) -> str:
+    """The event's identity WITHIN one student's ledger.
+
+    The user is deliberately not part of the string: uniqueness is scoped by
+    the (user_id, idempotency_key) constraint instead. Until
+    20261108063442_xp_events_per_user_idempotency the constraint was on this
+    key alone, and a source shared across students (an achievement id) paid
+    only the first student to earn it.
+    """
     return f"{rule_key}:{source_type or '-'}:{source_id or '-'}"
 
 
