@@ -235,6 +235,10 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # Learning loop PKG-10: the student's answer that a misconception was
     # recorded from (learning/misconceptions.record encrypts it at the write).
     ("misconceptions", "id", "evidence_text"),
+    # Learning loop spec §13 A138 / A139: a prequestion guess (encrypted JSON;
+    # NULL for "no idea") and a self-explanation reply.
+    ("learning_prequestions", "id", "guess_json"),
+    ("learning_self_explanations", "id", "reply_text"),
 )
 
 

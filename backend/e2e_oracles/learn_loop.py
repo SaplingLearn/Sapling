@@ -129,9 +129,21 @@ def _number(value) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
-def _release_at(steps: dict) -> float | None:
-    """The first moment the session released an answer, or None (never)."""
+def _prequestions_of(session: dict) -> dict:
+    state = session.get("loop_state")
+    records = state.get("prequestion") if isinstance(state, dict) else None
+    return {k: v for k, v in (records or {}).items() if isinstance(v, dict)} if isinstance(records, dict) else {}
+
+
+def _release_at(steps: dict, prequestions: dict | None = None) -> float | None:
+    """The first moment the session released an answer, or None (never). Spec
+    §13 A138: an answered segment prequestion releases its item's answer by
+    design — the explaining turn opens with it — at its `answered_at`."""
     times: list[float] = []
+    for record in (prequestions or {}).values():
+        answered = _number(record.get("answered_at"))
+        if answered is not None and record.get("status") in ("answered", "resolved"):
+            times.append(answered)
     for step in steps.values():
         graded = _number(step.get("graded_at"))
         if graded is not None and step.get("last_verdict") != "correct":
@@ -161,7 +173,7 @@ def learn_loop_activity_findings(
     release: dict[str, float | None] = {}
     for s in sessions:
         steps = _steps_of(s)
-        release[s["id"]] = _release_at(steps)
+        release[s["id"]] = _release_at(steps, _prequestions_of(s))
         for qh, step in sorted(steps.items()):
             if step.get("graded_at") is None:
                 continue

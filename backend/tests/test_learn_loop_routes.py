@@ -148,6 +148,10 @@ MODEL_ROUTES = [
     "/action",
     # PKG-14: the post-test answer runs the grader (tests/test_learning_posttest.py).
     "/posttest/answer",
+    # spec §13 A138: the prequestion's answer serves its explaining turn
+    # (tests/test_learning_teach_prompts_routes.py)
+    "/prequestion/answer",
+    "/prequestion/answer/stream",
 ]
 #: No rate-limit DEPENDENCY. /probe/answer runs the grader but checks the rate
 #: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
@@ -180,6 +184,8 @@ RATE_LIMITED_NO_MODEL = [
     "/rating",
     # spec §13 A113: "Report this question" writes a report, state and an event
     "/report",
+    # spec §13 A139: a self-explanation reply writes a row, state and an event
+    "/self-explain",
 ]
 #: PKG-12: no review route carries the dependency — /review/answer checks the rate
 #: limit inline for a check answer only (tests/test_learning_review.py).
@@ -345,6 +351,10 @@ def seams():
         # and the loop_tutor_v2 flag — off, the default, unless a test turns it on
         ns.has_items = p("course_has_items", return_value=True)
         ns.v2 = p("_tutor_v2_on", return_value=False)
+        # spec §13 A138 / A139: the segment prequestion and the self-explanation
+        # prompts — off, the default, unless a test turns one on
+        ns.pq_flag = p("_prequestion_on", return_value=False)
+        ns.se_flag = p("_self_explain_on", return_value=False)
         ns.list_items = p("list_items", return_value=[])
         ns.node = p("_node_for_item", return_value="node-1")
         ns.prereq = p("_prereq_proficient", return_value=True)

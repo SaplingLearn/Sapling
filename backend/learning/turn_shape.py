@@ -85,11 +85,15 @@ class TurnTemplate:
     `question`: the model's question closes the turn — False on a turn that
     poses a check, whose card is the one open prompt. `answer_check`: the turn
     answers the student's reply to the tutor's own question, so the model's
-    `answer_verdict` leads it as a plain line (and then no label: one lead)."""
+    `answer_verdict` leads it as a plain line (and then no label: one lead).
+    `question_text` (spec §13 A139): code's question served IN PLACE of the
+    model's — a self-explanation prompt at a code-decided juncture; the turn
+    still has exactly one question. None (the default): the model's."""
 
     label: bool = True
     question: bool = True
     answer_check: bool = False
+    question_text: str | None = None
 
 
 DEFAULT_TEMPLATE = TurnTemplate()
@@ -350,7 +354,8 @@ def render_turn(out: Mapping[str, str], template: TurnTemplate = DEFAULT_TEMPLAT
     last, and absent when the turn poses a check. The default template is the
     original "Key idea: {key_idea}\\n\\n{body}\\n\\n{question}". An empty key
     idea is left out (code serves none at an H0/H1 correct-verdict feedback)."""
-    required = ("key_idea", "body") + (("question",) if template.question else ())
+    own_question = template.question and template.question_text is None
+    required = ("key_idea", "body") + (("question",) if own_question else ())
     missing = [k for k in required if k not in out]
     if missing:
         raise ValueError(f"render_turn: missing {missing}")
@@ -361,13 +366,17 @@ def render_turn(out: Mapping[str, str], template: TurnTemplate = DEFAULT_TEMPLAT
         parts.append((KEY_IDEA_PREFIX if template.label and not lead else "") + key_idea)
     parts.append((out.get("body") or "").strip())
     if template.question:
-        parts.append((out.get("question") or "").strip())
+        parts.append(
+            template.question_text
+            if template.question_text is not None
+            else (out.get("question") or "").strip()
+        )
     return FIELD_JOIN.join(parts)
 
 
 _CONTROL_TAG = re.compile(
     r"\[(LOOP PHASE|VERDICT|ANSWER CHECK|PLAN FOCUS|CHECK ITEM|ACTION|STUDENT QUESTION"
-    r"|STUDENT MESSAGE|GRAPH CONTEXT)"
+    r"|STUDENT MESSAGE|GRAPH CONTEXT|PREQUESTION|SELF-EXPLANATION)"
     r"|<<(?:end_)?student_text"
 )
 # A backslash macro (\frac, \cdot), a \( or \[ math delimiter, or $…$ inline math.
@@ -506,6 +515,11 @@ def render_partial(partial: Mapping[str, str], template: TurnTemplate = DEFAULT_
                 parts.append(lead)
             continue
         if key == "question" and not template.question:
+            break
+        if key == "question" and template.question_text is not None:
+            # spec §13 A139: code's question replaces the model's; it is whole
+            # from the moment the model's question starts (the body is done)
+            parts.append(template.question_text)
             break
         raw = (partial[key] or "").lstrip()
         done = raw.rstrip() if later_started else _completed_prefix(raw)

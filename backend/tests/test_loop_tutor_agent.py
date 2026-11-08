@@ -234,10 +234,16 @@ def test_phase_prefix_has_no_reference_parameter():
         "poses_check",
         "answer_check",
         "plan_reason",
+        # spec §13 A138: the prequestion item AS POSED (its prompt and options,
+        # agents.loop_tutor.prequestion_item_block) — its answer rides the
+        # untrusted prequestion_answer_block outside the prefix; A139: a bool
+        "prequestion_block",
+        "self_explain_ack",
     }
     assert params["attempt_first"].annotation in (bool, "bool")
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
-    assert all(params[k].default is False for k in ("v2", "poses_check", "answer_check"))
+    assert all(params[k].default is False for k in ("v2", "poses_check", "answer_check", "self_explain_ack"))
+    assert params["prequestion_block"].default is None
 
 
 def test_phase_prefix_verdict_and_release_only_in_feedback():

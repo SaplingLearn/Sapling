@@ -183,6 +183,11 @@ def test_event_taxonomy_is_pinned():
         # spec §13 A127: an open misconception closed by a correct unassisted
         # isomorph answer. Emit coverage lives in test_learning_confidence_resolve.py.
         "learn.misconception_resolved",
+        # spec §13 A138 / A139: the segment prequestion's lifecycle and the
+        # self-explanation prompts. Emit coverage lives in
+        # test_learning_teach_prompts_routes.py.
+        "learn.prequestion",
+        "learn.self_explanation",
         "review.session_started",     # PKG-12: a daily review session row (not session.started)
         "review.served",              # PKG-12: one per kind in a built review queue
         "review.graded",              # PKG-12: one per graded review answer

@@ -853,6 +853,36 @@ E2E_LOOP_ANSWER_REPLY = render_turn(
 )
 
 
+# ── Spec §13 A138 / A139: the teach-phase prompts' loop constants ───────────
+#
+# Flag-on prompt paths only (`segment_prequestion`, `self_explanation_prompts`);
+# no flag-off prefix carries either pattern, so every flag-off E2E reply above
+# is unchanged. The patterns are copied from agents/loop_tutor.py's
+# PREQUESTION_LINE and SELF_EXPLAIN_ACK_LINE (tests/test_e2e_function_handlers.py
+# pins that each is real prompt source and sits only in its own prefix).
+#   • A138: the teach turn that explains an answered prequestion — code serves
+#     the answer above it ("The answer: …", learning/prequestion.answer_lead),
+#     then this turn (E2E_LOOP_PREQUESTION_REPLY, labelled as any default teach
+#     turn is). The seeded prequestion items (db/seed_learning_teach_prompts.py)
+#     are multiple choice with B correct.
+#   • A139: the first model turn after a self-explanation reply opens its body
+#     with an acknowledgement — the phase's own turn with its body replaced by
+#     E2E_LOOP_SELF_EXPLAIN_ACK_BODY. The prompts themselves are code's text
+#     (learning/self_explain.py), never the model's.
+E2E_LOOP_PREQUESTION_PATTERN = "Before any teaching on this concept the student was asked the"
+E2E_LOOP_PREQUESTION_TURN = {
+    "key_idea": (
+        "[e2e-function-model] Deterministic prequestion explanation: the answer rests "
+        "on the one idea the question tests."
+    ),
+    "body": "Set your guess beside the answer above and find where they part.",
+    "question": "What would you check first on a question like this next time?",
+}
+E2E_LOOP_PREQUESTION_REPLY = render_turn(E2E_LOOP_PREQUESTION_TURN)
+E2E_LOOP_SELF_EXPLAIN_ACK_PATTERN = "The student has answered your last 'why' question"
+E2E_LOOP_SELF_EXPLAIN_ACK_BODY = "Thanks for putting that step into your own words."
+
+
 def _loop_tutor_handler(messages, info) -> ModelResponse:
     prompt = _last_user_prompt_text(messages)
     if E2E_LOOP_PHASE_PATTERNS["hint"] in prompt:
@@ -865,8 +895,12 @@ def _loop_tutor_handler(messages, info) -> ModelResponse:
             if E2E_LOOP_CHAT_ANSWER_TOKEN in prompt
             else E2E_LOOP_NOT_AN_ANSWER_TURN
         )
+    elif E2E_LOOP_PREQUESTION_PATTERN in prompt:
+        turn = E2E_LOOP_PREQUESTION_TURN
     else:
         turn = E2E_LOOP_TUTOR_TURN
+    if E2E_LOOP_SELF_EXPLAIN_ACK_PATTERN in prompt:
+        turn = {**turn, "body": E2E_LOOP_SELF_EXPLAIN_ACK_BODY}
     return ModelResponse(parts=[TextPart(content=json.dumps(turn))])
 
 

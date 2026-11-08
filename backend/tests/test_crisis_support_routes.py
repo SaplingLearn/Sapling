@@ -123,6 +123,17 @@ CASES: list[Case] = [
     Case("loop_posttest_answer", "/api/learn/loop/posttest/answer",
          lambda t: {"user_id": "u1", "node_id": "n1", "question_hash": "qh", "answer": t},
          "routes.learn_loop._posttest_node", neutral={"graded": False}),
+    # learning-loop spec §13 A138: a guess at the segment prequestion (free and
+    # multiple choice), JSON and stream; A139: a self-explanation reply
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _answer,
+         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer/stream", _answer,
+         "routes.learn_loop._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _reason,
+         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_self_explain", "/api/learn/loop/self-explain",
+         lambda t: {"session_id": "s1", "user_id": "u1", "prompt_id": "p1", "reply": t},
+         "routes.learn_loop._session_scope", neutral={"recorded": False}),
     # /api/notes/* — the message, or the note an agent action hands a model
     Case("note_chat", "/api/notes/n1/chat", lambda t: {"user_id": "u1", "message": t},
          "routes.notes.offering_course_id", neutral={"degraded": False}),
@@ -518,6 +529,9 @@ SCREENED_BY_DEPENDENCY = {
     "/api/learn/loop/check/answer", "/api/learn/loop/check/answer/stream",
     "/api/learn/loop/posttest/answer", "/api/learn/loop/step/attempt",
     "/api/learn/loop/start-session", "/api/learn/loop/start-session/stream",
+    # spec §13 A138 / A139
+    "/api/learn/loop/prequestion/answer", "/api/learn/loop/prequestion/answer/stream",
+    "/api/learn/loop/self-explain",
 }
 #: Every covered route whose limiters are all inline: (path, the screen's call,
 #: the limiter calls it must precede in the handler's source).
