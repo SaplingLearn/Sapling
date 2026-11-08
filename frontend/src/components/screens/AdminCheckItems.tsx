@@ -100,6 +100,18 @@ export const VERDICT_LABELS: Record<CheckItemAuditVerdict, string> = {
   ambiguous: "Ambiguous",
 };
 
+/** The ASCII unit separator a multi-concept item's concept_key joins its
+ *  components with (backend learning/multi_concept.py SEP). */
+const COMPONENT_SEP = "\u001f";
+
+/** What an item is filed under, for staff: a concept, or — a multi-concept
+ *  item (spec §13 A141) — "apex + prerequisite(s)", from its components when
+ *  the row names them, else from its key. */
+export function conceptLabel(conceptKey: string, components?: string[]): string {
+  const parts = components?.length ? components : conceptKey.split(COMPONENT_SEP);
+  return parts.length > 1 ? `Combines ${parts.join(" + ")}` : conceptKey;
+}
+
 // spec §13 A131: what the numbers flag (each only from `min_n` students)
 export const ITEM_STATS_FLAG_LABELS: Record<ItemStatsFlag, string> = {
   too_easy: "Too easy: almost everyone gets it right first time",
@@ -501,7 +513,7 @@ function QueueRow({
       style={{ padding: "var(--pad-lg)", display: "grid", gap: 10 }}
     >
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
-        <span className="label-micro">{entry.course_id} · {entry.concept_key}</span>
+        <span className="label-micro">{entry.course_id} · {conceptLabel(entry.concept_key, entry.components)}</span>
         <span className="chip">{entry.format} · difficulty {entry.difficulty}</span>
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
         {entry.held && (
@@ -675,7 +687,7 @@ function AuditRow({
       style={{ padding: "var(--pad-lg)", display: "grid", gap: 10 }}
     >
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
-        <span className="label-micro">{item.concept_key}</span>
+        <span className="label-micro">{conceptLabel(item.concept_key)}</span>
         <span className="chip">{item.format} · difficulty {item.difficulty}</span>
         <span
           className={item.key_status === "held" ? "chip chip--err" : "chip"}

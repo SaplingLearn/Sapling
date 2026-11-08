@@ -155,6 +155,9 @@ def test_event_taxonomy_is_pinned():
         "learn.check_item_quarantined",
         "learn.check_item_retired",
         "learn.check_item_approved",
+        # Spec §13 A141: a multi-concept item posed. Emit coverage lives in
+        # test_learning_varied_serving.py.
+        "learn.multi_concept_served",
         # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
         "zpd.step",
         "zpd.offer",

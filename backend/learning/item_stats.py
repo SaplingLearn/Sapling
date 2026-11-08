@@ -69,6 +69,7 @@ from pydantic import ValidationError
 from learning.evidence import Evidence, evidence_weight
 from learning.evidence_void import ItemKey, graded_item, is_void_row
 from learning.item_audit import wilson
+from learning.multi_concept import components_of
 from learning.params import (
     CHANNELS,
     ITEM_STATS_EASY_P,
@@ -271,8 +272,34 @@ def _void_times(
     return out
 
 
+def multi_concept_rests(stored: Iterable[Mapping[str, Any]]) -> dict[ItemKey, frozenset[ItemKey]]:
+    """Spec §13 A141: for each stored multi-concept item of the rows (their
+    plaintext columns: course_id, concept_key, question_hash), the course
+    items its rest score is read from — the single-concept items of every one
+    of its components. {} when the rows hold no multi-concept item."""
+    rows = [r for r in stored if isinstance(r, Mapping)]
+    by_concept: dict[tuple[str, str], set[ItemKey]] = defaultdict(set)
+    for row in rows:
+        if components_of(row.get("concept_key")) is None and row.get("question_hash"):
+            by_concept[(row.get("course_id"), row.get("concept_key"))].add(
+                (row.get("course_id"), row.get("question_hash"))
+            )
+    out: dict[ItemKey, frozenset[ItemKey]] = {}
+    for row in rows:
+        comps = components_of(row.get("concept_key"))
+        if comps and row.get("question_hash"):
+            course = row.get("course_id")
+            out[(course, row["question_hash"])] = frozenset(
+                key for comp in comps for key in by_concept.get((course, comp), ())
+            )
+    return out
+
+
 def item_statistics(
-    rows: Iterable[Mapping[str, Any]], *, retired: Collection[ItemKey] = frozenset()
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    retired: Collection[ItemKey] = frozenset(),
+    multi: Mapping[ItemKey, Collection[ItemKey]] | None = None,
 ) -> dict[ItemKey, dict]:
     """(course_id, question_hash) → its statistics (module docstring), for
     every course item some student has a first unassisted attempt on.
@@ -284,14 +311,26 @@ def item_statistics(
     attempt in its students' rest scores, since a new answer on the concept
     changes the discrimination too — or the newest retire that voided some of
     its students' attempts on the concept. Nothing else changes them, so a
-    review decided at or after it was decided on the numbers shown."""
+    review decided at or after it was decided on the numbers shown.
+
+    `multi` (spec §13 A141; multi_concept_rests): the multi-concept items,
+    each with the single-concept items its rest score is read from — the
+    student's first unassisted attempts on its components' own items (its
+    evidence is its apex's, but it measures every component together). A
+    single-concept item's rest score leaves every multi-concept item out: an
+    integration item is another construct, so a concept's items are
+    discriminated against the concept's own. None (no multi-concept item):
+    exactly the rule above."""
     rows = list(rows)
     observations = first_unassisted(rows, retired=retired)
     voided_at = _void_times(rows, retired)
+    combos = dict(multi or {})
     by_student_node: dict[tuple[str, str], dict[ItemKey, dict]] = defaultdict(dict)
+    by_student: dict[str, dict[ItemKey, dict]] = defaultdict(dict)
     by_item: dict[ItemKey, list[dict]] = defaultdict(list)
     for ob in observations:
         by_student_node[(ob["user_id"], ob["node_id"])][ob["item"]] = ob
+        by_student[ob["user_id"]][ob["item"]] = ob
         by_item[ob["item"]].append(ob)
     out: dict[ItemKey, dict] = {}
     for item, obs in by_item.items():
@@ -302,12 +341,21 @@ def item_statistics(
         changed = max(ob["at"] for ob in obs)
         for ob in obs:
             student_node = (ob["user_id"], ob["node_id"])
-            others = [other for key, other in by_student_node[student_node].items() if key != item]
+            if item in combos:
+                rest = combos[item]
+                others = [o for key, o in by_student[ob["user_id"]].items() if key in rest]
+            else:
+                others = [
+                    other
+                    for key, other in by_student_node[student_node].items()
+                    if key != item and key not in combos
+                ]
             if others:
                 pairs.append((float(ob["outcome"]), sum(o["outcome"] for o in others) / len(others)))
                 changed = max(changed, *(o["at"] for o in others))
-            if student_node in voided_at:
-                changed = max(changed, voided_at[student_node])
+            for node in {ob["node_id"], *(o["node_id"] for o in others)}:
+                if (ob["user_id"], node) in voided_at:
+                    changed = max(changed, voided_at[(ob["user_id"], node)])
         p_value = correct / n
         discrimination = _pearson(pairs)
         out[item] = {

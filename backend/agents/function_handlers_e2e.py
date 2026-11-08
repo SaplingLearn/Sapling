@@ -44,6 +44,7 @@ from learning.params import (
     CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_FORMATS,
     CHECK_ITEM_MC_MIN_PER_CONCEPT,
+    MULTI_CONCEPT_DIFFICULTY,
 )
 from learning.turn_shape import (
     ANSWER_VERDICT_LEADS,
@@ -485,22 +486,90 @@ def _e2e_check_item(
     return item
 
 
-register_function_handler(
-    "check_items",
-    _structured_output({
-        "items": [
-            item
-            for name, _, _ in E2E_DOC_CONCEPTS
-            for item in [
-                *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
-                *(
-                    _e2e_check_item(name, "mc_reason", level)
-                    for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
-                ),
-            ]
-        ],
-    }),
-)
+#: The plain drafter's scripted payload: every E2E_DOC_CONCEPTS concept's items.
+E2E_CHECK_ITEMS = [
+    item
+    for name, _, _ in E2E_DOC_CONCEPTS
+    for item in [
+        *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+        *(
+            _e2e_check_item(name, "mc_reason", level)
+            for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+        ),
+    ]
+]
+
+# Spec §13 A140 (flag `varied_isomorphs`): the varied drafter and its top-up
+# ride this slot with their own schema (VariedCheckItemDraft: answer_kind and
+# stepwise left to code, the surface descriptor in), told apart by the output
+# tool's $defs. They get the SAME items, each with a surface of its own: the
+# n-th item of a concept the n-th of E2E_CHECK_ITEM_SURFACES, so no two items of
+# a concept share a representation or a context.
+# frontend/e2e/learn-varied-practice.spec.ts reads these. Keep them in sync.
+E2E_CHECK_ITEM_SURFACES = [
+    ("verbal", "e2e lecture recap"),
+    ("applied", "e2e training run"),
+    ("numeric", "e2e step sizes"),
+    ("visual", "e2e loss curve"),
+]
+_VARIED_DRAFT = "VariedCheckItemDraft"
+_DERIVED_FIELDS = ("answer_kind", "stepwise")
+
+
+def _e2e_varied(items: list[dict]) -> list[dict]:
+    """The items in the varied schema, the n-th of each concept on the n-th surface."""
+    seen: dict[str, int] = {}
+    out = []
+    for item in items:
+        n = seen.get(item["concept"], 0)
+        seen[item["concept"]] = n + 1
+        rep, context = E2E_CHECK_ITEM_SURFACES[n % len(E2E_CHECK_ITEM_SURFACES)]
+        varied = {k: v for k, v in item.items() if k not in _DERIVED_FIELDS}
+        varied.update(surface_representation=rep, surface_context=context)
+        out.append(varied)
+    return out
+
+
+# Spec §13 A141 (flag `multi_concept_items`): the multi-concept drafter rides
+# this slot with the plain schema; its message lists the combinations under
+# agents/check_items_combo.py::COMBINATIONS_HEADER. Each listed label gets one
+# item per format at MULTI_CONCEPT_DIFFICULTY, built like every E2E item with
+# the label as its concept — so its question carries the
+# `[e2e-function-model][<label>]` marker the alignment and key-check handlers
+# read. frontend/e2e/learn-varied-practice.spec.ts reads these. Keep in sync.
+_COMBINATIONS_HEADER = "Combinations (write items for each; copy the label exactly into `concept`)."
+_LIST_LINE_RE = re.compile(r"^- (.+)$", re.M)
+
+
+def _combination_labels(text: str) -> list[str]:
+    """The labels a multi-concept request lists (none for any other request)."""
+    start = text.find(_COMBINATIONS_HEADER)
+    if start < 0:
+        return []
+    section = text[start:].split("\n\n", 1)[0]
+    return _LIST_LINE_RE.findall(section)
+
+
+def _check_items_handler(messages, info) -> ModelResponse:
+    """The check_items slot: the plain drafter and the A37 top-up get
+    E2E_CHECK_ITEMS exactly as before; the A140 varied drafter and top-up get
+    the same items in their schema; the A141 multi-concept drafter gets one
+    item per format for each combination it lists."""
+    tool = info.output_tools[0]
+    defs = (tool.parameters_json_schema or {}).get("$defs", {})
+    labels = _combination_labels(_last_user_prompt_text(messages))
+    if labels:
+        items = [
+            _e2e_check_item(label, fmt, MULTI_CONCEPT_DIFFICULTY)
+            for label in labels
+            for fmt in CHECK_ITEM_FORMATS
+        ]
+    else:
+        items = _e2e_varied(E2E_CHECK_ITEMS) if _VARIED_DRAFT in defs else E2E_CHECK_ITEMS
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args={"items": items})])
+
+
+register_function_handler("check_items", _check_items_handler)
 
 
 # ── Check-item alignment check (spec §13 A119) ────────────────────────────
@@ -526,10 +595,19 @@ _CRITERION_RE = re.compile(r"^CRITERION (\S+):", re.M)
 _E2E_CONCEPT_RE = re.compile(r"\[e2e-function-model\]\[([^\]\n]+)\]")
 
 
+# Spec §13 A141: the multi-concept alignment check rides this slot with its own
+# schema (`components` rows), told apart by it: every criterion asked, and every
+# `COMPONENT <id>:` of an item carrying the `[e2e-function-model][...]` marker
+# needed (an item without it: none needed, so it is rejected — the handler
+# cannot tell).
+_COMPONENT_RE = re.compile(r"^COMPONENT (\S+):", re.M)
+
+
 def _verify_handler(messages, info) -> ModelResponse:
     text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    combining = "components" in (tool.parameters_json_schema or {}).get("properties", {})
     heads = list(_ITEM_HEAD_RE.finditer(text))
-    criteria, concepts = [], []
+    criteria, concepts, components = [], [], []
     for n, head in enumerate(heads):
         block = text[head.end() : heads[n + 1].start() if n + 1 < len(heads) else len(text)]
         item = head.group(1)
@@ -541,7 +619,14 @@ def _verify_handler(messages, info) -> ModelResponse:
         concepts.append(
             {"item": item, "asks": E2E_VERIFY_ASKS, "concept": marked.group(1) if marked else "none"}
         )
-    args = {"criteria": criteria, "concepts": concepts}
+        components += [
+            {"item": item, "component": kid, "why": E2E_VERIFY_WHY, "required": bool(marked)}
+            for kid in _COMPONENT_RE.findall(block)
+        ]
+    if combining:
+        args = {"criteria": criteria, "components": components}
+    else:
+        args = {"criteria": criteria, "concepts": concepts}
     return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
 
 

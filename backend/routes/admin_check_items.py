@@ -64,7 +64,8 @@ from db.connection import page_all, table
 from learning import item_reports
 from learning.checks import CheckItem, held
 from learning.item_audit import stratified_sample, summary
-from learning.item_stats import empty_stats, item_statistics
+from learning.item_stats import empty_stats, item_statistics, multi_concept_rests
+from learning.multi_concept import components_of
 from learning.params import (
     ITEM_AUDIT_SAMPLE_DEFAULT,
     ITEM_AUDIT_SAMPLE_MAX,
@@ -428,23 +429,27 @@ def item_statistics_report(request: Request, course_id: str) -> dict:
     except Exception:
         logger.warning("check item statistics unavailable (course %s)", course_id, exc_info=True)
         raise HTTPException(status_code=503, detail="Item statistics unavailable; try again.") from None
-    stats = item_statistics(evidence, retired=_retired_at(decisions))
+    # spec §13 A141: a multi-concept item's rest score is its components' items
+    multi = multi_concept_rests(stored) or None
+    stats = item_statistics(evidence, retired=_retired_at(decisions), multi=multi)
     items: list[dict] = []
     flagged: list[dict] = []
     for row in stored:
         if not row.get("id"):
             continue
         s = stats.get((row.get("course_id"), row.get("question_hash"))) or empty_stats()
-        items.append(
-            {
-                "id": row["id"],
-                "concept_key": row.get("concept_key"),
-                "question_hash": row.get("question_hash"),
-                "format": row.get("format"),
-                "difficulty": row.get("difficulty"),
-                **s,
-            }
-        )
+        entry_row = {
+            "id": row["id"],
+            "concept_key": row.get("concept_key"),
+            "question_hash": row.get("question_hash"),
+            "format": row.get("format"),
+            "difficulty": row.get("difficulty"),
+            **s,
+        }
+        comps = components_of(row.get("concept_key"))
+        if comps:  # spec §13 A141: what the item combines, apex first
+            entry_row["components"] = list(comps)
+        items.append(entry_row)
         if s["flags"]:
             entry = item_reports.review_entry(row, counts, decisions)
             if not _decided_on_these_numbers(entry, s):

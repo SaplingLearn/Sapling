@@ -56,7 +56,10 @@ MAX_TOTAL_PROPERTIES = 20
 # (A37, below) that replaced the four parallel option arrays (18 -> 15).
 # Recorded live against gemini-2.5-flash-lite with no schema rejection
 # (tests/evals/cassettes/check_items). Every other budget rule still applies.
-PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 15}
+# VariedCheckItemDraft (spec §13 A140): the same draft with answer_kind and
+# stepwise left to code and the two surface fields in their place — so the
+# varied output is exactly as wide (15 fields, 20 properties) as the recorded one.
+PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 15, "VariedCheckItemDraft": 15}
 
 # Per-object nesting ceilings above MAX_OBJECT_DEPTH, keyed by schema title,
 # each pinned exactly (test_depth_exceptions_are_exact). OptionDraft (spec §13
@@ -91,6 +94,14 @@ _SKIP_PREFIX = "function_handlers"
 EXPECTED_STRUCTURED_AGENTS = {
     "check_items_agent",  # learning loop PKG-04 (15-field draft + A37 option objects; see the exceptions)
     "check_items_topup_agent",  # A37 top-up: the same CheckItemsOutput, one concept's mc_reason items
+    # A140 varied drafter and top-up: VariedCheckItemsOutput (the draft's two derived
+    # fields traded for the surface descriptor; see the exceptions)
+    "check_items_varied_agent",
+    "check_items_varied_topup_agent",
+    # A141 multi-concept drafter (the plain CheckItemsOutput, the schema recorded live)
+    # and its alignment check (two flat lists of small rows, 4 + 4 fields, 10 properties)
+    "check_items_combo_agent",
+    "check_items_combo_verify_agent",
     # A119 alignment check: two flat lists of small rows (4 + 3 fields), 9 properties
     "check_items_verify_agent",
     # A124 key check: the blind solve (one flat list of 4-field rows, 5 properties) and the

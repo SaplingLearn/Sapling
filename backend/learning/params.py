@@ -38,6 +38,12 @@ WEIGHT_ASSISTED = 0.5
 WEIGHT_SAME_SESSION_RECHECK = 0.5  # † half-weight recheck is a heuristic, not a research finding
 WEIGHT_PROPAGATION = 0.5
 WEIGHT_LOW_CONFIDENCE = 0.5
+# † spec §13 A141: a multi-concept item's observation on its apex concept. The
+# answer also depends on the item's other components and on combining them, so
+# under a conjunctive model (DINA; Koedinger et al. 2011's conjunctive knowledge
+# tracing) the apex's effective slip exceeds the item channel's: a partial
+# observation, at the loop's one partial weight.
+WEIGHT_MULTI_CONCEPT = 0.5
 S_IDK = 0.02
 
 # Per-channel guess/slip (KT-IDEM). `idk` is NOT a row: it is the idk=True
@@ -804,3 +810,50 @@ SELF_EXPLAIN_JUNCTURES = ("worked_example", "released_solution", "first_correct"
 # concept reaches (most often its worked example) — and keeps a two-check
 # segment from asking "why" after every item.
 SELF_EXPLAIN_MAX_PER_CONCEPT = 1
+# ── Varied practice: surface-varied isomorphs (spec §13 A140) ───────────────
+# The closed enum of a check item's surface representation: how its question
+# presents the idea — stated in words, in formulas or code, with numbers to
+# work, as a diagram/graph/table described in words, or as a concrete
+# real-world situation (Lesh's translation model of representations). The
+# varied drafter's schema enum and the check_items CHECK list read it.
+SURFACE_REPRESENTATIONS = ("verbal", "symbolic", "numeric", "visual", "applied")
+# † the most words a surface context label keeps (clipped locally, never an
+# output retry): a label names the item's scenario, it never describes it.
+SURFACE_CONTEXT_MAX_WORDS = 4
+# How familiar a picker counts an item's surface (learning/surface.py): one
+# point per surface component — representation, context — the student has
+# already met on the concept, 0..2. An item with no descriptor (every item
+# drafted before A140) is the middle: neither known new nor known repeated.
+SURFACE_FAMILIARITY_UNKNOWN = 1
+# A114 × A140: the difficulty of a recall-or-definition check item (the
+# drafter's own rubric: "1 = recall or definition"). With varied_isomorphs on,
+# the review interleave neither pulls such an item forward nor pairs from it:
+# interleaving helps when confusable categories are discriminated and favours
+# blocking for word-like material (Brunmair & Richter 2019: words g = -0.39).
+INTERLEAVE_DEFINITIONAL_DIFFICULTY = CHECK_ITEM_DIFFICULTIES[0]
+
+# ── Varied practice: multi-concept items (spec §13 A141) ────────────────────
+# A multi-concept item combines its APEX concept with one or two of the apex's
+# direct prerequisites (graph_edges `prerequisite`, EDGE_PREREQ_SOURCE_IS_PREREQ).
+MULTI_CONCEPT_MIN_COMPONENTS = 2
+MULTI_CONCEPT_MAX_COMPONENTS = 3
+# Drafted at the top difficulty (transfer or analysis in a new situation), one
+# item per format: what a concept whose single-concept difficulty dial is at
+# its top is served next.
+MULTI_CONCEPT_DIFFICULTY = CHECK_ITEM_DIFFICULTIES[-1]
+MULTI_CONCEPT_ITEMS_PER_COMBO = len(CHECK_ITEM_FORMATS)
+# † combinations drafted per apex (its prerequisite pairs, then one triple) and
+# per uploaded document, and combinations per drafting call (3 x 3 items, well
+# inside one alignment and one key-check call).
+MULTI_CONCEPT_COMBOS_PER_APEX = 3
+MULTI_CONCEPT_COMBOS_PER_DOC = 6
+MULTI_CONCEPT_COMBOS_PER_CALL = 3
+# The serving gate: every component at least proficient — decayed p_known at
+# BKT_PROFICIENT (the planner's own prerequisite-readiness cut) with at least
+# this many strong-channel unassisted observations behind it (A110 (c): a
+# profic belief with none is unconfirmed).
+MULTI_CONCEPT_GATE_P = BKT_PROFICIENT
+MULTI_CONCEPT_GATE_MIN_STRONG = 1
+# † multi-concept items posed per concept per session: the ideas-combined dial
+# moves one step a session, and the concept's other checks stay single-concept.
+MULTI_CONCEPT_PER_CONCEPT_SESSION = 1

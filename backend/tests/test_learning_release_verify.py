@@ -318,6 +318,7 @@ _LEARNING_SCHEMA_MIGRATIONS = (
     "20261108091912_learning_document_drafting.sql",  # A128
     "20261108092032_learning_student_confidence.sql",  # A127
     "20261108093359_learning_posttest_outcomes.sql",  # A126
+    "20261108185101_learning_varied_practice.sql",  # A140, A141
 )
 #: SQL type -> information_schema.columns.data_type (an array column reads ARRAY)
 _DATA_TYPE = {
@@ -365,11 +366,13 @@ def test_every_column_the_learning_wave2_migrations_add_is_required():
     # (documents.check_items_status / check_items_at), 1 for A127
     # (node_mastery_events.student_confidence), 12 for A126 (6 pose columns and
     # the 6-column posttest_skips table), 1 for A137 (llm_usage.course_id), 26 for
-    # A138/A139 (the 13-column learning_prequestions and learning_self_explanations)
-    assert len(introduced) == 96
+    # A138/A139 (the 13-column learning_prequestions and learning_self_explanations),
+    # and 4 for A140/A141 (check_items' surface descriptor, apex and components)
+    assert len(introduced) == 100
     assert ("llm_usage", "course_id", "text") in introduced
     assert ("learning_prequestions", "guess_json", "text") in introduced
     assert ("learning_self_explanations", "reply_chars", "integer") in introduced
+    assert ("check_items", "component_keys", "ARRAY") in introduced
     assert ("node_mastery_events", "student_confidence", "double precision") in introduced
     required = {
         (table, column, kind)

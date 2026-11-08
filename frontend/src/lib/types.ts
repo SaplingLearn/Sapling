@@ -854,6 +854,9 @@ export interface LearningLoopKpisData {
   /** spec §13 A139: the "why does this follow?" prompts. null: its reads failed
    *  (the rest of the report stands); absent from a pre-A139 backend. */
   self_explanation?: LoopSelfExplanation | null;
+  /** spec §13 A141: multi-concept items stored, served and their outcomes.
+   *  null: its reads failed (the rest stands); absent from a pre-A141 backend. */
+  multi_concept?: LoopMultiConcept | null;
   truncated: boolean;
 }
 
@@ -899,6 +902,29 @@ export interface LoopSelfExplanation {
   next_item: LoopSelfExplainNextPair;
   by_juncture: LoopSelfExplainJuncture[];
   truncated: boolean;
+}
+
+/** spec §13 A141: one course's (course_id null: every course's) multi-concept
+ *  items — stored and held, served in the range and their graded outcomes in it. */
+export interface LoopMultiConceptBlock {
+  course_id: string | null;
+  items: number;
+  held: number;
+  served: number;
+  answered: number;
+  correct: number;
+  unassisted: number;
+  unassisted_correct: number;
+  students: number;
+  /** correct / answered, with its Wilson 95% interval; null when nothing was answered */
+  correct_rate: number | null;
+  correct_ci_low: number | null;
+  correct_ci_high: number | null;
+}
+
+export interface LoopMultiConcept {
+  overall: LoopMultiConceptBlock;
+  courses: LoopMultiConceptBlock[];
 }
 
 /** spec §13 A133: a median in seconds over n values (null when n = 0, never a zero). */

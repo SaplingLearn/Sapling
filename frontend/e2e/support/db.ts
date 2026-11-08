@@ -205,6 +205,22 @@ export async function seedTeachPromptItems(): Promise<void> {
   });
 }
 
+/** Opt-in synthetic assets for the varied-practice journeys (spec §13 A140,
+ * A141): `python -m db.seed_learning_varied_practice <stage>` through the
+ * canonical app writers (graph writer, encrypted check-item write), printing
+ * the ids the journey drives the real routes with. Local stack only. */
+export async function seedVariedPractice(stage: "varied" | "multi"): Promise<Record<string, unknown>> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  const { stdout } = await execFileAsync(python, ["-m", "db.seed_learning_varied_practice", stage], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+  const lines = stdout.trim().split("\n");
+  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+}
+
 /**
  * Raw-SQL readback for journey assertions (#392): journeys write through the
  * app and assert directly against Postgres (the #397 posture), so the read

@@ -46,6 +46,9 @@ PURE_MODULES = (
     "prequestion.py",  # A138: the segment prequestion (loop state + items in, decisions out)
     "self_explain.py",  # A139: the self-explanation junctures (loop state + steps in, decisions out)
     "self_explain_report.py",  # A139: the self-explanation report (rows in, numbers out)
+    "surface.py",  # A140: the surface descriptor and the cue-familiarity dial (descriptors in, ranks out)
+    "multi_concept.py",  # A141: combination identity, the gate and the session dial (keys/states in)
+    "multi_concept_report.py",  # A141: served and outcomes per course (rows in, report out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
@@ -73,6 +76,14 @@ SERIES_AGENT_MODULES = (
     # prompt stack, both on the check_items_solve slot
     "check_items_solve.py",
     "check_items_key_match.py",
+    # A140: the varied drafter and the varied top-up, each its own agent and
+    # prompt stack on the check_items model slot
+    "check_items_varied.py",
+    "check_items_varied_topup.py",
+    # A141: the multi-concept drafter (check_items slot) and its alignment
+    # check (check_items_verify slot), each its own agent and prompt stack
+    "check_items_combo.py",
+    "check_items_combo_verify.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",

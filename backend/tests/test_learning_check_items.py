@@ -2943,7 +2943,8 @@ class TestReadItems:
             assert svc.coverage("course-1") == (1, 2)
         first = mocks["check_items"].select.call_args_list[0]
         # A124: it reads plaintext columns a page at a time until an unheld row
-        assert first[0][0] == "id,lint_flags,canonical_verified"
+        # (A141: the concept key too, so a multi-concept row never counts)
+        assert first[0][0] == "id,concept_key,lint_flags,canonical_verified"
         assert first[1]["filters"] == {"course_id": "eq.course-1"} and first[1]["offset"] == 0
         assert first[1]["limit"] == svc._HAS_ITEMS_PAGE and first[1]["order"] == "id"
         # both course-wide coverage reads page with a total order
