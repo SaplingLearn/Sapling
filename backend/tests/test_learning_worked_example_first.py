@@ -292,6 +292,18 @@ def test_after_the_worked_example_h5_keeps_the_attempt_and_dwell_gate(worked):
         assert _hint() == {"denied": "ceiling"}  # §3.3: the not-known novice row stops at H5
 
 
+def test_past_the_worked_example_the_gate_denies_before_any_read(worked):
+    """/hint carries no rate limit, so a denied request stays as cheap as before
+    A122: once the worked example is granted (H4), the ordinary gate answers
+    before any item, node, learner-state or prerequisite read."""
+    _hint()
+    for mock in (worked.item, worked.node, worked.read_states, worked.prereq):
+        mock.reset_mock()
+    assert _hint() == {"denied": "no_genuine_attempt"}
+    for mock in (worked.item, worked.node, worked.read_states, worked.prereq):
+        mock.assert_not_called()
+
+
 @pytest.mark.parametrize("change", ["exam", "develop", "flag_off"])
 def test_without_the_worked_example_row_the_ordinary_gate_answers(worked, change):
     if change == "exam":
