@@ -10,8 +10,9 @@ misconception wrong_key, same course — comes next, anchored on the item this
 session graded last (`loop_state["review"]["last_graded"]`), so the order holds
 across the per-request rebuild; the set, the budget and every unrelated item's
 DASH order are unchanged. A concept's item never comes from the
-student's seen/revealed sets or the concept's post-test reserve (A23); when that
-leaves nothing, only revealed items and the reserve are excluded; still nothing
+student's seen/revealed sets or the concept's post-test reserves (A23; both
+since A126); when that leaves nothing, only revealed items and the reserves are
+excluded; still nothing
 → the concept is counted `unservable`. An item the student reported (spec §13
 A113) is excluded in both passes, like a revealed one — even when it is the
 item the session has open for its concept (the view carries "open" since
@@ -64,7 +65,7 @@ from agents.tools.check import CheckAnswer, grade_answer  # PKG-05 — the ONLY 
 from db.connection import pg_quote_value, table
 from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
-from learning.checks import is_servable, posttest_reserve_hash, select_item
+from learning.checks import is_servable, posttest_reserves, select_item
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.interleave import confusable_partners, serve_order  # A114
@@ -590,11 +591,9 @@ class _Selector:
                 None,
             )
         if chosen is None:
-            reserve = posttest_reserve_hash(pool)
-            # A113: a reported item is excluded in both passes, like a revealed one
-            fallback = (
-                self.history["revealed"] | reported | ({reserve} if reserve is not None else set())
-            )
+            # A113: a reported item is excluded in both passes, like a revealed
+            # one; A23/A126: so are both post-test reserves
+            fallback = self.history["revealed"] | reported | posttest_reserves(pool)
             strict = self.served_today | self.history["seen"] | fallback
             chosen = _pick_item(pool, c.band, strict, fallback)
         if chosen is None:

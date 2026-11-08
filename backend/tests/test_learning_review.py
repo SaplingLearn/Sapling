@@ -166,7 +166,7 @@ def _no_review_history(monkeypatch):
 
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set(), raising=False)
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set(), raising=False)
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None, raising=False)
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset(), raising=False)
 
 
 class _Store:
@@ -598,7 +598,7 @@ def test_due_queue_excludes_seen_revealed_and_reserve_then_falls_back(monkeypatc
         for h in ("qh-reserve", "qh-seen", "qh-revealed", "qh-served", "qh-fresh")
     ]
     monkeypatch.setattr(review, "list_items", lambda course_id, concept_key, **kw: list(pool))
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: "qh-reserve")
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset({"qh-reserve"}))
     history_reads = []
     monkeypatch.setattr(
         review, "seen_hashes", lambda user_id: history_reads.append("seen") or {"qh-seen"}
@@ -1709,7 +1709,7 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     from learning import loop_state_store, review
 
     monkeypatch.undo()  # drop the autouse "nothing excluded" stubs
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None)
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset())
     reads = []
     monkeypatch.setattr(
         loop_state_store, "seen_hashes", lambda uid: reads.append("seen") or {"q-seen"}
