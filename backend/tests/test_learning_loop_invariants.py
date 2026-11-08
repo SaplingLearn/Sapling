@@ -72,6 +72,10 @@ SERIES_AGENT_MODULES = (
     # prompt stack, both on the check_items_solve slot
     "check_items_solve.py",
     "check_items_key_match.py",
+    # A140: the varied drafter and the varied top-up, each its own agent and
+    # prompt stack on the check_items model slot
+    "check_items_varied.py",
+    "check_items_varied_topup.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",

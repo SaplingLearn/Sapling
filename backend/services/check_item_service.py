@@ -81,6 +81,8 @@ from agents.check_items import CheckItemsUnavailable, draft_items
 from agents.check_items_key_match import MatchItem, match_keys, matches
 from agents.check_items_solve import SolveItem, solutions, solve_items
 from agents.check_items_topup import draft_mc_topup
+from agents.check_items_varied import draft_items_varied
+from agents.check_items_varied_topup import draft_mc_topup_varied
 from agents.check_items_verify import VerifyItem, verdicts, verify_items
 from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
@@ -133,6 +135,8 @@ from learning.item_keys import (
 )
 from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
 from learning.item_reports import QUARANTINED, RETIRED, review_statuses
+from learning.multi_concept import components_of
+from learning.surface import SurfacedCheckItemDraft, from_varied, surface, surface_of
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
@@ -229,6 +233,7 @@ def _build_row(
     unsourced: bool = False,
 ) -> dict:
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
+    multi_concept_components = components_of(key)  # A141: None for a concept's own key
     cited = clean_chunk_ids(draft, allowed)
     if unsourced and not cited:
         # A128: drafted from extracted text because the document's indexing
@@ -254,7 +259,7 @@ def _build_row(
         texts = [o.text for o in lettered]
         correct = next(i for i, o in enumerate(lettered) if o.letter == letter)
     numeric = draft.answer_kind == _NUMERIC
-    return {
+    row = {
         "id": item_id(course_id, key, qh),
         "course_id": course_id,
         "concept_key": key,
@@ -296,6 +301,21 @@ def _build_row(
         # never (create_items), which the key backfill picks up.
         "key_checked_at": key_checked_at,
     }
+    if isinstance(draft, SurfacedCheckItemDraft):
+        # A140: the varied drafter's descriptor — the representation (a closed
+        # enum, plaintext) and the context label (item content, encrypted),
+        # whole or absent. Only a varied run's rows name the two columns, so a
+        # plain run writes exactly the row it always did; every row of a varied
+        # run names both (one upsert's rows share their keys).
+        found = surface_of(draft)
+        row["surface_representation"] = found.representation if found else None
+        row["surface_context"] = encrypt_if_present(draft.surface_context) if found else None
+    if multi_concept_components is not None:
+        # A141: a multi-concept item's apex and components (plaintext concept
+        # keys, like concept_key, which is their SEP-joined form)
+        row["apex_key"] = multi_concept_components[0]
+        row["component_keys"] = list(multi_concept_components)
+    return row
 
 
 # A top-up draft whose prompt a stored item of the concept already has (A37).
@@ -2145,6 +2165,84 @@ def _stored_items(course_id: str, key: str) -> dict[str, tuple[str | None, int |
     }
 
 
+# ── surface-varied drafting (spec §13 A140) ───────────────────────────────
+
+
+class _Drafts(NamedTuple):
+    """A varied run's drafts in the plain drafter's shape (`.items`)."""
+
+    items: list[SurfacedCheckItemDraft]
+
+
+def _surfaced(out):
+    """A varied run's output as the plain drafter's: each draft through
+    learning.surface.from_varied (the answer kind and stepwise read back off
+    the draft, the surface kept); an unavailable run passes through."""
+    if isinstance(out, CheckItemsUnavailable):
+        return out
+    return _Drafts([from_varied(d) for d in out.items])
+
+
+def used_surfaces(course_id: str, keys: Iterable[str]) -> dict[str, list[tuple[str, str]]]:
+    """{concept_key: [(representation, context)]} of these concepts' stored
+    items that carry a surface descriptor — held ones too, the bank has their
+    surface either way — the contexts decrypted, each surface once: what the
+    varied drafter is told its new items should not repeat. A failed read is a
+    WARNING and {} (the run drafts without the list)."""
+    keys = [k for k in dict.fromkeys(keys) if k]
+    if not keys:
+        return {}
+    try:
+        rows = table(_TABLE).select(
+            "concept_key,surface_representation,surface_context",
+            filters={
+                "course_id": f"eq.{course_id}",
+                "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
+                "surface_representation": "not.is.null",
+            },
+            order="created_at,id",
+        )
+    except Exception:
+        logger.warning(
+            "check items: stored surfaces unread (course=%s); drafting without them",
+            course_id,
+            exc_info=True,
+        )
+        return {}
+    out: dict[str, list[tuple[str, str]]] = {}
+    for row in rows or []:
+        context = decrypt_if_present(row.get("surface_context"))
+        if surface(row.get("surface_representation"), context) is None:
+            continue
+        entry = (row["surface_representation"], " ".join(str(context).split()))
+        listed = out.setdefault(row.get("concept_key"), [])
+        if entry not in listed:
+            listed.append(entry)
+    return out
+
+
+class DraftingFlags(NamedTuple):
+    """One drafting run's flags, resolved ONCE for the student the run is
+    attributed to (spec §13 A140, A141)."""
+
+    varied: bool = False  # varied_isomorphs: the varied drafter and top-up
+    multi_concept: bool = False  # multi_concept_items: the combination drafter
+
+
+def drafting_flags(user_id: str | None) -> DraftingFlags:
+    """The uploader's varied_isomorphs and multi_concept_items, read once per
+    drafting run; no student (the backfill, the system actor) → both off,
+    whatever the stored default — so every backfill request is the plain one."""
+    if not user_id:
+        return DraftingFlags()
+    from services.feature_flags import flag_on
+
+    return DraftingFlags(
+        varied=flag_on("varied_isomorphs", user_id),
+        multi_concept=flag_on("multi_concept_items", user_id),
+    )
+
+
 def _report_topup(
     user_id: str | None,
     document_id: str | None,
@@ -2196,6 +2294,7 @@ def _top_up_mc_reason(
     document_id: str | None,
     course_id: str,
     scope: dict[str, str],
+    varied: bool = False,
 ) -> int:
     """A37 (series coordinator's ruling, 2026-09-28): a concept this pass
     drafted that ends it with fewer than CHECK_ITEM_MC_MIN_PER_CONCEPT stored
@@ -2242,16 +2341,32 @@ def _top_up_mc_reason(
         lacking = [d for d in CHECK_ITEM_DIFFICULTIES if d not in set(have.values())]
         difficulties = (lacking + list(CHECK_ITEM_DIFFICULTIES))[:missing]
         sources = _call_sources([live])
-        out = run_agent_sync(
-            draft_mc_topup(
-                name,
-                sources.passages,
-                difficulties=difficulties,
-                drop_reasons=drops,
-                deps=deps,
-                flex=flex,
+        if varied:
+            # A140: the varied top-up — its items state their surfaces, away
+            # from the ones the concept's stored items already use
+            out = run_agent_sync(
+                draft_mc_topup_varied(
+                    name,
+                    sources.passages,
+                    difficulties=difficulties,
+                    drop_reasons=drops,
+                    used=used_surfaces(course_id, [key]).get(key, []),
+                    deps=deps,
+                    flex=flex,
+                )
             )
-        )
+            out = _surfaced(out)
+        else:
+            out = run_agent_sync(
+                draft_mc_topup(
+                    name,
+                    sources.passages,
+                    difficulties=difficulties,
+                    drop_reasons=drops,
+                    deps=deps,
+                    flex=flex,
+                )
+            )
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
             _report_topup(
@@ -2348,11 +2463,14 @@ _FAILURES_ON_CONFLICT = "course_id,concept_key"
 _CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
 
 
-def _drafting_version() -> str:
+def _drafting_version(*, varied: bool = False) -> str:
     """The drafting prompts' versions and the model, the A119 alignment
     check's prompt and model, and the A124 key check's prompts and model (each
     decides what of a draft is stored): a change to any is a new source, so a
-    concept stalled under the old one is drafted again."""
+    concept stalled under the old one is drafted again. A140: a varied run
+    drafts with the varied prompts, so their versions are part of its source
+    too (a concept stalled under the plain prompts is drafted again under
+    them); a plain run's version is exactly what it always was."""
     from agents import (
         check_items,
         check_items_key_match,
@@ -2362,21 +2480,24 @@ def _drafting_version() -> str:
     )
     from agents._providers import model_name_for
 
-    return "|".join(
-        (
-            check_items._PROMPT_HASH,
-            check_items_topup._PROMPT_HASH,
-            model_name_for("check_items"),
-            check_items_verify._PROMPT_HASH,
-            model_name_for("check_items_verify"),
-            check_items_solve._PROMPT_HASH,
-            check_items_key_match._PROMPT_HASH,
-            model_name_for("check_items_solve"),
-        )
-    )
+    parts = [
+        check_items._PROMPT_HASH,
+        check_items_topup._PROMPT_HASH,
+        model_name_for("check_items"),
+        check_items_verify._PROMPT_HASH,
+        model_name_for("check_items_verify"),
+        check_items_solve._PROMPT_HASH,
+        check_items_key_match._PROMPT_HASH,
+        model_name_for("check_items_solve"),
+    ]
+    if varied:
+        from agents import check_items_varied, check_items_varied_topup
+
+        parts += [check_items_varied._PROMPT_HASH, check_items_varied_topup._PROMPT_HASH]
+    return "|".join(parts)
 
 
-def _source_fingerprint(ranked: Iterable[dict]) -> str:
+def _source_fingerprint(ranked: Iterable[dict], *, varied: bool = False) -> str:
     """What a concept is drafted from: its ranked passages' ids and texts,
     order-free (a re-rank of the same passages is the same source), and the
     drafting version (_drafting_version)."""
@@ -2385,7 +2506,7 @@ def _source_fingerprint(ranked: Iterable[dict]) -> str:
         + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
         for chunk in ranked
     )
-    parts.append("version\x1f" + _drafting_version())
+    parts.append("version\x1f" + _drafting_version(varied=varied))
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -2497,8 +2618,8 @@ class _SplitGroup:
     last one settles and every one stored items alone, the failure was the
     combination's: each is marked solo (A38 fix round 3)."""
 
-    def __init__(self, batch: list):
-        self.fps = {key: _source_fingerprint(ranked) for key, _, ranked in batch}
+    def __init__(self, batch: list, *, varied: bool = False):
+        self.fps = {key: _source_fingerprint(ranked, varied=varied) for key, _, ranked in batch}
         self.ok: dict[str, bool] = {}
 
     def settle(self, key: str, *, ok: bool, ledger: _DraftFailures) -> None:
@@ -2520,8 +2641,15 @@ def generate_for_concepts(
     document_id: str | None = None,
     max_concepts: int | None = None,
     min_chunk_score: int = 0,
+    varied: bool = False,
 ) -> GenerationOutcome:
     """Draft items for the course concepts that still lack them, from `chunks`.
+
+    `varied` (spec §13 A140: the uploader's `varied_isomorphs` flag, resolved
+    once by the caller, `drafting_flags`): the varied drafter and top-up write
+    the items — surface-varied isomorphs, each with its surface descriptor,
+    told the surfaces the concepts' stored items already use — and the A41
+    fingerprint covers their prompts. Off: every request is the plain one.
 
     Inert (zeros, no read, no agent) when LEARNING_LOOP_ENABLED is off or
     there is nothing to write from. Otherwise: names de-duplicated by
@@ -2576,7 +2704,10 @@ def generate_for_concepts(
             continue
         todo.append((key, names_by_key[key], ranked))
     ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
-    stalled = [key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked))]
+    stalled = [
+        key for key, _, ranked in todo
+        if ledger.stalled(key, _source_fingerprint(ranked, varied=varied))
+    ]
     if stalled:
         logger.info(
             "check items: %d concept(s) skipped after %d failed drafting passes on an "
@@ -2610,7 +2741,7 @@ def generate_for_concepts(
     # A concept whose last split rescued its whole batch (it and its mates
     # each drafted fine alone) is drafted alone while that holds (A38 fix
     # round 3), so a combination-only failure does not cost 1 + N calls a pass.
-    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2]))]
+    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2], varied=varied))]
     rest = [t for t in todo if t not in solo]
     queue: deque[tuple[list, _SplitGroup | None]] = deque(
         [([t], None) for t in solo]
@@ -2639,13 +2770,24 @@ def generate_for_concepts(
         names = [name for _, name, _ in batch]
         sources = _call_sources(ranked for _, _, ranked in batch)
 
-        out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
+        if varied:
+            # A140: the varied drafter, told the surfaces the concepts' stored
+            # items already use; its drafts read as the plain drafter's
+            stored_surfaces = used_surfaces(course_id, [key for key, _, _ in batch])
+            used = {name: stored_surfaces[key] for key, name, _ in batch if key in stored_surfaces}
+            out = _surfaced(
+                run_agent_sync(
+                    draft_items_varied(names, sources.passages, used=used, deps=deps, flex=flex)
+                )
+            )
+        else:
+            out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
         if not split:  # a split re-run is the same concepts' same attempt
             attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
             if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
-                new_group = _SplitGroup(list(batch))
+                new_group = _SplitGroup(list(batch), varied=varied)
                 queue.extendleft(([concept], new_group) for concept in reversed(batch))
                 continue
             if group is not None:
@@ -2655,7 +2797,7 @@ def generate_for_concepts(
             # own outcome; anything else is no concept's fault (M2 allowlist).
             if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
                 key, _, ranked = batch[0]
-                ledger.failed(key, _source_fingerprint(ranked))
+                ledger.failed(key, _source_fingerprint(ranked, varied=varied))
             continue
 
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
@@ -2705,13 +2847,14 @@ def generate_for_concepts(
                     document_id=document_id,
                     course_id=course_id,
                     scope=scope,
+                    varied=varied,
                 )
                 created += topped.created
                 # A write that failed (StorageError) is not the drafts' fault:
                 # only a concept whose write ran is counted either way — and a
                 # concept whose drafts the A119 check left unanswered is not
                 # counted as failing (the check's outcome, not the concept's).
-                fp = _source_fingerprint(ranked)
+                fp = _source_fingerprint(ranked, varied=varied)
                 ok = bool(write.stored[key].ids or topped.own)
                 if ok:
                     ledger.succeeded(key, fp)
@@ -2740,10 +2883,13 @@ def generate_for_document(
     course_id: str,
     concept_names: Iterable[str],
     flex: bool,
+    flags: DraftingFlags = DraftingFlags(),
 ) -> GenerationOutcome:
     """The upload hook's generation: the document's source passages (A23 —
     shared course material only), then at most CHECK_ITEM_MAX_CONCEPTS_PER_DOC
-    of its concepts. Usage is attributed to the uploader.
+    of its concepts. Usage is attributed to the uploader. `flags` are the
+    uploader's (drafting_flags, resolved once by the hook): A140's varied
+    drafting, A141's combinations after the concepts' own items.
 
     A128: it records how drafting ended on the document's row
     (`check_items_status`, `drafting_status_for`): `done`, `unavailable` (a
@@ -2759,6 +2905,7 @@ def generate_for_document(
             course_id=course_id,
             concept_names=concept_names,
             flex=flex,
+            flags=flags,
         )
     except BaseException:
         mark_drafting(document_id, DRAFTING_FAILED)
@@ -2774,6 +2921,7 @@ def _generate_for_document(
     course_id: str,
     concept_names: Iterable[str],
     flex: bool,
+    flags: DraftingFlags = DraftingFlags(),
 ) -> GenerationOutcome:
     rows = table("documents").select(
         # index_status: A128 — an unindexed source drafts `unsourced` items
@@ -2796,6 +2944,7 @@ def _generate_for_document(
         flex=flex,
         document_id=document_id,
         max_concepts=CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
+        varied=flags.varied,
     )
 
 
@@ -2942,11 +3091,18 @@ def _generate_for_document_logged(document_id: str, **kwargs) -> None:
 
 
 def queue_generation_for_document(
-    document_id: str, *, user_id: str, course_id: str, concept_names: Iterable[str]
+    document_id: str,
+    *,
+    user_id: str,
+    course_id: str,
+    concept_names: Iterable[str],
+    flags: DraftingFlags = DraftingFlags(),
 ) -> Future:
     """Queue the upload hook's drafting (background prefill, Flex) on this
     module's own bounded pool and return at once. The caller's context
-    (request id) rides along; a failure is logged, never raised."""
+    (request id) rides along; a failure is logged, never raised. `flags`: the
+    uploader's drafting flags, resolved once by the hook (A140, A141); with
+    both off the queued call is exactly the one it always was."""
     return _draft_pool().submit(
         contextvars.copy_context().run,
         _generate_for_document_logged,
@@ -2955,4 +3111,5 @@ def queue_generation_for_document(
         course_id=course_id,
         concept_names=list(concept_names),
         flex=True,
+        **({"flags": flags} if any(flags) else {}),
     )

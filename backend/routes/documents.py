@@ -47,6 +47,7 @@ from services.document_indexing import index_document
 from services.check_item_service import (
     DRAFTING_FAILED,
     DRAFTING_PENDING,
+    drafting_flags,
     generate_for_document,
     mark_drafting,
     queue_generation_for_document,
@@ -1341,14 +1342,19 @@ def _index_then_check_items(
     except Exception:
         logger.exception("Indexing doc %s before check items failed", doc_id)
     try:
+        # spec §13 A140/A141: the uploader's drafting flags, resolved ONCE for
+        # this run; with both off the call is exactly the one it always was
+        flags = drafting_flags(user_id)
+        extra = {"flags": flags} if any(flags) else {}
         if model_mode() == "function":
             generate_for_document(
                 doc_id, user_id=user_id, course_id=course_id,
-                concept_names=concept_names, flex=True,
+                concept_names=concept_names, flex=True, **extra,
             )
         else:
             queue_generation_for_document(
                 doc_id, user_id=user_id, course_id=course_id, concept_names=concept_names,
+                **extra,
             )
     except Exception:
         logger.exception("Check items for doc %s failed", doc_id)
