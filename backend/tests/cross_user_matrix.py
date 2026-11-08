@@ -312,6 +312,10 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
     ("POST", "/api/notes"):
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+    ("POST", "/api/learn/start-session"):
+        ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+    ("POST", "/api/learn/start-session/stream"):
+        ((404,), "not enrolled in the course: academics.require_course_enrollment"),
 }
 
 #: Swap cases whose correct answer is not 403.
@@ -412,6 +416,17 @@ PATH_OVERRIDES: dict[tuple[str, str], dict[str, str]] = {
 #: Paths whose wrongful success would destroy data; run last in their group so
 #: one leak cannot cascade into every later case.
 _DESTRUCTIVE_HINTS = ("/account", "/wipe", "/copy", "/seed", "/leave", "/disconnect")
+
+#: Routes whose CORRECT answer changes B's enrollments. B adding A's catalog
+#: course to their own schedule is legitimate (a 200), but from then on B IS
+#: enrolled in it, and every later #115 enrollment-gated case (expected 404)
+#: would pass the gate. They run after every other create/update in their
+#: group, and before the DELETEs (which drop the enrollment again). Path
+#: order alone put `/api/graph/...` ahead of `/api/notes` and `/api/learn/...`
+#: — the lane's `POST /api/notes 404 -> 200` failure.
+SELF_ENROLLING: dict[tuple[str, str], str] = {
+    ("POST", "/api/graph/{user_id}/courses"): "graph_service.add_course enrolls the caller",
+}
 
 
 # ── Route enumeration ────────────────────────────────────────────────────────
@@ -684,8 +699,10 @@ class Case:
         ])
 
 
-def _order(case: Case) -> tuple[int, str, str]:
-    rank = {"GET": 0, "POST": 1, "PUT": 1, "PATCH": 1, "DELETE": 2}.get(case.method, 1)
+def _order(case: Case) -> tuple[float, str, str]:
+    rank: float = {"GET": 0, "POST": 1, "PUT": 1, "PATCH": 1, "DELETE": 2}.get(case.method, 1)
+    if case.key in SELF_ENROLLING:
+        rank = 1.5
     if any(h in case.path for h in _DESTRUCTIVE_HINTS):
         rank = 3
     return (rank, case.path, case.method)
