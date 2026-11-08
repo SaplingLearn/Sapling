@@ -50,8 +50,20 @@ export type PlanItem = {
 };
 
 /** Days the deadline is in, as the chip the old Upcoming card showed. */
+/**
+ * When an assignment is due, in ms. A date-only `due_date` ("2026-11-09")
+ * means the END of that day in the student's own zone: `new Date()` would
+ * read it as UTC midnight, so anyone west of UTC saw today's work as
+ * OVERDUE from the morning on.
+ */
+export function dueAtMs(due: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999).getTime();
+  return new Date(due).getTime();
+}
+
 export function dueChip(dueIso: string, nowMs: number): PlanChip {
-  const diffMs = new Date(dueIso).getTime() - nowMs;
+  const diffMs = dueAtMs(dueIso) - nowMs;
   const hours = diffMs / 3_600_000;
   const days = Math.ceil(diffMs / 86_400_000);
   if (hours <= 0) return { label: "OVERDUE", tone: "err" };
@@ -119,14 +131,22 @@ export function buildTodayPlan(input: {
   const byScore = (a: GraphNode, b: GraphNode) => a.mastery_score - b.mastery_score;
   const struggling = concepts.filter((n) => n.mastery_tier === "struggling").sort(byScore);
   const learning = concepts.filter((n) => n.mastery_tier === "learning").sort(byScore);
-  const weak = struggling[0] ?? learning[0];
+  // A concept worked on today holds the slot (ticked), even if that work
+  // moved it out of the weak tiers or another concept is now weaker —
+  // re-picking the weakest on every render would swap the finished item for
+  // a fresh one and the checklist could never complete.
+  const doneToday = concepts
+    .filter((n) => localDayKey(n.last_studied_at) === todayKey && n.mastery_tier !== "unexplored")
+    .sort(byScore)[0];
+  const weak = doneToday ?? struggling[0] ?? learning[0];
   if (weak) {
     items.push({
       key: `quiz-${weak.id}`,
       title: `Quiz: ${weak.name}`,
       meta: join(
         courseLabel(weak.course_id),
-        weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning",
+        doneToday ? "reviewed today"
+          : weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning",
       ),
       checkable: true,
       done: localDayKey(weak.last_studied_at) === todayKey,
@@ -138,8 +158,8 @@ export function buildTodayPlan(input: {
 
   // 3. The nearest deadline, if it's close.
   const soon = [...assignments]
-    .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
-    .find((a) => new Date(a.due_date).getTime() - nowMs <= DUE_SOON_DAYS * 86_400_000);
+    .sort((a, b) => dueAtMs(a.due_date) - dueAtMs(b.due_date))
+    .find((a) => dueAtMs(a.due_date) - nowMs <= DUE_SOON_DAYS * 86_400_000);
   if (soon) {
     items.push({
       key: `due-${soon.id}`,
@@ -496,7 +516,9 @@ export function TodayColumn(props: {
             data-testid="dashboard-course-rows"
             style={{
               marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
-              flex: "1 1 0", minHeight: 0, overflowY: "auto",
+              // basis auto, not 0: with no definite card height (mobile stacks
+              // the column) a 0 basis collapsed the rows to nothing.
+              flex: "1 1 auto", minHeight: 0, overflowY: "auto",
               maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
               display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
             }}

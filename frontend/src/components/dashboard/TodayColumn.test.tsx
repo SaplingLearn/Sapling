@@ -6,7 +6,7 @@ import type { GraphNode } from "@/lib/data";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 
-import { buildTodayPlan, DashboardActions, localDayKey, TodayColumn } from "./TodayColumn";
+import { buildTodayPlan, DashboardActions, dueAtMs, localDayKey, TodayColumn } from "./TodayColumn";
 
 // Sat 7 Nov 2026, 15:00 local.
 const NOW = new Date(2026, 10, 7, 15, 0, 0).getTime();
@@ -32,6 +32,21 @@ const base = {
 };
 
 afterEach(() => cleanup());
+
+describe("dueAtMs", () => {
+  it("reads a date-only due date as the end of that local day, not UTC midnight", () => {
+    expect(dueAtMs("2026-11-07")).toBe(new Date(2026, 10, 7, 23, 59, 59, 999).getTime());
+    expect(dueAtMs("2026-11-07T09:00:00Z")).toBe(Date.parse("2026-11-07T09:00:00Z"));
+  });
+
+  it("never calls work due later today OVERDUE", () => {
+    const plan = buildTodayPlan({
+      ...base,
+      assignments: [{ id: "a", user_id: "u", title: "PS", due_date: "2026-11-07" }],
+    });
+    expect(plan.find((i) => i.key === "due-a")?.chip?.label).not.toBe("OVERDUE");
+  });
+});
 
 describe("localDayKey", () => {
   it("keys on the local calendar day, not UTC", () => {
@@ -90,7 +105,19 @@ describe("buildTodayPlan", () => {
 
   it("falls back to a learning concept and marks it done once studied today", () => {
     const plan = buildTodayPlan({ ...base, nodes: [node("n1", "Matrices", "learning", 0.4, TODAY)] });
-    expect(plan.find((i) => i.key === "quiz-n1")).toMatchObject({ meta: "MATH210 · still learning", done: true });
+    expect(plan.find((i) => i.key === "quiz-n1")).toMatchObject({ meta: "MATH210 · reviewed today", done: true });
+    const fresh = buildTodayPlan({ ...base, nodes: [node("n1", "Matrices", "learning", 0.4)] });
+    expect(fresh.find((i) => i.key === "quiz-n1")).toMatchObject({ meta: "MATH210 · still learning", done: false });
+  });
+
+  it("keeps a concept reviewed today in the slot, ticked, once a weaker one exists", () => {
+    // A was the weakest; the quiz lifted it above B. Re-picking the weakest
+    // would swap in 'Quiz: B' and the item could never complete.
+    const plan = buildTodayPlan({
+      ...base,
+      nodes: [node("a", "A", "learning", 0.3, TODAY), node("b", "B", "struggling", 0.2)],
+    });
+    expect(plan.find((i) => i.key.startsWith("quiz-"))).toMatchObject({ title: "Quiz: A", done: true, meta: "MATH210 · reviewed today" });
   });
 
   it("never quizzes a course root", () => {

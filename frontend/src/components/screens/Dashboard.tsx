@@ -235,6 +235,9 @@ export function Dashboard() {
   // concept dates when these don't load.
   const [xpDays, setXpDays] = React.useState<Set<string>>(new Set());
   const [bestStreak, setBestStreak] = React.useState<number | null>(null);
+  // Bumped by every load() so the streak extras refresh with the rest of the
+  // dashboard (Retry, a semester switch, a course change), not just on mount.
+  const [extrasKey, setExtrasKey] = React.useState(0);
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
@@ -287,6 +290,7 @@ export function Dashboard() {
   const load = React.useCallback(async () => {
     if (!userId) return;
     const run = loadReq.begin();
+    setExtrasKey((k) => k + 1);
     setLoading(true);
     setLoadError(null);
     try {
@@ -356,7 +360,7 @@ export function Dashboard() {
       }
     })();
     return () => { cancelled = true; };
-  }, [userReady, userId]);
+  }, [userReady, userId, extrasKey]);
 
   React.useEffect(() => {
     // Wait for the active-semester read from localStorage before the first load,

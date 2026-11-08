@@ -207,7 +207,9 @@ async function toast(page: Page, t: string | RegExp): Promise<void> {
 
 async function openDashboard(page: Page): Promise<void> {
   await page.goto("/dashboard");
-  await visible(page, "dashboard-review-due");
+  // The graph header renders in every layout once the load lands (the
+  // review-due CTA this used to wait on was removed with #753).
+  await expect(page.getByText(/concepts across/)).toBeVisible({ timeout: 30_000 });
 }
 
 async function openCoursesKey(page: Page): Promise<void> {
@@ -545,7 +547,7 @@ export const RECIPES_CORE: RecipeBook = {
       await hold(page, GRAPH);
       await page.goto("/dashboard");
       await expect(page.locator(".skeleton").first()).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("dashboard-review-due")).toHaveCount(0);
+      await expect(page.getByText(/concepts across/)).toHaveCount(0);
     },
   },
 
@@ -561,7 +563,7 @@ export const RECIPES_CORE: RecipeBook = {
   "dashboard/populated-sidebar": {
     run: async (page) => {
       await page.goto("/dashboard");
-      await visible(page, "dashboard-review-due");
+      await visible(page, "dashboard-plan");
       await expect(page.getByTestId("graph-node").first()).toBeVisible({ timeout: 30_000 });
       await page.waitForTimeout(3_000); // typewriter greeting + quote settle
     },
@@ -599,26 +601,6 @@ export const RECIPES_CORE: RecipeBook = {
       await openDashboard(page);
       await expect(page.locator("h1").first()).toContainText("Welcome back", { timeout: 15_000 });
       await page.waitForTimeout(1_500);
-    },
-  },
-
-  "dashboard/review-due-count": {
-    run: async (page) => {
-      await openDashboard(page);
-      await expect(page.getByTestId("dashboard-review-due")).toContainText("Review what's due ·");
-      await page.waitForTimeout(2_000);
-    },
-  },
-
-  "dashboard/review-quiz": {
-    run: async (page) => {
-      await patchJson(page, GRAPH, (g) => {
-        for (const n of g.nodes) if (!n.is_subject_root) n.mastery_tier = "mastered";
-      });
-      await openDashboard(page);
-      await expect(page.getByTestId("dashboard-review-due")).toContainText("Quiz");
-      await expect(page.getByTestId("dashboard-review-due")).not.toContainText("Review");
-      await page.waitForTimeout(2_000);
     },
   },
 
