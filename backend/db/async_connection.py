@@ -422,7 +422,7 @@ class AsyncTableMixin:
         return r.json()
 
 
-async def arpc(function_name: str, params: dict, *, timeout: Optional[float] = None) -> list:
+async def arpc(function_name: str, params: dict, *, timeout: float | None = None) -> list:
     """The coroutine twin of ``db.connection.rpc``. Never retried. ``timeout``
     as in ``rpc``: it bounds this one call instead of the client default."""
     c = _conn()
