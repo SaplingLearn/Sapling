@@ -1,6 +1,7 @@
 # Async DB client and how it composes with the user-scoped client
 
-Status: design, not implemented. Trov #117 (phase 3 of `docs/architecture-hardening-plan.md`).
+Status: wave 0 and the first converted read implemented (branch `harden2/w8-async-stateless`; see
+§7). Trov #117 (phase 3 of `docs/architecture-hardening-plan.md`).
 Depends on: the user-scoped client from `docs/security/rls-step2-plan.md` §4 (`db/scope.py`, flag
 `db_user_scope`), which is being built in parallel. Nothing here changes that design; this doc says
 how the async path plugs into it.
@@ -309,3 +310,36 @@ Consequences that bind both W3a and this work:
 - No change to RLS policy or to the §4.2 precedence. This doc only consumes the scope.
 - Workers, scripts and seeds stay sync.
 - No Redis or other new infrastructure for the replica prerequisites; Postgres carries them.
+
+## 7. What wave 0 shipped, and where it differs from the above
+
+- **The seam:** `db/async_connection.py`. `SupabaseTable` inherits `AsyncTableMixin`, so the `a*`
+  twins live on the handle `table()` returns (2.2), plus `arpc` and `apage_all`. Flag
+  `async_db_client` (off/on) exactly as §3. One identity-free `AsyncClient` per running loop
+  (pool 40, `Timeout(30, connect=5, pool=5)`, `retries=1` on the transport), closed by the lifespan.
+- **Not a shared request builder (yet).** Each `a*` verb mirrors its sync sibling instead of both
+  sharing one builder, so `db/connection.py` (edited by several in-flight PRs) only gained the mixin
+  and one line in `_scope_headers`. They share `_scope_headers`, `_raise_for_status` and
+  `_maybe_shadow`; `tests/test_async_db_client.py` pins byte-identical requests on the wire under
+  `db_user_scope` off, shadow and enforce. Fold both into one builder once those PRs land.
+- **No application-level GET retries** on either path: the sync client has none, and the two paths
+  keep identical error semantics. DB spans, the saturation gauges and a `PoolTimeout` -> 503 handler
+  are not built yet.
+- **The 5 blocking handlers** (§1) hop their sync calls with `asyncio.to_thread` /
+  `run_in_threadpool` (`admin_documents.reindex` already did on main). The static ratchet
+  (`tests/test_no_sync_db_in_async_handlers.py`) also follows calls into same-module sync helpers,
+  and that finds **22 more** inline offenders (learn.py's tutor turn path, notes, documents upload);
+  they are its allowlist, by wave. `tests/test_async_handlers_off_loop.py` drives each fixed handler
+  through the real seam with the runtime guard raising.
+- **First converted read:** `GET /api/quiz/attempts` (wave 2).
+- **§5 rate limiter:** `rate_limit_hits` + `claim_rate_limit()` (migration
+  `20261108220438_stateless_rate_limit_and_flag_version.sql`) behind the `stateless_rate_limit`
+  flag (global, default off); a DB failure falls back to the per-process limiter.
+- **§5 flag cache:** the version row and trigger as designed, but no lifespan poller (a 5 s poll
+  would keep Railway Serverless previews awake, the reason the index sweeper is off there).
+  Instead a process re-reads the version at most every `FEATURE_FLAGS_VERSION_CHECK_S` (5 s) while
+  it serves flag reads. Convergence across replicas: about 5 s under traffic, never worse than the
+  30 s TTL.
+- **Load test:** `loadtest/` (locust) and a `workflow_dispatch`-only workflow with a required
+  `target_url`.
+
