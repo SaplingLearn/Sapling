@@ -316,8 +316,13 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
     monkeypatch.setattr(analytics, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     by_table = {n: f for n, _, f in calls}
-    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.reveal)"
+    # spec §13 A133: the hint-unlocking attempts ride the same events scan
+    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.reveal,zpd.attempt)"
     assert by_table["node_mastery_events"]["event_type"] == "eq.evidence"
+    # A133: the help ledger's loop poses and help only, ranged on `at`
+    ledger = by_table["learning_reveals"]
+    assert ledger["kind"] == "in.(posed,help)" and ledger["source"] == "eq.loop"
+    assert set(ledger["at"]) == {f"gte.{RANGE['from']}", f"lte.{RANGE['to']}"}
 
 
 def test_truncated_is_the_or_of_both_scans(monkeypatch):

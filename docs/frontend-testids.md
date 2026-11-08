@@ -459,6 +459,10 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-loop-gain-{window}-post-ci` / `-diff-ci` / `admin-loop-gain-{window}-hidden` / `admin-loop-gain-ci-note` | spec §13 A126 in the learning-gain table: a window's bootstrap intervals under its post-test rate and paired change, its "page hidden while answering" stratum row, and the note naming the interval method |
 | `admin-loop-funnel` / `admin-loop-funnel-{window}` / `admin-loop-funnel-{window}-skipped` | A126: the funnel of the post-test windows that opened in the range (due, opened, answered, expired, open, skipped by reason, never opened, still open); the container says so when the funnel could not be read |
 | `admin-loop-delay` / `admin-loop-delay-{loDays}` | A126: the pairs binned by the days from the concept's first graded answer to the post-test answer |
+| `admin-loop-help-abuse` / `-overall` / `-unavailable` / `-limits` | spec §13 A133 (`screens/admin/HelpAbusePanel.tsx`): the "Are students gaming the hints?" section, its headline numbers, the note when its reads failed, and the note on what it cannot measure |
+| `admin-loop-help-abuse-{gate\|band\|course\|student}` / `…-{group}-{key}` | A133: the by-gate (standard / strict / none), by-band, by-course and by-student tables and their rows |
+| `admin-loop-help-abuse-students-toggle` | A133: "Show all N students" / "Show the top 10" under the by-student table |
+| `admin-loop-help-abuse-next` / `…-next-{none\|partial\|bottom_out}` | A133: what happened on the next item on the concept, by the help the item got |
 
 ### `admin-items`
 

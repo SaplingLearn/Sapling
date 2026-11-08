@@ -17,6 +17,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
+import { HelpAbusePanel } from "./admin/HelpAbusePanel";
 import { useUser } from "@/context/UserContext";
 import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
 
@@ -617,6 +618,8 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         &ldquo;Excluded&rdquo;. The funnel below counts every window that opened in the range, answered or not.
       </p>
       <LearningGainTable gain={d.learning_gain} />
+      {/* spec §13 A133: help abuse on the hint ladder (its own component) */}
+      <HelpAbusePanel data={d.help_abuse} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "16px 0 0" }}>
         Are the questions valid?{" "}

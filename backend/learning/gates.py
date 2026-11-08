@@ -1,10 +1,12 @@
-"""Attempt, rung, H6 and offer gates (spec §3.3 GATES; §13 A5, A32). Pure.
+"""Attempt, rung, H6 and offer gates (spec §3.3 GATES; §13 A5, A32, A134). Pure.
 
 `has_non_attempt_phrase`, `attempt_content`, `vetoes_attempt`,
-`non_attempt_phrases` and `matches_non_attempt` are the ONLY functions in the
-policy layer that read student text, and they are fixed phrase and word lists,
-never a model. policy.py must not import them (invariant 4). They answer two
-questions, each failing in its safe direction:
+`non_attempt_phrases`, `matches_non_attempt` and the strict rule's
+`attempt_token_values`, `pastes_stem` and `attempt_novelty` (spec §13 A134)
+are the ONLY functions in the policy layer that read student text, and they
+are fixed phrase and word lists and the A34 token rules, never a model.
+policy.py must not import them (invariant 4). They answer two questions, each
+failing in its safe direction:
 
 - hint unlocking and H6: `vetoes_attempt`, FAIL CLOSED for pleas (spec §13
   A120). A phrase or a plea vetoes the attempt only when nothing else in the
@@ -27,9 +29,10 @@ from __future__ import annotations
 import bisect
 import math
 import re
-from typing import get_args
+from collections.abc import Callable, Collection
+from typing import NamedTuple, get_args
 
-from learning import params
+from learning import params, stem_match
 from learning.policy import (
     Band,
     CeilingReason,
@@ -616,3 +619,104 @@ def teach_turn_ceiling(
         message, independent_seconds, learner.band, time_scale=time_scale, variant=variant
     )
     return ceiling_with_reason(learner, StepState(question_hash=""), teach_attempt=attempt)
+
+
+# ── Spec §13 A134: the strict genuine-attempt rule (flag help_gate_strict) ───
+# Under the §3.3 rule an attempt needs some text and the band's independent
+# time since the item was POSED, so only the first attempt pays the time: in
+# the develop band six distinct one-character attempts climb H1→H6 in 45 s +
+# 5 × the 8 s dwell. The strict rule grounds an attempt in two signals measured
+# on the attempt itself, never on its length and never on the item's key:
+#
+# - time alone with the latest help: the band's independent-time gate, counted
+#   from the last rung shown (else the pose) — "seconds alone before an
+#   attempt counts" read per attempt, so every rung costs it (the caller
+#   measures `alone_seconds`);
+# - novelty: the attempt holds an answer token no earlier counted attempt on
+#   the item held, and it is not a paste of the item's stem.
+#
+# Nothing here reads the reference, the key or the rubric: a grant or a deny
+# that depended on them would let a student probe the key with the Hint button
+# before submitting (an oracle), and a credited first attempt after such probes
+# would not be unassisted.
+
+
+class _Stem(NamedTuple):
+    """An item-like for stem_match.StemSet (it reads question_hash and prompt)."""
+
+    prompt: str
+    question_hash: str = "stem"
+
+
+def attempt_token_values(text: str) -> frozenset[str]:
+    """The answer tokens of what in `text` counts toward a genuine attempt:
+    `attempt_content` (A120: a hedge's plea and what it governs are no part of
+    it), cut into A34 tokens on the A33 detection fold (`stem_match.tokens`: a
+    look-alike letter or a zero-width character is the same token)."""
+    return frozenset(t.value for t in stem_match.tokens(attempt_content(text or "")))
+
+
+def pastes_stem(text: str, stem: str | None) -> bool:
+    """Whether the attempt is a paste of the item's stem: it QUOTES the stem by
+    spec §13 A125's rule (learning/stem_match.py: most of a stem of at least
+    LEAK_PROVENANCE_MIN_TOKENS tokens, in runs of consecutive stem tokens) and
+    holds no token the stem does not. An answer that only names something the
+    stem names ("5" for "Which is larger, 3 or 5?") quotes nothing, so it is
+    never a paste; neither is a quoted stem with an answer added."""
+    content = attempt_content(text or "")
+    if not stem or not stem_match.StemSet.build([_Stem(stem)]).quoted(content):
+        return False
+    stem_tokens = {t.value for t in stem_match.tokens(stem)}
+    return all(t.value in stem_tokens for t in stem_match.tokens(content))
+
+
+def attempt_novelty(
+    text: str,
+    *,
+    stem: str | None,
+    seen: Collection[str],
+    digest: Callable[[str], str],
+) -> tuple[bool, frozenset[str]]:
+    """(novel, the attempt's token digests). `digest` keys one token value (the
+    route's keyed hash: neither a token nor the attempt text is ever stored);
+    `seen` holds the digests of the student's earlier COUNTED attempts on the
+    item. Novel: a digest of this attempt is not in `seen` — it says something
+    no counted attempt said (a repeat, a reordering or a subset of earlier work
+    says nothing new) — and the attempt is no paste of the stem."""
+    digests = frozenset(digest(value) for value in attempt_token_values(text))
+    novel = bool(digests - frozenset(seen)) and not pastes_stem(text, stem)
+    return novel, digests
+
+
+def independent_time_required(
+    band: Band, *, time_scale: float = 1.0, variant: str = "A"
+) -> float:
+    """The band's independent-time gate in seconds (§3.3; the concept's
+    within-student variant through `policy.independent_gate`, PKG-14; A5's
+    time scale): what is_genuine_attempt asks of the time since the pose, and
+    what the strict rule asks of the time since the latest help."""
+    if band not in _BANDS:
+        raise ValueError(f"unknown band {band!r}")
+    return params.gate_seconds(independent_gate(band, variant), time_scale)
+
+
+def strict_genuine_attempt(
+    genuine: bool,
+    alone_seconds: float,
+    novel: bool,
+    band: Band,
+    *,
+    time_scale: float = 1.0,
+    variant: str = "A",
+) -> bool:
+    """Spec §13 A134: whether an attempt counts under the strict rule.
+    `genuine` is the §3.3 rule's verdict on it (is_genuine_attempt with
+    vetoes_attempt, so A120's hedge tolerance holds: what a hedge leaves is
+    judged like any attempt), `alone_seconds` the time since the latest help on
+    the item (the last rung shown, else the pose) and `novel` attempt_novelty's
+    verdict. Counts only when all three hold and the time alone reaches the
+    band's independent-time gate."""
+    if math.isnan(alone_seconds):
+        raise ValueError("alone_seconds is NaN")
+    required = independent_time_required(band, time_scale=time_scale, variant=variant)
+    return bool(genuine and novel) and alone_seconds >= required

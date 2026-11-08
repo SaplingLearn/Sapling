@@ -13,7 +13,9 @@ them; zpd.band_adjust and zpd.wheelspin are emitted by the check route's
 graded-check path (spec §13 A122: routes/learn_loop.py::_emit_band_verdict).
 zpd.step's `earnest_blocked` key (spec §13 A109) is read by
 `learning.earnest_revise`, outside this layer (the admin KPI and the nightly
-metrics script must not import a PKG-06 module). The leak family's one event
+metrics script must not import a PKG-06 module); zpd.attempt (spec §13 A133,
+A134: one hint-unlocking attempt's signals) by `learning.help_abuse`, for the
+same reason. The leak family's one event
 outside zpd.*, learn.outside_leak (spec §13 A125: the integrity guard of the AI
 surfaces outside the loop), is emitted here too, through the same text guard.
 """
@@ -160,6 +162,61 @@ def emit_zpd_step(
         return payload
 
     _emit("zpd.step", "usage", user_id, request_id, build)
+
+
+#: Spec §13 A134: which genuine-attempt rule judged an attempt — the §3.3 rule
+#: ("standard", the default) or the strict one (the `help_gate_strict` flag).
+AttemptGate = Literal["standard", "strict"]
+
+
+def emit_zpd_attempt(
+    *,
+    user_id: str,
+    request_id: str | None,
+    session_id: str,
+    question_hash: str,
+    concept_id: str | None,
+    band: Band,
+    gate: AttemptGate,
+    rung: Rung,
+    since_pose_ms: int,
+    alone_ms: int,
+    gate_ms: int,
+    novel: bool,
+    standard: bool,
+    strict: bool,
+    counted: bool,
+) -> None:
+    """Spec §13 A133/A134: one hint-unlocking attempt (POST /step/attempt), as
+    judged — the attempt's structured signals, never its text. `rung` is the
+    step's rung when the attempt came (a counted attempt unlocks the next one);
+    `alone_ms` the time since the latest help on the item (the last rung shown,
+    else the pose) and `gate_ms` the band's independent-time gate; `novel` the
+    strict rule's novelty verdict; `standard` / `strict` what each rule says
+    of it; `counted` whether it counted (the rule `gate` names, at most one
+    per rung anchor and never a repeat of a counted attempt). Read by
+    learning/help_abuse.py (the admin help-abuse report)."""
+
+    def build() -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "question_hash": question_hash,
+            "band": band,
+            "gate": gate,
+            "rung": int(rung),
+            "since_pose_ms": int(since_pose_ms),
+            "alone_ms": int(alone_ms),
+            "gate_ms": int(gate_ms),
+            "novel": bool(novel),
+            "standard": bool(standard),
+            "strict": bool(strict),
+            "counted": bool(counted),
+        }
+        if concept_id is not None:  # omitted (never blanked) for an item with no node
+            payload["concept_id"] = concept_id
+        return payload
+
+    _emit("zpd.attempt", "usage", user_id, request_id, build)
 
 
 def emit_zpd_offer(*, user_id: str, request_id: str | None, accepted: bool, band: Band) -> None:

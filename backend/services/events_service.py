@@ -125,6 +125,12 @@ zpd.step                      usage     concept_id, question_hash, phase, channe
                                         material retrieval failed since the concept's last
                                         check; omitted otherwise, spec §13 A128)
                                         (learning loop PKG-06, spec §6)
+zpd.attempt                   usage     session_id, question_hash, band, gate (standard / strict),
+                                        rung, since_pose_ms, alone_ms, gate_ms, novel, standard,
+                                        strict, counted; optional concept_id — one
+                                        hint-unlocking attempt (POST /step/attempt) as judged:
+                                        its structured signals, never its text (learning loop
+                                        spec §13 A133, A134)
 zpd.offer                     usage     accepted, band
 zpd.band_adjust               usage     direction, trigger, window_stats
 zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k, prerequisite_ids
@@ -387,6 +393,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "zpd.leak",
     "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
     "zpd.rating",
+    # Learning-loop spec §13 A133, A134: one hint-unlocking attempt as judged —
+    # the time alone with the latest help, novelty, what the standard and the
+    # strict rule say, and whether it counted. Never the attempt's text.
+    "zpd.attempt",
     # Learning-loop spec §13 A125: the leak family's event for the AI surfaces
     # OUTSIDE the loop (services/integrity_guard.py — the notes chat, summary and
     # concepts, the flashcard generators). stage `request`: the student's text

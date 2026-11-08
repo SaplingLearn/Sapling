@@ -31,6 +31,8 @@ from learning.calibration import confidence_calibration
 from learning.calibration import eligible as calibration_eligible
 from learning.earnest_revise import earnest_revise
 from learning.evidence_void import is_void_row, pose_is_void
+from learning.help_abuse import LOOP_SOURCE as HELP_LOOP_SOURCE
+from learning.help_abuse import help_abuse as help_abuse_report
 from learning.item_reports import retired_items
 from learning.learning_gain import (
     due_windows,
@@ -55,6 +57,7 @@ from learning.params import (
     PROBE_TARGET_LO,
 )
 from learning.probe import probe_history_hashes
+from services.academics import offering_course_id
 from services.auth_guard import require_admin
 from services.quiz_ask import quiz_ask_session_ids
 from services.events_service import SYSTEM_CATEGORY
@@ -755,6 +758,64 @@ class SlotWarning(BaseModel):
     rule: str | None = None
 
 
+class HelpMedian(BaseModel):
+    n: int
+    median: float | None  # seconds; None when n = 0, never a zero
+
+
+class HelpAttempts(BaseModel):
+    """Counted hint-unlocking attempts and their signals (zpd.attempt, A134)."""
+
+    counted: int
+    rapid: int  # less than the band's independent time alone with the latest help
+    repeat: int  # said nothing a counted attempt on the item had not said
+    strict_refused: int  # under the strict gate: refused, though the §3.3 rule counted it
+
+
+class BottomOutAttempts(BaseModel):
+    """The counted attempts that bought a bottom-out's climb (below H5)."""
+
+    measured: int
+    unmeasured: int  # no attempt record (a step before A134): never a zero
+    held_by_strict: int  # one climb attempt or more the strict rule would not count
+    no_strict_attempt: int  # no climb attempt the strict rule would count
+
+
+class HelpNextOutcome(BaseModel):
+    """The next graded opportunity on the concept with another item."""
+
+    graded: int  # steps with a graded, non-void evidence row in the range
+    unassisted_correct: int
+    other: int
+    none: int  # no later opportunity in the range
+
+
+class HelpAbuseGroup(BaseModel):
+    key: str
+    steps: int  # loop check items posed (student × session × item)
+    bottom_outs: int
+    full_solutions: int
+    bottom_out_rate: float | None
+    time_to_bottom_out_s: HelpMedian
+    help_gap_s: HelpMedian
+    climb_gap_s: HelpMedian
+    attempts: HelpAttempts
+    bottom_out_attempts: BottomOutAttempts
+    next: dict[str, HelpNextOutcome]  # by the step's help: none / partial / bottom_out
+
+
+class HelpAbuse(BaseModel):
+    """Spec §13 A133: help abuse, measured (learning/help_abuse.py)."""
+
+    bottom_out_rung: int
+    overall: HelpAbuseGroup
+    by_band: list[HelpAbuseGroup]
+    by_gate: list[HelpAbuseGroup]
+    by_course: list[HelpAbuseGroup]
+    by_student: list[HelpAbuseGroup]
+    truncated: bool = False
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -777,6 +838,8 @@ class LearningLoopKpis(BaseModel):
     learning_gain: LearningGain
     # A128: the active evidence-slot warnings ([] when none; never blocking)
     slot_warnings: list[SlotWarning] = Field(default_factory=list)
+    # spec §13 A133: help abuse — None when its reads failed (the rest stands)
+    help_abuse: HelpAbuse | None = None
     truncated: bool = False
 
 
@@ -1083,6 +1146,52 @@ def _funnel_reads(from_iso: str, to_iso: str) -> _FunnelReads | None:
     return _FunnelReads(due, poses, skips, truncated)
 
 
+_ATTEMPT_EVENT = "zpd.attempt"  # spec §13 A133/A134: one hint-unlocking attempt, as judged
+#: spec §13 A133: the help ledger's loop rows (learning/help_ledger.py) — poses and help
+_LEDGER_COLS = "id,user_id,kind,question_hash,rung,session_id,source,at"
+
+
+def _session_courses(session_ids: Iterable[str]) -> dict[str, str]:
+    """Session id → abstract course id (the session's offering's course),
+    for the sessions that have one: bounded `in.(...)` reads of `sessions`,
+    then services.academics.offering_course_id per distinct offering (cached)."""
+    ids = sorted({str(s) for s in session_ids if s})
+    offering: dict[str, str] = {}
+    for batch in _batches(ids):
+        for row in table("sessions").select("id,offering_id", filters={"id": _in(batch)}) or []:
+            if row.get("id") and row.get("offering_id"):
+                offering[str(row["id"])] = str(row["offering_id"])
+    course = {o: offering_course_id(o) for o in set(offering.values())}
+    return {sid: course[o] for sid, o in offering.items() if course.get(o)}
+
+
+def _help_abuse(
+    events: list[dict], steps: list[dict], valid: list[dict], from_iso: str, to_iso: str
+) -> HelpAbuse | None:
+    """Spec §13 A133 over the range: the help ledger's loop poses and help in
+    it, the zpd.attempt / zpd.step events and the non-void evidence the
+    endpoint already scanned, and the sessions' courses. Additive: a failed
+    read logs a WARNING and answers None — the rest of the report stands."""
+    try:
+        ledger, truncated = _scan_range(
+            "learning_reveals",
+            _LEDGER_COLS,
+            from_iso,
+            to_iso,
+            extra_filters={"kind": "in.(posed,help)", "source": f"eq.{HELP_LOOP_SOURCE}"},
+            time_column="at",
+            order="at.asc,id.asc",
+        )
+        courses = _session_courses(r.get("session_id") for r in ledger if r.get("kind") == "posed")
+        attempts = [e for e in events if e.get("event_type") == _ATTEMPT_EVENT]
+        return HelpAbuse(
+            **help_abuse_report(ledger, attempts, steps, valid, courses), truncated=truncated
+        )
+    except Exception:
+        logger.warning("admin learning-loop: the help-abuse report could not be built", exc_info=True)
+        return None
+
+
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
     n = ok = 0
     for row in steps:
@@ -1115,7 +1224,10 @@ def learning_loop_kpis(
     the confidence calibration, the next-session success, the learning gain's
     post-tests (counted per window in `excluded_retired`) and its pretests;
     the active evidence-slot warnings of this process's configuration (A128);
-    `truncated: true` means a scan cap cut the aggregation short."""
+    help abuse (A133: bottom-outs, their pace, the attempts that bought them
+    and what the student did next, per band, gate, course and student — None
+    when its reads failed); `truncated: true` means a scan cap cut the
+    aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -1124,7 +1236,9 @@ def learning_loop_kpis(
         "event_type,user_id,payload,created_at",
         from_iso,
         to_iso,
-        extra_filters={"event_type": f"in.({_STEP_EVENT},{_LEAK_EVENT},{_REVEAL_EVENT})"},
+        extra_filters={
+            "event_type": f"in.({_STEP_EVENT},{_LEAK_EVENT},{_REVEAL_EVENT},{_ATTEMPT_EVENT})"
+        },
     )
     evidence, evidence_truncated = _scan_range(
         "node_mastery_events",
@@ -1175,6 +1289,8 @@ def learning_loop_kpis(
         else None
     )
     funnel_truncated = funnel_reads.truncated if funnel_reads is not None else False
+    # spec §13 A133: help abuse, over the same events and non-void evidence
+    help_abuse = _help_abuse(events, steps, valid, from_iso, to_iso)
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -1200,5 +1316,10 @@ def learning_loop_kpis(
         confidence_calibration=ConfidenceCalibration(**confidence_calibration(valid)),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired), funnel=funnel),
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
-        truncated=events_truncated or evidence_truncated or poses_truncated or funnel_truncated,
+        help_abuse=help_abuse,
+        truncated=events_truncated
+        or evidence_truncated
+        or poses_truncated
+        or funnel_truncated
+        or bool(help_abuse is not None and help_abuse.truncated),
     )

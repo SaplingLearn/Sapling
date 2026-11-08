@@ -129,6 +129,23 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "misconception_confront datasets are re-recorded live under "
             "LOOP_EVAL_VARIANT=v2 (their own cassettes) and pass. "
             "Off: the tutor request is byte-identical to before A121.", False),
+    # Learning loop spec §13 A134: the strict genuine-attempt rule for hint
+    # unlocking (learning/gates.py::strict_genuine_attempt). Resolved per
+    # request, for the student, by routes/learn_loop.py::_help_gate_strict_on
+    # (POST /step/attempt counts an attempt by it; POST /hint words its
+    # time-alone denial by it). Server-only: the client renders the denial
+    # reason it is sent. Turning it on is the owner's pedagogy decision, judged
+    # by the A133 help-abuse report (GET /api/admin/analytics/learning-loop,
+    # `help_abuse.by_gate`). Off: both routes behave exactly as before A134.
+    FlagDef("help_gate_strict", ("off", "on"),
+            "Strict genuine-attempt gate for loop hints (A134): an attempt "
+            "unlocks the next hint rung only after the band's independent time "
+            "(45 s; 90 s for a novice) alone with the latest hint, and only when "
+            "it says something none of the student's counted attempts on the item "
+            "said and is not a paste of the question. Off: an attempt counts after "
+            "that time since the question was posed, so later rungs need only the "
+            "8 s dwell. Judge it by the help-abuse report on the admin learning-"
+            "loop page (by gate).", False),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

@@ -710,3 +710,20 @@ ITEM_AUDIT_SAMPLE_DEFAULT = 30
 ITEM_AUDIT_SAMPLE_MAX = 200
 # The two-sided 95% standard-normal quantile of the audit's Wilson interval.
 WILSON_Z_95 = 1.959963984540054
+
+# ── Help abuse and the strict genuine-attempt gate (spec §13 A133, A134) ────
+# † the bottom of the hint ladder (A133): an item whose help reached this rung
+# or above BOTTOMED OUT — H5, the completion problem (the solution with only
+# its last steps blanked), or H6, the full solution. In the help-seeking
+# literature the bottom-out hint is the one that hands over the step's answer
+# (Aleven et al. 2016: a high bottom-out rate goes with poorer learning); H5
+# leaves the student at most the last steps. A novice on the worked-example
+# path reaches H5 by design (A122), so that band's rate is read with its
+# attempt signals, never on its own.
+HELP_BOTTOM_OUT_RUNG = 5
+# † A134: the most token digests one step keeps for the strict gate's novelty
+# check (the union over its counted attempts; at most one attempt counts per
+# rung anchor, so a step has at most seven). Past the cap a later attempt is
+# compared with what is kept, so the check errs toward counting it (the time
+# rule still binds) — never toward withholding help it cannot judge.
+HELP_NOVELTY_DIGESTS_MAX = 256
