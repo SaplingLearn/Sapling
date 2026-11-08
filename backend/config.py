@@ -189,6 +189,30 @@ def canopy_metrics_token() -> str:
     return (os.getenv("CANOPY_METRICS_TOKEN") or "").strip()
 
 
+# ── Cross-environment account copy (admin account tools) ────────────────────
+#
+# OPTIONAL and deliberately absent from `validate_config`: with any of these
+# unset the copy feature is inert (the admin route answers 503, the internal
+# `/api/internal/account-sync/*` routes answer 404). Read at call time and
+# stripped, like `canopy_metrics_token`, so a rotation needs no code change and
+# a pasted trailing newline cannot fail as a silent 401.
+
+
+def account_sync_peer_url() -> str:
+    """The OTHER environment's backend base URL (no trailing slash), or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_URL") or "").strip().rstrip("/")
+
+
+def account_sync_peer_token() -> str:
+    """Bearer token we SEND to the peer's internal account-sync routes, or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_TOKEN") or "").strip()
+
+
+def account_sync_inbound_token() -> str:
+    """Bearer token our internal account-sync routes ACCEPT, or "" (= routes 404)."""
+    return (os.getenv("ACCOUNT_SYNC_INBOUND_TOKEN") or "").strip()
+
+
 def build_commit() -> str:
     """Short git SHA of the running build, or "unknown".
 

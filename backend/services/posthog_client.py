@@ -551,8 +551,14 @@ def _submit(
 #: expired cookie, every 404 probe and every 422: high volume, no product
 #: signal, and a raw path per row. flag.changed (#620) is an admin audit
 #: event whose `field` names the rule's target — `user:<another student's
-#: id>` — in a value no key-based id filter can see.
-_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx", "flag.changed"})
+#: id>` — in a value no key-based id filter can see. The account.* events are
+#: admin account-tools audit rows: no product signal, and the internal
+#: export/import rows are attributed to the TARGET student, who did nothing.
+_NOT_MIRRORED: frozenset[str] = frozenset({
+    "error.4xx", "flag.changed",
+    "account.seed", "account.wipe", "account.copy_push", "account.copy_pull",
+    "account.export", "account.import",
+})
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a
 #: raw path like auth.permission_denied's `/api/profile/<another user's id>`,

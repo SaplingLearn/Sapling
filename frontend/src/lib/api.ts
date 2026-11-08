@@ -7,6 +7,8 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
+  AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -1259,6 +1261,45 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
 // its historical `/unapprove` path; 409 on your own account.
 export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — account tools (backend routes/admin_accounts.py; spec
+// docs/superpowers/specs/2026-11-08-admin-account-tools-design.md). Each write
+// sends the action word as `confirm` — the backend 400s without it; the UI
+// first shows a review (summary / copy-preview: what will be deleted) and
+// makes the admin type the account's email before calling these.
+export const adminAccountsMeta = () =>
+  fetchJSON<AdminAccountsMeta>('/api/admin/accounts/meta');
+
+/** Read-only: what the account holds on this environment (the seed/wipe review). 404 unknown. */
+export const adminAccountSummary = (userId: string) =>
+  fetchJSON<AdminAccountSummary>(`/api/admin/accounts/${encodeURIComponent(userId)}/summary`);
+
+/** Read-only: both sides of a copy (the copy review). 503 unconfigured, 502 peer down. */
+export const adminCopyPreview = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyPreview>(
+    `/api/admin/accounts/${encodeURIComponent(userId)}/copy-preview?direction=${direction}`,
+  );
+
+/** Wipe-then-seed the account with `major`'s mock semester (replaces, never stacks). */
+export const adminSeedAccount = (userId: string, major: string) =>
+  fetchJSON<AdminSeedAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/seed`, {
+    method: 'POST',
+    body: JSON.stringify({ major, confirm: 'SEED' }),
+  });
+
+/** Remove the account's academic/study data; the account itself is kept. */
+export const adminWipeAccount = (userId: string) =>
+  fetchJSON<AdminWipeAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/wipe`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'WIPE' }),
+  });
+
+/** push = overwrite the peer env's copy with ours; pull = overwrite ours with the peer's. */
+export const adminCopyAccount = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ direction, confirm: 'COPY' }),
+  });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
 export type AdminFeedbackEntry = {
