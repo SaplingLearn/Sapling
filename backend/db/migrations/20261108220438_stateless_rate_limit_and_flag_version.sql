@@ -19,15 +19,23 @@
 --   returns its id (the refund handle: the app deletes exactly that row when
 --   the work it guarded fails) or returns NULL plus the seconds until the
 --   oldest hit in the window ages out (clamped to [1, p_window_sec], the same
---   answer the in-memory limiter gives). About 1% of claims also prune every
---   key's hits older than a day (the longest window the function accepts), so
---   keys nobody uses again do not accumulate. SECURITY INVOKER, search_path
---   pinned to '', EXECUTE for service_role only.
+--   answer the in-memory limiter gives). About 1% of claims also prune up to
+--   500 hits (any key) older than a day (the longest window the function
+--   accepts), so keys nobody uses again do not accumulate; that bounded
+--   prune runs before the key's advisory lock is taken and skips rows
+--   another pruner holds. SECURITY INVOKER, search_path pinned to '',
+--   EXECUTE for service_role only.
 --
 -- public.feature_flags_version: one row whose `version` a statement-level
 --   trigger on feature_flags and feature_flag_targets bumps on every write
---   (insert, update, delete, truncate), however it was made (the admin API or
---   hand-run SQL). services/feature_flags.py reads it every few seconds while
+--   (insert, update, delete), however it was made (the admin API or hand-run
+--   SQL). Not on TRUNCATE: emptying the flag store is a reset, not an edit
+--   (only test/E2E resets do it, and those run with the snapshot TTL at 0),
+--   the replicas still converge within the snapshot TTL, and the statement
+--   would trip promotion's destructive-DDL preflight. The bump is an
+--   upsert, so a deleted/truncated version row is re-created by the next
+--   flag write (at the current epoch-ms, so it still differs from any
+--   version a replica holds) rather than silently stuck absent. services/feature_flags.py reads it every few seconds while
 --   requests flow and drops its 30 s snapshot when it moves, so an admin flag
 --   write reaches every replica within that interval instead of the snapshot
 --   TTL. Service-only like the flag store itself.
@@ -99,6 +107,22 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
+    -- Housekeeping for keys nobody claims again (a day is the longest window):
+    -- about 1 claim in 100 deletes at most 500 day-old hits of ANY key. It
+    -- runs BEFORE the key's advisory lock is taken, so it never lengthens
+    -- the time another claim on this key waits, and SKIP LOCKED means two
+    -- pruning claims never wait on each other's rows.
+    IF pg_catalog.random() < 0.01 THEN
+        DELETE FROM public.rate_limit_hits h
+         WHERE h.id IN (
+             SELECT o.id
+               FROM public.rate_limit_hits o
+              WHERE o.hit_at < v_now - INTERVAL '1 day'
+              ORDER BY o.hit_at
+              LIMIT 500
+              FOR UPDATE SKIP LOCKED);
+    END IF;
+
     -- One claim per key at a time, across every replica, until commit.
     PERFORM pg_catalog.pg_advisory_xact_lock(
         pg_catalog.hashtextextended('rate_limit:' || p_key, 0));
@@ -126,12 +150,6 @@ BEGIN
     INSERT INTO public.rate_limit_hits (key, hit_at)
     VALUES (p_key, v_now)
     RETURNING id INTO v_id;
-
-    -- Housekeeping for keys nobody claims again (a day is the longest window).
-    IF pg_catalog.random() < 0.01 THEN
-        DELETE FROM public.rate_limit_hits h
-         WHERE h.hit_at < v_now - INTERVAL '1 day';
-    END IF;
 
     hit_id := v_id;
     retry_after := NULL;
@@ -167,9 +185,15 @@ SECURITY INVOKER
 SET search_path = ''
 AS $$
 BEGIN
-    UPDATE public.feature_flags_version
-       SET version = version + 1, updated_at = now()
-     WHERE id;
+    -- Self-healing: if the one row is gone (deleted or truncated by hand, or
+    -- a test reset), the next flag write re-creates it instead of bumping
+    -- nothing. Readers treat a missing row as "unknown" (TTL only) until then.
+    -- The re-created version is the current epoch in milliseconds, not 1: a
+    -- replica that last saw the old row at, say, 1 must still see it move.
+    INSERT INTO public.feature_flags_version AS v (id, version, updated_at)
+    VALUES (TRUE, (extract(epoch FROM clock_timestamp()) * 1000)::bigint, now())
+    ON CONFLICT (id) DO UPDATE
+        SET version = v.version + 1, updated_at = now();
     RETURN NULL;
 END;
 $$;
@@ -182,7 +206,7 @@ BEGIN
            AND tgrelid = 'public.feature_flags'::regclass
     ) THEN
         CREATE TRIGGER trg_feature_flags_bump_version
-            AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.feature_flags
+            AFTER INSERT OR UPDATE OR DELETE ON public.feature_flags
             FOR EACH STATEMENT EXECUTE FUNCTION public.bump_feature_flags_version();
     END IF;
     IF NOT EXISTS (
@@ -191,7 +215,7 @@ BEGIN
            AND tgrelid = 'public.feature_flag_targets'::regclass
     ) THEN
         CREATE TRIGGER trg_feature_flag_targets_bump_version
-            AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.feature_flag_targets
+            AFTER INSERT OR UPDATE OR DELETE ON public.feature_flag_targets
             FOR EACH STATEMENT EXECUTE FUNCTION public.bump_feature_flags_version();
     END IF;
 END $$;
