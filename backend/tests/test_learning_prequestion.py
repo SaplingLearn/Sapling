@@ -321,6 +321,26 @@ def test_a_step_graded_after_the_release_ends_the_next_item_rule_but_class_mates
     assert _recheck(st, _graded_item("teachback", 3), later=False) is True
 
 
+def test_a_multi_concept_item_is_no_class_mate_of_a_prequestion_release():
+    # second review, item 7 (A141's isomorph_class): real string concept keys,
+    # so the graded item's class is a 3-tuple when it is a combination — another
+    # construct, never a class-mate of the single-concept item a prequestion posed
+    from types import SimpleNamespace
+
+    from learning.multi_concept import combo_key
+
+    st = _answered("mc_reason", 1)
+    st["steps"] = {"q1": {"node_id": "n1", "graded_at": _NOW.timestamp() - 60}}  # the next-item rule is spent
+    single = SimpleNamespace(question_hash="q9", format="mc_reason", difficulty=1, concept_key="recursion")
+    combo = SimpleNamespace(question_hash="q8", format="mc_reason", difficulty=1,
+                            concept_key=combo_key(["recursion", "loops"]))
+    assert _recheck(st, single, later=True) is True
+    assert _recheck(st, combo, later=True) is False
+    rel = [{"shape": ("mc_reason", 1), "at": _NOW - timedelta(hours=2)}]  # across sessions too
+    assert _recheck({}, single, releases=rel, later=True) is True
+    assert _recheck({}, combo, releases=rel, later=True) is False
+
+
 def test_a_grade_on_another_surface_after_the_release_ends_it():
     assert _recheck(_answered(), _graded_item("teachback", 3), later=True) is False
 
