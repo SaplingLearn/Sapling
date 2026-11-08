@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { answerRetentionCheck, startRetentionCheck, type EnrolledCourse, type RetentionItem } from "@/lib/api";
 import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
+import { useFeedbackHold } from "@/lib/feedbackPacing";
 import styles from "./LoopLearn.module.css";
 
 /** Opening a post-test commits its pose. Only an explicit learner action may
@@ -59,6 +60,8 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     }
   };
   const item = items?.[index];
+  // No feedback survey during an opened retention check (lib/feedbackPacing.ts).
+  useFeedbackHold(!!item);
   const submit = async (idk: boolean) => {
     if (!item || busy || result !== null) return;
     const mine = request.current;

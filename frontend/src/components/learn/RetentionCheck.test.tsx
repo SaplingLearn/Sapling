@@ -6,12 +6,34 @@ import type { EnrolledCourse } from "@/lib/api";
 const api = vi.hoisted(() => ({ startRetentionCheck: vi.fn(), answerRetentionCheck: vi.fn() }));
 vi.mock("@/lib/api", async (original) => ({ ...await original<typeof import("@/lib/api")>(), ...api }));
 import { ApiError } from "@/lib/api";
+import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
 import { RetentionCheck } from "./RetentionCheck";
 const courses = [{ course_id: "c1", course_name: "Computer Science" }, { course_id: "c2", course_name: "Mathematics" }] as EnrolledCourse[];
 const item = { node_id: "n1", question_hash: "qh", format: "free", difficulty: 1, prompt: "What do you remember?" };
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(cleanup);
 async function open() { fireEvent.click(screen.getByTestId("retention-open")); await screen.findByTestId("retention-item"); }
+
+it("holds the shell's feedback prompts only while an opened check is in progress (lib/feedbackPacing.ts)", async () => {
+  __resetFeedbackPacingForTests();
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  // A findBy can resolve on the commit, before its passive effects run.
+  const effectsFlushed = () => act(async () => {});
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  expect(feedbackHeld()).toBe(false); // the entry card alone is not an activity
+  await open();
+  await effectsFlushed();
+  expect(feedbackHeld()).toBe(true);
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "My own remembered explanation" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  await screen.findByTestId("retention-result");
+  await effectsFlushed();
+  expect(feedbackHeld()).toBe(true);
+  fireEvent.click(screen.getByTestId("retention-next"));
+  expect(screen.getByTestId("retention-finished")).toBeTruthy();
+  expect(feedbackHeld()).toBe(false);
+});
 
 it("never creates a pose on mount/course change and honestly renders no eligible items", async () => {
   api.startRetentionCheck.mockResolvedValue({ items: [] });

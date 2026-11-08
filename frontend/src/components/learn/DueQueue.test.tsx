@@ -12,7 +12,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { act, render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const { mockNext, mockAnswer, mockSummary, mockReport, flags } = vi.hoisted(() => ({
@@ -36,6 +36,7 @@ vi.mock("@/lib/api", async (orig) => ({
 vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
 
 import { ApiError } from "@/lib/api";
+import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
 import { DueQueue } from "./DueQueue";
 
 const SR = { stage: "acquire", correct: 0, target: 3 } as const;
@@ -78,6 +79,29 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   for (const key of Object.keys(flags)) delete flags[key];
+});
+
+describe("DueQueue — no feedback survey over a review item (lib/feedbackPacing.ts)", () => {
+  it("holds the shell's feedback prompts while an item is on screen, answered or not, and releases them when the queue is done", async () => {
+    __resetFeedbackPacingForTests();
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
+    mockAnswer.mockResolvedValue(graded());
+    // A findBy can resolve on the commit, before its passive effects run.
+    const effectsFlushed = () => act(async () => {});
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(true);
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await screen.findByTestId("review-hint");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(true);
+    await userEvent.click(screen.getByTestId("review-next"));
+    await screen.findByTestId("review-empty");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(false);
+  });
 });
 
 describe("DueQueue — Report this question (spec §13 A113)", () => {

@@ -20,7 +20,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/learn",
   useRouter: () => router,
 }));
-vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
+// isAuthenticated: the shell's FeedbackFlow, rendered alongside in the pacing tests
+vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true, isAuthenticated: true }) }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn() }));
 vi.mock("../ToastProvider", () => ({ useToast: () => toast })); // useToast throws outside a provider
 // MarkdownChat is lazy (next/dynamic): render plain text so assertions see message content.
@@ -49,6 +50,13 @@ const flags = vi.hoisted(() => ({}) as Record<string, string>);
 vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
 
 import { ApiError } from "@/lib/api";
+import {
+  __resetFeedbackPacingForTests,
+  currentLearningSession,
+  ENDED_SESSION_KEY,
+  feedbackHeld,
+} from "@/lib/feedbackPacing";
+import { FeedbackFlow } from "../FeedbackFlow";
 import { LoopLearn } from "./LoopLearn";
 
 const course = { course_id: "c1", course_name: "Intro CS", course_code: "CS 101" }; // the EnrolledCourse fields LoopLearn reads
@@ -1972,5 +1980,82 @@ describe("LoopLearn — Report this question (spec §13 A113)", () => {
     fireEvent.click(screen.getByTestId("loop-check-me"));
     expect((await screen.findByTestId("loop-check-prompt")).getAttribute("data-question-hash")).toBe("qh8");
     expect(screen.queryByTestId("loop-check-reported")).toBeNull();
+  });
+});
+
+// A live walkthrough had the shell's "What's clicking?" pulse open on top of the
+// check-in, right after the first diagnostic answer. LoopLearn's half of the
+// pacing contract (lib/feedbackPacing.ts; the shell's half is
+// components/feedbackFlows.test.tsx): an open session holds every feedback
+// prompt until its wrap-up, which releases them and remembers the ended session.
+describe("LoopLearn — no feedback survey mid-learning", () => {
+  const PULSE = "What's clicking?";
+  const endedSession = () => JSON.parse(sessionStorage.getItem(ENDED_SESSION_KEY) ?? "null");
+  // A findBy can resolve on the commit, before its passive effects run.
+  const effectsFlushed = () => act(async () => {});
+
+  beforeEach(() => {
+    __resetFeedbackPacingForTests();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("holds prompts from the boot through the check-in, after the first answer too; leaving /learn releases them", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "ref" });
+    const view = render(<LoopLearn />);
+    expect(feedbackHeld()).toBe(true); // about to resume or start a session
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "a loop" } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    await screen.findByTestId("loop-probe-reference");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(true);
+    expect(currentLearningSession()).toBe("s2");
+    view.unmount();
+    expect(feedbackHeld()).toBe(false);
+    expect(endedSession()).toBeNull(); // left mid-session: nothing wrapped up
+  });
+
+  it("an open check card holds them", async () => {
+    await withCheckItem();
+    expect(feedbackHeld()).toBe(true);
+  });
+
+  it("the wrap-up releases them and remembers the ended session; the next session holds again and forgets it", async () => {
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    expect(feedbackHeld()).toBe(true);
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-done");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(false);
+    expect(endedSession()).toEqual({ sessionId: "s2", topic: "t s2" });
+
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    await screen.findByTestId("loop-probe-item");
+    await effectsFlushed();
+    expect(feedbackHeld()).toBe(true);
+    expect(currentLearningSession()).toBe("s9");
+    expect(endedSession()).toBeNull();
+  });
+
+  it("with the shell's pulse: it never opens over an open check, and opens once the session wraps up", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "check" });
+    render(<FeedbackFlow />);
+    await withCheckItem();
+    act(() => { vi.advanceTimersByTime(45_000); });
+    act(() => { vi.advanceTimersByTime(10 * 60_000); });
+    expect(screen.queryByText(PULSE)).toBeNull();
+
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-done");
+    expect(await screen.findByText(PULSE)).toBeTruthy();
   });
 });

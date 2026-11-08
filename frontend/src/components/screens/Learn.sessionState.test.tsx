@@ -85,6 +85,7 @@ vi.mock("@/lib/api", async importOriginal => ({
 import { Learn } from "./Learn";
 import { ToastProvider } from "../ToastProvider";
 import { ChatStreamError } from "@/lib/api";
+import { __resetFeedbackPacingForTests, currentLearningSession, feedbackHeld } from "@/lib/feedbackPacing";
 
 class StubResizeObserver {
   constructor(private cb: (entries: { contentRect: { width: number } }[]) => void) {}
@@ -636,6 +637,18 @@ describe("session-feedback bookkeeping", () => {
       expect(JSON.parse(sessionStorage.getItem("sapling_last_session_context") ?? "null")).toEqual({ sessionId: "sess-a", topic: "Recursion" }),
     );
     expect(localStorage.getItem("sapling_session_end_count")).toBeNull();
+  });
+
+  it("a live session holds the shell's feedback prompts; ending it releases them (lib/feedbackPacing.ts)", async () => {
+    __resetFeedbackPacingForTests();
+    renderLearn();
+    await openSession("sess-a");
+    await act(async () => {}); // a findBy can resolve before the commit's passive effects run
+    expect(feedbackHeld()).toBe(true);
+    expect(currentLearningSession()).toBe("sess-a");
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm end" }));
+    await waitFor(() => expect(feedbackHeld()).toBe(false));
   });
 
   it("starting or resuming another session clears the previous session's feedback context", async () => {
