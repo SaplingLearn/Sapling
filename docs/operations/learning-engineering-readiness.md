@@ -381,6 +381,38 @@ unfinished engineering requirement.
    claude-* model. The defaults that still run on Gemini are unaffected, so
    there is nothing to order.
 
+### Learning-loop wave-4 rollout ordering
+
+Varied practice (spec §13 A140, A141; `feat/learning-varied-practice`):
+
+1. `20261108185101_learning_varied_practice.sql` adds four nullable
+   `check_items` columns (`surface_representation`, `surface_context`,
+   `apex_key`, `component_keys`) and their CHECKs. Apply it before either
+   flag is turned on. It may land before or after the code: no request-path
+   read selects the columns while `varied_isomorphs` and
+   `multi_concept_items` are off, and nothing writes them. With a flag on and
+   the migration missing, a varied drafting write fails its batch
+   (`learn.check_items_failed`, StorageError; a later run drafts it again),
+   the surface and multi-concept reads fail and every pick keeps its plain
+   order, and the admin `multi_concept` report is `null`. `--db-audit`
+   requires the four columns.
+2. Both flags ship off and are per student. `varied_isomorphs` changes the
+   uploader's drafting prompt and output schema and the student's picks;
+   `multi_concept_items` adds a drafting call per combination and changes
+   what a proficient student is posed. Turn either on only after its eval
+   dataset is recorded live and passes (the varied drafter and top-up; the
+   combination drafter and its alignment check) — recording is owner-approved
+   spend. `multi_concept_items` drafts nothing unless the uploader also has
+   `upload_prereq_edges` (A118): combinations come only from prerequisite
+   edges.
+3. Rollback: older code never reads the four columns. A stored multi-concept
+   item's key matches no concept, so older code never serves it (its
+   `course_has_items` would count it). Its answers stay valid evidence: the
+   journal keeps the weight. Rolling back while a multi-concept grade
+   checkpoint is in flight cannot replay it as written (older code drops the
+   `multi_concept` flag, so its weight and fingerprint differ): roll forward,
+   or drain grade checkpoints first.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,
