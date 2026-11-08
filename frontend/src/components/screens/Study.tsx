@@ -60,8 +60,13 @@ import {
   type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { StudyHub } from "../study/StudyHub";
+import Link from "next/link";
 
-type Mode = "guide" | "cards";
+// "hub" is the one-page-per-course Study hub (the bare /study route); the
+// Study Guide and Flashcards tools it links to stay on ?mode=guide / ?mode=cards.
+type Mode = "hub" | "guide" | "cards";
+const modeFrom = (v: string | null): Mode => (v === "cards" ? "cards" : v === "guide" ? "guide" : "hub");
 
 // A guide load fails two ways that deserve different UI: the guide's target
 // isn't there (normal — a deleted exam, a stale "recent guides" entry, or a
@@ -96,9 +101,15 @@ export function Study() {
   const isMobile = useIsMobile();
   const { userId, userReady } = useUser();
   const searchParams = useSearchParams();
-  const [mode, setMode] = React.useState<Mode>(
-    searchParams.get("mode") === "cards" ? "cards" : "guide",
-  );
+  const modeParam = searchParams.get("mode");
+  const [mode, setMode] = React.useState<Mode>(modeFrom(modeParam));
+  // The hub navigates to ?mode=… with the screen still mounted: follow the URL
+  // when it changes (StudyTabs' in-place switches don't touch it).
+  const [seenParam, setSeenParam] = React.useState(modeParam);
+  if (seenParam !== modeParam) {
+    setSeenParam(modeParam);
+    setMode(modeFrom(modeParam));
+  }
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [activeSemester, , semesterHydrated] = useActiveSemester();
 
@@ -117,8 +128,23 @@ export function Study() {
     [courses, activeSemester],
   );
 
+  if (mode === "hub") {
+    return (
+      <StudyHub
+        courses={scopedCourses}
+        semester={activeSemester}
+        semesterReady={semesterHydrated}
+        initialCourseId={searchParams.get("course")}
+        isMobile={isMobile}
+      />
+    );
+  }
+
   const actions = (
     <>
+      <Link href="/study" className="btn btn--sm btn--ghost" aria-label="Back to the Study hub">
+        <Icon name="chevron-left" size={12} /> Study
+      </Link>
       <AIDisclaimerChip />
       <StudyTabs mode={mode} onChange={setMode} />
     </>
@@ -172,8 +198,10 @@ function GuideMode({
 }) {
   const toast = useToast();
   const { userId } = useUser();
-  const [courseId, setCourseId] = React.useState<string>("");
-  const [examId, setExamId] = React.useState<string>("");
+  const searchParams = useSearchParams();
+  // Deep link from the Study hub: /study?mode=guide&course=…&exam=…
+  const [courseId, setCourseId] = React.useState<string>(searchParams.get("course") || "");
+  const [examId, setExamId] = React.useState<string>(searchParams.get("exam") || "");
   const [exams, setExams] = React.useState<StudyGuideExam[]>([]);
   const [guide, setGuide] = React.useState<StudyGuideContent | null>(null);
   const [generatedAt, setGeneratedAt] = React.useState<string>("");
@@ -601,7 +629,12 @@ function FlashcardsMode({
   const toast = useToast();
   const { userId } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
-  const [courseId, setCourseId] = React.useState<string>("all");
+  const searchParams = useSearchParams();
+  // Deep link from the Study hub: /study?mode=cards&course=…&concepts=A|B
+  const [courseId, setCourseId] = React.useState<string>(searchParams.get("course") || "all");
+  const [concepts, setConcepts] = React.useState<string[]>(
+    (searchParams.get("concepts") || "").split("|").map(x => x.trim()).filter(Boolean),
+  );
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
   const [idx, setIdx] = React.useState(0);
   const [flipped, setFlipped] = React.useState(false);
@@ -666,6 +699,11 @@ function FlashcardsMode({
 
   const filtered = React.useMemo(() => {
     let out = cards;
+    if (concepts.length) {
+      // Concepts picked on the hub: a card belongs when its topic names one.
+      const wanted = concepts.map(c => c.toLowerCase());
+      return out.filter(c => wanted.some(w => (c.topic || "").toLowerCase().includes(w)));
+    }
     if (courseId !== "all") {
       const course = courses.find(c => c.course_id === courseId);
       const courseName = course?.course_name;
@@ -673,7 +711,7 @@ function FlashcardsMode({
     }
     if (topicFilter !== "all") out = out.filter(c => c.topic === topicFilter);
     return out;
-  }, [cards, courseId, topicFilter, courses]);
+  }, [cards, courseId, topicFilter, courses, concepts]);
 
   React.useEffect(() => {
     if (idx >= filtered.length) setIdx(0);
@@ -691,7 +729,7 @@ function FlashcardsMode({
   }, [filtered]);
 
   // A different deck (course/topic filter) is a fresh review, not a finished one.
-  React.useEffect(() => { setDone(false); }, [courseId, topicFilter]);
+  React.useEffect(() => { setDone(false); }, [courseId, topicFilter, concepts]);
 
   const card = filtered[idx];
 
@@ -755,7 +793,9 @@ function FlashcardsMode({
   const generate = async () => {
     if (!userId) return;
     const course = courses.find(c => c.course_id === courseId);
-    const topic = course ? course.course_name : (topicFilter !== "all" ? topicFilter : "");
+    const topic = concepts.length
+      ? concepts.join(", ")
+      : course ? course.course_name : (topicFilter !== "all" ? topicFilter : "");
     if (!topic) {
       toast.warn("Pick a course or topic before generating.");
       return;
@@ -791,9 +831,18 @@ function FlashcardsMode({
               ...topics.map((t) => ({ value: t, label: t })),
             ]}
             value={topicFilter}
-            onChange={setTopicFilter}
+            onChange={v => { setTopicFilter(v); setConcepts([]); }}
             gap={8}
           />
+          {concepts.length > 0 && (
+            <button
+              className="chip chip--accent"
+              onClick={() => setConcepts([])}
+              title="Show every card again"
+            >
+              {concepts.join(", ")} <Icon name="x" size={10} />
+            </button>
+          )}
           <div style={{ flex: 1 }} />
           {docsUsed !== null && (
             <span className="chip chip--accent" title="Library documents used as context for generation">
@@ -912,7 +961,7 @@ function FlashcardsMode({
           <CourseFilterRow
             label="All courses"
             active={courseId === "all"}
-            onClick={() => { setCourseId("all"); setTopicFilter("all"); }}
+            onClick={() => { setCourseId("all"); setTopicFilter("all"); setConcepts([]); }}
           />
           {courses.map(c => (
             <CourseFilterRow
@@ -921,7 +970,7 @@ function FlashcardsMode({
               subLabel={c.course_code ? c.course_name : undefined}
               color={c.color || undefined}
               active={courseId === c.course_id}
-              onClick={() => { setCourseId(c.course_id); setTopicFilter("all"); }}
+              onClick={() => { setCourseId(c.course_id); setTopicFilter("all"); setConcepts([]); }}
             />
           ))}
         </aside>

@@ -1,0 +1,39 @@
+/* Hover states and scrollbars from "Sapling Study v2" (style-hover attributes). */
+.hoverCourse:hover { background: #F0ECE3 !important; }
+.hoverOption:hover { background: #F2F6EE !important; }
+.hoverDue:hover { background: #F7E6BF !important; }
+.hoverIcon:hover { background: #F0ECE3 !important; color: #1A1814 !important; }
+.hoverTab:hover { border-bottom-color: rgba(68, 93, 34, 0.4) !important; }
+.hoverTabOn:hover { border-bottom-color: #445D22; }
+.hoverTool:hover { border-color: rgba(68, 93, 34, 0.45) !important; }
+.hoverSeg { transition: transform 120ms ease; }
+.hoverSeg:hover { transform: scale(1.15); }
+.hoverLegend:hover { background: #EBF0E1 !important; }
+.hoverMore:hover { background: #F0ECE3 !important; color: #1A1814 !important; }
+.hoverQr:hover { background: #D6E3F0 !important; border-color: #A9C3E0 !important; }
+.hoverQrStart:hover { background: #23497A !important; }
+.hoverRemove:hover { background: #F6E3E1 !important; }
+.hoverAdd:hover { background: #F2F6EE !important; }
+.hoverChip:hover { background: #EBF0E1 !important; }
+.hoverGhost:hover { background: #F0ECE3 !important; }
+
+/* Scrollbars: transparent until the pane scrolls (data-scrolling set from JS). */
+.scroll::-webkit-scrollbar { width: 14px; height: 14px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb {
+  background: transparent; border: 4px solid transparent; background-clip: padding-box;
+  border-radius: 8px; min-height: 40px;
+}
+.scroll[data-scrolling]::-webkit-scrollbar-thumb { background-color: rgba(68, 93, 34, 0.45); }
+.scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scroll[data-scrolling] { scrollbar-color: rgba(68, 93, 34, 0.45) transparent; }
+
+/* Always-visible thin green bar (Quick Reviews list). */
+.catScroll { scrollbar-width: thin; scrollbar-color: rgba(68, 93, 34, 0.45) transparent; }
+.catScroll::-webkit-scrollbar { width: 10px; }
+.catScroll::-webkit-scrollbar-track { background: transparent; }
+.catScroll::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.catScroll::-webkit-scrollbar-thumb {
+  background-color: rgba(68, 93, 34, 0.45); border: 2px solid transparent;
+  background-clip: padding-box; min-height: 24px;
+}

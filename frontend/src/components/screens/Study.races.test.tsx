@@ -107,7 +107,7 @@ function renderStudy() {
 }
 
 beforeEach(() => {
-  search.qs = "";
+  search.qs = "mode=guide";
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 

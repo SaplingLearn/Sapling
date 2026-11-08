@@ -29,7 +29,8 @@ import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+  // Bare /study is now the hub; these tests cover the Study Guide tool page.
+  useSearchParams: () => new URLSearchParams("mode=guide"),
 }));
 
 vi.mock("@/context/UserContext", () => ({

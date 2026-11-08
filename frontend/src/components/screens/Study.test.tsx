@@ -16,7 +16,8 @@ import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/study",
-  useSearchParams: () => new URLSearchParams(),
+  // Bare /study is now the hub; these tests cover the Study Guide tool page.
+  useSearchParams: () => new URLSearchParams("mode=guide"),
 }));
 
 vi.mock("@/context/UserContext", () => ({
