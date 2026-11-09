@@ -38,6 +38,7 @@ from services.encryption import (
 )
 from services import pg_lease
 from services.http_cache import cached_json, conditional, make_etag
+from services.llm_budget import budget_error_in
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,9 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
             feature="study_guide", task="study_guide", user_id=user_id,
         )
     except Exception as e:  # generation/transport failure → 502, not a raw 500
+        budget = budget_error_in(e)
+        if budget is not None:  # the daily LLM budget refused it: its 429 (#838)
+            raise budget from e
         raise HTTPException(
             status_code=502, detail="Study guide generation failed."
         ) from e

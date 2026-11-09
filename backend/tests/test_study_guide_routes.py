@@ -892,3 +892,18 @@ class TestUniqueGuideKey:
         with patch("routes.study_guide.table", side_effect=table):
             assert sg._insert_or_replace(row) == "g-new"
         assert inserts == ["g-new", "g-new"]
+
+
+def test_a_budget_refusal_is_the_429_not_the_generic_502():
+    """#838: the daily LLM budget refused the generation. The student gets the
+    budget's own 429 (Retry-After, LLM_BUDGET_EXCEEDED), and nothing is cached."""
+    from services.llm_budget import ERROR_CODE, LLMBudgetExceeded, next_reset
+
+    store = _GuideStore([["d1"]])
+    refused = AsyncMock(side_effect=LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset()))
+    with _guide_patches(store, refused):
+        r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+    assert r.status_code == 429, r.text
+    assert int(r.headers["Retry-After"]) >= 1
+    assert r.json()["error"]["code"] == ERROR_CODE
+    assert store.guides == []
