@@ -14,10 +14,11 @@
  * to fix without opening the trace. Each scan's raw result is also written to
  * `e2e/results/a11y/<label>.json` (git-ignored) for counting by rule.
  *
- * Determinism: the scan waits for web fonts and for every finite animation to
- * finish, so a fade-in caught half way is never measured for colour contrast.
- * The specs also run with `reducedMotion: "reduce"`, which the app's global
- * reset (globals.css) turns into instant transitions.
+ * Determinism: the scan waits for the page to be shown (see `shown`), for web
+ * fonts and for every finite animation to finish, so a fade-in caught half way
+ * is never measured for colour contrast. The specs also run with
+ * `reducedMotion: "reduce"`, which the app's global reset (globals.css) turns
+ * into instant transitions.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -52,6 +53,17 @@ type AxeRun = {
   }[];
 };
 
+/** Wait until the page is shown. Until the flags load, NavFeatureGate keeps a
+ *  flagged route's page (/study, /quiz, ...) mounted but visibility-hidden,
+ *  marked `data-veiled`, so its controls can be attached and enabled while
+ *  nothing is rendered. A scan started then runs across the unveil and
+ *  measures a mix of the two states: the Study retention check once reported
+ *  the aside's course buttons, "All courses" included, as having no name
+ *  (button-name), because axe had read their text while it was hidden. */
+async function shown(page: Page): Promise<void> {
+  await expect(page.locator('[data-testid="nav-feature-gate"][data-veiled]')).toHaveCount(0);
+}
+
 /** Wait until the page has stopped moving: fonts loaded, every finite
  *  animation finished, then two frames for layout to settle. */
 async function settle(page: Page): Promise<void> {
@@ -73,6 +85,7 @@ async function settle(page: Page): Promise<void> {
 
 /** Run axe against the current page and return its violations. */
 export async function scanA11y(page: Page, label: string): Promise<A11yViolation[]> {
+  await shown(page);
   await settle(page);
   if (!(await page.evaluate(() => "axe" in window))) {
     await page.addScriptTag({ path: AXE_SOURCE });
