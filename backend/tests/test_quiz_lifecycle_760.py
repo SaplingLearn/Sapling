@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 import pytest
 
 # #117: a sync PostgREST call reached on the event loop raises here.

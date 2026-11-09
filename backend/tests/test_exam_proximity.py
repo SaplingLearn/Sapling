@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from services.exam_proximity import days_until_next_exam, is_exam
 from tests.db_fakes import with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 
 def _due(days_from_today: int) -> str:

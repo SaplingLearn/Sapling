@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import routes.documents as documents_routes
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 from main import app
 from tests.test_async_handlers_off_loop import Wire, wire  # noqa: F401 (fixture)
 

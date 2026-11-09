@@ -17,7 +17,7 @@ from tests.split_patches import ADMIN_MODULES, patch_admin, setattr_in
 from routes import admin_email
 from services import email_service
 from services.encryption import encrypt
-from tests.route_patches import set_auth_table
+from tests.split_patches import set_auth_table
 
 client = TestClient(app)
 

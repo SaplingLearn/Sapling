@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from db import seed_local_rich as seed
 from main import app
 from services import academics
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 pytestmark = pytest.mark.real_course_enrollment
 

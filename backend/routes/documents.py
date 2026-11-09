@@ -43,7 +43,7 @@ from services.llm_budget import LLMBudgetExceeded
 from services.documents.errors import ConceptScanFailed
 # The upload's persistence, post-roll side effects, concept scan and SSE event
 # stream live in services/documents/ (#118); every moved name stays importable
-# (and patchable, via tests/doc_patches.py) here.
+# (and patchable, via tests/split_patches.py) here.
 from services.documents.upload import (  # noqa: F401  (re-export, #118)
     MIN_EXTRACTED_CHARS,
     UNREADABLE_DOCUMENT_DETAIL,

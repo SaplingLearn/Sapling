@@ -24,7 +24,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
-from tests.route_patches import patch_profile_table
+from tests.split_patches import patch_profile_table
 
 client = TestClient(app)
 

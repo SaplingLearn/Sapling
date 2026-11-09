@@ -29,7 +29,7 @@ import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
 from services import auth_guard, session_tokens
-from tests.route_patches import PROFILE_TABLE_MODULES, set_auth_session_secret, set_auth_table
+from tests.split_patches import PROFILE_TABLE_MODULES, set_auth_session_secret, set_auth_table
 
 SECRET = "issue-756-session-secret-at-least-32-bytes-long"
 

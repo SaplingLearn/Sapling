@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services import events_service, posthog_client
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import pytest
 
 import config
 from routes import auth as auth_mod
-from tests.route_patches import set_auth_session_secret
+from tests.split_patches import set_auth_session_secret
 
 
 def _set_required(monkeypatch, **overrides):

@@ -27,7 +27,7 @@ from services import document_jobs as dj
 from services import jobs
 from services.agent_events import SaplingEvent
 from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

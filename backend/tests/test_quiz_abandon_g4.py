@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 # The attempt-row shape is the D-workstream's (#542) and is single-sourced
 # there: two byte-identical copies drifted apart the moment either route grew

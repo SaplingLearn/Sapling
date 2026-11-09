@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 import pytest
 from fastapi.testclient import TestClient

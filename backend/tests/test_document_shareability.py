@@ -15,7 +15,7 @@ the category reaching the row, and the route feeding both into the decision.
 from unittest.mock import MagicMock, patch
 
 import pytest
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 
 # ── The classifier's new field ───────────────────────────────────────────────

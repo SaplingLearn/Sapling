@@ -15,7 +15,7 @@ so a typo'd rule_key or a swapped source_id fails loudly.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 import io
 
@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services.xp_service import idempotency_key
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 client = TestClient(app)
 

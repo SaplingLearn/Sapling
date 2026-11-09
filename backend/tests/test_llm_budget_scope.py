@@ -39,8 +39,8 @@ from tests.test_llm_budget import (  # noqa: F401  (fixtures: _fresh is autouse)
     _ResilientFn,
     session_user,
 )
-from tests.doc_patches import patch_documents
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_documents
+from tests.split_patches import patch_quiz
 
 
 def _exc():

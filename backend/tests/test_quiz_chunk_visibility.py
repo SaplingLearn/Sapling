@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from services.rag_service import Retrieval
 from tests.db_fakes import add_async_twins, fake_table, with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 import pytest
 
 # #117: a sync PostgREST call reached on the event loop raises here.

@@ -34,7 +34,7 @@ from agents.usage import record_agent_usage
 from main import app
 from routes.quiz import CourseMaterial
 from tests.db_fakes import with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 client = TestClient(app)
 

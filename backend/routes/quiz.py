@@ -8,7 +8,7 @@ publishes. Every helper, constant and class that used to live in this file
 moved under its old name (``services/quiz/__init__.py`` has the map) and is
 re-exported here, so ``from routes.quiz import _foo`` keeps working. A test
 patch must target the module that LOOKS UP the name now (see
-``tests/quiz_patches.py``).
+``tests/split_patches.py``).
 """
 from fastapi import APIRouter, BackgroundTasks, Request
 

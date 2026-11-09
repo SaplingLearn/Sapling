@@ -40,7 +40,7 @@ from routes import gradescope as gsr
 from services import gradescope_jobs as gj
 from services import gradescope_service as gs
 from services import jobs, request_limits
-from tests.doc_patches import patch_gradescope
+from tests.split_patches import patch_gradescope
 
 client = TestClient(app)
 RID = "rid-00000001"

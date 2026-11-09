@@ -20,7 +20,7 @@ in the ADR itself.
 """
 from unittest.mock import MagicMock, patch
 
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 import pytest
 

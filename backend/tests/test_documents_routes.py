@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from main import app
 from tests.db_fakes import fake_table
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 client = TestClient(app)
 

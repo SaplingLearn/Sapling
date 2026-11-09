@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services import gradescope_service as gs
 from services import request_limits
-from tests.doc_patches import patch_gradescope
+from tests.split_patches import patch_gradescope
 
 
 client = TestClient(app)

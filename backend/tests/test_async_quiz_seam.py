@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 import routes.quiz as quiz_routes
 from main import app
 from tests.test_async_handlers_off_loop import Wire, wire  # noqa: F401 (fixture)
-from tests.quiz_patches import setattr_quiz
+from tests.split_patches import setattr_quiz
 from tests.test_quiz_lifecycle_d import _attempt_row
 
 client = TestClient(app)
