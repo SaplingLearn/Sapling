@@ -280,6 +280,7 @@ from services import ai_budget, crisis_support, events_service
 from services.academics import (
     course_offering_ids,
     offering_course_id,
+    require_course_enrollment,
     resolve_offering,
     user_offering_ids_for_course,
 )
@@ -3333,9 +3334,20 @@ class _LoopOpener(_LoopTurn):
             if self.quiz_ask is not None
             else body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
         )
+        # #115: a course the session names — the client's, or a quiz-ask's node
+        # course (main's legacy opener names that one on the body too) — passes
+        # the enrollment gate first (404 unless the student is enrolled), and
+        # the session keys on the offering the gate returns; a topic-derived
+        # course keeps the current-term resolution (routes/learn.py::
+        # _session_offering).
+        if self.course_id and (self.quiz_ask is not None or body.course_id):
+            self.offering_id = require_course_enrollment(self.user_id, self.course_id)
+        else:
+            self.offering_id = (
+                resolve_offering(self.course_id, create=True) if self.course_id else ""
+            )
         if body.goal is not None:
             _validate_goal(body.goal, _plan_states(self.user_id, self.course_id or ""))
-        self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;
         # the topic is the student's and rides the envelope (review round 3, C1(a))
         self.message = body.topic or ""

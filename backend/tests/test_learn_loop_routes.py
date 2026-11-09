@@ -3245,6 +3245,54 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
     assert '_loop_delegate("end_session", request)' in src
 
 
+@pytest.mark.real_course_enrollment
+@pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
+def test_a_named_course_passes_the_enrollment_gate_before_the_loop_opens(gate_on, seams, path):
+    """#115 on the loop opener: a client-named course_id is gated (404 unless the
+    student is enrolled, before anything is read for the plan or stashed), and an
+    enrolled one keys the session on the offering the gate returns."""
+    from services import academics
+    from routes.learn_loop import PENDING_SESSIONS
+
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("the probe-phase opener ran the model"))
+    topic_p, offering_p, graph_p = _opener_patches()
+    body = {"user_id": "u1", "topic": "Hash tables", "course_id": "c-foreign"}
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("services.academics.enrolled_offering_for_course", return_value=None),
+        patch("routes.learn_loop._plan_states") as plan_states,
+        topic_p,
+        offering_p as resolve,
+        graph_p,
+    ):
+        before = set(PENDING_SESSIONS)
+        r = client.post(path, json=body)
+    assert r.status_code == 404, r.text
+    assert str(r.json()["detail"]).startswith(academics.COURSE_NOT_ENROLLED_DETAIL)
+    assert set(PENDING_SESSIONS) == before
+    resolve.assert_not_called()
+    plan_states.assert_not_called()
+
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("services.academics.enrolled_offering_for_course", return_value="off-mine") as gate,
+        topic_p,
+        offering_p as resolve,
+        graph_p,
+    ):
+        r = client.post(path, json={**body, "course_id": "c1"})
+    assert r.status_code == 200, r.text
+    gate.assert_called_once_with("u1", "c1")
+    resolve.assert_not_called()
+    sid = (
+        _sse_events(r.text)[-1]["data"]["session_id"] if path.endswith("/stream")
+        else r.json()["session_id"]
+    )
+    pending = PENDING_SESSIONS.pop(sid)
+    assert pending["course_id"] == "c1" and pending["offering_id"] == "off-mine"
+
+
 # ── PKG-08 reopen: no teaching before the probe and the plan are done ────────
 
 _TEACH_ROUTES = [

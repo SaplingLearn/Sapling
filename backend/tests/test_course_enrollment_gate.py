@@ -422,6 +422,7 @@ class TestNoteMoveGate:
         gate.assert_not_called()
 
 
+@pytest.mark.kill_switch  # the legacy opener; the loop opener's gate: test_learn_loop_routes.py
 @pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
 class TestStartSessionGate:
     def test_a_foreign_course_id_is_404_before_any_agent_setup(self, path):

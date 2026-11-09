@@ -457,6 +457,8 @@ def test_the_kill_switch_quiz_ask_runs_on_the_quiz_nodes_course(path):
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn._get_course_id_for_topic", return_value="c-topic"),
         patch("routes.learn.resolve_offering", return_value="off-1") as offering,
+        # #115: the session's (now the quiz node's) course passes main's gate
+        patch("routes.learn.require_course_enrollment", return_value="off-1") as gate,
         patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help"),
@@ -467,7 +469,8 @@ def test_the_kill_switch_quiz_ask_runs_on_the_quiz_nodes_course(path):
             json={"user_id": "user_andres", "topic": "Recursion", "course_id": "c-client", **ASK},
         )
     assert r.status_code == 200, r.text
-    assert {c.args[0] for c in offering.call_args_list} == {"c-node"}
+    assert {c.args[1] for c in gate.call_args_list} == {"c-node"}
+    assert {c.args[0] for c in offering.call_args_list} <= {"c-node"}  # never the client's
     PENDING_SESSIONS.clear()
 
 
