@@ -186,7 +186,16 @@ _DEFAULTS: dict[AgentTask, str] = {
 # and a slot pointed back at Gemini (SAPLING_MODEL_<TASK>=gemini-*) falls back
 # to its Claude default. `SAPLING_MODEL_FALLBACK_<TASK>` overrides the name,
 # the same ADR-0008 tuning knob the primary has; the flag still gates.
-_GEMINI_FALLBACKS: dict[AgentTask, str] = {
+#
+# Learning-loop slots: a slot still on its Gemini default (the pending set)
+# has no Claude default, so it falls back to nothing; its entry is the Gemini
+# model a Claude flip falls back to, the one its quality gates were recorded
+# on. The two key/alignment checks (A119 check_items_verify, A124
+# check_items_solve) have NO fallback (None): they must come from a different
+# model family than the gemini-* drafter, or a correlated check would pass the
+# drafter's own mistakes, and an unavailable check already fails closed
+# (the item is held), which is the safe outage behaviour.
+_GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
     "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
@@ -208,6 +217,17 @@ _GEMINI_FALLBACKS: dict[AgentTask, str] = {
     "concept_prune": "gemini-2.5-flash",
     "ocr_vision": "gemini-2.5-flash",
     "decision": "gemini-2.5-flash-lite",
+    # Learning loop (see above): each pending slot's Gemini default.
+    "check_items": "gemini-2.5-flash-lite",
+    "check_items_verify": None,
+    "check_items_solve": None,
+    "grader": "gemini-2.5-flash-lite",
+    "grader_second": "gemini-2.5-flash",
+    "learning_decision": "gemini-2.5-flash-lite",
+    "loop_tutor_lite": "gemini-2.5-flash-lite",
+    "loop_tutor": "gemini-2.5-flash",
+    "loop_tutor_deep": "gemini-2.5-pro",
+    "session_close": "gemini-2.5-flash-lite",
 }
 
 # Per-request timeout, seconds. On a plain request it is the TOTAL deadline
@@ -246,6 +266,30 @@ def timeout_for(task: AgentTask | None) -> float:
     if task is None:
         return _PROBE_TIMEOUT_S
     return _SLOT_TIMEOUT_S.get(task, _DEFAULT_TIMEOUT_S)
+
+
+def _settings_timeout_s(model_settings: Any) -> float | None:
+    """The HTTP timeout an agent or run set for itself, in seconds (a number,
+    or an httpx.Timeout's longest phase), or None when it set none."""
+    raw = model_settings.get("timeout") if isinstance(model_settings, dict) else None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return float(raw)
+    if isinstance(raw, httpx.Timeout):
+        phases = [v for v in (raw.connect, raw.read, raw.write, raw.pool) if v is not None]
+        return float(max(phases)) if phases else None
+    return None
+
+
+def deadline_for(task: AgentTask | None, model_settings: Any = None) -> float:
+    """The per-attempt bound `call_with_retries` enforces: the slot's timeout,
+    or a LONGER one the agent or run set for itself (the learning loop's Flex
+    drafting waits up to FLEX_TIMEOUT_S for the queued tier), so the run's own
+    HTTP timeout can still fire first as the slack intends. Never shorter than
+    the slot's: a run that pins a short timeout (ocr_vision) keeps the slot's
+    deadline."""
+    own = _settings_timeout_s(model_settings)
+    slot = timeout_for(task)
+    return max(slot, own) if own is not None else slot
 
 
 def fallback_model_name_for(task: AgentTask, primary_name: str) -> str | None:
@@ -826,7 +870,7 @@ class _ResilientModelMixin:
             return await _resilience.call_with_retries(
                 self._site(),
                 lambda: send(messages, settings, model_request_parameters),
-                deadline_s=timeout_for(self._res_task) + _DEADLINE_SLACK_S,
+                deadline_s=deadline_for(self._res_task, model_settings) + _DEADLINE_SLACK_S,
             )
         except Exception as exc:
             fallback = await self._fallback_for(exc)
@@ -865,7 +909,7 @@ class _ResilientModelMixin:
                 # Streams get no total deadline — only time-to-first-chunk
                 # here, and the HTTP read timeout between chunks after it.
                 stream = await _resilience.call_with_retries(
-                    self._site(), _open, deadline_s=timeout_for(self._res_task)
+                    self._site(), _open, deadline_s=deadline_for(self._res_task, model_settings)
                 )
             except Exception as exc:
                 fallback = await self._fallback_for(exc)

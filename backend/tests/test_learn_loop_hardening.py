@@ -528,6 +528,29 @@ def test_a_grader_failure_releases_the_claim(gate_on, seams):
     assert first.status_code == 502 and second.json()["verdict"] == "correct"
 
 
+def test_a_budget_refused_grade_is_the_429_and_releases_the_claim(gate_on, seams):
+    """#119 (main's per-user LLM budget, at the model chokepoint): a grader run
+    the budget refuses is no verdict and no outage — the 429 reaches the
+    student as itself (its code and Retry-After), nothing is recorded, and the
+    claim is released so the same answer can be submitted once it resets."""
+    from datetime import datetime, timedelta, timezone
+
+    from services.llm_budget import ERROR_CODE, LLMBudgetExceeded
+
+    reset = datetime.now(timezone.utc) + timedelta(hours=2)
+    seams.grade.side_effect = [LLMBudgetExceeded(limit=10, used=10, reset_at=reset), CORRECT]
+    p1, p2 = _feedback_agent_patches()
+    with p1, p2:
+        first = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
+        assert first.status_code == 429, first.text
+        assert first.headers.get("Retry-After")
+        assert "grading_claim" not in seams.store["doc"]["steps"]["qh-1"]
+        seams.flush.assert_not_called()
+        second = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
+    assert second.json()["verdict"] == "correct"
+    assert ERROR_CODE == "LLM_BUDGET_EXCEEDED"
+
+
 def test_a_post_flush_conflict_replays_one_committed_operation_without_regrading(gate_on, seams):
     """An exhausted final CAS retains the checkpoint; replay commits no new evidence."""
     from learning import grade_checkpoint

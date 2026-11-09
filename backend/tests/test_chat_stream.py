@@ -1264,6 +1264,46 @@ def test_structured_stream_fallback_before_first_token():
     assert fallback_calls == [1] and persisted == [] and usage == []
 
 
+def test_a_budget_refused_structured_turn_is_the_terminal_budget_error_not_a_fallback():
+    """#119 on the loop's structured stream (as stream_agent_turn does): the
+    per-user LLM budget refused the run's first request, so nothing was shown
+    or written and the Rung-1 fallback would meet the same budget — one
+    terminal, non-retryable `error` carrying the budget's code and reset."""
+    from datetime import datetime, timedelta, timezone
+
+    from services.llm_budget import ERROR_CODE, LLMBudgetExceeded
+
+    reset = datetime.now(timezone.utc) + timedelta(hours=3)
+
+    async def refuse(messages, info):
+        raise LLMBudgetExceeded(limit=10, used=12, reset_at=reset)
+        yield  # pragma: no cover - makes this an async generator
+
+    def never(messages, info):
+        raise AssertionError("the non-stream path is never used here")
+
+    fallback_calls = []
+
+    async def fallback(messages):
+        fallback_calls.append(1)
+        return {"reply": "Fallback reply."}
+
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(),
+            _loop_deps(),
+            FunctionModel(never, stream_function=refuse),
+            lambda r, g, m: {},
+            nonstream_fallback=fallback,
+        )
+    )
+    assert [e.type for e in events] == ["status", "error"]
+    data = events[-1].data
+    assert data["code"] == ERROR_CODE and data["retryable"] is False
+    assert data["reset_at"] == reset.isoformat()
+    assert fallback_calls == []
+
+
 def test_structured_stream_fallback_before_first_token_without_fallback_errors():
     model, _ = _streamed_model([_TURN], fail_at=(0, 0))
     events = asyncio.run(
