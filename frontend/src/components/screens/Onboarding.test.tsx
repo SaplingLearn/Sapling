@@ -212,7 +212,10 @@ describe("Onboarding", () => {
     try {
       render(<Onboarding />);
       expect(continueBtn().disabled).toBe(true);
+      // The form arrives a fade after the zoom starts (INTRO_DONE = 3200).
       await act(async () => { vi.advanceTimersByTime(2600); });
+      expect(continueBtn().disabled).toBe(true);
+      await act(async () => { vi.advanceTimersByTime(700); });
       expect(continueBtn().disabled).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -338,6 +341,28 @@ describe("Onboarding over the landing (Get Started)", () => {
     const marks = [...document.querySelectorAll<HTMLImageElement>(".ob-logo img, .ob-welcome img")];
     expect(marks.length).toBeGreaterThan(0);
     for (const m of marks) expect(m.getAttribute("src")).toBe(SAPLING_WORDMARK_SRC);
+  });
+
+  it("the zoom waits for the intro line to finish fading out", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    reducedMotion(false);
+    vi.useFakeTimers();
+    try {
+      render(<Onboarding takeover />);
+      // 1900ms: the line starts its 650ms fade. The graph must still be at rest.
+      await act(async () => { vi.advanceTimersByTime(1900); });
+      expect(graphStage.zoom).toBe("rest");
+      // Mid-fade: still at rest.
+      await act(async () => { vi.advanceTimersByTime(600); });
+      expect(graphStage.zoom).toBe("rest");
+      // The fade is done (2550): now the zoom pulls in.
+      await act(async () => { vi.advanceTimersByTime(60); });
+      expect(graphStage.zoom).toBe("active");
+    } finally {
+      vi.useRealTimers();
+      reducedMotion(true);
+    }
   });
 
   it("the /onboarding route keeps its own graph", async () => {

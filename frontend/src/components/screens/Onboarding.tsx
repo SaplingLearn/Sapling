@@ -67,7 +67,17 @@ const CONNECTIONS: { key: ConnKey; name: string; icon: string; desc: string; rea
 ];
 
 // Intro / outro beats from the handoff, in ms.
-const INTRO_TEXT_IN = 450, INTRO_TEXT_OUT = 1900, INTRO_DONE = 2550;
+//
+// `.ob-moment`'s own opacity transition, so the zoom can wait for the intro
+// line to be gone rather than racing it.
+const INTRO_FADE = 650;
+// The handoff — and the pre-#292 animated onboarding it descends from — armed
+// the zoom in the SAME tick as the fade-out, so the line was still dissolving
+// while the graph pulled in. By request the zoom now starts only once the line
+// has fully faded, keeping the original's 650ms beat between the zoom starting
+// and the form arriving.
+const INTRO_TEXT_IN = 450, INTRO_TEXT_OUT = 1900;
+const INTRO_ZOOM = INTRO_TEXT_OUT + INTRO_FADE, INTRO_DONE = INTRO_ZOOM + INTRO_FADE;
 const OUTRO_TEXT_IN = 1400, OUTRO_TEXT_OUT = 3050, OUTRO_WHITE = 3450, OUTRO_HANDOFF = 4250;
 
 /** The pre-#757 key, shared by every account on the browser: one student's
@@ -227,7 +237,8 @@ export function Onboarding({ takeover = false }: {
       setPhase("out");
       timers.current = [
         setTimeout(() => setIntroText(true), INTRO_TEXT_IN),
-        setTimeout(() => { setIntroText(false); setZoom("active"); }, INTRO_TEXT_OUT),
+        setTimeout(() => setIntroText(false), INTRO_TEXT_OUT),
+        setTimeout(() => setZoom("active"), INTRO_ZOOM),
         setTimeout(() => setPhase("active"), INTRO_DONE),
       ];
     }
