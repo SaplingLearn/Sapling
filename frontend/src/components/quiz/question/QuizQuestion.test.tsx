@@ -598,7 +598,7 @@ describe("QuizQuestion — flag and generating", () => {
     );
     expect(screen.getByTestId("quiz-generating")).toBeInTheDocument();
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("Writing your quiz…");
+    expect(status).toHaveTextContent("Writing your quiz");
     expect(status).toHaveTextContent(/questions on Recursion/);
     expect(container.querySelector(".quiz-generating__bar .quiz-generating__fill")).not.toBeNull();
     // No skeleton of a layout the quiz may not have.

@@ -407,7 +407,7 @@ export function QuizQuestion({
               call, ~5–10 s) and never claims to be done until the quiz is —
               /generate answers in one piece, so there is no finer signal. */}
           <div className="quiz-generating" role="status">
-            <p className="quiz-generating__title h-serif">Writing your quiz…</p>
+            <p className="quiz-generating__title h-serif">Writing your quiz</p>
             <p className="quiz-generating__detail">
               {`${quizLength} questions on ${concept.name}${difficulty ? ` · ${difficulty.toLowerCase()}` : ""}`}
             </p>
