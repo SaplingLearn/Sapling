@@ -40,7 +40,7 @@ from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
 from services import extraction_service, request_limits
 from services.encryption import decrypt_if_present
-from services.llm_budget import LLMBudgetExceeded, budget_error_in
+from services.llm_budget import LLMBudgetExceeded, reraise_budget_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -553,12 +553,11 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
 
 def llm_http_error(exc: BaseException) -> HTTPException:
     """The HTTP error a flashcard route raises when a generation failed: the
-    LLM budget refusal itself when there is one in `exc` (a 429 with
-    Retry-After, which main.py's handler answers like the tutor's and quiz's,
-    #838), else the routes' long-standing 502."""
-    budget = budget_error_in(exc)
-    return budget if budget is not None else HTTPException(
-        status_code=502, detail=f"Gemini error: {exc}")
+    routes' long-standing 502 — except that a budget refusal in `exc` is
+    re-raised as itself (`llm_budget.reraise_budget_refusal`), so main.py
+    answers it with the friendly 429 the tutor and uploads use (#838)."""
+    reraise_budget_refusal(exc)
+    return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
 
 
 def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> list[Card]:
