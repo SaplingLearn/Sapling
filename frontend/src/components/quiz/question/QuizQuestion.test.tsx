@@ -592,13 +592,17 @@ describe("QuizQuestion — flag and generating", () => {
     expect(screen.getByTestId("quiz-flag")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows the skeleton while the quiz is being written, and says so", () => {
+  it("shows a status with a progress bar while the quiz is being written", () => {
     const { container } = renderScreen(
       makeSession({ phase: "generating", items: [], attemptId: null }),
     );
     expect(screen.getByTestId("quiz-generating")).toBeInTheDocument();
-    expect(screen.getByText("Writing your quiz…")).toBeInTheDocument();
-    expect(container.querySelectorAll(".quiz-question__skeleton-row")).toHaveLength(4);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Writing your quiz…");
+    expect(status).toHaveTextContent(/questions on Recursion/);
+    expect(container.querySelector(".quiz-generating__bar .quiz-generating__fill")).not.toBeNull();
+    // No skeleton of a layout the quiz may not have.
+    expect(container.querySelector(".quiz-question__skeleton-row")).toBeNull();
     expect(screen.queryByTestId("quiz-answer-options")).toBeNull();
   });
 

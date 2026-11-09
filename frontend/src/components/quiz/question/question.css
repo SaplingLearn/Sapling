@@ -19,14 +19,6 @@
   --quiz-q-feedback-mh: 20px;  /* reserved for the verdict line */
   --quiz-q-feedback-mt: 24px;
   --quiz-q-aside-mt: 12px;
-  --quiz-q-skeleton-row: 55px; /* one `AnswerOption` row, while generating */
-  --quiz-q-skeleton-stem: 26px;
-  --quiz-q-skeleton-line: 13px;
-  /* The skeleton row's left inset is `AnswerOption`'s own (`padding: 17px 16px
-     17px 14px`, globals.css), so the placeholder starts where the answer text
-     will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
-     the same number today by coincidence, not by construction. */
-  --quiz-q-skeleton-inset: 14px;
   --quiz-q-numeric-w: 300px;   /* the narrowest a number's field gets (room for its reading) */
   --quiz-q-key-h: 30px;
   --quiz-q-key-min-w: 40px;
@@ -290,35 +282,115 @@
 
 /* ── Generating ─────────────────────────────────────────────────────── */
 
-.quiz-question__generating-copy {
-  margin: var(--pad-md) 0 0;
+/* A status panel where the question will be: what is being written, and a
+   bar that fills at the pace a generation usually takes. */
+.quiz-generating {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-sm);
+  margin: var(--quiz-q-stem-my) 0 0;
+  max-width: var(--quiz-q-stem-mw);
+  animation: quiz-fade-in var(--dur) var(--ease) both;
+}
+
+.quiz-generating__title {
+  margin: 0;
+  font-size: var(--quiz-q-stem-fs);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.quiz-generating__detail {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.quiz-generating__bar {
+  position: relative;
+  height: 6px;
+  margin-top: var(--pad-md);
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+/* Paced, not measured: /generate answers in one piece. Quick at first, then
+   slowing so it never reaches the end before the quiz does; a soft sheen
+   keeps it visibly alive while it waits near the top. */
+.quiz-generating__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--quiz-accent, var(--accent));
+  transform-origin: left center;
+  transform: scaleX(0.04);
+  animation: quiz-generating-fill 16s cubic-bezier(0.08, 0.7, 0.2, 1) forwards;
+}
+
+.quiz-generating__fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-100%);
+  animation: quiz-generating-sheen 1.6s ease-in-out infinite;
+}
+
+@keyframes quiz-generating-fill {
+  to { transform: scaleX(0.94); }
+}
+
+@keyframes quiz-generating-sheen {
+  to { transform: translateX(100%); }
+}
+
+/* Only when it is taking longer than usual. */
+.quiz-generating__slow {
+  margin: 0;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
+  opacity: 0;
+  animation: quiz-fade-in var(--dur-slow) var(--ease) 12s forwards;
 }
 
-/* The stem's placeholder keeps the real stem's box, so the skeleton and the
-   question that replaces it occupy the same space. */
-.quiz-question__stem--skeleton {
-  min-height: var(--quiz-q-stem-mh);
+@keyframes quiz-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Arriving, and scoring ────────────────────────────────────────────── */
+
+/* Each question (keyed on its id) rises in: from the generating panel, from
+   Next, and from the pager alike. */
+.quiz-question__body {
   display: flex;
   flex-direction: column;
-  gap: var(--pad-sm);
-  justify-content: center;
+  animation: quiz-question-in 260ms var(--ease) both;
 }
 
-.quiz-question__skeleton-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--pad-sm);
+@keyframes quiz-question-in {
+  from { opacity: 0; transform: translateY(6px); }
 }
 
-.quiz-question__skeleton-row {
-  display: flex;
-  align-items: center;
-  height: var(--quiz-q-skeleton-row);
-  padding: 0 var(--pad-md) 0 var(--quiz-q-skeleton-inset);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-panel);
+/* Scoring: the finished question steps back while the score is worked out,
+   so the move to the results screen reads as one transition. */
+.quiz-question__body,
+.quiz-question__header {
+  transition: opacity var(--dur) var(--ease);
+}
+
+.quiz-question[data-phase="submitting"] .quiz-question__body,
+.quiz-question[data-phase="submitting"] .quiz-question__header {
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-generating,
+  .quiz-question__body { animation: none; }
+  .quiz-generating__fill { animation: none; transform: scaleX(0.6); }
+  .quiz-generating__fill::after { animation: none; }
+  .quiz-generating__slow { animation: none; opacity: 1; }
 }
 
 /* ── Leave dialog ───────────────────────────────────────────────────── */

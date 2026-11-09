@@ -26,7 +26,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
-import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
@@ -69,8 +68,6 @@ export interface QuizQuestionProps {
 
 /** The header mark, at the size §3 pins for a `dot`. */
 const HEADER_DOT = 15;
-/** Placeholder row widths while the quiz is written — four is the modal count. */
-const SKELETON_ROWS = [72, 86, 64, 79];
 /** `A`…`F` — the answer shortcuts. Six covers every count `/config` offers and
  *  degrades harmlessly on a question with fewer options. */
 const SHORTCUT_LETTERS = "abcdef";
@@ -404,21 +401,20 @@ export function QuizQuestion({
       <div className="quiz-question" data-testid="quiz-generating">
         <div className="quiz-question__col">
           {header}
-          <p className="label-micro quiz-question__generating-copy" role="status">
-            Writing your quiz…
-          </p>
-          <div className="quiz-question__prompt">
-            <div className="quiz-question__stem quiz-question__stem--skeleton">
-              <Skeleton height="var(--quiz-q-skeleton-stem)" width="92%" />
-              <Skeleton height="var(--quiz-q-skeleton-stem)" width="64%" />
+          {/* A status, not a skeleton: the questions don't exist yet, so a
+              ghost of their layout promised a shape that the real quiz then
+              replaced. The bar is paced to a typical generation (one model
+              call, ~5–10 s) and never claims to be done until the quiz is —
+              /generate answers in one piece, so there is no finer signal. */}
+          <div className="quiz-generating" role="status">
+            <p className="quiz-generating__title h-serif">Writing your quiz…</p>
+            <p className="quiz-generating__detail">
+              {`${quizLength} questions on ${concept.name}${difficulty ? ` · ${difficulty.toLowerCase()}` : ""}`}
+            </p>
+            <div className="quiz-generating__bar" aria-hidden="true">
+              <span className="quiz-generating__fill" />
             </div>
-          </div>
-          <div className="quiz-question__skeleton-options" aria-hidden="true">
-            {SKELETON_ROWS.map((width, i) => (
-              <div key={i} className="quiz-question__skeleton-row">
-                <Skeleton height="var(--quiz-q-skeleton-line)" width={`${width}%`} />
-              </div>
-            ))}
+            <p className="quiz-generating__slow">Still writing. Longer quizzes take a little more time.</p>
           </div>
           <div className="quiz-question__grow" />
           {/* #760: a generation that never answers must not be a dead end. */}
@@ -465,12 +461,16 @@ export function QuizQuestion({
       ref={rootRef}
       className="quiz-question"
       data-testid="quiz-panel"
+      data-phase={phase}
       tabIndex={-1}
       onKeyDown={onRootKeyDown}
     >
       <div className="quiz-question__col">
         {header}
 
+        {/* Keyed on the question, so each one arrives with the same short
+            entrance — from the generating panel, from Next, from the pager. */}
+        <div className="quiz-question__body" key={item?.question.id ?? cursor}>
         <div className="quiz-question__prompt">
         <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
           {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
@@ -613,6 +613,8 @@ export function QuizQuestion({
               Ask about this
             </Button>
           )}
+        </div>
+
         </div>
 
         <div className="quiz-question__grow" />
