@@ -227,7 +227,14 @@ button.ob-school:hover { transform: translateY(-2px); }
 
 /* Tour */
 .ob-tour-art { width: 100%; max-width: 520px; height: auto; overflow: visible; }
-.ob-features { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(8px, 1.2vw, 14px); width: 100%; max-width: 1080px; }
+/* `grid-auto-rows: 1fr` is ours, not the handoff's: with auto rows, the row
+ * holding the two-line captions grew taller than the row below it at window
+ * sizes where the art's clamp doesn't already set the height (visible at
+ * 1152px and 1280px). Equal rows keep all eight panels the same size. */
+.ob-features {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr;
+  gap: clamp(8px, 1.2vw, 14px); width: 100%; max-width: 1080px;
+}
 .ob-feature {
   display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
   gap: clamp(4px, 0.8vh, 10px); padding: clamp(6px, 1.2vh, 16px) clamp(8px, 1.2vw, 16px);
