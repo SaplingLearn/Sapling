@@ -186,8 +186,12 @@ class Database:
             for (table, column), expected in verify.REQUIRED_COLUMN_ATTRIBUTES.items()
         ]
         self.rpcs = [("sample", "p_user_id text, p_day date")]
-        # spec §13 A136: ALTER ROLE service_role SET extra_float_digits = 3
-        self.role_settings = [("service_role", ["statement_timeout=8s", "extra_float_digits=3"])]
+        # spec §13 A136: ALTER ROLE service_role SET extra_float_digits = 3;
+        # A148: the same on authenticated, the role a db_user_scope request runs as
+        self.role_settings = [
+            ("service_role", ["statement_timeout=8s", "extra_float_digits=3"]),
+            ("authenticated", ["extra_float_digits=3"]),
+        ]
         self.statements = []
 
     def cursor(self):
@@ -661,12 +665,27 @@ SERVICE_KEY = "eyJhbGciOiJIUzI1NiJ9.PRIVATE-SERVICE-KEY.signature"
 def test_db_audit_requires_the_service_role_float_setting():
     db = Database()
     assert audit(db)["missing_role_settings"] == []
-    db.role_settings = [("service_role", ["statement_timeout=8s"])]
+    db.role_settings = [
+        ("service_role", ["statement_timeout=8s"]),
+        ("authenticated", ["extra_float_digits=3"]),
+    ]
     result = audit(db)
     assert result["status"] == "failed"
     assert result["missing_role_settings"] == ["service_role.extra_float_digits=3"]
     db.role_settings = []  # no role row at all (a plain Postgres)
-    assert audit(db)["missing_role_settings"] == ["service_role.extra_float_digits=3"]
+    assert audit(db)["missing_role_settings"] == [
+        "service_role.extra_float_digits=3",
+        "authenticated.extra_float_digits=3",
+    ]
+
+
+def test_db_audit_requires_the_authenticated_float_setting():
+    """Spec §13 A148: under db_user_scope a request reads as `authenticated`."""
+    db = Database()
+    db.role_settings = [("service_role", ["statement_timeout=8s", "extra_float_digits=3"])]
+    result = audit(db)
+    assert result["status"] == "failed"
+    assert result["missing_role_settings"] == ["authenticated.extra_float_digits=3"]
 
 
 def test_float_probe_passes_only_when_every_value_reads_back_exactly():

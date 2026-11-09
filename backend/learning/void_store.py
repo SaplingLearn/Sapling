@@ -21,10 +21,12 @@ a planning read fails closed, a cosmetic one degrades)."""
 from __future__ import annotations
 
 from db.connection import page_all, table
+from db.scope import runs_as_service
 
 VOIDS = "learning_evidence_voids"
 
 
+@runs_as_service  # spec §13 A148: learning_evidence_voids is service-only; read by graph and quiz evidence readers
 def voided_event_ids(
     *, user_id: str | None = None, node_id: str | None = None, session_id: str | None = None
 ) -> set[str]:
@@ -46,6 +48,7 @@ def voided_event_ids(
     }
 
 
+@runs_as_service  # spec §13 A148: learning_evidence_voids is service-only; read by graph and quiz evidence readers
 def voided_by_node(user_id: str) -> dict[str, set[str]]:
     """The student's void journal row ids, grouped by node: one paged read for
     a reader that then reads several of the student's nodes one at a time."""
@@ -58,6 +61,7 @@ def voided_by_node(user_id: str) -> dict[str, set[str]]:
     return out
 
 
+@runs_as_service  # spec §13 A148: learning_evidence_voids is service-only; read by graph and quiz evidence readers
 def voided_sessions(user_id: str) -> set[str]:
     """The sessions in which the student was graded against an item since
     retired (their evidence there is void)."""

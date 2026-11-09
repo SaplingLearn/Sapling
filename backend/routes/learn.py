@@ -19,6 +19,7 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
+from db.scope import service_route
 from learning.gate import learning_loop_for_request
 from services import ai_budget, crisis_support, events_service
 from services.academics import offering_course_id, require_course_enrollment, resolve_offering
@@ -87,10 +88,17 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 _PRO_THINKING_BUDGET = 2048
 
 
-def _loop_delegate(name: str):
+def _loop_delegate(name: str, request: Request):
     """Loop handler by name, resolved lazily: routes.learn_loop imports THIS
-    module's helpers, so a top-level import would be circular."""
+    module's helpers, so a top-level import would be circular.
+
+    #115 (spec §13 A148): a delegated request runs as the loop router does,
+    as the service role under `db_user_scope` — the loop's tables are
+    service-only. Marked on the request's shared state (not a ContextVar), so
+    a streamed loop response keeps it after this handler returns."""
     from routes import learn_loop
+
+    service_route(request)
     return getattr(learn_loop, name)
 
 
@@ -1053,7 +1061,7 @@ async def start_session(body: StartSessionBody, request: Request):
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await _loop_delegate("start_session")(body, request)
+        return await _loop_delegate("start_session", request)(body, request)
     _kill_switch_budget(body.user_id)
     session_id = str(uuid.uuid4())
     # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
@@ -1419,7 +1427,7 @@ async def chat(body: ChatBody, request: Request):
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await _loop_delegate("chat")(body, request)
+        return await _loop_delegate("chat", request)(body, request)
     _kill_switch_budget(body.user_id)
     await _materialize_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
@@ -1456,7 +1464,7 @@ async def chat_stream(body: ChatBody, request: Request):
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await _loop_delegate("chat_stream")(body, request)
+        return await _loop_delegate("chat_stream", request)(body, request)
     _kill_switch_budget(body.user_id)
     await _materialize_turn_session(body.session_id, body.user_id)
 
@@ -1609,7 +1617,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await _loop_delegate("start_session_stream")(body, request)
+        return await _loop_delegate("start_session_stream", request)(body, request)
     _kill_switch_budget(body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
@@ -1774,7 +1782,7 @@ def end_session(body: EndSessionBody, request: Request):
         # kill-switch path (spec §11.6). No model runs here, so no budget check.
         if learning_loop_for_request(body.user_id):
             request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-            loop = _loop_delegate("end_session")(body, request)
+            loop = _loop_delegate("end_session", request)(body, request)
             if loop is not None:
                 return loop
     empty = {
@@ -2129,7 +2137,7 @@ async def action(body: ActionBody, request: Request):
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await _loop_delegate("action")(body, request)
+        return await _loop_delegate("action", request)(body, request)
     _kill_switch_budget(body.user_id)
     await _materialize_turn_session(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(

@@ -73,6 +73,8 @@ PRIVATE_ROOM_MESSAGE_TEXT = "MATRIX-PRIVATE-ROOM-MESSAGE-7f3a only A can read th
 PUBLIC_ROOM = "rich-matrix-room-public"
 PUBLIC_ROOM_INVITE = "MTX-PUB-A"
 PRIVATE_CHUNK_ID = "rich-matrix-chunk-private-a"
+#: Learning loop (spec §13 A139): an open self-explanation prompt of A's.
+SELF_EXPLANATION_PROMPT_ID = "rich-matrix-self-explain-a"
 PRIVATE_CHUNK_TEXT = "MATRIX-PRIVATE-CHUNK-91c2 A's private upload text"
 
 #: Plaintext that only A's rows hold. If one shows up in a response to B (and B
@@ -203,6 +205,19 @@ ID_SOURCES: dict[str, IdSource] = {
     ),
     "course_id": IdSource(SHARED_KEY, _A_ONLY_COURSE),
     "sapling_course_id": IdSource(SHARED_KEY, _A_ONLY_COURSE),
+    # Learning loop. A quiz-ask session names the quiz attempt it asks about
+    # (services/quiz_ask.py, 404 for another student's); the plan's concepts
+    # are the student's graph nodes; a self-explanation prompt is the
+    # student's own row (A139); a review item or report names a flashcard of
+    # the student's (the check-item kind is a course asset, reached only
+    # through the caller's own review session).
+    "quiz_attempt_id": _owned(_ATTEMPT),
+    "concept_ids": _owned(_NODE, many=True),
+    "prompt_id": _owned(
+        "SELECT id::text FROM learning_self_explanations WHERE user_id = %(a)s "
+        "ORDER BY id LIMIT 1"
+    ),
+    "item_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
 }
 
 #: Neutral stand-in for a shared_key param on a route that also probes an
@@ -313,9 +328,11 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/notes"):
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
     ("POST", "/api/learn/start-session"):
-        ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+        ((404,), "A's quiz attempt (services/quiz_ask.py); a foreign course would be "
+                 "academics.require_course_enrollment's 404 too"),
     ("POST", "/api/learn/start-session/stream"):
-        ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+        ((404,), "A's quiz attempt (services/quiz_ask.py); a foreign course would be "
+                 "academics.require_course_enrollment's 404 too"),
 }
 
 #: Swap cases whose correct answer is not 403.
@@ -365,6 +382,17 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("PATCH", "/api/learn/sessions/{session_id}"): {"user_id": SELF, "topic": "matrix"},
     ("POST", "/api/learn/mode-switch"): {"new_mode": "socratic"},
     ("POST", "/api/learn/chat"): {"message": "matrix probe"},
+    # learning loop: the quiz-ask session that names A's attempt
+    ("POST", "/api/learn/start-session"):
+        {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
+    ("POST", "/api/learn/start-session/stream"):
+        {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
+    ("POST", "/api/learn/loop/start-session"):
+        {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
+    ("POST", "/api/learn/loop/start-session/stream"):
+        {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
+    ("POST", "/api/learn/loop/report"): {"surface": "review", "reason": "unclear"},
+    ("POST", "/api/learn/loop/review/answer"): {"kind": "flashcard", "rating": 3},
     ("POST", "/api/learn/chat/stream"): {"message": "matrix probe"},
     ("POST", "/api/quiz/attempts/{attempt_id}/answer"): {"question_index": 0, "selected_index": 0},
     ("PATCH", "/api/topic-checklist/{user_id}/courses/{course_id}/topics/{topic_id}"): {"checked": True},

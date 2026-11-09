@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from db.connection import pg_quote_value, rpc, table
+from db.scope import runs_as_service
 from learning.evidence import MisconceptionVerdict
 from learning.loop_state_store import recent_evidence  # A76's journal half
 from learning.multi_concept import isomorph_class
@@ -393,6 +394,7 @@ def _now() -> str:
     return _utcnow().isoformat()
 
 
+@runs_as_service  # spec §13 A148: misconceptions + misconception_record/rollup are service-only
 def record(
     user_id: str,
     node_id: str,
@@ -457,6 +459,7 @@ def _in_list(values: Iterable[str]) -> str:
     return f"in.({','.join(pg_quote_value(v) for v in values)})"
 
 
+@runs_as_service  # spec §13 A148: misconceptions + misconception_record/rollup are service-only
 def resolve(user_id: str, node_id: str, wrong_keys: Iterable[str], *, by_item: str) -> list[dict]:
     """Spec §13 A127: close the student's OPEN misconceptions on `node_id` among
     `wrong_keys` that were recorded on an item other than `by_item` — the item
@@ -542,6 +545,7 @@ def resolve_after_grade(
     return [row["wrong_key"] for row in closed]
 
 
+@runs_as_service  # spec §13 A148: misconceptions + misconception_record/rollup are service-only
 def open_keys(user_id: str, keys: Iterable[str]) -> set[str]:
     """Spec §13 A127: which of `keys` the student still holds — an OPEN row on
     any node, seen within MISCONCEPTION_RECENT_DAYS (open_for's window). The
@@ -572,6 +576,7 @@ def open_keys(user_id: str, keys: Iterable[str]) -> set[str]:
     return {r["wrong_key"] for r in rows if isinstance(r, dict) and r.get("wrong_key") in wanted}
 
 
+@runs_as_service  # spec §13 A148: misconceptions + misconception_record/rollup are service-only
 def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
     """Open misconceptions for the student on the given nodes, seen within
     MISCONCEPTION_RECENT_DAYS (F6: one the student never meets again stops
@@ -607,6 +612,7 @@ def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
     return sorted(out, key=lambda r: -r["count"])
 
 
+@runs_as_service  # spec §13 A148: misconceptions + misconception_record/rollup are service-only
 def rollup(course_id: str) -> list[dict]:
     """Class rollup via the SECURITY DEFINER SQL function: rows
     {concept_key, wrong_key, users}, keyed on the course concept (spec §13

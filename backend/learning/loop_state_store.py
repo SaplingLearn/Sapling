@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from db.connection import is_missing_relation, page_all, pg_quote_value, table
+from db.scope import runs_as_service
 from learning import params, void_store
 from learning.multi_concept import isomorph_class
 from learning.policy import WINDOW_KEEP, LoopState, Opportunity
@@ -186,6 +187,7 @@ def _released(row: dict) -> bool:
     return row.get("correct") is False or (row.get("max_rung") or 0) >= params.RUNG_NO_CREDIT_MIN
 
 
+@runs_as_service  # spec §13 A148: reads service-only loop tables (check_items, learning_reveals, reports, prequestions)
 def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | None:
     """PKG-10 (spec §13 A76): the student's evidence rows on this node
     journaled since `since`, oldest first, each as {question_hash, released,
@@ -340,6 +342,7 @@ def seen_hashes(user_id: str) -> set[str]:
     return {r["question_hash"] for r in _evidence_rows(user_id) if r.get("question_hash")}
 
 
+@runs_as_service  # spec §13 A148: reads service-only loop tables (check_items, learning_reveals, reports, prequestions)
 def revealed_hashes(user_id: str) -> set[str]:
     """Items whose reference the user has seen (A23): a wrong attempt (the
     answer is released), an attempt at or above RUNG_NO_CREDIT_MIN, or an H4
@@ -380,6 +383,7 @@ def revealed_hashes(user_id: str) -> set[str]:
     return revealed
 
 
+@runs_as_service  # spec §13 A148: reads service-only loop tables (check_items, learning_reveals, reports, prequestions)
 def _answered_prequestion_hashes(user_id: str) -> set[str]:
     """Spec §13 A138: the student's answered prequestions' items. Review fix:
     a deploy ahead of the table's migration reads NO rows — exactly true, as
@@ -399,6 +403,7 @@ def _answered_prequestion_hashes(user_id: str) -> set[str]:
         raise
 
 
+@runs_as_service  # spec §13 A148: reads service-only loop tables (check_items, learning_reveals, reports, prequestions)
 def reported_hashes(user_id: str) -> set[str]:
     """Items the user reported ("Report this question", spec §13 A113): never
     served to them again — every selection that excludes seen_hashes and

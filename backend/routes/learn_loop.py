@@ -95,6 +95,7 @@ from agents.loop_tutor import (
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, pg_quote_value, table
+from db.scope import runs_as_service
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
 from learning import grade_checkpoint, item_reports
 from learning import prequestion as prequestion_rules
@@ -1537,6 +1538,7 @@ def _ts(value) -> datetime | None:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
+@runs_as_service  # spec §13 A148: reads service-only loop tables; called by the notes/flashcards integrity guard
 def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime | None] | None:
     """A93 (owner decision 1, M2): (item, first posed at) for every item POSED to
     the student and not yet graded — every session's ungraded steps (ended or

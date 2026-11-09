@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from db.connection import page_all, table
+from db.scope import runs_as_service
 
 _REVEALS = "learning_reveals"  # loop_state_store.revealed_hashes reads it too
 
@@ -19,6 +20,7 @@ _REVEALS = "learning_reveals"  # loop_state_store.revealed_hashes reads it too
 # turn is served, with or without a session row (the loop opener has none).
 
 
+@runs_as_service  # spec §13 A148: learning_reveals is service-only; reached from the notes/flashcards integrity guard
 def record_reveals(user_id: str, hashes, *, session_id: str | None, source: str) -> None:
     """Append one 'reveal' row per question hash (raises on a failed write)."""
     rows = [
@@ -35,6 +37,7 @@ def record_reveals(user_id: str, hashes, *, session_id: str | None, source: str)
         table(_REVEALS).insert(rows)
 
 
+@runs_as_service  # spec §13 A148: learning_reveals is service-only; reached from the notes/flashcards integrity guard
 def record_unscanned(user_id: str, *, session_id: str | None, source: str, at: datetime) -> None:
     """Append an 'unscanned' marker: the turn's open items could not be read, so
     every item posed at or before `at` grades as assisted (raises on failure)."""
@@ -50,6 +53,7 @@ def record_unscanned(user_id: str, *, session_id: str | None, source: str, at: d
     )
 
 
+@runs_as_service  # spec §13 A148: learning_reveals is service-only; reached from the notes/flashcards integrity guard
 def unscanned_since(user_id: str, posed_at: datetime | None) -> bool:
     """Whether a marker of this student lands at or after `posed_at` (None: any)
     — in learning_reveals or, the write fallback, a session's

@@ -47,6 +47,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from db.connection import pg_quote_value, table
+from db.scope import runs_as_service
 from learning.params import LADDER_MAX_RUNG, RUNG_NO_CREDIT_MIN
 
 _LEDGER = "learning_reveals"
@@ -61,6 +62,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def record_help(
     user_id: str, question_hash: str, rung: int, *, source: str, session_id: str | None = None
 ) -> None:
@@ -81,6 +83,7 @@ def record_help(
     )
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def record_posed(
     user_id: str, question_hash: str, *, source: str, session_id: str | None = None
 ) -> None:
@@ -99,6 +102,7 @@ def record_posed(
     )
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def mark_graded(user_id: str, question_hash: str) -> None:
     """Close every ungraded 'posed' row of the item: it leaves the scan set (raises)."""
     table(_LEDGER).update(
@@ -113,6 +117,7 @@ def mark_graded(user_id: str, question_hash: str) -> None:
     )
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def max_help(user_id: str, question_hash: str) -> int:
     """The highest help ever recorded for (student, item): a 'help' row's rung,
     a 'reveal' row counting as RUNG_NO_CREDIT_MIN; 0 with none (raises)."""
@@ -133,6 +138,7 @@ def max_help(user_id: str, question_hash: str) -> int:
     return min(floor, LADDER_MAX_RUNG)
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def max_help_many(user_id: str, question_hashes) -> dict[str, int]:
     """`max_help` for several items in ONE `in.(...)` read (spec §13 A99: the quiz
     submit's help floor); every asked hash is a key (0 with no row). Raises."""
@@ -159,6 +165,7 @@ def max_help_many(user_id: str, question_hashes) -> dict[str, int]:
     return out
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def earliest_open_pose(user_id: str, question_hash: str) -> datetime | None:
     """When the item was FIRST posed and not yet graded (None: no such row; raises)."""
     rows = table(_LEDGER).select(
@@ -180,6 +187,7 @@ def earliest_open_pose(user_id: str, question_hash: str) -> datetime | None:
 _ROWS_PER_ITEM = 4
 
 
+@runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
 def ungraded_posed_window(
     user_id: str, limit: int
 ) -> tuple[list[tuple[str, datetime | None]], datetime | None]:

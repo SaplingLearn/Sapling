@@ -42,6 +42,7 @@ from collections.abc import Iterable
 from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, rpc, table
+from db.scope import runs_as_service
 from learning.checks import held_flags
 from learning.multi_concept import components_of
 from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS, ITEM_REPORT_REASONS
@@ -86,6 +87,7 @@ def _one_row(rows, name: str) -> dict:
     return row
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def record_report(
     user_id: str, course_id: str, question_hash: str, *, reason: str, surface: str
 ) -> ReportOutcome:
@@ -116,6 +118,7 @@ def record_report(
     )
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def decide(course_id: str, question_hash: str, status: str, *, reviewed_by: str) -> Decision:
     """An admin's decision on a course item ('approved' — lifts a quarantine
     — or 'retired' — holds every row until `retire_course_item` deletes it),
@@ -139,6 +142,7 @@ def decide(course_id: str, question_hash: str, status: str, *, reviewed_by: str)
     return Decision(previous=row.get("previous"), applied=bool(row.get("applied")))
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def review_statuses(course_id: str, hashes: Iterable[str]) -> dict[str, str]:
     """The pending-or-final decision on each of `hashes` for the course:
     question_hash -> 'quarantined' or 'retired' (an approved or undecided one
@@ -165,6 +169,7 @@ def review_statuses(course_id: str, hashes: Iterable[str]) -> dict[str, str]:
     return out
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def retired_items() -> set[tuple[str, str]]:
     """Every course item staff retired, as (course_id, question_hash) — the
     key the void rule (learning/evidence_void.py) is applied with. Retired
@@ -181,6 +186,7 @@ def retired_items() -> set[tuple[str, str]]:
     }
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def report_counts() -> dict[tuple[str, str], dict]:
     """Every reported course item: (course_id, question_hash) -> {reason: n
     for every reason, "total": n, "last_reported_at": aware datetime or None}.
@@ -208,6 +214,7 @@ def report_counts() -> dict[tuple[str, str], dict]:
     return out
 
 
+@runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only
 def reviews() -> dict[tuple[str, str], dict]:
     """Every review decision: (course_id, question_hash) -> its row."""
     return {

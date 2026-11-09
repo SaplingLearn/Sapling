@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from db.connection import page_all, table
+from db.scope import runs_as_service
 from learning import bkt
 from learning.params import BKT_L0
 
@@ -103,6 +104,7 @@ def _from_row(row: dict, now: datetime) -> LearnerState:
     return st
 
 
+@runs_as_service  # spec §13 A148: learner_state is service-only; read by the graph and the tutor
 def read_states(user_id: str, node_ids, now: datetime | None = None) -> dict[str, LearnerState]:
     """Bounded batched reads, decayed to one `now`, without silent truncation.
 

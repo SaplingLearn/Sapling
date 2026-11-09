@@ -3241,7 +3241,8 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
         assert src.count("_loop_delegate(") == 1
     src = inspect.getsource(learn.end_session)
     assert src.index("get_session_user_id(request)") < src.index("learning_loop_for_request(")
-    assert '_loop_delegate("end_session")' in src
+    # spec §13 A148: the delegate marks the request service-scoped (db_user_scope)
+    assert '_loop_delegate("end_session", request)' in src
 
 
 # ── PKG-08 reopen: no teaching before the probe and the plan are done ────────

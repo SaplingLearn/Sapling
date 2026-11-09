@@ -18,6 +18,7 @@ from typing import Callable
 import uuid
 
 from db.connection import rpc
+from db.scope import runs_as_service
 from learning.evidence import Evidence, PlanningObservation, PlanningPersistenceUnavailable
 from learning.learner_state import LearnerState, _from_row
 from learning.params import EVIDENCE_TRANSACTION_RETRIES
@@ -126,6 +127,7 @@ def _receipt(value: dict, user_id: str, op_id: str, expected_fingerprint=None) -
     return receipt
 
 
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
 def read_receipt(user_id: str, op_id: str, *, input_fingerprint: str | None = None) -> dict | None:
     """Owner-scoped committed receipt for checkpoint recovery, or no receipt.
 
@@ -213,6 +215,7 @@ def _retryable_sql(exc: Exception) -> bool:
         return False
 
 
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
 def commit_evidence_transaction(
     user_id: str,
     course_id: str | None,
@@ -337,6 +340,7 @@ class VoidPlan:
     changes: list[dict]
 
 
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
 def void_pending(course_id: str, question_hash: str) -> dict[str, int]:
     """{user_id: rows} — the students who still have a NON-void evidence row
     graded against the course item. Read-only; raises
@@ -364,6 +368,7 @@ def void_pending(course_id: str, question_hash: str) -> dict[str, int]:
         raise PlanningPersistenceUnavailable("Evidence void pending set unavailable") from exc
 
 
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
 def commit_void_transaction(
     user_id: str,
     course_id: str,

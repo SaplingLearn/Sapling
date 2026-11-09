@@ -250,7 +250,11 @@ REQUIRED_COLUMNS = {
 REQUIRED_COLUMN_ATTRIBUTES = {("learner_state", "evidence_touch_at"): ("YES", None)}
 # spec §13 A136: the role PostgREST runs the backend's requests as (the service
 # key) carries extra_float_digits = 3, so every float it reads is exact.
-REQUIRED_ROLE_SETTINGS = {"service_role": {"extra_float_digits": "3"}}
+REQUIRED_ROLE_SETTINGS = {
+    "service_role": {"extra_float_digits": "3"},
+    # spec §13 A148: the role a `db_user_scope` request runs as (RLS step 2)
+    "authenticated": {"extra_float_digits": "3"},
+}
 # spec §13 A136: the constant-only function (20261108162223) the float probe reads
 # and the values it returns. A float8 is exact when its JSON parses back to the
 # same double, a real when it rounds back to the same single.

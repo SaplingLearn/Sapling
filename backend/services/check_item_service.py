@@ -92,6 +92,7 @@ from agents.check_items_combo_verify import (
 from agents.check_items_verify import VerifyItem, verdicts, verify_items
 from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
+from db.scope import runs_as_service
 from learning.checks import (
     KEY_AUDIT_AMBIGUOUS,
     KEY_AUDIT_WRONG,
@@ -1516,6 +1517,7 @@ def source_chunks(doc_row: dict) -> list[dict]:
 _DOC_ID_BATCH = 50
 
 
+@runs_as_service  # spec §13 A148: check_items is a service-only course asset; retired from the documents and profile routes
 def retire_items_for_documents(document_ids: Iterable[str]) -> int:
     """DELETE every item whose source_document_ids overlaps `document_ids`;
     returns how many went. Logs the count only (no event, no text)."""
@@ -1642,6 +1644,7 @@ def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:
     return [d for d in ids if d not in live or not consent.get(live[d], True)]
 
 
+@runs_as_service  # spec §13 A148: check_items is a service-only course asset; retired from the documents and profile routes
 def retire_items_for_uploader(user_id: str) -> int:
     """Retire every item drafted from any document `user_id` uploaded (soft-
     deleted ones included) — the share_class_context opt-out (A23).

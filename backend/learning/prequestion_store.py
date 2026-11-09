@@ -15,6 +15,7 @@ import logging
 from datetime import datetime
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.encryption import decrypt_json, encrypt_json
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 _TABLE = "learning_prequestions"
 
 
+@runs_as_service  # spec §13 A148: learning_prequestions is service-only; the A76 read runs on every grade
 def store_answer(
     *,
     user_id: str,
@@ -52,6 +54,7 @@ def store_answer(
     table(_TABLE).insert_ignore_duplicates(row, on_conflict="user_id,session_id,node_id")
 
 
+@runs_as_service  # spec §13 A148: learning_prequestions is service-only; the A76 read runs on every grade
 def stored_answer(user_id: str, session_id: str, node_id: str) -> dict | None:
     """The answer stored for (student, session, concept) — the answer route's
     COMMIT POINT: the first stored guess stands, and the transcript and the
@@ -82,6 +85,7 @@ def _ts(value) -> datetime | None:
     return ts
 
 
+@runs_as_service  # spec §13 A148: learning_prequestions is service-only; the A76 read runs on every grade
 def releases(user_id: str, node_id: str, *, since: datetime) -> list[dict] | None:
     """A76: the student's answered prequestions on `node_id` since `since`,
     oldest first, each {shape: (format, difficulty), at: datetime} — one

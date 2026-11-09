@@ -2838,6 +2838,7 @@ QUIZ_EVIDENCE_WINDOW_HOURS = 24
 _CLAIMS = "quiz_evidence_claims"  # migration 20261001060408
 
 
+@runs_as_service  # spec §13 A148: quiz_evidence_claims is service-only (learning loop)
 def _claim_quiz_evidence(user_id: str, attempt_id: str, hashes: list[str], now: datetime) -> set[str]:
     """Spec §13 A100: the hashes THIS submit may write evidence for — the ones it
     claims in quiz_evidence_claims, by two database-arbitrated statements: an

@@ -248,7 +248,7 @@ def test_default_path_delegates_before_the_legacy_budget_check(monkeypatch, lega
     async def _loop_chat(body, request):
         return {"delegated": True}
 
-    monkeypatch.setattr(learn, "_loop_delegate", lambda name: _loop_chat)
+    monkeypatch.setattr(learn, "_loop_delegate", lambda name, request: _loop_chat)
     r = legacy_client.post("/api/learn/chat", json=legacy_chat_body)
     assert r.json() == {"delegated": True}
     assert seen == []

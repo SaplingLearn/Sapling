@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 import config
 from db.connection import page_all, rpc, table
+from db.scope import runs_as_service
 from learning import params
 from learning.policy import Band, BudgetLevel, Tier
 from services.auth_guard import get_session_user_id
@@ -276,6 +277,7 @@ def _binding(hard: dict[Scope, datetime | None]) -> Scope:
     return next(s for s in _HARD_ORDER if s in hard)
 
 
+@runs_as_service  # spec §13 A148: llm_usage and ai_tutor_daily_calls are service-only; checked from /api/learn and the topic checklist
 def _load_rows(user_id: str, since: datetime) -> list[dict]:
     """Every llm_usage row of the user since ``since``: one logical read, paged past max_rows."""
     return list(
@@ -362,6 +364,7 @@ def _as_count(value: object) -> int:
     return value
 
 
+@runs_as_service  # spec §13 A148: llm_usage and ai_tutor_daily_calls are service-only; checked from /api/learn and the topic checklist
 def count_tutor_call(user_id: str) -> int:
     """Count one tutor model call for the student today (UTC) and return the new count. PKG-07
     calls it once per tutor run, and PKG-14b's kill-switch path (routes/learn.py::
@@ -401,6 +404,7 @@ def _cache_tutor_calls(user_id: str, day: str, stored: int | None) -> None:
         _tutor_calls_cache[key] = (_clock(), stored)
 
 
+@runs_as_service  # spec §13 A148: llm_usage and ai_tutor_daily_calls are service-only; checked from /api/learn and the topic checklist
 def _tutor_calls_today(user_id: str, now: datetime) -> int:
     """Today's tutor calls: the store's count, never below this process's own; this process's
     alone when the read fails (one WARNING per read). The store read is cached like _usage's:
@@ -691,6 +695,7 @@ def _maybe_check_platform() -> None:
     _spawn(_check_platform)
 
 
+@runs_as_service  # spec §13 A148: llm_usage and ai_tutor_daily_calls are service-only; checked from /api/learn and the topic checklist
 def _check_platform() -> None:
     """Today's spend over all users against PLATFORM_DAILY_BUDGET_USD. Never changes a decision."""
     budget = config.PLATFORM_DAILY_BUDGET_USD

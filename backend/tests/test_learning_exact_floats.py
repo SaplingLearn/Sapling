@@ -65,9 +65,17 @@ def test_the_probe_values_round_to_something_else_at_the_image_default():
     assert rounded != single
 
 
-def test_the_backend_reaches_postgrest_with_the_service_key_only():
+#: Spec §13 A148: the one other way the backend reaches PostgREST. Under the
+#: `db_user_scope` flag (RLS step 2, #115) db/user_jwt.py sends the anon key as
+#: `apikey` with a backend-minted JWT whose role is `authenticated`, and
+#: 20261109032302_learning_loop_rls.sql gives `authenticated` the same setting.
+USER_SCOPED_SEAM = "db/user_jwt.py"
+
+
+def test_the_backend_reaches_postgrest_with_the_service_key_or_the_user_scope_only():
     """The role setting covers every PostgREST read because the backend sends
-    the service key and nothing else; an anon-key client would bypass it."""
+    the service key, or (db_user_scope) a minted `authenticated` JWT whose
+    role carries the setting too; any other anon-key client would bypass it."""
     from db import connection
 
     assert connection._HEADERS["Authorization"] == f"Bearer {connection.SUPABASE_KEY}"
@@ -79,4 +87,9 @@ def test_the_backend_reaches_postgrest_with_the_service_key_only():
         for path in ([BACKEND / top] if top.endswith(".py") else (BACKEND / top).rglob("*.py"))
         if "SUPABASE_ANON_KEY" in path.read_text()
     ]
-    assert offenders == []
+    assert offenders == [USER_SCOPED_SEAM]
+    from db import user_jwt
+
+    assert user_jwt.ROLE == "authenticated"
+    rls = (BACKEND / "db" / "migrations" / "20261109032302_learning_loop_rls.sql").read_text()
+    assert "ALTER ROLE authenticated SET extra_float_digits = 3;" in rls

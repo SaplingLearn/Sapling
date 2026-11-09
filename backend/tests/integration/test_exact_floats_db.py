@@ -51,10 +51,13 @@ def _binary(db_conn, sql: str, params: tuple) -> dict:
     return db_conn.execute(sql, params, binary=True).fetchone()
 
 
-def test_the_setting_is_on_service_role_and_only_there(db_conn):
-    row = db_conn.execute("SELECT rolconfig FROM pg_roles WHERE rolname = 'service_role'").fetchone()
-    assert "extra_float_digits=3" in (row["rolconfig"] or [])
-    for other in ("anon", "authenticated", "authenticator"):
+def test_the_setting_is_on_the_backends_roles_and_only_there(db_conn):
+    # service_role (A136) and authenticated, the role a db_user_scope request
+    # runs as (A148); never the anonymous or the login role
+    for role in ("service_role", "authenticated"):
+        row = db_conn.execute("SELECT rolconfig FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+        assert "extra_float_digits=3" in (row["rolconfig"] or []), role
+    for other in ("anon", "authenticator"):
         config = db_conn.execute(
             "SELECT rolconfig FROM pg_roles WHERE rolname = %s", (other,)
         ).fetchone()

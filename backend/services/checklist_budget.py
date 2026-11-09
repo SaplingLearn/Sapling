@@ -17,6 +17,7 @@ import config
 from fastapi import HTTPException
 
 from db.connection import rpc
+from db.scope import runs_as_service
 from services import llm_pricing
 from services.usage_receipts import PreparedUsageReceipt
 
@@ -64,6 +65,7 @@ def _unavailable() -> HTTPException:
     return HTTPException(503, "Checklist usage could not be confirmed. Please retry; an earlier request may still reserve allowance.", headers={"Retry-After": "120"})
 
 
+@runs_as_service  # spec §13 A148: the checklist_budget_* RPCs and tables are service-only
 def _call(name: str, params: dict) -> dict:
     try:
         result = rpc(f"checklist_budget_{name}", params)

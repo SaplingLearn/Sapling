@@ -470,8 +470,11 @@ _ADMIN_SVC = [Depends(admin_service_route)]
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
-# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
-app.include_router(learn_loop.router, prefix="/api/learn/loop")
+# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch). Service
+# role under db_user_scope (#115): the loop's tables are service-only (bucket E,
+# spec §13 A148) and every handler checks ownership in code (require_self /
+# the session's owner), which the cross-user matrix pins.
+app.include_router(learn_loop.router, prefix="/api/learn/loop", dependencies=_SVC)
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
 # Social stays service role until step 2e: room_messages has no policies or
