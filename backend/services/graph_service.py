@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 import httpx
 from starlette.concurrency import run_in_threadpool
@@ -1163,11 +1165,22 @@ def _dispatch_graph_achievements(user_id: str) -> None:
 
 
 def apply_graph_update(
-    user_id: str, graph_update: GraphUpdate | dict, course_id: str | None = None,
+    user_id: str,
+    graph_update: GraphUpdate | dict,
+    course_id: str | None = None,
+    *,
+    defer: Callable[[Callable[[], None]], object] | None = None,
 ) -> list:
     """
     Apply a graph update to the DB. Returns mastery_changes list.
     If course_id is provided, all new/updated nodes will be associated with that course.
+
+    `defer`: where to run the class-aggregate refresh this update triggers
+    (`refresh_course_context` for each touched offering). That refresh can make
+    an LLM call (the offering summary, regenerated whenever the stats change),
+    and nothing the caller returns depends on it — so a route that can run work
+    after its response passes `background_tasks.add_task` here. Omitted, the
+    refresh runs inline, as it always has.
 
     ``graph_update`` is a :class:`services.graph_update_model.GraphUpdate` or the
     legacy dict of that shape (``new_nodes`` / ``updated_nodes`` / ``new_edges``);
@@ -1201,7 +1214,11 @@ def apply_graph_update(
 
     _upsert_new_edges(user_id, update.new_edges, _lookup)
     if touched_courses:
-        _refresh_touched_course_contexts(user_id, touched_courses)
+        refresh = partial(_refresh_touched_course_contexts, user_id, frozenset(touched_courses))
+        if defer is not None:
+            defer(refresh)
+        else:
+            refresh()
     _dispatch_graph_achievements(user_id)
     return mastery_changes
 

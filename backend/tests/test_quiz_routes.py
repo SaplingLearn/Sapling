@@ -673,6 +673,10 @@ class TestSubmitQuizMasteryWrite:
         # user_id first, abstract course id passed (graph keys on abstract).
         assert args[0] == "user_andres"
         assert kwargs["course_id"] == "course1"
+        # The class-aggregate refresh (an LLM call when the stats changed) runs
+        # after the response, never inside the submit the student waits on.
+        assert callable(kwargs["defer"])
+        assert getattr(kwargs["defer"], "__name__", "") == "add_task"
         updated = args[1]["updated_nodes"]
         assert len(updated) == 1
         assert updated[0]["concept_name"] == "Loops"

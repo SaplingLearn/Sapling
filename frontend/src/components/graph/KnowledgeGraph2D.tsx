@@ -187,13 +187,31 @@ export function followersOf(
   return leader;
 }
 
-function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
+/**
+ * The visible part of a link: rim of the source to rim of the target, so no
+ * line is ever drawn underneath a node. Node fills are translucent (mastery
+ * tier opacity, legible-mode fades), so a line running to a node's centre
+ * shows through it. Nodes that touch or overlap leave nothing to draw.
+ */
+function rimToRim(
+  x1: number, y1: number, x2: number, y2: number, r1: number, r2: number,
+): [number, number, number, number] {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const len = Math.hypot(dx, dy);
-  if (len <= inset * 1.5) return [x2, y2];
-  return [x2 - (dx / len) * inset, y2 - (dy / len) * inset];
+  if (len <= r1 + r2) {
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    return [mx, my, mx, my];
+  }
+  const ux = dx / len;
+  const uy = dy / len;
+  return [x1 + ux * r1, y1 + uy * r1, x2 - ux * r2, y2 - uy * r2];
 }
+// Clearance past a node's radius: half its stroke, so the line meets the rim.
+const rimGap = (n: GraphNode) => (n.is_subject_root ? 1.25 : 0.75);
+// Legible mode leaves room at the target for the arrowhead.
+const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
 
 // Visually-hidden but screen-reader-available, so the pointer-only SVG graph
@@ -358,17 +376,25 @@ function KnowledgeGraph2DImpl({
       const s = resolve(l.source);
       const t = resolve(l.target);
       if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
-      // Legible mode ends each line at the target's rim so its arrow shows.
-      const [ex, ey] = legibleRef.current
-        ? lineEnd(s.x, s.y, t.x, t.y,
-            Math.max(radiusRef.current.get(t.id) ?? 0, MIN_SCREEN_R / viewScaleRef.current) + 2)
-        : [t.x, t.y];
+      // Same radii the render draws: legible nodes never shrink below
+      // MIN_SCREEN_R on screen.
+      const legible = legibleRef.current;
+      const rOf = (n: SimNode) => {
+        const r = radiusRef.current.get(n.id) ?? 0;
+        return legible ? Math.max(r, MIN_SCREEN_R / viewScaleRef.current) : r;
+      };
+      const [x1, y1, x2, y2] = rimToRim(
+        s.x, s.y, t.x, t.y,
+        rOf(s) + rimGap(s),
+        rOf(t) + (legible ? ARROW_GAP : rimGap(t)),
+      );
+      // The mastery gradient spans exactly the visible segment.
       for (const target of [el, gradElsRef.current.get(i)]) {
         if (!target) continue;
-        target.setAttribute("x1", String(s.x));
-        target.setAttribute("y1", String(s.y));
-        target.setAttribute("x2", String(target === el ? ex : t.x));
-        target.setAttribute("y2", String(target === el ? ey : t.y));
+        target.setAttribute("x1", String(x1));
+        target.setAttribute("y1", String(y1));
+        target.setAttribute("x2", String(x2));
+        target.setAttribute("y2", String(y2));
       }
     });
   }, []);
@@ -425,6 +451,11 @@ function KnowledgeGraph2DImpl({
   }, [adoptLayoutAround]);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
+  /** Re-assigned every render (it closes over the current size and zoom);
+   *  the simulation's tick calls the latest one. */
+  const frameContentRef = React.useRef<() => void>(() => {});
+  /** The node set the opening frame was last fitted to. */
+  const framedIdsRef = React.useRef<string | null>(null);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
 
   React.useEffect(() => {
@@ -438,19 +469,30 @@ function KnowledgeGraph2DImpl({
     // zoom out to fit — until the student pans or zooms themselves.
     const b = planBounds(plan, width, height);
     fittedViewRef.current = null;
-    // Only at the default zoom: a caller that asks for its own opening zoom
-    // (quiz home's neighbourhood fragment) has already chosen its framing.
-    if (b && initialZoom === 1) {
+    if (b) {
       const bw = b.maxX - b.minX;
       const bh = b.maxY - b.minY;
       const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / bw, height / bh));
-      if (scale < initialZoom || bw > width || bh > height) {
+      // Only at the default zoom: a caller that asks for its own opening zoom
+      // (quiz home's neighbourhood fragment) is framed on where its nodes
+      // actually come to rest instead (`frameContent`, on the tick).
+      if (initialZoom === 1 && (scale < initialZoom || bw > width || bh > height)) {
         const mx = (b.minX + b.maxX) / 2;
         const my = (b.minY + b.maxY) / 2;
         fittedViewRef.current = { tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale };
         if (!viewTouchedRef.current) setView(fittedViewRef.current);
       }
     }
+
+    // A graph with its own opening frame (the quiz preview) that is handed a
+    // different set of nodes — a new focus concept — follows the new cluster
+    // into frame again, easing there rather than staying where the student
+    // left the old one. A resize alone keeps their view.
+    const idsKey = nodes.map((n) => n.id).sort().join("|");
+    if (initialZoom !== 1 && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
+      viewTouchedRef.current = false;
+    }
+    framedIdsRef.current = idsKey;
 
     // Merge new node data into existing sim nodes to preserve motion state.
     const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
@@ -508,7 +550,9 @@ function KnowledgeGraph2DImpl({
     simLinksRef.current = nextLinks;
 
     if (!simRef.current) {
-      simRef.current = forceSimulation<SimNode>(nextNodes).on("tick", applyPositions);
+      simRef.current = forceSimulation<SimNode>(nextNodes)
+        .on("tick", applyPositions)
+        .on("tick.frame", () => frameContentRef.current());
     } else {
       simRef.current.nodes(nextNodes);
     }
@@ -769,6 +813,51 @@ function KnowledgeGraph2DImpl({
     };
   };
 
+  /**
+   * A view that frames the nodes where they are NOW (radius + label room),
+   * centred, at no more than the opening zoom. For a caller with its own
+   * opening zoom (a small fragment): centring on the window instead left the
+   * fragment off to one side with a neighbour cut off at the edge.
+   */
+  const contentFrame = (): { tx: number; ty: number; scale: number } | null => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of simNodesRef.current) {
+      if (n.x == null || n.y == null) continue;
+      const r = nodeRadius(n) + 24;
+      minX = Math.min(minX, n.x - r);
+      maxX = Math.max(maxX, n.x + r);
+      minY = Math.min(minY, n.y - r);
+      maxY = Math.max(maxY, n.y + r + 10); // the caption sits under the node
+    }
+    if (!Number.isFinite(minX)) return null;
+    const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / (maxX - minX), height / (maxY - minY)));
+    return {
+      tx: width / 2 - ((minX + maxX) / 2) * scale,
+      ty: height / 2 - ((minY + maxY) / 2) * scale,
+      scale,
+    };
+  };
+  // While the student hasn't touched the view, it eases toward that frame as
+  // the layout settles — following the fragment into place rather than
+  // jumping once it stops.
+  frameContentRef.current = () => {
+    if (initialZoom === 1 || viewTouchedRef.current || dragRef.current) return;
+    const target = contentFrame();
+    if (!target) return;
+    fittedViewRef.current = target;
+    setView((v) => {
+      const k = 0.25;
+      const next = {
+        tx: v.tx + (target.tx - v.tx) * k,
+        ty: v.ty + (target.ty - v.ty) * k,
+        scale: v.scale + (target.scale - v.scale) * k,
+      };
+      const close =
+        Math.abs(next.scale - target.scale) < 0.001 && Math.abs(next.tx - target.tx) < 0.3 && Math.abs(next.ty - target.ty) < 0.3;
+      return close ? target : next;
+    });
+  };
+
   // ── Pointer interaction ─────────────────────────────────────────────────
   const clientToSvg = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -782,11 +871,11 @@ function KnowledgeGraph2DImpl({
 
   // ── Smooth view changes (legible) ───────────────────────────────────────
   // Wheel, zoom buttons, reset and course zooms ease toward a target view
-  // over a few frames instead of jumping. Other graphs (and test mode /
-  // reduced motion) still jump, so their behaviour is unchanged.
+  // over a few frames instead of jumping — in every mode (the plain mode used
+  // to jump, so quiz home's preview felt nothing like the tree). Test mode
+  // and reduced motion still jump.
   const easeView = (target: { tx: number; ty: number; scale: number }) => {
     const instant =
-      !legible ||
       IS_TEST_MODE ||
       typeof requestAnimationFrame === "undefined" ||
       (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
@@ -887,6 +976,9 @@ function KnowledgeGraph2DImpl({
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
+    // Moving a node is taking the view in hand: the opening frame stops
+    // following the layout (⟲ hands it back).
+    viewTouchedRef.current = true;
     if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
@@ -985,25 +1077,15 @@ function KnowledgeGraph2DImpl({
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     viewTouchedRef.current = true;
-    if (legible) {
-      // Exponential, capped per event: a mouse wheel notch (deltaY ~100) and
-      // a trackpad's many small deltas both feel even, then ease in.
-      const d = Math.max(-120, Math.min(120, e.deltaY));
-      zoomAbout(Math.exp(-d * 0.0022), mx, my);
-      return;
-    }
-    const delta = -e.deltaY * 0.0015;
-    setView((v) => {
-      const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
-      const factor = nextScale / v.scale;
-      const c = clampView(mx - (mx - v.tx) * factor, my - (my - v.ty) * factor, nextScale);
-      return { tx: c.tx, ty: c.ty, scale: nextScale };
-    });
+    // Exponential, capped per event: a mouse wheel notch (deltaY ~100) and a
+    // trackpad's many small deltas both feel even, then ease in.
+    const d = Math.max(-120, Math.min(120, e.deltaY));
+    zoomAbout(Math.exp(-d * 0.0022), mx, my);
   };
 
   const resetView = () => {
     viewTouchedRef.current = false;
-    easeView(fittedViewRef.current ?? initialView());
+    easeView((initialZoom !== 1 ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
   };
 
   const hoveredMastery = hovered
@@ -1083,7 +1165,11 @@ function KnowledgeGraph2DImpl({
               const directed = legible && !l.anchor && isDirected(l);
               // Arrowheads don't fade with their line, so a dimmed link drops its arrow.
               const arrow = directed && (focusId ? incident : view.scale >= 0.9);
-              const [ex, ey] = legible ? lineEnd(s.x!, s.y!, t.x!, t.y!, drawRadius(t) + 2) : [t.x, t.y];
+              const [x1, y1, x2, y2] = rimToRim(
+                s.x!, s.y!, t.x!, t.y!,
+                drawRadius(s) + rimGap(s),
+                drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
+              );
               const gradId = `${gradPrefix}-e${i}`;
               return (
                 <React.Fragment key={i}>
@@ -1096,10 +1182,10 @@ function KnowledgeGraph2DImpl({
                           else gradElsRef.current.delete(i);
                         }}
                         gradientUnits="userSpaceOnUse"
-                        x1={s.x}
-                        y1={s.y}
-                        x2={t.x}
-                        y2={t.y}
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
                       >
                         <stop offset="0%" stopColor={fillFor(s)} />
                         <stop offset="100%" stopColor={fillFor(t)} />
@@ -1112,10 +1198,10 @@ function KnowledgeGraph2DImpl({
                       else edgeElsRef.current.delete(i);
                     }}
                     data-testid="graph-edge"
-                    x1={s.x}
-                    y1={s.y}
-                    x2={ex}
-                    y2={ey}
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
                     stroke={mastery ? `url(#${gradId})` : incident ? "var(--text-dim)" : "var(--text-muted)"}
                     strokeOpacity={op}
                     markerEnd={arrow ? `url(#${gradPrefix}-arrow${incident ? "-on" : ""})` : undefined}
@@ -1298,17 +1384,13 @@ function KnowledgeGraph2DImpl({
           data-testid="graph-zoom-in"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          // About the window's centre in every mode. The plain mode used to
+          // scale about the content origin, so each press slid what you were
+          // looking at toward a corner (quiz home's preview lost its focus
+          // concept off the edge in three presses).
           onClick={() => {
-            if (legible) {
-              viewTouchedRef.current = true;
-              zoomAbout(1.25, width / 2, height / 2);
-              return;
-            }
-            setView((v) => {
-              const s = Math.min(MAX_ZOOM, v.scale * 1.2);
-              const c = clampView(v.tx, v.ty, s);
-              return { tx: c.tx, ty: c.ty, scale: s };
-            });
+            viewTouchedRef.current = true;
+            zoomAbout(1.25, width / 2, height / 2);
           }}
           title="Zoom in"
         >
@@ -1319,16 +1401,8 @@ function KnowledgeGraph2DImpl({
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
           onClick={() => {
-            if (legible) {
-              viewTouchedRef.current = true;
-              zoomAbout(1 / 1.25, width / 2, height / 2);
-              return;
-            }
-            setView((v) => {
-              const s = Math.max(MIN_ZOOM, v.scale / 1.2);
-              const c = clampView(v.tx, v.ty, s);
-              return { tx: c.tx, ty: c.ty, scale: s };
-            });
+            viewTouchedRef.current = true;
+            zoomAbout(1 / 1.25, width / 2, height / 2);
           }}
           title="Zoom out"
         >

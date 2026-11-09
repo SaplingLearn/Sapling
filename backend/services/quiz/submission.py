@@ -387,7 +387,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                     }
                 ]
             },
-            course_id=node.get("course_id"),
+            course_id=node.get("course_id"), defer=background_tasks.add_task,
         )
     except Exception:
         logger.exception(
