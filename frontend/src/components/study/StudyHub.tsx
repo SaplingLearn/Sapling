@@ -1024,6 +1024,9 @@ export function StudyHub({
       {picker && (() => {
         const name = picker.kind === "quiz" ? "Quiz" : "Flashcards";
         const n = topics.filter(t => picker.picks[t.id]).length;
+        // A quiz targets one concept or the whole course (quizHref): two or
+        // more picks start a course quiz, so the button says so.
+        const wholeCourse = picker.kind === "quiz" && n > 1;
         const setPicks = (picks: Record<string, boolean>) => setPicker({ ...picker, picks });
         const chip: React.CSSProperties = { height: 32, padding: "0 12px", border: 0, borderRadius: 16, ...INHERIT_FONT, fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" };
         return (
@@ -1057,8 +1060,10 @@ export function StudyHub({
               ))}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 10, borderTop: "1px solid rgba(42,39,31,0.10)" }}>
                 <button onClick={() => setPicker(null)} style={{ height: 46, padding: "0 18px", border: 0, borderRadius: 12, background: "transparent", color: "#3F3B31", ...INHERIT_FONT, fontSize: 15, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>Cancel</button>
-                <button onClick={startPicker} disabled={!n} style={{ height: 46, padding: "0 22px", border: 0, borderRadius: 12, background: "#445D22", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, opacity: n ? 1 : 0.5, whiteSpace: "nowrap", flexShrink: 0, cursor: n ? "pointer" : "default" }}>
-                  {n ? `Start ${name} · ${n} ${n === 1 ? "Concept" : "Concepts"}` : "Pick at Least One Concept"}
+                <button onClick={startPicker} disabled={!n} title={wholeCourse ? "A quiz covers one concept or the whole course" : undefined} style={{ height: 46, padding: "0 22px", border: 0, borderRadius: 12, background: "#445D22", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, opacity: n ? 1 : 0.5, whiteSpace: "nowrap", flexShrink: 0, cursor: n ? "pointer" : "default" }}>
+                  {!n ? "Pick at Least One Concept"
+                    : wholeCourse ? "Start Quiz · Whole Course"
+                    : `Start ${name} · ${n} ${n === 1 ? "Concept" : "Concepts"}`}
                 </button>
               </div>
             </div>

@@ -130,11 +130,20 @@ describe("StudyHub", () => {
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("button", { name: "Quiz" }));
     const dlg = screen.getByRole("dialog", { name: "Quiz" });
-    // Struggling and learning preselected: Loops + Recursion.
-    expect(within(dlg).getByText("Start Quiz · 2 Concepts")).toBeTruthy();
+    // Struggling and learning preselected: Loops + Recursion. A quiz covers one
+    // concept or the whole course, so two picks say "Whole Course".
+    expect(within(dlg).getByText("Start Quiz · Whole Course")).toBeTruthy();
     fireEvent.click(within(dlg).getByRole("button", { name: "Loops" }));
     fireEvent.click(within(dlg).getByText("Start Quiz · 1 Concept"));
     expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/quiz\?concept=rec&from=link&return=%2Fstudy$/));
+  });
+
+  it("a multi-concept quiz pick starts a whole-course quiz", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    fireEvent.click(screen.getByRole("button", { name: "Quiz" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Quiz" })).getByText("Start Quiz · Whole Course"));
+    expect(push).toHaveBeenLastCalledWith(expect.stringMatching(/^\/quiz\?course=c1&/));
   });
 
   it("Flashcards and Study Guide go to their tool pages", async () => {
