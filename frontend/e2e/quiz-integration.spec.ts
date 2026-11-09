@@ -312,7 +312,7 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
     await expect(panel).toContainText(scriptedStem(offset + 2), { timeout: 30_000 });
     await chooseOption(page, label);
     await page.getByTestId("quiz-submit-answer").click();
-    await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+    await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
     await page.getByTestId("quiz-next").click();
   }
 
@@ -507,7 +507,7 @@ test("screenshots for the lead", async ({ page }) => {
 
   // Question 2's answer is C, so choosing B is the wrong-answer reveal.
   await page.getByTestId("quiz-submit-answer").click();
-  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
   await page.getByTestId("quiz-next").click();
   await expect(panel).toContainText(scriptedStem(2), { timeout: 30_000 });
   await chooseOption(page, "B");
@@ -522,7 +522,7 @@ test("screenshots for the lead", async ({ page }) => {
   await expect(panel).toContainText(scriptedStem(3), { timeout: 30_000 });
   await chooseOption(page, "A");
   await page.getByTestId("quiz-submit-answer").click();
-  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
   await page.getByTestId("quiz-next").click();
 
   await expect(page.getByTestId("quiz-results")).toBeVisible({ timeout: 60_000 });

@@ -51,9 +51,13 @@ BUCKETS: dict[str, frozenset[str]] = {
         "role_cosmetics", "growth_stages", "xp_rules",
     }),
     "E_service_only": frozenset({
+        "gradescope_syncs",
         "events", "llm_usage", "feature_flags", "feature_flag_targets", "admin_audit_log",
         "email_broadcasts", "email_sends", "email_suppressions", "newsletter_emails",
         "job_applications", "encryption_key_check", "schema_migrations", "jobs",
+        "document_uploads",
+        "llm_budgets",
+        "rate_limit_hits", "feature_flags_version",  # #117
     }),
 }
 
@@ -431,3 +435,101 @@ def test_foreign_tokens_read_nothing_anywhere(world, token):
     assert err == DENIED
     rows, err = _try(world, "SELECT * FROM apply_mastery_delta('rlsp-node-a', %s, 0.3, 0.8, 0.5, 0.2)", (A,))
     assert (rows, err) == ([], None)
+
+
+# ── Step 2e: room_messages under RLS, read through the Realtime bridge ──────
+#
+# 20261108210944_rls_room_messages_realtime.sql adds the member SELECT policy
+# but leaves RLS OFF on room_messages (the anon Realtime lane still needs it).
+# These tests apply the documented MANUAL enable step inside the rolled-back
+# transaction (GRANT SELECT to authenticated, ENABLE RLS, REVOKE anon SELECT),
+# so they pin what the policy does once it is live, the way Realtime's
+# realtime.apply_rls evaluates it: SET LOCAL ROLE to the subscriber's role
+# claim, then request.jwt.claims = the subscriber's JWT claims.
+
+def _rt(sub: str) -> dict:
+    """Claims of the browser Realtime token (db/user_jwt.py::mint_realtime)."""
+    return {"iss": "sapling-realtime", "sub": sub, "role": "authenticated", "aud": "authenticated"}
+
+
+@pytest.fixture
+def chat_world(world):
+    """world + messages in both rlsp rooms (A in both, B in the public one,
+    C in neither) + the manual 2e enable step. All rolled back with world."""
+    world.execute(f"INSERT INTO room_members (room_id, user_id) VALUES ('rlsp-room-pub', '{B}')")
+    world.execute(
+        f"INSERT INTO room_messages (room_id, user_id, user_name, text) VALUES "
+        f"('rlsp-room-priv', '{A}', 'A', 'priv-1'), ('rlsp-room-priv', '{A}', 'A', 'priv-2'), "
+        f"('rlsp-room-pub', '{B}', 'B', 'pub-1')"
+    )
+    world.execute("GRANT SELECT ON public.room_messages TO authenticated")
+    world.execute("ALTER TABLE public.room_messages ENABLE ROW LEVEL SECURITY")
+    if world.execute("SELECT 1 FROM pg_roles WHERE rolname = 'anon'").fetchone():
+        world.execute("REVOKE SELECT ON public.room_messages FROM anon")
+    return world
+
+
+def _rooms_read(conn) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT room_id, count(*) AS n FROM public.room_messages "
+        "WHERE room_id LIKE 'rlsp-%' GROUP BY room_id"
+    ).fetchall()
+    return {r["room_id"]: r["n"] for r in rows}
+
+
+def test_room_messages_realtime_token_reads_only_its_members_rooms(chat_world):
+    _as(chat_world, _rt(A))
+    assert _rooms_read(chat_world) == {"rlsp-room-priv": 2, "rlsp-room-pub": 1}
+    _as(chat_world, _rt(B))
+    assert _rooms_read(chat_world) == {"rlsp-room-pub": 1}
+    _as(chat_world, _rt(C))
+    assert _rooms_read(chat_world) == {}
+
+
+def test_room_messages_backend_token_reads_its_members_rooms(chat_world):
+    # The same policy admits a sapling-api member (a future user-scoped social
+    # router); /api/social is service-scoped today.
+    _as(chat_world, _api(A))
+    assert _rooms_read(chat_world) == {"rlsp-room-priv": 2, "rlsp-room-pub": 1}
+    _as(chat_world, _api(C))
+    assert _rooms_read(chat_world) == {}
+
+
+def test_room_messages_leaving_a_room_stops_the_feed(chat_world):
+    # Realtime re-runs the policy per change, so a kicked or departed member
+    # stops receiving the room the moment the membership row goes.
+    chat_world.execute(f"DELETE FROM room_members WHERE room_id = 'rlsp-room-pub' AND user_id = '{B}'")
+    _as(chat_world, _rt(B))
+    assert _rooms_read(chat_world) == {}
+
+
+@pytest.mark.parametrize(
+    "token", sorted(k for k in FOREIGN_TOKENS if k != "realtime_token_with_a_sub"))
+def test_room_messages_foreign_tokens_read_nothing(chat_world, token):
+    # A GoTrue signup, the demo issuer and issuer-less tokens carrying A's id.
+    _as(chat_world, FOREIGN_TOKENS[token])
+    assert _count(chat_world, "room_messages") == 0
+
+
+def test_room_messages_anon_reads_nothing_once_enabled(chat_world):
+    if not chat_world.execute("SELECT 1 FROM pg_roles WHERE rolname = 'anon'").fetchone():
+        pytest.skip("no anon role")
+    chat_world.execute("SET LOCAL ROLE anon")
+    _, err = _try(chat_world, "SELECT 1 FROM public.room_messages LIMIT 1")
+    assert err == DENIED
+
+
+def test_room_messages_realtime_token_cannot_write(chat_world):
+    _as(chat_world, _rt(A))
+    _, err = _try(chat_world, f"INSERT INTO room_messages (room_id, user_id, user_name, text) "
+                              f"VALUES ('rlsp-room-priv', '{A}', 'A', 'x')")
+    assert err == DENIED
+    _, err = _try(chat_world, "UPDATE room_messages SET text = 'pwned' WHERE room_id = 'rlsp-room-priv'")
+    assert err == DENIED
+    _, err = _try(chat_world, "DELETE FROM room_messages WHERE room_id = 'rlsp-room-priv'")
+    assert err == DENIED
+
+
+# That the realtime token is no user anywhere ELSE (app_auth.uid() stays
+# sapling-api only) is test_foreign_tokens_read_nothing_anywhere's
+# `realtime_token_with_a_sub` case above.

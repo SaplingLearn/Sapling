@@ -4,8 +4,9 @@ import os
 import sqlite3
 import zipfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior
 
@@ -86,7 +87,16 @@ class TestDedup:
 
 class TestRateLimit:
     def setup_method(self):
-        svc._rate_state.clear()
+        svc.clear_rate_state()
+
+    def test_clear_rate_state_drops_only_flashcard_keys(self):
+        from services import request_limits
+
+        svc.check_rate_limit("u1")
+        request_limits.check_rate_limit("ocr:u1", limit=1, window_sec=60)
+        svc.clear_rate_state()
+        assert "flashcard_import:u1" not in request_limits._rate_state
+        assert len(request_limits._rate_state["ocr:u1"]) == 1
 
     def test_allows_first_5_calls(self):
         for _ in range(5):
@@ -241,10 +251,60 @@ _QUIZLET_PAYLOAD = """
 """
 
 
+_PUBLIC_ADDRINFO = [(2, 1, 6, "", ("104.16.1.1", 443))]
+
+
+def _addrinfo(ip):
+    family = 10 if ":" in ip else 2
+    return [(family, 1, 6, "", (ip, 443))]
+
+
+@pytest.fixture(autouse=False)
+def public_dns():
+    """Hermetic DNS: every lookup answers one public address."""
+    with patch(
+        "services.flashcard_import_service.socket.getaddrinfo",
+        return_value=_PUBLIC_ADDRINFO,
+    ) as gai:
+        yield gai
+
+
+def _mock_client(handler):
+    """A stand-in for ``_quizlet_client`` that builds a real httpx.Client over
+    a MockTransport, so status codes, Location headers and the client's
+    redirect setting all behave exactly as in production. Records every
+    fetched URL and every client the scrape built."""
+    seen: list[str] = []
+    clients: list[httpx.Client] = []
+
+    def _handler(request):
+        seen.append(str(request.url))
+        return handler(request)
+
+    def _factory(resolver):
+        c = httpx.Client(transport=httpx.MockTransport(_handler), follow_redirects=False)
+        clients.append(c)
+        return c
+
+    _factory.seen = seen
+    _factory.clients = clients
+    return _factory
+
+
+def _patch_client(handler):
+    factory = _mock_client(handler)
+    return factory, patch("services.flashcard_import_service._quizlet_client", side_effect=factory)
+
+
+def _ok(request):
+    return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+
+@pytest.mark.usefixtures("public_dns")
 class TestScrapeQuizlet:
     def test_extracts_terms_from_set_page_data(self):
-        resp = MagicMock(status_code=200, text=_QUIZLET_PAYLOAD)
-        with patch("services.flashcard_import_service.httpx.get", return_value=resp):
+        _, p = _patch_client(_ok)
+        with p:
             cards = svc.scrape_quizlet_url("https://quizlet.com/123/abc")
         assert cards == [
             {"front": "Mitosis", "back": "Cell division"},
@@ -252,16 +312,307 @@ class TestScrapeQuizlet:
         ]
 
     def test_raises_on_login_wall(self):
-        resp = MagicMock(status_code=200, text="<html><body>Please log in</body></html>")
-        with patch("services.flashcard_import_service.httpx.get", return_value=resp):
-            with pytest.raises(svc.QuizletBlocked):
-                svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        _, p = _patch_client(lambda r: httpx.Response(200, text="<html><body>Please log in</body></html>"))
+        with p, pytest.raises(svc.QuizletBlocked):
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
 
     def test_raises_on_403(self):
-        resp = MagicMock(status_code=403, text="")
-        with patch("services.flashcard_import_service.httpx.get", return_value=resp):
-            with pytest.raises(svc.QuizletBlocked):
+        _, p = _patch_client(lambda r: httpx.Response(403, text=""))
+        with p, pytest.raises(svc.QuizletBlocked):
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+
+
+@pytest.mark.usefixtures("public_dns")
+class TestScrapeQuizletSSRF:
+    """The URL is user-supplied: only https quizlet.com hosts resolving to
+    public addresses may be fetched, at every redirect hop."""
+
+    def test_allowlisted_url_fetched_once(self):
+        factory, p = _patch_client(_ok)
+        with p:
+            cards = svc.scrape_quizlet_url("https://www.quizlet.com/123/abc")
+        assert len(cards) == 2
+        assert factory.seen == ["https://www.quizlet.com/123/abc"]
+
+    def test_http_submission_upgraded_to_https(self):
+        factory, p = _patch_client(_ok)
+        with p:
+            svc.scrape_quizlet_url("http://quizlet.com/123/abc")
+        assert factory.seen == ["https://quizlet.com/123/abc"]
+
+    def test_http_submission_on_explicit_port_80_upgraded(self):
+        factory, p = _patch_client(_ok)
+        with p:
+            svc.scrape_quizlet_url("http://www.quizlet.com:80/123/abc?x=1")
+        assert factory.seen == ["https://www.quizlet.com/123/abc?x=1"]
+
+    def test_follows_allowlisted_redirect_on_one_client(self):
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(301, headers={"location": "https://www.quizlet.com/123/abc"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        factory, p = _patch_client(handler)
+        with p:
+            cards = svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert len(cards) == 2
+        assert factory.seen == ["https://quizlet.com/123/abc", "https://www.quizlet.com/123/abc"]
+        assert len(factory.clients) == 1  # one client reused across hops
+
+    def test_relative_redirect_stays_on_host(self):
+        def handler(request):
+            if request.url.path == "/old":
+                return httpx.Response(302, headers={"location": "/123/abc"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        factory, p = _patch_client(handler)
+        with p:
+            svc.scrape_quizlet_url("https://quizlet.com/old")
+        assert factory.seen[-1] == "https://quizlet.com/123/abc"
+
+    def test_dns_resolved_once_per_host_per_scrape(self, public_dns):
+        def handler(request):
+            n = int(request.url.params.get("n", "0"))
+            if n < 3:
+                return httpx.Response(302, headers={"location": f"https://quizlet.com/s?n={n + 1}"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        _, p = _patch_client(handler)
+        with p:
+            svc.scrape_quizlet_url("https://quizlet.com/s")
+        assert public_dns.call_count == 1
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://evil.example.com/123/abc",
+            "https://quizlet.com.evil.example/123",
+            "https://notquizlet.com/123",
+            "https://quizlet.com@evil.example/123",
+            "https://user:pw@quizlet.com/123",
+            "https://quizlet.com:8443/123",
+            "http://quizlet.com:8080/123/abc",
+            "ftp://quizlet.com/123",
+            "file:///etc/passwd",
+            "https://127.0.0.1/",
+            "https://localhost/",
+            "http://169.254.169.254/latest/meta-data/",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[::1]/",
+            "https://10.0.0.5/",
+            "not a url",
+            "",
+        ],
+    )
+    def test_rejects_non_quizlet_urls_without_fetching(self, url):
+        factory, p = _patch_client(_ok)
+        with p, pytest.raises(svc.QuizletURLRejected):
+            svc.scrape_quizlet_url(url)
+        assert factory.seen == []
+
+    @pytest.mark.parametrize(
+        "location",
+        [
+            "http://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/admin",
+            "https://[::1]/",
+            "https://localhost:8000/api/internal/metrics",
+            "http://www.quizlet.com/123/abc",
+            "https://evil.example.com/",
+        ],
+    )
+    def test_redirect_to_disallowed_target_is_blocked_not_rejected(self, location):
+        # A hop leaving the policy is upstream behaviour, not a bad student
+        # input: 422-class QuizletBlocked (Paste fallback), never fetched.
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(302, headers={"location": location})
+            raise AssertionError(f"disallowed hop was fetched: {request.url}")
+
+        factory, p = _patch_client(handler)
+        with p, pytest.raises(svc.QuizletBlocked, match="redirected away") as ei:
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert not isinstance(ei.value, svc.QuizletURLRejected)
+        assert factory.seen == ["https://quizlet.com/123/abc"]
+
+    def test_redirect_chain_over_cap_is_blocked_not_rejected(self):
+        def handler(request):
+            n = int(request.url.params.get("n", "0"))
+            return httpx.Response(302, headers={"location": f"https://quizlet.com/loop?n={n + 1}"})
+
+        factory, p = _patch_client(handler)
+        with p, pytest.raises(svc.QuizletBlocked, match="too many times") as ei:
+            svc.scrape_quizlet_url("https://quizlet.com/loop")
+        assert not isinstance(ei.value, svc.QuizletURLRejected)
+        assert len(factory.seen) == svc._QUIZLET_MAX_REDIRECTS + 1
+
+    def test_redirect_chain_at_cap_allowed(self):
+        cap = svc._QUIZLET_MAX_REDIRECTS
+
+        def handler(request):
+            n = int(request.url.params.get("n", "0"))
+            if n < cap:
+                return httpx.Response(302, headers={"location": f"https://quizlet.com/s?n={n + 1}"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        _, p = _patch_client(handler)
+        with p:
+            assert len(svc.scrape_quizlet_url("https://quizlet.com/s")) == 2
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "240.0.0.1",
+            "::1",
+            "::",
+            "fe80::1",
+            "fc00::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "64:ff9b::7f00:1",  # NAT64 of 127.0.0.1
+            "64:ff9b::a9fe:a9fe",  # NAT64 of 169.254.169.254
+            "2002:7f00:1::1",  # 6to4 of 127.0.0.1
+            "2002:a00:1::1",  # 6to4 of 10.0.0.1
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",  # Teredo
+        ],
+    )
+    def test_allowlisted_host_resolving_to_internal_ip_refused(self, public_dns, ip):
+        public_dns.return_value = _addrinfo(ip)
+        factory, p = _patch_client(_ok)
+        with p, pytest.raises(svc.QuizletURLRejected):
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert factory.seen == []
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "64:ff9b::6810:101",  # NAT64 (DNS64 answer) of 104.16.1.1
+            "2002:6810:101::1",  # 6to4 of 104.16.1.1
+            "2606:4700::6810:101",  # plain global IPv6
+        ],
+    )
+    def test_ipv6_wrapping_a_public_ipv4_is_allowed(self, public_dns, ip):
+        # An IPv6-only/DNS64 host sees Quizlet as 64:ff9b::<v4>: judged by the
+        # embedded IPv4, not the (reserved) wrapper prefix.
+        public_dns.return_value = _addrinfo(ip)
+        _, p = _patch_client(_ok)
+        with p:
+            assert len(svc.scrape_quizlet_url("https://quizlet.com/123/abc")) == 2
+
+    def test_any_internal_address_in_answer_refused(self, public_dns):
+        public_dns.return_value = _PUBLIC_ADDRINFO + _addrinfo("10.0.0.1")
+        factory, p = _patch_client(_ok)
+        with p, pytest.raises(svc.QuizletURLRejected):
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert factory.seen == []
+
+    def test_redirect_hop_rechecks_dns(self, public_dns):
+        # First host resolves public; the redirect target's lookup answers a
+        # metadata address — the hop must be refused before it is fetched.
+        public_dns.side_effect = [_PUBLIC_ADDRINFO, _addrinfo("169.254.169.254")]
+
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(301, headers={"location": "https://www.quizlet.com/123/abc"})
+            raise AssertionError("internal hop was fetched")
+
+        _, p = _patch_client(handler)
+        with p, pytest.raises(svc.QuizletBlocked) as ei:
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert not isinstance(ei.value, svc.QuizletURLRejected)
+
+    def test_dns_failure_is_blocked_not_rejected(self, public_dns):
+        import socket as _socket
+
+        public_dns.side_effect = _socket.gaierror("nope")
+        with pytest.raises(svc.QuizletBlocked) as ei:
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert not isinstance(ei.value, svc.QuizletURLRejected)
+
+    def test_dns_lookup_is_time_bounded(self, public_dns, monkeypatch):
+        import threading
+
+        release = threading.Event()
+        public_dns.side_effect = lambda *a, **k: release.wait(5) or _PUBLIC_ADDRINFO
+        monkeypatch.setattr(svc, "_QUIZLET_DNS_TIMEOUT_SECONDS", 0.05)
+        try:
+            with pytest.raises(svc.QuizletBlocked, match="timed out") as ei:
                 svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+            assert not isinstance(ei.value, svc.QuizletURLRejected)
+        finally:
+            release.set()
+
+
+class TestQuizletPinnedTransport:
+    """The production client: proxies off, and the socket can only be
+    opened to an address the resolver approved (no rebinding window)."""
+
+    def test_client_ignores_proxy_env_and_does_not_follow_redirects(self, monkeypatch):
+        monkeypatch.setenv("HTTPS_PROXY", "http://10.0.0.1:3128")
+        monkeypatch.setenv("ALL_PROXY", "http://10.0.0.1:3128")
+        with svc._quizlet_client(svc._QuizletResolver()) as c:
+            assert c.trust_env is False
+            assert c.follow_redirects is False
+            assert isinstance(c._transport, svc._PinnedQuizletTransport)
+            assert c._mounts == {}  # no proxy mounts picked up from the env
+
+    def test_pinned_transport_dials_only_the_checked_ip(self, public_dns):
+        # Drive a REAL request through the production client. The resolver
+        # approved 104.16.1.1; a later (rebinding) DNS answer must not matter:
+        # the dial goes to the cached, approved IP with the hostname kept
+        # for SNI/Host. The dial itself is stubbed to stop before any I/O.
+        resolver = svc._QuizletResolver()
+        resolver.resolve("quizlet.com")
+        public_dns.return_value = _addrinfo("127.0.0.1")  # rebinding attempt
+
+        class _Stop(Exception):
+            pass
+
+        with patch("httpcore.SyncBackend.connect_tcp", side_effect=_Stop) as dial:
+            with svc._quizlet_client(resolver) as c, pytest.raises(_Stop):
+                c.get("https://quizlet.com/123/abc")
+        assert dial.call_args.args[0] == "104.16.1.1"
+        assert dial.call_args.args[1] == 443
+        assert public_dns.call_count == 1  # connect reused the cached answer
+
+    def test_pinned_backend_refuses_unchecked_host(self, public_dns):
+        backend = svc._PinnedQuizletBackend(svc._QuizletResolver())
+        with patch("httpcore.SyncBackend.connect_tcp") as dial:
+            with pytest.raises(svc.QuizletBlocked):
+                backend.connect_tcp("evil.example.com", 443)
+            with pytest.raises(svc.QuizletBlocked):
+                backend.connect_tcp("quizlet.com", 8443)
+        dial.assert_not_called()
+
+    def test_pinned_backend_refuses_internal_answer_at_connect(self, public_dns):
+        public_dns.return_value = _addrinfo("10.0.0.1")
+        backend = svc._PinnedQuizletBackend(svc._QuizletResolver())
+        with patch("httpcore.SyncBackend.connect_tcp") as dial:
+            with pytest.raises(svc.QuizletBlocked):
+                backend.connect_tcp("quizlet.com", 443)
+        dial.assert_not_called()
+
+    def test_pinned_backend_tries_next_address_on_connect_error(self, public_dns):
+        import httpcore
+
+        public_dns.return_value = _addrinfo("104.16.1.1") + _addrinfo("104.16.1.2")
+        backend = svc._PinnedQuizletBackend(svc._QuizletResolver())
+        stream = object()
+        with patch(
+            "httpcore.SyncBackend.connect_tcp",
+            side_effect=[httpcore.ConnectError("down"), stream],
+        ) as dial:
+            assert backend.connect_tcp("quizlet.com", 443) is stream
+        assert [c.args[0] for c in dial.call_args_list] == ["104.16.1.1", "104.16.1.2"]
 
 
 # ── flashcard agent helpers (#146) ───────────────────────────────────────────

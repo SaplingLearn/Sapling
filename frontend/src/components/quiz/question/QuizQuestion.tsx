@@ -23,13 +23,15 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
-import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
+import { isUnanswered } from "@/lib/quiz/machine";
+import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { AskPanel, type AskSeed } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
@@ -66,8 +68,6 @@ export interface QuizQuestionProps {
 
 /** The header mark, at the size §3 pins for a `dot`. */
 const HEADER_DOT = 15;
-/** Placeholder row widths while the quiz is written — four is the modal count. */
-const SKELETON_ROWS = [72, 86, 64, 79];
 /** `A`…`F` — the answer shortcuts. Six covers every count `/config` offers and
  *  degrades harmlessly on a question with fewer options. */
 const SHORTCUT_LETTERS = "abcdef";
@@ -90,6 +90,29 @@ function isTypingTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+/** What each format is called on screen — the same names the Format setting
+ *  uses, so "Algebra" in the settings is "Algebra" on the question. */
+const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
+  multiple_choice: { label: "Multiple choice", Icon: ListChecks },
+  short_answer: { label: "Short answer", Icon: PenLine },
+  numeric: { label: "Numeric", Icon: Hash },
+  symbolic: { label: "Algebra", Icon: Sigma },
+};
+
+/** Where the question's grounding came from, said plainly. */
+const MATERIAL_CONTEXT = {
+  course_material: { text: "Course material provided for this question", Icon: BookOpen },
+  catalog: { text: "Course catalog context provided", Icon: Library },
+  general: { text: "General practice: no matching course material was found", Icon: Sparkles },
+} as const;
+
+/** Parts with `<sup>` for the raised ones. */
+function renderParts(parts: ExpressionPart[]): React.ReactNode {
+  return parts.map((part, i) =>
+    part.sup ? <sup key={i}>{part.text}</sup> : <React.Fragment key={i}>{part.text}</React.Fragment>,
+  );
 }
 
 /** The key as the end of a sentence: one full stop, unless it already ends in
@@ -128,6 +151,10 @@ export function QuizQuestion({
   const options = item?.question.options ?? [];
   const selectedIndex = item?.selectedIndex ?? null;
   const written = isWrittenType(item?.question.type);
+  // A type this client doesn't know is answered by choosing, exactly as the
+  // backend treats it, so it wears the multiple-choice tag too.
+  const format = written ? (item?.question.type as string) : "multiple_choice";
+  const formatTag = FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
   const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
   const answeredCount = items.filter(i => i.verdict !== null).length;
   const isLast = cursor >= total - 1;
@@ -153,7 +180,7 @@ export function QuizQuestion({
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
   const difficulty = (item?.question.difficulty ?? session.config.difficulty ?? "").toUpperCase();
-  const railTotal = total || session.config.count;
+  const quizLength = total || session.config.count;
 
   // ── Effects ──────────────────────────────────────────────────────────
 
@@ -215,9 +242,14 @@ export function QuizQuestion({
         activate: () => {},
       };
     }
-    if (showVerdict) {
+    // "See results" once nothing is left to answer — not merely on the last
+    // question, since questions can now be answered out of order.
+    const allAnswered = items.every(i => !isUnanswered(i));
+    if (showVerdict || phase === "answered") {
+      // `answered` without a shown verdict is an at-end question the student
+      // came back to: its answer is recorded and locked, so the way on is Next.
       return {
-        label: isLast ? "See results" : "Next",
+        label: allAnswered ? "See results" : "Next",
         testid: "quiz-next",
         enabled: phase === "answered",
         activate: () => actions.next(),
@@ -229,7 +261,7 @@ export function QuizQuestion({
       enabled: phase === "active" && !busy && hasAnswer,
       activate: submit,
     };
-  }, [actions, busy, isLast, phase, hasAnswer, showVerdict, submit]);
+  }, [actions, busy, items, phase, hasAnswer, showVerdict, submit]);
 
   // ── Keyboard (§5 B2) ─────────────────────────────────────────────────
 
@@ -286,6 +318,59 @@ export function QuizQuestion({
 
   // ── Pieces shared by the generating and the live render ──────────────
 
+  // Where the student is in the quiz, and the way round it: a numbered button
+  // per question (green / red once marked, in as-you-go mode) between back and
+  // forward arrows, beside the footer's primary button. Any question can be
+  // opened — one already answered shows what was recorded (answers lock once
+  // the server has them), one ahead can be answered out of order.
+  const position = Math.min(cursor + 1, quizLength);
+  const canNavigate = (phase === "active" || phase === "answered") && !busy && total > 0;
+  const goTo = (index: number) => {
+    if (canNavigate && index !== cursor && index >= 0 && index < total) actions.goTo?.(index);
+  };
+  const progress = (
+    <nav className="quiz-question__progress" aria-label="Questions">
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-prev-question"
+        aria-label="Previous question"
+        disabled={!canNavigate || cursor <= 0}
+        onClick={() => goTo(cursor - 1)}
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
+      </button>
+      <ProgressDots
+        total={quizLength}
+        // Nothing is "here" yet while the quiz is still being written.
+        current={total === 0 ? -1 : cursor}
+        answered={total === 0 ? 0 : answeredCount}
+        // Out of order once questions can be skipped: answered isn't a prefix.
+        done={items.map(i => !isUnanswered(i))}
+        // As-you-go shows each verdict, so the pager keeps the tally too.
+        // At-end holds every verdict back, and the pager must not leak them.
+        outcomes={session.config.feedback === "as-you-go"
+          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
+          : undefined}
+        orientation="row"
+        onSelect={goTo}
+        disabled={!canNavigate}
+        ariaLabel={`Question ${position} of ${quizLength}`}
+        testid="quiz-progress"
+      />
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-next-question"
+        aria-label="Next question"
+        disabled={!canNavigate || cursor >= total - 1}
+        onClick={() => goTo(cursor + 1)}
+      >
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
+  );
+
   const header = (
     <div className="quiz-question__header">
       <ConceptNode
@@ -299,21 +384,13 @@ export function QuizQuestion({
         {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
       </span>
       <span className="quiz-question__header-gap" />
+      {phase !== "generating" && item && (
+        <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
+          <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
+          {formatTag.label}
+        </span>
+      )}
       {difficulty && <Badge bg="var(--bg-soft)">{difficulty}</Badge>}
-    </div>
-  );
-
-  const rail = (
-    <div className="quiz-question__rail">
-      <ProgressDots
-        total={railTotal}
-        // Nothing is "here" yet while the quiz is still being written.
-        current={total === 0 ? -1 : cursor}
-        answered={total === 0 ? 0 : answeredCount}
-        orientation="column"
-        ariaLabel={`Question ${Math.min(cursor + 1, railTotal)} of ${railTotal}`}
-        testid="quiz-progress"
-      />
     </div>
   );
 
@@ -322,22 +399,22 @@ export function QuizQuestion({
   if (phase === "generating") {
     return (
       <div className="quiz-question" data-testid="quiz-generating">
-        {rail}
         <div className="quiz-question__col">
           {header}
-          <p className="label-micro quiz-question__generating-copy" role="status">
-            Writing your quiz…
-          </p>
-          <div className="quiz-question__stem quiz-question__stem--skeleton">
-            <Skeleton height="var(--quiz-q-skeleton-stem)" width="92%" />
-            <Skeleton height="var(--quiz-q-skeleton-stem)" width="64%" />
-          </div>
-          <div className="quiz-question__skeleton-options" aria-hidden="true">
-            {SKELETON_ROWS.map((width, i) => (
-              <div key={i} className="quiz-question__skeleton-row">
-                <Skeleton height="var(--quiz-q-skeleton-line)" width={`${width}%`} />
-              </div>
-            ))}
+          {/* A status, not a skeleton: the questions don't exist yet, so a
+              ghost of their layout promised a shape that the real quiz then
+              replaced. The bar is paced to a typical generation (one model
+              call, ~5–10 s) and never claims to be done until the quiz is —
+              /generate answers in one piece, so there is no finer signal. */}
+          <div className="quiz-generating" role="status">
+            <p className="quiz-generating__title h-serif">Writing your quiz</p>
+            <p className="quiz-generating__detail">
+              {`${quizLength} questions on ${concept.name}${difficulty ? ` · ${difficulty.toLowerCase()}` : ""}`}
+            </p>
+            <div className="quiz-generating__bar" aria-hidden="true">
+              <span className="quiz-generating__fill" />
+            </div>
+            <p className="quiz-generating__slow">Still writing. Longer quizzes take a little more time.</p>
           </div>
           <div className="quiz-question__grow" />
           {/* #760: a generation that never answers must not be a dead end. */}
@@ -345,9 +422,9 @@ export function QuizQuestion({
             <Button data-testid="quiz-cancel-generate" onClick={() => actions.cancel()}>
               Cancel
             </Button>
+            {progress}
           </div>
         </div>
-        <div className="quiz-question__spacer" />
       </div>
     );
   }
@@ -359,6 +436,8 @@ export function QuizQuestion({
   // letter is optional and the copy has to survive without it.
   const correctLabel =
     verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.label : undefined;
+
+  const context = item?.question.material_context ? MATERIAL_CONTEXT[item.question.material_context] : null;
 
   const optionState = (index: number): AnswerState => {
     if (!showVerdict || !verdict) return selectedIndex === index ? "selected" : "default";
@@ -375,6 +454,7 @@ export function QuizQuestion({
     correctText:
       verdict?.correctAnswer ?? (verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.text : undefined) ?? "",
     explanation: verdict?.explanation ?? "",
+    written,
   };
 
   return (
@@ -382,22 +462,31 @@ export function QuizQuestion({
       ref={rootRef}
       className="quiz-question"
       data-testid="quiz-panel"
+      data-phase={phase}
       tabIndex={-1}
       onKeyDown={onRootKeyDown}
     >
-      {rail}
-
       <div className="quiz-question__col">
         {header}
 
-        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">{item?.question.question ?? ""}</h2>
-        {item?.question.material_context && (
-          <p className="label-micro" data-testid="quiz-material-context">
-            {item.question.material_context === "course_material" ? "Course material provided for this question"
-              : item.question.material_context === "catalog" ? "Course catalog context provided"
-                : "General concept practice · no matching course material retrieved"}
+        {/* Keyed on the question, so each one arrives with the same short
+            entrance — from the generating panel, from Next, from the pager. */}
+        <div className="quiz-question__body" key={item?.question.id ?? cursor}>
+        <div className="quiz-question__prompt">
+        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
+          {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
+              the exponents so the question reads the way it would be printed. */}
+          {format === "symbolic"
+            ? renderParts(superscriptParts(item?.question.question ?? ""))
+            : item?.question.question ?? ""}
+        </h2>
+        {context && (
+          <p className="quiz-question__context" data-testid="quiz-material-context">
+            <context.Icon size={13} strokeWidth={2} aria-hidden="true" />
+            {context.text}
           </p>
         )}
+        </div>
 
         {!written && (
           <p className="quiz-question__hint" id="quiz-keyboard-hint">
@@ -407,22 +496,18 @@ export function QuizQuestion({
         )}
 
         {written ? (
-          <div className="quiz-question__written">
-            <label htmlFor="quiz-written-answer" className="label-micro" id="quiz-written-label">Your answer</label>
-            {/* Visible, unlike the keyboard hint: these are the rules the
-                grader applies, so a sighted student needs them as much as a
-                screen-reader user does. */}
-            <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
-              {item?.question.type === "symbolic"
-                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
-                : item?.question.type === "numeric"
-                  ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
-                  : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
-            </p>
+          <div
+            className={`quiz-question__written quiz-question__written--${format}`}
+            data-marked={showVerdict && verdict ? "true" : undefined}
+          >
+            {/* The accessible name ("Your answer, <stem>"); on screen the format
+                tag and the field's own shape already say what goes here. */}
+            <label htmlFor="quiz-written-answer" className="quiz-question__sr" id="quiz-written-label">Your answer</label>
             <WrittenAnswer
               type={(item?.question.type ?? "short_answer") as WrittenType}
               value={item?.answerText ?? ""}
               disabled={!selectable}
+              verdict={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : null}
               onChange={text => actions.write?.(text)}
               onSubmit={() => {
                 if (primary.enabled) primary.activate();
@@ -430,6 +515,16 @@ export function QuizQuestion({
               describedBy="quiz-format-hint"
               labelledBy="quiz-written-label quiz-question-stem"
             />
+            {/* Visible, unlike the keyboard hint: these are the rules the
+                grader applies, so a sighted student needs them as much as a
+                screen-reader user does. */}
+            <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+              {item?.question.type === "symbolic"
+                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
+                : item?.question.type === "numeric"
+                  ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
+                  : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
+            </p>
           </div>
         ) : <div
           ref={optionsRef}
@@ -446,6 +541,9 @@ export function QuizQuestion({
               letter={option.label}
               text={option.text}
               state={optionState(index)}
+              status={showVerdict && verdict && index === selectedIndex
+                ? (verdict.isCorrect ? "Correct" : "Incorrect")
+                : undefined}
               disabled={!selectable}
               onSelect={() => actions.select(index)}
               // The group owns one tab stop: the chosen row, or the first row
@@ -460,22 +558,37 @@ export function QuizQuestion({
           ref={feedbackRef}
           className="quiz-question__feedback"
           data-testid="quiz-review-verdict"
+          data-outcome={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : undefined}
           aria-live="polite"
           tabIndex={-1}
         >
           {showVerdict && verdict && (
             <>
-              <span>
-                {verdict.isCorrect
-                  ? "Correct."
-                  : verdict.correctAnswer
-                    ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
-                  : correctLabel
-                    ? `Not quite — the answer is ${correctLabel}.`
-                    : "Not quite."}
-              </span>
+              {/* On screen the outcome sits on the answer itself (the chosen
+                  tile, or the written field); this is the line the live
+                  region announces. */}
+              <p className="quiz-question__sr" data-testid="quiz-verdict-outcome">
+                {verdict.isCorrect ? "Correct." : "Incorrect."}
+              </p>
+              {/* The card is the reading: what the answer was, and why. */}
+              {(!verdict.isCorrect || verdict.explanation) && (
+              <div className="card quiz-question__verdict-card">
+              {!verdict.isCorrect && (
+                <p className="quiz-question__verdict-line h-sans">
+                  {verdict.correctAnswer && format === "symbolic"
+                      ? <>Not quite — the expected answer is{" "}
+                          <span className="quiz-question__verdict-expr">{renderParts(expressionParts(verdict.correctAnswer.trim().replace(/[.]$/, "")))}</span>.</>
+                    : verdict.correctAnswer
+                      ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
+                    : correctLabel
+                      ? `Not quite — the answer is ${correctLabel}.`
+                      : "Not quite."}
+                </p>
+              )}
               {verdict.explanation && (
                 <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+              )}
+              </div>
               )}
             </>
           )}
@@ -503,6 +616,8 @@ export function QuizQuestion({
           )}
         </div>
 
+        </div>
+
         <div className="quiz-question__grow" />
 
         <div className="quiz-question__footer">
@@ -518,6 +633,7 @@ export function QuizQuestion({
               Leave
             </Button>
           )}
+          {progress}
           <Button
             variant="primary"
             data-testid={primary.testid}
@@ -529,8 +645,6 @@ export function QuizQuestion({
           </Button>
         </div>
       </div>
-
-      <div className="quiz-question__spacer" />
 
       <LeaveDialog
         open={phase === "confirm-leave"}

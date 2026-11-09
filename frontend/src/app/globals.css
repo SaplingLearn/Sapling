@@ -741,7 +741,7 @@ body { font-size: 14px; line-height: 1.5; }
   /* The answer row's body size. The --fs-* scale has no 15px step and is
      documented as derived-from-an-audit, not invented, so the design's own
      value is pinned here rather than bolted onto the global type ramp. */
-  --answer-text-fs: 15px;
+  --answer-text-fs: 16px;
   /* Gradebook's blank-semester screen, promoted verbatim with <EmptyState
      size="hero">. These four are the values that screen was drawn at; the
      hero rules below exist so the promotion renders it unchanged. */
@@ -823,52 +823,144 @@ body { font-size: 14px; line-height: 1.5; }
 .seg__opt[aria-disabled="true"]:hover { color: var(--text-muted); }
 
 /* ── AnswerOption ────────────────────────────────────────────────────
-   Selection is a 2px LEFT bar, not a full border, and the mark slot is
-   always reserved: picking an answer and revealing the verdict both leave
-   every other pixel where it was. */
+   Each choice is its own tile with a key-cap letter, because A–D (and 1–4)
+   ARE the keyboard shortcuts — the cap says "press me" without a legend.
+   Nothing moves between states: the 1px border never changes width (emphasis
+   is an inset ring drawn by box-shadow), and the ✓/✕ slot is always
+   reserved, so choosing and revealing both leave every pixel where it was. */
 .answer-option {
+  --answer-tone: var(--quiz-accent, var(--accent));
   display: flex;
   width: 100%;
-  gap: 18px;
-  align-items: baseline;
-  padding: 17px var(--pad-md) 17px 14px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-left: var(--answer-bar-w) solid transparent;
-  background: none;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px 16px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
-.answer-option:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.answer-option:hover {
+  border-color: color-mix(in srgb, var(--answer-tone) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--answer-tone) 3%, var(--bg-panel));
+}
+.answer-option:focus-visible {
+  outline: 2px solid var(--answer-tone);
+  outline-offset: 2px;
+}
 .answer-option[aria-disabled="true"] { cursor: default; }
-.answer-option[aria-disabled="true"]:hover { background: none; }
+.answer-option[aria-disabled="true"]:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-panel);
+}
 .answer-option__letter {
-  width: var(--answer-letter-w);
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 .answer-option__text {
   flex: 1;
   min-width: 0;
   font-size: var(--answer-text-fs);
-  line-height: 1.55;
-  color: var(--text-dim);
-}
-.answer-option__mark {
-  width: var(--answer-mark-w);
-  flex-shrink: 0;
-  text-align: right;
-  font-size: var(--fs-md);
+  line-height: 1.5;
   color: var(--text);
 }
-.answer-option--selected { border-left-color: var(--quiz-accent, var(--accent)); }
-.answer-option--selected .answer-option__text { color: var(--text); }
-/* Correct is never signalled by weight alone — the row also carries a ✓ and
-   an "— correct answer" suffix in its accessible name. */
-.answer-option--correct .answer-option__text { color: var(--text); font-weight: 600; }
-.answer-option--chosen-wrong { border-left-color: var(--state-struggle); }
-.answer-option--chosen-wrong .answer-option__text { color: var(--text); }
+.answer-option__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: #fff;
+}
+.answer-option__mark:empty { visibility: hidden; }
+.answer-option__status {
+  flex-shrink: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--answer-tone);
+}
+
+.answer-option--selected {
+  border-color: var(--answer-tone);
+  background: color-mix(in srgb, var(--answer-tone) 7%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--answer-tone);
+}
+.answer-option--selected:hover { border-color: var(--answer-tone); }
+.answer-option--selected .answer-option__letter {
+  background: var(--answer-tone);
+  border-color: color-mix(in srgb, var(--answer-tone) 70%, #000);
+  color: #fff;
+}
+
+/* Revealed. Correct is never signalled by colour alone — the row also carries
+   a ✓ and an "— correct answer" suffix in its accessible name. */
+.answer-option--correct,
+.answer-option--correct[aria-disabled="true"]:hover {
+  --answer-tone: var(--positive);
+  border-color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 9%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--positive);
+}
+.answer-option--correct .answer-option__letter {
+  background: var(--positive);
+  border-color: color-mix(in srgb, var(--positive) 70%, #000);
+  color: #fff;
+}
+.answer-option--correct .answer-option__text { font-weight: 600; }
+.answer-option--correct .answer-option__mark { background: var(--positive); }
+
+.answer-option--chosen-wrong,
+.answer-option--chosen-wrong[aria-disabled="true"]:hover {
+  --answer-tone: var(--state-struggle);
+  border-color: var(--state-struggle);
+  background: color-mix(in srgb, var(--state-struggle) 7%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--state-struggle);
+}
+.answer-option--chosen-wrong .answer-option__letter {
+  background: var(--state-struggle);
+  border-color: color-mix(in srgb, var(--state-struggle) 70%, #000);
+  color: #fff;
+}
+.answer-option--chosen-wrong .answer-option__text {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--state-struggle) 55%, transparent);
+}
+.answer-option--chosen-wrong .answer-option__mark { background: var(--state-struggle); }
+
+.answer-option--muted,
+.answer-option--muted[aria-disabled="true"]:hover {
+  background: transparent;
+  border-color: var(--border);
+  box-shadow: none;
+}
 .answer-option--muted .answer-option__text { color: var(--text-muted); }
+.answer-option--muted .answer-option__letter { color: var(--text-muted); border-color: var(--border); }
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-option, .answer-option__letter { transition: none; }
+}
 
 /* ── ProgressDots ────────────────────────────────────────────────────
    Column = the design's "branch": a hairline rail behind evenly-spaced dots.
@@ -913,6 +1005,45 @@ body { font-size: 14px; line-height: 1.5; }
   background: var(--bg);
   border: 1px solid var(--border-strong);
 }
+/* A marked question keeps its result on the rail: the run of right and wrong
+   so far, readable at a glance. */
+.progress-dots__dot[data-outcome="correct"] { background: var(--positive); border-color: var(--positive); }
+.progress-dots__dot[data-outcome="incorrect"] { background: var(--err); border-color: var(--err); }
+
+/* Steps: the navigable variant (`onSelect`). Each dot is a numbered button
+   big enough to aim at — the quiz's question pager. */
+.progress-dots--steps.progress-dots--row { gap: 6px; flex-wrap: wrap; justify-content: center; }
+.progress-dots__dot.progress-dots__dot--step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.progress-dots__dot--step.progress-dots__dot--done { background: var(--bg-soft); color: var(--text); }
+.progress-dots__dot--step.progress-dots__dot--current {
+  border: 2px solid var(--quiz-accent, var(--accent));
+  color: var(--text);
+}
+.progress-dots__dot--step[data-outcome="correct"] { background: var(--positive); border-color: var(--positive); color: #fff; }
+.progress-dots__dot--step[data-outcome="incorrect"] { background: var(--err); border-color: var(--err); color: #fff; }
+/* The current one keeps its outcome fill and gains a ring, so "here" and
+   "how it went" both read. */
+.progress-dots__dot--step.progress-dots__dot--current[data-outcome] {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--quiz-accent, var(--accent));
+}
+.progress-dots__dot--step:hover:not(:disabled) { border-color: var(--quiz-accent, var(--accent)); }
+.progress-dots__dot--step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-full); }
+.progress-dots__dot--step:disabled { cursor: default; }
 
 /* ── InlineBanner ────────────────────────────────────────────────────
    The tinted strip under a page header. No precedent existed anywhere. */

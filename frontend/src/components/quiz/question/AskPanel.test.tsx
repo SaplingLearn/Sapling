@@ -89,6 +89,17 @@ describe("composeAskMessage", () => {
   });
 });
 
+describe("composeAskMessage — a typed answer", () => {
+  it("says what was written, without option letters", () => {
+    const msg = composeAskMessage({
+      ...SEED, written: true, chosenLabel: "", chosenText: "4", correctLabel: "", correctText: "2",
+    });
+    expect(msg).toContain("I wrote: 4");
+    expect(msg).toContain("The correct answer is: 2");
+    expect(msg).not.toMatch(/I chose|is :/);
+  });
+});
+
 describe("AskPanel", () => {
   it("opens a session on the concept, then sends the composed context", async () => {
     renderPanel();

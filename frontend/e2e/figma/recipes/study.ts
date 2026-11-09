@@ -919,7 +919,7 @@ export const RECIPES_STUDY: RecipeBook = {
     run: async (page) => {
       await startQuiz(page, { feedback: "as-you-go" });
       await answerShown(page, 0, "B");
-      await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+      await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
       await visible(page, "quiz-next");
     },
   },

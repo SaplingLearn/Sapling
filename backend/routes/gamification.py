@@ -30,7 +30,7 @@ from services.http_cache import (
     conditional,
     make_etag,
 )
-from services.profiles import get_display_names
+from services.profiles import LIVE_USER_FILTER, get_display_names
 from services.streak_service import effective_streak
 
 router = APIRouter()
@@ -126,6 +126,15 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     hidden = _private_ids() - {user_id} if scope in ("everyone", "school") else set()
 
     ids = [k for k in weekly if k not in hidden]
+    # Live accounts only (#115): a soft-deleted student keeps their xp_events,
+    # but must not keep a place (or a name) on anyone's board. The read the
+    # rows need anyway decides it, BEFORE ranking, so ranks have no gaps.
+    users = table("users").select(
+        "id,level,total_xp,streak_count,last_active_date",
+        filters={"id": f"in.({','.join(ids)})", **LIVE_USER_FILTER},
+    ) if ids else []
+    by_id = {u["id"]: u for u in users or []}
+    ids = [i for i in ids if i in by_id or i == user_id]
     ranked = sorted(ids, key=lambda i: (-weekly.get(i, 0), i))
 
     # The ETag has to key on the ranking ITSELF, not on (count, total). Those
@@ -147,11 +156,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     if not_mod:
         return not_mod
 
-    users = table("users").select(
-        "id,level,total_xp,streak_count,last_active_date", filters={"id": f"in.({','.join(ids)})"}
-    ) if ids else []
     names = get_display_names(ids) if ids else {}
-    by_id = {u["id"]: u for u in users or []}
     rows, you = [], None
     for rank, uid in enumerate(ranked, start=1):
         u = by_id.get(uid, {})

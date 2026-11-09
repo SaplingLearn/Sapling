@@ -6,7 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 
-export const SESSION_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000;
+export const SESSION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
 
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions.

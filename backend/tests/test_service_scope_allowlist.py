@@ -33,6 +33,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "/api/admin/documents admin_documents_router", "admin_service_route"):
         "stuck-index listing + forced re-index (index_* lease, shared chunks)",
     ("main.py", "/api/admin/email admin_email_router", "admin_service_route"): "email_* tables are service-only",
+    ("main.py", "/api/admin/jobs admin_jobs_router", "admin_service_route"):
+        "#116 queue depth + dead letters (jobs is service-only)",
+    ("main.py", "/api/admin/llm admin_llm_router", "admin_service_route"):
+        "#119 llm_budgets / llm_usage are service-only",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
     ("main.py", "/api/auth auth.router", "service_route"):
@@ -59,7 +63,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "check_username", "service_route"): "unauthenticated; looks at other users' usernames",
     ("routes/profile.py", "get_public_profile", "service_route"):
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
-    ("routes/profile.py", "get_roles", "service_route"): "public roles of any user",
+    ("routes/profile.py", "get_roles", "service_route"):
+        "roles of any live user; needs a session (anonymous is a 401)",
     ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("routes/quiz.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
@@ -87,6 +92,22 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "class stats over every classmate (silently wrong under a user scope)",
     ("services/document_indexing.py", "index_document", "runs_as_service"):
         "owns documents.index_* lease + shared course_chunks",
+    ("services/document_jobs.py", "stage_upload", "runs_as_service"):
+        "#116 document_uploads is service-only (bucket E): staged upload bytes",
+    ("services/document_jobs.py", "enqueue_process", "runs_as_service"):
+        "#116 jobs + document_uploads are service-only",
+    ("services/document_jobs.py", "take_back", "runs_as_service"): "#116 document_uploads stage swap",
+    ("services/document_jobs.py", "read_status", "runs_as_service"): "#116 document_uploads progress poll",
+    ("services/document_jobs.py", "read_result", "runs_as_service"): "#116 document_uploads outcome",
+    ("services/document_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
+    ("services/document_jobs.py", "fail_if_running", "runs_as_service"):
+        "#116 document_uploads: record a dead-lettered job",
+    ("services/document_jobs.py", "clear_result", "runs_as_service"):
+        "#116 document_uploads: drop a delivered outcome",
+    ("services/document_jobs.py", "finish_inline", "runs_as_service"):
+        "#116 document_uploads: record an inline run's outcome",
+    ("services/documents_read.py", "saved_document", "runs_as_service"):
+        "#116 reads back the uploader's own row the worker saved (select * incl. index columns)",
     ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions",
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",
     ("services/email_service.py", "send_email", "runs_as_service"): "email_sends/email_suppressions",
@@ -97,9 +118,34 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
     ("services/feature_flags.py", "_user_roles", "service_scope"): "flag store (decides db_user_scope itself)",
     ("services/feature_flags.py", "read_config", "service_scope"): "flag store (decides db_user_scope itself)",
+    ("services/feature_flags.py", "_read_version", "service_scope"):
+        "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
+        "#116 gradescope_syncs is service-only (bucket E): staged sync",
+    ("services/gradescope_jobs.py", "enqueue_sync", "runs_as_service"):
+        "#116 jobs + gradescope_syncs are service-only",
+    ("services/gradescope_jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
+    ("services/gradescope_jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
+    ("services/gradescope_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
+    ("services/gradescope_jobs.py", "fail_if_running", "runs_as_service"):
+        "#116 gradescope_syncs: record a dead-lettered job",
+    ("services/gradescope_jobs.py", "finish_inline", "runs_as_service"):
+        "#116 gradescope_syncs: an inline run records its outcome",
+    ("services/gradescope_jobs.py", "latest_sync", "runs_as_service"):
+        "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/llm_budget.py", "read_status", "runs_as_service"):
+        "#119 llm_budgets / llm_usage are service-only (bucket E)",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
+    ("services/profiles.py", "live_user_ids", "runs_as_service"):
+        "other users' account state (deleted_at) for cross-user lists",
+    ("services/request_limits.py", "_claim_db", "service_scope"):
+        "#117 stateless_rate_limit: rate_limit_hits + claim_rate_limit() are service-only",
+    ("services/request_limits.py", "_aclaim_db", "service_scope"):
+        "#117 stateless_rate_limit: the async twin of _claim_db",
+    ("services/request_limits.py", "_refund_db", "service_scope"):
+        "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",

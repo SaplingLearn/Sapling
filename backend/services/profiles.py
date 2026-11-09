@@ -43,3 +43,27 @@ def get_display_names(user_ids: list[str]) -> dict[str, str]:
         if name:
             out[r["user_id"]] = name
     return out
+
+
+#: The `users` filter that keeps a cross-user read to LIVE accounts. Merge it
+#: into a read that already selects `users` rows; `live_user_ids` is the same
+#: rule for callers holding bare ids.
+LIVE_USER_FILTER = {"deleted_at": "is.null"}
+
+
+@runs_as_service  # #115: account state of OTHER users (leaderboard, rooms, friends)
+def live_user_ids(user_ids: list[str]) -> set[str]:
+    """The subset of `user_ids` that names a live account — not soft-deleted
+    (`users.deleted_at`), and present at all.
+
+    A deleted account keeps its rows (the delete is soft), so every list that
+    shows OTHER students — leaderboard, room members, friends, requests — has
+    to drop it here or it keeps appearing, name and graph included, after the
+    student deleted it (#115)."""
+    ids = list(dict.fromkeys(i for i in user_ids if i))
+    if not ids:
+        return set()
+    rows = table("users").select(
+        "id", filters={"id": f"in.({','.join(ids)})", **LIVE_USER_FILTER}
+    )
+    return {r["id"] for r in rows or []}

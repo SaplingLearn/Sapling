@@ -803,8 +803,10 @@ function FlashcardsMode({
     setGenerating(true);
     setDocsUsed(null);
     try {
-      // Term-scoped generation context: the selected term's course documents.
-      const r = await generateFlashcards(userId, topic, 5, semester || undefined);
+      // Term-scoped generation context: the selected term's course documents,
+      // resolved by the selected course's id (#829) — the name is only the
+      // prompt's label. A free-text topic sends no id.
+      const r = await generateFlashcards(userId, topic, 5, semester || undefined, course?.course_id);
       setDocsUsed(r.context_used?.documents_found ?? 0);
       // Keep the reviewer's place (#769): mid-deck, stay on the current card;
       // past the end, continue at the first new card. Only an empty deck

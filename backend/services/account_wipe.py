@@ -7,7 +7,7 @@ and resets the gamification counters. It never deletes the `users` row.
 Deleted (directly, or through the FK cascades noted):
 
 * enrollments → gradebook_categories, assignments, gradescope_course_links,
-  topic_checklists (→ topic_checklist_progress)
+  topic_checklists (→ topic_checklist_progress), gradescope_syncs
 * documents — chunks withdrawn FIRST via `chunk_visibility.withdraw_document_chunks`,
   then any private `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
@@ -66,6 +66,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("graph_nodes", "id"),
     ("xp_events", "id"),
     ("user_achievements", "achievement_id"),
+    # #116 staged uploads (the queued pipeline's transient rows). Wiped, never
+    # copied: a staged upload is in-flight work, not account data — a finished
+    # one is already a `documents` row, which the bundle copies.
+    ("document_uploads", "id"),
 )
 
 #: Every table the wipe deletes from directly.
@@ -80,6 +84,7 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "gradebook_categories": "enrollments",
     "assignments": "enrollments",
     "gradescope_course_links": "enrollments",
+    "gradescope_syncs": "enrollments",  # #116 queued-sync bookkeeping
     "topic_checklists": "enrollments",
     "topic_checklist_progress": "topic_checklists",
     "graph_edges": "graph_nodes",

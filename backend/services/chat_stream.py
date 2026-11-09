@@ -25,8 +25,31 @@ from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from services.agent_events import SaplingEvent
+from services.llm_budget import budget_error_in
 
 logger = logging.getLogger(__name__)
+
+
+def _budget_event(exc: BaseException, request_id: str) -> SaplingEvent | None:
+    """#119: the terminal `error` for a run the per-user LLM budget refused
+    (services/llm_budget.py), or None for any other failure. Refused before
+    the run's first model request, so nothing streamed or was written; and
+    `retryable: False`, because a re-send (or the client's JSON rung) hits the
+    same budget until it resets."""
+    budget = budget_error_in(exc)
+    if budget is None:
+        return None
+    return SaplingEvent(
+        type="error",
+        step="reply",
+        message=budget.detail,
+        data={
+            "request_id": request_id,
+            "retryable": False,
+            "code": budget.code,
+            "reset_at": budget.reset_at_iso,
+        },
+    )
 
 
 def _managed(stream: Any) -> Any:
@@ -162,6 +185,10 @@ async def _rung1_fallback_events(
     try:
         fallback_result = await nonstream_fallback()
     except Exception as exc:
+        budget_event = _budget_event(exc, request_id)
+        if budget_event is not None:
+            yield budget_event
+            return
         logger.exception("Nonstream fallback also failed")
         # PR #472 review: the fallback is itself a tool-calling agent run.
         # If ITS tools wrote graph/mastery before it failed, a client retry
@@ -335,6 +362,10 @@ async def stream_agent_turn(
     # NOT BaseException: asyncio.CancelledError must propagate so a client
     # disconnect stays a cancellation — never a fallback re-run.
     except Exception as exc:
+        budget_event = _budget_event(exc, request_id)
+        if budget_event is not None:
+            yield budget_event
+            return
         write_count = len(deps.graph_updates) + len(deps.mastery_changes)
         if chunks:
             # Rung 2: text already shown. Never silently re-run — the user

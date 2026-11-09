@@ -143,7 +143,12 @@ def _material_fingerprint(user_id: str, offering_id: str) -> tuple[str, ...]:
 
 def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     """Generate a study guide, insert it into study_guides, and return
-    {content, generated_at}.
+    ``{id, content, generated_at, cached}``.
+
+    ``cached`` is False when the #771 stale-material check took the new row
+    back out (the documents changed mid-generation): the student still gets
+    ``content``, but no row with ``id`` exists, so a caller must not treat
+    the new guide as having replaced anything.
 
     Study guides + the documents that feed them key on the OFFERING (0025);
     the caller resolves the abstract course id to an offering first.
@@ -268,14 +273,43 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     # invalidation may already have run — take the stale row back out so the
     # next request regenerates from the current documents. The student still
     # gets this answer; it just is not cached.
+    cached = True
     if _material_fingerprint(user_id, offering_id) != material:
         logger.info(
             "study guide for offering %s generated across a document change; "
             "not caching it", offering_id,
         )
         table("study_guides").delete(filters={"id": f"eq.{row['id']}"})
+        cached = False
 
-    return {"content": content, "generated_at": now}
+    return {"id": row["id"], "content": content, "generated_at": now, "cached": cached}
+
+
+def _drop_older_guides(user_id: str, offering_id: str, exam_id: str, newer_than: str) -> None:
+    """Best-effort: delete this key's guides generated BEFORE ``newer_than``
+    (the just-inserted row's ``generated_at``).
+
+    Keyed on time, not ``id=neq.<new id>``: the per-key lock is per-process,
+    so two workers can regenerate the same guide concurrently, and with
+    ``neq`` each would delete the OTHER's new row — leaving zero guides.
+    With ``lt.<own generated_at>`` a row never deletes itself, so at least
+    one new guide always survives. A failure here only leaves an older
+    duplicate behind (reads take the newest), so it must never turn a
+    successful, already-paid generation into a 500."""
+    try:
+        table("study_guides").delete(
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"eq.{offering_id}",
+                "exam_id": f"eq.{exam_id}",
+                "generated_at": f"lt.{newer_than}",
+            }
+        )
+    except Exception:
+        logger.warning(
+            "study guide regenerate: could not drop older guides for offering %s exam %s",
+            offering_id, exam_id, exc_info=True,
+        )
 
 
 @router.get("/{user_id}/cached")
@@ -445,12 +479,13 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
         )
     flight = _guide_lock(user_id, offering_id, exam_id)
     with flight.lock:
-        table("study_guides").delete(
-            filters={
-                "user_id": f"eq.{user_id}",
-                "offering_id": f"eq.{offering_id}",
-                "exam_id": f"eq.{exam_id}",
-            }
-        )
+        # Generate FIRST, replace after: _generate_and_insert validates the exam
+        # (404 for a missing/foreign one) and raises 502 on a failed generation,
+        # and either must leave the student's existing guide in place. Only once
+        # the new row is in do the older rows for this key go — and not at all
+        # when the #771 stale-material check dropped the new row (deleting the
+        # old ones then would leave the student with no guide).
         result = _generate_and_insert(user_id, offering_id, exam_id)
+        if result["cached"]:
+            _drop_older_guides(user_id, offering_id, exam_id, result["generated_at"])
     return {"success": True, "guide": result["content"], "generated_at": result["generated_at"]}

@@ -279,6 +279,27 @@ describe("Study flashcards — review session state (#769)", () => {
     expect(await screen.findByText("Card 1 of 2")).toBeTruthy();
   });
 
+  it("generating for a selected course sends that course's id (#829)", async () => {
+    mockedCourses.mockResolvedValue({ courses: [course("c1", "CS101", "Intro to CS")] });
+    mockedGenerate.mockResolvedValue({ flashcards: [card("n")], context_used: { documents_found: 2, weak_concepts_found: 0 } });
+    renderStudy();
+    await screen.findByText("Card 1 of 2");
+    await userEvent.click(await screen.findByRole("button", { name: /CS101/ }));
+    await userEvent.click(screen.getByRole("button", { name: /generate cards/i }));
+    await waitFor(() => expect(mockedGenerate).toHaveBeenCalled());
+    expect(mockedGenerate).toHaveBeenCalledWith("u1", "Intro to CS", 5, undefined, "c1");
+  });
+
+  it("a free-text topic sends no course id (#829)", async () => {
+    mockedGenerate.mockResolvedValue({ flashcards: [card("n")], context_used: { documents_found: 0, weak_concepts_found: 0 } });
+    renderStudy();
+    await screen.findByText("Card 1 of 2");
+    await userEvent.click(screen.getByRole("button", { name: /^Bio$/ }));
+    await userEvent.click(screen.getByRole("button", { name: /generate cards/i }));
+    await waitFor(() => expect(mockedGenerate).toHaveBeenCalled());
+    expect(mockedGenerate).toHaveBeenCalledWith("u1", "Bio", 5, undefined, undefined);
+  });
+
   it("generating new cards keeps the current position", async () => {
     mockedRate.mockResolvedValue({ ok: true });
     renderStudy();

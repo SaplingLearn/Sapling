@@ -10,6 +10,8 @@ policies, whose identity anchor is ``app_auth.uid()`` (``sub``, but only when
 
 Claims (plan §2.1): ``iss=sapling-api, sub=<users.id>, role=authenticated,
 aud=authenticated, iat, exp=iat+300``. The token never leaves the backend.
+The one browser-bound token, :func:`mint_realtime` (RLS step 2e, flag
+``realtime_rls``), has its own issuer that only room_messages SELECT trusts.
 
 Key: ``SUPABASE_JWT_SIGNING_KEY`` holds ONE JWK (JSON). ``kty: oct`` signs
 HS256 with its ``k`` (local + CI: the Supabase CLI's default secret);
@@ -45,6 +47,18 @@ TOKEN_TTL_S = 300
 #: never sends one that expires mid-flight (PostgREST checks exp per request).
 REFRESH_MARGIN_S = 60
 _TOKEN_CACHE_MAX = 10_000
+
+#: RLS step 2e (docs/security/realtime-jwt-bridge-design.md): the token the
+#: BROWSER's Supabase Realtime client authenticates with. A different issuer
+#: on purpose: only ``app_auth.realtime_uid()`` trusts it, and the only policy
+#: using that is SELECT on room_messages (members only), so a token lifted out
+#: of the page reads its own rooms' messages and nothing else.
+#: ``app_auth.uid()`` (every other policy) keeps rejecting it.
+REALTIME_ISSUER = "sapling-realtime"
+#: Lifetime of one realtime token (design doc: ~1 hour). The client re-fetches
+#: before ``exp`` and calls ``realtime.setAuth`` again; Realtime closes a
+#: channel whose token has expired.
+REALTIME_TOKEN_TTL_S = 3600
 
 
 class SigningKeyError(RuntimeError):
@@ -161,6 +175,20 @@ def _now() -> int:
 
 def mint(subject: str, *, now: int | None = None) -> str:
     """Sign a fresh token for ``subject`` (a users.id). Uncached."""
+    return _sign(subject, ISSUER, TOKEN_TTL_S, now)[0]
+
+
+def mint_realtime(subject: str, *, now: int | None = None) -> tuple[str, int]:
+    """Sign a browser Realtime token for ``subject``: ``(token, exp)``.
+    Uncached (one per GET /api/auth/realtime-token, about one an hour per open
+    study room). Same key as :func:`mint`; ``iss`` is REALTIME_ISSUER. ``exp``
+    is the claim actually signed into the token, never recomputed, so the
+    ``expires_at`` the browser schedules its refresh on cannot drift from it."""
+    return _sign(subject, REALTIME_ISSUER, REALTIME_TOKEN_TTL_S, now)
+
+
+def _sign(subject: str, issuer: str, ttl_s: int, now: int | None) -> tuple[str, int]:
+    """Sign one token; returns ``(token, exp)`` with ``exp`` the signed claim."""
     if not subject or not isinstance(subject, str):
         raise ValueError("a user-scoped token needs a subject")
     key = signing_key()
@@ -169,15 +197,15 @@ def mint(subject: str, *, now: int | None = None) -> str:
     if key.kid:
         header["kid"] = key.kid
     claims = {
-        "iss": ISSUER, "sub": subject, "role": ROLE, "aud": AUDIENCE,
-        "iat": iat, "exp": iat + TOKEN_TTL_S,
+        "iss": issuer, "sub": subject, "role": ROLE, "aud": AUDIENCE,
+        "iat": iat, "exp": iat + ttl_s,
     }
     signing_input = (
         _b64url(json.dumps(header, separators=(",", ":")).encode())
         + "."
         + _b64url(json.dumps(claims, separators=(",", ":")).encode())
     )
-    return signing_input + "." + _b64url(key.sign(signing_input.encode()))
+    return signing_input + "." + _b64url(key.sign(signing_input.encode())), claims["exp"]
 
 
 def token_for(subject: str) -> str:

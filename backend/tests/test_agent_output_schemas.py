@@ -64,6 +64,8 @@ EXPECTED_STRUCTURED_AGENTS = {
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",
+    "concept_edges_agent",
+    "concept_prune_agent",
     "concept_scan_agent",
     "course_summary_agent",
     "decision_agent",
