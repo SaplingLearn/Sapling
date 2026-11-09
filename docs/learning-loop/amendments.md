@@ -19,10 +19,11 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A142. **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A148. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
-they would be). There are 132 rows, all indexed below.
+they would be). A143–A147 are reserved for the quiz in the learning system,
+a separate package. There are 133 rows, all indexed below.
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
 
@@ -202,7 +203,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A111 | providers | The loop slots are Claude-ready; their defaults stay on Gemini until a live Claude eval passes | `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` |
 | A137 | cost | Cost readiness for the Claude move, and the loop's cost per learning gain | `backend/learning/cost_per_gain.py::cost_per_gain` |
 
-### Operations and process (21)
+### Operations and process (22)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -227,6 +228,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A135 | a11y | The student UI is accessible, and an axe lane keeps it so | `frontend/e2e/a11y.spec.ts` |
 | A136 | schema | Every float the backend reads through PostgREST is exact | `backend/db/migrations/20261108162223_learning_exact_floats.sql` |
 | A142 | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) | `backend/db/migrations/20261108193927_learning_report_course_key.sql` |
+| A148 | main sync | The loop on main's hardening architecture: its tables' RLS posture, service scope, the upload job queue, the LLM budget and resilience | `backend/db/migrations/20261109032302_learning_loop_rls.sql` |
 
 ## In A-number order
 
@@ -364,6 +366,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A140 | Item quality | surface | Surface-varied isomorphs and the cue-familiarity dial, behind the `varied_isomorphs` flag |
 | A141 | Item quality | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag |
 | A142 | Operations and process | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) |
+| A148 | Operations and process | main sync | The loop on main's hardening architecture (RLS posture, service scope, job queue, LLM budget, resilience) |
 
 ## Where the spec and the code disagree
 
