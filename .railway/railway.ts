@@ -36,6 +36,13 @@ const BRANCH_FOR: Record<string, string> = { production: "production" };
 const DEFAULT_BRANCH = "main";
 /** Keep false until the runbook's step 6. */
 const MANAGE_API = false;
+/** API replicas (#117). TWO only once the cut-over flags are on, in the order
+ * docs/deploy/railway.md "Two API replicas" gives: stateless_rate_limit,
+ * stateless_locks, stateless_tutor_sessions (async_db_client optional). With
+ * any of them off, a second replica splits that state per process (rate
+ * budgets double, locks stop excluding, tutor sessions 404 on the other
+ * replica). Rollback = set this back to 1. Applies only with MANAGE_API. */
+const API_REPLICAS = 2;
 
 /** Variables the worker takes from the API service, by reference (no secret
  * is written here, and the two cannot drift). Derived by grepping every
@@ -182,6 +189,8 @@ export default defineRailway((ctx) => {
       source,
       start: "uvicorn main:app --host 0.0.0.0 --port 5000",
       healthcheck: "/api/health",
+      // Takes effect only after the cut-over flags are on (API_REPLICAS).
+      replicas: API_REPLICAS,
       env: {
         // `full` (the default when unset) until the cut-over in the runbook;
         // then `api`: no torch, no Docling, no Chromium.
