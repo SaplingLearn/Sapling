@@ -104,7 +104,8 @@ const HANDLER_VARIABLES = [
  * the worker too, or the queue keeps doing what the API was told to stop.
  * The nav `hide_*` flags are frontend-only and left out. Includes the flags
  * the stack above this branch adds (llm_budget, llm_outage_drill,
- * async_db_client, stateless_rate_limit), so it is right at every step. */
+ * async_db_client, stateless_rate_limit, stateless_locks), so it is right at
+ * every step. */
 const FLAG_KILL_SWITCHES = [
   "decision_router",
   "product_analytics",
@@ -116,6 +117,7 @@ const FLAG_KILL_SWITCHES = [
   "llm_outage_drill",
   "async_db_client",
   "stateless_rate_limit",
+  "stateless_locks",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

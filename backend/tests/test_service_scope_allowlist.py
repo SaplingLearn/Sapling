@@ -146,6 +146,13 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_rate_limit: the async twin of _claim_db",
     ("services/request_limits.py", "_refund_db", "service_scope"):
         "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
+    ("services/pg_lease.py", "_claim_db", "service_scope"):
+        "#117 stateless_locks: app_leases + claim_lease() are service-only",
+    ("services/pg_lease.py", "_aclaim_db", "service_scope"): "#117 stateless_locks: async twin of _claim_db",
+    ("services/pg_lease.py", "_release_db", "service_scope"):
+        "#117 stateless_locks: release_lease() drops the caller's own lease",
+    ("services/pg_lease.py", "_arelease_db", "service_scope"):
+        "#117 stateless_locks: async twin of _release_db",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",

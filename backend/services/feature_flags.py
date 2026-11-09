@@ -182,6 +182,14 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("stateless_rate_limit", ("off", "on"),
             "Keep rate-limit counters in Postgres so every replica shares one "
             "budget. Global: per-user rules and rollouts do not apply.", False),
+    # #117 wave 3: the per-process locks (study-guide single-flight, admin
+    # account operations, consumed OAuth nonces) also take a Postgres lease
+    # (`claim_lease()`, services/pg_lease.py), so they hold across replicas.
+    # Resolved GLOBALLY. Off = today's in-process locks only; on keeps them as
+    # the first layer, and a failing DB falls back to them. Server-only.
+    FlagDef("stateless_locks", ("off", "on"),
+            "Back the per-process locks with Postgres leases so they hold "
+            "across replicas. Global: per-user rules and rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

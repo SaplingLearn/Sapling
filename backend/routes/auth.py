@@ -39,7 +39,7 @@ from config import (
     ALLOWED_EMAIL_DOMAINS,
 )
 from db.connection import like_literal, pg_quote_value, table
-from services import email_service, events_service
+from services import email_service, events_service, pg_lease
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
 from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
@@ -330,10 +330,9 @@ _OAUTH_FALLBACK_STORE: dict[str, tuple[float, dict]] = {}
 # #756: OAuth state nonces the callback has already accepted, nonce → monotonic
 # expiry. The state cookie is cleared on every callback response, but a client
 # that ignores (or an attacker that captured) the cookie could otherwise replay
-# the same state for the cookie's whole max-age. Each nonce is honoured once.
-# Per-process: the backend runs one uvicorn process (backend/Dockerfile), and
-# Google's authorization code is itself single-use, so this is the second lock,
-# not the only one. Entries expire with the cookie, so the set stays bounded.
+# the same state for the cookie's whole max-age. Each nonce is honoured once:
+# here, and (`stateless_locks`, services/pg_lease.py) on every replica via a
+# never-released lease on the nonce's HASH. Google's code is itself single-use.
 _CONSUMED_OAUTH_NONCES: dict[str, float] = {}
 _CONSUMED_OAUTH_NONCES_LOCK = threading.Lock()
 
@@ -347,7 +346,8 @@ def _consume_oauth_nonce(nonce: str) -> bool:
         if nonce in _CONSUMED_OAUTH_NONCES:
             return False
         _CONSUMED_OAUTH_NONCES[nonce] = now + _OAUTH_COOKIE_MAX_AGE
-    # The local-dev unsigned fallback keeps the state server-side too: drop it.
+    if pg_lease.consume_once(pg_lease.hashed_key("oauth_nonce", nonce), _OAUTH_COOKIE_MAX_AGE) is False:
+        return False  # consumed on another replica
     _OAUTH_FALLBACK_STORE.pop(nonce, None)
     return True
 

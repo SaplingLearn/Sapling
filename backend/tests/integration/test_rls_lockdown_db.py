@@ -376,6 +376,7 @@ BACKEND_RPCS = frozenset({
     "canopy_metrics",                # routes/internal_metrics.py (METRICS_RPC)
     "claim_documents_for_indexing",  # services/index_sweeper.py
     "claim_jobs",                    # services/jobs.py (#116)
+    "claim_lease",                   # services/pg_lease.py (#117, stateless_locks)
     "claim_rate_limit",              # services/request_limits.py (#117, stateless_rate_limit)
     "complete_job",                  # services/jobs.py (#116)
     "enqueue_job",                   # services/jobs.py (#116)
@@ -387,6 +388,7 @@ BACKEND_RPCS = frozenset({
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
     "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
     "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
+    "release_lease",                 # services/pg_lease.py (#117, stateless_locks)
 })
 
 APP_AUTH_FUNCTIONS = frozenset({
