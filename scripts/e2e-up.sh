@@ -207,12 +207,22 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
   || echo "  ⚠ backend/.env APP_ENV is not local/test — /api/auth/test-login will 404 for E2E harnesses"
 # RLS step 2e: study-room live chat subscribes ONLY with the backend-minted
 # Realtime token (room_messages has RLS on and no anon SELECT), signed with
-# SUPABASE_JWT_SIGNING_KEY; every slot's Realtime trusts the oct key in
-# backend/.env.local.example (the CLI default secret). Without it
-# GET /api/auth/realtime-token answers 503, rooms are REST-only, and
-# study-room.spec.ts cannot see live messages.
+# SUPABASE_JWT_SIGNING_KEY. Without it GET /api/auth/realtime-token answers
+# 503, rooms are REST-only, and study-room.spec.ts cannot see live messages.
+# Every stack this script boots runs the Supabase CLI's default JWT secret,
+# whose oct JWK backend/.env.local.example carries, so when neither the shell
+# nor backend/.env sets the key, export that demo key — the same way the slot
+# setup exports its URLs (an exported variable beats backend/.env, since
+# python-dotenv never overrides one). It is the public CLI demo secret, never
+# a real project's.
 if [ -z "${SUPABASE_JWT_SIGNING_KEY:-}" ] && ! grep -qE '^SUPABASE_JWT_SIGNING_KEY=.+' backend/.env; then
-  echo "  ⚠ SUPABASE_JWT_SIGNING_KEY is unset in backend/.env — study rooms get no live chat; copy it (and SUPABASE_ANON_KEY) from backend/.env.local.example"
+  DEMO_JWT_SIGNING_KEY="$(grep -E '^SUPABASE_JWT_SIGNING_KEY=.+' backend/.env.local.example | tail -n1 | cut -d= -f2- | tr -d '\r')"
+  if [ -z "$DEMO_JWT_SIGNING_KEY" ]; then
+    echo "✗ SUPABASE_JWT_SIGNING_KEY is unset in backend/.env and missing from backend/.env.local.example — study rooms would get no live chat. Set it in backend/.env."
+    exit 1
+  fi
+  export SUPABASE_JWT_SIGNING_KEY="$DEMO_JWT_SIGNING_KEY"
+  echo "  ℹ SUPABASE_JWT_SIGNING_KEY unset in backend/.env — using the local demo key from backend/.env.local.example (RLS step 2e live chat)"
 fi
 # e2e-up deliberately does NOT set the LLM-seam envs — a live-model stack is
 # legitimate. But the deterministic lanes need them, so leave a pointer when

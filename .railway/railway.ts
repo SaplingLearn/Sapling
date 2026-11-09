@@ -121,6 +121,10 @@ const FLAG_KILL_SWITCHES = [
   "llm_fallback",
   "jobs_queue",
   "db_user_scope",
+  // Kept only while realtime_rls stays registered for old frontend bundles
+  // (backend/services/feature_flags.py); never set it to off. Deleted with
+  // the flag in the follow-up.
+  "realtime_rls",
   "llm_budget",
   "llm_outage_drill",
   "async_db_client",

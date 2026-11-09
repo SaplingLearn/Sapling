@@ -500,6 +500,12 @@ async def local_seed_status(request: Request):
 
 # ── GET /api/auth/realtime-token (RLS step 2e) ────────────────────────────────
 
+#: ``detail.code`` of the ONE 503 the browser treats as "no live chat for this
+#: page session" (frontend/src/lib/realtimeAuth.ts): the signing key is unset
+#: or unusable, which no retry can fix. Every other 5xx on this route (the
+#: session guard's account-state read, a restart, a cold start) carries no
+#: such code, and the client retries it with backoff.
+REALTIME_UNCONFIGURED = "realtime_unconfigured"
 
 @router.get("/realtime-token")
 def realtime_token(request: Request):
@@ -515,11 +521,14 @@ def realtime_token(request: Request):
     which no other policy trusts. Answers ``{token, expires_at}`` (unix
     seconds); the client re-fetches before ``expires_at``.
 
-    401/403 without a live, approved session; 503 when
-    SUPABASE_JWT_SIGNING_KEY is unset or unusable (fail closed: never a
-    service-role or anon fallback; the room then works over REST only).
-    ``no-store``: it is a credential. No feature flag: ``realtime_rls``
-    graduated with the anon path's removal.
+    401/403 without a live, approved session; 503 with
+    ``detail.code == "realtime_unconfigured"`` when SUPABASE_JWT_SIGNING_KEY
+    is unset or unusable (fail closed: never a service-role or anon fallback;
+    the room then works over REST only). Any other 503 (e.g. the guard could
+    not read the account) is transient and has no such code. ``no-store``: it
+    is a credential. No feature flag: the endpoint stopped reading
+    ``realtime_rls`` with the anon path's removal (the flag stays registered
+    one release for old bundles only; see services/feature_flags.py).
     """
     from db import user_jwt
 
@@ -528,7 +537,13 @@ def realtime_token(request: Request):
         token, expires_at = user_jwt.mint_realtime(user_id)
     except user_jwt.SigningKeyError as exc:
         logger.warning("realtime-token: cannot mint (%s)", exc)
-        raise HTTPException(status_code=503, detail="Realtime authorization is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": REALTIME_UNCONFIGURED,
+                "message": "Realtime authorization is not configured",
+            },
+        )
     return JSONResponse(
         {"token": token, "expires_at": expires_at},
         headers={"Cache-Control": "private, no-store"},

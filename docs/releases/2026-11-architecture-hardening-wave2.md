@@ -254,7 +254,7 @@ role rule, rollout, default (§8.1 for what that means for turning one off).
 
 | Flag | From | Variants | Scope | Client-visible | Kill switch |
 |---|---|---|---|---|---|
-| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off`. **Retired since** (after it reached default `on` on staging and prod): the anon path is gone, so there is no flag and no kill switch; see step 1 below. |
+| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off`. **Retired in code since** (after it reached default `on` on staging and prod): the anon path is gone and nothing new reads it. It stays registered, client-visible and default `on` for one release, only so bundles older than that change keep live chat; **never set it `off`** (it would push those bundles onto the dead anon path). Deleted with its stored rows in a follow-up; see step 1 below. |
 | `llm_budget` | #838 | off / on | Per user (role rules and rollouts apply) | no | `SAPLING_FLAG_LLM_BUDGET=off` |
 | `llm_outage_drill` | #838 | off / anthropic / google / both | **Global** (`user_id=None`) | no | Unset `SAPLING_FLAG_LLM_OUTAGE_DRILL`, default `off`. Refused in `APP_ENV=production` (also what an unset `APP_ENV` means) unless `SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes`. A flag-store outage resolves to `off`, so the store can never arm it. |
 | `async_db_client` | #839 | off / on | Per user, resolved once per request | no | `SAPLING_FLAG_ASYNC_DB_CLIENT=off` |
@@ -292,8 +292,10 @@ on staging before prod:
    steps 4–5 landed as one change instead of a manual step:
    `20261109073255_room_messages_rls_enable.sql` (the SQL above, idempotent;
    a no-op on prod, changes staging when it migrates), the client's anon
-   subscription path removed, and `realtime_rls` retired from the registry
-   and `.railway/railway.ts`. Nothing manual is left.
+   subscription path removed, and nothing reads `realtime_rls` any more. It
+   stays registered (and in `.railway/railway.ts`) one release for old
+   bundles; a follow-up deletes it and its stored rows. Nothing manual is
+   left.
 2. **`llm_budget`.** Check the seeded default first:
    `GET /api/admin/llm/budgets` (2,000,000 tokens per UTC day, a runaway guard,
    not a study limit). Ladder: admins, then 10/50/100%. Watch 429s with
@@ -540,8 +542,9 @@ The stages: preflight, **backup**, snapshot, migrate (the irreversible step:
      targets, set the rollout to 0, **and** set the default to `off`. With
      #839 each process notices within about 5 s under traffic (the version
      check), never later than its 30 s snapshot.
-   - `realtime_rls` is retired (§4, step 1), so `SAPLING_FLAG_REALTIME_RLS`
-     above is now ignored and there is no flag to turn off. Rolling live chat
+   - `realtime_rls` is retired in code (§4, step 1): the token endpoint and
+     the new client ignore it, and `SAPLING_FLAG_REALTIME_RLS=off` would
+     only break old bundles, so there is no flag to turn off. Rolling live chat
      back to the anon key means reverting the change that retired it (it
      restores the anon subscription path) and then, on staging only, the
      reverse SQL in `20261109073255_room_messages_rls_enable.sql`

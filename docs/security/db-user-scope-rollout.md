@@ -378,8 +378,10 @@ TRUNCATE/REFERENCES/TRIGGER the June lockdown left go too; step 2a had
 already taken them), authenticated exactly SELECT, gated by the member
 policy. It is a no-op on prod (RLS on since June, anon already revoked) and
 changes staging when it migrates. The same change removed the client's anon
-subscription path and retired the `realtime_rls` flag. Nothing is left to do
-by hand. Rollback: revert that change, then (staging only, never prod) `GRANT
+subscription path and stopped reading the `realtime_rls` flag; the flag
+stays registered (stored default `on`) for one release so frontend bundles
+older than the change keep live chat, and a follow-up deletes it with its
+stored rows. Nothing is left to do by hand. Rollback: revert that change, then (staging only, never prod) `GRANT
 SELECT ON public.room_messages TO anon; ALTER TABLE public.room_messages
 DISABLE ROW LEVEL SECURITY;`.
 

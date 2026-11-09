@@ -7,11 +7,16 @@ patched and the signing key is a test JWK. What is pinned:
   app_auth.uid() trusts), sub = the session user, role/aud authenticated,
   exp = iat + REALTIME_TOKEN_TTL_S, signed with SUPABASE_JWT_SIGNING_KEY
   (HS256 verified here; ES256 shares the signer with mint());
-* the gate: no session -> 401, key unset/unusable -> 503 (fail closed),
+* the gate: no session -> 401, key unset/unusable -> 503 with
+  ``detail.code == "realtime_unconfigured"`` (fail closed; the ONE reason the
+  browser stops asking for the page session), a transient 503 (the session
+  guard's account-state read) carries no such code,
   ``Cache-Control: private, no-store``;
-* no flag: ``realtime_rls`` graduated (the anon Realtime path is gone and
-  room_messages has RLS on everywhere), so an env override left behind on a
-  deploy cannot switch the endpoint off;
+* no flag: the endpoint and Social.tsx stopped reading ``realtime_rls`` (the
+  anon Realtime path is gone and room_messages has RLS on everywhere), so an
+  env override left behind on a deploy cannot switch the endpoint off. The
+  flag itself stays registered and client-visible for one release, for
+  frontend bundles older than this change;
 * mint() for the backend's own token is unchanged by the refactor.
 """
 from __future__ import annotations
@@ -175,11 +180,17 @@ def test_no_session_is_401_and_mints_nothing(monkeypatch):
     mint.assert_not_called()
 
 
+def _detail_code(r) -> str | None:
+    detail = r.json().get("detail")
+    return detail.get("code") if isinstance(detail, dict) else None
+
+
 def test_unset_signing_key_fails_closed_503(monkeypatch):
     with _signed_in():
         r = client.get(URL)
     assert r.status_code == 503
-    assert "token" not in r.text
+    assert "token" not in r.json()
+    assert _detail_code(r) == "realtime_unconfigured"
 
 
 @pytest.mark.parametrize("bad", ["not json", '{"kty": "oct", "k": "c2hvcnQ"}', '{"kty": "RSA"}'])
@@ -188,14 +199,57 @@ def test_unusable_signing_key_fails_closed_503(monkeypatch, bad):
     with _signed_in():
         r = client.get(URL)
     assert r.status_code == 503
+    assert _detail_code(r) == "realtime_unconfigured"
 
 
-# ── The retired flag ────────────────────────────────────────────────────────
+def test_a_transient_503_is_not_the_unconfigured_reason(monkeypatch):
+    # The session guard 503s when it cannot read the account
+    # (services/auth_guard.py::account_state). The browser must retry that
+    # one, so it must not carry the code that stops live chat for the page.
+    from services import auth_guard
+
+    monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
+    auth_guard.clear_account_state_cache()
+    # conftest stubs the guard everywhere; run the real one for this request.
+    with patch("routes.auth.get_session_user_id", side_effect=auth_guard._real_get_session_user_id), \
+         patch("services.auth_guard._decode_session", return_value={"user_id": "user_rt"}), \
+         patch("services.auth_guard._read_account_state", side_effect=RuntimeError("db down")), \
+         patch.object(user_jwt, "mint_realtime") as mint:
+        r = client.get(URL)
+    assert r.status_code == 503
+    assert _detail_code(r) != "realtime_unconfigured"
+    assert "realtime_unconfigured" not in r.text
+    mint.assert_not_called()
 
 
-def test_realtime_rls_flag_is_retired():
-    # Retired with the anon path (frontend Social.tsx no longer reads it). Its
-    # stored feature_flags rows, if any, are ignored: resolution and the admin
-    # listing only ever walk REGISTRY.
-    assert "realtime_rls" not in ff.REGISTRY
-    assert ff.flag_variant("realtime_rls", "user_rt") == "off"
+# ── The flag kept for old bundles ───────────────────────────────────────────
+
+
+def test_realtime_rls_stays_registered_for_old_bundles():
+    # Kept one release so a browser on the previous bundle, which reads it
+    # from GET /api/flags and takes the (now dead) anon path unless it is
+    # "on", keeps live chat until it reloads. Deleted, with its stored rows,
+    # in the follow-up.
+    fd = ff.REGISTRY["realtime_rls"]
+    assert fd.client_visible
+    assert fd.variants == ("off", "on")
+
+
+def test_nothing_in_this_release_reads_realtime_rls():
+    # Only the registry may name the key as a value; a comment may mention it.
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    reads = re.compile(r"""["']realtime_rls["']|\.realtime_rls\b""")
+    offenders = []
+    sources = [p for p in (root / "backend").rglob("*.py")
+               if not ({"venv", ".venv", "tests", "site-packages"} & set(p.parts))]
+    sources += [p for ext in ("ts", "tsx") for p in (root / "frontend" / "src").rglob(f"*.{ext}")
+                if not re.search(r"\.test\.tsx?$", p.name)]
+    for path in sources:
+        if path.name == "feature_flags.py":
+            continue
+        if reads.search(path.read_text(encoding="utf-8", errors="replace")):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, f"new code must not read the old-bundle-only flag: {offenders}"

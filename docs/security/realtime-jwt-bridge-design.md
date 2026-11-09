@@ -4,7 +4,9 @@
 flag, switched on everywhere, then closed and pinned:
 `20261109073255_room_messages_rls_enable.sql` turns RLS on for
 `room_messages` and revokes anon on every environment, the anon subscription
-path is gone from the client, and the flag is retired. What was built, and
+path is gone from the client, and no code reads the flag any more (it stays
+registered, client-visible, one release for frontend bundles that predate
+this, then goes with its stored rows). What was built, and
 the enable sequence as it ran, are in "Step 2e (shipped)" at the end; the
 sections before it are the original design.
 
@@ -100,10 +102,10 @@ and raises on `user_<google id>`).
 | --- | --- |
 | Migration: `app_auth.realtime_uid()` (trusts `iss = sapling-realtime` only), SECURITY DEFINER `app_auth.is_room_member_realtime(room_id)`, policy `room_messages_select_member` (SELECT, TO authenticated: member via a `sapling-api` OR a `sapling-realtime` token), SELECT grant to authenticated only where RLS is already on | `backend/db/migrations/20261108210944_rls_room_messages_realtime.sql` |
 | Minting: `mint_realtime(sub)` → `(token, exp)`; claims `iss=sapling-realtime, sub, role=authenticated, aud=authenticated, iat, exp=iat+3600`; same key and signer as the user-scoped client (`SUPABASE_JWT_SIGNING_KEY`: oct JWK → HS256, EC P-256 JWK → ES256) | `backend/db/user_jwt.py` |
-| Endpoint: `GET /api/auth/realtime-token` → `{token, expires_at}`, `Cache-Control: private, no-store`. 401/403 without a live approved session; 503 when the signing key is unset or unusable (fail closed, no anon/service fallback). (It answered 404 while `realtime_rls` was off for the student, until the flag graduated.) | `backend/routes/auth.py` |
-| Flag `realtime_rls` (`off`/`on`, client-visible): RETIRED. It gated the endpoint and the client until step 5; it is no longer in the registry, and a left-over `SAPLING_FLAG_REALTIME_RLS` is ignored | (was `backend/services/feature_flags.py`) |
+| Endpoint: `GET /api/auth/realtime-token` → `{token, expires_at}`, `Cache-Control: private, no-store`. 401/403 without a live approved session; 503 with `detail.code = "realtime_unconfigured"` when the signing key is unset or unusable (fail closed, no anon/service fallback); any other 503 (e.g. the session guard's account read) carries no code and is transient. (It answered 404 while `realtime_rls` was off for the student, until the flag graduated.) | `backend/routes/auth.py` |
+| Flag `realtime_rls` (`off`/`on`, client-visible): RETIRED IN CODE, still registered for one release. It gated the endpoint and the client until step 5; nothing in this code reads it, but the PREVIOUS frontend bundle does (off = the anon path, dead once RLS is on), so it stays registered and client-visible, stored default `on` on staging and prod, until every client has reloaded. A fresh local/CI database resolves it `off`, which is harmless there (no old bundle exists). A follow-up deletes it, its `.railway/railway.ts` kill switch and its stored `feature_flags` rows together. Never set `SAPLING_FLAG_REALTIME_RLS=off` | `backend/services/feature_flags.py` |
 | Migration: RLS on for `room_messages`, anon revoked, authenticated exactly SELECT (enable steps 4–5) | `backend/db/migrations/20261109073255_room_messages_rls_enable.sql` |
-| Client: the Social screen (not the per-room `RoomChat`) holds ONE shared, ref-counted token lifecycle (`acquireRealtimeAuth`/`useRealtimeAuth`), so room and tab switches neither revert to anon nor re-mint; only the last release reverts with `setAuth()`, and every `setAuth` runs through one owner-guarded chain so an old revert never lands after a newer token. `room:<id>` and `presence:<id>` join only on an applied token (there is no anon subscription any more): refresh 5 min before `expires_at` (and at once when a sleeping tab wakes past that point); an expiry timer reports not-authed AT `expires_at` whatever the fetches are doing (channels drop to REST-only), and the next token re-joins them (the auth `epoch` bumps on every re-entry). A channel Realtime errors, times out or closes re-joins after a token refresh with 1 s..30 s backoff, then re-fetches the latest page. Transient fetch failures retry at 30 s doubling to 5 min; 503 (no signing key; or 404 from a backend that predates the graduation) stops retrying and leaves the room REST-only for the page session (history on open and own sends, no live channel; logged once with `console.warn`) | `frontend/src/lib/realtimeAuth.ts`, `frontend/src/components/screens/Social.tsx` |
+| Client: the Social screen (not the per-room `RoomChat`) holds ONE shared, ref-counted token lifecycle (`acquireRealtimeAuth`/`useRealtimeAuth`), so room and tab switches neither revert to anon nor re-mint; only the last release reverts with `setAuth()`, and every `setAuth` runs through one owner-guarded chain so an old revert never lands after a newer token. The token lifecycle starts only once the session is known (`userReady && userId`) and is keyed to that user. `room:<id>` joins only on an applied token (there is no anon subscription any more); `presence:<id>` (typing) is a public channel Realtime never authorizes against RLS, so it is not gated and joins on whatever key the client holds: refresh 5 min before `expires_at` (and at once when a sleeping tab wakes past that point); an expiry timer reports not-authed AT `expires_at` whatever the fetches are doing (channels drop to REST-only), and the next token re-joins them (the auth `epoch` bumps on every re-entry). A channel Realtime errors, times out or closes re-joins after a token refresh with 1 s..30 s backoff, then re-fetches the latest page. Transient fetch failures (network, every 5xx including a 503 without the code) retry at 30 s doubling to 5 min. A refusal stops retrying: 503 `realtime_unconfigured`, 403 (not for this account) and 404 (a backend that predates the graduation) latch REST-only for that user for the page session (logged once with `console.warn`); 401 (no session) stops until the session changes, without a latch. While not live the room polls the latest page every 12 s (visible tab only, at once on return) and, after 5 s, shows "Live updates paused" (`social-chat-live-paused`) | `frontend/src/lib/realtimeAuth.ts`, `frontend/src/components/screens/Social.tsx` |
 | Tests | `backend/tests/test_realtime_token.py` (hermetic), `backend/tests/integration/test_rls_policies_db.py` + `test_rls_lockdown_db.py` (SQL: `room_messages` is no longer exempt; anon reads no rows; a member's realtime token reads its rooms, a non-member's nothing), `frontend/src/lib/realtimeAuth.test.tsx`, `frontend/src/components/screens/Social.realtime.test.ts`, `frontend/src/components/screens/Social.realtimeAuth.test.tsx` |
 
 One token per student, not per room: the policy does the scoping, and
@@ -169,16 +171,20 @@ local and CI included, replays the end state.
    with an anon-reads-no-rows test in place of its anon-SELECT test, and it
    is in `AUTHENTICATED_TABLE_GRANTS` as SELECT. The anon subscription path
    is gone from `Social.tsx` / `realtimeAuth.ts`, the token endpoint no
-   longer reads a flag, and `realtime_rls` is out of the flag registry and
-   `.railway/railway.ts` `FLAG_KILL_SWITCHES`. There is no kill switch any
-   more: rollback is reverting that change plus the reverse SQL above.
+   longer reads a flag. `realtime_rls` stays in the registry (and
+   `.railway/railway.ts` `FLAG_KILL_SWITCHES`, which a test keeps in parity
+   with it) for one release only, for frontend bundles that predate this;
+   switching it off would only push those onto the dead anon path, so it is
+   no kill switch. Rollback is reverting that change plus the reverse SQL
+   above.
 
 ### What the E2E pass checks
 
 `frontend/e2e/study-room.spec.ts` (live chat across two contexts) now always
 runs through the bridge: the backend needs `SUPABASE_JWT_SIGNING_KEY` (the
 oct JWK of the CLI default secret, from `backend/.env.local.example`, which
-CI copies to `backend/.env`; `scripts/e2e-up.sh` warns when it is missing),
+CI copies to `backend/.env`; `scripts/e2e-up.sh` exports that demo key when
+`backend/.env` lacks one),
 and the local Realtime verifies that token. The spec's wait for the
 `Subscribed to PostgreSQL` frame on `room:<id>` resolves after the token is
 applied, and A→B / B→A propagation must pass with RLS on and anon revoked.

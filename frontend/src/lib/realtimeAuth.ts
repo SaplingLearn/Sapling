@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import { fetchJSON } from "@/lib/api";
+import { ApiError, fetchJSON } from "@/lib/api";
 import { statusOf } from "@/lib/errorMessage";
 
 /**
@@ -16,7 +16,7 @@ import { statusOf } from "@/lib/errorMessage";
  * Three layers, bottom up:
  *   - `startRealtimeAuth`: one token lifecycle (fetch, apply with `setAuth`,
  *     refresh before expiry, report expiry, back off on transient failures,
- *     give up on permanent ones).
+ *     give up on refusals: see `refusalOf`).
  *   - `acquireRealtimeAuth` / `useRealtimeAuth`: ONE shared, ref-counted
  *     lifecycle per page, because `setAuth` is global to the Realtime client:
  *     a room or tab switch must not drop the token and re-mint, and only the
@@ -27,8 +27,9 @@ import { statusOf } from "@/lib/errorMessage";
  */
 export type RealtimeToken = { token: string; expires_at: number };
 
-/** GET /api/auth/realtime-token: 503 when the backend has no signing key
- * (404 only from a backend older than the graduated `realtime_rls` flag). */
+/** GET /api/auth/realtime-token: 503 + `detail.code: "realtime_unconfigured"`
+ * when the backend has no usable signing key (404 only from a backend older
+ * than the step 2e graduation). */
 export function fetchRealtimeToken(): Promise<RealtimeToken> {
   return fetchJSON<RealtimeToken>("/api/auth/realtime-token");
 }
@@ -45,9 +46,42 @@ export const MAX_RETRY_MS = 5 * 60_000;
 export const RECOVER_MIN_INTERVAL_MS = 30_000;
 /** Never schedule a refresh sooner than this (a clock-skewed `expires_at`). */
 const MIN_REFRESH_MS = 5_000;
-/** Statuses retrying cannot fix in this page session: 503 = the backend has
- * no signing key; 404 = a backend from before the endpoint lost its flag. */
-const PERMANENT_STATUSES = new Set([404, 503]);
+/** `detail.code` of the one 503 that means "this backend cannot mint"
+ * (backend/routes/auth.py::REALTIME_UNCONFIGURED). */
+export const REALTIME_UNCONFIGURED = "realtime_unconfigured";
+
+/**
+ * Why the token endpoint refused, when retrying cannot help:
+ * - `unconfigured`: 503 with `realtime_unconfigured` (no usable signing key).
+ * - `unsupported`: 404, a backend from before the endpoint lost its flag.
+ * - `forbidden`: 403, this account may not have one (e.g. not approved).
+ * - `no_session`: 401, no live session; nothing to do until it changes.
+ * Anything else (a network error, any other 5xx, including a 503 without the
+ * code: the session guard's account read, a restart, a cold start) is
+ * transient and retried with backoff.
+ */
+export type RealtimeTokenRefusal = "unconfigured" | "unsupported" | "forbidden" | "no_session";
+
+function detailCodeOf(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  if (err.code) return err.code;
+  const body = err.body;
+  if (body === null || typeof body !== "object") return undefined;
+  const detail = (body as Record<string, unknown>).detail;
+  if (detail === null || typeof detail !== "object") return undefined;
+  const code = (detail as Record<string, unknown>).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** The refusal `err` amounts to, or null when it is worth retrying. */
+export function refusalOf(err: unknown): RealtimeTokenRefusal | null {
+  const status = statusOf(err);
+  if (status === 401) return "no_session";
+  if (status === 403) return "forbidden";
+  if (status === 404) return "unsupported";
+  if (status === 503 && detailCodeOf(err) === REALTIME_UNCONFIGURED) return "unconfigured";
+  return null;
+}
 
 /** Milliseconds from `nowMs` until the token minted to expire at
  * `expiresAtSec` (unix seconds) should be refreshed. */
@@ -100,9 +134,9 @@ export type RealtimeAuthOptions = {
    * closes channels on an expired token; refreshes keep going and the next
    * success calls `onReady` again. */
   onFail: () => void;
-  /** Permanent failure (404/503): retries stopped, the minted token is
-   * dropped, and nothing should join for the rest of this lifecycle. */
-  onUnavailable?: (status: number) => void;
+  /** A refusal (`refusalOf`): retries stopped, the minted token is dropped,
+   * and nothing should join for the rest of this lifecycle. */
+  onUnavailable?: (status: number, reason: RealtimeTokenRefusal) => void;
   fetchToken?: () => Promise<RealtimeToken>;
 };
 
@@ -174,8 +208,8 @@ export function startRealtimeAuth(
       t = await fetchToken();
     } catch (err) {
       if (!live()) return;
-      const status = statusOf(err);
-      if (status !== undefined && PERMANENT_STATUSES.has(status)) {
+      const reason = refusalOf(err);
+      if (reason !== null) {
         // Back to the client's own token first (a still-valid minted one
         // must not outlive the decision), then stop for good.
         await apply(null);
@@ -183,7 +217,7 @@ export function startRealtimeAuth(
         unavailable = true;
         clearTimers();
         document.removeEventListener("visibilitychange", onVisible);
-        onUnavailable?.(status);
+        onUnavailable?.(statusOf(err) ?? 0, reason);
         return;
       }
       if (Date.now() >= expiresAtMs) onFail();
@@ -256,8 +290,10 @@ export function startRealtimeAuth(
  * - `token`: a minted token is applied. `epoch` increments every time the
  *   state ENTERS `token`, so effects keyed on it re-join after an expiry even
  *   when React only ever renders the final state.
- * - `unavailable`: permanent 404/503. No live channel for the rest of this
- *   page session (latched until reload); the room works over REST only.
+ * - `unavailable`: the endpoint refused (`refusalOf`). No live channel; the
+ *   room works over REST only. Latched for this user for the rest of the page
+ *   session, except `no_session` (401), which only stops this lifecycle: the
+ *   next acquire after the session changes asks again.
  */
 export type RealtimeAuthMode = "off" | "pending" | "token" | "unavailable";
 export type RealtimeAuthSnapshot = { mode: RealtimeAuthMode; epoch: number };
@@ -267,6 +303,8 @@ export type RealtimeAuthSnapshot = { mode: RealtimeAuthMode; epoch: number };
 const RELEASE_GRACE_MS = 0;
 
 type Shared = {
+  /** The signed-in user this lifecycle mints for. */
+  userId: string | null;
   refs: number;
   lifecycle: RealtimeAuthLifecycle | null;
   stopTimer?: ReturnType<typeof setTimeout>;
@@ -274,7 +312,9 @@ type Shared = {
 
 let shared: Shared | null = null;
 let snapshot: RealtimeAuthSnapshot = { mode: "off", epoch: 0 };
-let unavailableForSession = false;
+/** The refusal that stopped live chat, keyed to the user it was answered
+ * for: a different user (sign-out, then sign-in as someone else) asks again. */
+let latch: { userId: string | null; status: number; reason: RealtimeTokenRefusal } | null = null;
 let warned = false;
 const listeners = new Set<() => void>();
 
@@ -300,19 +340,37 @@ export function recoverRealtimeAuth(): Promise<void> {
   return shared?.lifecycle?.recover() ?? Promise.resolve();
 }
 
+const REFUSAL_LOG: Record<Exclude<RealtimeTokenRefusal, "no_session">, string> = {
+  unconfigured: "the backend has no usable signing key",
+  unsupported: "this backend predates the token endpoint",
+  forbidden: "this account may not subscribe",
+};
+
 /**
- * Hold the page's Realtime token lifecycle; returns the release function.
- * The first holder starts it; the last release stops it (reverting the client
- * to its own key).
+ * Hold the page's Realtime token lifecycle for `userId`; returns the release
+ * function. The first holder starts it; the last release stops it (reverting
+ * the client to its own key). A holder for a different user replaces it.
  */
 export function acquireRealtimeAuth(
   realtime: RealtimeAuthTarget,
-  options: { fetchToken?: () => Promise<RealtimeToken> } = {},
+  options: { fetchToken?: () => Promise<RealtimeToken>; userId?: string | null } = {},
 ): () => void {
+  const userId = options.userId ?? null;
+  if (shared && shared.userId !== userId) {
+    // A different signed-in user: the old lifecycle (still in its release
+    // grace, or held by a stale consumer) must not mint for, or keep a token
+    // of, the previous account.
+    const old = shared;
+    if (old.stopTimer !== undefined) clearTimeout(old.stopTimer);
+    old.stopTimer = undefined;
+    old.lifecycle?.stop();
+    shared = null;
+  }
+  if (latch && latch.userId !== userId) latch = null;
   if (!shared) {
-    const s: Shared = { refs: 0, lifecycle: null };
+    const s: Shared = { userId, refs: 0, lifecycle: null };
     shared = s;
-    if (unavailableForSession) {
+    if (latch) {
       setMode("unavailable");
     } else {
       setMode("pending");
@@ -320,15 +378,20 @@ export function acquireRealtimeAuth(
         fetchToken: options.fetchToken,
         onReady: () => { if (shared === s) setMode("token"); },
         onFail: () => { if (shared === s) setMode("pending"); },
-        onUnavailable: (status) => {
-          unavailableForSession = true;
-          if (!warned) {
-            warned = true;
-            console.warn(
-              `[realtime] minted token unavailable (HTTP ${status}); live chat is off for this session, messages load over REST`,
-            );
+        onUnavailable: (status, reason) => {
+          if (shared !== s) return;
+          // 401: no session. Stop until it changes (UserContext tears the
+          // identity down on a 401, which releases this); nothing to latch.
+          if (reason !== "no_session") {
+            latch = { userId, status, reason };
+            if (!warned) {
+              warned = true;
+              console.warn(
+                `[realtime] minted token unavailable (HTTP ${status}: ${REFUSAL_LOG[reason]}); live chat is off for this session, messages load over REST`,
+              );
+            }
           }
-          if (shared === s) setMode("unavailable");
+          setMode("unavailable");
         },
       });
     }
@@ -362,27 +425,35 @@ export function resetRealtimeAuthForTests(): void {
   if (shared?.stopTimer !== undefined) clearTimeout(shared.stopTimer);
   shared?.lifecycle?.stop();
   shared = null;
-  unavailableForSession = false;
+  latch = null;
   warned = false;
   snapshot = { mode: "off", epoch: 0 };
   listeners.clear();
 }
 
+const OFF: RealtimeAuthSnapshot = { mode: "off", epoch: 0 };
+
 /**
- * Hold the shared lifecycle while mounted. `getRealtime` must be stable; with
- * no Realtime client (no Supabase env) nothing is fetched and the mode stays
+ * Hold the shared lifecycle while mounted with a signed-in user. Pass the
+ * user id only once the session is known (`userReady && userId`): until then
+ * nothing is requested and the mode is `off`, and a new id starts a fresh
+ * lifecycle (and a fresh latch). `getRealtime` must be stable; with no
+ * Realtime client (no Supabase env) nothing is fetched and the mode stays
  * `off`.
  */
 export function useRealtimeAuth(
   getRealtime: () => RealtimeAuthTarget | null | undefined,
+  sessionUserId: string | null | undefined,
 ): RealtimeAuthSnapshot {
   const snap = useSyncExternalStore(subscribeRealtimeAuth, getRealtimeAuthSnapshot, getRealtimeAuthSnapshot);
+  const userId = sessionUserId || null;
   useEffect(() => {
+    if (!userId) return;
     const realtime = getRealtime();
     if (!realtime) return;
-    return acquireRealtimeAuth(realtime);
-  }, [getRealtime]);
-  return snap;
+    return acquireRealtimeAuth(realtime, { userId });
+  }, [getRealtime, userId]);
+  return userId ? snap : OFF;
 }
 
 // ---------------------------------------------------------------------------
