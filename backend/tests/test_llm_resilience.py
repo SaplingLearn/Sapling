@@ -540,6 +540,34 @@ def test_fallback_names(monkeypatch):
     assert set(_providers._GEMINI_FALLBACKS) == set(_providers._DEFAULTS)
 
 
+def test_the_loop_key_and_alignment_checks_never_fall_back_to_the_drafters_family():
+    # A119 / A124: a check must not come from the gemini-* drafter's family,
+    # and an unavailable check already fails closed (the item is held).
+    for task in ("check_items_verify", "check_items_solve"):
+        assert _providers._GEMINI_FALLBACKS[task] is None
+        assert _providers.fallback_model_name_for(task, "claude-haiku-5-5") is None
+    # A pending loop slot flipped to Claude falls back to the Gemini model its
+    # gates were recorded on; on its Gemini default it has no fallback at all.
+    assert _providers.fallback_model_name_for("grader", "claude-haiku-5-5") == "gemini-2.5-flash-lite"
+    assert _providers.fallback_model_name_for("loop_tutor_deep", "claude-sonnet-5-5") == "gemini-2.5-pro"
+    assert _providers.fallback_model_name_for("grader", "gemini-2.5-flash-lite") is None
+
+
+def test_a_run_that_asks_for_a_longer_timeout_gets_a_longer_deadline():
+    # The loop's Flex drafting waits up to FLEX_TIMEOUT_S (900 s): a 120 s slot
+    # deadline would cut every queued request and retry it as a new generation.
+    from learning.params import FLEX_TIMEOUT_S
+
+    assert _providers.deadline_for("check_items") == _providers.timeout_for("check_items")
+    assert _providers.deadline_for("check_items", {"timeout": FLEX_TIMEOUT_S}) == FLEX_TIMEOUT_S
+    assert _providers.deadline_for(
+        "check_items", {"timeout": httpx.Timeout(FLEX_TIMEOUT_S, connect=5.0)}
+    ) == FLEX_TIMEOUT_S
+    # never shorter than the slot's: ocr_vision pins 60 s and keeps 120 s
+    assert _providers.deadline_for("ocr_vision", {"timeout": 60.0}) == 120.0
+    assert _providers.deadline_for("quiz", {"timeout": True}) == _providers.timeout_for("quiz")
+
+
 def test_a_built_fallback_is_resilient_but_never_falls_back_again():
     fb = _providers._build_fallback_model("quiz", "claude-haiku-5-5")
     assert isinstance(fb, _providers._LoopSafeGoogleModel)

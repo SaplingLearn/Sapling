@@ -14,6 +14,7 @@
 import React from "react";
 import {
   adminErrors,
+  adminLearningLoopKpis,
   adminLlmCost,
   adminUsageByUser,
   adminUsageSummary,
@@ -22,6 +23,7 @@ import { humanizeError } from "./errorMessage";
 import type {
   AnalyticsBucket,
   ErrorsPageData,
+  LearningLoopKpisData,
   LlmCostData,
   LlmCostGroupBy,
   UsageByUserData,
@@ -154,6 +156,20 @@ export function useErrorsFeed(
   const fetcher = React.useCallback(
     () => adminErrors({ from, to, limit, offset, bucket }),
     [from, to, limit, offset, bucket],
+  );
+  return useAnalyticsQuery(fetcher, onBackgroundError);
+}
+
+/** spec §10 / A110: the learning loop's KPIs, gates and BKT calibration. */
+export function useLearningLoopKpis(
+  range: AnalyticsRangeValue,
+  opts?: AnalyticsHookOptions,
+): AnalyticsQuery<LearningLoopKpisData> {
+  const { from, to } = range;
+  const { onBackgroundError } = opts ?? {};
+  const fetcher = React.useCallback(
+    () => adminLearningLoopKpis({ from, to }),
+    [from, to],
   );
   return useAnalyticsQuery(fetcher, onBackgroundError);
 }

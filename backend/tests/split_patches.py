@@ -75,6 +75,8 @@ ADMIN_ANALYTICS_MODULES = (
     "routes.admin_analytics",
     "services.admin.analytics.scan",
     "services.admin.analytics.series",
+    # the learning loop's KPI report, split out of the route (spec §13 A149)
+    "services.admin.analytics.learning_loop",
 )
 
 
@@ -193,6 +195,8 @@ QUIZ_MODULES = (
     "services.quiz.practice",
     "services.quiz.generation",
     "services.quiz.submission",
+    # GET /plan's body (the learning loop's concept plan, spec §13 A143/A149)
+    "services.quiz.plan",
 )
 
 

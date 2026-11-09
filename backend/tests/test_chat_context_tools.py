@@ -312,17 +312,16 @@ class TestReadSessionHistory:
 
 class TestReadUserProgress:
     def test_aggregates_mastered_weak_in_progress(self):
-        # Thresholds come from config.get_mastery_tier (#557): mastered
-        # >= 0.75, learning >= 0.45, below that is weak (struggling or
-        # unexplored). This tool used to carry its own 0.7/0.4, which is why
-        # 0.4 counts as WEAK here and used to count as in-progress — the
+        # Thresholds come from learning.bkt.tier_for (#557, PKG-14b): mastered
+        # >= 0.95, learning >= 0.30, below that is weak (struggling or
+        # unexplored). This tool used to carry its own 0.7/0.4 — the
         # divergence a student saw as "Struggling on the Tree, in-progress to
         # the tutor".
         rows = [
-            {"mastery_score": 0.9},   # mastered
-            {"mastery_score": 0.75},  # mastered (boundary)
+            {"mastery_score": 0.98},  # mastered
+            {"mastery_score": 0.95},  # mastered (boundary)
             {"mastery_score": 0.5},   # learning
-            {"mastery_score": 0.4},   # weak — below the 0.45 learning floor
+            {"mastery_score": 0.29},  # weak — below the 0.30 learning floor
             {"mastery_score": 0.2},   # struggling -> weak
             {"mastery_score": 0.0},   # unexplored -> weak
         ]
@@ -335,8 +334,8 @@ class TestReadUserProgress:
         assert result.mastered_count == 2
         assert result.weak_count == 3
         assert result.in_progress_count == 1
-        # avg_mastery is rounded to 4dp; sum/6 = 2.75/6 = 0.4583...
-        assert abs(result.avg_mastery - round(2.75 / 6, 4)) < 1e-6
+        # avg_mastery is rounded to 4dp; sum/6 = 2.92/6 = 0.4866...
+        assert abs(result.avg_mastery - round(2.92 / 6, 4)) < 1e-6
 
     def test_empty_graph_returns_zeros(self):
         with patch("agents.tools.chat_context.table") as t:

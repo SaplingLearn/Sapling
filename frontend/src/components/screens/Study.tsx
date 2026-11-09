@@ -40,6 +40,7 @@ import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
@@ -60,6 +61,9 @@ import {
   type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { DueQueue } from "../learn/DueQueue";
+import { RetentionCheck } from "../learn/RetentionCheck";
+import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
 
@@ -409,6 +413,7 @@ function GuideMode({
               <span className="label-micro">Course</span>
             </div>
             <CustomSelect
+              ariaLabel="Course"
               value={courseId}
               onChange={selectCourse}
               placeholder="Pick a course…"
@@ -435,6 +440,7 @@ function GuideMode({
               <span className="label-micro">Exam</span>
             </div>
             <CustomSelect
+              ariaLabel="Exam"
               value={examId}
               onChange={v => setExamId(v)}
               placeholder={loadingExams ? "Loading…" : (courseId ? "Pick an exam…" : "Select a course first")}
@@ -512,7 +518,8 @@ function GuideMode({
                 <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{guide.exam}</div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   {guide.due_date && <span className="chip">Due {guide.due_date}</span>}
-                  <span className="chip" style={{ opacity: 0.7 }}>
+                  {/* Secondary by colour, not opacity: a 70% chip was 3.9:1 (spec §13 A135). */}
+                  <span className="chip" style={{ color: "var(--text-muted)" }}>
                     {cached ? "Cached" : "Fresh"} · {generatedAt ? new Date(generatedAt).toLocaleString() : ""}
                   </span>
                 </div>
@@ -599,7 +606,8 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
-  const { userId } = useUser();
+  const retentionCourse = useSearchParams().get("retention-course") ?? "";
+  const { userId, userReady } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
@@ -610,6 +618,9 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+  // A failed status read is not an inactive learning loop: retain the legacy
+  // flashcards and offer a retry so the student can still reach due reviews.
+  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
   // Review-session state (#769). `rating` is the in-flight guard: one rating
   // per card, however many times the button/key fires while it's saving
   // (the ref closes the same-tick gap before the state re-renders). `done`
@@ -675,7 +686,11 @@ function FlashcardsMode({
     return out;
   }, [cards, courseId, topicFilter, courses]);
 
-  React.useEffect(() => {
+  // A new card (or a shrunk deck) starts unflipped. A layout effect, so the
+  // reset lands in the same commit that shows the card: as a passive effect it
+  // ran a beat later and could undo a Space pressed as soon as the card
+  // appeared (seen as a CI flake in Study.races.test.tsx).
+  React.useLayoutEffect(() => {
     if (idx >= filtered.length) setIdx(0);
     setFlipped(false);
   }, [filtered.length, idx]);
@@ -735,8 +750,11 @@ function FlashcardsMode({
     }
   }, [card, userId, toast, load]);
 
-  // Keyboard: Space flips; 1/2/3 rate when flipped.
-  React.useEffect(() => {
+  // Keyboard: Space flips; 1/2/3 rate when flipped. Subscribed in a layout
+  // effect, so the handler reads the state on screen from the commit that
+  // drew it: a passive re-subscribe left the previous handler (an unflipped
+  // card) live for a beat, and a rating key pressed then was ignored.
+  React.useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
@@ -775,6 +793,7 @@ function FlashcardsMode({
       if (done && keepId) setDone(false);
       await load(keepId);
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
+      if (r.withheld) toast.warn(withheldNotice(r.withheld, "card")); // spec §13 A125
     } catch (err) {
       console.error("flashcard generate failed", err);
       toast.error(humanizeError(err, "Couldn't generate cards right now."));
@@ -786,6 +805,16 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === true && <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />}
+        {loopActive === "error" && (
+          <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
+            <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
+            <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+              Retry due reviews
+            </button>
+          </div>
+        )}
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[

@@ -1,28 +1,14 @@
-"""Logfire scrubber that redacts user content from agent spans.
+"""Content-free fallback redaction for attributes Logfire sends to its callback.
 
-Pydantic AI's logfire integration writes the full prompt text and model
-output to span attributes. For Sapling that means uploaded document
-text — which contains user names, email addresses, course materials,
-sometimes student work — flowing to logfire.pydantic.dev.
-
-This scrubber redacts the highest-risk attributes BEFORE they leave
-the process. Truncates to a length cap and hashes content past it,
-so we keep a fingerprint for debugging without shipping the body.
-
-Wiring: applied via ``logfire.configure(scrubbing=ScrubbingOptions(
-callback=scrub_value, extra_patterns=EXTRA_PATTERNS))``. The callback
-fires only when an attribute path matches one of our patterns OR a
-default Logfire pattern (password, secret, api[._ -]?key, ...). For
-attributes that match, the callback returns the sanitized value; for
-default-pattern matches, returning the value unchanged keeps Logfire's
-normal behavior of fully redacting it.
-
-See https://logfire.pydantic.dev/docs/how-to-guides/scrubbing/ for the
-ScrubbingOptions API surface.
+Agent content capture must also be disabled at the instrumentation source:
+Logfire deliberately exempts several standard GenAI attributes from scrubbing.
+This callback is defense in depth, not a sanitizer for arbitrary logging,
+exception messages, span names or request URLs.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -31,30 +17,6 @@ from logfire import ScrubMatch
 from services.fingerprint import fingerprint_text
 
 
-# Path components that indicate the value contains user-supplied prompt
-# text or model output. These are matched against any segment of the
-# JsonPath the scrubber walks (e.g. ('attributes', 'gen_ai.prompt'),
-# ('attributes', 'all_messages_events', 0, 'content')). Conservative —
-# easier to add safe attrs to the allowlist than to retract a leak.
-_RISKY_PATH_TOKENS = (
-    "input.value",
-    "output.value",
-    "ai.input.messages",
-    "ai.output.value",
-    "gen_ai.prompt",
-    "gen_ai.completion",
-    "all_messages_events",
-    "events",
-    "messages",
-    "user_prompt",
-    "prompt",
-    "completion",
-    "content",
-)
-
-# Compiled into a single regex so it can also be passed to Logfire as
-# `extra_patterns` — making sure the callback fires for these names even
-# when the default pattern set wouldn't match.
 EXTRA_PATTERNS: tuple[str, ...] = (
     r"prompt",
     r"completion",
@@ -66,78 +28,54 @@ EXTRA_PATTERNS: tuple[str, ...] = (
     r"ai\.output\.value",
     r"gen_ai\.prompt",
     r"gen_ai\.completion",
+    r"system.?instructions",
     r"user_prompt",
     r"\bcontent\b",
+    r"tool[._](?:arguments|response|result)",
+    r"final_result",
 )
-
-# Header of the truncated body; rest replaced with a content hash.
-_PREVIEW_CHARS = 80
 
 _RISKY_RE = re.compile("|".join(EXTRA_PATTERNS), re.IGNORECASE)
 
 
-def _fingerprint(value: str) -> str:
-    """Short, stable hash for matching a redacted body to a re-uploaded copy.
-
-    Delegates to services.fingerprint.fingerprint_text so the hashing
-    convention is consistent across log-correlation sites (this scrubber
-    + routes/quiz.py drift warnings).
-    """
-    return fingerprint_text(value, length=16)
-
-
 def _path_is_risky(path: tuple[Any, ...] | str) -> bool:
-    """True if any segment of the JsonPath looks like a prompt/output attr."""
     if isinstance(path, str):
         return bool(_RISKY_RE.search(path))
-    for seg in path:
-        if isinstance(seg, str) and _RISKY_RE.search(seg):
-            return True
-    return False
+    return any(isinstance(part, str) and _RISKY_RE.search(part) for part in path)
 
 
-def _sanitize(value: Any, path: tuple[Any, ...] | str) -> Any:
-    """Truncate strings, recurse into lists/dicts."""
+def _sanitize(value: Any) -> str:
+    """Replace the WHOLE value, including nested keys and non-string answers.
+
+    No prefix survives, even for one-character or empty answers. Unsupported or
+    cyclic objects fail closed without invoking their repr/str methods.
+    """
     if isinstance(value, str):
-        if len(value) <= _PREVIEW_CHARS:
-            return value
-        return (
-            f"{value[:_PREVIEW_CHARS]}…[redacted, {len(value)} chars, "
-            f"sha256:{_fingerprint(value)}]"
+        payload, kind, size = value, "string", len(value)
+    else:
+        try:
+            payload = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            return "[redacted]"
+        kind = (
+            "object"
+            if isinstance(value, dict)
+            else "array"
+            if isinstance(value, (list, tuple))
+            else "scalar"
         )
-    if isinstance(value, list):
-        return [_sanitize(v, path) for v in value]
-    if isinstance(value, dict):
-        return {k: _sanitize(v, path) for k, v in value.items()}
-    return value
+        size = len(value) if isinstance(value, (dict, list, tuple)) else 1
+    fingerprint = fingerprint_text(payload, length=16)
+    return f"[redacted, type:{kind}, length:{size}, sha256:{fingerprint}]"
 
 
 def scrub_value(match: ScrubMatch) -> Any:
-    """Logfire scrubber callback.
-
-    Returning ``None`` lets Logfire perform its default redaction (full
-    replacement with ``[Scrubbed due to '<pattern>']``). Returning the
-    sanitized value short-circuits Logfire's redaction and keeps the
-    truncated/fingerprinted form.
-
-    For attributes whose path looks like prompt/output content we return
-    a truncated form with a sha256 fingerprint. For everything else
-    (e.g. default-pattern matches like "password" or "api_key") we
-    return ``None`` so Logfire applies its normal full redaction.
-    """
-    path = match.path
-    if not _path_is_risky(path):
-        # Let Logfire's default behavior win — most likely a sensitive
-        # word (password, secret, ...) that we don't want to preserve at
-        # all.
+    """Redact routed content; delegate default secret patterns to Logfire."""
+    if not _path_is_risky(match.path):
         return None
-    return _sanitize(match.value, path)
+    return _sanitize(match.value)
 
 
-# Back-compat / direct-call helper used by the unit test. Keeps the
-# pure transformation testable without constructing a ScrubMatch.
 def scrub_attribute(name: str, value: Any) -> Any:
-    """Pure transformation entry point used by tests and ad-hoc callers."""
-    if not _path_is_risky(name):
-        return value
-    return _sanitize(value, name)
+    """Pure helper; does not imply Logfire routes every attribute here."""
+    return _sanitize(value) if _path_is_risky(name) else value

@@ -21,11 +21,14 @@ from main import app
 from tests.db_fakes import fake_table
 from tests.split_patches import patch_documents
 
-client = TestClient(app)
-
+# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
+# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
 # #117: the converted handlers run on the async seam; a sync PostgREST call
 # creeping back onto the event loop raises instead of only logging.
-pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
+
+client = TestClient(app)
+
 
 
 def _mock_validate_user():

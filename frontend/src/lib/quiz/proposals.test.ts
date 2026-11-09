@@ -61,7 +61,7 @@ function attempt(over: Partial<AttemptSummary> & { quiz_id: string; concept_node
     difficulty: "medium",
     mastery_before: 0.2,
     mastery_after: 0.26,
-    mastery_delta: 0.06,
+    p_delta: 0.06,
     created_at: "2026-08-20T10:00:00Z",
     completed_at: "2026-08-20T10:05:00Z",
     ...over,

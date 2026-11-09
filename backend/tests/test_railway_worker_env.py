@@ -51,6 +51,12 @@ WORKER_PATH_MODULES = (
     "services/feature_flags.py",
     "services/jobs.py",
     "routes/documents.py",
+    # the learning loop's check_items.document job and what it runs
+    "services/check_item_jobs.py",
+    "services/check_item_service.py",
+    "services/concept_prereqs.py",
+    "services/ai_budget.py",
+    "agents/check_items*.py",
 )
 
 #: Read in those modules but not on a worker's path, or not the API's to share.
@@ -82,7 +88,9 @@ EXCLUDED = {
 
 #: Agent tasks a worker runs (document.process, page OCR, course context).
 WORKER_AGENT_TASKS = {"classifier", "summary", "concepts", "syllabus", "ocr_vision",
-                      "course_summary"}
+                      "course_summary",
+                      # learning loop: check_items.document drafts and checks items
+                      "check_items", "check_items_verify", "check_items_solve"}
 
 _READS = (
     re.compile(r'(?:getenv|environ\.get|env\.get)\(\s*"([A-Z][A-Z0-9_]+)"'),

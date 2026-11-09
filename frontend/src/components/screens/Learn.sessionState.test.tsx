@@ -30,6 +30,11 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
+// These pin the legacy tutor's session state: the learning loop's kill-switch
+// path (PKG-14b), which Learn renders when the loop status probe says inactive.
+vi.mock("../learn/useLoopStatus", () => ({
+  useLoopStatus: () => ({ status: false, retry: () => {} }),
+}));
 vi.mock("@/lib/useActiveSemester", () => ({
   useActiveSemester: () => ["", () => {}, true],
   courseInTerm: () => true,
@@ -79,7 +84,9 @@ vi.mock("@/lib/api", async importOriginal => ({
 
 import { Learn } from "./Learn";
 import { ToastProvider } from "../ToastProvider";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 import { ChatStreamError } from "@/lib/api";
+import { __resetFeedbackPacingForTests, currentLearningSession, feedbackHeld } from "@/lib/feedbackPacing";
 
 class StubResizeObserver {
   constructor(private cb: (entries: { contentRect: { width: number } }[]) => void) {}
@@ -633,10 +640,64 @@ describe("session-feedback bookkeeping", () => {
     expect(localStorage.getItem("sapling_session_end_count")).toBeNull();
   });
 
+  it("a live session holds the shell's feedback prompts; ending it releases them (lib/feedbackPacing.ts)", async () => {
+    __resetFeedbackPacingForTests();
+    renderLearn();
+    await openSession("sess-a");
+    await act(async () => {}); // a findBy can resolve before the commit's passive effects run
+    expect(feedbackHeld()).toBe(true);
+    expect(currentLearningSession()).toBe("sess-a");
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm end" }));
+    await waitFor(() => expect(feedbackHeld()).toBe(false));
+  });
+
   it("starting or resuming another session clears the previous session's feedback context", async () => {
     sessionStorage.setItem("sapling_last_session_context", JSON.stringify({ sessionId: "old", topic: "Old" }));
     renderLearn();
     await openSession("sess-b");
     expect(sessionStorage.getItem("sapling_last_session_context")).toBeNull();
+  });
+});
+
+// ─────────────────── crisis support (docs/safety/crisis-support.md) ───────────────────
+
+describe("crisis support", () => {
+  const CRISIS = { reply: "the card as text", graph_update: {}, mastery_changes: [], crisis_support: crisisFixture };
+
+  it("a turn answered with the card shows it in the conversation; the composer stays open", async () => {
+    api.streamChat.mockResolvedValueOnce(CRISIS);
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    const card = await within(log()).findByTestId("crisis-support-card");
+    expect(card).toHaveTextContent(crisisFixture.title);
+    expect(log()).not.toHaveTextContent("the card as text");
+    expect(api.sendChat).not.toHaveBeenCalled(); // a complete stream: no JSON rung
+    await waitFor(() => expect(screen.getByTestId("tutor-input")).not.toBeDisabled());
+  });
+
+  it("the JSON fallback's card renders the same way", async () => {
+    api.streamChat.mockRejectedValueOnce(new Error("stream refused")); // Rung 3
+    api.sendChat.mockResolvedValueOnce(CRISIS);
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(await within(log()).findByTestId("crisis-support-card")).toBeTruthy();
+  });
+
+  it("a session start answered with the card opens no session and shows the card over the picker", async () => {
+    api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "…", crisis_support: crisisFixture });
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.click(await screen.findByTestId("kg-node-n-trees"));
+    fireEvent.click(await screen.findByRole("button", { name: /Start session/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(crisisFixture.title);
+    expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // back at the picker
+    expect(api.startSession).not.toHaveBeenCalled(); // a complete answer: no JSON rung
+    expect(api.streamChat).not.toHaveBeenCalled();
   });
 });

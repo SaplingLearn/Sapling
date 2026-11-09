@@ -1,11 +1,34 @@
+import math
 import re
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from learning.evidence import StudentConfidence
+from learning.params import GRADER_ANSWER_MAX_CHARS
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
+
+class LoopGoal(BaseModel):
+    """The student confirms concept IDs; prose never silently selects a scope."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=500)
+    target_node_ids: list[str] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def _distinct_targets(self) -> "LoopGoal":
+        if any(not n.strip() for n in self.target_node_ids) or len(set(self.target_node_ids)) != len(self.target_node_ids):
+            raise ValueError("target_node_ids must be non-empty and distinct")
+        self.text = self.text.strip()
+        return self
+
+
+class LoopGoalBody(BaseModel):
+    session_id: str
+    user_id: str = "user_andres"
+    goal: LoopGoal | None = None
+
 
 class StartSessionBody(BaseModel):
     user_id: str = "user_andres"
@@ -14,6 +37,20 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    goal: LoopGoal | None = None
+    # PKG-14 final fix round (spec §13 A99): the quiz "Ask about this" panel opens a
+    # session ABOUT one quiz question. The client names the question by its attempt
+    # and index; the server resolves the question's identity (`question_hash`) from
+    # the attempt row the student owns — never from a client-supplied hash.
+    origin: Optional[Literal["quiz_ask"]] = None
+    quiz_attempt_id: Optional[str] = None
+    quiz_question_index: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _quiz_ask_names_its_question(self) -> "StartSessionBody":
+        if self.origin == "quiz_ask" and (not self.quiz_attempt_id or self.quiz_question_index is None):
+            raise ValueError("a quiz_ask session names its quiz_attempt_id and quiz_question_index")
+        return self
 
 
 class ChatBody(BaseModel):
@@ -36,6 +73,93 @@ class EndSessionBody(BaseModel):
     user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
+class CloseBody(BaseModel):
+    session_id: str
+    user_id: str = ""  # PKG-09: resolved from the session cookie when empty, like EndSessionBody
+
+
+class PosttestStartBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/start — rung 3 of the evaluation ladder
+    (spec §10): the tool-removed, delayed post-test items of one course."""
+    course_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+
+
+class PosttestAnswerBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/answer — one post-test answer, graded
+    through grade_answer with the ceiling forced to H0 (A16, A33 length bound).
+    Spec §13 A126: `hidden_count` / `hidden_s` are the client's page-hidden
+    telemetry for the item (hidden periods, total hidden seconds) — untrusted:
+    anything that is not a finite number reads as not reported, never a 422,
+    and the route clamps the rest (learning_gain.clamp_visibility). The grade
+    never reads them."""
+    node_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
+    user_id: str = ""
+    hidden_count: Optional[float] = None
+    hidden_s: Optional[float] = None
+
+    @field_validator("hidden_count", "hidden_s", mode="before")
+    @classmethod
+    def _telemetry_or_none(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            value = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+
+class PosttestShownBody(BaseModel):
+    """Spec §13 A126 /api/learn/loop/posttest/shown — the client shows an open
+    post-test item; the server stamps its first display (served_at)."""
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(..., min_length=1, max_length=128)
+    question_hash: str = Field(..., min_length=1, max_length=128)
+    user_id: str = ""
+
+
+class LoopRatingBody(BaseModel):
+    """PKG-14 /api/learn/loop/rating — the perceived-difficulty answer the loop
+    asks for every ZPD_RATING_EVERY_N_CHECKS checks (spec §3.4, §6 zpd.rating)."""
+    session_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+    rating: Literal["too_easy", "appropriate", "too_hard"]
+
+
+class LoopReportBody(BaseModel):
+    """/api/learn/loop/report (spec §13 A113; GitHub #695) — "Report this
+    question" on a check item the student was posed: on the loop's check card
+    (`surface` loop: the session's step, by `question_hash`) or in Study's
+    review queue (`surface` review: today's review session's item, by
+    `item_id`, the course scope as /review/answer takes it). The reason is an
+    enum and the body takes nothing else: no free text is ever stored.
+    Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = ""  # resolved from the session cookie when empty, like LoopRatingBody
+    surface: Literal["loop", "review"]
+    session_id: str = Field(..., min_length=1, max_length=128)
+    reason: Literal["wrong_answer", "unclear", "not_from_my_course"]
+    question_hash: Optional[str] = Field(None, max_length=128)
+    item_id: Optional[str] = Field(None, max_length=128)
+    course_id: Optional[str] = Field(None, max_length=128)
+
+    @model_validator(mode="after")
+    def _names_its_item(self) -> "LoopReportBody":
+        if self.surface == "loop" and not self.question_hash:
+            raise ValueError("a loop report names the posed check's question_hash")
+        if self.surface == "review" and not self.item_id:
+            raise ValueError("a review report names the served item's item_id")
+        return self
+
+
 class RenameSessionBody(BaseModel):
     user_id: str
     topic: str
@@ -48,6 +172,162 @@ class ActionBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+
+
+# ── Learning loop (PKG-07; spec §9, A16) ──────────────────────────────────────
+# No loop body carries model_pref: the loop picks its tier in code (spec A15).
+# Free text is bounded by the grader's own answer bound, so an over-long
+# submission is a 422 before anything is scanned or graded (HANDOFF-05/06).
+# Spec §13 A127: the check, probe and review answer bodies take an optional
+# `confidence` — the student's stated confidence, one of
+# learning.evidence.StudentConfidence ("guessing" / "fairly_sure" / "sure");
+# any other value, and any field the body does not name, is a 422. Absent =
+# skipped (recorded as absent, never as a default). The post-test takes none.
+
+
+class LoopAttemptBody(BaseModel):
+    """PKG-07 /api/learn/loop/step/attempt. `attempt_text` is judged by
+    learning.gates.is_genuine_attempt for hint unlocking only; never stored,
+    never graded."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    attempt_text: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+
+
+class LoopHintBody(BaseModel):
+    """PKG-07 /api/learn/loop/hint — moves rung state only; the hint text
+    comes from the next tutor turn."""
+    session_id: str
+    user_id: str
+    question_hash: str
+
+
+class LoopCheckAnswerBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/answer(/stream) — an explicit answer
+    submission, the ONLY loop-chat evidence path (spec A16). Unknown fields are
+    a 422 (spec §13 A127)."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
+    confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
+
+
+class PrequestionAnswerBody(BaseModel):
+    """Spec §13 A138: /api/learn/loop/prequestion/answer(/stream) — the student's
+    UNGRADED guess at the segment's prequestion: `answer` (a free item),
+    `option` with an optional `reason` (a multiple-choice item), or
+    `no_idea`. Never graded and never evidence; stored encrypted. Once a guess
+    is stored the guess fields are ignored and the explanation is served again
+    (a retry). Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=8)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    no_idea: bool = False
+
+
+class SelfExplainBody(BaseModel):
+    """Spec §13 A139: /api/learn/loop/self-explain — the student's reply to the
+    open self-explanation prompt (`prompt_id`), or `skip`. Diagnostic only:
+    stored encrypted, never graded, never evidence. An empty reply is a skip.
+    Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    prompt_id: str = Field(..., min_length=1, max_length=64)
+    reply: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    skip: bool = False
+
+
+class LoopCheckNextBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/next ("Check me", spec §9, A27): activates
+    the current concept's next check item and returns its pose; no model call."""
+    session_id: str
+    user_id: str
+
+
+# PKG-08 (probe + plan; spec §9). No course_id: the course is the session's
+# (routes/learn_loop.py::_session_scope), never the client's.
+
+
+class ProbeNextBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/next — the next probe item (no model call)."""
+    session_id: str
+    user_id: str
+
+
+class ProbeAnswerBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/answer — an explicit answer to the posed probe
+    item, graded through grade_answer (A16). The answer fields are PKG-07's
+    LoopCheckAnswerBody's, so the client sends one shape to every loop check;
+    above GRADER_ANSWER_MAX_CHARS the body is a 422 and the item stays posed
+    (A33: padding is never a skip). Unknown fields are a 422 (spec §13 A127)."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    idk: bool = False
+    confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
+
+
+class PlanApproveBody(BaseModel):
+    """PKG-08 /api/learn/loop/plan/approve — the student's subset of the proposed
+    plan, in the order they want it (a reorder is theirs to make)."""
+    goal_version: int | None = Field(default=None, ge=0)
+    session_id: str
+    user_id: str
+    concept_ids: List[str] = Field(..., min_length=1)
+
+
+class ReviewAnswerBody(BaseModel):
+    """PKG-12 /api/learn/loop/review/answer — one answer to a served review item
+    (spec §3.2, A16, A22, A33). The item, its node and its reference are re-loaded
+    on the server by `item_id`; no field names a node, a reference or model_pref.
+    Free text is bounded by the grader's own answer bound (an over-long answer is
+    a 422 and the item stays due). A check needs `answer` or `selected_option`
+    (which of the two its format needs is checked after the item loads); a
+    flashcard needs a legacy self-rating 1/2/3. Unknown fields are a 422: a
+    client can never pass a node, a reference or a model preference."""
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    session_id: str
+    course_id: Optional[str] = None
+    kind: Literal["flashcard", "check"]
+    item_id: str
+    answer: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    rating: Optional[int] = None
+    # spec §13 A127: a check's stated confidence (optional); a flashcard's own
+    # self-rating already says how it went, so a flashcard body takes none
+    confidence: Optional[StudentConfidence] = None
+
+    @model_validator(mode="after")
+    def _answer_fits_kind(self):
+        if self.kind == "check" and not (self.answer or self.selected_option):
+            raise ValueError("a check answer needs answer or selected_option")
+        if self.kind == "flashcard" and self.rating not in (1, 2, 3):
+            raise ValueError("a flashcard answer needs rating 1, 2 or 3")
+        if self.kind == "flashcard" and self.confidence is not None:
+            raise ValueError("a flashcard answer takes no confidence")
+        return self
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────
@@ -132,14 +412,19 @@ class AnswerQuestionBody(BaseModel):
     for one question. `question_id` is the guard against confusing them:
     send the id you displayed and the route rejects a mismatch instead of
     silently grading the neighbouring question (which the idempotency rule
-    would then lock in). The response echoes both either way."""
+    would then lock in). The response echoes both either way.
+
+    `confidence` (learning-loop spec §13 A132) is the student's optional
+    stated confidence, A127's label ("guessing" / "fairly_sure" / "sure");
+    any other value, a number included, is a 422. Absent = skipped (stored as
+    absent, never as a default level); an idk written answer states none."""
 
     question_index: int = Field(ge=0)
     selected_index: Optional[int] = Field(default=None, ge=0)
     answer_text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
-    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confidence: Optional[StudentConfidence] = None
 
     @model_validator(mode="after")
     def one_answer(self):
@@ -326,7 +611,10 @@ class OnboardingBody(BaseModel):
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
     course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
-    learning_style: str
+    # PKG-14b (spec §11.2): the learning-style step is gone for everyone; an older
+    # client that still sends the field is accepted and the value ignored
+    # (user_profiles.learning_style stays, dead — ADR 0030).
+    learning_style: Optional[str] = None
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────

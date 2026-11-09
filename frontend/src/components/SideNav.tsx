@@ -7,8 +7,10 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
+import { useRetentionDue } from "@/context/RetentionDueContext";
 import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
+import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 
 type Entry = NavItem;
 
@@ -83,8 +85,9 @@ function fade(collapsed: boolean): React.CSSProperties {
 /* Active/hover surfaces.
  *
  * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent cream wash (see
- * [data-app-sidenav] in globals.css), with the label in bold cream.
+ * which inside the olive rail resolves to a translucent dark wash (see
+ * [data-app-sidenav] in globals.css; a cream wash failed AA under the white
+ * label), with the label in bold cream.
  * No rail, no hue on the label: the fill IS the treatment.
  *
  * Hover is the same colour at half strength, so it is unmistakably the
@@ -115,6 +118,7 @@ export function SideNav() {
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
   const sections = useVisibleNavSections();
+  const { due: retentionDue } = useRetentionDue();
   const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
@@ -258,6 +262,7 @@ export function SideNav() {
               entry={item}
               active={isActive(pathname, item.href)}
               collapsed={collapsed}
+              retentionDue={retentionDue && item.href === RETENTION_NAV_HREF}
             />
           ))}
         </React.Fragment>
@@ -400,13 +405,16 @@ export function SideNav() {
   );
 }
 
-function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; collapsed: boolean }) {
+function NavLink({ entry, active, collapsed, retentionDue = false }: {
+  entry: Entry; active: boolean; collapsed: boolean; retentionDue?: boolean;
+}) {
+  const label = retentionDue ? `${entry.label}, retention check due` : entry.label;
   return (
     <Link
       href={entry.href}
       data-testid={`nav-link-${entry.href.slice(1)}`}
-      title={collapsed ? entry.label : undefined}
-      aria-label={collapsed ? entry.label : undefined}
+      title={collapsed ? label : undefined}
+      aria-label={collapsed || retentionDue ? label : undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -438,8 +446,10 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
-      <span style={{ display: "inline-flex", flexShrink: 0 }}>
+      {/* A126: the dot rides the icon, so the narrow rail shows it too. */}
+      <span style={{ display: "inline-flex", flexShrink: 0, position: "relative" }}>
         <Icon name={entry.icon} size={ICON_SIZE} />
+        {retentionDue && <RetentionDueDot testid="nav-retention-due" overlay />}
       </span>
       <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
         {entry.label}

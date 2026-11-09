@@ -17,6 +17,7 @@ from services.quiz.grading import WRITTEN_TYPES, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
 from services.quiz.identity import question_hash
+from learning import quiz_gates
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -362,7 +363,14 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 # student's own question) but because nothing client-side consumes it yet.
 # Per-question feedback (#26) is the change that should surface it, and it
 # should do so by adding it to the keyless allowlist, deliberately.
-_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash")
+#
+# `lint_flags` (learning-loop spec §13 A132) IS sensitive: a code such as
+# `correct_longest` says where the key is.
+#
+# `gate` and `planned` (spec §13 A144/A145) are the item gates' verdict and the
+# plan a question was written to; an option's `misconception` tag names a
+# distractor. Internal like the rest, and only ever present with their flags.
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash", "lint_flags", "gate", "planned")
 
 
 def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
@@ -370,6 +378,43 @@ def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> l
     if not include_answer_key:
         return _strip_answer_key(wire_questions)
     return [
-        {k: v for k, v in q.items() if k not in _INTERNAL_QUESTION_KEYS}
+        {
+            k: (_untagged(v) if k == "options" else v)
+            for k, v in q.items()
+            if k not in _INTERNAL_QUESTION_KEYS
+        }
         for q in wire_questions
     ]
+
+
+def _untagged(options):
+    """Options without A144's misconception tags (a no-op on untagged ones)."""
+    if not isinstance(options, list) or not any(
+        isinstance(o, dict) and quiz_gates.TAG_KEY in o for o in options
+    ):
+        return options
+    return [
+        {k: v for k, v in o.items() if k != quiz_gates.TAG_KEY} if isinstance(o, dict) else o
+        for o in options
+    ]
+
+
+def _record_plan(question: dict, spec, tags, plan) -> None:
+    """Learning-loop spec §13 A144: stamp a planned question with the plan it
+    answers (its slot, where its difficulty came from, its target) and tag
+    each distractor with the misconception key the model gave it, kept only
+    when the plan named that key (`quiz_gates.validate_tags`)."""
+    options = question.get("options") or []
+    if options:
+        correct = next((i for i, o in enumerate(options) if o.get("correct")), -1)
+        kept = quiz_gates.validate_tags(
+            tags, options=len(options), correct_index=correct, allowed=plan.allowed_keys
+        )
+        for option, tag in zip(options, kept):
+            if tag:
+                option[quiz_gates.TAG_KEY] = tag
+    question[quiz_gates.PLANNED_KEY] = {
+        "slot": spec.slot,
+        "difficulty_source": plan.source,
+        "target": spec.target,
+    }

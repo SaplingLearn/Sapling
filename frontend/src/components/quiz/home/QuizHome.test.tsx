@@ -26,10 +26,13 @@ import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 import {
   alternativesOf,
+  dueFromPlan,
   dueSet,
   groupByCourse,
   primaryOf,
+  queueFor,
   rankCandidates,
+  rankFromPlan,
 } from "@/lib/quiz/proposals";
 import { QUEUE_COUNT } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
@@ -40,6 +43,7 @@ import type {
   AttemptDetail,
   AttemptSummary,
   QuizConfig,
+  QuizPlan,
   QuizSession,
   WireQuestion,
 } from "@/lib/quiz/types";
@@ -213,6 +217,8 @@ function buildHome(over: Partial<QuizHomeData> = {}): QuizHomeData {
     primary,
     alternatives: alternativesOf(candidates, primary),
     due: dueSet(nodes),
+    dueQueue: queueFor("due", nodes),
+    planned: false,
     byCourse: groupByCourse(nodes, courses),
     resumable: null,
     // A2 fix round 5: the hook now describes the concept the CARD shows, which a
@@ -1011,5 +1017,49 @@ describe("QuizHome — the states with no proposal", () => {
     expect(within(dialog).queryByTestId("quiz-seg-difficulty")).toBeNull();
     // The one list that is a client concept (R-2) is always there.
     expect(within(dialog).getByTestId("quiz-seg-feedback")).toBeInTheDocument();
+  });
+});
+
+// ── Learning-loop spec §13 A143: the learner model's plan ───────────────────
+
+describe("QuizHome with the learner model's plan (quiz_concept_plan)", () => {
+  const PLAN: QuizPlan = {
+    concepts: [
+      { node_id: "matrices", concept_name: "Matrices", course_id: "c-math", reason: "due", p_known: 0.91, band: "profic", due_at: null, open_misconceptions: 0 },
+      { node_id: "base-cases", concept_name: "Base cases", course_id: "c-cs", reason: "misconception", p_known: 0.47, band: "develop", due_at: null, open_misconceptions: 1 },
+    ],
+  };
+
+  function planned(): Partial<QuizHomeData> {
+    const candidates = rankFromPlan(PLAN, NODES, COURSES, []);
+    const due = dueFromPlan(PLAN, NODES);
+    return {
+      candidates,
+      primary: candidates[0],
+      alternatives: alternativesOf(candidates, candidates[0]),
+      due,
+      dueQueue: due.conceptIds,
+      planned: true,
+      cardConceptId: "matrices",
+    };
+  }
+
+  it("proposes the plan's first concept and says why, with its skill meter", () => {
+    mount({ home: planned() });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Matrices");
+    expect(screen.getByTestId("quiz-plan-reason")).toHaveTextContent(
+      "Due for review — bring it back before it fades. Skill meter: 91%.",
+    );
+  });
+
+  it("calls the due queue's order the most overdue", () => {
+    mount({ home: planned(), entry: entry({ scope: "due" }) });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
+    expect(screen.getByText(/starting with the 1 most overdue/)).toBeInTheDocument();
+  });
+
+  it("explains nothing on the tier ranking's card", () => {
+    mount();
+    expect(screen.queryByTestId("quiz-plan-reason")).toBeNull();
   });
 });

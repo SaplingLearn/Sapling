@@ -17,7 +17,8 @@ def run() -> None:
     node_id = f"e2e-node-{RUNID}"
 
     # ── 0. Ensure the e2e graph node exists ───────────────────────────────────
-    # mastery_score=0.3 → mastery_tier "struggling" per get_mastery_tier() thresholds.
+    # mastery_score=0.3 → mastery_tier "learning" per learning.bkt.tier_for (PKG-14b:
+    # 0.3 is BAND_NOVICE_MAX, the first "learning" score).
     table("graph_nodes").upsert(
         {
             "id": node_id,
@@ -25,7 +26,7 @@ def run() -> None:
             "course_id": COURSE_ID,
             "concept_name": "E2E Concept",
             "mastery_score": 0.3,
-            "mastery_tier": "struggling",
+            "mastery_tier": "learning",
         },
         on_conflict="id",
     )

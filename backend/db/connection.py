@@ -304,6 +304,15 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         _raise_for_status(r, scoped, self.name, "insert")
         return r.json()
 
+    def insert_ignore_duplicates(self, data, on_conflict: str = "id") -> list:
+        """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
+        `resolution=ignore-duplicates`): never overwrites an existing row, unlike
+        `upsert`. Returns the rows actually inserted ([] when one existed)."""
+        headers = {"Prefer": "return=representation,resolution=ignore-duplicates"}
+        r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
+        r.raise_for_status()
+        return r.json()
+
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.
 
@@ -355,6 +364,26 @@ class SupabaseTable(_aconn.AsyncTableMixin):
             r = _client.delete(self.url, params=filters, headers=scoped)
         _raise_for_status(r, scoped, self.name, "delete")
         return r.json()
+
+
+#: PostgREST's "table not in the schema cache" and Postgres' undefined_table:
+#: the relation does not exist (a deploy ahead of its migration).
+MISSING_RELATION_CODES = frozenset({"PGRST205", "42P01"})
+
+
+def is_missing_relation(exc: BaseException) -> bool:
+    """Whether a `table()` call failed because its TABLE does not exist —
+    read off the PostgREST error body (`raise_for_status`'s message omits it).
+    Any other failure, and anything unreadable, is False: callers keep failing
+    closed on everything but this one exactly-known case."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("code") in MISSING_RELATION_CODES
 
 
 def pg_quote_value(value: str) -> str:

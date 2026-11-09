@@ -737,6 +737,43 @@ class TestVisionPageCap:
 
 
 class TestOcrCacheKey:
+    @pytest.mark.parametrize("setting,value", [
+        ("GOT_OCR_MODEL_PATH", "/models/native-v2"),
+        ("GOT_OCR_MODEL_REVISION", "new-revision"),
+    ])
+    def test_active_got_checkpoint_changes_invalidate_transcription(self, monkeypatch, setting, value):
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "true")
+        monkeypatch.delenv("GOT_OCR_MODEL_PATH", raising=False)
+        monkeypatch.delenv("GOT_OCR_MODEL_REVISION", raising=False)
+        before = _ocr_cache_key(b"same-bytes")
+        monkeypatch.setenv(setting, value)
+        assert _ocr_cache_key(b"same-bytes") != before
+
+    @pytest.mark.parametrize("engine,enabled", [("auto", "false"), ("docling", "true"), ("tesseract", "true")])
+    def test_inactive_got_settings_leave_existing_cache_valid(self, monkeypatch, engine, enabled):
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("OCR_ENGINE", engine)
+        monkeypatch.setenv("GOT_OCR_ENABLED", enabled)
+        monkeypatch.setenv("GOT_OCR_MODEL_PATH", "/models/old")
+        before = _ocr_cache_key(b"same-bytes")
+        monkeypatch.setenv("GOT_OCR_MODEL_PATH", "/models/new")
+        monkeypatch.setenv("GOT_OCR_MODEL_REVISION", "new-revision")
+        assert _ocr_cache_key(b"same-bytes") == before
+
+    def test_native_got_key_cannot_reuse_legacy_transcriptions(self, monkeypatch):
+        import hashlib
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "false")
+        legacy_key = f"ocr:{hashlib.sha256(b'same-bytes').hexdigest()}:auto:True:False"
+        assert _ocr_cache_key(b"same-bytes") != legacy_key
+
     def test_cache_key_includes_the_vision_flag(self, monkeypatch):
         """Turning vision OCR on must not return the empty text cached from a
         run made before it was enabled."""

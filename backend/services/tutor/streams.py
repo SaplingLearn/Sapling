@@ -13,7 +13,7 @@ from starlette.requests import Request
 
 from agents.usage import record_agent_usage
 from models import ChatBody, StartSessionBody
-from services import events_service
+from services import ai_budget, crisis_support, events_service
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import guard_off_loop, require_self
 from services.chat_stream import stream_agent_turn
@@ -27,18 +27,21 @@ from services.tutor.messages import (
     _save_turn_rows,
     _turn_row_ids,
 )
-from services.tutor.pending import _open_turn_session
+from services.quiz_ask import open_quiz_ask
+from services.tutor.pending import _materialize_turn_session, _require_turn_session
 from services.tutor.run import (
     _continuation_text,
+    _kill_switch_budget,
     _observe_persisted_turn,
     _prepare_chat_run,
     _ran_on,
+    _usage_session_id,
 )
-from services.tutor.turns import _chat_turn_json, _start_session_agent
+from services.tutor.turns import _chat_turn_json, _start_session_agent, _start_texts
 from services.tutor_sessions import stash_pending
 
 
-async def chat_stream(body: ChatBody, request: Request):
+async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
     """SSE token-streaming chat turn (#70) with live graph deltas (#74).
 
     The JSON /chat pipeline (`_chat_turn_json`, on the fast tier) is the
@@ -51,7 +54,22 @@ async def chat_stream(body: ChatBody, request: Request):
     persisted is replayed (here and on /chat) instead of run again.
     """
     await guard_off_loop(require_self, body.user_id, request)
-    await _open_turn_session(body.session_id, body.user_id)
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_chat", body.message):
+        return crisis_support.sse_response(crisis, request)
+    # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
+    await _require_turn_session(body.session_id, body.user_id)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    # #117: off the event loop (it reads llm_usage).
+    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+    # Learning loop (spec §7): `loop_handler` is the loop's handler when the
+    # route-entry gate is true (the default; routes/learn.py evaluates it,
+    # owner decision 00); below is the kill-switch path (spec §11.6),
+    # cost-bounded by _kill_switch_budget (A20).
+    if loop_handler is not None:
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
+    await asyncio.to_thread(_kill_switch_budget, body.user_id)
+    await _materialize_turn_session(body.session_id, body.user_id)
 
     request_id = (
         getattr(request.state, "request_id", None)
@@ -67,6 +85,10 @@ async def chat_stream(body: ChatBody, request: Request):
             _replay_events(replay),
             headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
         )
+
+    # A92: the llm_usage session id, resolved here off the event loop (the
+    # usage hook below runs on it, inside the stream).
+    usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)
 
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
@@ -145,6 +167,7 @@ async def chat_stream(body: ChatBody, request: Request):
         # turn's decision.made) by construction, not by ambient context.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=usage_session_id,
             request_id=request_id,
         )
         ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
@@ -169,7 +192,7 @@ async def chat_stream(body: ChatBody, request: Request):
     )
 
 
-async def start_session_stream(body: StartSessionBody, request: Request):
+async def start_session_stream(body: StartSessionBody, request: Request, loop_handler=None):
     """Streamed session opener — runs chat_tutor_agent and streams the
     greeting (#152/#151).
 
@@ -190,12 +213,29 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     await guard_off_loop(require_self, body.user_id, request)
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_start", *_start_texts(body)):
+        return crisis_support.sse_response(crisis, request, session_id=None)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    # #117: off the event loop (it reads llm_usage).
+    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+    # Learning loop (spec §7): the loop's handler when the route-entry gate is
+    # true (the default); below is the kill-switch path (spec §11.6),
+    # cost-bounded by _kill_switch_budget (A20).
+    if loop_handler is not None:
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
+    await asyncio.to_thread(_kill_switch_budget, body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
         or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = await asyncio.to_thread(open_quiz_ask, body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
 
     course_id = body.course_id or await _get_course_id_for_topic(body.topic, body.user_id)
     offering_id = await run_in_threadpool(_session_offering, body, course_id)
@@ -259,6 +299,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # request_id, as in /chat/stream.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
             request_id=request_id,
         )
 

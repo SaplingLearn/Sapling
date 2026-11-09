@@ -1,0 +1,39 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "43645:no",
+        "65459:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "43645:yes",
+        "65459:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "43645: The base case is what stops it",
+        "65459: otherwise it keeps calling itself and the stack blows up"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "43645:yes",
+        "65459:yes"
+      ],
+      "item_results": [
+        "43645:yes",
+        "65459:yes"
+      ]
+    }
+  ]
+}

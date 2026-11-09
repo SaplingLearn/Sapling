@@ -26,9 +26,10 @@ export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_shared_ctx', // chat/SharedContextToggle.tsx (a privacy choice)
   'sapling_model_pref', // chat/ModelToggle.tsx
   'ach:seen-ids', // screens/Achievements.tsx
-  'sapling_last_feedback', // FeedbackFlow.tsx cooldown
-  'sapling_feedback_first_seen', // FeedbackFlow.tsx new-student grace
-  'sapling_last_session_feedback', // SessionFeedbackFlow.tsx cooldown
+  'sapling_last_feedback', // lib/feedbackPacing.ts: pulse (FeedbackFlow.tsx) cooldown
+  'sapling_feedback_first_seen', // lib/feedbackPacing.ts: pulse new-student grace
+  'sapling_last_session_feedback', // lib/feedbackPacing.ts: session prompt cooldown
+  'sapling_feedback_sessions', // lib/feedbackPacing.ts: sessions that had a prompt
   'sapling_session_end_count', // Learn.tsx / SessionFeedbackFlow.tsx
   'sapling_disclaimer_ack', // DisclaimerModal.tsx (each student acknowledges)
 ] as const;
@@ -41,7 +42,7 @@ export const USER_SCOPED_LOCAL_PREFIXES = [
 
 /** sessionStorage keys holding one account's data. */
 export const USER_SCOPED_SESSION_KEYS = [
-  'sapling_last_session_context', // Learn.tsx → SessionFeedbackGlobal.tsx
+  'sapling_last_session_context', // lib/feedbackPacing.ts ended session: LoopLearn / Learn.tsx → SessionFeedbackGlobal.tsx
   'sapling_pending_token', // lib/pendingToken.ts
 ] as const;
 

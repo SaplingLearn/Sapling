@@ -1,0 +1,313 @@
+{
+  "items": [
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 1,
+      "final_answer": "The non-recursive branch that terminates the recursion.",
+      "format": "free",
+      "options": [],
+      "prompt": "What is a base case in the context of recursion?",
+      "reference_answer": "A base case is the condition in a recursive function that stops the recursion. It represents the simplest version of the problem that can be solved directly without further recursion. Without a base case, a recursive function would call itself indefinitely, leading to a stack overflow.\nFinal answer: The non-recursive branch that terminates the recursion. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Identifies the base case as the terminating condition.",
+        "Mentions that it is non-recursive."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "recursive_step",
+        "infinite_recursion"
+      ],
+      "wrong_texts": [
+        "Confuses the base case with the recursive step.",
+        "Fails to mention that it stops the recursion."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1"
+      ],
+      "concept": "Base Case",
+      "difficulty": 2,
+      "final_answer": "When the number to count down reaches 1 or 0.",
+      "format": "free",
+      "options": [],
+      "prompt": "Consider a recursive function designed to count down from 5 to 1. What would be the base case for this function?",
+      "reference_answer": "The base case for a countdown function would be when the number reaches 1 (or 0, depending on the exact implementation). At this point, the function would stop calling itself and simply return or print the final number. This prevents infinite recursion.\nFinal answer: When the number to count down reaches 1 or 0. <chunk_eval-doc-2:c1>",
+      "rubric": [
+        "Identifies the specific condition that stops the countdown.",
+        "Explains why this condition is necessary (e.g., to terminate recursion)."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "recursive_call",
+        "incorrect_termination"
+      ],
+      "wrong_texts": [
+        "Describes the recursive step instead of the base case.",
+        "Provides a termination condition that would still lead to infinite recursion."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 3,
+      "final_answer": "It terminates the recursion, preventing a stack overflow.",
+      "format": "free",
+      "options": [],
+      "prompt": "Why is it crucial for a recursive function to have a base case?",
+      "reference_answer": "A base case is crucial because it provides the condition under which the recursion stops. Without a base case, the function would repeatedly call itself with smaller subproblems indefinitely. This leads to an excessive growth of the call stack, eventually causing a stack overflow error and program termination.\nFinal answer: It terminates the recursion, preventing a stack overflow. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Explains that the base case stops the recursion.",
+        "Explains the consequence of not having a base case (stack overflow)."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "performance_improvement",
+        "infinite_loop_analogy"
+      ],
+      "wrong_texts": [
+        "Claims the base case improves performance without stopping recursion.",
+        "Compares the lack of a base case to a simple infinite loop without mentioning the call stack."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 1,
+      "final_answer": "The stopping condition that solves the simplest version of the problem.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Explain to a classmate who missed the lecture what a base case is in recursion.",
+      "reference_answer": "A base case is basically the stopping point for a recursive function. It's the simplest version of the problem that the function can solve directly, without needing to call itself again. Think of it like the 'end condition' that prevents the function from calling itself forever.\nFinal answer: The stopping condition that solves the simplest version of the problem. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Explains that the base case stops the recursion.",
+        "Mentions that it handles the simplest case directly."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "recursive_step_explanation",
+        "defines_problem"
+      ],
+      "wrong_texts": [
+        "Explains the recursive step instead of the base case.",
+        "Describes the base case as defining the problem rather than solving it."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1"
+      ],
+      "concept": "Base Case",
+      "difficulty": 2,
+      "final_answer": "It stops the recursion when N=1, preventing infinite calls.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Imagine a recursive function that calculates the sum of numbers from 1 to N. Explain to a classmate why the base case is essential for this function to work correctly.",
+      "reference_answer": "The base case is essential because it's the point where the recursion stops. For summing numbers 1 to N, the base case would be when N is 1. At that point, the function just returns 1, and doesn't call itself anymore. Without this, it would keep calling itself with smaller N values indefinitely, leading to an error.\nFinal answer: It stops the recursion when N=1, preventing infinite calls. <chunk_eval-doc-2:c1>",
+      "rubric": [
+        "Identifies N=1 as the base case for summing 1 to N.",
+        "Explains that the base case prevents infinite recursion."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "base_case_as_sum",
+        "recursive_step_explanation"
+      ],
+      "wrong_texts": [
+        "Defines the base case as performing the sum.",
+        "Describes the recursive step as the essential part."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 3,
+      "final_answer": "It leads to infinite calls, filling the call stack and crashing the program.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Explain to a classmate how the absence of a base case in a recursive function could be compared to a flawed design that leads to a system crash.",
+      "reference_answer": "If a recursive function lacks a base case, it's like building a machine that keeps trying to do its job without an 'off' switch. Each time it performs its task, it creates a smaller version of the task but never reaches a point where it can just stop. This continuous process fills up all available memory for tracking tasks (the call stack), causing the whole system to crash, similar to how a program crashes when the call stack overflows.\nFinal answer: It leads to infinite calls, filling the call stack and crashing the program. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Explains that no base case causes infinite recursion.",
+        "Explains that this fills the call stack and causes a crash."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "resource_depletion_analogy",
+        "stack_overflow_definition"
+      ],
+      "wrong_texts": [
+        "Compares it to general resource depletion without mentioning the call stack.",
+        "Defines stack overflow without linking it to the lack of a base case."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 1,
+      "final_answer": "It terminates the recursion.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "It terminates the recursion."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "defines_problem_instead_of_stopping",
+          "misconception_text": "Confuses the base case with the problem definition.",
+          "text": "It defines the problem to be solved."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_with_recursive_step",
+          "misconception_text": "Confuses the base case with the recursive step.",
+          "text": "It performs the recursive step."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_termination_with_efficiency",
+          "misconception_text": "Believes the primary role is efficiency rather than termination.",
+          "text": "It makes the function more efficient."
+        }
+      ],
+      "prompt": "In recursion, what is the primary role of a base case?",
+      "reference_answer": "The base case provides the condition that stops the recursive calls and returns a direct result, preventing infinite recursion. For example, in a factorial function, the base case is often when n=0 or n=1, returning 1.\nFinal answer: It terminates the recursion. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Correctly identifies that the base case terminates the recursion.",
+        "Provides a valid reason why termination is the primary role."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1"
+      ],
+      "concept": "Base Case",
+      "difficulty": 2,
+      "final_answer": "When n equals 0.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "When n equals 0."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "incorrect_termination_condition",
+          "misconception_text": "Provides a condition that does not terminate the recursion for all inputs.",
+          "text": "When n is greater than 1."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_recursive_step_with_base_case",
+          "misconception_text": "Describes the recursive step rather than the base case.",
+          "text": "When the result is doubled."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "tautological_base_case",
+          "misconception_text": "States a condition that is true by definition but doesn't terminate recursion.",
+          "text": "When n is equal to the exponent."
+        }
+      ],
+      "prompt": "For a recursive function that calculates 2^n, which of the following would serve as an appropriate base case?",
+      "reference_answer": "The base case for calculating 2^n is when n=0. In this case, 2^0 is 1, which can be directly returned without further recursion. The recursive step would be 2^n = 2 * 2^(n-1).\nFinal answer: When n equals 0. <chunk_eval-doc-2:c1>",
+      "rubric": [
+        "Correctly identifies n=0 as the base case for 2^n.",
+        "Explains that this base case provides a direct, non-recursive answer."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "difficulty": 3,
+      "final_answer": "It serves as the base case, stopping recursion on non-list elements.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "It serves as the base case, stopping recursion on non-list elements."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_base_case_with_recursive_step",
+          "misconception_text": "Mistakes the condition for stopping recursion as the step that continues it.",
+          "text": "It is the recursive step for processing nested lists."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "overgeneralizes_base_case",
+          "misconception_text": "Believes the base case applies to the whole problem, not just a subproblem.",
+          "text": "It indicates the completion of the entire traversal."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "misinterprets_base_case_as_error",
+          "misconception_text": "Incorrectly views a valid termination condition as an error.",
+          "text": "It is an error condition that should halt the program."
+        }
+      ],
+      "prompt": "A recursive function is designed to traverse a nested list. If the function encounters an element that is not a list, it processes that element directly. Which statement best describes the role of this 'not a list' condition?",
+      "reference_answer": "The condition where the function encounters an element that is not a list serves as the base case. This is because it represents the simplest element that can be processed directly without further recursive calls into nested structures. It stops the recursion from trying to 'traverse' non-list items.\nFinal answer: It serves as the base case, stopping recursion on non-list elements. <chunk_eval-doc-2:c2>",
+      "rubric": [
+        "Correctly identifies the 'not a list' condition as the base case.",
+        "Explains that this base case stops recursion for individual elements."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    }
+  ]
+}
