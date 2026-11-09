@@ -74,6 +74,9 @@ describe("assessments", () => {
   it("counts days and formats dates", () => {
     expect(daysTo("2026-11-13", NOW)).toBe(5);
     expect(fmtDow("2026-11-13")).toBe("Fri, Nov 13");
+    // Exam tabs pass today: a date in another year carries its year.
+    expect(fmtDow("2026-11-13", new Date(2026, 10, 8))).toBe("Fri, Nov 13");
+    expect(fmtDow("2025-10-15", new Date(2026, 10, 8))).toBe("Wed, Oct 15, 2025");
   });
 });
 

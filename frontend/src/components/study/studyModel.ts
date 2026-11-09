@@ -168,9 +168,11 @@ export const daysTo = (iso: string, today: Date) =>
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** "Fri, Nov 13" */
-export const fmtDow = (iso: string) => {
+/** "Fri, Nov 13"; with `today`, a date in another year gets the year too ("Wed, Oct 15, 2025"). */
+export const fmtDow = (iso: string, today?: Date) => {
   const d = parseIso(iso);
-  return `${DOW[d.getDay()]}, ${MON[d.getMonth()]} ${d.getDate()}`;
+  const base = `${DOW[d.getDay()]}, ${MON[d.getMonth()]} ${d.getDate()}`;
+  return today && d.getFullYear() !== today.getFullYear() ? `${base}, ${d.getFullYear()}` : base;
 };
 /** "Today" / "Yesterday" / "Nov 4" for a timestamp. */
 export function fmtWhen(ts: string, today: Date): string {

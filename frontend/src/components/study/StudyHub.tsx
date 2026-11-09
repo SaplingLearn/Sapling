@@ -213,8 +213,21 @@ export function StudyHub({
 
   const list = React.useMemo(() => assessFor(cid), [assessFor, cid]);
   const upcoming = list.filter(e => daysTo(e.iso, today) >= 0);
-  const exams = upcoming.filter(e => e.type !== "Homework");
-  const exam = exams.find(e => e.id === st.exam) || exams[0] || null;
+  // Every exam and quiz configured for the course gets a tab, past or not (as
+  // in the v3 handoff: a date in Exams and Deadlines is enough). Homework stays
+  // in the bell / deadline pill only. The default tab is the next exam ahead,
+  // else the most recent one.
+  const exams = list.filter(e => e.type !== "Homework");
+  const nextExam = exams.find(e => daysTo(e.iso, today) >= 0) || exams[exams.length - 1] || null;
+  const exam = exams.find(e => e.id === st.exam) || nextExam;
+  // An exam just added in Exams and Deadlines: select its tab once it loads.
+  const [justAdded, setJustAdded] = React.useState<{ title: string; iso: string } | null>(null);
+  React.useEffect(() => {
+    if (!justAdded) return;
+    const hit = exams.find(e => e.title === justAdded.title && e.iso === justAdded.iso);
+    if (hit) { setJustAdded(null); set({ exam: hit.id, topic: null, hover: null, lvl: null }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `set` is a stable state merger
+  }, [justAdded, exams]);
 
   const pickCourse = (id: string) => {
     setCourseId(id);
@@ -306,6 +319,8 @@ export function StudyHub({
         if (Object.keys(patch).length) await updateAssignment(r.id, userId, patch);
       }
       const added = rows.filter(r => r.isNew);
+      const addedExam = added.filter(r => r.type !== "Homework").pop();
+      if (addedExam) setJustAdded({ title: addedExam.title, iso: addedExam.iso });
       if (added.length) {
         await saveAssignments(userId, added.map(r => ({
           title: r.title, course_id: cid, due_date: r.iso, assignment_type: TYPE_RAW[r.type],
@@ -581,7 +596,7 @@ export function StudyHub({
               <button key={e.id} role="tab" aria-selected={on} className={on ? undefined : s.hoverTab} onClick={() => set({ exam: e.id, topic: null, hover: null, lvl: null })}
                 style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, flexShrink: 0, padding: "4px 0 12px", border: 0, borderBottom: `3px solid ${on ? "#445D22" : "transparent"}`, background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
                 <span style={{ fontSize: 17, fontWeight: 700, color: on ? "#1A1814" : "#6F6857", whiteSpace: "nowrap" }}>{e.title}</span>
-                <span style={{ fontSize: 13, color: "#6F6857", whiteSpace: "nowrap" }}>{fmtDow(e.iso)}</span>
+                <span style={{ fontSize: 13, color: "#6F6857", whiteSpace: "nowrap" }}>{fmtDow(e.iso, today)}</span>
               </button>
             );
           })}
