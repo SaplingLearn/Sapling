@@ -53,3 +53,10 @@ def patch_admin(name, new=DEFAULT, **kwargs):
     """``patch("routes.admin.<name>", ...)`` across routes/admin.py and
     services/admin/."""
     return patch_in(ADMIN_MODULES, name, new, **kwargs)
+
+
+ADMIN_ANALYTICS_MODULES = (
+    "routes.admin_analytics",
+    "services.admin.analytics.scan",
+    "services.admin.analytics.series",
+)
