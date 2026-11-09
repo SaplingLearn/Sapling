@@ -40,7 +40,7 @@ def _now() -> datetime:
 
 
 def _claim(user: str, attempt: str, hashes: list[str], now: datetime | None = None) -> set[str]:
-    from routes.quiz import _claim_quiz_evidence
+    from services.quiz.submission import _claim_quiz_evidence  # #118 (spec §13 A149)
 
     return _claim_quiz_evidence(user, attempt, hashes, now or _now())
 
@@ -87,7 +87,7 @@ def test_concurrent_submits_sharing_a_hash_claim_it_exactly_once(db_conn):
 
 
 def test_a_claim_inside_the_window_holds_and_a_stale_one_is_renewed_once(db_conn):
-    from routes.quiz import QUIZ_EVIDENCE_WINDOW_HOURS
+    from services.quiz.submission import QUIZ_EVIDENCE_WINDOW_HOURS  # #118 (spec §13 A149)
 
     held, stale = _qh(), _qh()
     assert _claim(USER, "attempt-0", [held, stale]) == {held, stale}
