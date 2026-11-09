@@ -227,6 +227,8 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("graph_nodes"),
     _Spec("graph_edges"),
     _Spec("node_mastery_events", key="node_id", parent="graph_nodes"),
+    # Before documents: documents.folder_id references library_folders.
+    _Spec("library_folders"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
     _Spec("enrollments"),
@@ -250,6 +252,9 @@ SPECS: tuple[_Spec, ...] = (
 
 # Tables whose rows carry an `offering_id` to remap.
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
+
+# Tables whose rows carry an abstract `course_id` to remap.
+_COURSE_TABLES = ("graph_nodes", "library_folders")
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
@@ -375,7 +380,7 @@ def _export_catalog(exported: dict[str, list[dict]]) -> dict:
         raise BundleError(f"offerings referenced but not found: {sorted(missing)}")
 
     course_ids = {o["course_id"] for o in offerings} | (
-        {r.get("course_id") for r in exported.get("graph_nodes", [])} - {None}
+        {r.get("course_id") for t in _COURSE_TABLES for r in exported.get(t, [])} - {None}
     )
     courses = _select_in("courses", "id", course_ids, "id,course_code,course_name,school_id")
     missing = course_ids - {c["id"] for c in courses}
@@ -647,10 +652,10 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
         if src not in offering_map:
             raise BundleError(f"{name}: offering {src} is not in the bundle's catalog")
         out["offering_id"] = offering_map[src]
-    if name == "graph_nodes" and out.get("course_id") is not None:
+    if name in _COURSE_TABLES and out.get("course_id") is not None:
         src = out["course_id"]
         if src not in course_map:
-            raise BundleError(f"graph_nodes: course {src} is not in the bundle's catalog")
+            raise BundleError(f"{name}: course {src} is not in the bundle's catalog")
         out["course_id"] = course_map[src]
     if name == "documents":
         out.update(_DOCUMENT_INDEX_RESET)

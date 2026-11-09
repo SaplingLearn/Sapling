@@ -10,6 +10,7 @@ Deleted (directly, or through the FK cascades noted):
   topic_checklists (→ topic_checklist_progress), gradescope_syncs
 * documents — chunks withdrawn FIRST via `chunk_visibility.withdraw_document_chunks`,
   then any private `course_chunks` still carrying `uploader_id = user`
+* library_folders (after documents, whose `folder_id` is SET NULL anyway)
 * notes → note_concepts
 * flashcards
 * sessions → messages (feedback.session_id is SET NULL; feedback is kept)
@@ -57,6 +58,8 @@ _BATCH = 100
 #: the graph nodes they reference; notes before graph nodes, both of which
 #: cascade note_concepts).
 _USER_TABLES: tuple[tuple[str, str], ...] = (
+    # The Library's folders. After documents: documents.folder_id points here.
+    ("library_folders", "id"),
     ("notes", "id"),
     ("flashcards", "id"),
     ("sessions", "id"),
