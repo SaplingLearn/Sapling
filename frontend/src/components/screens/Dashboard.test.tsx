@@ -18,7 +18,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, within, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
