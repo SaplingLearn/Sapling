@@ -333,6 +333,18 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/learn/start-session/stream"):
         ((404,), "A's quiz attempt (services/quiz_ask.py); a foreign course would be "
                  "academics.require_course_enrollment's 404 too"),
+    # Learning loop (spec §13 A148): each answers A's id exactly as it answers an
+    # id that names nothing, reads nothing of A's and writes nothing keyed on A.
+    ("GET", "/api/learn/loop/status"):
+        ((200,), "a fresh loop: _session_scope's 404 for a session that is not B's reads as "
+                 "'no session yet', the same answer as an unknown id; A's state is never loaded"),
+    ("POST", "/api/learn/loop/posttest/shown"):
+        ((200,), "{'served': false}: the stamp looks for B's own open pose (user_id = B) and "
+                 "B has none on A's node, the same answer as an unknown node id"),
+    ("POST", "/api/learn/loop/review/answer"):
+        ((409,), "the stale-day 409: a review session id is derived from (B, course, UTC day) "
+                 "(learning/review.py::review_session_id), so any other id, A's or unknown, "
+                 "is refused before any session or item is read"),
 }
 
 #: Swap cases whose correct answer is not 403.

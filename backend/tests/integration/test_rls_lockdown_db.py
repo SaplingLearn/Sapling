@@ -361,7 +361,7 @@ def test_service_role_keeps_full_table_access(db_conn):
             r["priv"] for r in db_conn.execute(
                 """
                 SELECT p.priv FROM unnest(%s::text[]) AS p(priv)
-                 WHERE has_table_privilege('service_role', format('public.%%I', %s), p.priv)
+                 WHERE has_table_privilege('service_role', format('public.%%I', %s::text), p.priv)
                 """,
                 (list(_ALL_TABLE_PRIVS), table),
             ).fetchall()
