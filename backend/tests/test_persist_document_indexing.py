@@ -9,7 +9,7 @@ queue.
 from unittest.mock import MagicMock, patch
 
 from services.encryption import decrypt_if_present
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 
 def _result(confidence=0.91):

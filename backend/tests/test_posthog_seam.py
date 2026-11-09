@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
-from tests.route_patches import patch_profile_table
+from tests.split_patches import patch_profile_table
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
 # users.id is TEXT, not a UUID — a UUID-only rule would drop every real user.

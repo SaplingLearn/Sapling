@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 client = TestClient(app)
 

@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
-from tests.route_patches import set_auth_session_secret
+from tests.split_patches import set_auth_session_secret
 
 # Build a minimal app that mounts ONLY the auth router so these tests don't
 # pull in main.py (which imports logfire and the full router stack).

@@ -25,7 +25,7 @@ from agents import _resilience
 from agents._providers import _ResilientModelMixin
 from services import llm_budget, request_context
 from services.llm_budget import BudgetStatus, LLMBudgetExceeded
-from tests.doc_patches import patch_documents
+from tests.split_patches import patch_documents
 
 USER = "user_budget"
 RESET = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -400,7 +400,7 @@ def test_a_streamed_tutor_turn_ends_in_a_terminal_budget_error(status):
 def test_quiz_generation_answers_its_daily_limit_code_and_refunds_the_slot(monkeypatch):
     import routes.quiz as quiz
     from services.quiz.errors import QuizAPIError, QuizErrorCode
-    from tests.quiz_patches import setattr_quiz
+    from tests.split_patches import setattr_quiz
 
     async def refused(**_kw):
         raise _exc()

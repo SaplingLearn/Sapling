@@ -10,7 +10,7 @@ from agents._providers import model_for
 from agents.concept_scan import NewConcepts, concept_scan_agent
 import routes.documents as documents
 from main import app
-from tests.doc_patches import DOCUMENTS_MODULES, patch_documents, setattr_in
+from tests.split_patches import DOCUMENTS_MODULES, patch_documents, setattr_in
 
 
 def test_model_for_concept_scan_defaults_to_haiku():

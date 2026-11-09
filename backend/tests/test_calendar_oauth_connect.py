@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
 import routes.calendar as cal
-from tests.route_patches import set_auth_session_secret
+from tests.split_patches import set_auth_session_secret
 
 # Mount ONLY the calendar router so these tests don't pull in main.py's full
 # router + logfire stack (mirrors test_auth_state.py).

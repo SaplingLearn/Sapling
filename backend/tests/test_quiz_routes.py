@@ -18,7 +18,7 @@ from main import app
 from agents.quiz import Quiz, QuizQuestion
 from services.rag_service import Retrieval
 from tests.db_fakes import fake_table, with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 
 # #117: a sync PostgREST call reached on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")

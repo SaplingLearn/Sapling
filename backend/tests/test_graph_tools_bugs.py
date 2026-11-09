@@ -20,7 +20,7 @@ import pytest
 from agents.deps import SaplingDeps
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import fake_table, with_async_twins
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_quiz
 from agents.tools.graph import (
     ConceptMasteryUpdate,
     GraphUpdateInput,

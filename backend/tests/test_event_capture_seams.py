@@ -27,8 +27,8 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
-from tests.doc_patches import patch_documents
-from tests.quiz_patches import patch_quiz
+from tests.split_patches import patch_documents
+from tests.split_patches import patch_quiz
 
 client = TestClient(app)
 
