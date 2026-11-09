@@ -12,14 +12,17 @@ at any point; follow their steering over the default itinerary.
 ## Steps
 
 1. **Boot.** Run `scripts/explore.sh up` (takes minutes: Supabase, migrations,
-   seed, backend, test-profile Next build; it takes the machine-singleton
-   stack lock and fails fast if another session holds it — if it does, stop
-   and tell the operator). Everything lands in `.explore/`.
+   seed, backend, test-profile Next build; it holds a free E2E slot, waits
+   while all are busy, and refuses if this checkout already holds a stack —
+   if it does, stop and tell the operator). Everything lands in `.explore/`.
 
 2. **Open a browser you can drive.** Use this session's browser tools
    (Playwright MCP if configured, else the Claude-in-Chrome tools) on a NEW
-   tab at the slot's frontend URL that `scripts/explore.sh up` prints
-   (also `frontendUrl` in `.e2e/stack.json`; e.g. `http://localhost:3101`).
+   tab at the slot's frontend on **127.0.0.1**, the "in your own browser" URL
+   `scripts/explore.sh up` prints (e.g. `http://127.0.0.1:3101`). Never
+   `localhost:310N` in the operator's real browser: cookies ignore ports, so
+   the seeded student's `sapling_session` would replace the operator's own
+   sign-in on the dev app at `localhost:3000`.
 
 3. **Sign in as the seeded student.** The storage-state file works only for
    Playwright contexts; in a live browser, mint the session from the page

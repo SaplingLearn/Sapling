@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 /**
- * RLS step 2e (#115): the Realtime token lifecycle behind `realtime_rls`.
+ * RLS step 2e (#115): the study-room Realtime token lifecycle (no flag since
+ * `realtime_rls` graduated; the fake client's own key is labelled "anon").
  *   - startRealtimeAuth: applied before anything subscribes, refreshed before
  *     it expires, not-authed reported AT expiry whatever the fetches do,
- *     transient failures retried with capped backoff, 404/503 permanent (back
- *     to anon, no more fetches), refreshed on tab wake, reverted on stop, and
+ *     transient failures (network, every 5xx incl. a 503 without the
+ *     `realtime_unconfigured` code) retried with capped backoff, refusals
+ *     (401/403/404, 503 `realtime_unconfigured`) final (the minted token
+ *     dropped, no more fetches), refreshed on tab wake, reverted on stop, and
  *     an old lifecycle's revert never lands after a newer one's token.
  *   - acquireRealtimeAuth / useRealtimeAuth: one shared, ref-counted lifecycle
- *     (room/tab switches and StrictMode reuse it); `epoch` bumps on every
- *     (re)entry into `token`; flag off never requests a token.
+ *     per signed-in user (room/tab switches and StrictMode reuse it; another
+ *     user replaces it); `epoch` bumps on every (re)entry into `token`; a
+ *     refusal other than 401 latches `unavailable` (REST only) for THAT user
+ *     and logs once; nothing is requested before the session is known or
+ *     without a Realtime client.
  *   - superviseChannel: a channel that Realtime errors/closes re-joins after
  *     a token refresh, with bounded backoff.
  */
@@ -83,6 +89,16 @@ function setVisibility(state: "visible" | "hidden") {
 }
 
 const httpError = (status: number) => new ApiError(`HTTP ${status}`, status);
+/** What fetchJSON throws for the backend's "no signing key" answer. */
+const unconfigured = () => {
+  const body = { detail: { code: "realtime_unconfigured", message: "Realtime authorization is not configured" } };
+  return new ApiError(JSON.stringify(body), 503, { body });
+};
+/** The session guard's transient 503 (account-state read failed). */
+const guard503 = () => {
+  const body = { detail: "Could not verify your account. Please try again." };
+  return new ApiError(JSON.stringify(body), 503, { body });
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -161,8 +177,8 @@ describe("startRealtimeAuth", () => {
     h.life.stop();
   });
 
-  it("transient failures (network, 5xx other than 503) back off and cap", async () => {
-    const errors = [new TypeError("Failed to fetch"), httpError(500), httpError(502), httpError(504), httpError(500), httpError(500)];
+  it("transient failures (network, any 5xx, a 503 without the code) back off and cap", async () => {
+    const errors = [new TypeError("Failed to fetch"), httpError(500), guard503(), httpError(503), httpError(502), httpError(504)];
     let calls = 0;
     const h = harness(async () => {
       const e = errors[calls++];
@@ -225,10 +241,15 @@ describe("startRealtimeAuth", () => {
     h.life.stop();
   });
 
-  it.each([404, 503])("HTTP %i is permanent: back to anon, no more fetches", async (status) => {
-    const h = harness(async () => { throw httpError(status); });
+  it.each([
+    [401, "no_session", () => httpError(401)],
+    [403, "forbidden", () => httpError(403)],
+    [404, "unsupported", () => httpError(404)],
+    [503, "unconfigured", unconfigured],
+  ] as const)("HTTP %i (%s) is a refusal: minted token dropped, no more fetches", async (status, reason, error) => {
+    const h = harness(async () => { throw error(); });
     await flush();
-    expect(h.onUnavailable).toHaveBeenCalledWith(status);
+    expect(h.onUnavailable).toHaveBeenCalledWith(status, reason);
     expect(h.setAuth).toHaveBeenCalledWith();
     expect(h.realtime.current).toBe("anon");
     await vi.advanceTimersByTimeAsync(24 * HOUR_MS);
@@ -241,7 +262,7 @@ describe("startRealtimeAuth", () => {
     h.life.stop();
   });
 
-  it("a 404 at refresh drops an applied token for the anon key", async () => {
+  it("a 404 at refresh drops an applied token", async () => {
     let calls = 0;
     const h = harness(async () => {
       calls += 1;
@@ -253,7 +274,7 @@ describe("startRealtimeAuth", () => {
     await vi.advanceTimersByTimeAsync(HOUR_MS - REFRESH_MARGIN_MS);
     await flush();
     expect(h.realtime.current).toBe("anon");
-    expect(h.onUnavailable).toHaveBeenCalledWith(404);
+    expect(h.onUnavailable).toHaveBeenCalledWith(404, "unsupported");
     // The expiry timer is cancelled with everything else.
     await vi.advanceTimersByTimeAsync(HOUR_MS);
     expect(h.onFail).not.toHaveBeenCalled();
@@ -441,21 +462,99 @@ describe("acquireRealtimeAuth (shared, ref-counted)", () => {
     release();
   });
 
-  it("404/503 latches anon for the session and logs once", async () => {
+  it("503 realtime_unconfigured latches unavailable for this user and logs once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const realtime = fakeRealtime();
-    const fetchToken = vi.fn(async () => { throw httpError(503); });
-    const release = acquireRealtimeAuth(realtime, { fetchToken });
+    const fetchToken = vi.fn(async () => { throw unconfigured(); });
+    const release = acquireRealtimeAuth(realtime, { fetchToken, userId: "u1" });
     await flush();
-    expect(getRealtimeAuthSnapshot().mode).toBe("anon");
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
     release();
     await vi.advanceTimersByTimeAsync(10);
-    const again = acquireRealtimeAuth(realtime, { fetchToken });
-    expect(getRealtimeAuthSnapshot().mode).toBe("anon");
+    const again = acquireRealtimeAuth(realtime, { fetchToken, userId: "u1" });
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
     await vi.advanceTimersByTimeAsync(HOUR_MS);
     expect(fetchToken).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("HTTP 503");
+    expect(String(warn.mock.calls[0][0])).toContain("REST");
     again();
+  });
+
+  it("a transient 503 does not latch: it retries and goes live", async () => {
+    const realtime = fakeRealtime();
+    let calls = 0;
+    const fetchToken = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw guard503();
+      return token(calls);
+    });
+    const release = acquireRealtimeAuth(realtime, { fetchToken, userId: "u1" });
+    await flush();
+    expect(getRealtimeAuthSnapshot().mode).toBe("pending");
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await flush();
+    expect(getRealtimeAuthSnapshot().mode).toBe("token");
+    expect(realtime.current).toBe("tok-2");
+    release();
+  });
+
+  it("the latch is keyed to the user: another user asks again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const realtime = fakeRealtime();
+    const refused = vi.fn(async () => { throw httpError(403); });
+    const releaseA = acquireRealtimeAuth(realtime, { fetchToken: refused, userId: "uA" });
+    await flush();
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
+    releaseA();
+    await vi.advanceTimersByTimeAsync(10);
+    const fetchToken = vi.fn(async () => token(1));
+    const releaseB = acquireRealtimeAuth(realtime, { fetchToken, userId: "uB" });
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+    expect(getRealtimeAuthSnapshot().mode).toBe("token");
+    releaseB();
+  });
+
+  it("401 stops the lifecycle without latching: the next acquire asks again", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const realtime = fakeRealtime();
+    let calls = 0;
+    const fetchToken = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw httpError(401);
+      return token(calls);
+    });
+    const release = acquireRealtimeAuth(realtime, { fetchToken, userId: "u1" });
+    await flush();
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
+    await vi.advanceTimersByTimeAsync(HOUR_MS);
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+    release();
+    await vi.advanceTimersByTimeAsync(10);
+    const again = acquireRealtimeAuth(realtime, { fetchToken, userId: "u1" });
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+    expect(getRealtimeAuthSnapshot().mode).toBe("token");
+    expect(warn).not.toHaveBeenCalled();
+    again();
+  });
+
+  it("a different user replaces a lifecycle still in its release grace", async () => {
+    const realtime = fakeRealtime();
+    let n = 0;
+    const fetchToken = vi.fn(async () => token(++n));
+    const releaseA = acquireRealtimeAuth(realtime, { fetchToken, userId: "uA" });
+    await flush();
+    expect(realtime.current).toBe("tok-1");
+    releaseA();
+    const releaseB = acquireRealtimeAuth(realtime, { fetchToken, userId: "uB" });
+    await vi.advanceTimersByTimeAsync(10);
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+    expect(realtime.current).toBe("tok-2");
+    expect(getRealtimeAuthSnapshot().mode).toBe("token");
+    releaseB();
   });
 
   it("recoverRealtimeAuth asks the shared lifecycle for a fresh token", async () => {
@@ -475,23 +574,24 @@ describe("acquireRealtimeAuth (shared, ref-counted)", () => {
 describe("useRealtimeAuth", () => {
   const realtime = fakeRealtime();
   const getRealtime = () => realtime;
+  const noRealtime = () => null;
 
   beforeEach(() => {
     realtime.setAuth.mockClear();
     realtime.current = "anon";
   });
 
-  it("flag off: never requests a token or touches setAuth", async () => {
-    const { result } = renderHook(() => useRealtimeAuth(false, getRealtime));
+  it("no Realtime client: never requests a token or touches setAuth", async () => {
+    const { result } = renderHook(() => useRealtimeAuth(noRealtime, "u1"));
     await act(async () => { await vi.advanceTimersByTimeAsync(HOUR_MS); });
     expect(fetchJSON).not.toHaveBeenCalled();
     expect(realtime.setAuth).not.toHaveBeenCalled();
     expect(result.current.mode).toBe("off");
   });
 
-  it("flag on: fetches /api/auth/realtime-token once (StrictMode too) and reports token", async () => {
+  it("fetches /api/auth/realtime-token once (StrictMode too) and reports token", async () => {
     vi.mocked(fetchJSON).mockImplementation(async () => token(1) as never);
-    const { result, unmount } = renderHook(() => useRealtimeAuth(true, getRealtime), {
+    const { result, unmount } = renderHook(() => useRealtimeAuth(getRealtime, "u1"), {
       wrapper: ({ children }) => <React.StrictMode>{children}</React.StrictMode>,
     });
     await act(async () => { await flush(); });
@@ -502,6 +602,44 @@ describe("useRealtimeAuth", () => {
     unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(10); await flush(); });
     expect(realtime.current).toBe("anon");
+  });
+
+  it("requests nothing until the session is known, then once", async () => {
+    vi.mocked(fetchJSON).mockImplementation(async () => token(1) as never);
+    const { result, rerender, unmount } = renderHook(
+      ({ uid }: { uid: string | null }) => useRealtimeAuth(getRealtime, uid),
+      { initialProps: { uid: null as string | null } },
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(HOUR_MS); });
+    expect(fetchJSON).not.toHaveBeenCalled();
+    expect(result.current.mode).toBe("off");
+    rerender({ uid: "u1" });
+    await act(async () => { await flush(); });
+    expect(fetchJSON).toHaveBeenCalledTimes(1);
+    expect(result.current.mode).toBe("token");
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); await flush(); });
+  });
+
+  it("sign-out then sign-in as another user clears a latch", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fetchJSON).mockImplementationOnce(async () => { throw unconfigured(); });
+    vi.mocked(fetchJSON).mockImplementation(async () => token(2) as never);
+    const { result, rerender, unmount } = renderHook(
+      ({ uid }: { uid: string | null }) => useRealtimeAuth(getRealtime, uid),
+      { initialProps: { uid: "uA" as string | null } },
+    );
+    await act(async () => { await flush(); });
+    expect(result.current.mode).toBe("unavailable");
+    rerender({ uid: null });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); await flush(); });
+    expect(result.current.mode).toBe("off");
+    rerender({ uid: "uB" });
+    await act(async () => { await flush(); });
+    expect(fetchJSON).toHaveBeenCalledTimes(2);
+    expect(result.current.mode).toBe("token");
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); await flush(); });
   });
 });
 

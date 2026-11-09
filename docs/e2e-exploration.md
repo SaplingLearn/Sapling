@@ -56,8 +56,8 @@ make explore
 
 This runs the full pipeline: boot the stack, mint a session, hand the
 explorer prompt to a Playwright-MCP-armed `claude -p`, run the oracle final
-pass, then tear everything down. It takes the machine-singleton stack lock
-for the whole run (see §10). With warm caches (a repo you've already run
+pass, then tear everything down. It holds an E2E slot for the whole run
+(see §10). With warm caches (a repo you've already run
 `make e2e-up` or `make explore` on before), the whole thing typically
 finishes in a few minutes end-to-end; the first-ever run on a machine can
 take closer to ~10 minutes (see §9's cost note — it's the `npx
@@ -81,10 +81,9 @@ EXPLORE_HEADED=1 EXPLORE_USER=rich-user-admin EXPLORE_MAX_TURNS=60 make explore
 
 Two things worth internalizing before your first run:
 
-- **`.explore/` is wiped at `up`, but only after the lock is acquired.** If
+- **`.explore/` is wiped at `up`, but only once the stack is up and ours.** If
   you want to keep a previous run's findings, triage them (§7) before
-  re-running — a second `make explore` deletes the prior artifacts (except
-  the in-flight `lock.ok`, which is bookkeeping, not a finding).
+  re-running — a second `make explore` deletes the prior artifacts.
 - **A crashed run is recoverable.** If a prior `make explore` died mid-run
   (killed session, machine sleep, whatever), `make explore-down` (same as
   `scripts/explore.sh down`) runs the oracle final pass against whatever is
@@ -105,7 +104,8 @@ Unlike `make explore`, you watch (and can steer) the exploration live:
    the same stack lock `make explore` does; if another session holds it, the
    skill stops and tells you).
 2. It opens a real browser tab (Playwright MCP if configured for the session,
-   else the Claude-in-Chrome tools) at the slot's frontend (`http://localhost:310N`, printed by `up`) and signs in as
+   else the Claude-in-Chrome tools) at the slot's frontend (`http://127.0.0.1:310N`, printed by `up` — 127.0.0.1, so the seeded
+   student's cookie never replaces the operator's dev-app sign-in on `localhost`) and signs in as
    `rich-user-active` by minting a session directly from the page.
 3. It reads `scripts/explore/explorer-prompt.md` as its own mission briefing
    and starts exploring — narrating what it's trying so you can redirect it
@@ -132,7 +132,7 @@ Everything lands in `.explore/` at the repo root (gitignored in full):
 | `oracle-final.txt` / `oracle-final.json` | The final `python -m e2e_oracles` pass, run at teardown while the stack is still up, in both text and JSON form. |
 | `traces/` | `@playwright/mcp` session-recording artifacts (page snapshots plus an MCP session directory) — these are MCP session recordings, not Playwright Trace Viewer `.zip` files. |
 | `storageState.json`, `mcp.json` | Plumbing, not findings: the minted Playwright storage state and the `--mcp-config` fed to `claude -p`. Useful for debugging why the explorer couldn't reach a page, otherwise ignorable. |
-| `lock.ok` | Internal lock-holder bookkeeping (holder-written, self-identifying — its content is the holder process's own PID). Not a finding artifact. |
+| `cycle.pid` | The held E2E cycle this explore started; `down` stops only that one. Not a finding artifact. |
 
 ## 6. The oracles, standalone
 
@@ -287,36 +287,37 @@ a warm Next build and an already-cached `@playwright/mcp`; budget closer to
 the `npx @playwright/mcp` download and a cold test-profile Next build (see
 §3).
 
-## 10. Lock protocol & hygiene
+## 10. Slots & hygiene
 
 Each local E2E stack runs in a numbered **slot** with its own ports and its
 own Supabase project (`scripts/lib/e2e-slot.sh`; table in
-`docs/local-supabase.md`). `scripts/explore.sh` claims the first free slot's
-lock (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`, or `E2E_SLOT`'s) and holds
-it for the entire session (both the headless full pipeline and the
-interactive `up`/`down` pair); the browser targets that slot's frontend
-(`http://localhost:310N`, printed by `up`), never the dev app's :3000.
+`docs/local-supabase.md`). `scripts/explore.sh up` starts a cycle held in the
+background (`scripts/e2e-cycle.sh --background`, the same owner as
+`make e2e-up`), which takes the first free slot (or `E2E_SLOT`) and keeps it
+for the entire session (both the headless full pipeline and the interactive
+`up`/`down` pair); the browser targets that slot's frontend (printed by `up`),
+never the dev app's :3000. `down` stops that cycle, which tears the stack down.
 
 Rules that follow from that:
 
 - **Explorations and Playwright cycles can run side by side**, up to the
-  number of slots (3). When every slot is busy, `explore` fails fast with
-  "every E2E slot is busy" and touches nothing (no wipe, no teardown of
-  another session's stack).
-- **One exploration per checkout at a time** — `.explore/` and `.e2e/` are
-  per checkout.
+  number of slots (3). When every slot is busy, `up` waits for one to free
+  up; it touches nothing of another session's.
+- **One stack per checkout** — `.explore/` and `.e2e/` are per checkout, so
+  `up` refuses while the checkout holds a stack (`make e2e-up`, another
+  explore). Explore from another worktree, or `make e2e-down` first.
+  `down` only ever stops the cycle its own `up` started.
 - **Always end a session via `down`.** For `make explore` this happens
   automatically. For `/explore` or a manual `scripts/explore.sh up`, that
   means `make explore-down` (or `scripts/explore.sh down`) — every time,
-  even after an error. Skipping it leaks both the running stack and the
-  lock, which then blocks every future exploration until someone runs
-  `explore-down` by hand.
+  even after an error. Skipping it leaves the stack running and its slot
+  taken until someone runs `explore-down` by hand.
 
 ## 11. Troubleshooting
 
-- **"e2e stack lock busy"** — another session (yours or someone else's on
-  the same machine) is already exploring or mid-`up`. Find and finish it, or
-  run `make explore-down` if you're sure it's actually a stale/crashed run.
+- **"this checkout already holds an E2E stack"** — `make e2e-up` or another
+  explore is running in this checkout. Finish it (`make e2e-down` /
+  `make explore-down`), or explore from another worktree.
 - **`POST /api/auth/test-login` 404s** — `backend/.env`'s `APP_ENV` is not
   `local` or `test`. This route is hard-gated on that check; fix `.env` and
   restart the backend.
@@ -331,5 +332,4 @@ Rules that follow from that:
   first, or check `.e2e/*.log`), or the DB URL the oracle resolved isn't
   pointed at the local stack. Re-run with `--json` to see which check raised.
 - **Stale `.explore/` from a previous run** — don't worry about manually
-  cleaning it; the next `up` wipes everything except `lock.ok` before
-  writing fresh artifacts. Triage anything you care about first (§7).
+  cleaning it; the next `up` wipes it before writing fresh artifacts. Triage anything you care about first (§7).
