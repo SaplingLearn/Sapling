@@ -10,7 +10,6 @@
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simNodes.map()": 30,
     "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
     "src/components/screens/Settings.tsx::Settings": 26,
-    "src/components/screens/admin/AccountToolsDialog.tsx::AccountToolsDialog": 31,
     "src/context/UserContext.tsx::UserProvider>fetchProfileData": 31
   }
 }
