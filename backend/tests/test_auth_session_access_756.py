@@ -29,6 +29,7 @@ import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
 from services import auth_guard, session_tokens
+from tests.route_patches import PROFILE_TABLE_MODULES
 
 SECRET = "issue-756-session-secret-at-least-32-bytes-long"
 
@@ -180,7 +181,8 @@ def test_delete_account_drops_the_cached_state(monkeypatch):
 
     auth_guard._account_state_cache["user_alice"] = (float("inf"), auth_guard.ACCOUNT_ACTIVE)
     users = MagicMock()
-    monkeypatch.setattr(profile_module, "table", lambda name: users)
+    for module in PROFILE_TABLE_MODULES:
+        monkeypatch.setattr(f"{module}.table", lambda name: users)
     monkeypatch.setattr(profile_module, "delete_posthog_person", lambda *_a, **_k: None)
     app = FastAPI()
     app.include_router(profile_module.router, prefix="/api/profile")
@@ -433,7 +435,8 @@ def test_removed_student_can_still_erase_and_export(real_guard, monkeypatch, met
     data.select.return_value = [{"id": "user_alice"}]
     data.update.return_value = []
     data.upsert.return_value = [{}]
-    monkeypatch.setattr(profile_module, "table", lambda name: data)
+    for module in PROFILE_TABLE_MODULES:
+        monkeypatch.setattr(f"{module}.table", lambda name: data)
     real_guard.select.return_value = _row(is_approved=False)
     app = FastAPI()
     app.include_router(profile_module.router, prefix="/api/profile")

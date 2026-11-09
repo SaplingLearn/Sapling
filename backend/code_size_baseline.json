@@ -12,7 +12,6 @@
     "routes/gradebook.py": 649,
     "routes/gradescope.py": 868,
     "routes/learn.py": 2011,
-    "routes/profile.py": 978,
     "routes/quiz.py": 3150,
     "routes/social.py": 1136
   }
