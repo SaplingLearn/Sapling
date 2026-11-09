@@ -23,8 +23,8 @@ interface Props {
   speed?: number;
 }
 
-const AMB = ["#8A63D2", "#3e6f8a", "#D97706", "#14B8A6", "#9CA3AF", "#D1D5DB"];
-const HERO = ["#9CA3AF", "#D97706", "#3e6f8a", "#8A63D2", "#14B8A6", "#EF4444"];
+const AMB = ["#445D22", "#7B9E51", "#D97706", "#B1D28B", "#A39E8F", "#D6D1C4"];
+const HERO = ["#A39E8F", "#D97706", "#7B9E51", "#445D22", "#B1D28B", "#E27A63"];
 const AMB_WEIGHTS = [0.24, 0.24, 0.2, 0.15, 0.1, 0.07];
 const AMBIENT_CLUSTERS = [
   { x: -600, y: -250, z: 80 }, { x: -350, y: -100, z: -120 }, { x: -100, y: -300, z: 200 }, { x: 150, y: -150, z: -80 },
@@ -109,7 +109,7 @@ export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed =
           const d2 = dx * dx + dy * dy;
           if (d2 < maxD2) {
             const a = (1 - Math.sqrt(d2) / maxD) * aScale;
-            if (a > 0.002) { ctx.strokeStyle = `rgba(156,163,175,${a})`; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
+            if (a > 0.002) { ctx.strokeStyle = `rgba(163,158,143,${a})`; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
           }
         }
       }

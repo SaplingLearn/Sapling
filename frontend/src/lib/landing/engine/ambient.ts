@@ -13,8 +13,7 @@
 
 import { cv } from './dom';
 
-// The onboarding graph's ambient colors (Claude Design onboarding handoff).
-const PALETTE = ['#8A63D2', '#3e6f8a', '#D97706', '#14B8A6', '#9CA3AF', '#D1D5DB'];
+const PALETTE = ['#68951F', '#7B9E51', '#B1D28B', '#445D22', '#A39E8F'];
 
 /** Squared link distance — 110px, pre-squared to keep it out of the loop. */
 const LINK_D2 = 12100;
@@ -80,7 +79,7 @@ export function createAmbient(): AmbientField {
         const dy = pts[i].y - pts[j].y;
         if (dx * dx + dy * dy < LINK_D2) {
           const d = Math.sqrt(dx * dx + dy * dy);
-          ctx.strokeStyle = 'rgba(156,163,175,' + (fade * 0.1 * (1 - d / LINK_D)).toFixed(3) + ')';
+          ctx.strokeStyle = 'rgba(123,158,81,' + (fade * 0.1 * (1 - d / LINK_D)).toFixed(3) + ')';
           ctx.beginPath();
           ctx.moveTo(pts[i].x, pts[i].y);
           ctx.lineTo(pts[j].x, pts[j].y);

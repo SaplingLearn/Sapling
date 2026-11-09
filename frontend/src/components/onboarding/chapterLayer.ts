@@ -24,9 +24,9 @@ const CENTERS = [
   { ox: -155, oy: 95, oz: 35 }, { ox: -215, oy: -25, oz: -55 },
   { ox: -250, oy: -165, oz: -20 }, { ox: -215, oy: 165, oz: 30 },
 ];
-// Chapter clusters in the original animated onboarding's order (pre-#292
-// OB_STEP_COLORS), with the design's olive for the sixth chapter it added.
-const STEP = ["#D97706", "#8A63D2", "#3e6f8a", "#14B8A6", "#EF4444", "#7C9A2E"];
+// Chapter clusters in main's olive landing palette (amber first, as the
+// pre-#292 OB_STEP_COLORS had it), so they match the hero nodes around them.
+const STEP = ["#D97706", "#445D22", "#7B9E51", "#B1D28B", "#E27A63", "#A39E8F"];
 const ZOOM_TARGET: Record<GraphZoom, number> = { rest: 1, active: 2.5, outro: 5.5 };
 const FL = 1000;
 /** Opacity the scene's own (ambient) nodes and links settle at once onboarding starts. */

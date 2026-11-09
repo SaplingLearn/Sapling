@@ -7,11 +7,12 @@ import { IS_TEST_MODE, now, random } from '@/lib/testMode';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { createChapterLayer, graphStage, onGraphStage, type ChapterState } from '@/components/onboarding/chapterLayer';
 
-// Node palettes, hardcoded because they feed canvas fillStyle where CSS var()
-// doesn't resolve. They are the onboarding graph's colors (Claude Design
-// onboarding handoff: HERO_ORIG here, AMB_ORIG below), so Get Started hands
-// off into the same colors it zooms into.
-const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
+// Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
+// fillStyle where CSS var() doesn't resolve. Anchored on the olive brand
+// (#445D22 = --brand-forest, #7B9E51 = --ld-mid, #B1D28B = --ld-pale) with
+// amber/coral as the warm complement and warm greys for the quiet points.
+// OnboardingGraph uses the same colors, so Get Started hands off into them.
+const CLUSTER_COLORS = ['#A39E8F', '#D97706', '#7B9E51', '#445D22', '#B1D28B', '#E27A63'];
 /** See the legibility-glow comment in the hero content. */
 const HERO_SCRIM: CSSProperties = {
   position: 'absolute', left: 0, right: 0, top: '-6%', bottom: '-4%',
@@ -79,9 +80,9 @@ export function Hero({
 
     // Literals because canvas can't resolve var(); see CLUSTER_COLORS.
     const palette = [
-      { c: '#8A63D2', w: 0.24 }, { c: '#3e6f8a', w: 0.24 },
-      { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
-      { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
+      { c: '#445D22', w: 0.24 }, { c: '#7B9E51', w: 0.24 },
+      { c: '#D97706', w: 0.20 }, { c: '#B1D28B', w: 0.15 },
+      { c: '#A39E8F', w: 0.10 }, { c: '#D6D1C4', w: 0.07 },
     ];
     function randColor() {
       const r = random();
@@ -188,7 +189,7 @@ export function Hero({
           if (d2 < maxD2) {
             const a = (1 - Math.sqrt(d2) / maxD) * aScale;
             if (a > 0.002) {
-              ctx.strokeStyle = `rgba(156,163,175,${a})`;
+              ctx.strokeStyle = `rgba(163,158,143,${a})`;
               ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
             }
           }
