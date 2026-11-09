@@ -5,8 +5,8 @@ in the threadpool, but an `async def` handler runs ON the event loop: a sync
 `table(...).select(...)` there blocks every request on the replica (and every
 SSE tutor stream) for a whole PostgREST round trip.
 
-This walks the AST of every `routes/*.py` module (and of the #118 domain
-packages in ``DOMAIN_PACKAGES``) and flags, inside any
+This walks the AST of every `routes/*.py` module (and of every module of the
+#118 domain packages in ``DOMAIN_PACKAGES``) and flags, inside any
 `async def` (handlers and the module's async helpers alike), an INLINE call to
 
 * a sync verb on a `table(...)` handle (``select``, ``insert``, ...), inline
@@ -18,8 +18,12 @@ packages in ``DOMAIN_PACKAGES``) and flags, inside any
 * the sync rate limiter, ``check_rate_limit(...)`` / ``claim_rate_limit(...)``
   (bare or as an attribute): with ``stateless_rate_limit`` on it is a
   PostgREST call (use ``acheck_rate_limit`` / ``aclaim_rate_limit``),
-* a sync function of the same module that (transitively, within the module)
-  makes one of those calls.
+* a sync function that (transitively) makes one of those calls: one of the same
+  module, or one a scanned module imports from another scanned module
+  (``from services.<pkg>.<mod> import name`` / ``from .mod import name``, or
+  ``from services.<pkg> import mod`` + ``mod.name(...)``, following package
+  ``__init__`` re-exports). A split moved handler bodies and their sync
+  helpers into sibling modules, so the walk must cross files to see them.
 
 Passing the bound method or function to a hop is fine and is not a call:
 ``await run_in_threadpool(table("x").select, ...)`` /
@@ -28,8 +32,9 @@ threadpool, AnyIO's 40-token limiter). The ``a*`` twins are the native fix
 (``await table("x").aselect(...)``); a handler that awaits nothing else is
 simplest as a plain ``def`` (FastAPI runs it in that same threadpool).
 
-What it cannot see: a sync DB call reached through an IMPORTED service
-function. The runtime guard covers those (``db.sync_on_loop``; the
+What it cannot see: a sync DB call reached through a function imported from
+a module it does not scan (a flat ``services/*.py`` module, ``agents/``). The
+runtime guard covers those (``db.sync_on_loop``; the
 ``no_sync_db_on_loop`` fixture in tests/conftest.py makes it raise).
 
 ``ALLOWLIST`` is a ratchet, in the style of test_migration_naming.py: it may
@@ -43,17 +48,16 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 ROUTES = BACKEND / "routes"
-#: Domain packages that hold handler bodies moved out of routes/ (#118): the
-#: documents library CRUD over the a* seam, the upload SSE stream, quiz
-#: attempts and the tutor turn path. Each body moved verbatim, async ones
-#: included, so they stay in scope.
-#: The in-module transitive walk is per FILE: a sync DB helper imported from
-#: a sibling module is not followed (the runtime guard still covers it).
-DOMAIN_PACKAGES = (
-    BACKEND / "services" / "documents",
-    BACKEND / "services" / "gradescope",
-    BACKEND / "services" / "quiz",
-    BACKEND / "services" / "tutor",
+#: Every #118 domain package (the ``domains`` contract's source_modules in
+#: .importlinter; a test pins the two together). Each holds handler bodies
+#: moved out of routes/ verbatim, async ones included, so they stay in scope.
+#: Scanned recursively (services/admin/analytics is a subpackage).
+DOMAIN_PACKAGES = tuple(
+    BACKEND / "services" / name
+    for name in (
+        "admin", "auth", "documents", "flashcards", "gradebook",
+        "gradescope", "profile", "quiz", "social", "tutor",
+    )
 )
 
 SYNC_VERBS = frozenset({"select", "select_with_count", "insert", "update", "upsert", "delete"})
@@ -128,50 +132,129 @@ def _db_calls_in(fn: ast.AST):
         yield call, _direct_db_call(call, aliases)
 
 
-def _offenders(path: Path) -> set[tuple[str, str, str]]:
-    return _offenders_in(path.read_text(), path.relative_to(BACKEND).as_posix())
+def _module_name(rel: str) -> str:
+    """``services/quiz/attempts.py`` -> ``services.quiz.attempts``; a package
+    ``__init__`` is the package itself."""
+    name = rel.removesuffix(".py").replace("/", ".")
+    return name.removesuffix(".__init__")
+
+
+class _Module:
+    """One scanned file: its top-level functions and what it imports."""
+
+    def __init__(self, source: str, rel: str):
+        self.rel = rel
+        self.name = _module_name(rel)
+        self.is_package = rel.endswith("__init__.py")
+        tree = ast.parse(source, filename=rel)
+        self.top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        self.sync_fns = {n.name: n for n in self.top if isinstance(n, ast.FunctionDef)}
+        #: local name -> (module, name) for ``from <module> import name``
+        self.names: dict[str, tuple[str, str]] = {}
+        #: local name -> module, for ``import a.b as m`` (and, once every module
+        #: is known, ``from a import b`` where ``a.b`` is a module)
+        self.modules: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                base = self._absolute(node)
+                for alias in node.names:
+                    self.names[alias.asname or alias.name] = (base, alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self.modules[alias.asname] = alias.name
+
+    def _absolute(self, node: ast.ImportFrom) -> str:
+        if not node.level:
+            return node.module or ""
+        parts = self.name.split(".")
+        # A package's own name is its package; a plain module drops itself.
+        keep = len(parts) - node.level + (1 if self.is_package else 0)
+        base = ".".join(parts[:keep])
+        return f"{base}.{node.module}" if node.module else base
+
+
+class _Universe:
+    """Every scanned module, so a call resolves across files."""
+
+    def __init__(self, sources: dict[str, str]):
+        self.mods = {m.name: m for m in (_Module(src, rel) for rel, src in sources.items())}
+        for mod in self.mods.values():
+            for local, (base, name) in list(mod.names.items()):
+                if f"{base}.{name}" in self.mods:
+                    mod.modules[local] = f"{base}.{name}"
+                    del mod.names[local]
+        self.touches = self._touching()
+
+    def _resolve_name(self, module: str, name: str, depth: int = 0):
+        mod = self.mods.get(module)
+        if mod is None or depth > 8:
+            return None
+        if name in mod.sync_fns:
+            return (module, name)
+        if name in mod.names:  # a re-export (package __init__)
+            return self._resolve_name(*mod.names[name], depth + 1)
+        return None
+
+    def resolve(self, mod: _Module, call: ast.Call):
+        """The (module, sync function) a call reaches, when a scanned module defines it."""
+        f = call.func
+        if isinstance(f, ast.Name):
+            if f.id in mod.sync_fns:
+                return (mod.name, f.id)
+            if f.id in mod.names:
+                return self._resolve_name(*mod.names[f.id])
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in mod.modules:
+            return self._resolve_name(mod.modules[f.value.id], f.attr)
+        return None
+
+    def _touching(self) -> set[tuple[str, str]]:
+        """Sync functions that reach the DB, transitively across scanned modules."""
+        touches = {
+            (mod.name, name)
+            for mod in self.mods.values() for name, fn in mod.sync_fns.items()
+            if any(hit for _c, hit in _db_calls_in(fn))
+        }
+        changed = True
+        while changed:
+            changed = False
+            for mod in self.mods.values():
+                for name, fn in mod.sync_fns.items():
+                    if (mod.name, name) in touches:
+                        continue
+                    if any(self.resolve(mod, c) in touches for c in _calls_in(fn)):
+                        touches.add((mod.name, name))
+                        changed = True
+        return touches
+
+    def offenders(self) -> set[tuple[str, str, str]]:
+        out: set[tuple[str, str, str]] = set()
+        for mod in self.mods.values():
+            for fn in mod.top:
+                if not isinstance(fn, ast.AsyncFunctionDef):
+                    continue
+                for call, hit in _db_calls_in(fn):
+                    if hit is None and self.resolve(mod, call) in self.touches:
+                        hit = f"{_callee(call.func)}()"
+                    if hit is not None:
+                        out.add((mod.rel, fn.name, hit))
+        return out
 
 
 def _offenders_in(source: str, rel: str) -> set[tuple[str, str, str]]:
-    tree = ast.parse(source, filename=rel)
-    top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    sync_fns = {n.name: n for n in top if isinstance(n, ast.FunctionDef)}
+    return _Universe({rel: source}).offenders()
 
-    # Module-level sync functions that reach the DB, transitively in-module.
-    touches: set[str] = {
-        name for name, fn in sync_fns.items()
-        if any(hit for _c, hit in _db_calls_in(fn))
-    }
-    changed = True
-    while changed:
-        changed = False
-        for name, fn in sync_fns.items():
-            if name in touches:
-                continue
-            if any(isinstance(c.func, ast.Name) and c.func.id in touches for c in _calls_in(fn)):
-                touches.add(name)
-                changed = True
 
-    out: set[tuple[str, str, str]] = set()
-    for fn in top:
-        if not isinstance(fn, ast.AsyncFunctionDef):
-            continue
-        for call, hit in _db_calls_in(fn):
-            if hit is None and isinstance(call.func, ast.Name) and call.func.id in touches:
-                hit = f"{call.func.id}()"
-            if hit is not None:
-                out.add((rel, fn.name, hit))
-    return out
+def _scanned_paths() -> list[Path]:
+    paths = sorted(ROUTES.glob("*.py"))
+    for package in DOMAIN_PACKAGES:
+        paths += sorted(package.rglob("*.py"))
+    return paths
 
 
 def _all_offenders() -> set[tuple[str, str, str]]:
-    found: set[tuple[str, str, str]] = set()
-    for path in sorted(ROUTES.glob("*.py")) + [p for d in DOMAIN_PACKAGES for p in sorted(d.glob("*.py"))]:
-        found |= _offenders(path)
-    for package in DOMAIN_PACKAGES:
-        for path in sorted(package.glob("*.py")):
-            found |= _offenders(path)
-    return found
+    sources = {p.relative_to(BACKEND).as_posix(): p.read_text() for p in _scanned_paths()}
+    return _Universe(sources).offenders()
 
 
 def test_no_new_sync_db_calls_on_the_event_loop():
@@ -262,3 +345,69 @@ async def good():
         ("bad_limiter", "check_rate_limit"),
         ("bad_limiter_helper", "_limited()"),
     }
+
+
+def test_the_checker_follows_helpers_across_sibling_modules():
+    """A split moves a handler body and its sync helper into sibling modules:
+    the walk must resolve the imported helper in the other file (absolute,
+    relative, module-attribute and package-``__init__`` re-export forms)."""
+    sources = {
+        "services/probe/__init__.py": "from services.probe.store import load_row\n",
+        "services/probe/store.py": """
+from db.connection import table
+
+def load_row(uid):
+    return table("t").select("*", filters={"id": f"eq.{uid}"})
+
+def _two_hops(uid):
+    return load_row(uid)
+""",
+        "services/probe/handlers.py": """
+from services.probe.store import load_row
+from .store import _two_hops
+from services.probe import store
+from services.probe import load_row as reexported
+
+async def bad_absolute(uid):
+    load_row(uid)
+
+async def bad_relative_transitive(uid):
+    _two_hops(uid)
+
+async def bad_module_attr(uid):
+    store.load_row(uid)
+
+async def bad_reexport(uid):
+    reexported(uid)
+
+async def good(uid):
+    await run_in_threadpool(load_row, uid)
+    await run_in_threadpool(store._two_hops, uid)
+""",
+        "routes/probe.py": """
+from services.probe import load_row
+
+async def bad_route(uid):
+    load_row(uid)
+""",
+    }
+    found = {(f, fn, what) for f, fn, what in _Universe(sources).offenders()}
+    assert found == {
+        ("services/probe/handlers.py", "bad_absolute", "load_row()"),
+        ("services/probe/handlers.py", "bad_relative_transitive", "_two_hops()"),
+        ("services/probe/handlers.py", "bad_module_attr", "load_row()"),
+        ("services/probe/handlers.py", "bad_reexport", "reexported()"),
+        ("routes/probe.py", "bad_route", "load_row()"),
+    }
+
+
+def test_every_domain_package_is_scanned():
+    """DOMAIN_PACKAGES is the .importlinter ``domains`` contract's package list."""
+    import configparser
+
+    cfg = configparser.ConfigParser()
+    cfg.read(BACKEND / ".importlinter")
+    declared = set(cfg["importlinter:contract:domains"]["source_modules"].split())
+    scanned = {f"services.{p.name}" for p in DOMAIN_PACKAGES}
+    assert scanned == declared
+    assert all(p.is_dir() for p in DOMAIN_PACKAGES)
