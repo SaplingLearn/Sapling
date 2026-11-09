@@ -317,7 +317,7 @@ class AsyncTableMixin:
         scoped = _headers(self.name)
         r = await _async_client().get(self.url, params=params,
                                       headers=_identity(None, scoped), **kw)
-        c._raise_for_status(r, scoped, self.name)
+        c._raise_for_status(r, scoped, self.name, "select")
         rows = r.json()
         if scoped is None:
             c._maybe_shadow(self.name, self.url, params, None, timeout, rows)
@@ -351,7 +351,7 @@ class AsyncTableMixin:
         scoped = _headers(self.name)
         r = await _async_client().get(self.url, params=params,
                                       headers=_identity(headers, scoped), **kw)
-        c._raise_for_status(r, scoped, self.name)
+        c._raise_for_status(r, scoped, self.name, "select")
         rows = r.json()
         if scoped is None:
             c._maybe_shadow(self.name, self.url, params, headers, timeout, rows)
@@ -370,7 +370,7 @@ class AsyncTableMixin:
         await _prime_scope()
         scoped = _headers(self.name, "insert", data=data)
         r = await _async_client().post(self.url, json=data, headers=_identity(None, scoped))
-        _conn()._raise_for_status(r, scoped, self.name)
+        _conn()._raise_for_status(r, scoped, self.name, "insert")
         return r.json()
 
     async def aupdate(self, data: dict, filters: dict, *,
@@ -383,7 +383,7 @@ class AsyncTableMixin:
         scoped = _headers(self.name, "update", data=data, filters=filters)
         r = await _async_client().patch(self.url, params=filters, json=data,
                                         headers=_identity(headers, scoped))
-        _conn()._raise_for_status(r, scoped, self.name)
+        _conn()._raise_for_status(r, scoped, self.name, "update")
         if prefer_return_minimal:
             return []
         return r.json()
@@ -408,7 +408,7 @@ class AsyncTableMixin:
         scoped = _headers(self.name, "upsert", data=data)
         r = await _async_client().post(self.url, headers=_identity(headers, scoped),
                                        params=params, json=data)
-        _conn()._raise_for_status(r, scoped, self.name)
+        _conn()._raise_for_status(r, scoped, self.name, "upsert")
         return r.json()
 
     async def adelete(self, filters: dict) -> list:
@@ -418,7 +418,7 @@ class AsyncTableMixin:
         scoped = _headers(self.name, "delete", filters=filters)
         r = await _async_client().delete(self.url, params=filters,
                                          headers=_identity(None, scoped))
-        _conn()._raise_for_status(r, scoped, self.name)
+        _conn()._raise_for_status(r, scoped, self.name, "delete")
         return r.json()
 
 
@@ -435,9 +435,9 @@ async def arpc(function_name: str, params: dict, *, timeout: float | None = None
     # Same rule as the sync rpc(): a read-only function in SHADOW_READ_RPCS is
     # not noted as a write and is shadow-compared like a select.
     read_only = function_name in c.SHADOW_READ_RPCS
-    scoped = _headers(target, None if read_only else "rpc")
+    scoped = _headers(target, None if read_only else "rpc", data=params)
     r = await _async_client().post(url, json=params, headers=_identity(None, scoped), **kw)
-    c._raise_for_status(r, scoped, target)
+    c._raise_for_status(r, scoped, target, "rpc")
     rows = r.json()
     if scoped is None and read_only:
         c._maybe_shadow(target, url, {}, None, None, rows, op="rpc", json_body=params)
