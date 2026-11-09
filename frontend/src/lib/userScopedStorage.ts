@@ -27,6 +27,7 @@ export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_model_pref', // chat/ModelToggle.tsx
   'ach:seen-ids', // screens/Achievements.tsx
   'sapling_last_feedback', // FeedbackFlow.tsx cooldown
+  'sapling_feedback_first_seen', // FeedbackFlow.tsx new-student grace
   'sapling_last_session_feedback', // SessionFeedbackFlow.tsx cooldown
   'sapling_session_end_count', // Learn.tsx / SessionFeedbackFlow.tsx
   'sapling_disclaimer_ack', // DisclaimerModal.tsx (each student acknowledges)
