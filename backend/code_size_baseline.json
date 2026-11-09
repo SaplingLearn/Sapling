@@ -8,7 +8,7 @@
     "routes/admin.py": 1005,
     "routes/admin_analytics.py": 696,
     "routes/auth.py": 1173,
-    "routes/documents.py": 1500,
+    "routes/documents.py": 1423,
     "routes/flashcards.py": 701,
     "routes/gradebook.py": 649,
     "routes/gradescope.py": 868,

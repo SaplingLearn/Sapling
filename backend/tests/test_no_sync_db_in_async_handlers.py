@@ -54,30 +54,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     # Measured on main at #117 wave 0 (the design doc counted only the five
     # DIRECT offenders; the in-module transitive walk finds these too). Each
     # converts with its router's wave (design §4.1) and leaves this list.
-    ("routes/documents.py", "upload_document", "_validate_user()"):
-        "wave 4 (documents CRUD; the upload pipeline is moving to the worker, #116)",
-    ("routes/documents.py", "upload_document_sync", "_validate_user()"):
-        "wave 4 (documents CRUD; the upload pipeline is moving to the worker, #116)",
-    ("routes/learn.py", "_action_turn", "_get_session_offering_id()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_action_turn", "_load_message_history()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_action_turn", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_action_turn", "save_message()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_chat_turn_json", "_get_session_offering_id()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_chat_turn_json", "_load_message_history()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_chat_turn_json", "_save_turn_rows()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_chat_via_agent", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_start_session_agent", "_get_course_id_for_topic()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "_start_session_agent", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "chat", "_persisted_turn()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "chat_stream", "_get_session_offering_id()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "chat_stream", "_load_message_history()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "chat_stream", "_persisted_turn()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "chat_stream", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "start_session_stream", "_get_course_id_for_topic()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/learn.py", "start_session_stream", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
-    ("routes/notes.py", "create", "_course_meta()"): "later wave (notes router)",
-    ("routes/notes.py", "list_user_notes", "_course_meta()"): "later wave (notes router)",
-    ("routes/notes.py", "read", "_course_meta()"): "later wave (notes router)",
 }
 
 

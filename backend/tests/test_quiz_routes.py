@@ -17,6 +17,10 @@ from fastapi.testclient import TestClient
 from main import app
 from agents.quiz import Quiz, QuizQuestion
 from services.rag_service import Retrieval
+from tests.db_fakes import fake_table, with_async_twins
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -116,7 +120,7 @@ def _make_table(questions=None):
 @contextmanager
 def _submit_quiz_mocks(questions=None):
     with (
-        patch("routes.quiz.table", side_effect=_make_table(questions)),
+        patch("routes.quiz.table", side_effect=with_async_twins(_make_table(questions))),
         # Mastery writes now route through apply_graph_update (the sanctioned
         # graph path) instead of a direct graph_nodes.update.
         patch("routes.quiz.apply_graph_update"),
@@ -208,7 +212,7 @@ class TestSubmitQuiz:
         assert data["mastery_after"] < data["mastery_before"]
 
     def test_returns_404_for_nonexistent_quiz(self):
-        with patch("routes.quiz.table") as t:
+        with patch("routes.quiz.table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "does-not-exist",
@@ -239,7 +243,7 @@ class TestSubmitQuiz:
             mock.update.return_value = [{"id": "updated"}]
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             with patch("routes.quiz.apply_graph_update"):
                 with patch("routes.quiz.get_quiz_context", return_value={}):
                     with patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()):
@@ -318,7 +322,7 @@ class TestSubmitQuizResubmit:
         apply_mock = MagicMock()
         ctx_run = _noop_ctx_agent()
         with (
-            patch("routes.quiz.table", side_effect=self._completed_attempt_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._completed_attempt_factory())),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
@@ -424,7 +428,7 @@ class TestQuizNodeOwnership:
 
         agent_run = AsyncMock()
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -467,7 +471,7 @@ class TestQuizNodeOwnership:
 
         apply_mock = MagicMock()
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
@@ -501,7 +505,7 @@ class TestGenerateQuizDifficultyEnum:
     def test_invalid_difficulty_returns_400(self):
         agent_run = AsyncMock()
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -525,7 +529,7 @@ class TestGenerateQuizDifficultyEnum:
             ),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -555,7 +559,7 @@ class TestGenerateQuizNumQuestionsBound:
         """POST with num_questions=15 should return 422, not silently truncate."""
         agent_run = AsyncMock()
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -581,7 +585,7 @@ class TestGenerateQuizNumQuestionsBound:
             for _ in range(10)
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -600,7 +604,7 @@ class TestGenerateQuizNumQuestionsBound:
         """POST with num_questions=0 should return 422."""
         agent_run = AsyncMock()
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -649,7 +653,7 @@ class TestSubmitQuizMasteryWrite:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
@@ -734,7 +738,7 @@ class TestQuizAgentSuccess:
             ),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -820,7 +824,7 @@ class TestQuizAgentSuccess:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -872,7 +876,7 @@ class TestQuizContextUpdate:
             saved["ctx"] = context
 
         with (
-            patch("routes.quiz.table", side_effect=_make_table(None)),
+            patch("routes.quiz.table", side_effect=with_async_twins(_make_table(None))),
             patch("routes.quiz.apply_graph_update"),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=run),
@@ -898,7 +902,7 @@ class TestQuizAgentDegrade:
         from pydantic_ai.exceptions import UsageLimitExceeded
 
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(side_effect=UsageLimitExceeded("token cap")),
@@ -915,7 +919,7 @@ class TestQuizAgentDegrade:
 
     def test_degrades_on_unexpected_exception(self):
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(side_effect=RuntimeError("boom")),
@@ -947,7 +951,7 @@ class TestQuizAgentDegrade:
         ])
         agent_run_mock = AsyncMock(return_value=SimpleNamespace(output=drift_quiz))
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run_mock),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -1084,7 +1088,7 @@ class TestQuizGrounding:
 
     def test_resolve_bu_code_returns_course_code(self):
         from routes.quiz import _resolve_bu_code
-        with patch("routes.quiz.table", side_effect=self._table_factory()):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory())):
             lookup = _resolve_bu_code("course-uuid-1")
         assert lookup.code == "CAS CS 330"
         assert lookup.failed is False
@@ -1094,7 +1098,7 @@ class TestQuizGrounding:
         wrong, there is simply nothing to resolve."""
         from routes.quiz import _resolve_bu_code
         assert _resolve_bu_code(None) == (None, False)
-        with patch("routes.quiz.table", side_effect=self._table_factory(course_code=None)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory(course_code=None))):
             lookup = _resolve_bu_code("course-uuid-1")
         assert lookup.code is None
         assert lookup.failed is False
@@ -1110,7 +1114,7 @@ class TestQuizGrounding:
             m.select.side_effect = RuntimeError("postgrest 503")
             return m
 
-        with patch("routes.quiz.table", side_effect=boom):
+        with patch("routes.quiz.table", side_effect=with_async_twins(boom)):
             lookup = _resolve_bu_code("course-uuid-1")
         assert lookup.code is None
         assert lookup.failed is True
@@ -1132,7 +1136,7 @@ class TestQuizGrounding:
 
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=counting),
+            patch("routes.quiz.table", side_effect=with_async_twins(counting)),
             # Counted through BOTH module references, or the second `courses`
             # read (the one the signals module used to make) is invisible here
             # and the assertion below would pass either way.
@@ -1166,7 +1170,7 @@ class TestQuizGrounding:
         must generate ungrounded, not 502 QUIZ_GENERATION_FAILED."""
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._course_row", side_effect=RuntimeError("boom")),
             patch("routes.quiz.course_offering_ids",
@@ -1186,7 +1190,7 @@ class TestQuizGrounding:
     def test_material_injected_when_chunks_exist(self):
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value="Course: CAS CS 330 ..."),
             patch("routes.quiz.retrieve_chunks_detailed",
@@ -1208,7 +1212,7 @@ class TestQuizGrounding:
     def test_no_block_when_retrieval_empty(self):
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
             patch("routes.quiz.retrieve_chunks_detailed", return_value=Retrieval(chunks=[])),
@@ -1227,7 +1231,7 @@ class TestQuizGrounding:
         best-effort and must never 502 a generation."""
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
             patch("routes.quiz.retrieve_chunks_detailed",
@@ -1258,7 +1262,7 @@ class TestQuizGrounding:
 
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = client.post("/api/quiz/generate", json={
@@ -1304,7 +1308,7 @@ class TestQuizModelPref:
         """model_pref='smart' → agent.run is called with model=AnthropicModel('claude-sonnet-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = self._post({"model_pref": "smart"})
@@ -1318,7 +1322,7 @@ class TestQuizModelPref:
         """model_pref='fast' → agent.run is called with model=AnthropicModel('claude-haiku-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = self._post({"model_pref": "fast"})
@@ -1331,7 +1335,7 @@ class TestQuizModelPref:
         """No model_pref → agent.run gets NO model kwarg, falls back to model_for('quiz')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = self._post({})  # no model_pref
@@ -1392,7 +1396,7 @@ class TestSubmitQuizConcurrentClaim:
         apply_mock = MagicMock()
         ctx_run = _noop_ctx_agent()
         with (
-            patch("routes.quiz.table", side_effect=self._race_loser_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._race_loser_factory())),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
@@ -1442,7 +1446,7 @@ class TestSubmitQuizConcurrentClaim:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update"),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
@@ -1511,7 +1515,7 @@ class TestQuizEncryption:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -1570,7 +1574,7 @@ class TestQuizEncryption:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update"),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
@@ -1724,7 +1728,7 @@ class TestSignalCourseKeyspace:
         ))
         tables = _RecordingTables(self.SPEC, seen)
         with (
-            patch("routes.quiz.table", side_effect=tables),
+            patch("routes.quiz.table", side_effect=with_async_twins(tables)),
             patch("services.quiz_signals.table", side_effect=tables),
             patch("services.academics.table", side_effect=tables),
             patch("services.exam_proximity.table", side_effect=tables),
@@ -1801,7 +1805,7 @@ class TestDarkScopeAlarmOwnership:
         )
         with (
             patch("routes.quiz.table",
-                  side_effect=TestQuizGrounding._table_factory(TestQuizGrounding())),
+                  side_effect=with_async_twins(TestQuizGrounding._table_factory(TestQuizGrounding()))),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
             patch("routes.quiz.retrieve_chunks_detailed",
@@ -1865,7 +1869,7 @@ class TestDegradedCourseReadIsDescribedHonestly:
         )
         with (
             patch("routes.quiz.table",
-                  side_effect=TestQuizGrounding._table_factory(TestQuizGrounding())),
+                  side_effect=with_async_twins(TestQuizGrounding._table_factory(TestQuizGrounding()))),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._course_row", side_effect=RuntimeError("boom")),
             patch("routes.quiz.course_offering_ids", return_value=["off-1"]),

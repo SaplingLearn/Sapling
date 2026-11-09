@@ -18,6 +18,7 @@ Deleted (directly, or through the FK cascades noted):
 * quiz_context
 * graph_nodes → graph_edges, node_mastery_events, note_concepts
 * xp_events, user_achievements
+* document_uploads, tutor_pending_sessions (in-flight work, never bundled)
 
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
@@ -70,6 +71,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # copied: a staged upload is in-flight work, not account data — a finished
     # one is already a `documents` row, which the bundle copies.
     ("document_uploads", "id"),
+    # #117 tutor sessions not yet started, and end/delete tombstones (flag
+    # stateless_tutor_sessions). Transient like document_uploads: wiped, never
+    # copied — a session someone chats in is a `sessions` row.
+    ("tutor_pending_sessions", "session_id"),
 )
 
 #: Every table the wipe deletes from directly.

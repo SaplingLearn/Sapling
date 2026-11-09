@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -699,7 +700,7 @@ def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
         patch("routes.documents.require_course_enrollment", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch(
-            "routes.documents.classifier_agent.run",
+            "agents.classifier.classifier_agent.run",
             AsyncMock(side_effect=RuntimeError("agent pipeline failure")),
         ),
         patch("routes.documents.table") as t,
@@ -752,7 +753,7 @@ def test_quiz_generate_emits_quiz_started(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         # Patched through the signals module too, so the offering resolution
         # answers from the fixture rather than from whatever a real
         # (unreachable) Supabase does — this test asserts on the SCOPE the
@@ -844,7 +845,7 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     from routes.quiz import CourseMaterial
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(
@@ -906,7 +907,7 @@ def test_ungrounded_generation_emits_rag_uncovered(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(course_chunks=0, bu_code="CAS CS 330"),
@@ -965,7 +966,7 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(course_chunks=42, bu_code="CAS CS 330"),
@@ -1020,7 +1021,7 @@ def test_rag_uncovered_calls_a_failed_retrieval_unknown_not_no_match(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         # Fail inside rag_service, the way a real outage does: retrieve_chunks
         # catches, emits rag.retrieval_failed, and hands back [].
         patch(
@@ -1074,7 +1075,7 @@ def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch("routes.quiz.recent_question_identities", return_value=[]),
         patch(
             "routes.quiz.quiz_agent.run",
@@ -1136,7 +1137,7 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
         return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
     )
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch("routes.quiz.apply_graph_update"),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
@@ -1191,7 +1192,7 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
-        patch("routes.learn.table", side_effect=_learn_table_factory()),
+        patch("routes.learn.table", side_effect=with_async_twins(_learn_table_factory())),
         patch("routes.learn.agent_for_mode", return_value=agent),
     ):
         r = client.post("/api/learn/chat", json={
@@ -1221,7 +1222,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
         from services.agent_events import SaplingEvent
 
         yield SaplingEvent(type="status", step="start", message="Starting.")
-        kwargs["on_complete"]("Hi", {}, [])
+        await kwargs["on_complete"]("Hi", {}, [])
         yield SaplingEvent(
             type="done", step="reply", message="Complete.",
             data={"reply": "Hi", "graph_update": {}, "mastery_changes": []},
@@ -1234,7 +1235,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
+        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1338,7 +1339,7 @@ def test_end_session_emits_session_ended(sink):
         mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
-    with patch("routes.learn.table", side_effect=factory):
+    with patch("routes.learn.table", side_effect=with_async_twins(factory)):
         r = client.post("/api/learn/end-session", json={
             "session_id": "s-ended", "user_id": "user_andres",
         })
@@ -1475,7 +1476,7 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
         patch.object(learn_routes, "stream_agent_turn", fake_stream),
         patch.object(learn_routes, "_consume_pending"),
         patch.object(learn_routes, "require_session_owner"),
-        patch.object(learn_routes, "table", side_effect=_learn_table_factory()),
+        patch.object(learn_routes, "table", side_effect=with_async_twins(_learn_table_factory())),
         patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
         patch.object(learn_routes, "save_message"),
     ):

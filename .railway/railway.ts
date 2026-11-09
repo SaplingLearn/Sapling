@@ -36,6 +36,15 @@ const BRANCH_FOR: Record<string, string> = { production: "production" };
 const DEFAULT_BRANCH = "main";
 /** Keep false until the runbook's step 6. */
 const MANAGE_API = false;
+/** API replicas (#117). Stays 1 until the LAST cut-over step: the first
+ * `MANAGE_API = true` apply must keep one replica. Change it to 2 only after
+ * the flags in docs/deploy/railway.md "Two API replicas" are on, in order
+ * (stateless_rate_limit, stateless_locks, stateless_tutor_sessions;
+ * async_db_client optional), as that section's final step. With any of them
+ * off, a second replica splits that state per process (rate budgets double,
+ * locks stop excluding, tutor sessions 404 on the other replica).
+ * Rollback = set this back to 1. Applies only with MANAGE_API. */
+const API_REPLICAS = 1;
 
 /** Variables the worker takes from the API service, by reference (no secret
  * is written here, and the two cannot drift). Derived by grepping every
@@ -104,7 +113,8 @@ const HANDLER_VARIABLES = [
  * the worker too, or the queue keeps doing what the API was told to stop.
  * The nav `hide_*` flags are frontend-only and left out. Includes the flags
  * the stack above this branch adds (llm_budget, llm_outage_drill,
- * async_db_client, stateless_rate_limit), so it is right at every step. */
+ * async_db_client, stateless_rate_limit, stateless_locks), so it is right at
+ * every step. */
 const FLAG_KILL_SWITCHES = [
   "decision_router",
   "product_analytics",
@@ -116,6 +126,8 @@ const FLAG_KILL_SWITCHES = [
   "llm_outage_drill",
   "async_db_client",
   "stateless_rate_limit",
+  "stateless_locks",
+  "stateless_tutor_sessions",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
@@ -179,6 +191,8 @@ export default defineRailway((ctx) => {
       source,
       start: "uvicorn main:app --host 0.0.0.0 --port 5000",
       healthcheck: "/api/health",
+      // 1 until the cut-over flags are on; see API_REPLICAS.
+      replicas: API_REPLICAS,
       env: {
         // `full` (the default when unset) until the cut-over in the runbook;
         // then `api`: no torch, no Docling, no Chromium.

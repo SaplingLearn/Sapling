@@ -19,6 +19,7 @@ import pytest
 
 from agents.deps import SaplingDeps
 from tests.agent_run_fakes import run_result
+from tests.db_fakes import fake_table, with_async_twins
 from agents.tools.graph import (
     ConceptMasteryUpdate,
     GraphUpdateInput,
@@ -443,9 +444,9 @@ class TestOrchestratorLimitsWired:
             patch("routes.learn._build_deep_turn_model_settings", return_value=None),
             patch("routes.learn.save_message", side_effect=mock_save_message),
             patch("routes.learn._consume_pending"),
-            patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
+            patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
             patch("routes.learn._load_message_history", return_value=[]),
-            patch("routes.learn.table") as mock_table,
+            patch("routes.learn.table", return_value=fake_table()) as mock_table,
             patch("routes.learn.require_self"),
         ):
             mock_table.return_value.select.return_value = []
@@ -502,7 +503,7 @@ class TestEndSessionConceptsCovered:
         mock_request = MagicMock()
 
         with (
-            patch("routes.learn.table", side_effect=table_factory),
+            patch("routes.learn.table", side_effect=with_async_twins(table_factory)),
             patch("routes.learn.require_self"),
             patch("routes.learn.get_session_user_id", return_value="u1"),
             patch("routes.learn.encrypt_json", return_value="{}"),

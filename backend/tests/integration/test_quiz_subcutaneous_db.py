@@ -498,7 +498,7 @@ def test_another_student_can_neither_answer_submit_nor_abandon_this_attempt(
 
 
 def test_generate_persists_exam_days_away_when_an_exam_is_upcoming(
-    authed_client, db_conn
+    authed_client, db_conn, monkeypatch
 ):
     """The claim this file's docstring makes, made true.
 
@@ -510,11 +510,18 @@ def test_generate_persists_exam_days_away_when_an_exam_is_upcoming(
     and still returns 200. So the write has to be provoked and then read back
     from Postgres.
     """
-    from datetime import date, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from db.connection import table
+    from services import exam_proximity
 
-    due = date.today() + timedelta(days=5)
+    # "Today" exactly as services/exam_proximity computes it (UTC), pinned for
+    # the whole test: `date.today()` is the process's LOCAL date, which differs
+    # from the UTC date for part of every day outside UTC, and an unpinned UTC
+    # read could still cross midnight between this insert and the generation.
+    today = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(exam_proximity, "_today", lambda: today)
+    due = today + timedelta(days=5)
     table("assignments").insert({
         "id": "sub-exam-upcoming",
         "enrollment_id": "rich-enr-active-cs101-f25",

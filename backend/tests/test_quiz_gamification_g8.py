@@ -33,6 +33,9 @@ from main import app
 from services import events_service
 from services.xp_service import XpAward
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 client = TestClient(app)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
@@ -7,6 +8,7 @@ from functools import partial
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from config import (
     MASTERY_LEARNING_MIN,
@@ -56,15 +58,33 @@ def _reshape_enrollment(r: dict) -> dict:
     }
 
 
+_ENROLLED_COURSES_SELECT = (
+    "id,offering_id,color,nickname,enrolled_at,"
+    "course_offerings!inner(course_id,"
+    "courses!inner(course_code,course_name,department),terms!inner(label))"
+)
+
+
 def _user_enrolled_courses(user_id: str) -> list[dict]:
     """All courses a user is enrolled in, via enrollments → course_offerings →
     courses/terms, reshaped to the legacy flat shape (abstract course_id + nested
     courses dict + offering_id + term label)."""
     try:
         rows = table("enrollments").select(
-            "id,offering_id,color,nickname,enrolled_at,"
-            "course_offerings!inner(course_id,"
-            "courses!inner(course_code,course_name,department),terms!inner(label))",
+            _ENROLLED_COURSES_SELECT,
+            filters={"user_id": f"eq.{user_id}"},
+            order="enrolled_at.asc",
+        )
+    except Exception:
+        return []
+    return [_reshape_enrollment(r) for r in (rows or [])]
+
+
+async def _auser_enrolled_courses(user_id: str) -> list[dict]:
+    """Async twin of :func:`_user_enrolled_courses` (#117)."""
+    try:
+        rows = await table("enrollments").aselect(
+            _ENROLLED_COURSES_SELECT,
             filters={"user_id": f"eq.{user_id}"},
             order="enrolled_at.asc",
         )
@@ -94,6 +114,17 @@ def ensure_user_exists(user_id: str) -> None:
     if not existing:
         try:
             table("users").insert({"id": user_id, "streak_count": 0})
+        except Exception:
+            pass  # already exists (race condition) — safe to ignore
+
+
+@runs_as_service  # #115: inserts a users row (service-only)
+async def aensure_user_exists(user_id: str) -> None:
+    """Async twin of :func:`ensure_user_exists` (#117)."""
+    existing = await table("users").aselect("id", filters={"id": f"eq.{user_id}"})
+    if not existing:
+        try:
+            await table("users").ainsert({"id": user_id, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
 
@@ -147,33 +178,123 @@ def _compute_velocity(events: list) -> float:
     return round(positive_gain / days, 4)
 
 
-def get_graph(user_id: str, semester: str | None = None) -> dict:
-    ensure_user_exists(user_id)
+def _semester_course_ids(user_id: str, semester: str | None) -> set[str] | None:
+    """Optional semester scope (Path A): the courses the user is enrolled in for
+    that term. ``None`` means "all terms"; an unresolved label is the empty set.
+    Sync (services/academics.py): the async readers hop it off the loop."""
+    if not semester:
+        return None
+    from services.academics import term_id_for_label, user_course_ids_for_term
+    term_id = term_id_for_label(semester)
+    return user_course_ids_for_term(user_id, term_id) if term_id else set()
 
-    # Get all enrolled courses for this user
-    enrolled_courses = _user_enrolled_courses(user_id)
 
-    # Optional semester scope (Path A): restrict to the courses the user is
-    # enrolled in for that term. `allowed_course_ids is None` means "all terms".
-    allowed_course_ids: set[str] | None = None
-    if semester:
-        from services.academics import term_id_for_label, user_course_ids_for_term
-        term_id = term_id_for_label(semester)
-        allowed_course_ids = (
-            user_course_ids_for_term(user_id, term_id) if term_id else set()
-        )
-        enrolled_courses = [
-            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
-        ]
-
-    # Get all graph nodes for this user
-    nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
+def _scope_nodes(nodes_raw: list | None, allowed_course_ids: set[str] | None) -> list:
     nodes = nodes_raw or []
     if allowed_course_ids is not None:
         nodes = [n for n in nodes if n.get("course_id") in allowed_course_ids]
+    return nodes
+
+
+#: Mastery events live in the append-only node_mastery_events table (the
+#: graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
+#: of this user's node events in one query, then group by node id.
+_NODE_EVENTS_SELECT = "node_id,delta,reason,created_at"
+
+
+def _node_events_filters(nodes: list) -> dict | None:
+    node_ids = {n["id"] for n in nodes}
+    return {"node_id": f"in.({','.join(node_ids)})"} if node_ids else None
+
+
+def _node_events(nodes: list) -> list:
+    filters = _node_events_filters(nodes)
+    if filters is None:
+        return []
+    try:
+        return table("node_mastery_events").select(
+            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
+        ) or []
+    except Exception:
+        return []
+
+
+async def _anode_events(nodes: list) -> list:
+    filters = _node_events_filters(nodes)
+    if filters is None:
+        return []
+    try:
+        return await table("node_mastery_events").aselect(
+            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
+        ) or []
+    except Exception:
+        return []
+
+
+#: The STORED streak_count is only reset on the student's next activity, so a
+#: lapsed streak would still display; effective_streak reads it as of today
+#: (#767).
+_STREAK_SELECT = "streak_count,last_active_date"
+
+
+def get_graph(user_id: str, semester: str | None = None) -> dict:
+    ensure_user_exists(user_id)
+    enrolled_courses = _user_enrolled_courses(user_id)
+    allowed_course_ids = _semester_course_ids(user_id, semester)
+    nodes = _scope_nodes(
+        table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"}),
+        allowed_course_ids,
+    )
+    edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
+    event_rows = _node_events(nodes)
+    user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
+    return _assemble_graph(
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+    )
+
+
+async def _none() -> None:
+    """An awaitable None, for a gather slot with nothing to read."""
+    return None
+
+
+async def aget_graph(user_id: str, semester: str | None = None) -> dict:
+    """Async twin of :func:`get_graph` (#117): the same reads through the
+    ``a*`` seam, the academics term lookup hopped off the loop. The user row
+    is ensured first (the streak read depends on it); the five independent
+    reads then run concurrently, and the node-events read follows the nodes."""
+    await aensure_user_exists(user_id)
+    user_filter = {"user_id": f"eq.{user_id}"}
+    enrolled_courses, allowed_course_ids, nodes_raw, edges_raw, user_rows = await asyncio.gather(
+        _auser_enrolled_courses(user_id),
+        run_in_threadpool(_semester_course_ids, user_id, semester) if semester else _none(),
+        table("graph_nodes").aselect("*", filters=user_filter),
+        table("graph_edges").aselect("*", filters=user_filter),
+        table("users").aselect(_STREAK_SELECT, filters={"id": f"eq.{user_id}"}),
+    )
+    nodes = _scope_nodes(nodes_raw, allowed_course_ids)
+    event_rows = await _anode_events(nodes)
+    return _assemble_graph(
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+    )
+
+
+def _assemble_graph(
+    user_id: str,
+    enrolled_courses: list[dict],
+    allowed_course_ids: set[str] | None,
+    nodes: list,
+    edges_raw: list,
+    event_rows: list,
+    user_rows: list | None,
+) -> dict:
+    """The pure half of :func:`get_graph` / :func:`aget_graph`: no I/O."""
+    if allowed_course_ids is not None:
+        enrolled_courses = [
+            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
+        ]
     node_ids = {n["id"] for n in nodes}
 
-    edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
     edges = [
         {
             "id": e["id"],
@@ -186,21 +307,9 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
         if e["source_node_id"] in node_ids and e["target_node_id"] in node_ids
     ]
 
-    # Mastery events live in the append-only node_mastery_events table (the
-    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
-    # of this user's node events in one query, then group by node id.
     events_by_node: dict[str, list] = {}
-    if node_ids:
-        try:
-            event_rows = table("node_mastery_events").select(
-                "node_id,delta,reason,created_at",
-                filters={"node_id": f"in.({','.join(node_ids)})"},
-                order="created_at.asc",
-            ) or []
-        except Exception:
-            event_rows = []
-        for ev in event_rows:
-            events_by_node.setdefault(ev.get("node_id"), []).append(ev)
+    for ev in event_rows:
+        events_by_node.setdefault(ev.get("node_id"), []).append(ev)
 
     # Enrich each node with learning velocity; trim event history for API response
     for n in nodes:
@@ -216,12 +325,6 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
     avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
-    # The STORED streak_count is only reset on the student's next activity, so
-    # a lapsed streak would still display; effective_streak reads it as of
-    # today (#767).
-    user_rows = table("users").select(
-        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"},
-    )
     streak = effective_streak(user_rows[0] if user_rows else None)
 
     stats = {
@@ -340,10 +443,39 @@ def get_courses(user_id: str) -> list:
     course_name, school, department, color, nickname, term, node_count,
     enrolled_at, enrollment_ids, terms.
     """
-    rows = _user_enrolled_courses(user_id)
+    return [
+        _course_entry(group, len(_course_node_ids(user_id, group[0])))
+        for group in _collapse_enrollments(_user_enrolled_courses(user_id))
+    ]
 
-    # Collapse enrollments to one representative row per abstract course_id,
-    # preserving first-seen order, while accumulating every enrollment id / term.
+
+#: Per-course node-count reads in flight at once in :func:`aget_courses`.
+_COURSE_COUNT_CONCURRENCY = 8
+
+
+async def aget_courses(user_id: str) -> list:
+    """Async twin of :func:`get_courses` (#117): the per-course node counts
+    run concurrently (at most ``_COURSE_COUNT_CONCURRENCY`` at a time), in
+    the same order."""
+    gate = asyncio.Semaphore(_COURSE_COUNT_CONCURRENCY)
+
+    async def entry(group) -> dict:
+        async with gate:
+            node_rows = await table("graph_nodes").aselect(
+                "id", filters=_course_nodes_filters(user_id, group[0]),
+            ) or []
+        return _course_entry(group, len(node_rows))
+
+    groups = _collapse_enrollments(await _auser_enrolled_courses(user_id))
+    return list(await asyncio.gather(*(entry(g) for g in groups)))
+
+
+def _collapse_enrollments(
+    rows: list[dict],
+) -> list[tuple[str, dict, list[str], list[str]]]:
+    """Collapse enrollments to one representative row per abstract course_id,
+    preserving first-seen order, while accumulating every enrollment id / term.
+    Returns ``(course_id, representative, enrollment_ids, terms)`` groups."""
     order: list[str] = []
     reps: dict[str, dict] = {}
     enrollment_ids: dict[str, list[str]] = {}
@@ -363,36 +495,40 @@ def get_courses(user_id: str) -> list:
         term_label = r.get("term")
         if term_label and term_label not in terms[course_id]:
             terms[course_id].append(term_label)
+    return [(cid, reps[cid], enrollment_ids[cid], terms[cid]) for cid in order]
 
-    result = []
-    for course_id in order:
-        r = reps[course_id]
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
 
-        # Count nodes for this course (graph keys on the abstract course id).
-        # Counted once per distinct course — the fan-out used to run this per
-        # enrollment, double-counting the same abstract course's nodes.
-        node_rows = table("graph_nodes").select(
-            "id",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        ) or []
+def _course_nodes_filters(user_id: str, course_id: str) -> dict:
+    # Count nodes for this course (graph keys on the abstract course id).
+    # Counted once per distinct course — the fan-out used to run this per
+    # enrollment, double-counting the same abstract course's nodes.
+    return {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
 
-        result.append({
-            "enrollment_id": r["id"],
-            "course_id": course_id,
-            "course_code": course.get("course_code", ""),
-            "course_name": course.get("course_name", ""),
-            "school": course.get("school", ""),
-            "department": course.get("department", ""),
-            "color": r.get("color"),
-            "nickname": r.get("nickname"),
-            "term": r.get("term", ""),
-            "node_count": len(node_rows),
-            "enrolled_at": r.get("enrolled_at"),
-            "enrollment_ids": enrollment_ids[course_id],
-            "terms": terms[course_id],
-        })
-    return result
+
+def _course_node_ids(user_id: str, course_id: str) -> list:
+    return table("graph_nodes").select(
+        "id", filters=_course_nodes_filters(user_id, course_id),
+    ) or []
+
+
+def _course_entry(group: tuple[str, dict, list[str], list[str]], node_count: int) -> dict:
+    course_id, r, enrollment_ids, terms = group
+    course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+    return {
+        "enrollment_id": r["id"],
+        "course_id": course_id,
+        "course_code": course.get("course_code", ""),
+        "course_name": course.get("course_name", ""),
+        "school": course.get("school", ""),
+        "department": course.get("department", ""),
+        "color": r.get("color"),
+        "nickname": r.get("nickname"),
+        "term": r.get("term", ""),
+        "node_count": node_count,
+        "enrolled_at": r.get("enrolled_at"),
+        "enrollment_ids": enrollment_ids,
+        "terms": terms,
+    }
 
 
 def add_course(
@@ -1033,26 +1169,55 @@ def apply_graph_update(
     return mastery_changes
 
 
-def get_recommendations(user_id: str, semester: str | None = None) -> list:
+def _recommendation_filters(user_id: str, semester: str | None) -> dict | None:
+    """The graph_nodes filters for the user's recommendations, or None when the
+    semester scope leaves nothing to recommend. Sync: a semester resolves
+    through services/academics.py (the async reader hops it off the loop)."""
     filters = {
         "user_id": f"eq.{user_id}",
         "mastery_tier": "in.(struggling,learning,unexplored)",
     }
     if semester:
-        from services.academics import term_id_for_label, user_course_ids_for_term
-        term_id = term_id_for_label(semester)
-        allowed = user_course_ids_for_term(user_id, term_id) if term_id else set()
+        allowed = _semester_course_ids(user_id, semester)
         # Unresolved label / no enrollment in that term → no recommendations.
         if not allowed:
-            return []
+            return None
         filters["course_id"] = f"in.({','.join(allowed)})"
+    return filters
 
+
+_RECOMMENDATION_READ = {
+    "order": "mastery_score.asc",
+    "limit": 5,
+}
+_RECOMMENDATION_COLUMNS = "concept_name,mastery_score,mastery_tier,course_id"
+
+
+def get_recommendations(user_id: str, semester: str | None = None) -> list:
+    filters = _recommendation_filters(user_id, semester)
+    if filters is None:
+        return []
     rows = table("graph_nodes").select(
-        "concept_name,mastery_score,mastery_tier,course_id",
-        filters=filters,
-        order="mastery_score.asc",
-        limit=5,
+        _RECOMMENDATION_COLUMNS, filters=filters, **_RECOMMENDATION_READ,
     )
+    return _recommendations_from(rows)
+
+
+async def aget_recommendations(user_id: str, semester: str | None = None) -> list:
+    """Async twin of :func:`get_recommendations` (#117)."""
+    filters = (
+        await run_in_threadpool(_recommendation_filters, user_id, semester)
+        if semester else _recommendation_filters(user_id, None)
+    )
+    if filters is None:
+        return []
+    rows = await table("graph_nodes").aselect(
+        _RECOMMENDATION_COLUMNS, filters=filters, **_RECOMMENDATION_READ,
+    )
+    return _recommendations_from(rows)
+
+
+def _recommendations_from(rows: list) -> list:
     recs = []
     for r in rows:
         tier = r["mastery_tier"]

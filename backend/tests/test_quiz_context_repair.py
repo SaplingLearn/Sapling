@@ -28,6 +28,9 @@ from main import app
 from agents._providers import UnregisteredHandlerError
 from agents.quiz_context import QuizContext
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 client = TestClient(app)
 
 

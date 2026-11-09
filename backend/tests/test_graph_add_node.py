@@ -18,6 +18,9 @@ from main import app
 import routes.graph as graph_routes
 import services.graph_service as gs
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 client = TestClient(app)
 
 ANCHOR = {"id": "n-root", "concept_name": "Math 210", "course_id": "c1"}

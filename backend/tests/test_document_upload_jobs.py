@@ -390,8 +390,8 @@ def _agent_patches(*, is_syllabus=False):
               AsyncMock(return_value=SimpleNamespace(output=summary))),
         patch("agents.concept_extraction.concept_extraction_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=concepts))),
-        patch("agents.tools.graph.apply_concepts_to_graph", AsyncMock(return_value=1)),
-        patch("agents.usage.record_agent_usage", side_effect=lambda r, **kw: r),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=1)),
+        patch("agents.document.record_agent_usage", side_effect=lambda r, **kw: r),
     )
 
 
@@ -597,13 +597,13 @@ def _route_agent_patches():
     summary = Summary(headline="h", abstract="abstract.", key_points=["a", "b", "c"])
     concepts = ConceptList(concepts=[Concept(name="Backprop", description="d", importance=0.9)])
     return (
-        patch("routes.documents.classifier_agent.run",
+        patch("agents.classifier.classifier_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=cls))),
-        patch("routes.documents.summary_agent.run",
+        patch("agents.summary.summary_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=summary))),
-        patch("routes.documents.concept_extraction_agent.run",
+        patch("agents.concept_extraction.concept_extraction_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=concepts))),
-        patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=0)),
     )
 
 
@@ -684,7 +684,7 @@ def test_flag_on_stream_relays_the_worker_and_runs_nothing_inline():
          patch.object(dj, "read_result", return_value={"result": {"id": "x"}}), \
          patch.object(dj, "POLL_INTERVAL_SECONDS", 0), \
          patch("routes.documents.extract_text_from_file") as ext, \
-         patch("routes.documents.classifier_agent.run") as cls, \
+         patch("agents.classifier.classifier_agent.run") as cls, \
          patch("routes.documents._spawn_post_roll") as spawn:
         events = _stream_upload(_client())
     assert [(e, d["step"]) for e, d in events] == [("status", "start"), *_EXPECTED_STEPS]

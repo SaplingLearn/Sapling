@@ -169,6 +169,24 @@ def budget_error_in(exc: BaseException | None) -> LLMBudgetExceeded | None:
     return None
 
 
+def reraise_budget_refusal(exc: BaseException | None) -> None:
+    """Re-raise the budget refusal inside `exc` (:func:`budget_error_in`), else
+    return. For a route's broad failure ``except`` (the one that maps model /
+    transport errors to its generic 502), called first::
+
+        except Exception as e:
+            llm_budget.reraise_budget_refusal(e)
+            raise HTTPException(502, ...) from e
+
+    so a refused run reaches the student as the friendly 429 (main.py's
+    LLMBudgetExceeded handler: `error.code` = ERROR_CODE, `error.reset_at`,
+    `Retry-After`) the tutor and uploads answer with, not as "generation
+    failed". Quiz routes convert the refusal to their own coded 429 instead."""
+    refusal = budget_error_in(exc)
+    if refusal is not None:
+        raise refusal
+
+
 # ── status ──────────────────────────────────────────────────────────────────
 
 

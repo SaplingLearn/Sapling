@@ -27,6 +27,7 @@ OCR_ASYNC_ENABLED = os.getenv("OCR_ASYNC_ENABLED", "false").lower() == "true"
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
@@ -47,15 +48,13 @@ from services import document_jobs
 from services.documents_read import decrypt_document_row
 from services.llm_budget import LLMBudgetExceeded
 from services.xp_service import award_xp_safe
+from contextlib import aclosing
+
 from agents import WORKER_LIMITS
-from agents.classifier import classifier_agent
-from agents.summary import summary_agent
-from agents.concept_extraction import concept_extraction_agent
-from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
-from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
+from services import document_pipeline
 from agents.concept_scan import concept_scan_agent
 from agents.usage import record_agent_usage
 
@@ -113,8 +112,15 @@ def _has_usable_text(text: str | None) -> bool:
     return len((text or "").strip()) >= MIN_EXTRACTED_CHARS
 
 
-def _validate_user(user_id: str) -> None:
-    """Verify that the user_id corresponds to an existing user."""
+async def _validate_user(user_id: str) -> None:
+    """Verify that the user_id corresponds to an existing user (#117: async)."""
+    rows = await table("users").aselect("id", filters={"id": f"eq.{user_id}"}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=403, detail="Invalid user.")
+
+
+def _validate_user_sync(user_id: str) -> None:
+    """`_validate_user` for the plain-`def` scan handlers (threadpool)."""
     rows = table("users").select("id", filters={"id": f"eq.{user_id}"}, limit=1)
     if not rows:
         raise HTTPException(status_code=403, detail="Invalid user.")
@@ -236,19 +242,21 @@ def _extend_concepts(
 
 
 @router.get("/user/{user_id}")
-def list_documents(user_id: str, request: Request):
-    require_self(user_id, request)
-    _validate_user(user_id)
-    docs = table("documents").select(
+async def list_documents(user_id: str, request: Request):
+    await guard_off_loop(require_self, user_id, request)
+    await _validate_user(user_id)
+    docs = await table("documents").aselect(
         "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
     # The row keys on the OFFERING (0025); the HTTP boundary keeps the
-    # abstract course_id (#435 — Library.tsx filters/labels on d.course_id).
-    # Resolve each unique offering_id once (mirrors routes/learn.py's
-    # list_sessions offering_to_course pattern), not once per row.
-    offering_to_course: dict[str, str | None] = {}
+    # abstract course_id (#435). Each unique offering_id resolves once, in one
+    # threadpool hop (offering_course_id is a cached sync read, #117).
+    offering_ids = list(dict.fromkeys(d.get("offering_id") for d in docs if d.get("offering_id")))
+    offering_to_course = (
+        await run_in_threadpool(_courses_for_offerings, offering_ids) if offering_ids else {}
+    )
     for d in docs:
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
@@ -265,32 +273,42 @@ def list_documents(user_id: str, request: Request):
                     d.get("id"),
                 )
                 d["concept_notes"] = []
-        off_id = d.get("offering_id")
-        if off_id and off_id not in offering_to_course:
-            offering_to_course[off_id] = offering_course_id(off_id)
-        d["course_id"] = offering_to_course.get(off_id)
+        d["course_id"] = offering_to_course.get(d.get("offering_id"))
     return {"documents": docs}
 
 
-@router.delete("/doc/{document_id}")
-def delete_document(document_id: str, request: Request, user_id: str | None = None):
+def _courses_for_offerings(offering_ids: list[str]) -> dict[str, str | None]:
+    """offering id -> abstract course id, one resolve per offering."""
+    return {off_id: offering_course_id(off_id) for off_id in offering_ids}
+
+
+async def _session_or_self(user_id: str | None, request: Request) -> str:
+    """The acting user: `user_id` (the session's own, existing) or the session's."""
     if user_id:
-        require_self(user_id, request)
-        _validate_user(user_id)
-    else:
-        user_id = get_session_user_id(request)
-    # Ensure the document belongs to the requesting user (and isn't already
-    # soft-deleted)
-    docs = table("documents").select(
+        await guard_off_loop(require_self, user_id, request)
+        await _validate_user(user_id)
+        return user_id
+    return await guard_off_loop(get_session_user_id, request)
+
+
+async def _require_owned_document(document_id: str, user_id: str) -> None:
+    """404 unless the document is this user's and not soft-deleted."""
+    docs = await table("documents").aselect(
         "id",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+
+@router.delete("/doc/{document_id}")
+async def delete_document(document_id: str, request: Request, user_id: str | None = None):
+    user_id = await _session_or_self(user_id, request)
+    await _require_owned_document(document_id, user_id)
     # Soft delete (0025): stamp deleted_at; reads filter it out. The
     # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
-    table("documents").update(
+    await table("documents").aupdate(
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
@@ -301,12 +319,12 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
     # document is deleted, which covers a withdrawal that fails part-way.
     from services.chunk_visibility import withdraw_document_chunks
 
-    withdraw_document_chunks(document_id, user_id)
+    await run_in_threadpool(withdraw_document_chunks, document_id, user_id)
     return {"deleted": True}
 
 
 @router.patch("/doc/{document_id}")
-def update_document(document_id: str, request: Request, body: dict = Body(...)):
+async def update_document(document_id: str, request: Request, body: dict = Body(...)):
     """Update mutable fields on a document (currently only category)."""
     category = body.get("category")
     if category and category not in VALID_CATEGORIES:
@@ -316,20 +334,10 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
         updates["category"] = category
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update.")
-    user_id = body.get("user_id")
-    if user_id:
-        require_self(user_id, request)
-        _validate_user(user_id)
-    else:
-        user_id = get_session_user_id(request)
-    docs = table("documents").select(
-        "id",
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
-        limit=1,
-    )
-    if not docs:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
+    user_id = await _session_or_self(body.get("user_id"), request)
+    await _require_owned_document(document_id, user_id)
+    updated = await table("documents").aupdate(
+        updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
     return updated[0] if updated else {"id": document_id, **updates}
 
 
@@ -682,6 +690,38 @@ def _graph_backstop(*, user_id: str, course_id: str, filename: str,
         logger.exception("Graph backstop failed for '%s' (best-effort)", filename)
 
 
+def _upload_request_id(request: Request) -> str:
+    """The middleware-stamped request id, so agent traces, Logfire spans and
+    client-facing error payloads share one correlation key."""
+    return (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
+
+
+async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
+    """(filename, bytes) of an accepted upload: 400 on a type or size the
+    routes refuse."""
+    filename = file.filename or ""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
+        )
+    return filename, file_bytes
+
+
 @router.post("/upload/sync")
 @document_jobs.records_inline_outcome  # #116: a queued upload taken back records its outcome
 async def upload_document_sync(
@@ -694,15 +734,9 @@ async def upload_document_sync(
     """Non-streaming JSON upload. Original behavior preserved here so any
     frontend that hasn't migrated to the SSE /upload route keeps working."""
     await guard_off_loop(require_self, user_id, request)
-    _validate_user(user_id)
+    await _validate_user(user_id)
 
-    # Unify with the middleware-stamped request ID so agent traces and
-    # client-facing error payloads share the same correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
+    request_id = _upload_request_id(request)
 
     # Idempotency: if the client retries with the same X-Request-ID,
     # short-circuit to the previously persisted document instead of
@@ -722,32 +756,13 @@ async def upload_document_sync(
     # stays the key for the graph + course-context + calendar side effects.
     offering_id = await asyncio.to_thread(require_course_enrollment, user_id, course_id)
 
-    # ── Validation ────────────────────────────────────────────────────────────
-    filename = file.filename or ""
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
-        )
-
-    file_bytes = await file.read()
-
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
-                "Please upload a smaller file."
-            ),
-        )
+    filename, file_bytes = await _read_upload(file)
 
     # #116: with `jobs_queue` on for the uploader, extraction runs on the
     # worker (document_jobs); off, it runs here exactly as before.
     queued = await asyncio.to_thread(document_jobs.should_queue, user_id, len(file_bytes))
-    extracted_text = (
-        None if queued else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    extracted_text = None if queued else await asyncio.to_thread(  # #117: OCR off the loop
+        _extract_text_or_422, file_bytes, filename, file.content_type or "",
     )
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
@@ -874,15 +889,9 @@ async def upload_document(
     events; the client should NOT auto-retry against this route.
     """
     await guard_off_loop(require_self, user_id, request)
-    _validate_user(user_id)
+    await _validate_user(user_id)
 
-    # Unify the agent-trace request_id with the middleware-stamped one so
-    # SSE error payloads and Logfire spans share a single correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
+    request_id = _upload_request_id(request)
     # Idempotency: a client retry with the same X-Request-ID should not
     # re-run the orchestrator; the stream replays the persisted row instead.
     # Looked up BEFORE the enrollment gate (#115 review), so a retry of an
@@ -899,23 +908,7 @@ async def upload_document(
         else await asyncio.to_thread(require_course_enrollment, user_id, course_id)
     )
 
-    filename = file.filename or ""
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
-        )
-
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
-                "Please upload a smaller file."
-            ),
-        )
+    filename, file_bytes = await _read_upload(file)
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -937,7 +930,9 @@ async def upload_document(
         document_jobs.should_queue, user_id, len(file_bytes))
     extracted_text: str | None = (
         None if OCR_ASYNC_ENABLED or existing or queued
-        else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+        else await asyncio.to_thread(  # #117: OCR off the event loop
+            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+        )
     )
 
     async def event_stream():
@@ -1005,10 +1000,7 @@ async def upload_document(
             # return so the client gets a clean failure instead of a
             # double-fault.
             if extracted_text is None:
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracting_text",
-                    message="Extracting text from document...",
-                ))
+                yield sapling_event_to_sse(document_pipeline.extracting_text_event())
                 try:
                     extracted_text = await asyncio.to_thread(
                         extract_text_from_file, file_bytes, filename,
@@ -1033,10 +1025,8 @@ async def upload_document(
                         message="Failed.",
                     ))
                     return
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracted_text",
-                    message=f"Extracted {len(extracted_text):,} chars.",
-                ))
+                yield sapling_event_to_sse(
+                    document_pipeline.extracted_text_event(len(extracted_text)))
                 # Extraction can succeed and still yield nothing usable -- a
                 # rasterized PDF has no text layer, so the except branch above
                 # never fires. Stop here rather than asking the model to
@@ -1060,84 +1050,17 @@ async def upload_document(
                     ))
                     return
 
-            # ── Phase 1: classifier (serial gate) ─────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classify",
-                message="Classifying document...",
-            ))
-            cls_run = record_agent_usage(
-                await classifier_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                ),
-                feature="document", task="classifier",
-            )
-            classification = cls_run.output
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classified",
-                message=f"Classified as {classification.category}.",
-                data={
-                    "category": classification.category,
-                    "is_syllabus": classification.is_syllabus,
-                },
-            ))
-
-            # ── Phase 2: workers in parallel ──────────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extract",
-                message="Extracting summary, concepts"
-                        + (" and syllabus" if classification.is_syllabus else "")
-                        + " in parallel...",
-            ))
-            summary_task = summary_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            concepts_task = concept_extraction_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            if classification.is_syllabus:
-                syllabus_task = syllabus_extraction_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
-                )
-                record_agent_usage(syllabus_r, feature="document", task="syllabus")
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = syllabus_r.output
-            else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = None
-            record_agent_usage(summary_r, feature="document", task="summary")
-            record_agent_usage(concepts_r, feature="document", task="concepts")
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extracted",
-                message=f"Extracted {len(concepts.concepts)} concept(s).",
-            ))
-
-            # ── Phase 3: graph update (direct call, no agent loop) ──────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_update",
-                message="Merging concepts into the course graph...",
-            ))
-            concept_names = [c.name for c in concepts.concepts]
-            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
-            graph_updated = merged > 0
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_updated",
-                message=f"Merged {merged} concept(s).",
-            ))
-
-            # ── Compose final result + emit ──────────────────────────────────
-            final_output = DocumentProcessingResult(
-                classification=classification,
-                summary=summary,
-                concepts=concepts,
-                syllabus=syllabus,
-                graph_updated=graph_updated,
-            )
+            # ── Phases 1-3: the one pipeline (agents.document) ────────────────
+            # classify -> summary/concepts(/syllabus) in parallel -> graph
+            # merge, each boundary relayed as its progress events (#835: the
+            # same steps and events a queued upload's worker records).
+            final_output: DocumentProcessingResult | None = None
+            async with aclosing(document_pipeline.run_document_agents(extracted_text, deps)) as steps:
+                async for step in steps:
+                    for ev in document_pipeline.step_events(step):
+                        yield sapling_event_to_sse(ev)
+                    if step.name == document_pipeline.DONE:
+                        final_output = step.result
             yield sapling_event_to_sse(SaplingEvent(
                 type="result", step="finalize",
                 message="Processing complete.",
@@ -1448,7 +1371,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
-    _validate_user(user_id)
+    _validate_user_sync(user_id)
 
     rows = table("documents").select(
         "id,user_id,offering_id,file_name,summary,concept_notes",
@@ -1495,6 +1418,6 @@ def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
-    _validate_user(user_id)
+    _validate_user_sync(user_id)
     require_course_enrollment(user_id, course_id)  # #115
     return _scan_concepts_for_course(user_id, course_id)

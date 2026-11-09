@@ -32,12 +32,15 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
 )
 
+from fastapi import HTTPException
+
 from db.connection import table
 from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
 from services import extraction_service, request_limits
 from services.encryption import decrypt_if_present
+from services.llm_budget import LLMBudgetExceeded, reraise_budget_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -516,6 +519,10 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
                 feature="flashcard", task="flashcard",
             )
             break
+        except LLMBudgetExceeded:
+            # The student's daily LLM budget refused the run (#119): not a
+            # failure to log, and the route answers it as the 429 it is.
+            raise
         except ContentFilterError:
             # Subclasses UnexpectedModelBehavior, so this carve-out must come
             # first: a content-filter block is not schema noncompliance and
@@ -542,6 +549,15 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
         if front and back:
             out.append({"front": front, "back": back})
     return out
+
+
+def llm_http_error(exc: BaseException) -> HTTPException:
+    """The HTTP error a flashcard route raises when a generation failed: the
+    routes' long-standing 502 — except that a budget refusal in `exc` is
+    re-raised as itself (`llm_budget.reraise_budget_refusal`), so main.py
+    answers it with the friendly 429 the tutor and uploads use (#838)."""
+    reraise_budget_refusal(exc)
+    return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
 
 
 def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> list[Card]:

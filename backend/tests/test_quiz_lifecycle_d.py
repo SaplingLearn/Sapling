@@ -19,6 +19,10 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
+import pytest
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -91,7 +95,7 @@ class TestMasterySnapshotPersisted:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update"),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch(
@@ -148,7 +152,7 @@ class TestMasterySnapshotPersisted:
             {"concept": "Loops", "before": 0.5, "after": 0.9},
         ])
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.apply_graph_update", new=applied),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch(
@@ -192,7 +196,7 @@ class TestAttemptResume:
         right."), so shipping it on resume hands over the answer key in a
         different field — the exact hole C3/D2 exist to close."""
         with patch("routes.quiz.table",
-                   side_effect=self._factory(_attempt_row())):
+                   side_effect=with_async_twins(self._factory(_attempt_row()))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
         body = r.text
@@ -208,7 +212,7 @@ class TestAttemptResume:
         legacy = _attempt_row(questions_json=[
             {"q": "What defines an eigenvalue?", "a": "Av = lambda v"},
         ])
-        with patch("routes.quiz.table", side_effect=self._factory(legacy)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(legacy))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_RESUMABLE"
@@ -219,7 +223,7 @@ class TestAttemptResume:
         promises exactly this, and serving its questions while /answer and
         /submit still accept them makes the TTL enforce nothing."""
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
-        with patch("routes.quiz.table", side_effect=self._factory(abandoned)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
         data = r.json()
@@ -235,7 +239,7 @@ class TestAttemptResume:
             "answered_at": "2026-08-12T00:01:00+00:00",
         }]
         with patch("routes.quiz.table",
-                   side_effect=self._factory(_attempt_row(), responses)):
+                   side_effect=with_async_twins(self._factory(_attempt_row(), responses))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
         data = r.json()
@@ -255,13 +259,13 @@ class TestAttemptResume:
             (_attempt_row(), "in_progress"),
         ]
         for attempt, expected in cases:
-            with patch("routes.quiz.table", side_effect=self._factory(attempt)):
+            with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(attempt))):
                 r = client.get("/api/quiz/attempts/quiz1")
             assert r.status_code == 200
             assert r.json()["status"] == expected
 
     def test_unknown_attempt_404s(self):
-        with patch("routes.quiz.table", side_effect=self._factory(None)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(None))):
             r = client.get("/api/quiz/attempts/nope")
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
@@ -294,7 +298,7 @@ class TestAbandonedIsEnforced:
 
     def test_answer_on_an_abandoned_attempt_409s(self):
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
-        with patch("routes.quiz.table", side_effect=self._factory(abandoned)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))):
             r = client.post("/api/quiz/attempts/quiz1/answer", json={
                 "question_index": 0, "selected_index": 1,
             })
@@ -305,7 +309,7 @@ class TestAbandonedIsEnforced:
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
         apply_mock = MagicMock()
         with (
-            patch("routes.quiz.table", side_effect=self._factory(abandoned)),
+            patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.save_quiz_context"),
@@ -346,7 +350,7 @@ class TestAbandonSweep:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             _sweep_abandoned("user_andres")
 
         assert len(update_calls) == 1

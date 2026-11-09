@@ -18,6 +18,10 @@ from routes.quiz import CourseMaterial
 from services.encryption import decrypt_json_column
 from services.quiz_identity import question_hash
 from services.quiz_repetition import RecentQuestion
+from tests.db_fakes import with_async_twins
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -64,7 +68,7 @@ def _generate(
     )
     agent_run = AsyncMock(return_value=result)
     with (
-        patch("routes.quiz.table", side_effect=_factory(captured)),
+        patch("routes.quiz.table", side_effect=with_async_twins(_factory(captured))),
         patch("routes.quiz.quiz_agent.run", new=agent_run),
         patch(
             "routes.quiz._course_material",
@@ -151,7 +155,7 @@ def _coverage(rows, total):
         m.select_with_count.return_value = (rows, total)
         return m
 
-    with patch("routes.quiz.table", side_effect=factory):
+    with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
         return _course_chunk_coverage("CAS CS 330", "user-1")
 
 
@@ -180,7 +184,7 @@ def test_count_read_failure_is_unknown():
         m.select_with_count.side_effect = RuntimeError("postgrest down")
         return m
 
-    with patch("routes.quiz.table", side_effect=factory):
+    with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
         assert _course_chunk_coverage("CAS CS 330", "user-1") is None
 
 
@@ -355,7 +359,7 @@ def test_repetition_read_failure_never_breaks_generation():
         response=SimpleNamespace(model_name="m"),
     )
     with (
-        patch("routes.quiz.table", side_effect=_factory(captured)),
+        patch("routes.quiz.table", side_effect=with_async_twins(_factory(captured))),
         patch("routes.quiz.quiz_agent.run", new=AsyncMock(return_value=result)),
         patch("routes.quiz._course_material", return_value=CourseMaterial()),
         patch(
