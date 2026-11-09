@@ -798,14 +798,23 @@ describe("QuizQuestion — each format looks like itself", () => {
     expect(dots()).toEqual([null, null, null]);
   });
 
-  it("states the outcome outside the card, and reads Correct / Incorrect", () => {
+  it("puts the outcome on the chosen answer, and announces it in the verdict", () => {
     renderScreen(makeSession({ phase: "answered", items: [
       item(0, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "Because." } }), item(1), item(2),
     ] }));
+    expect(screen.getByTestId("quiz-answer-option-A").querySelector(".answer-option__status")).toHaveTextContent("Incorrect");
+    expect(screen.getByTestId("quiz-answer-option-B").querySelector(".answer-option__status")).toBeNull();
     const verdict = screen.getByTestId("quiz-review-verdict");
-    const status = verdict.querySelector(".quiz-question__verdict-status")!;
-    expect(status).toHaveTextContent("Incorrect");
-    expect(status.closest(".card")).toBeNull();
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Incorrect.");
     expect(verdict.querySelector(".card")).toHaveTextContent("Because.");
   });
+
+  it("marks a written answer on its own field", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "base case",
+        verdict: { isCorrect: true, correctIndex: -1, explanation: "", correctAnswer: "base case" } })] }));
+    expect(document.querySelector(".quiz-written__field .quiz-written__status")).toHaveTextContent("Correct");
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Correct.");
+  });
+
 });

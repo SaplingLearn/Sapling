@@ -25,6 +25,7 @@
  */
 
 import React from "react";
+import { Check, X } from "lucide-react";
 import type { QuestionType } from "@/lib/quiz/types";
 import {
   expressionParts,
@@ -176,7 +177,19 @@ export function WrittenAnswer({
 
   return (
     <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
-      {input}
+      <div className="quiz-written__field">
+        {input}
+        {/* The result, on the answer itself. Decorative: the verdict's live
+            region announces it. */}
+        {verdict && (
+          <span className="quiz-written__status" aria-hidden="true">
+            {verdict === "correct" ? "Correct" : "Incorrect"}
+            <span className="quiz-written__mark">
+              {verdict === "correct" ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+            </span>
+          </span>
+        )}
+      </div>
 
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">

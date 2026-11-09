@@ -23,7 +23,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
+import { BookOpen, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
@@ -503,6 +503,9 @@ export function QuizQuestion({
               letter={option.label}
               text={option.text}
               state={optionState(index)}
+              status={showVerdict && verdict && index === selectedIndex
+                ? (verdict.isCorrect ? "Correct" : "Incorrect")
+                : undefined}
               disabled={!selectable}
               onSelect={() => actions.select(index)}
               // The group owns one tab stop: the chosen row, or the first row
@@ -523,12 +526,11 @@ export function QuizQuestion({
         >
           {showVerdict && verdict && (
             <>
-              {/* The outcome, outside the card: the mark and the word. */}
-              <p className="quiz-question__verdict-status">
-                <span className="quiz-question__verdict-mark" aria-hidden="true">
-                  {verdict.isCorrect ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />}
-                </span>
-                {verdict.isCorrect ? "Correct" : "Incorrect"}
+              {/* On screen the outcome sits on the answer itself (the chosen
+                  tile, or the written field); this is the line the live
+                  region announces. */}
+              <p className="quiz-question__sr" data-testid="quiz-verdict-outcome">
+                {verdict.isCorrect ? "Correct." : "Incorrect."}
               </p>
               {/* The card is the reading: what the answer was, and why. */}
               {(!verdict.isCorrect || verdict.explanation) && (

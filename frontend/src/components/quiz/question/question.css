@@ -28,7 +28,7 @@
      will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
      the same number today by coincidence, not by construction. */
   --quiz-q-skeleton-inset: 14px;
-  --quiz-q-numeric-w: 22ch;    /* a number needs a field, not the column */
+  --quiz-q-numeric-w: 300px;   /* a number needs a field, not the column (room for the result) */
   --quiz-q-key-h: 30px;
   --quiz-q-key-min-w: 40px;
   --quiz-q-key-gap: 6px;
@@ -176,19 +176,11 @@
   outline: none;
 }
 
-/* The verdict, once there is one. The outcome sits OUTSIDE the card — a
-   mark and a word in the outcome's colour — and the card (the app's plain
-   `.card`) holds the correction and the reason. */
+/* The verdict, once there is one. The outcome itself is shown ON the answer
+   (the chosen tile, the written field); this holds the plain `.card` with
+   the correction and the reason. */
 .quiz-question__feedback[data-outcome] {
-  --verdict-tone: var(--positive);
-  display: flex;
-  flex-direction: column;
-  gap: var(--pad-sm);
   animation: quiz-verdict-in var(--dur) var(--ease);
-}
-
-.quiz-question__feedback[data-outcome="incorrect"] {
-  --verdict-tone: var(--err);
 }
 
 @keyframes quiz-verdict-in {
@@ -197,26 +189,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .quiz-question__feedback[data-outcome] { animation: none; }
-}
-
-.quiz-question__verdict-status {
-  display: flex;
-  align-items: center;
-  gap: var(--pad-sm);
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  color: var(--verdict-tone);
-}
-
-.quiz-question__verdict-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-full);
-  background: var(--verdict-tone);
-  color: #fff;
 }
 
 .quiz-question__verdict-card {
@@ -574,9 +546,53 @@
 
 .quiz-written__input--short_answer { font-family: var(--font-serif); }
 
-/* A number is short: a field sized to it, digits aligned. */
-.quiz-written__input--numeric {
+/* The field and, once marked, the result at its right end. */
+.quiz-written__field {
+  position: relative;
+  width: 100%;
+}
+
+.quiz-written[data-format="numeric"] .quiz-written__field {
   max-width: var(--quiz-q-numeric-w);
+}
+
+/* Room for the result, so it never sits on top of the answer. */
+.quiz-written[data-verdict] .field.quiz-question__written-input {
+  padding-right: 120px;
+}
+
+.quiz-written__status {
+  --status-tone: var(--positive);
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--status-tone);
+  pointer-events: none;
+}
+
+.quiz-written[data-verdict="incorrect"] .quiz-written__status {
+  --status-tone: var(--err);
+}
+
+/* The same filled mark as the answer tiles' ✓ / ✕. */
+.quiz-written__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-full);
+  background: var(--status-tone);
+  color: #fff;
+}
+
+/* A number is short: digits aligned. */
+.quiz-written__input--numeric {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }

@@ -898,6 +898,12 @@ body { font-size: 14px; line-height: 1.5; }
   color: #fff;
 }
 .answer-option__mark:empty { visibility: hidden; }
+.answer-option__status {
+  flex-shrink: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--answer-tone);
+}
 
 .answer-option--selected {
   border-color: var(--answer-tone);
