@@ -111,7 +111,7 @@ client = TestClient(app)
 
 def test_course_scan_endpoint_uses_agent_and_keeps_response_shape():
     fake = _FakeAgent(result=_Result(["Binary Search", "Hashing"]))
-    with patch("routes.documents._validate_user", return_value=None), \
+    with patch("routes.documents._validate_user_sync", return_value=None), \
          patch("routes.documents._course_label", return_value="CS101"), \
          patch("routes.documents.apply_graph_update", return_value=None), \
          patch("routes.documents.concept_scan_agent", fake), \
@@ -135,7 +135,7 @@ def test_course_scan_endpoint_degrades_to_empty_shape_on_agent_failure():
     same shape an actually-empty scan produces — {"concepts": [], "added": 0,
     "existing": N} — and writes nothing to the graph."""
     fake = _FakeAgent(exc=RuntimeError("boom"))
-    with patch("routes.documents._validate_user", return_value=None), \
+    with patch("routes.documents._validate_user_sync", return_value=None), \
          patch("routes.documents._course_label", return_value="CS101"), \
          patch("routes.documents.apply_graph_update") as apply_update, \
          patch("routes.documents.concept_scan_agent", fake), \

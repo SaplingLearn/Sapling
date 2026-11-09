@@ -54,10 +54,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     # Measured on main at #117 wave 0 (the design doc counted only the five
     # DIRECT offenders; the in-module transitive walk finds these too). Each
     # converts with its router's wave (design §4.1) and leaves this list.
-    ("routes/documents.py", "upload_document", "_validate_user()"):
-        "wave 4 (documents CRUD; the upload pipeline is moving to the worker, #116)",
-    ("routes/documents.py", "upload_document_sync", "_validate_user()"):
-        "wave 4 (documents CRUD; the upload pipeline is moving to the worker, #116)",
     ("routes/learn.py", "_action_turn", "_get_session_offering_id()"): "wave 3 (learn.py + the tutor stream)",
     ("routes/learn.py", "_action_turn", "_load_message_history()"): "wave 3 (learn.py + the tutor stream)",
     ("routes/learn.py", "_action_turn", "_prepare_chat_run()"): "wave 3 (learn.py + the tutor stream)",
