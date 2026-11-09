@@ -854,6 +854,31 @@ class TestUniqueGuideKey:
         # _drop_older_guides keys on generated_at < the new stamp: the row stays.
         assert all("generated_at" in (d or {}) for d in store.deleted)
 
+    def test_stale_material_keeps_the_in_place_replaced_guide(self):
+        """With the unique index a regenerate overwrites the key's ONLY row.
+        The #771 stale-material check used to delete that row by id, leaving
+        the student with no guide; it now keeps it (and does not cache-claim
+        it), as the index-free path keeps the older row."""
+        store = _IndexedGuideStore([["d1"], ["d1", "d2"]], existing=[dict(self.OLD)])
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})):
+            r = client.post("/api/study-guide/regenerate",
+                            json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID})
+        assert r.status_code == 200, r.text
+        assert r.json()["guide"]["exam"] == "Fresh"
+        (row,) = store.guides
+        assert row["id"] == "g-old" and row["content"] != "old-ciphertext"
+        assert store.deleted == [], "neither the stale delete nor the older-guide drop ran"
+
+    def test_stale_material_still_drops_a_freshly_inserted_guide(self):
+        """Index present but no existing row: the insert is a plain insert,
+        so the stale check takes it back out exactly as before."""
+        store = _IndexedGuideStore([["d1"], ["d1", "d2"]])
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})):
+            r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert r.status_code == 200 and r.json()["guide"]["exam"] == "Fresh"
+        assert store.guides == []
+        assert len(store.deleted) == 1 and "id" in store.deleted[0]
+
     def test_a_foreign_key_409_is_not_swallowed(self):
         store = _IndexedGuideStore([["d1"]])
 
@@ -890,7 +915,7 @@ class TestUniqueGuideKey:
         row = {"id": "g-new", "user_id": "u", "offering_id": "o", "exam_id": "e",
                "content": "c", "generated_at": "t"}
         with patch("routes.study_guide.table", side_effect=table):
-            assert sg._insert_or_replace(row) == "g-new"
+            assert sg._insert_or_replace(row) == ("g-new", False)
         assert inserts == ["g-new", "g-new"]
 
 
