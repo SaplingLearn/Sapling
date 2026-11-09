@@ -4,7 +4,7 @@
  *   - semester scoping of the graph fetch and the course dropdown (#360);
  *   - every card is derived from real data: pills, Up Next, Quick Reviews,
  *     Last Session, Roadmap, Recent Notes, Coming Up, level and streak;
- *   - the quote is editable and remembered per user;
+ *   - the greeting types itself out, then a rotating quote fades in;
  *   - the original knowledge graph card (KnowledgeGraph + CoursesKey) and
  *     the latest-load-wins race (#769).
  */
@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor, within, act, fireEvent } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
+import { QUOTES } from "../home/homeModel";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -161,7 +162,7 @@ describe("Home: header", () => {
       ],
     });
     render(<Dashboard />);
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Good morning, Ada");
+    expect(await screen.findByRole("heading", { level: 1, name: "Good morning, Ada" })).toBeInTheDocument();
     const exam = await screen.findByTestId("home-pill-exam");
     expect(exam).toHaveTextContent("Midterm in 4 days");
     expect(exam).toHaveAttribute("href", "/study?course=c-BIO-101");
@@ -193,18 +194,19 @@ describe("Home: header", () => {
     expect(within(reviews).getByRole("link")).toHaveAttribute("href", "/study?mode=cards");
   });
 
-  it("edits the quote and remembers it for this user", async () => {
+  it("types the greeting, then fades in one of the original quotes", async () => {
     render(<Dashboard />);
+    const heading = await screen.findByRole("heading", { level: 1, name: "Good morning, Ada" });
     const quote = await screen.findByTestId("home-quote");
-    expect(quote).toHaveTextContent("The roots of education are bitter");
-    expect(screen.getByText("Aristotle")).toBeInTheDocument();
-    fireEvent.click(quote);
-    const input = screen.getByLabelText("Your quote");
-    fireEvent.change(input, { target: { value: "“Keep going.” Me" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByTestId("home-quote")).toHaveTextContent("“Keep going.”");
-    expect(screen.getByText("Me")).toBeInTheDocument();
-    expect(window.localStorage.getItem("sapling_home_quote:u1")).toBe("“Keep going.” Me");
+    // Hidden from assistive tech (and faded out) while the greeting types.
+    expect(quote.closest("[aria-hidden]")).toHaveAttribute("aria-hidden", "true");
+    await waitFor(
+      () => expect(within(heading).getByTestId("home-greeting-typed")).toHaveTextContent("Good morning, Ada"),
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(quote.closest("[aria-hidden]")).toHaveAttribute("aria-hidden", "false"), { timeout: 3000 });
+    const shown = `${quote.textContent} ${quote.parentElement?.querySelector("figcaption")?.textContent ?? ""}`.trim();
+    expect(QUOTES).toContain(shown);
   });
 });
 

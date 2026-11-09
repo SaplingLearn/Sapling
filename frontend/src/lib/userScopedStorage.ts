@@ -36,7 +36,6 @@ export const USER_SCOPED_LOCAL_KEYS = [
 export const USER_SCOPED_LOCAL_PREFIXES = [
   'sapling_onboarding_draft:', // Onboarding.tsx onboardingDraftKey(userId), #757
   'sapling.flags.v1:', // context/FlagsContext.tsx last-known flags per user, #771
-  'sapling_home_quote:', // components/home/homeModel.ts quoteStorageKey(userId), editable Home quote
 ] as const;
 
 /** sessionStorage keys holding one account's data. */

@@ -354,7 +354,19 @@ export function dueReviewConcepts(cards: CardLike[], nowMs: number): number {
 
 // ── Quote ────────────────────────────────────────────────────────────────────
 
-export const DEFAULT_QUOTE = "“The roots of education are bitter, but the fruit is sweet.” Aristotle";
+/**
+ * The original Home's rotating learning quotes (pre-v3 Dashboard), written as
+ * `“text” Author` so `splitQuote` can set the attribution in the v3 style. One
+ * is picked at random per visit; test mode pins QUOTES[0] (see Dashboard).
+ */
+export const QUOTES = [
+  "“Learning is the only thing the mind never exhausts, never fears, and never regrets.” da Vinci",
+  "“The roots of education are bitter, but the fruit is sweet.” Aristotle",
+  "“Live as if you were to die tomorrow. Learn as if you were to live forever.” Gandhi",
+  "“An investment in knowledge pays the best interest.” Franklin",
+  "“The beautiful thing about learning is that no one can take it away from you.” B.B. King",
+  "“Tell me and I forget. Teach me and I remember. Involve me and I learn.” Franklin",
+] as const;
 
 /** Split `“text” Author` into its text and attribution, as the design does. */
 export function splitQuote(q: string): { text: string; by: string } {
@@ -362,6 +374,3 @@ export function splitQuote(q: string): { text: string; by: string } {
   return m ? { text: m[1], by: m[2] } : { text: q, by: "" };
 }
 
-export function quoteStorageKey(userId: string): string {
-  return `sapling_home_quote:${userId}`;
-}

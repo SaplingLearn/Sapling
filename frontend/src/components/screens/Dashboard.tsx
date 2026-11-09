@@ -1,7 +1,7 @@
 "use client";
 /**
  * Home (Sapling Home v2): greeting, deadline pills, Up Next + Quick Reviews,
- * an editable quote, the knowledge graph / family tree, and a right column
+ * a typed greeting with a rotating quote, the knowledge graph / family tree, and a right column
  * with level + streak, Last Session, Roadmap, Recent Notes and Coming Up.
  *
  * Every value is derived from data loaded here (see `home/homeModel.ts`):
@@ -35,14 +35,14 @@ import {
 } from "@/lib/api";
 import type { GamificationMe, GraphNode as ApiNode, GraphEdge as ApiEdge, Note } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
-import { now } from "@/lib/testMode";
+import { IS_TEST_MODE, now } from "@/lib/testMode";
+import { Typewriter } from "../home/Typewriter";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { Chevron, ComingUp, LastSession, LevelStreak, RecentNotes, Roadmap, type LevelInfo } from "../home/HomeAside";
 import {
-  DEFAULT_QUOTE,
   buildPrereqs,
   courseFocus,
   dueAtMs,
@@ -56,8 +56,8 @@ import {
   isExam,
   localDayKey,
   notificationPills,
-  quoteStorageKey,
   sessionDayLabel,
+  QUOTES,
   splitQuote,
   weekDaysOf,
   type CardLike,
@@ -189,23 +189,16 @@ export function Dashboard() {
   const [nowMs, setNowMs] = React.useState<number>(0);
   React.useEffect(() => { setNowMs(now()); }, []);
   const [greeting, setGreeting] = React.useState("Welcome back");
+  const [greetingDoneFor, setGreetingDoneFor] = React.useState<string | null>(null);
   React.useEffect(() => { setGreeting(greetingPrefix(new Date(now()))); }, []);
 
-  // ── Quote: per-user, in this browser ──
-  const [quote, setQuote] = React.useState<string | null>(null);
-  const [quoteEditing, setQuoteEditing] = React.useState(false);
-  const [quoteDraft, setQuoteDraft] = React.useState("");
+  // ── Quote: one of the original learning quotes, picked per visit ──
+  // Client-only (an SSR pick would drift from the client's RNG); test mode
+  // pins QUOTES[0] so the hero copy is byte-stable.
+  const [shownQuote, setShownQuote] = React.useState<string>(QUOTES[0]);
   React.useEffect(() => {
-    if (!userId) return;
-    try { setQuote(window.localStorage.getItem(quoteStorageKey(userId))); } catch { setQuote(null); }
-  }, [userId]);
-  const saveQuote = (q: string) => {
-    setQuote(q);
-    setQuoteEditing(false);
-    if (!userId) return;
-    try { window.localStorage.setItem(quoteStorageKey(userId), q); } catch { /* private mode: keeps for this view */ }
-  };
-  const shownQuote = quote ?? DEFAULT_QUOTE;
+    setShownQuote(IS_TEST_MODE ? QUOTES[0] : QUOTES[Math.floor(Math.random() * QUOTES.length)]);
+  }, []);
 
   // ── Graph size ──
   const [size, setSize] = React.useState({ w: 720, h: 420 });
@@ -463,12 +456,17 @@ export function Dashboard() {
 
   const firstName = userName ? userName.split(" ")[0] : "";
   const { text: quoteText, by: quoteBy } = splitQuote(shownQuote);
+  const greetingText = firstName ? `${greeting}, ${firstName}` : "Welcome back";
+  // WHICH greeting finished typing, not a one-way latch: the name and the
+  // time-of-day prefix arrive after mount, the Typewriter restarts, and the
+  // quote hides again until the new text settles (as on the original Home).
+  const greetingDone = greetingDoneFor === greetingText;
 
   const header = (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: isMobile ? 18 : 40, maxWidth: 1164, flexWrap: isMobile ? "wrap" : "nowrap" }}>
       <div style={{ flex: "1 1 612px", minWidth: 0 }}>
-        <h1 style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
-          {firstName ? `${greeting}, ${firstName}` : "Welcome back"}
+        <h1 aria-label={greetingText} style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+          <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
         </h1>
         {pills.length > 0 && (
           <div data-testid="home-pills" style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -506,58 +504,30 @@ export function Dashboard() {
         </section>
       </div>
       <figure style={{ margin: 0, flex: "0 1 400px", minWidth: 0, paddingLeft: 16, borderLeft: DIVIDER }}>
-        {!quoteEditing ? (
-          <>
-            <blockquote
-              data-testid="home-quote"
-              role="button"
-              tabIndex={0}
-              onClick={() => { setQuoteDraft(shownQuote); setQuoteEditing(true); }}
-              onKeyDown={(e) => { if (e.key === "Enter") { setQuoteDraft(shownQuote); setQuoteEditing(true); } }}
-              title="Click to change your quote"
-              style={{
-                margin: 0, fontFamily: "var(--font-serif)", fontSize: 15, fontStyle: "italic",
-                color: shownQuote ? "#3F3B31" : "#8A8372", lineHeight: 1.5, cursor: "text", textWrap: "pretty",
-              } as React.CSSProperties}
-            >
-              {shownQuote ? quoteText : "Add a quote that keeps you going"}
-            </blockquote>
-            {quoteBy && (
-              <figcaption style={{ marginTop: 6, paddingLeft: 7, textAlign: "left", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "#7A9A4E" }}>
-                {quoteBy}
-              </figcaption>
-            )}
-          </>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <input
-              data-testid="home-quote-input"
-              autoFocus
-              value={quoteDraft}
-              onChange={(e) => setQuoteDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveQuote(quoteDraft.trim());
-                if (e.key === "Escape") setQuoteEditing(false);
-              }}
-              placeholder="Type a quote that keeps you going"
-              aria-label="Your quote"
-              style={{
-                height: 34, padding: "0 10px", border: "1px solid rgba(42,39,31,0.22)", borderRadius: 8, background: "#FDFCF9",
-                fontFamily: "var(--font-serif)", fontSize: 15, fontStyle: "italic", color: "#1A1814", outlineColor: "#597536",
-              }}
-            />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button type="button" data-testid="home-quote-save" onClick={() => saveQuote(quoteDraft.trim())} className={styles.primary}
-                style={{ height: 30, padding: "0 12px", border: 0, background: "#445D22", color: "#FFFFFF", borderRadius: 8, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                Save
-              </button>
-              <button type="button" data-testid="home-quote-cancel" onClick={() => setQuoteEditing(false)}
-                style={{ height: 30, padding: "0 8px", border: 0, background: "transparent", color: "#3F3B31", fontFamily: "inherit", fontSize: 13, cursor: "pointer" }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Fades in once the greeting has typed out, like the original. */}
+        <div
+          aria-hidden={!greetingDone}
+          style={{
+            opacity: greetingDone ? 1 : 0,
+            transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
+            transition: "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
+          }}
+        >
+          <blockquote
+            data-testid="home-quote"
+            style={{
+              margin: 0, fontFamily: "var(--font-serif)", fontSize: 15, fontStyle: "italic",
+              color: "#3F3B31", lineHeight: 1.5, textWrap: "pretty",
+            } as React.CSSProperties}
+          >
+            {quoteText}
+          </blockquote>
+          {quoteBy && (
+            <figcaption style={{ marginTop: 6, paddingLeft: 7, textAlign: "left", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "#7A9A4E" }}>
+              {quoteBy}
+            </figcaption>
+          )}
+        </div>
       </figure>
     </div>
   );
