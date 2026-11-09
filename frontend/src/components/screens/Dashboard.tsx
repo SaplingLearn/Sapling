@@ -84,7 +84,9 @@ function ActionCard(props: {
     <div
       data-testid={props.testId}
       style={{
-        flex: "1 1 300px", minWidth: 0, maxWidth: 420, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 14, height: 68,
+        // No cap: paired, each card takes half the row; wrapped, one fills it.
+        // A maxWidth left a ragged half-empty row whenever the pair didn't fit.
+        flex: "1 1 235px", minWidth: 0, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 14, height: 68,
         padding: "0 16px 0 18px", border: `1px solid ${props.border}`, borderRadius: 14, background: props.bg, color: "#1A1814",
       }}
     >

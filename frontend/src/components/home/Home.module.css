@@ -42,13 +42,26 @@
   align-content: start;
 }
 
-/* The greeting + pills + action cards, and the quote beside them — the quote
-   sits to their right as in the design, top-aligned with the pills. Both
-   sides may shrink; they only drop onto separate rows when even their
-   minimums can't sit together. */
-.greetRow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 32px; }
-.greetMain { flex: 1 1 420px; min-width: 0; }
-.greetQuote { flex: 0 1 360px; min-width: 250px; }
+/* The greeting + pills + action cards, with the quote to their right and
+   top-aligned — the arrangement the design draws. A GRID, not flex-wrap:
+   under wrap the two sides competed for one pool of free space, so the quote
+   dropped below the cards with the nav expanded and the cards stacked on each
+   other with it collapsed. Two proportional tracks give each side a
+   predictable share, and both shrink together. */
+.greetRow {
+  display: grid;
+  grid-template-columns: minmax(0, 2.05fr) minmax(230px, 1fr);
+  align-items: start;
+  gap: 32px;
+}
+.greetMain { min-width: 0; }
+.greetQuote { min-width: 0; }
+
+/* Only once the left track can no longer hold the card pair does the quote go
+   under it — past that there is genuinely no room beside. */
+@container home (max-width: 1150px) {
+  .greetRow { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+}
 
 /* Up Next + Quick Reviews. A card may shrink, but only to the width where its
    title still reads; past that the pair wraps onto two rows instead of
