@@ -83,6 +83,14 @@
 .ob-logo { position: absolute; top: 26px; left: 32px; zoom: var(--uiz); z-index: 5; }
 .ob-logo img { height: 30px; width: auto; display: block; }
 
+/* Over the landing, the mark stays exactly where the landing navbar drew it —
+ * same file, same box, no UI-scale zoom — so it holds its place while the
+ * landing fades out, through the intro and the graph's zoom, and across every
+ * onboarding screen. Mirrors `.sapling-nav`'s padding and `.ld-nav-mark`'s
+ * width (Navbar.tsx, and the 640px override in globals.css). */
+.ob-root--takeover .ob-logo { top: 20px; left: max(4.2vw, 22px); zoom: 1; }
+.ob-root--takeover .ob-logo img { height: auto; width: 132px; }
+
 .ob-content {
   position: absolute; inset: 0; z-index: 3;
   display: flex; flex-direction: column;
@@ -379,6 +387,13 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-welcome span { white-space: nowrap; font: 600 clamp(22px, 3.2vw, 44px)/1 'Gummi', sans-serif; letter-spacing: -0.01em; text-shadow: var(--ob-tsh); }
 .ob-welcome img { height: clamp(80px, 12vw, 170px); width: auto; max-width: 90vw; display: block; }
 .ob-whiteout { position: absolute; inset: 0; z-index: 92; background: #FFFFFF; transition: opacity 900ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* The landing's navbar steps the mark down at 640px; the takeover follows it
+ * so the hand-off stays seamless on a phone too. */
+@media (max-width: 640px) {
+  .ob-root--takeover .ob-logo { top: 14px; left: 18px; }
+  .ob-root--takeover .ob-logo img { width: 108px; }
+}
 
 /* ── Small screens ────────────────────────────────────────────── */
 @media (max-width: 720px) {

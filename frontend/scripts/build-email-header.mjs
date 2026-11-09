@@ -8,12 +8,11 @@
 //     src/components/landing-v5/Hero.tsx (same palette, cluster centres,
 //     spread and link rule, at rest: no rotation, no mouse), thinned out;
 //   - the hero's legibility glow behind the wordmark;
-//   - the landing navbar's logo: the approved hand-drawn wordmark SVG,
-//     drawn the way src/components/SaplingWordmark.tsx draws it (an <img>),
-//     just larger;
+//   - the landing navbar's logo: the wordmark src/components/SaplingWordmark.tsx
+//     draws (an <img> over public/sapling-wordmark.png), just larger;
 //   - a fade into the email's white card at the bottom.
 //
-// Email clients can't run canvas or render SVG/web fonts reliably, so a real
+// Email clients can't run canvas or render web fonts reliably, so a real
 // browser (Playwright's Chromium, already installed for the E2E lane) renders
 // it once into a JPEG. Re-run after changing the hero or the wordmark:
 //
@@ -115,7 +114,7 @@ function cloudSvg() {
 const MARK_W = 250;
 
 function page() {
-  const mark = pathToFileURL(join(FRONTEND, "public", "design", "sapling", "originals", "logo-letters.svg")).href;
+  const mark = pathToFileURL(join(FRONTEND, "public", "sapling-wordmark.png")).href;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 html, body { margin: 0; padding: 0; }
 #h { position: relative; width: ${W}px; height: ${H}px; overflow: hidden; background: ${GROUND}; }

@@ -26,6 +26,7 @@ import {
 import type { UserSettings } from "@/lib/types";
 import { onboardingRedirect } from "@/lib/localSeed";
 import SignInModal from "@/components/marketing/SignInModal";
+import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
 import { statusOf } from "@/lib/errorMessage";
 import { OnboardingGraph, type GraphPhase, type GraphZoom } from "@/components/onboarding/OnboardingGraph";
 import { setGraphStage } from "@/components/onboarding/chapterLayer";
@@ -424,7 +425,7 @@ export function Onboarding({ takeover = false }: {
       <div className="ob-scrim" aria-hidden="true" style={{ opacity: phase === "idle" || (phase === "out" && zoom === "rest") ? 0 : 1 }} />
 
       <div className="ob-logo">
-        <img src="/onboarding/sapling-logo.png" alt="Sapling" />
+        <img src={SAPLING_WORDMARK_SRC} alt="Sapling" />
       </div>
 
       <div
@@ -664,7 +665,7 @@ export function Onboarding({ takeover = false }: {
           <div className="ob-moment-glow" />
           <p className="ob-welcome">
             <span>Welcome to</span>
-            <img src="/onboarding/sapling-logo.png" alt="Sapling" />
+            <img src={SAPLING_WORDMARK_SRC} alt="Sapling" />
           </p>
         </div>
       )}
