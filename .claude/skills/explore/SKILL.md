@@ -12,9 +12,9 @@ at any point; follow their steering over the default itinerary.
 ## Steps
 
 1. **Boot.** Run `scripts/explore.sh up` (takes minutes: Supabase, migrations,
-   seed, backend, test-profile Next build; it takes the machine-singleton
-   stack lock and fails fast if another session holds it — if it does, stop
-   and tell the operator). Everything lands in `.explore/`.
+   seed, backend, test-profile Next build; it holds a free E2E slot, waits
+   while all are busy, and refuses if this checkout already holds a stack —
+   if it does, stop and tell the operator). Everything lands in `.explore/`.
 
 2. **Open a browser you can drive.** Use this session's browser tools
    (Playwright MCP if configured, else the Claude-in-Chrome tools) on a NEW

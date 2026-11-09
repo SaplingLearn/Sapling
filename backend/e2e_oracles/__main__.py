@@ -77,6 +77,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# Written by scripts/e2e-up.sh for the stack this checkout is running.
+_STACK_MANIFEST = Path(__file__).resolve().parents[2] / ".e2e" / "stack.json"
+
+
 def _adopt_e2e_stack(argv: list[str]) -> str | None:
     """Point the oracles at the E2E stack, or say why there is none.
 
@@ -89,9 +93,8 @@ def _adopt_e2e_stack(argv: list[str]) -> str | None:
     """
     if os.environ.get("E2E_BACKEND_URL", "").strip():
         return None
-    manifest = Path(__file__).resolve().parents[2] / ".e2e" / "stack.json"
     try:
-        stack = json.loads(manifest.read_text())
+        stack = json.loads(_STACK_MANIFEST.read_text())
     except (OSError, ValueError):
         stack = None
     if stack and stack.get("backendUrl") and stack.get("dbUrl"):
