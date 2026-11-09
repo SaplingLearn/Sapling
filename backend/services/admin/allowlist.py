@@ -3,8 +3,8 @@ backend/services/admin/allowlist.py
 
 The newsletter waitlist / allowlist: list with invite status,
 single + bulk approve (letting linked accounts in, #757) and revoke.
-``waitlist_entries`` is ``routes/auth.py::_waitlist_entries``, passed in by the
-route (a domain package may not import routes).
+Every case twin of one address is read through the auth package
+(``services.auth.waitlist_entries``).
 
 Moved verbatim out of ``routes/admin.py`` (#118); the route keeps the
 auth checks and maps ``services.admin.errors`` to HTTP statuses.
@@ -14,11 +14,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+import services.auth as auth_service
 from db.connection import page_all, pg_quote_value, table
 from models import AllowlistBulkBody, AllowlistEmailBody
 from services import email_service
 from services.admin.errors import Conflict, NotFound
-from services.admin.types import WaitlistEntries
 from services.admin_audit import log_admin_action
 from services.auth_guard import clear_account_state_cache
 from services.encryption import decrypt_if_present
@@ -158,7 +158,7 @@ def _approve_waitlist(
 
 
 def approve_allowlist(
-    body: AllowlistEmailBody, actor: str | None, background_tasks, waitlist_entries: WaitlistEntries,
+    body: AllowlistEmailBody, actor: str | None, background_tasks,
 ):
     """Approve one address — the bulk path's rules for a single email (#757):
     normalised, case twins reached, `approved_at` never re-stamped, and an
@@ -166,7 +166,7 @@ def approve_allowlist(
     now_iso = datetime.now(timezone.utc).isoformat()
     email = body.email  # normalized: lowercased, stripped
     recipients, _ = _approve_waitlist(
-        [email], {email: waitlist_entries(email, _APPROVE_COLUMNS)}, now_iso,
+        [email], {email: auth_service.waitlist_entries(email, _APPROVE_COLUMNS)}, now_iso,
     )
     log_admin_action(
         actor_id=actor, action="allowlist.approve",
@@ -178,7 +178,7 @@ def approve_allowlist(
     # for someone who joined from /pending; it never leaves this function.
     for address, first_name in recipients:
         email_service.queue_waitlist_approved(background_tasks, address, first_name)
-    rows = waitlist_entries(email, _ALLOWLIST_COLUMNS)
+    rows = auth_service.waitlist_entries(email, _ALLOWLIST_COLUMNS)
     row = dict(rows[0]) if rows else None
     if row:
         row.pop("first_name", None)  # 🔒; never in a response
@@ -221,7 +221,7 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, actor: str | None, backgroun
     return {"approved": len(wanted), "emails": _with_invite_status(rows)}
 
 
-def revoke_allowlist(body: AllowlistEmailBody, actor: str | None, waitlist_entries: WaitlistEntries):
+def revoke_allowlist(body: AllowlistEmailBody, actor: str | None):
     """Take an address's approval back — and the access it granted (#757).
 
     Reaches every case twin (sign-in reads the approved twin, so revoking only
@@ -235,7 +235,7 @@ def revoke_allowlist(body: AllowlistEmailBody, actor: str | None, waitlist_entri
     sign-in re-reading an approved row.
     """
     email = body.email  # normalized: lowercased, stripped
-    twins = waitlist_entries(email, _ALLOWLIST_COLUMNS)
+    twins = auth_service.waitlist_entries(email, _ALLOWLIST_COLUMNS)
     if not twins:
         raise NotFound("Email not found")
     user_ids = sorted({r["joined_user_id"] for r in twins if r.get("joined_user_id")})

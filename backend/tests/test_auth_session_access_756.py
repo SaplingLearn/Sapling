@@ -380,7 +380,7 @@ def test_admin_unapprove_drops_the_cached_state(monkeypatch):
 def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
     import routes.admin as admin_module
     from tests.split_patches import ADMIN_MODULES, setattr_in
-    import routes.auth as auth_routes
+    import services.auth as auth_service
     from models import AllowlistEmailBody
 
     _cached("user_bob", "user_carol")
@@ -395,7 +395,7 @@ def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
     setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
     setattr_in(monkeypatch, ADMIN_MODULES, "log_admin_action", lambda **_k: None)
-    monkeypatch.setattr(auth_routes, "_waitlist_entries", lambda *_a, **_k: [
+    monkeypatch.setattr(auth_service, "waitlist_entries", lambda *_a, **_k: [
         {"id": "w1", "email": "bob@bu.edu", "joined_user_id": "user_bob"},
     ])
     admin_module.revoke_allowlist(AllowlistEmailBody(email="bob@bu.edu"), MagicMock())

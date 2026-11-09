@@ -321,12 +321,10 @@ def list_users(
 def unapprove_user(user_id: str, request: Request):
     """Remove a user's access. They leave Admin → Users and reappear in
     Admin → Allowlist as a signup; their account and data are kept."""
-    from routes.auth import _waitlist_entries
-
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
-        return users.unapprove_user(user_id, actor, _waitlist_entries)
+        return users.unapprove_user(user_id, actor)
 
 
 # ── Newsletter Allowlist ──────────────────────────────────────────────────────
@@ -344,11 +342,9 @@ def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tas
     """Approve one address — the bulk path's rules for a single email (#757):
     normalised, case twins reached, `approved_at` never re-stamped, and an
     existing account let in at once."""
-    from routes.auth import _waitlist_entries
-
     require_admin(request)
     actor = get_session_user_id(request)
-    return allowlist.approve_allowlist(body, actor, background_tasks, _waitlist_entries)
+    return allowlist.approve_allowlist(body, actor, background_tasks)
 
 
 @router.post("/allowlist/approve-bulk")
@@ -373,12 +369,10 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
     by the admin repeating the revoke, never undone by the student's next
     sign-in re-reading an approved row.
     """
-    from routes.auth import _waitlist_entries
-
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
-        return allowlist.revoke_allowlist(body, actor, _waitlist_entries)
+        return allowlist.revoke_allowlist(body, actor)
 
 
 # ── Feedback + issue reports (#520) ──────────────────────────────────────────

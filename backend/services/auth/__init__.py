@@ -1,6 +1,8 @@
 """Auth domain (#118): OAuth state, the account side of a Google sign-in,
 the /pending token and waitlist, the ``/me`` overview and the test-login
-gate. ``routes/auth.py`` is the HTTP layer over these.
+gate. ``routes/auth.py`` is the HTTP layer over these. ``waitlist_entries``
+(every case twin of an address on the waitlist) is also what the admin
+package's approve / revoke / unapprove writes read.
 
 ``services/session_tokens.py`` (the session wire format) and
 ``services/auth_guard.py`` (the request guard) are CLAUDE.md chokepoints and
@@ -14,6 +16,7 @@ from services.auth.signin import (
     record_google_sign_in,
     welcome_and_achievements_after_sign_in,
 )
+from services.auth.waitlist import _waitlist_entries as waitlist_entries
 from services.auth.waitlist import join_waitlist
 
 __all__ = [
@@ -24,5 +27,6 @@ __all__ = [
     "fetch_google_userinfo",
     "join_waitlist",
     "record_google_sign_in",
+    "waitlist_entries",
     "welcome_and_achievements_after_sign_in",
 ]
