@@ -378,33 +378,19 @@ describe("QuizHome — the proposal", () => {
     expect(home.prefetchDescription).not.toHaveBeenCalledWith("eigenvalues");
   });
 
-  it("cancels back to the session's source", () => {
-    // `cancelTarget` reads `session.source.returnTo`. A session that carries one
-    // must land there — not on the fallback the no-source case uses.
-    const { actions } = mount({
-      session: session({ source: { kind: "tree", returnTo: "/tree?node=recursion" } }),
-    });
-    fireEvent.click(screen.getByTestId("quiz-cancel"));
-    expect(actions.exit).toHaveBeenCalledWith("/tree?node=recursion");
+  it("has no Cancel link and no eyebrow labels — the sidebar is the way out", () => {
+    mount();
+    expect(screen.queryByTestId("quiz-cancel")).toBeNull();
+    expect(screen.queryByText("Ready for you")).toBeNull();
+    expect(screen.queryByText("Choose a topic")).toBeNull();
+    // The topic column keeps its name for assistive tech.
+    expect(screen.getByRole("region", { name: "Choose a topic" })).toBeInTheDocument();
   });
 
-  it("cancels to the dashboard when the session has no source", () => {
-    // The fixture session is `{kind:"nav"}` with no `returnTo` (§5 B1.8).
-    const { actions } = mount();
-    fireEvent.click(screen.getByTestId("quiz-cancel"));
-    expect(actions.exit).toHaveBeenCalledWith("/dashboard");
-  });
-
-  it("keeps Cancel reachable when there is nothing to propose", () => {
-    // The three no-card states are still a way back to wherever you came from.
-    const { actions } = mount({
-      home: { nodes: [], edges: [] },
-      session: session({ source: { kind: "tree", returnTo: "/tree?node=recursion" } }),
-    });
-
+  it("has no Cancel link when there is nothing to propose either", () => {
+    mount({ home: { nodes: [], edges: [] } });
     expect(screen.getByTestId("quiz-empty-state")).toHaveTextContent("Your tree is empty");
-    fireEvent.click(screen.getByTestId("quiz-cancel"));
-    expect(actions.exit).toHaveBeenCalledWith("/tree?node=recursion");
+    expect(screen.queryByTestId("quiz-cancel")).toBeNull();
   });
 });
 
@@ -475,7 +461,7 @@ describe("QuizHome — picking a concept", () => {
     fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
 
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Determinants");
-    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Your pick");
+    expect(screen.getByTestId("quiz-pick-reset")).toBeInTheDocument();
     // No dialog: the card beside the list is where it is started from.
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(onPickedChange).toHaveBeenLastCalledWith("determinants");
@@ -539,7 +525,6 @@ describe("QuizHome — picking a concept", () => {
     fireEvent.click(screen.getByTestId("quiz-pick-reset"));
 
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
-    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Ready for you");
     expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
     expect(onPickedChange).toHaveBeenLastCalledWith(null);
   });
@@ -550,7 +535,6 @@ describe("QuizHome — picking a concept", () => {
     // Recursion — the suggestion — is back in the list; picking it is "back".
     fireEvent.click(screen.getByTestId("quiz-pick-recursion"));
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
-    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Ready for you");
     expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
   });
 
@@ -562,7 +546,7 @@ describe("QuizHome — picking a concept", () => {
     // must do something.
     fireEvent.click(screen.getByTestId("quiz-pick-tail-recursion"));
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Tail recursion");
-    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Your pick");
+    expect(screen.getByTestId("quiz-pick-reset")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("quiz-pick-reset"));
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Practice CS101");
