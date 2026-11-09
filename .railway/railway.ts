@@ -148,6 +148,12 @@ const FLAG_KILL_SWITCHES = [
   "varied_isomorphs",
   "multi_concept_items",
   "crisis_support",
+  // the quiz in the learning system (A143-A147)
+  "quiz_concept_plan",
+  "quiz_planned_questions",
+  "quiz_item_gates",
+  "quiz_misconceptions",
+  "quiz_results_routing",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

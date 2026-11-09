@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from db.connection import page_all, pg_quote_value, table
+from db.scope import runs_as_service
 from learning import item_keys, quiz_gates, quiz_plan
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.learner_state import read_states
@@ -124,6 +125,7 @@ def _prereq_edges(user_id: str, node_ids: Iterable[str]) -> list[tuple[str, str]
     return out
 
 
+@runs_as_service  # spec §13 A148: misconceptions is service-only; read on the user-scoped quiz routes
 def _open_misconceptions(user_id: str) -> list[dict]:
     """The student's open misconceptions seen within MISCONCEPTION_RECENT_DAYS
     (the loop readers' window, learning/misconceptions.py::open_for), keys
@@ -221,6 +223,7 @@ class GenerationPlan:
         return next((s for s in self.specs if s.slot == slot), None)
 
 
+@runs_as_service  # spec §13 A148: check_items is a service-only course asset; read on the user-scoped quiz routes
 def _bank_keys(course_id: str | None, concept_name: str) -> list[tuple[str, str]]:
     """The concept's vetted misconception keys: the `common_wrong` (key, text)
     of every check item a student may be served (held ones never), in the

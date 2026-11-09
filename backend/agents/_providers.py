@@ -210,7 +210,8 @@ _DEFAULTS: dict[AgentTask, str] = {
 # check_items_solve) have NO fallback (None): they must come from a different
 # model family than the gemini-* drafter, or a correlated check would pass the
 # drafter's own mistakes, and an unavailable check already fails closed
-# (the item is held), which is the safe outage behaviour.
+# (the item is held), which is the safe outage behaviour. The quiz's
+# `quiz_check` (A145) has none for the same reason.
 _GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
     "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
@@ -244,6 +245,11 @@ _GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
     "loop_tutor": "gemini-2.5-flash",
     "loop_tutor_deep": "gemini-2.5-pro",
     "session_close": "gemini-2.5-flash-lite",
+    # The quiz's item gates (A145) check on a model other than the quiz
+    # writer's (services/quiz_learning.py::checks_independent compares the
+    # SLOTS' models, not a fallback's), and an unavailable check is no
+    # evidence: no fallback, like the loop's own two checks above.
+    "quiz_check": None,
 }
 
 # Per-request timeout, seconds. On a plain request it is the TOTAL deadline
