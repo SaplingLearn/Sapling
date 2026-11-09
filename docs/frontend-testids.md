@@ -225,7 +225,7 @@ entry points the quiz wave added inside other surfaces' files.
 
 Three ids are **renamed** from the pre-#537 quiz — same role, clearer name:
 `quiz-exit` → `quiz-leave`, `quiz-retake` → `quiz-again`,
-`quiz-explain-concept` → `quiz-ask`. Eleven are **kept** verbatim so existing
+`quiz-explain-concept` → `quiz-ask`. Ten are **kept** verbatim so existing
 journeys keep anchoring: `quiz-panel`, `quiz-start`,
 `quiz-answer-options`, `quiz-answer-option-{label}`, `quiz-submit-answer`,
 `quiz-next`, `quiz-review-verdict`, `quiz-results-score`,
