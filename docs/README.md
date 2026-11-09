@@ -13,6 +13,10 @@
 - `security/` — Security hardening and remediation plans (RLS lockdown,
   storage hardening, realtime JWT bridge).
 - `staging/` — Staging environment setup notes.
+- `design/` — Design docs for cross-cutting backend changes before they are
+  built (e.g. `async-db-client.md`, #117).
+- `releases/` — Prod release plans: merge order, migrations with reverse SQL,
+  flags, promote + rollback steps (e.g. `2026-11-architecture-hardening.md`).
 
 If you are Claude Code, run `/sync-context` to load the most recent
 decisions before working.

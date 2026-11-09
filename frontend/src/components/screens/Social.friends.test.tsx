@@ -46,6 +46,7 @@ vi.mock("@/lib/api", () => ({
   fetchFriendRequests: vi.fn(),
   acceptFriendRequest: vi.fn(),
   declineFriendRequest: vi.fn(),
+  cancelFriendRequest: vi.fn(),
   removeFriend: vi.fn(),
 }));
 
@@ -55,6 +56,7 @@ import {
   fetchFriendRequests,
   acceptFriendRequest,
   declineFriendRequest,
+  cancelFriendRequest,
   removeFriend,
 } from "@/lib/api";
 
@@ -63,6 +65,7 @@ const mockedFetchFriendRequests = vi.mocked(fetchFriendRequests);
 const mockedAccept = vi.mocked(acceptFriendRequest);
 const mockedDecline = vi.mocked(declineFriendRequest);
 const mockedRemove = vi.mocked(removeFriend);
+const mockedCancel = vi.mocked(cancelFriendRequest);
 
 afterEach(() => {
   cleanup();
@@ -168,5 +171,21 @@ describe("FriendsPanel", () => {
     // The row disappears because the refetch's server truth no longer has it,
     // not because we removed it optimistically.
     await waitFor(() => expect(screen.queryByTestId("social-friend-decline-r1")).toBeNull());
+  });
+
+  it("cancelling an outgoing request calls cancelFriendRequest and refetches (#764)", async () => {
+    mockedFetchFriends.mockResolvedValue({ friends: [] });
+    mockedFetchFriendRequests.mockResolvedValueOnce({
+      incoming: [],
+      outgoing: [{ id: "r2", to_user_id: "u3", name: "Cy", created_at: "2026-01-01" }],
+    });
+    mockedFetchFriendRequests.mockResolvedValueOnce(emptyRequests());
+    mockedCancel.mockResolvedValue({ cancelled: true });
+
+    render(<FriendsPanel />);
+    fireEvent.click(await screen.findByTestId("social-friend-cancel-r2"));
+
+    await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("r2", "u1"));
+    await waitFor(() => expect(screen.queryByTestId("social-friend-outgoing-r2")).toBeNull());
   });
 });

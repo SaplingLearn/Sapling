@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 //
-// Builds public/email/header.jpg, the header every Sapling email opens with
+// Builds public/email/header.jpg and public/og.png using the original logo.
+// The email header is the image every Sapling email opens with
 // (backend/services/email_templates.py): the landing page hero, frozen.
 //
 //   - the pale #F2F4F0 ground and the point cloud from
@@ -114,7 +115,7 @@ function cloudSvg() {
 const MARK_W = 250;
 
 function page() {
-  const mark = pathToFileURL(join(FRONTEND, "public", "design", "sapling", "sapling-wordmark-approved.svg")).href;
+  const mark = pathToFileURL(join(FRONTEND, "public", "design", "sapling", "originals", "logo-letters.svg")).href;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 html, body { margin: 0; padding: 0; }
 #h { position: relative; width: ${W}px; height: ${H}px; overflow: hidden; background: ${GROUND}; }
@@ -145,6 +146,9 @@ try {
     await tab.evaluate(() => document.fonts.ready);
     await tab.waitForFunction(() => [...document.images].every((img) => img.complete && img.naturalWidth > 0));
     await tab.locator("#h").screenshot({ path: OUT, type: "jpeg", quality: 88 });
+    await tab.setViewportSize({ width: 1200, height: 630 });
+    await tab.addStyleTag({ content: "#h { width: 1200px; height: 630px; } #cloud svg { width: 100%; height: 100%; } #mark { width: 500px; }" });
+    await tab.locator("#h").screenshot({ path: join(FRONTEND, "public", "og.png"), type: "png", scale: "css" });
   } finally {
     await browser.close();
   }

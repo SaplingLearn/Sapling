@@ -13,6 +13,7 @@ import binascii
 from typing import Optional
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.encryption import decrypt_if_present
 from services.profiles import get_display_names
 
@@ -72,6 +73,7 @@ def _attach_names(users: list[dict]) -> None:
         user["name"] = names.get(user["id"], "")
 
 
+@runs_as_service  # #115: admin user directory (every user)
 def paginate_users(
     q: Optional[str],
     page: int = 1,

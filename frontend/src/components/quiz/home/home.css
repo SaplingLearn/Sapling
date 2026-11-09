@@ -1,4 +1,4 @@
-/* Quiz home (§5 B1) — the proposal, the "Choose a topic" list beside it, and
+/* Quiz home (§5 B1) — the proposal, the topic list beside it, and
  * the two settings dialogs.
  *
  * R-1: class names only, tokens only. Every geometry constant the design draws
@@ -36,7 +36,7 @@
      documented as derived from an audit, not invented — see globals.css). */
   --quiz-home-name-fs: 34px;
   --quiz-home-def-fs: 15px;
-  --quiz-home-config-fs: 18px;
+  --quiz-home-config-fs: 15px;
 
   /* ── The two columns ──────────────────────────────────────────────── */
   --quiz-home-grid-gap: 56px;
@@ -136,16 +136,6 @@
   display: grid;
   grid-template-columns: minmax(0, var(--quiz-home-lead-w)) 1px minmax(0, 1fr);
   gap: var(--quiz-home-grid-gap);
-}
-
-/* Cancel (§5 B1.8) sits in the grid's top-right corner, level with the
-   eyebrows: beside "Choose a topic" on two columns, beside "Ready for you"
-   once they stack — at the top of the screen either way. */
-.quiz-home__grid-cancel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  line-height: 1;
 }
 
 /* The vertical hairline between the columns. */
@@ -291,21 +281,12 @@
   }
 }
 
-/* The Cancel-only row the empty, no-course and error states draw (§5 B1.8). */
-.quiz-home__card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: var(--quiz-home-head-gap);
-}
-
-.quiz-home__topics-col > .quiz-eyebrow {
-  margin-bottom: 0;
-}
-
 .quiz-home .quiz-eyebrow,
-.quiz-home__pick-group .label-micro {
-  font-size: var(--quiz-home-eyebrow-fs);
+.quiz-home__pick-group {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 /* ── The proposal ───────────────────────────────────────────────────── */
@@ -314,7 +295,7 @@
   margin-bottom: 0;
 }
 
-/* The eyebrow, and once a concept is picked, the way back to the suggestion. */
+/* Once a concept is picked: the way back to the suggestion, above its name. */
 .quiz-home__eyebrow-row {
   display: flex;
   align-items: baseline;
@@ -352,6 +333,7 @@
 .quiz-home__config {
   margin: var(--quiz-home-config-top) 0 0;
   font-size: var(--quiz-home-config-fs);
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -414,8 +396,12 @@
   display: inline-flex;
 }
 
+/* The UI face, not the display face: the display face is the card's title,
+   and a list of fifteen of them competed with it. */
 .quiz-home__row-name {
-  font-size: var(--fs-xl);
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -450,10 +436,8 @@
 
 /* A course heading, drawn only when the list spans more than one course. */
 .quiz-home__pick-group {
-  display: flex;
-  align-items: center;
-  gap: var(--quiz-home-group-gap);
   margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
+  padding-left: 2px;
 }
 
 .quiz-home__topics > section:first-child .quiz-home__pick-group {
@@ -558,7 +542,7 @@
   }
 }
 
-.quiz-home__proposal[data-entering="true"] {
+.quiz-home__proposal[data-entering="true"] .quiz-home__card-text {
   animation: quiz-home-enter var(--quiz-home-enter-dur) var(--quiz-home-enter-ease);
 }
 
@@ -601,7 +585,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quiz-home__proposal[data-entering="true"],
+  .quiz-home__proposal[data-entering="true"] .quiz-home__card-text,
   .quiz-home__definition,
   .quiz-home__row[data-returned="true"] {
     animation: none;

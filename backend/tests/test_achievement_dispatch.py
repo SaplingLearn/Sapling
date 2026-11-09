@@ -24,6 +24,8 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -59,7 +61,8 @@ class TestAwardXpDispatch:
             [{"amount": total_xp + 30}], 1,
         )
         handles["users"].select.return_value = [{"total_xp": total_xp, "level": level}]
-        handles["users"].update.return_value = []
+        # The cache write is a compare-and-set (#767): a matched row comes back.
+        handles["users"].update.return_value = [{"id": "u1"}]
         return _tables(handles), handles
 
     def test_fires_xp_in_day_on_every_award(self):
@@ -218,9 +221,9 @@ class TestEndSessionDispatch:
             "started_at": "2026-07-31T10:00:00+00:00",
         }]
         handles["messages"].select.return_value = []
-        with patch("routes.learn.table", side_effect=_tables(handles)), \
-             patch("routes.learn.award_xp_safe"), \
-             patch("routes.learn.touch_streak_safe"), \
+        with patch_tutor("table", side_effect=_tables(handles)), \
+             patch_tutor("award_xp_safe"), \
+             patch_tutor("touch_streak_safe"), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/learn/end-session",
@@ -239,7 +242,7 @@ class TestRoomMessageDispatch:
         handles = {"room_members": MagicMock(), "room_messages": MagicMock()}
         handles["room_members"].select.return_value = [{"user_id": "u1"}]
         handles["room_messages"].insert.return_value = [{"id": "m1", "text": None}]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/social/rooms/r1/messages", json={
@@ -263,9 +266,9 @@ class TestOwnedRoomMembersDispatch:
             "created_at": None, "updated_at": None, "is_public": False,
         }]
         handles["room_members"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social._touch_room"), \
-             patch("routes.social.invalidate_summary"), \
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("_touch_room"), \
+             patch_social("invalidate_summary"), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/social/rooms/join", json={
@@ -288,9 +291,9 @@ class TestOwnedRoomMembersDispatch:
             "id": "r1", "is_public": True, "created_by": "owner1",
         }]
         handles["room_members"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social._touch_room"), \
-             patch("routes.social.invalidate_summary"), \
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("_touch_room"), \
+             patch_social("invalidate_summary"), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/social/public-rooms/r1/join",
@@ -311,9 +314,9 @@ class TestOwnedRoomMembersDispatch:
             "id": "r1", "is_public": True, "created_by": "owner1",
         }]
         handles["room_members"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social._touch_room"), \
-             patch("routes.social.invalidate_summary"), \
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("_touch_room"), \
+             patch_social("invalidate_summary"), \
              patch("services.achievement_service.check_achievements",
                    side_effect=RuntimeError("boom")):
             r = client.post("/api/social/public-rooms/r1/join",
@@ -322,8 +325,8 @@ class TestOwnedRoomMembersDispatch:
 
     def test_creating_a_room_fires_for_the_creator(self):
         handles = {"rooms": MagicMock(), "room_members": MagicMock()}
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.invalidate_summary"), \
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("invalidate_summary"), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/social/rooms/create", json={
@@ -392,7 +395,8 @@ def _dispatched_event_types() -> set[str]:
     root = Path(__file__).resolve().parent.parent
     found: set[str] = set()
     for sub in ("routes", "services"):
-        for path in (root / sub).glob("*.py"):
+        # rglob: Phase-4 splits (#118) move call sites into services/<domain>/.
+        for path in (root / sub).rglob("*.py"):
             src = path.read_text(encoding="utf-8")
             found |= set(re.findall(
                 r"check_achievements\(\s*[^,]+,\s*[\"']([a-z_]+)[\"']", src))

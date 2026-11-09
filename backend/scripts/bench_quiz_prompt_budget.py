@@ -72,10 +72,10 @@ from agents._providers import (  # noqa: E402
 )
 from agents.quiz import _SYSTEM_PROMPT  # noqa: E402
 from services.exam_proximity import exam_prompt_line  # noqa: E402
-from services.quiz_config import QUIZ_MAX_QUESTIONS  # noqa: E402
-from services.quiz_repetition import RECENT_QUESTION_LIMIT  # noqa: E402
-from services.quiz_signals import QuizSignals  # noqa: E402
-from services.quiz_signals import prompt_block as signal_prompt_block  # noqa: E402
+from services.quiz.config import QUIZ_MAX_QUESTIONS  # noqa: E402
+from services.quiz.repetition import RECENT_QUESTION_LIMIT  # noqa: E402
+from services.quiz.signals import QuizSignals  # noqa: E402
+from services.quiz.signals import prompt_block as signal_prompt_block  # noqa: E402
 
 # Resolved through the provider config, not hard-coded: the whole point of
 # measuring "the quiz's prompt" is that it is measured on the model the quiz

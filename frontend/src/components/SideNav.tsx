@@ -42,6 +42,11 @@ const RULE_INSET = 8;
 const RAIL_PAD_X = { wide: 10, narrow: 6 };
 const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
 const ICON_SIZE = 15;
+/* Logo slot: the wordmark's height at 112px wide; the collapsed-rail symbol
+   is drawn at that same height (its own aspect sets the width). */
+const LOGO_SLOT_HEIGHT = 34;
+const SAPLING_SYMBOL_SRC = "/design/sapling/originals/logo-symbol.svg";
+const SYMBOL_WIDTH = Math.round(LOGO_SLOT_HEIGHT * (258.58 / 366.39));
 const ROW = {
   wide: { inset: 0, padX: 12 },
   narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
@@ -89,6 +94,7 @@ const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
+  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -109,6 +115,7 @@ export function SideNav() {
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
   const sections = useVisibleNavSections();
+  const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -121,13 +128,9 @@ export function SideNav() {
       style={{
         width,
         minWidth: width,
-        height: "100vh",
-        // Olive rail; the light-on-dark token overrides live on
-        // [data-app-sidenav] in globals.css. No right border: the olive edge
-        // is the divider, and ShellFrame rounds the content side into it.
+        height: "100%",
         background: "var(--sidenav-bg)",
-        // Positioned and lifted so the rail paints over the content column
-        // it borders (the .shell-corner pieces round that column into it).
+        borderRadius: "0 var(--r-lg) var(--r-lg) 0",
         position: "relative",
         zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
@@ -140,25 +143,54 @@ export function SideNav() {
         transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
-      {/* Logo — the approved wordmark (#728). There is no approved standalone
-          mark, so the collapsed rail shows no logo: the wordmark fades and the
-          row keeps its height, and it leaves the tab order while hidden. */}
+      {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
+          cross-fade in one fixed-height slot so nothing below shifts, and the
+          link stays a live home link in both widths. */}
       <Link
         href="/dashboard"
         aria-label="Sapling — home"
-        tabIndex={collapsed ? -1 : undefined}
+        data-sidenav-logo=""
         style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 0 14px 6px",
+          position: "relative",
+          display: "block",
+          height: LOGO_SLOT_HEIGHT,
+          paddingBottom: 14,
+          boxSizing: "content-box",
           overflow: "hidden",
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
-          pointerEvents: collapsed ? "none" : undefined,
         }}
       >
-        <SaplingWordmark width={112} decorative tone="light" style={fade(collapsed)} />
+        <SaplingWordmark
+          width={112}
+          decorative
+          tone="light"
+          style={{ position: "absolute", left: 6, top: 0, ...fade(collapsed) }}
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element -- a static vector; next/image adds nothing for SVG */}
+        <img
+          src={SAPLING_SYMBOL_SRC}
+          alt=""
+          aria-hidden
+          data-sidenav-symbol=""
+          width={SYMBOL_WIDTH}
+          height={LOGO_SLOT_HEIGHT}
+          draggable={false}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2,
+            width: SYMBOL_WIDTH,
+            height: LOGO_SLOT_HEIGHT,
+            // The source is brand green; the rail is olive, so render it in
+            // cream like the wordmark.
+            filter: "brightness(0) invert(1)",
+            // Inverse of `fade`: in once the rail is narrow, out at once when it widens.
+            opacity: collapsed ? 1 : 0,
+            transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "90ms" : "0ms"}`,
+          }}
+        />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
@@ -233,8 +265,25 @@ export function SideNav() {
 
       </div>
 
-      {/* Collapse/expand sits just above the footer rule, pinned with it, and
-          is built like a nav row: panel icon + "Collapse" in the wide rail, the
+
+      {/* The account footer — Collapse, Admin and the profile block — sits
+          under one full-width rule, the same line as the logo's, so the pair
+          frames the rail top and bottom and the account cluster reads as split
+          off from the main nav. Pinned: it never scrolls with the list above. */}
+      <div
+        data-sidenav-footer=""
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: NAV_GAP,
+          flexShrink: 0,
+          marginTop: 4,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+      {/* Collapse/expand opens the footer, just under its rule and above the
+          account block, and is built like a nav row: panel icon + "Collapse" in the wide rail, the
           bare icon in the narrow one — the usual sidebar toggle.
           Same insets, padding and row height as NavLink so it lines up with
           the destinations above it. */}
@@ -249,7 +298,6 @@ export function SideNav() {
           gap: 10,
           flexShrink: 0,
           minHeight: NAV_ITEM_MIN_HEIGHT,
-          marginTop: 6,
           ...rowGeometry(collapsed),
           borderRadius: "var(--r-xs)",
           color: "var(--text-dim)",
@@ -270,27 +318,6 @@ export function SideNav() {
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
       </button>
 
-      {/* The account footer — Settings, Admin and the profile block — sits
-          under one full-width rule, the same line as the logo's, so the pair
-          frames the rail top and bottom and the account cluster reads as split
-          off from the main nav. Pinned: it never scrolls with the list above. */}
-      <div
-        data-sidenav-footer=""
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: NAV_GAP,
-          flexShrink: 0,
-          marginTop: 4,
-          paddingTop: 10,
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-      <NavLink
-        entry={{ href: "/settings", label: "Settings", icon: "cog" }}
-        active={isActive(pathname, "/settings")}
-        collapsed={collapsed}
-      />
       {isAdmin && (
         <NavLink
           entry={{ href: "/admin", label: "Admin", icon: "shield" }}
@@ -301,7 +328,8 @@ export function SideNav() {
 
       {/* The profile block carries no rule of its own — the footer's rule
           already opened this cluster, and a second hairline here would box the
-          avatar in. */}
+          avatar in. The whole block is the Settings button: avatar + name +
+          a trailing gear, one link to /settings. */}
       {isAuthenticated && (
         <div style={{ padding: "10px 0 4px" }}>
           <div
@@ -311,8 +339,12 @@ export function SideNav() {
               width: "100%",
             }}
           >
-            <div
-              title={collapsed ? (userName || "Account") : undefined}
+            <Link
+              href="/settings"
+              data-testid="nav-link-settings"
+              aria-label="Settings"
+              aria-current={settingsActive ? "page" : undefined}
+              title={collapsed ? "Settings" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -324,7 +356,20 @@ export function SideNav() {
                 borderRadius: "var(--r-sm)",
                 textAlign: "left",
                 overflow: "hidden",
-                transition: GEOMETRY_TRANSITION,
+                textDecoration: "none",
+                color: settingsActive ? "var(--text)" : "var(--text-dim)",
+                background: settingsActive ? NAV_ACTIVE_BG : "transparent",
+                transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
+              }}
+              onMouseEnter={(e) => {
+                if (settingsActive) return;
+                e.currentTarget.style.background = NAV_HOVER_BG;
+                e.currentTarget.style.color = "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                if (settingsActive) return;
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--text-dim)";
               }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
@@ -343,7 +388,10 @@ export function SideNav() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
                 </div>
-            </div>
+                <span aria-hidden style={{ display: "inline-flex", flexShrink: 0, ...fade(collapsed) }}>
+                  <Icon name="setting" size={ICON_SIZE} />
+                </span>
+            </Link>
           </div>
         </div>
       )}

@@ -1,10 +1,19 @@
+import logging
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator, Optional
 
 import httpx
 from dotenv import load_dotenv
 
+from db import async_connection as _aconn
+from db import scope as _scope
+from db import scope_report as _scope_report
+
 load_dotenv()
+
+logger = logging.getLogger("sapling.db")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
@@ -21,8 +30,193 @@ _HEADERS = {
 _client = httpx.Client(headers=_HEADERS, timeout=30.0)
 
 
-class SupabaseTable:
-    """Thin synchronous wrapper around Supabase PostgREST REST API."""
+# ── Who the call runs as (#115, RLS step 2; db/scope.py) ────────────────────
+#
+# The client's default headers above are the service role. Every verb asks
+# `_scope_headers()` right before it sends: `None` means "send exactly what
+# was sent before the user-scoped client existed" (no `headers=` argument is
+# added at all, so flag `off` is byte-identical), and a dict is the
+# user-scoped `apikey` + `Authorization` pair httpx merges over the defaults
+# for that one request. One function for every verb (and, later, the async
+# twin): it never awaits.
+
+
+def _scope_headers(target: Optional[str] = None, write_op: Optional[str] = None, *,
+                   data=None, filters: Optional[dict] = None) -> Optional[dict]:
+    """The per-request header override for the current scope, or None for
+    service role. Raises (enforce only) rather than ever falling back.
+    `write_op` names a write/rpc, so shadow can note what it knows about it
+    without running it twice (db/scope.py::note_shadow_write)."""
+    _aconn.note_sync_call(target)  # #117: db.sync_on_loop when this blocks a loop
+    scoped = _scope.resolve_headers(target)
+    if scoped is None and write_op is not None:
+        _scope.note_shadow_write(target or "?", write_op, data, filters)
+    return scoped
+
+
+def _merge(headers: Optional[dict], scoped: Optional[dict]) -> Optional[dict]:
+    if scoped is None:
+        return headers
+    return {**(headers or {}), **scoped}
+
+
+def _raise_for_status(r, scoped: Optional[dict], target: str, op: str) -> None:
+    """`raise_for_status()`, plus the enforce-only mapping of PostgREST's two
+    user-scope refusals: 401 (the minted token was rejected: key/kid mismatch)
+    -> ScopeUnavailable (503), 403 (RLS WITH CHECK / missing grant, 42501) ->
+    ScopedAccessDenied (404). A service-role call is unchanged. `op` is the
+    caller's own operation (select/insert/update/upsert/delete/rpc): the HTTP
+    verb cannot tell an upsert from an insert."""
+    if scoped is not None:
+        status = r.status_code
+        if status == 401:
+            logger.error("db_user_scope=enforce: PostgREST rejected the user-scoped token "
+                         "for %s (401); refusing rather than retrying as service role", target)
+            raise _scope.ScopeUnavailable(f"PostgREST rejected the user-scoped token ({target})")
+        if status == 403:
+            _scope.report_denied(target, status, code=_pg_code(r), op=op)
+            raise _scope.ScopedAccessDenied(
+                f"user-scoped call on {target} refused (403)",
+                request=r.request, response=r,
+            )
+    r.raise_for_status()
+
+
+# ── Shadow reads (db_user_scope = shadow) ────────────────────────────────────
+#
+# A sampled service-role READ is re-run user-scoped on a small background pool
+# and the two answers compared (row count + set of ids, never content). Off
+# the request thread so it never delays the response; bounded so a slow
+# PostgREST cannot pile them up (a full pool skips the comparison). Writes and
+# rpc() are never shadowed: running a mutation twice is not an observation —
+# except the read-only functions in SHADOW_READ_RPCS. Every outcome is tallied
+# in db/scope_report.py (the admin db-scope report).
+
+SHADOW_TIMEOUT_S = 3.0
+_SHADOW_IN_FLIGHT_MAX = 4
+_shadow_slots = threading.BoundedSemaphore(_SHADOW_IN_FLIGHT_MAX)
+_shadow_pool: Optional[ThreadPoolExecutor] = None
+_shadow_pool_lock = threading.Lock()
+
+
+def _submit_shadow(fn, *args) -> None:
+    """Run `fn(*args)` on the shadow pool. A seam: tests run it inline."""
+    global _shadow_pool
+    with _shadow_pool_lock:
+        if _shadow_pool is None:
+            _shadow_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rls-shadow")
+        pool = _shadow_pool
+    pool.submit(fn, *args)
+
+
+#: rpc functions that only READ (`LANGUAGE sql STABLE`, no writes), so a
+#: shadow re-run is safe. match_course_chunks is plan §6.3's riskiest read: RLS
+#: filters AFTER the ANN scan, so a student can get fewer than match_count
+#: chunks — shadow measures it. Adding a function here re-runs it: never list
+#: one that writes.
+SHADOW_READ_RPCS = frozenset({"match_course_chunks"})
+
+
+def _row_ids(rows) -> set:
+    return {str(r["id"]) for r in rows if isinstance(r, dict) and "id" in r}
+
+
+def _pg_code(r) -> Optional[str]:
+    """PostgREST's error `code` (`42501`, `PGRST301`, ...) off an error
+    response, or None. The code only: the message can quote values."""
+    try:
+        body = r.json()
+    except Exception:
+        return None
+    code = body.get("code") if isinstance(body, dict) else None
+    if isinstance(code, str) and 0 < len(code) <= 16 and code.isalnum():
+        return code
+    return None
+
+
+def _maybe_shadow(name: str, url: str, params: dict, headers: Optional[dict],
+                  timeout: Optional[float], rows, *, op: str = "select",
+                  json_body=None) -> None:
+    scoped = _scope.shadow_headers()
+    if scoped is None or not isinstance(rows, list):
+        return
+    if not _shadow_slots.acquire(blocking=False):
+        _scope_report.note_shadow("skipped_busy")
+        return
+    from services.request_context import (
+        current_method, current_request_id, current_route_template,
+    )
+
+    args = (name, url, dict(params), _merge(headers, scoped),
+            min(timeout, SHADOW_TIMEOUT_S) if timeout else SHADOW_TIMEOUT_S,
+            len(rows), _row_ids(rows), current_route_template(),
+            _scope.current_db_subject(), current_request_id(), current_method(), op,
+            json_body)
+    try:
+        _submit_shadow(_shadow_compare, *args)
+        _scope_report.note_shadow("sampled")
+    except Exception:
+        _shadow_slots.release()
+        logger.debug("shadow read not submitted", exc_info=True)
+
+
+def _shadow_kind(service_count: int, service_ids: set, rows: list) -> Optional[str]:
+    if len(rows) < service_count:
+        return "fewer_rows"
+    if len(rows) > service_count:
+        return "more_rows"
+    scoped_ids = _row_ids(rows)
+    if (service_ids or scoped_ids) and scoped_ids != service_ids:
+        return "different_ids"
+    return None
+
+
+def _shadow_compare(name, url, params, headers, timeout, service_count, service_ids,
+                    route, subject, request_id, method=None, op="select",
+                    json_body=None) -> None:
+    try:
+        try:
+            if json_body is None:
+                r = _client.get(url, params=params, headers=headers, timeout=timeout)
+            else:
+                r = _client.post(url, json=json_body, headers=headers, timeout=timeout)
+        except Exception:
+            # Transport trouble says nothing about RLS; never report it as a
+            # divergence.
+            _scope_report.note_shadow("transport_error")
+            logger.debug("shadow read of %s failed in transport", name, exc_info=True)
+            return
+        _scope_report.note_shadow("compared")
+        if r.status_code >= 400:
+            _scope_report.note_shadow("diverged")
+            _scope.report_shadow_divergence(
+                table=name, route=route, subject=subject, request_id=request_id,
+                service_count=service_count, scoped_count=-1, kind="error",
+                method=method, op=op, status=r.status_code, code=_pg_code(r),
+            )
+            return
+        rows = r.json()
+        rows = rows if isinstance(rows, list) else []
+        kind = _shadow_kind(service_count, service_ids, rows)
+        if kind is None:
+            _scope_report.note_shadow("agreed")
+            return
+        _scope_report.note_shadow("diverged")
+        _scope.report_shadow_divergence(
+            table=name, route=route, subject=subject, request_id=request_id,
+            service_count=service_count, scoped_count=len(rows), kind=kind,
+            method=method, op=op,
+        )
+    except Exception:
+        logger.debug("shadow comparison of %s failed", name, exc_info=True)
+    finally:
+        _shadow_slots.release()
+
+
+class SupabaseTable(_aconn.AsyncTableMixin):
+    """Thin synchronous wrapper around Supabase PostgREST REST API. The
+    coroutine twins (`aselect`, `ainsert`, ...) come from the mixin
+    (db/async_connection.py, #117)."""
 
     def __init__(self, name: str):
         self.name = name
@@ -54,9 +248,15 @@ class SupabaseTable:
         if offset is not None:
             params["offset"] = str(offset)
         kw = {"timeout": timeout} if timeout is not None else {}
+        scoped = _scope_headers(self.name)
+        if scoped is not None:
+            kw["headers"] = scoped
         r = _client.get(self.url, params=params, **kw)
-        r.raise_for_status()
-        return r.json()
+        _raise_for_status(r, scoped, self.name, "select")
+        rows = r.json()
+        if scoped is None:
+            _maybe_shadow(self.name, self.url, params, None, timeout, rows)
+        return rows
 
     def select_with_count(
         self,
@@ -80,9 +280,12 @@ class SupabaseTable:
             params["offset"] = str(offset)
         headers = {"Prefer": "count=exact"}
         kw = {"timeout": timeout} if timeout is not None else {}
-        r = _client.get(self.url, params=params, headers=headers, **kw)
-        r.raise_for_status()
+        scoped = _scope_headers(self.name)
+        r = _client.get(self.url, params=params, headers=_merge(headers, scoped), **kw)
+        _raise_for_status(r, scoped, self.name, "select")
         rows = r.json()
+        if scoped is None:
+            _maybe_shadow(self.name, self.url, params, headers, timeout, rows)
         total = 0
         cr = r.headers.get("Content-Range") or r.headers.get("content-range")
         if cr and "/" in cr:
@@ -93,8 +296,12 @@ class SupabaseTable:
         return rows, total
 
     def insert(self, data) -> list:
-        r = _client.post(self.url, json=data)
-        r.raise_for_status()
+        scoped = _scope_headers(self.name, "insert", data=data)
+        if scoped is None:
+            r = _client.post(self.url, json=data)
+        else:
+            r = _client.post(self.url, json=data, headers=scoped)
+        _raise_for_status(r, scoped, self.name, "insert")
         return r.json()
 
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
@@ -107,8 +314,9 @@ class SupabaseTable:
         the wire. Returns [] in that mode.
         """
         headers = {"Prefer": "return=minimal"} if prefer_return_minimal else None
-        r = _client.patch(self.url, params=filters, json=data, headers=headers)
-        r.raise_for_status()
+        scoped = _scope_headers(self.name, "update", data=data, filters=filters)
+        r = _client.patch(self.url, params=filters, json=data, headers=_merge(headers, scoped))
+        _raise_for_status(r, scoped, self.name, "update")
         if prefer_return_minimal:
             return []
         return r.json()
@@ -134,13 +342,18 @@ class SupabaseTable:
         params = {"on_conflict": on_conflict}
         if columns:
             params["select"] = columns
-        r = _client.post(self.url, headers=headers, params=params, json=data)
-        r.raise_for_status()
+        scoped = _scope_headers(self.name, "upsert", data=data)
+        r = _client.post(self.url, headers=_merge(headers, scoped), params=params, json=data)
+        _raise_for_status(r, scoped, self.name, "upsert")
         return r.json()
 
     def delete(self, filters: dict) -> list:
-        r = _client.delete(self.url, params=filters)
-        r.raise_for_status()
+        scoped = _scope_headers(self.name, "delete", filters=filters)
+        if scoped is None:
+            r = _client.delete(self.url, params=filters)
+        else:
+            r = _client.delete(self.url, params=filters, headers=scoped)
+        _raise_for_status(r, scoped, self.name, "delete")
         return r.json()
 
 
@@ -264,9 +477,20 @@ def page_all(
         offset += page
 
 
-def rpc(function_name: str, params: dict) -> list:
-    """Call a Supabase Postgres function via /rest/v1/rpc/{function_name}."""
+def rpc(function_name: str, params: dict, *, timeout: float | None = None) -> list:
+    """Call a Supabase Postgres function via /rest/v1/rpc/{function_name}.
+    `timeout` (seconds) bounds this call instead of the client default."""
     url = f"{REST_URL}/rpc/{function_name}"
-    r = _client.post(url, json=params)
-    r.raise_for_status()
-    return r.json()
+    target = f"rpc/{function_name}"
+    read_only = function_name in SHADOW_READ_RPCS
+    scoped = _scope_headers(target, None if read_only else "rpc", data=params)
+    extra = {} if timeout is None else {"timeout": timeout}
+    if scoped is None:
+        r = _client.post(url, json=params, **extra)
+    else:
+        r = _client.post(url, json=params, headers=scoped, **extra)
+    _raise_for_status(r, scoped, target, "rpc")
+    rows = r.json()
+    if scoped is None and read_only:
+        _maybe_shadow(target, url, {}, None, None, rows, op="rpc", json_body=params)
+    return rows

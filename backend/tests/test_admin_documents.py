@@ -18,7 +18,7 @@ BASE = "/api/admin/documents"
 STUCK = {
     "id": "doc-1", "file_name": "hw4.pdf", "category": "assignment",
     "offering_id": "off-1", "created_at": "2026-09-20T10:00:00Z",
-    "index_status": "failed", "index_attempts": 3, "index_error": "ClientError",
+    "index_status": "exhausted", "index_attempts": 3, "index_error": "ClientError",
     "index_chunk_count": 0, "index_leased_at": None,
 }
 
@@ -79,7 +79,7 @@ def test_lists_documents_that_did_not_finish(admin, listed):
     assert body["count"] == 1
     row = body["documents"][0]
     assert row["id"] == "doc-1"
-    assert row["index_status"] == "failed"
+    assert row["index_status"] == "exhausted"
     assert row["index_error"] == "ClientError"
     assert body["max_attempts"] == 3
 
@@ -91,10 +91,24 @@ def test_an_exhausted_document_is_flagged(admin, listed):
     assert row["exhausted"] is True
 
 
+def test_exhausted_is_the_stored_state_not_the_counter(admin, monkeypatch):
+    """#758: deriving it from `attempts >= INDEX_MAX_ATTEMPTS` let an env-var
+    change flip which documents an operator saw as given up on."""
+    retryable = {**STUCK, "id": "doc-2", "index_status": "failed", "index_attempts": 3}
+    monkeypatch.setattr(admin_documents, "page_all",
+                        lambda *a, **k: iter([dict(STUCK), retryable]))
+    monkeypatch.setattr(admin_documents, "table", lambda name: object())
+
+    rows = {r["id"]: r for r in client.get(f"{BASE}/unindexed").json()["documents"]}
+
+    assert rows["doc-1"]["exhausted"] is True
+    assert rows["doc-2"]["exhausted"] is False
+
+
 def test_only_unfinished_live_documents_are_read(admin, listed):
     client.get(f"{BASE}/unindexed")
 
-    assert listed["filters"]["index_status"] == "in.(pending,indexing,partial,failed)"
+    assert listed["filters"]["index_status"] == "in.(pending,indexing,partial,failed,exhausted)"
     assert listed["filters"]["deleted_at"] == "is.null"
 
 

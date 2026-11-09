@@ -4,11 +4,7 @@
  *   - The "Try this next" suggest card resolves `?suggest=<name>` to its node
  *     id (same case-insensitive match `suggestNode` already does) and opens
  *     the quiz on that concept, carrying `{kind:"dashboard", returnTo:"/dashboard"}`.
- *   - The Learn-next panel's quiz CTA (legacy topnav layout) becomes "Review
- *     what's due", showing the due count and scoping the quiz to `scope=due`;
- *     with nothing due it falls back to a plain "Quiz" button/home href.
- *   - The default (sidenav) layout has no "Learn next" panel of its own, so
- *     the same due CTA is also surfaced there (`dashboard-review-due`).
+ *   - Search and review-due shortcuts stay absent in every layout.
  */
 
 import React from "react";
@@ -20,6 +16,7 @@ const push = vi.fn();
 let searchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard",
   useRouter: () => ({ push, replace: vi.fn() }),
   useSearchParams: () => searchParams,
 }));
@@ -30,9 +27,7 @@ vi.mock("@/context/UserContext", () => ({
 
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: vi.fn(() => false) }));
 
-// "topnav" renders the legacy Learn-next panel with the quiz CTA; the
-// third describe block flips this to "sidebar" to exercise the layout with
-// no Learn-next panel at all.
+// Exercise both shell layouts.
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => [layoutState.pref, vi.fn()] }));
 
@@ -48,6 +43,8 @@ vi.mock("@/lib/api", () => ({
   getUpcomingAssignments: vi.fn(),
   getSessions: vi.fn(),
   getRecommendations: vi.fn(),
+  fetchActivity: vi.fn(async () => ({ week: [] })),
+  fetchGamificationMe: vi.fn(async () => null),
 }));
 
 import { Dashboard } from "./Dashboard";
@@ -130,61 +127,18 @@ describe("Dashboard — suggest card entry (?suggest=<name>)", () => {
   });
 });
 
-describe("Dashboard — review-what's-due CTA (legacy topnav layout)", () => {
-  it("shows the due count and scopes the quiz to scope=due", async () => {
-    render(<Dashboard />);
-
-    const cta = await screen.findByTestId("dashboard-review-due");
-    expect(cta.textContent).toContain("Review what's due");
-    expect(cta.textContent).toContain("1");
-
-    fireEvent.click(cta);
-    expect(push).toHaveBeenCalledWith("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
-  });
-
-  it("falls back to a plain 'Quiz' button/home href when nothing is due", async () => {
-    vi.mocked(getGraph).mockResolvedValue({
-      nodes: [apiNode({ mastery_tier: "mastered" })],
-      edges: [],
-      stats: {},
-    });
-
-    render(<Dashboard />);
-
-    const cta = await screen.findByTestId("dashboard-review-due");
-    expect(cta.textContent?.trim()).toBe("Quiz");
-
-    fireEvent.click(cta);
-    expect(push).toHaveBeenCalledWith("/quiz?from=dashboard&return=%2Fdashboard");
-  });
-});
-
-describe("Dashboard — review-what's-due CTA (default sidenav layout)", () => {
-  it("is also surfaced with no Learn-next panel present", async () => {
-    layoutState.pref = "sidebar";
-
-    render(<Dashboard />);
-
-    const cta = await screen.findByTestId("dashboard-review-due");
-    expect(cta.textContent).toContain("Review what's due");
-
-    fireEvent.click(cta);
-    expect(push).toHaveBeenCalledWith("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
-  });
-
-  it("is reachable at mobile width too, as the single mounted instance", async () => {
-    layoutState.pref = "sidebar";
-    vi.mocked(useIsMobile).mockReturnValue(true);
-
-    render(<Dashboard />);
-
-    // Exactly one CTA in the DOM — the mobile row, not the (hidden)
-    // desktop quick-action row — so the shared testid never collides.
-    const ctas = await screen.findAllByTestId("dashboard-review-due");
-    expect(ctas).toHaveLength(1);
-    expect(ctas[0].textContent).toContain("Review what's due");
-
-    fireEvent.click(ctas[0]);
-    expect(push).toHaveBeenCalledWith("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
-  });
+describe("Dashboard — simplified actions", () => {
+  for (const layout of ["sidebar", "topnav"]) {
+    for (const mobile of [false, true]) {
+      it(`omits Search and review-due shortcuts in ${layout}, mobile=${mobile}`, async () => {
+        layoutState.pref = layout;
+        vi.mocked(useIsMobile).mockReturnValue(mobile);
+        render(<Dashboard />);
+        await screen.findByText(/concepts across/);
+        expect(screen.queryByTestId("dashboard-review-due")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
+        expect(screen.queryByRole("button", { name: /Review what's due/ })).toBeNull();
+      });
+    }
+  }
 });

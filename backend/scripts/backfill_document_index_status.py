@@ -9,9 +9,9 @@ in course_chunks:
 
   chunks exist for the document     -> 'indexed', with index_chunk_count
   extracted_text, but no chunks     -> 'pending'  (the sweeper will index it)
-  no extracted_text                 -> 'failed', 'no_extracted_text', with the
-                                       attempt budget spent — visible on the
-                                       admin list, never retried
+  no extracted_text                 -> 'exhausted', 'no_extracted_text' — the
+                                       stored terminal state (#758): visible on
+                                       the admin list, never retried
 
 No embedding and no re-classification: re-indexing a document that is already
 indexed would re-run a non-deterministic classifier over a settled privacy
@@ -32,8 +32,9 @@ Dry-run by default. Run from backend/:
     python scripts/backfill_document_index_status.py --apply
 
 Reads .env; for staging/prod run under `dotenv -f .env.<env> run -- ...` and
-check the project it prints first. Run it AFTER the migration, once per
-environment. It needs no ENCRYPTION_KEY: it tests extracted_text for presence
+check the project it prints first. Run it AFTER the migrations — including
+`*_state_machines_audit.sql` (the #758 terminal-state section), whose CHECK constraint is what admits
+'exhausted' — once per environment. It needs no ENCRYPTION_KEY: it tests extracted_text for presence
 and never reads it.
 """
 import argparse
@@ -49,7 +50,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, page_all, table  # noqa: E402
-from services.document_indexing import INDEX_MAX_ATTEMPTS  # noqa: E402
+from services.document_indexing import EXHAUSTED  # noqa: E402
 
 #: The migration's inert default. Only rows still exactly here are touched.
 _UNTOUCHED = {"index_status": "eq.skipped", "index_attempts": "eq.0"}
@@ -63,11 +64,10 @@ def derive(*, has_text: bool, chunk_count: int) -> dict:
         return {"index_status": "indexed", "index_chunk_count": chunk_count}
     if has_text:
         return {"index_status": "pending"}
-    return {
-        "index_status": "failed",
-        "index_error": "no_extracted_text",
-        "index_attempts": INDEX_MAX_ATTEMPTS,
-    }
+    # Terminal by its STORED status, not by forcing the counter to the env
+    # var's current budget (#758): a later INDEX_MAX_ATTEMPTS change would
+    # otherwise put these back in the sweeper's queue.
+    return {"index_status": EXHAUSTED, "index_error": "no_extracted_text"}
 
 
 def _doc_ids(*, with_text: bool) -> list[str]:
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> dict:
     plan = [(d, True) for d in _doc_ids(with_text=True)]
     plan += [(d, False) for d in _doc_ids(with_text=False)]
 
-    summary = {"indexed": 0, "pending": 0, "failed": 0}
+    summary = {"indexed": 0, "pending": 0, EXHAUSTED: 0}
     for doc_id, has_text in plan:
         data = derive(has_text=has_text, chunk_count=counts.get(doc_id, 0))
         summary[data["index_status"]] += 1
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> dict:
 
     mode = "DRY RUN — nothing written" if args.dry_run else "applied"
     print(f"\n{mode}: {summary['indexed']} indexed, {summary['pending']} pending, "
-          f"{summary['failed']} failed (no extracted_text)")
+          f"{summary[EXHAUSTED]} exhausted (no extracted_text)")
     return summary
 
 

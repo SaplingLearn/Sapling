@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services.encryption import encrypt_if_present
+from tests.split_patches import patch_profile_table
 
 client = TestClient(app)
 
@@ -77,7 +78,7 @@ class TestProfileSettingsPatchResponse:
             "profile_visibility": "public",
         }
 
-        with patch("routes.profile.table") as t:
+        with patch_profile_table() as t:
             t.return_value.select.side_effect = lambda *a, **k: [dict(stored)]
             r = client.patch(
                 "/api/profile/user_andres/settings",

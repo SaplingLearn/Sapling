@@ -62,9 +62,12 @@ export const generateQuiz = (p: {
   numQuestions: number;
   difficulty: string;
   sourceAttemptId?: string | null;
+  /** #760: lets the session cancel or time out a generation it gave up on. */
+  signal?: AbortSignal;
 }): Promise<GenerateResult> =>
   fetchJSON<GenerateResult>("/api/quiz/generate", {
     method: "POST",
+    ...(p.signal ? { signal: p.signal } : {}),
     body: JSON.stringify({
       user_id: p.userId,
       concept_node_id: p.conceptNodeId,
@@ -115,9 +118,11 @@ export const answerQuestion = (
 export const submitQuiz = (
   attemptId: string,
   answers: { question_id: number; selected_label: string }[],
+  signal?: AbortSignal,
 ): Promise<SubmitResult> =>
   fetchJSON<SubmitResult>("/api/quiz/submit", {
     method: "POST",
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({ quiz_id: attemptId, answers }),
   });
 

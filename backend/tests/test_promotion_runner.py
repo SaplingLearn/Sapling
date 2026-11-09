@@ -4,10 +4,16 @@ Every port is injected, so the whole flow runs in-process with no database,
 no network, no git and no gh.
 """
 import json
+from pathlib import Path
 
 import pytest
 
+from promotion.backup import BackupResult
 from promotion.runner import Options, Ports, run
+
+FAKE_BACKUP = BackupResult(
+    path=Path("/backups/prod-20261108T000000Z.dump"), size_bytes=4_200_000, tool="fake", toc_entries=321
+)
 
 # Compact separators on purpose: FastAPI emits `{"status":"ok",...}` with no
 # spaces, and smoke's `api health` check looks for the literal `"status":"ok"`.
@@ -131,6 +137,7 @@ def make_ports(**over):
         confirm=lambda prompt: True,
         out=lambda line: None,
         sleep=lambda seconds: None,
+        backup=lambda conn: FAKE_BACKUP,
     )
     ports.update(over)
     return ports
@@ -180,6 +187,7 @@ def build(ports_kwargs, **option_over):
         confirm=ports_kwargs["confirm"],
         out=ports_kwargs["out"],
         sleep=ports_kwargs["sleep"],
+        backup=ports_kwargs["backup"],
         monotonic=ports_kwargs.get("monotonic", TickingClock()),
     )
     options = Options(**{"wait_timeout": 5, "poll_interval": 0, **option_over})
@@ -1034,3 +1042,105 @@ def test_unknown_mixed_with_real_sha_is_a_timeout_not_a_degrade():
     kwargs = make_ports(fetch=fetch, out=lines.append)
     assert run(*build(kwargs)) == 1
     assert "TIMEOUT" in "\n".join(lines)
+
+
+# ---- Pre-migrate backup (Trov #114) ------------------------------------
+# Production is on the Supabase Free plan: no platform backups, no PITR. The
+# runner must dump it after preflight and before ANY migration, and refuse to
+# migrate when the dump fails.
+
+
+def _recording_ports(**over):
+    order = []
+    kwargs = make_ports(**over)
+    kwargs["out"] = lambda line: order.append(("out", line))
+    kwargs["backup"] = lambda conn: order.append(("backup", conn)) or FAKE_BACKUP
+    kwargs["migrate"] = lambda conn: order.append(("migrate", None)) or ["0002_b.sql"]
+    return order, kwargs
+
+
+def test_backup_runs_before_migrate_and_its_path_is_printed():
+    order, kwargs = _recording_ports()
+    assert run(*build(kwargs)) == 0
+    kinds = [kind for kind, _ in order]
+    assert kinds.index("backup") < kinds.index("migrate")
+    # handed the preflight connection, so the real port can end its read tx
+    _, backup_conn = next(item for item in order if item[0] == "backup")
+    assert isinstance(backup_conn, FakeConn)
+    text = "\n".join(line for kind, line in order if kind == "out")
+    assert "prod-20261108T000000Z.dump" in text
+    assert "4.0 MiB" in text
+
+
+def test_backup_failure_aborts_before_migrate_and_merge():
+    migrated = []
+    lines = []
+
+    def failing_backup(conn):
+        raise RuntimeError("pg_dump failed (1): permission denied for schema vault")
+
+    kwargs = make_ports(migrate=lambda conn: migrated.append(1) or [], out=lines.append, backup=failing_backup)
+    captures = []
+    ports, options = build(kwargs)
+    real_capture = ports.capture
+    ports.capture = lambda conn: captures.append(1) or real_capture(conn)
+    assert run(ports, options) == 1
+    assert migrated == []
+    assert captures == []  # not even the before-snapshot
+    assert kwargs["gh"].calls == []
+    text = "\n".join(lines)
+    assert "BACKUP FAILED" in text
+    assert "permission denied for schema vault" in text
+    assert "not touched" in text
+
+
+def test_backup_is_not_taken_when_preflight_blocks():
+    backups = []
+    kwargs = make_ports(backup=lambda conn: backups.append(1) or FAKE_BACKUP)
+    kwargs["preflight_data"] = lambda conn: dict(
+        ledger_exists=True,
+        migration_files=["0001_a.sql"],
+        recorded={"0001_a.sql", "0099_ghost.sql"},  # orphan -> blocking
+        staging_recorded={"0001_a.sql"},
+        destructive=[],
+        db_url="postgresql://postgres.ref1:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
+        supabase_url="https://ref1.supabase.co",
+    )
+    assert run(*build(kwargs)) == 1
+    assert backups == []
+
+
+def test_backup_is_not_taken_when_there_is_nothing_to_promote():
+    backups = []
+    kwargs = make_ports(backup=lambda conn: backups.append(1) or FAKE_BACKUP)
+    kwargs["git"].commits_ahead = 0
+    kwargs["preflight_data"] = lambda conn: dict(
+        ledger_exists=True,
+        migration_files=["0001_a.sql"],
+        recorded={"0001_a.sql"},
+        staging_recorded={"0001_a.sql"},
+        destructive=[],
+        db_url="postgresql://postgres.ref1:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
+        supabase_url="https://ref1.supabase.co",
+    )
+    assert run(*build(kwargs)) == 0
+    assert backups == []
+
+
+def test_verify_only_takes_no_backup():
+    backups = []
+    kwargs = make_ports(backup=lambda conn: backups.append(1) or FAKE_BACKUP)
+    assert run(*build(kwargs, verify_only=True)) == 0
+    assert backups == []
+
+
+def test_skip_backup_skips_the_dump_loudly_and_still_migrates():
+    order, kwargs = _recording_ports()
+    assert run(*build(kwargs, skip_backup=True)) == 0
+    kinds = [kind for kind, _ in order]
+    assert "backup" not in kinds
+    assert "migrate" in kinds
+    warning_idx = next(
+        i for i, (kind, line) in enumerate(order) if kind == "out" and "NO BACKUP" in line
+    )
+    assert warning_idx < kinds.index("migrate")  # warned BEFORE the DDL, not after

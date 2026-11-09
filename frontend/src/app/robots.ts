@@ -1,25 +1,12 @@
 import type { MetadataRoute } from 'next';
 import { resolveFrontendEnv, resolveSiteUrl } from '@/lib/deployGuard';
+import { SHELL_PREFIXES } from '@/lib/appRoutes';
 
-// The private app surface: everything middleware.ts auth-gates, plus the
-// auth/api/onboarding flows and app routes that live outside (shell). Keep in
-// step with middleware.ts PROTECTED when a new shell route lands.
+// The private app surface: every app-shell route (lib/appRoutes.ts — the
+// same list middleware.ts auth-gates), plus the auth/api/onboarding flows and
+// app routes that live outside (shell).
 const PRIVATE = [
-  '/dashboard',
-  '/learn',
-  '/quiz',
-  '/study',
-  '/tree',
-  '/library',
-  '/calendar',
-  '/social',
-  '/settings',
-  '/achievements',
-  '/admin',
-  '/gradebook',
-  '/course-planner',
-  '/notetaker',
-  '/profile',
+  ...SHELL_PREFIXES,
   '/flashcards',
   '/onboarding',
   '/pending',

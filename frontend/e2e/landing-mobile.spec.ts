@@ -244,3 +244,15 @@ test("the beta dialog fits the phone and leads with the form", async ({ page }) 
     await page.locator(".ld-betacard").evaluate((el) => el.scrollHeight > el.clientHeight + 1),
   ).toBe(false);
 });
+
+for (const viewport of [{ width: 1440, height: 600 }, { width: 1280, height: 500 }, { width: 390, height: 500 }]) {
+  test(`hero scroll cue clears the beta button at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openLanding(page);
+    await expect.poll(async () => {
+      const button = await page.getByRole("button", { name: "Sign up for Beta Testing", exact: true }).first().boundingBox();
+      const cue = await page.getByText("SEE WHAT'S INSIDE", { exact: true }).locator("..").boundingBox();
+      return button && cue ? cue.y - button.y - button.height : -Infinity;
+    }).toBeGreaterThanOrEqual(24);
+  });
+}

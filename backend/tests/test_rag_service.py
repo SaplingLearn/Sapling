@@ -54,6 +54,26 @@ def _make_embedding_response(vecs: list[list[float]]):
     return resp
 
 
+def test_a_missing_key_is_not_latched(monkeypatch):
+    """#771: a keyless first call used to build (and keep) a client on
+    "dummy-key-for-import", so a key provided later was never used."""
+    from services import rag_service
+
+    monkeypatch.setattr(rag_service, "_client", None)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(rag_service._EmbeddingDisabled):
+        rag_service._get_client()
+    assert rag_service._client is None
+
+    built = []
+    monkeypatch.setattr(
+        rag_service.genai, "Client", lambda **kw: built.append(kw) or MagicMock(),
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "real-key")
+    rag_service._get_client()
+    assert built and built[0]["api_key"] == "real-key"
+
+
 def test_client_is_constructed_with_bounded_http_timeout():
     """retrieve_chunks() runs inline on the quiz/tutor request path, so the
     embedding client must carry an explicit HTTP timeout — otherwise a stalled

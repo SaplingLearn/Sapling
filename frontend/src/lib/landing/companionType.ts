@@ -17,7 +17,7 @@
 
 export const MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
 export const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
-export const DISPLAY = "var(--font-aleo), 'Aleo', Georgia, serif";
+export const DISPLAY = "var(--font-gummi), 'Gummi', Georgia, serif";
 
 /** Ink on the paper palette. */
 export const INK = '#1a1814';

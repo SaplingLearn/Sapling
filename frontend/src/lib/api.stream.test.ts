@@ -250,3 +250,48 @@ describe('shouldFallBackToJson (the client rung-3 ladder decision, #151a)', () =
     expect(shouldFallBackToJson(new Error('Stream stalled — no data received.'))).toBe(true);
   });
 });
+
+describe('turn_id (#762)', () => {
+  const bodyOf = (call: unknown[]) => JSON.parse(String((call[1] as RequestInit).body));
+
+  it('streamChat sends the turn_id it is given, unchanged', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        sseBody([ev('done', { type: 'done', step: 'reply', message: '', data: { reply: 'Hi', graph_update: {}, mastery_changes: [], replayed: true } })]),
+        { status: 200 },
+      ) as never,
+    );
+    const { streamChat } = await import('./api');
+    const res = await streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, {}, 'turn-abcdef12');
+    expect(bodyOf(fetchSpy.mock.calls[0])).toMatchObject({ session_id: 's1', turn_id: 'turn-abcdef12' });
+    expect(res.replayed).toBe(true);
+  });
+
+  it('sendChat (the JSON rung) sends the same turn_id', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ reply: 'Hi', graph_update: {}, mastery_changes: [] }), { status: 200 }) as never,
+    );
+    const { sendChat } = await import('./api');
+    await sendChat('s1', 'u1', 'hi', 'socratic', true, undefined, 'turn-abcdef12');
+    expect(bodyOf(fetchSpy.mock.calls[0])).toMatchObject({ turn_id: 'turn-abcdef12' });
+  });
+
+  it('omits turn_id when none is given (older callers keep today\'s body)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ reply: 'Hi', graph_update: {}, mastery_changes: [] }), { status: 200 }) as never,
+    );
+    const { sendChat } = await import('./api');
+    await sendChat('s1', 'u1', 'hi', 'socratic');
+    expect(bodyOf(fetchSpy.mock.calls[0])).not.toHaveProperty('turn_id');
+  });
+});
+
+describe('newTurnId (#762)', () => {
+  it('matches the backend pattern and is fresh each call', async () => {
+    const { newTurnId } = await import('./api');
+    const a = newTurnId();
+    const b = newTurnId();
+    expect(a).toMatch(/^[A-Za-z0-9_\-]{8,128}$/);
+    expect(a).not.toBe(b);
+  });
+});

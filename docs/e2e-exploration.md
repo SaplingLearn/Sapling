@@ -105,7 +105,7 @@ Unlike `make explore`, you watch (and can steer) the exploration live:
    the same stack lock `make explore` does; if another session holds it, the
    skill stops and tells you).
 2. It opens a real browser tab (Playwright MCP if configured for the session,
-   else the Claude-in-Chrome tools) at `http://localhost:3000` and signs in as
+   else the Claude-in-Chrome tools) at the slot's frontend (`http://localhost:310N`, printed by `up`) and signs in as
    `rich-user-active` by minting a session directly from the page.
 3. It reads `scripts/explore/explorer-prompt.md` as its own mission briefing
    and starts exploring — narrating what it's trying so you can redirect it
@@ -289,19 +289,22 @@ the `npx @playwright/mcp` download and a cold test-profile Next build (see
 
 ## 10. Lock protocol & hygiene
 
-The local E2E stack is a **machine singleton** — one Postgres, one backend,
-one frontend, bound to fixed local ports. `scripts/explore.sh` enforces this
-by holding an `flock` on `/tmp/claude-<uid>/sapling-e2e-stack.lock` for the
-entire session (both the headless full pipeline and the interactive
-`up`/`down` pair).
+Each local E2E stack runs in a numbered **slot** with its own ports and its
+own Supabase project (`scripts/lib/e2e-slot.sh`; table in
+`docs/local-supabase.md`). `scripts/explore.sh` claims the first free slot's
+lock (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`, or `E2E_SLOT`'s) and holds
+it for the entire session (both the headless full pipeline and the
+interactive `up`/`down` pair); the browser targets that slot's frontend
+(`http://localhost:310N`, printed by `up`), never the dev app's :3000.
 
 Rules that follow from that:
 
-- **Never run two explorations at once** on the same machine — the second
-  one fails fast with "stack lock busy" and touches nothing (no wipe, no
-  teardown of the first session's stack).
-- **Never run an exploration alongside the Chapter 1 Playwright suite** —
-  both want the same stack and the same ports.
+- **Explorations and Playwright cycles can run side by side**, up to the
+  number of slots (3). When every slot is busy, `explore` fails fast with
+  "every E2E slot is busy" and touches nothing (no wipe, no teardown of
+  another session's stack).
+- **One exploration per checkout at a time** — `.explore/` and `.e2e/` are
+  per checkout.
 - **Always end a session via `down`.** For `make explore` this happens
   automatically. For `/explore` or a manual `scripts/explore.sh up`, that
   means `make explore-down` (or `scripts/explore.sh down`) — every time,

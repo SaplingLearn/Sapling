@@ -38,6 +38,14 @@ class Ports:
     confirm: Callable[[str], bool]
     out: Callable[[str], None]
     sleep: Callable[[float], None]
+    # Full pg_dump of the target, taken after preflight passes and BEFORE any
+    # migration applies (Trov #114: production has no platform backups or
+    # PITR). Takes the preflight connection (the real port ends its read-only
+    # transaction so the session is not left idle-in-transaction for the
+    # length of the dump); returns a promotion.backup.BackupResult and raises
+    # on any failure. Required, not defaulted: a Ports built without it must
+    # not silently skip the backup.
+    backup: Callable[[Any], Any]
     # Wall-clock source for the deploy-wait budget. Defaulted — the only field
     # that may be — so __main__.py's Ports(...) construction needs no change;
     # tests inject a fake clock that advances with each fetch/sleep.
@@ -58,6 +66,38 @@ class Options:
     # commits_ahead is 0 and nothing is pending, so preflight would report
     # nothing-to-promote and exit clean before ever reaching the wait.
     verify_only: bool = False
+    # Skip the pre-migrate backup. Deliberately loud (see SKIP_BACKUP_WARNING):
+    # production has no other backup, so this is only for the case where the
+    # dump itself is broken and the operator has taken one by hand.
+    skip_backup: bool = False
+
+
+SKIP_BACKUP_WARNING = (
+    "\n" + "!" * 72 + "\n"
+    "!! --skip-backup: NO BACKUP was taken before migrating. Production is on\n"
+    "!! the Supabase Free plan — no platform backups, no PITR. If a migration\n"
+    "!! below goes wrong there is NOTHING to restore from unless you dumped the\n"
+    "!! database yourself (`make backup-db ENV=prod`).\n"
+    + "!" * 72
+)
+
+
+def _take_backup(ports: Ports, options: Options, conn: Any, out: Callable[[str], None]) -> bool:
+    """The pre-migrate backup stage. False = refuse to continue."""
+    if options.skip_backup:
+        out(SKIP_BACKUP_WARNING)
+        return True
+    try:
+        result = ports.backup(conn)
+    except Exception as exc:  # noqa: BLE001 — any failure blocks; reported, never a traceback
+        out(f"\nBACKUP FAILED — production was not touched. {exc}")
+        out(
+            "  No migration runs without a verified backup. Fix the cause above "
+            "and re-run (`make backup-db ENV=prod` reproduces the backup alone)."
+        )
+        return False
+    out(f"Backup written: {result.summary()}")
+    return True
 
 
 def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> str:
@@ -284,7 +324,7 @@ def run(ports: Ports, options: Options) -> int:
     # and nothing has been migrated yet.
     migrations_drift = ports.git.migrations_drift()
     production_is_ancestor = ports.git.is_ancestor("origin/production", "origin/main")
-    # Not an ancestor is the NORMAL state after a promotion: stage 6's merge
+    # Not an ancestor is the NORMAL state after a promotion: stage 7's merge
     # commit exists only on production (#666). It blocks only when the
     # production-only commits change the tree — a hotfix or revert that was
     # never back-merged. Merge-only divergence merges cleanly to main's tree.
@@ -327,7 +367,15 @@ def run(ports: Ports, options: Options) -> int:
             f"{head[:7]}), {len(pending)} migration(s) pending."
         )
 
-        # ---- Stage 2-4: snapshot, migrate, snapshot --------------------
+        # ---- Stage 2: backup (before ANY change) ------------------------
+        # After preflight, so a blocked or nothing-to-promote run never pays
+        # for a dump; before the snapshot/migrate, so a failed dump leaves
+        # production untouched. Taken on every promotion that gets this far,
+        # pending migrations or not — the merge ships new code that writes.
+        if not _take_backup(ports, options, conn, out):
+            return EXIT_FAIL
+
+        # ---- Stage 3-5: snapshot, migrate, snapshot --------------------
         before = ports.capture(conn)
         out(f"Target: project {preflight.project_ref(data['db_url'])} ({before.get('host', 'unknown')})")
 

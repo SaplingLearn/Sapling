@@ -3,11 +3,15 @@ Achievement checker service.
 Called synchronously after events to grant achievements when thresholds are met.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
-from services import gradebook_service
+from db.scope import runs_as_service
+from services.gradebook import grades
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
+
+logger = logging.getLogger(__name__)
 
 
 def _count_rows(table_name: str, filters: dict) -> int:
@@ -36,124 +40,138 @@ def _count_rows(table_name: str, filters: dict) -> int:
     return len(rows) if rows else 0
 
 
+@runs_as_service  # #115: achievement counters read rows beyond the student's own grants
 def get_user_stat(user_id: str, trigger_type: str) -> int:
     """Public wrapper around the internal stat lookup."""
     return _get_user_stat(user_id, trigger_type)
 
 
-def _get_user_stat(user_id: str, trigger_type: str) -> int:
-    """Evaluate the current value for a trigger type."""
-    if trigger_type == "login_streak":
-        user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-        if user:
-            return user[0].get("streak_count", 0) or 0
-        return 0
-
-    if trigger_type == "session_count":
-        return _count_rows("sessions", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "documents_uploaded":
-        return _count_rows("documents", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "quizzes_completed":
-        # #542 D3: really-finished attempts only. Two filters, because
-        # neither alone is sufficient: generate writes the attempt row
-        # BEFORE the student answers anything (so an unfiltered count let
-        # "generate and close the tab" advance quizzes_10), and submit's
-        # atomic claim stamps completed_at BEFORE grading (so a submit that
-        # dies between the claim and the score write would still count).
-        # A persisted score is the evidence a quiz was graded — the same
-        # signal agents/tools/quiz_history.py treats as completion.
-        return _count_rows("quiz_attempts", {
-            "user_id": f"eq.{user_id}",
-            "completed_at": "not.is.null",
-            "score": "not.is.null",
-        })
-
-    if trigger_type == "rooms_joined":
-        return _count_rows("room_members", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "flashcards_created":
-        return _count_rows("flashcards", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "post_count":
-        return _count_rows("room_messages", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "account_age_days":
-        user = table("users").select("created_at", filters={"id": f"eq.{user_id}"})
-        if user and user[0].get("created_at"):
-            created = datetime.fromisoformat(user[0]["created_at"].replace("Z", "+00:00"))
-            delta = datetime.now(timezone.utc) - created
-            return delta.days
-        return 0
-
-    if trigger_type == "manual_admin_grant":
-        return 0  # Handled directly by admin endpoint
-
-    if trigger_type == "flashcards_reviewed":
-        rows = table("flashcards").select(
-            "times_reviewed", filters={"user_id": f"eq.{user_id}"}
-        )
-        return sum(int(r.get("times_reviewed") or 0) for r in rows or [])
-
-    if trigger_type == "concepts_mastered":
-        return _count_rows("graph_nodes", {
-            "user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered",
-        })
-
-    if trigger_type == "courses_with_mastery":
-        rows = table("graph_nodes").select(
-            "course_id",
-            filters={"user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered"},
-        )
-        return len({r["course_id"] for r in rows or [] if r.get("course_id")})
-
-    if trigger_type == "graph_nodes_count":
-        return _count_rows("graph_nodes", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "friends_count":
-        return _count_rows("friendships", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "level":
-        rows = table("users").select("level", filters={"id": f"eq.{user_id}"})
-        return int(rows[0].get("level") or 1) if rows else 1
-
-    if trigger_type in ("session_minutes", "session_before_hour", "session_after_midnight"):
-        return _session_stat(user_id, trigger_type)
-
-    if trigger_type == "xp_in_day":
-        return _best_day_xp(user_id)
-
-    if trigger_type == "goal_streak":
-        return _goal_streak(user_id)
-
-    if trigger_type == "owned_room_members":
-        rooms = table("rooms").select("id", filters={"created_by": f"eq.{user_id}"})
-        best = 0
-        for room in rooms or []:
-            best = max(best, _count_rows("room_members", {"room_id": f"eq.{room['id']}"}))
-        return best
-
-    if trigger_type == "rooms_active":
-        rows = table("room_messages").select(
-            "room_id", filters={"user_id": f"eq.{user_id}"}
-        )
-        return len({r["room_id"] for r in rows or [] if r.get("room_id")})
-
-    if trigger_type == "course_grade_a":
-        return _course_grade_a_count(user_id)
-
-    if trigger_type == "room_replies":
-        owned = {
-            r["id"] for r in
-            (table("rooms").select("id", filters={"created_by": f"eq.{user_id}"}) or [])
-        }
-        rows = table("room_messages").select(
-            "room_id", filters={"user_id": f"eq.{user_id}"}
-        )
-        return sum(1 for r in rows or [] if r.get("room_id") not in owned)
-
+def _stat_login_streak(user_id: str) -> int:
+    # Deliberately the STORED count, not streak_service.effective_streak
+    # (#767). Readers that DISPLAY "your streak" must use the effective
+    # value, but a badge asks "did you ever reach N days", and a lapsed
+    # stored count is a streak that genuinely happened. login_streak is
+    # only dispatched at session end and sign-in, so a streak built from
+    # quizzes/uploads and then broken would otherwise never earn its badge.
+    user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
+    if user:
+        return user[0].get("streak_count", 0) or 0
     return 0
+
+
+def _stat_quizzes_completed(user_id: str) -> int:
+    # #542 D3: really-finished attempts only. Two filters, because
+    # neither alone is sufficient: generate writes the attempt row
+    # BEFORE the student answers anything (so an unfiltered count let
+    # "generate and close the tab" advance quizzes_10), and submit's
+    # atomic claim stamps completed_at BEFORE grading (so a submit that
+    # dies between the claim and the score write would still count).
+    # A persisted score is the evidence a quiz was graded — the same
+    # signal agents/tools/quiz_history.py treats as completion.
+    return _count_rows("quiz_attempts", {
+        "user_id": f"eq.{user_id}",
+        "completed_at": "not.is.null",
+        "score": "not.is.null",
+    })
+
+
+def _stat_account_age_days(user_id: str) -> int:
+    user = table("users").select("created_at", filters={"id": f"eq.{user_id}"})
+    if user and user[0].get("created_at"):
+        created = datetime.fromisoformat(user[0]["created_at"].replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - created
+        return delta.days
+    return 0
+
+
+def _stat_flashcards_reviewed(user_id: str) -> int:
+    rows = table("flashcards").select(
+        "times_reviewed", filters={"user_id": f"eq.{user_id}"}
+    )
+    return sum(int(r.get("times_reviewed") or 0) for r in rows or [])
+
+
+def _stat_courses_with_mastery(user_id: str) -> int:
+    rows = table("graph_nodes").select(
+        "course_id",
+        filters={"user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered"},
+    )
+    return len({r["course_id"] for r in rows or [] if r.get("course_id")})
+
+
+def _stat_level(user_id: str) -> int:
+    rows = table("users").select("level", filters={"id": f"eq.{user_id}"})
+    return int(rows[0].get("level") or 1) if rows else 1
+
+
+def _stat_owned_room_members(user_id: str) -> int:
+    rooms = table("rooms").select("id", filters={"created_by": f"eq.{user_id}"})
+    best = 0
+    for room in rooms or []:
+        best = max(best, _count_rows("room_members", {"room_id": f"eq.{room['id']}"}))
+    return best
+
+
+def _stat_rooms_active(user_id: str) -> int:
+    rows = table("room_messages").select(
+        "room_id", filters={"user_id": f"eq.{user_id}"}
+    )
+    return len({r["room_id"] for r in rows or [] if r.get("room_id")})
+
+
+def _stat_room_replies(user_id: str) -> int:
+    owned = {
+        r["id"] for r in
+        (table("rooms").select("id", filters={"created_by": f"eq.{user_id}"}) or [])
+    }
+    rows = table("room_messages").select(
+        "room_id", filters={"user_id": f"eq.{user_id}"}
+    )
+    return sum(1 for r in rows or [] if r.get("room_id") not in owned)
+
+
+def _count_own(table_name: str, **extra: str):
+    """A stat that is the count of the user's own rows in `table_name`."""
+    return lambda user_id: _count_rows(table_name, {"user_id": f"eq.{user_id}", **extra})
+
+
+# trigger_type -> reader(user_id). Every reader looks its helper up by name
+# when it runs, never at import: the `_stat_*` / `_session_stat` / ... helpers
+# below (some defined further down the module) through a lambda, and the
+# `_count_own` readers through `_count_rows`. So a
+# `patch.object(achievement_service, "<helper>", ...)` reaches the dispatch.
+_STAT_READERS = {
+    "login_streak": lambda user_id: _stat_login_streak(user_id),
+    "session_count": _count_own("sessions"),
+    "documents_uploaded": _count_own("documents"),
+    "quizzes_completed": lambda user_id: _stat_quizzes_completed(user_id),
+    "rooms_joined": _count_own("room_members"),
+    "flashcards_created": _count_own("flashcards"),
+    "post_count": _count_own("room_messages"),
+    "account_age_days": lambda user_id: _stat_account_age_days(user_id),
+    "manual_admin_grant": lambda user_id: 0,  # Handled directly by admin endpoint
+    "flashcards_reviewed": lambda user_id: _stat_flashcards_reviewed(user_id),
+    "concepts_mastered": _count_own("graph_nodes", mastery_tier="eq.mastered"),
+    "courses_with_mastery": lambda user_id: _stat_courses_with_mastery(user_id),
+    "graph_nodes_count": _count_own("graph_nodes"),
+    "friends_count": _count_own("friendships"),
+    "level": lambda user_id: _stat_level(user_id),
+    "session_minutes": lambda user_id: _session_stat(user_id, "session_minutes"),
+    "session_before_hour": lambda user_id: _session_stat(user_id, "session_before_hour"),
+    "session_after_midnight": lambda user_id: _session_stat(user_id, "session_after_midnight"),
+    "xp_in_day": lambda user_id: _best_day_xp(user_id),
+    "goal_streak": lambda user_id: _goal_streak(user_id),
+    "owned_room_members": lambda user_id: _stat_owned_room_members(user_id),
+    "rooms_active": lambda user_id: _stat_rooms_active(user_id),
+    "course_grade_a": lambda user_id: _course_grade_a_count(user_id),
+    "room_replies": lambda user_id: _stat_room_replies(user_id),
+}
+
+
+def _get_user_stat(user_id: str, trigger_type: str) -> int:
+    """Evaluate the current value for a trigger type (0 for an unknown one)."""
+    reader = _STAT_READERS.get(trigger_type)
+    return reader(user_id) if reader else 0
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -287,7 +305,7 @@ def _course_grade_a_count(user_id: str) -> int:
     """Count the user's gradebook courses (enrollments) whose currently
     computed letter grade is an A variant (A, A-, or A+ under a custom scale).
 
-    Reuses `gradebook_service.current_grade` / `letter_for` — the same pure
+    Reuses `services.gradebook.grades.current_grade` / `letter_for` — the same pure
     grade math `routes/gradebook.py` runs — rather than recomputing a percent
     here. `points_possible`/`points_earned` are encrypted at rest (see
     CLAUDE.md gotchas), so they're decrypted the same way `_load_assignments`
@@ -310,18 +328,19 @@ def _course_grade_a_count(user_id: str) -> int:
         for a in assignments:
             a["points_possible"] = decrypt_numeric(a.get("points_possible"))
             a["points_earned"] = decrypt_numeric(a.get("points_earned"))
-        percent = gradebook_service.current_grade(
+        percent = grades.current_grade(
             categories, assignments,
             curve_mode=enr.get("curve_mode") or "raw",
             curve_avg_target=enr.get("curve_avg_target"),
             curve_sd_delta=enr.get("curve_sd_delta"),
         )
-        letter = gradebook_service.letter_for(percent, enr.get("letter_scale"))
+        letter = grades.letter_for(percent, enr.get("letter_scale"))
         if letter and letter.startswith("A"):
             count += 1
     return count
 
 
+@runs_as_service  # #115: awards are server decisions (user_achievements/user_cosmetics writes are service-only)
 def check_achievements(user_id: str, event_type: str, event_data: dict = None) -> list:
     """
     Check and grant achievements for a user after an event.
@@ -342,10 +361,25 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 
     # Get user's existing achievements to avoid re-granting
     existing = table("user_achievements").select(
-        "achievement_id",
+        "achievement_id,earned_at",
         filters={"user_id": f"eq.{user_id}"},
-    )
-    existing_ids = {row["achievement_id"] for row in existing} if existing else set()
+    ) or []
+    existing_ids = {row["achievement_id"] for row in existing}
+
+    # Self-heal this event's badges that were granted RECENTLY (#767): a grant
+    # is insert → XP → cosmetics over separate writes, so one that died after
+    # the insert left the badge "earned" with its reward never paid, and
+    # nothing retried it because the badge is skipped from then on. Bounded to
+    # HEAL_WINDOW so the steady state costs no extra reads, and so raising a
+    # badge's xp_reward or linking a new cosmetic never pays out retroactively
+    # to everyone who already holds it.
+    event_ids = {t["achievement_id"] for t in triggers}
+    recent_cutoff = datetime.now(timezone.utc) - HEAL_WINDOW
+    _heal_grants(user_id, {
+        row["achievement_id"] for row in existing
+        if row["achievement_id"] in event_ids
+        and _earned_since(row.get("earned_at"), recent_cutoff)
+    })
 
     # Drop already-earned triggers BEFORE evaluating the stat. Several stats
     # are expensive (course_grade_a walks every enrollment's assignments,
@@ -388,13 +422,27 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
         if row.get("status") != "live":
             continue
 
-        table("user_achievements").insert({
-            "user_id": user_id,
-            "achievement_id": achievement_id,
-            "earned_at": datetime.now(timezone.utc).isoformat(),
-            "is_featured": False,
-        })
+        # ON CONFLICT DO NOTHING on the (user_id, achievement_id) PK (#767).
+        # A plain insert raised on the conflict — from a second trigger for the
+        # same badge in this loop, or a concurrent check that won the race —
+        # and the exception aborted every grant after it. An empty
+        # representation means the row already existed: someone else granted
+        # it, so it is not reported as newly earned here.
+        inserted = table("user_achievements").upsert(
+            {
+                "user_id": user_id,
+                "achievement_id": achievement_id,
+                "earned_at": datetime.now(timezone.utc).isoformat(),
+                "is_featured": False,
+            },
+            on_conflict="user_id,achievement_id",
+            ignore_duplicates=True,
+        )
+        existing_ids.add(achievement_id)
 
+        # Reward + cosmetics run even when the row was already there: both are
+        # idempotent (xp_events' idempotency key, user_cosmetics' PK), so this
+        # is free when the winner finished and the repair when it didn't.
         reward = int(row.get("xp_reward") or 0)
         if reward:
             award_xp_safe(
@@ -402,13 +450,152 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
                 source_type="achievement", source_id=achievement_id,
                 amount=reward,
             )
-        newly_earned.append({"slug": row["slug"], "name": row["name"], "xp": reward})
+        if inserted:
+            newly_earned.append({"slug": row["slug"], "name": row["name"], "xp": reward})
 
-        grant_linked_cosmetics(user_id, achievement_id)
+        # The badge is committed; a cosmetics failure must not abort the
+        # badges after it. _heal_grants re-attempts it on a later check.
+        try:
+            grant_linked_cosmetics(user_id, achievement_id)
+        except Exception:
+            logger.exception(
+                "linked cosmetics failed user=%s achievement=%s", user_id, achievement_id,
+            )
 
     return newly_earned
 
 
+# How long after a grant its missing XP/cosmetics are still re-attempted. A
+# half-grant is a request that died between the badge insert and its payouts,
+# so the student's next qualifying event almost always lands well inside this.
+# Past it, a missing payout is indistinguishable from an admin change made
+# after the grant (a raised xp_reward, a newly linked cosmetic), which must
+# NOT be paid out retroactively to every past holder.
+HEAL_WINDOW = timedelta(hours=24)
+
+
+def parse_utc(raw: str | None) -> datetime | None:
+    """A stored timestamp as an aware UTC datetime; None when missing or
+    unparseable. A naive value is taken as UTC. Shared with
+    scripts/backfill_achievement_xp.py so it reads grant times exactly as the
+    heal window does."""
+    try:
+        ts = _parse_ts(raw)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def _earned_since(raw: str | None, cutoff: datetime) -> bool:
+    """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
+    an unknown grant time is treated as old, so it is never healed."""
+    ts = parse_utc(raw)
+    return ts is not None and ts > cutoff
+
+
+def _heal_grants(user_id: str, achievement_ids: set) -> None:
+    """Re-attempt the XP reward and linked cosmetics of badges granted within
+    HEAL_WINDOW that never received them (#767). Never raises — it runs ahead
+    of the event's real work.
+
+    The grant-time reward and cosmetic set are not recorded, so the CURRENT
+    values are used — which is why the caller only passes recent grants: an
+    admin edit can then at most affect a badge earned in the last day, never
+    the whole back catalogue of holders.
+
+    Only LIVE badges are healed: a badge demoted to draft keeps its grant row
+    (hidden from display, see routes/admin.py::update_achievement) but pays
+    nothing more until it is published again.
+
+    Cost: nothing unless the event's badges include a recent grant; then one
+    read of the badges, one of their achievement_unlocked ledger rows (only if
+    any pays XP), one of their cosmetic links, and one of the user's cosmetics
+    (only if any are linked). Writes happen only when something is missing.
+    """
+    if not achievement_ids:
+        return
+    try:
+        ids = sorted(achievement_ids)
+        badges = table("achievements").select(
+            "id,xp_reward,status", filters={"id": f"in.({','.join(ids)})"},
+        ) or []
+        live = {b["id"]: int(b.get("xp_reward") or 0)
+                for b in badges if b.get("status") == "live"}
+        if not live:
+            return
+
+        paying = sorted(a for a, reward in live.items() if reward)
+        if paying:
+            paid = {
+                r.get("source_id") for r in table("xp_events").select(
+                    "source_id",
+                    filters={
+                        "user_id": f"eq.{user_id}",
+                        "rule_key": "eq.achievement_unlocked",
+                        "source_type": "eq.achievement",
+                        "source_id": f"in.({','.join(paying)})",
+                    },
+                ) or []
+            }
+            for achievement_id in paying:
+                if achievement_id not in paid:
+                    logger.warning(
+                        "healing unpaid achievement XP user=%s achievement=%s",
+                        user_id, achievement_id,
+                    )
+                    award_xp_safe(
+                        user_id, "achievement_unlocked",
+                        source_type="achievement", source_id=achievement_id,
+                        amount=live[achievement_id],
+                    )
+
+        links = table("achievement_cosmetics").select(
+            "achievement_id,cosmetic_id",
+            filters={"achievement_id": f"in.({','.join(sorted(live))})"},
+        ) or []
+        if not links:
+            return
+        wanted = sorted({lc["cosmetic_id"] for lc in links})
+        owned = {
+            r["cosmetic_id"] for r in table("user_cosmetics").select(
+                "cosmetic_id",
+                filters={"user_id": f"eq.{user_id}",
+                         "cosmetic_id": f"in.({','.join(wanted)})"},
+            ) or []
+        }
+        for cosmetic_id in wanted:
+            if cosmetic_id not in owned:
+                logger.warning(
+                    "healing missing achievement cosmetic user=%s cosmetic=%s",
+                    user_id, cosmetic_id,
+                )
+                try:
+                    _unlock_cosmetic(user_id, cosmetic_id)
+                except Exception:
+                    logger.exception(
+                        "cosmetic heal failed user=%s cosmetic=%s", user_id, cosmetic_id,
+                    )
+    except Exception:
+        logger.exception("achievement grant heal failed user=%s", user_id)
+
+
+def _unlock_cosmetic(user_id: str, cosmetic_id: str) -> None:
+    """Idempotent: ON CONFLICT DO NOTHING on the (user_id, cosmetic_id) PK, so
+    a re-grant or a heal of an already-owned cosmetic is a no-op, not a 409."""
+    table("user_cosmetics").upsert(
+        {
+            "user_id": user_id,
+            "cosmetic_id": cosmetic_id,
+            "unlocked_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="user_id,cosmetic_id",
+        ignore_duplicates=True,
+    )
+
+
+@runs_as_service  # #115: cosmetic awards are service-only writes
 def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     """Unlock every cosmetic linked to `achievement_id` for `user_id`.
 
@@ -427,9 +614,13 @@ def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     linked_cosmetics = table("achievement_cosmetics").select(
         "cosmetic_id", filters={"achievement_id": f"eq.{achievement_id}"}
     )
+    failed = None
     for lc in linked_cosmetics or []:
-        table("user_cosmetics").insert({
-            "user_id": user_id,
-            "cosmetic_id": lc["cosmetic_id"],
-            "unlocked_at": datetime.now(timezone.utc).isoformat(),
-        })
+        # One bad link (e.g. a dangling cosmetic_id, which has no FK on
+        # achievement_cosmetics) must not stop the others; re-raised after.
+        try:
+            _unlock_cosmetic(user_id, lc["cosmetic_id"])
+        except Exception as exc:
+            failed = exc
+    if failed is not None:
+        raise failed

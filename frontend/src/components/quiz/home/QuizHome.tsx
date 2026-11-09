@@ -30,7 +30,6 @@ import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/Pill";
 import { useToast } from "@/components/ToastProvider";
 import { apiToGraphNode } from "@/lib/data";
-import { cancelTarget } from "@/lib/quiz/exits";
 import type { SessionConfig } from "@/lib/quiz/machine";
 import { savePrefs } from "@/lib/quiz/prefs";
 import {
@@ -414,27 +413,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
     [home.nodes],
   );
 
-  const cancel = (
-    <Button
-      variant="link"
-      data-testid="quiz-cancel"
-      onClick={() => actions.exit(cancelTarget(session))}
-    >
-      Cancel
-    </Button>
-  );
-
-  /**
-   * The Cancel row for the screens that are not the two columns (§5 B1.8): an
-   * empty tree, no courses, a failed load. They still need a way back to
-   * wherever the student came from. The two columns (and their skeleton) pin
-   * Cancel to their own top-right corner instead, so it stays at the top of
-   * the screen when the columns stack and does not move as the load resolves.
-   */
-  const cardHead = <div className="quiz-home__card-head">{cancel}</div>;
-
-  const topicsHead = <div className="label-micro quiz-eyebrow">Choose a topic</div>;
-
   // The due set is a quiz of its own, so it sits with the card's actions, not
   // among the concepts. On a due card the card already IS that quiz.
   const dueLink =
@@ -454,19 +432,23 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       ref={proposalRef}
       className="quiz-home__proposal"
       data-testid="quiz-proposal"
-      // Keyed on the concept so a swap remounts the card and plays its
-      // entrance; the first card of a visit arrives without one.
-      key={card.node.id}
       data-entering={swapped && !reducedMotion ? "true" : undefined}
     >
-      <div className="quiz-home__eyebrow-row">
-        <div className="label-micro quiz-eyebrow">{pickedId ? "Your pick" : "Ready for you"}</div>
-        {pickedId && suggested && (
+      {/* The card's TEXT is keyed on the concept, so a swap remounts it and
+          plays its entrance (the first card of a visit arrives without one).
+          The neighbourhood below is NOT: it stays mounted, so the concepts
+          two neighbourhoods share glide to their new places and the view
+          eases onto the new cluster, instead of the graph being rebuilt. */}
+      <div className="quiz-home__card-text" key={card.node.id}>
+      {/* No eyebrow: the concept's name heads the card. Once a topic is
+          picked, the one line above it is the way back to the suggestion. */}
+      {pickedId && suggested && (
+        <div className="quiz-home__eyebrow-row">
           <Button variant="link" data-testid="quiz-pick-reset" onClick={() => choose(null)}>
             ← Back to the suggestion
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       <div className="h-serif quiz-home__name" data-testid="quiz-proposal-name">
         {title}
       </div>
@@ -488,6 +470,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
         </p>
       )}
       <p className="quiz-home__config">{configLine}</p>
+      </div>
 
       <LiveNeighbourhood
         centreId={card.node.id}
@@ -620,7 +603,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
 
   const topics = (
     <section className="quiz-home__topics-col" aria-label="Choose a topic">
-      {topicsHead}
       {toolbar}
       {/* Capped to the proposal's height and scrolled inside (`home.css`). */}
       <div className="quiz-home__topics-scroll">
@@ -643,7 +625,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   /** The two columns, with whatever each one holds. */
   const columns = (lead: React.ReactNode, side: React.ReactNode) => (
     <div className="quiz-home__grid">
-      <div className="quiz-home__grid-cancel">{cancel}</div>
       <div className="quiz-home__lead">{lead}</div>
       <div className="quiz-home__grid-divider" />
       {side}
@@ -652,7 +633,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
 
   const skeleton = columns(
     <div className="quiz-home__skeleton-main">
-      <Skeleton width={90} height={10} />
       <Skeleton width={240} height={32} />
       <Skeleton width={220} height={12} />
       <Skeleton width={380} height={13} />
@@ -662,7 +642,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       <Skeleton width={120} height={34} />
     </div>,
     <div className="quiz-home__topics-col">
-      {topicsHead}
       <Skeleton width="100%" height={28} />
       <div className="quiz-home__skeleton-rows">
         {[0, 1, 2, 3, 4, 5].map(i => (
@@ -747,8 +726,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
           padding outside the column. */}
       <div className="quiz-inset--home">
         <div className="quiz-col quiz-col--home">
-          {/* The two columns (and their skeleton) carry Cancel in their own head. */}
-          {view !== "home" && view !== "loading" && cardHead}
           {body()}
         </div>
       </div>

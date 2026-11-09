@@ -1,0 +1,155 @@
+{
+  "source": "https://drive.google.com/drive/folders/1wOYZRDvTjlKg4OHnvBXUvA5phFRZ-d19",
+  "assets": [
+    {
+      "name": "icon-achievements.svg",
+      "sha256": "88e66358288823505d9089398ff07c8fde91888a7dc9afdd61daabad8f28893d",
+      "source": "https://drive.google.com/file/d/1Ov2jp2p5xzok-QP063PLELmRo0CJNfMz/view"
+    },
+    {
+      "name": "icon-bulb.svg",
+      "sha256": "27aa17a5a9f795c141916fb7980e49ba49669677b6b81d985e1016b6de37919f",
+      "source": "https://drive.google.com/file/d/1sIFTsRJY8BzmkeTuPnzFoBqHhBdXbwku/view"
+    },
+    {
+      "name": "icon-calendar.svg",
+      "sha256": "428e5860276341556e1f78f330b583b6d0da836c0fe7d4ea226d126426fcb622",
+      "source": "https://drive.google.com/file/d/1nWI2om9tv4tImnpJZ22dwtJsU6fdwB_K/view"
+    },
+    {
+      "name": "icon-check.svg",
+      "sha256": "ebd80dd54b6f3bff899cb0ae1abf180b3d1182a33d0b9699b0951ea07b4ad1e6",
+      "source": "https://drive.google.com/file/d/1gaJQJu5QmsWA4-OpFHl7SNEVFB1dXW-Y/view"
+    },
+    {
+      "name": "icon-chevron-down.svg",
+      "sha256": "7715604abd0772871f73cda50eb732edd4eb54c92d10bb45874ba50a0e34782b",
+      "source": "https://drive.google.com/file/d/1pln8RPQJ66WNpS5wi-cJMrA_B9ZAXSmd/view"
+    },
+    {
+      "name": "icon-chevron-left.svg",
+      "sha256": "d1a7ec79d7821343387d8d0a2d8f6c3b4fae4fef15d5b3f4273701dda06fbeb2",
+      "source": "https://drive.google.com/file/d/11V3zhvhNvQUUwVCGy_AeNKsg-xZbvM3d/view"
+    },
+    {
+      "name": "icon-chevron-right.svg",
+      "sha256": "0ed7c9994260e4f72e693e55d241f0b078c727aee4dc68c3b213a9752e3c0199",
+      "source": "https://drive.google.com/file/d/1fTbaMYo6hg5AU-HkWbodEOj_nXq3ljEa/view"
+    },
+    {
+      "name": "icon-chevron-up.svg",
+      "sha256": "f5746843123613f369f924964ffdf13cf91e05cc1d9daed1c45115214342508a",
+      "source": "https://drive.google.com/file/d/1wzQVjFecvxvfNXtU52onj2yaoQHyY7m_/view"
+    },
+    {
+      "name": "icon-clover.svg",
+      "sha256": "3cc6b7eadcb050491ec00ded95189535984d5a93018384a3532f8e17da265709",
+      "source": "https://drive.google.com/file/d/1q8CPYF1IQI_xGVlUimGt06h0wgI8R9fx/view"
+    },
+    {
+      "name": "icon-cross.svg",
+      "sha256": "372fab03151da7512c9b137c99a94a4f104ac3cfd287afebe450c4d89aa00c79",
+      "source": "https://drive.google.com/file/d/1YnfqgvCsuDOAec9aRzY_2Bp2IOaiqqXW/view"
+    },
+    {
+      "name": "icon-download.svg",
+      "sha256": "b870da0f86a7f21e66d442979511b897a7a513d845948c6bf448b1b5fb4fdb06",
+      "source": "https://drive.google.com/file/d/11ye78AMHEUy7lqibT-Y0J80hVFz5cNmP/view"
+    },
+    {
+      "name": "icon-error.svg",
+      "sha256": "60be418bc70ae2d7e71675a15ab6bfc445ef37ca14000f96b8189e52b9b1d27a",
+      "source": "https://drive.google.com/file/d/13dl8IvgJeODlUQs6HqOmmgGrUEnafXn0/view"
+    },
+    {
+      "name": "icon-file.svg",
+      "sha256": "43d7f8871ef4f9035132306fdb2c85ad581918d453bd54feddb695f1835dbc41",
+      "source": "https://drive.google.com/file/d/18NWUFPmtWD9jL_Z7FqJ4C99oLfgznu4p/view"
+    },
+    {
+      "name": "icon-home.svg",
+      "sha256": "57e7192c5653f2bff5e04ea2add5be8bb0ead7bb2ef63d009e5ac2cd18f121a1",
+      "source": "https://drive.google.com/file/d/1nvwZomQxlZtc02PLKfbwPZqsbkr21unE/view"
+    },
+    {
+      "name": "icon-leaf.svg",
+      "sha256": "0f3f8e4b94c703cc5725543fdb5db5c948cf1c2398035b3bb45de29036493eec",
+      "source": "https://drive.google.com/file/d/1uGru0HiHFnfROGcCWVE10xpJJhRV68jU/view"
+    },
+    {
+      "name": "icon-library.svg",
+      "sha256": "0b44a26a08192ca4ba6a6c8f243c56befbf6c98ef18e0b98f0ef171a4761e32b",
+      "source": "https://drive.google.com/file/d/1IY4io8ASjoDxE3ylYISj3dd-XjCZGTt-/view"
+    },
+    {
+      "name": "icon-minus.svg",
+      "sha256": "fc34afca74d027929a7dcb8a6a85bf7dcdd338df1357bb2c1da2ee21e8f1dd50",
+      "source": "https://drive.google.com/file/d/1QUYqteimE3UCc8f-FMNpWn1M3fQ9UxWe/view"
+    },
+    {
+      "name": "icon-nofitication.svg",
+      "sha256": "76ae77422b8c30aafa18119f445f9223e138d64ca5e80a14b85271a315bac0a4",
+      "source": "https://drive.google.com/file/d/1dzEKlUIn5mp01u1t2FkKlYpluYWG7qud/view"
+    },
+    {
+      "name": "icon-plus.svg",
+      "sha256": "b940385f217cacfdf78d3735c6b59c2ed9f3973bd561c78c9f8a2f0708eb6196",
+      "source": "https://drive.google.com/file/d/15K-ezLW_qnbj07tMYSyZ_8N6y8DyOAOW/view"
+    },
+    {
+      "name": "icon-search.svg",
+      "sha256": "04dee85ff903b9de363f3b017cdeb594613e34f9574cd407c82392ddac2488cb",
+      "source": "https://drive.google.com/file/d/1bykfb0CUtEw5iIbMD7ThV-viv4-6-uya/view"
+    },
+    {
+      "name": "icon-send.svg",
+      "sha256": "bb926bb00dcdb6bf555f3cfba47ea6eec8faa15d61bc9355a7796d6e385dbd32",
+      "source": "https://drive.google.com/file/d/1xGdcnjHdYc5P22VUm0vkadQnsWYF8E2J/view"
+    },
+    {
+      "name": "icon-setting-2.svg",
+      "sha256": "9bac97efd297cfd04f1746781f9f96a7fdbeabde126ba3f0238c0dd951cd4822",
+      "source": "https://drive.google.com/file/d/1CXSPrUAXQoS9LqppXOFEToOot_cmTdXx/view"
+    },
+    {
+      "name": "icon-setting.svg",
+      "sha256": "5cfcffdf6454e4c8cb8d88b177a27812284e445576e80ed9ad5b122437db1a07",
+      "source": "https://drive.google.com/file/d/1MrX6-ISXrX4AfpA8M_TBhEHf0j2grkWm/view"
+    },
+    {
+      "name": "icon-social-notif.svg",
+      "sha256": "63a49c84528b9b8117163312880fcd69eaf0299981e8c90f741f7951be187968",
+      "source": "https://drive.google.com/file/d/1B3tfbcmnbCB_YhjrzMisvVz8YHfKDFw6/view"
+    },
+    {
+      "name": "icon-social.svg",
+      "sha256": "9f0d167a28de5f1c76ad9083aa5343ddb507f60cfe75f12a8506f18b2142e506",
+      "source": "https://drive.google.com/file/d/1nPRsZbHiTesHilckAxi2WsnrsCEfHv1U/view"
+    },
+    {
+      "name": "icon-study.svg",
+      "sha256": "867fb12a1db42e0b63512d0041aa5d86ace5c62c734d37f5aceafd9af0699fab",
+      "source": "https://drive.google.com/file/d/1MZo8l8x2j_or4y0KFx_YyvwU3LwXuzJ0/view"
+    },
+    {
+      "name": "icon-trees.svg",
+      "sha256": "73cb1d531fcc96f37351e6fa96c88a3fc9b982b2befb96c6a907473a757d79fa",
+      "source": "https://drive.google.com/file/d/14RNg3aoZS6WcTYe7W-F32BcYy0Uk0Tbw/view"
+    },
+    {
+      "name": "icon-upload.svg",
+      "sha256": "e9987126397772d2d4d0c4e4ca4c285e252b1c2f7dd4e61607dd0379f24a34e9",
+      "source": "https://drive.google.com/file/d/1UmbqQFZO4SH-SQ3c4pk7wqLOG-EydFm8/view"
+    },
+    {
+      "name": "logo-letters.svg",
+      "sha256": "93ca9232c8f9c1ec086caad9cc384aff063d4d6deff303707455b3cd71438165",
+      "source": "https://drive.google.com/file/d/1bnD-gbZh3pYS02VjHPtYGwUFDAveH-by/view"
+    },
+    {
+      "name": "logo-symbol.svg",
+      "sha256": "ca397d0fa43f8d5b699f7a8c8d2b734f0fad53e220305c3a3f79ac30dbe49682",
+      "source": "https://drive.google.com/file/d/1x9n1QCRhWjEqMqkrfYZYC_h8pUMg-GfS/view"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ wrong answer mean something.
 Joined against questions_json it is a per-concept mistake profile, which is
 what this module builds.
 """
-from services.quiz_distractors import DIGEST_SCHEMA_VERSION, build_distractor_profile
+from services.quiz.distractors import DIGEST_SCHEMA_VERSION, build_distractor_profile
 
 
 def _q(qid, stem, concept, options, difficulty="medium"):
@@ -87,7 +87,7 @@ def test_the_profile_is_bounded():
     """It rides a prompt. An attempt is capped at 10 questions today, but the
     cap is here so a future longer attempt cannot quietly inflate the digest
     prompt."""
-    from services.quiz_distractors import MAX_PROFILE_ENTRIES
+    from services.quiz.distractors import MAX_PROFILE_ENTRIES
 
     many = [
         _q(i, f"stem {i}", "C", [
@@ -148,7 +148,7 @@ def test_the_version_is_stamped_by_the_server_not_by_the_model():
     from unittest.mock import patch as _patch
 
     from agents.quiz_context import QuizContext
-    from services import quiz_context_service
+    from services.quiz import context as quiz_context_service
 
     assert "schema_version" not in QuizContext.model_fields
 

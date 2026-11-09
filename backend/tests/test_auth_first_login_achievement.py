@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
 import services.achievement_service as ach_module
+from tests.split_patches import set_auth_session_secret, set_auth_table
 
 # Mount ONLY the auth router — main.py pulls in the full stack (logfire etc.).
 _app = FastAPI()
@@ -70,11 +71,13 @@ def _make_factory(user_rows, earned_rows, insert_sink):
     ]
     factory("user_achievements").select.return_value = earned_rows
 
-    def _capture_insert(payload):
+    def _capture_insert(payload, **_kw):
         insert_sink.append(payload)
         return [{}]
 
     factory("user_achievements").insert.side_effect = _capture_insert
+    # The grant is an ON CONFLICT DO NOTHING upsert since #767.
+    factory("user_achievements").upsert.side_effect = _capture_insert
     factory("achievements").select.return_value = [{
         "slug": "first_login", "name": "First Steps", "xp_reward": 0, "status": "live",
     }]
@@ -85,7 +88,7 @@ def _make_factory(user_rows, earned_rows, insert_sink):
 @pytest.fixture
 def drive_callback(monkeypatch):
     """Drive the real /google/callback past the two Google network hops."""
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -110,7 +113,7 @@ def drive_callback(monkeypatch):
         factory, mocks = _make_factory(user_rows, earned_rows, insert_sink)
         # Both modules resolve `table` independently; share one factory so the
         # achievement check sees the same mocked DB the callback wrote to.
-        monkeypatch.setattr(auth_module, "table", factory)
+        set_auth_table(monkeypatch, factory)
         monkeypatch.setattr(ach_module, "table", factory)
 
         nonce = "nonce-xyz"

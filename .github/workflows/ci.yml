@@ -39,6 +39,12 @@ jobs:
       # violations (new files, or new rule categories in existing files) fail.
       - name: Lint (ruff — baselined ratchet)
         run: ruff check .
+      # #118: import boundaries (backend/.importlinter) — routes/worker ->
+      # services/agents/models -> db layering, and domain packages reaching each
+      # other only through the package __init__. Known exceptions are listed
+      # with their reason in the config; a new violation fails here.
+      - name: Lint (import-linter — boundary contracts)
+        run: lint-imports
       - name: Run pytest
         env:
           # Non-secret dummy values so config validation / DB-URL construction /

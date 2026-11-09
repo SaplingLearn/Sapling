@@ -16,6 +16,8 @@ const ERROR_COPY: Record<string, string> = {
   invalid_domain: "Sign-in is limited to approved school accounts (@bu.edu).",
   google_not_configured: "Google sign-in is not configured on the server. Please contact support.",
   signin_failed: "Sign-in failed. Please try again.",
+  account_deleted:
+    "This account was deleted. If you think that's a mistake, please contact support.",
   session_expired: "Your session has expired. Please sign in again.",
   env_misconfig: "This environment is misconfigured and can't sign you in. Please contact support.",
   revoked: "Your access has been revoked.",
@@ -31,9 +33,10 @@ interface SignInModalProps {
 
 export default function SignInModal({ open, onClose, errorCode }: SignInModalProps) {
   const router = useRouter();
-  const { setActiveUser, confirmApproved } = useUser();
+  const { setActiveUser } = useUser();
   const [closing, setClosing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [retried, setRetried] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const popupRef = useRef<Window | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -122,13 +125,15 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   if (!open) return null;
 
-  const visibleError = localError ?? errorCode ?? null;
+  // The landing's `?error=` code (#756) shows until the student tries again.
+  const visibleError = localError ?? (retried ? null : errorCode) ?? null;
   const errorMessage = visibleError
     ? ERROR_COPY[visibleError] ?? `Something went wrong (${visibleError}).`
     : null;
 
   const signInWithGoogle = () => {
     setLocalError(null);
+    setRetried(true);
 
     // An empty API_URL is the valid same-origin config (a cross-origin value
     // drops the session cookie), so we don't guard against it here. The
@@ -178,7 +183,6 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         setActiveUser(data.userId, data.name || "", data.avatar || "", {
           persist: data.profileConfirmed !== false,
         });
-        confirmApproved();
         // #715: a new account on a local backend waits for its sample data
         // on the hold screen; anywhere else this is /onboarding, as before.
         void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));

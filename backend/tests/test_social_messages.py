@@ -2,11 +2,12 @@
 Unit tests for routes/social.py message endpoints — focused on the new
 pagination behavior (`before` and `limit` query params, `has_more` flag).
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -39,7 +40,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
 
         assert r.status_code == 200
@@ -65,7 +66,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -88,7 +89,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -116,7 +117,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?before=2026-04-02T00:00:00Z&limit=20")
 
         assert r.status_code == 200
@@ -127,7 +128,7 @@ class TestGetRoomMessages:
     def test_invalid_before_rejected(self):
         # Guards against PostgREST operator injection (e.g. ?before=null or
         # ?before=gt.2026-01-01). Anything not parseable as ISO 8601 is 400.
-        with patch("routes.social.table"):
+        with patch_social("table"):
             for bad in ["null", "gt.2026-01-01", "not-a-date", "is.null", ""]:
                 if not bad:  # empty string skips the `if before:` branch; still valid
                     continue
@@ -142,7 +143,7 @@ class TestGetRoomMessages:
             else:
                 m.select.return_value = []
             return m
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
         assert r.status_code == 200
         assert r.json() == {"messages": [], "has_more": False}
@@ -164,7 +165,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=9999")
 
         assert r.status_code == 200
@@ -187,7 +188,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=0")
 
         assert r.status_code == 200

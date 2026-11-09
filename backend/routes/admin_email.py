@@ -7,20 +7,34 @@ dedupes every send in `email_sends` and honours `email_suppressions`.
 Audiences are resolved in Python because `users.email` is AES-GCM encrypted
 with a random nonce (it cannot be queried by value) and the waitlist keeps
 addresses as typed. Every audience is deduped by normalized address and
-excludes suppressed recipients, so the count shown is the count mailed.
+excludes suppressed recipients and accounts that turned email notifications
+off, so the count shown is the count mailed.
+
+A broadcast's lifecycle (`email_broadcasts.status`): `sending` while its
+background run is alive (it bumps `heartbeat_at` as it goes), then `sent`
+(everything that went anywhere went out), `partial` (some sent, some failed,
+or the run died part-way), `failed` (nothing sent, something failed) or
+`skipped` (nothing sent and nothing failed: no API key, everyone suppressed or
+opted out, or an empty audience). A `sending` row whose heartbeat is older
+than STALE_SENDING_AFTER has no live run (a deploy killed it); it, and a
+`failed`/`partial` one, can be resumed: the audience is re-resolved and every
+recipient re-runs through `email_sends` dedupe, so whoever already got it is a
+no-op and only the rest are mailed.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from pydantic import BaseModel, Field
 
 import config
-from db.connection import page_all, table
+from db.connection import page_all, pg_quote_value, table
 from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcastTestBody
 from services import email_service, email_templates, email_variables
 from services.admin_audit import log_admin_action
@@ -41,10 +55,49 @@ AUDIENCES: list[tuple[str, str]] = [
 
 _BROADCAST_COLUMNS = (
     "id,subject,audience,status,recipient_count,sent_count,skipped_count,"
-    "failed_count,created_at,sent_at,created_by"
+    "failed_count,created_at,sent_at,created_by,heartbeat_at"
 )
 #: How often (in recipients processed) a running broadcast writes its counts.
 PROGRESS_EVERY = 25
+#: ...and the longest it goes without one, so a slow run still heartbeats.
+HEARTBEAT_EVERY_S = 30.0
+#: A `sending` broadcast with no heartbeat for this long has no live run.
+STALE_SENDING_AFTER = timedelta(minutes=10)
+_RESUMABLE = ("failed", "partial")
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _stale_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - STALE_SENDING_AFTER
+
+
+def _parse_ts(value) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _is_stale(row: dict) -> bool:
+    if row.get("status") != "sending":
+        return False
+    beat = _parse_ts(row.get("heartbeat_at")) or _parse_ts(row.get("created_at"))
+    return beat is None or beat < _stale_cutoff()
+
+
+def _outcome(sent: int, failed: int) -> str:
+    """A finished run's honest status."""
+    if sent and failed:
+        return "partial"
+    if failed:
+        return "failed"
+    return "sent" if sent else "skipped"
 
 
 # ── Audience resolution ─────────────────────────────────────────────────────
@@ -161,7 +214,11 @@ def _by_hash(addresses: Iterable[str], suppressed: set[str]) -> dict[str, str]:
 def resolve_audiences(keys: Iterable[str]) -> dict[str, dict[str, str]]:
     """audience key → {recipient_hash: address}, reading each source once."""
     keys = list(keys)
-    suppressed = _suppressed_hashes()
+    excluded = set(_suppressed_hashes())
+    try:
+        excluded |= email_service.notification_opt_out_hashes(fresh=True)
+    except Exception:  # noqa: BLE001 — send_email still enforces it per recipient
+        logger.warning("notification opt-out read failed; audience may over-count", exc_info=True)
     out: dict[str, dict[str, str]] = {}
     waitlist = _waitlist_entries() if any(k.startswith("waitlist_") for k in keys) else {}
     for key in keys:
@@ -175,7 +232,7 @@ def resolve_audiences(keys: Iterable[str]) -> dict[str, dict[str, str]]:
             picked = _user_addresses().values()
         else:
             raise ValueError(f"unknown audience {key!r}")
-        out[key] = _by_hash(picked, suppressed)
+        out[key] = _by_hash(picked, excluded)
     return out
 
 
@@ -263,7 +320,10 @@ def send_test_broadcast(body: EmailBroadcastTestBody, request: Request):
 
 
 def _broadcast_view(row: dict) -> dict:
-    return {k: row.get(k) for k in _BROADCAST_COLUMNS.split(",")}
+    view = {k: row.get(k) for k in _BROADCAST_COLUMNS.split(",")}
+    view["stale"] = _is_stale(row)
+    view["resumable"] = view["stale"] or row.get("status") in _RESUMABLE
+    return view
 
 
 @router.post("/broadcasts", status_code=202)
@@ -280,6 +340,7 @@ def create_broadcast(body: EmailBroadcastBody, request: Request, background_task
         "status": "sending",
         "recipient_count": len(recipients),
         "created_by": actor,
+        "heartbeat_at": _iso(datetime.now(timezone.utc)),
     })
     if not rows:
         raise HTTPException(status_code=500, detail="Could not record the broadcast.")
@@ -299,20 +360,52 @@ def create_broadcast(body: EmailBroadcastBody, request: Request, background_task
     return {"broadcast": _broadcast_view(broadcast)}
 
 
-def run_broadcast(broadcast_id: str, subject: str, body: str, recipients: list[str]) -> None:
-    """Send one broadcast to `recipients`, writing progress as it goes.
+def _ledger_sent(broadcast_id: str) -> int | None:
+    """How many of this broadcast's recipients `email_sends` records as sent
+    (across every run of it), or None when it can't be read."""
+    try:
+        return sum(1 for _ in page_all(
+            table("email_sends"), "id",
+            filters={"broadcast_id": f"eq.{broadcast_id}", "status": "eq.sent"}, order="id.asc",
+        ))
+    except Exception:  # noqa: BLE001
+        logger.warning("broadcast ledger read failed id=%s", broadcast_id, exc_info=True)
+        return None
 
-    Never raises (it runs after the response). `duplicate` and `suppressed`
-    count as skipped: the address was not mailed by this run."""
+
+def run_broadcast(
+    broadcast_id: str, subject: str, body: str, recipients: list[str], *, resumed: bool = False,
+) -> None:
+    """Send one broadcast to `recipients`, writing progress (and a heartbeat)
+    as it goes.
+
+    Never raises (it runs after the response). `duplicate`, `suppressed`,
+    `opted_out` and `skipped` count as skipped: the address was not mailed by
+    this run. A `resumed` run takes its sent count from the ledger, because
+    whoever an earlier run already mailed comes back `duplicate` here. If the
+    run itself dies, the row says `partial` when anything went out (else
+    `failed`), never a bare `failed` over delivered mail."""
     counts = {"sent_count": 0, "skipped_count": 0, "failed_count": 0}
+    last_write = [time.monotonic()]
 
     def _write(extra: dict | None = None) -> None:
+        last_write[0] = time.monotonic()
         try:
             table("email_broadcasts").update(
-                {**counts, **(extra or {})}, filters={"id": f"eq.{broadcast_id}"},
+                {**counts, "heartbeat_at": _iso(datetime.now(timezone.utc)), **(extra or {})},
+                filters={"id": f"eq.{broadcast_id}"},
             )
         except Exception:  # noqa: BLE001
             logger.warning("broadcast progress write failed id=%s", broadcast_id, exc_info=True)
+
+    def _tally() -> tuple[int, int]:
+        sent, failed = counts["sent_count"], counts["failed_count"]
+        if resumed:
+            ledger = _ledger_sent(broadcast_id)
+            if ledger is not None and ledger > sent:
+                sent = counts["sent_count"] = ledger
+                counts["skipped_count"] = max(0, len(recipients) - sent - failed)
+        return sent, failed
 
     try:
         # Read once per run, and only when the text actually uses variables.
@@ -341,16 +434,19 @@ def run_broadcast(broadcast_id: str, subject: str, body: str, recipients: list[s
                 counts["failed_count"] += 1
             else:
                 counts["skipped_count"] += 1
-            if i % PROGRESS_EVERY == 0 and i < len(recipients):
+            if i < len(recipients) and (
+                i % PROGRESS_EVERY == 0 or time.monotonic() - last_write[0] >= HEARTBEAT_EVERY_S
+            ):
                 _write()
-        all_failed = bool(recipients) and counts["failed_count"] == len(recipients)
+        sent, failed = _tally()
         _write({
-            "status": "failed" if all_failed else "sent",
+            "status": _outcome(sent, failed),
             "sent_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception:  # noqa: BLE001
         logger.exception("broadcast run crashed id=%s", broadcast_id)
-        _write({"status": "failed"})
+        sent, _ = _tally()
+        _write({"status": "partial" if sent else "failed"})
 
 
 @router.get("/broadcasts")
@@ -360,3 +456,83 @@ def list_broadcasts(request: Request):
         _BROADCAST_COLUMNS, order="created_at.desc", limit=50,
     )
     return {"broadcasts": [_broadcast_view(r) for r in rows or []]}
+
+
+@router.post("/broadcasts/{broadcast_id}/resume", status_code=202)
+def resume_broadcast(broadcast_id: str, request: Request, background_tasks: BackgroundTasks):
+    """Re-run a broadcast whose run died (`sending` with a stale heartbeat) or
+    ended `failed`/`partial`. The audience is re-resolved now (addresses are
+    never stored, so the original list can't be replayed) and every recipient
+    goes back through `email_sends` dedupe: whoever already got it is a no-op,
+    failed sends are retried, and anyone who joined the audience since gets it.
+    The claim is a conditional update, so two clicks start one run."""
+    require_admin(request)
+    actor = get_session_user_id(request)
+    try:
+        uuid.UUID(broadcast_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No such broadcast.")
+    rows = table("email_broadcasts").select(
+        "id,subject,body,audience,status,heartbeat_at,created_at",
+        filters={"id": f"eq.{broadcast_id}"}, limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No such broadcast.")
+    row = rows[0]
+    if not (_is_stale(row) or row.get("status") in _RESUMABLE):
+        raise HTTPException(status_code=409, detail="This broadcast isn't stuck or failed, so there's nothing to resume.")
+    try:
+        recipients = list(resolve_audiences([row["audience"]])[row["audience"]].values())
+    except ValueError:
+        raise HTTPException(status_code=409, detail="This broadcast's audience no longer exists.")
+    cutoff = pg_quote_value(_iso(_stale_cutoff()))
+    claimed = table("email_broadcasts").update(
+        {
+            "status": "sending",
+            "heartbeat_at": _iso(datetime.now(timezone.utc)),
+            "recipient_count": len(recipients),
+            "sent_at": None,
+        },
+        filters={
+            "id": f"eq.{broadcast_id}",
+            "or": (
+                f"(status.in.({','.join(_RESUMABLE)}),"
+                f"and(status.eq.sending,heartbeat_at.lt.{cutoff}),"
+                "and(status.eq.sending,heartbeat_at.is.null))"
+            ),
+        },
+    )
+    if not claimed:
+        raise HTTPException(status_code=409, detail="This broadcast is already being resumed.")
+    log_admin_action(
+        actor_id=actor, action="email.broadcast_resume",
+        target_type="email_broadcast", target_id=broadcast_id,
+        payload={"audience": row["audience"], "recipient_count": len(recipients), "was": row.get("status")},
+    )
+    background_tasks.add_task(
+        run_broadcast, broadcast_id, row["subject"], row["body"], recipients, resumed=True,
+    )
+    return {"broadcast": _broadcast_view(claimed[0])}
+
+
+class UnsuppressBody(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+@router.post("/suppressions/remove")
+def unsuppress_address(body: UnsuppressBody, request: Request):
+    """Take an address off the suppression list (it unsubscribed by mistake,
+    or asked to be mailed again). The address is only hashed, never stored or
+    audited; a later send of a key that was recorded `suppressed` re-claims it."""
+    require_admin(request)
+    address = body.email.strip()
+    if "@" not in address:
+        raise HTTPException(status_code=422, detail="That isn't an email address.")
+    rhash = email_service.recipient_hash(address)
+    removed = email_service.unsuppress(rhash)
+    log_admin_action(
+        actor_id=get_session_user_id(request), action="email.unsuppress",
+        target_type="email_suppression", target_id=rhash,
+        payload={"removed": removed},
+    )
+    return {"removed": removed}

@@ -5,7 +5,7 @@ Wire format — this is exactly what `services/auth_guard._decode_session` verif
 and what the frontend session BFF (`frontend/src/lib/sessionToken.ts`) issues to
 the browser:
 
-    payload     = {"user_id": <str>, "exp": <unix seconds>}
+    payload     = {"user_id": <str>, "exp": <unix seconds>, "typ": "session"|"handoff"}
     payload_b64 = base64url(json.dumps(payload)).rstrip("=")
     sig_b64     = base64url(HMAC_SHA256(SESSION_SECRET, payload_b64)).rstrip("=")
     token       = f"{payload_b64}.{sig_b64}"
@@ -36,6 +36,15 @@ import time
 
 import config
 
+# `typ` claim values (#756). A `session` token is an API credential; a `handoff`
+# token is the short-lived one the OAuth callback puts in the frontend redirect,
+# good ONLY for the session BFF (frontend/src/app/api/auth/session) to exchange
+# for a session — `auth_guard._decode_session` refuses it. A legacy token minted
+# before the claim existed carries no `typ` and is read as a `session`.
+TOKEN_TYPE_SESSION = "session"
+TOKEN_TYPE_HANDOFF = "handoff"
+TOKEN_TYPES = frozenset({TOKEN_TYPE_SESSION, TOKEN_TYPE_HANDOFF})
+
 # The cookie `auth_guard._decode_session` reads and the frontend BFF sets.
 SESSION_COOKIE_NAME = "sapling_session"
 
@@ -48,8 +57,17 @@ def _now() -> int:
     return int(time.time())
 
 
-def mint_session(user_id: str, ttl: int = DEFAULT_TTL_SECONDS, *, secret: str | None = None) -> str:
-    """Mint a signed session token for `user_id`, valid for `ttl` seconds.
+def mint_session(
+    user_id: str,
+    ttl: int = DEFAULT_TTL_SECONDS,
+    *,
+    secret: str | None = None,
+    typ: str = TOKEN_TYPE_SESSION,
+) -> str:
+    """Mint a signed token for `user_id`, valid for `ttl` seconds.
+
+    `typ` is `session` (an API credential, the default) or `handoff` (the OAuth
+    redirect's one-shot token, which only the session BFF accepts).
 
     `secret` defaults to the live `config.SESSION_SECRET` (read at call time, not
     captured at import, so tests and env overrides take effect). An empty secret
@@ -62,7 +80,9 @@ def mint_session(user_id: str, ttl: int = DEFAULT_TTL_SECONDS, *, secret: str | 
         raise RuntimeError(
             "SESSION_SECRET is not configured; refusing to mint an unsigned session token."
         )
-    payload = json.dumps({"user_id": user_id, "exp": _now() + int(ttl)}).encode()
+    if typ not in TOKEN_TYPES:
+        raise ValueError(f"unknown token typ {typ!r}; expected one of {sorted(TOKEN_TYPES)}")
+    payload = json.dumps({"user_id": user_id, "exp": _now() + int(ttl), "typ": typ}).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     sig = hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")

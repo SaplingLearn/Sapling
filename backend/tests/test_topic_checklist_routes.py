@@ -14,7 +14,7 @@ REAL_DECODE_SESSION = auth_guard._decode_session
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, live_accounts):
     monkeypatch.setattr(routes, "require_self", REAL_REQUIRE_SELF)
     monkeypatch.setattr(auth_guard, "get_session_user_id", REAL_GET_SESSION)
     monkeypatch.setattr(auth_guard, "_decode_session", REAL_DECODE_SESSION)

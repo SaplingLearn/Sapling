@@ -19,6 +19,7 @@ import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useScrollLock } from "@/lib/useScrollLock";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useUser } from "@/context/UserContext";
 import {
   getDocuments,
@@ -56,6 +57,10 @@ export function Library() {
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<View>("grid");
   const [loading, setLoading] = React.useState(true);
+  // A failed load is NOT an empty library (#769): with nothing loaded yet it
+  // renders its own error state + retry instead of "Your library is quiet".
+  const [loadError, setLoadError] = React.useState(false);
+  const loadReq = useLatestRequest();
 
   useScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
@@ -93,19 +98,31 @@ export function Library() {
 
   const load = React.useCallback(async () => {
     if (!userId) return;
+    // Reloads overlap (upload complete + the syllabus re-poll, delete):
+    // the latest one owns the list (#769).
+    const run = loadReq.begin();
     try {
       const [docs, crs] = await Promise.all([
         getDocuments(userId),
         getCourses(userId),
       ]);
+      if (!run.isCurrent()) return;
       setDocuments(docs.documents || []);
       setCourses(crs.courses || []);
+      setLoadError(false);
     } catch (err) {
+      if (!run.isCurrent()) return;
       console.error("library load failed", err);
+      setLoadError(true);
     } finally {
-      setLoading(false);
+      if (run.isCurrent()) setLoading(false);
     }
-  }, [userId]);
+  }, [userId, loadReq]);
+
+  const retryLoad = () => {
+    setLoading(true);
+    load();
+  };
 
   React.useEffect(() => {
     if (userReady && userId) load();
@@ -193,7 +210,7 @@ export function Library() {
                 disabled={courses.length === 0}
                 title={courses.length === 0 ? "Enroll in a course first" : "Upload documents"}
               >
-                <Icon name="up" size={13} /> Upload
+                <Icon name="upload" size={13} /> Upload
               </button>
             </>
           }
@@ -226,7 +243,24 @@ export function Library() {
               view === "grid" ? <LibraryGridSkeleton /> : <LibraryListSkeleton />
             ) : (
               <>
-            {filtered.length === 0 && (
+            {loadError && documents.length === 0 && (
+              <div data-testid="library-load-error" role="alert" style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
+                <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Couldn&apos;t load your library</div>
+                <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
+                  Your documents are safe. Check your connection and try again.
+                </div>
+                <button data-testid="library-load-retry" className="btn btn--sm btn--primary" style={{ marginTop: 16 }} onClick={retryLoad}>
+                  Try again
+                </button>
+              </div>
+            )}
+            {loadError && documents.length > 0 && (
+              <div data-testid="library-load-error" role="alert" style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                Couldn&apos;t refresh your library — showing what was last loaded.
+                <button data-testid="library-load-retry" className="btn btn--ghost btn--sm" onClick={retryLoad}>Retry</button>
+              </div>
+            )}
+            {filtered.length === 0 && !(loadError && documents.length === 0) && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
                 <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
@@ -486,18 +520,28 @@ function DetailPanel({
   const toast = useToast();
   const [scanState, setScanState] = React.useState<"idle" | "scanning" | "done">("idle");
   const [scanResult, setScanResult] = React.useState<{ added: number; existing: number } | null>(null);
+  // The panel is reused across documents, so a scan started on doc A must not
+  // mark doc B "done" (#769): switching documents cancels the in-flight
+  // scan's claim on this panel's state.
+  const scanReq = useLatestRequest();
 
   React.useEffect(() => {
+    scanReq.cancel();
     setScanState("idle");
     setScanResult(null);
-  }, [doc.id]);
+  }, [doc.id, scanReq]);
 
   const runScan = async () => {
+    const run = scanReq.begin();
     setScanState("scanning");
     try {
       const res = await scanDocumentConcepts(doc.id, userId);
-      setScanResult({ added: res.added, existing: res.existing });
-      setScanState("done");
+      // The graph update is real either way — only the panel state is
+      // per-document. The toast still reports it.
+      if (run.isCurrent()) {
+        setScanResult({ added: res.added, existing: res.existing });
+        setScanState("done");
+      }
       if (res.added > 0) {
         toast.success(`Added ${res.added} new concept${res.added === 1 ? "" : "s"} to your graph.`);
       } else if (res.existing > 0) {
@@ -506,7 +550,7 @@ function DetailPanel({
         toast.info("Nothing to add from this document yet.");
       }
     } catch (err: any) {
-      setScanState("idle");
+      if (run.isCurrent()) setScanState("idle");
       toast.error(`Scan failed: ${String(err?.message || err)}`);
     }
   };

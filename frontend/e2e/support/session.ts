@@ -48,10 +48,11 @@ type StorageState = {
 /** POST /api/auth/test-login (#381) through the frontend origin: the raw
  * `sapling_session` token for `userId`. mintStorageState wraps it as a
  * storageState; a journey that drives the same-tab sign-in callback passes
- * it as `auth_token` instead (local-seed.spec.ts). */
+ * `handoffToken` as `auth_token` instead (local-seed.spec.ts) — since #756 the
+ * session BFF exchanges only the OAuth redirect's `typ=handoff` token. */
 export async function mintSessionToken(
   userId: string,
-): Promise<{ token: string; expiresIn: number }> {
+): Promise<{ token: string; handoffToken: string; expiresIn: number }> {
   const res = await fetch(`${FRONTEND_URL}/api/auth/test-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,14 +66,22 @@ export async function mintSessionToken(
         "check backend/.env and re-run `make e2e-up`.",
     );
   }
-  const body = (await res.json()) as { token?: string; expires_in?: number };
-  if (!body.token) {
+  const body = (await res.json()) as {
+    token?: string;
+    handoff_token?: string;
+    expires_in?: number;
+  };
+  if (!body.token || !body.handoff_token) {
     throw new Error(
       `test-login returned no token for ${userId}: ` +
         JSON.stringify(body).slice(0, 200),
     );
   }
-  return { token: body.token, expiresIn: body.expires_in ?? 3600 };
+  return {
+    token: body.token,
+    handoffToken: body.handoff_token,
+    expiresIn: body.expires_in ?? 3600,
+  };
 }
 
 /** Mint a session for a seeded rich-* user and return it as storageState.

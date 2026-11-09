@@ -110,6 +110,28 @@ export interface ConceptNeighbourhoodProps {
   testid?: string;
 }
 
+/** Clearance past a mark's radius, so a line meets its rim rather than its
+ *  stroke (the same allowance the tree's links use, #848). */
+const RIM_GAP = 0.75;
+
+/**
+ * The visible part of an edge: the centre mark's rim to the sibling's rim.
+ * Mark fills are translucent (the tier opacity), so a line drawn centre to
+ * centre showed through both discs. `null` when the marks touch.
+ */
+function rimToRim(
+  x1: number, y1: number, r1: number,
+  x2: number, y2: number, r2: number,
+): [number, number, number, number] | null {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len <= r1 + r2) return null;
+  const ux = dx / len;
+  const uy = dy / len;
+  return [x1 + ux * r1, y1 + uy * r1, x2 - ux * r2, y2 - uy * r2];
+}
+
 export function ConceptNeighbourhood({
   centre,
   siblings,
@@ -129,6 +151,11 @@ export function ConceptNeighbourhood({
   const [grown] = useGrowth(centreVariant, animate);
 
   const { centreOffsetX, slots } = COMPOSITIONS[composition];
+  // The centre's outermost drawn edge: a growth mark keeps its "before" ring
+  // as well as its body, so the line stops at whichever is larger.
+  const centreRadius = centreVariant.kind === "growth"
+    ? Math.max(markRadius(centreVariant.before, false, scale), markRadius(centreVariant.after, false, scale))
+    : markRadius(centre.mastery, false, scale);
   const cx = width / 2 + centreOffsetX;
   const cy = height / 2;
 
@@ -163,19 +190,27 @@ export function ConceptNeighbourhood({
         </filter>
       </defs>
 
-      {placed.map(({ sibling, x, y }) => (
-        <line
-          key={`edge-${sibling.id}`}
-          className="concept-neighbourhood__edge"
-          x1={cx}
-          y1={cy}
-          x2={x}
-          y2={y}
-          strokeOpacity={EDGE_OPACITY}
-          strokeWidth={edgeWidthFor(sibling.strength)}
-          strokeLinecap="round"
-        />
-      ))}
+      {placed.map(({ sibling, x, y }) => {
+        const segment = rimToRim(
+          cx, cy, centreRadius + RIM_GAP,
+          x, y, markRadius(sibling.mastery, false, scale) + RIM_GAP,
+        );
+        if (!segment) return null;
+        const [x1, y1, x2, y2] = segment;
+        return (
+          <line
+            key={`edge-${sibling.id}`}
+            className="concept-neighbourhood__edge"
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            strokeOpacity={EDGE_OPACITY}
+            strokeWidth={edgeWidthFor(sibling.strength)}
+            strokeLinecap="round"
+          />
+        );
+      })}
 
       {placed.map(({ sibling, x, y, captioned }) => (
         <React.Fragment key={sibling.id}>

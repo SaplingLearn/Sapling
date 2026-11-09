@@ -33,6 +33,9 @@ export interface MissedItem {
   correctLabel: string;
   correctText: string;
   explanation: string;
+  /** A typed answer: `chosenText` / `correctText` ARE the answers (there are
+   *  no option letters), so the line reads "You wrote 4 · the answer is 2". */
+  written: boolean;
 }
 
 /**
@@ -63,11 +66,12 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: written ? "Your answer" : r.selected,
+        chosenLabel: written ? "" : r.selected,
         chosenText: textFor(r.selected),
-        correctLabel: written ? "Expected" : r.correct_answer,
+        correctLabel: written ? "" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
+        written,
       };
     });
 }
@@ -111,9 +115,13 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
           >
             {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
             <p className="quiz-missed__line">
-              {item.chosenLabel
-                ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
-                : `No answer · the answer is ${item.correctLabel}`}
+              {item.written
+                ? item.chosenText
+                  ? `You wrote ${item.chosenText} · the answer is ${item.correctText}`
+                  : `No answer · the answer is ${item.correctText}`
+                : item.chosenLabel
+                  ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
+                  : `No answer · the answer is ${item.correctLabel}`}
             </p>
             <div className="quiz-missed__actions">
               {item.explanation && (

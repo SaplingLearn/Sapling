@@ -4,7 +4,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
-import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { FullHeightScreen } from "../FullHeightScreen";
@@ -13,6 +12,7 @@ import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
+import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
@@ -20,7 +20,6 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
-import { TopicChecklistPanel } from "../TopicChecklistPanel";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -69,6 +68,11 @@ export function Tree() {
   const focusNodeId = search.get("node");
 
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
+  // The "My courses" key and the graph, wired together: hovering a course row
+  // fades the other courses; hovering a concept lights its course's row;
+  // clicking a row filters to that course (the same state as the dropdown).
+  const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
+  const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
   const [tier, setTier] = React.useState<Tier>("all");
   const [query, setQuery] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
@@ -89,9 +93,8 @@ export function Tree() {
   const [attempts, setAttempts] = React.useState<AttemptSummary[] | null>(null);
   const attemptsFor = React.useRef<string | null>(null);
 
-  // Manual add-concept composer (#330) — only offered when a single course
-  // is selected: courseFilter is a FILTER whose "all" value gives no course
-  // to attribute the new node to.
+  // Manual add-concept composer (#330) — only offered when a course is picked
+  // in the key: "all" gives no course to attribute the new node to.
   const [addingConcept, setAddingConcept] = React.useState(false);
   const [newConceptName, setNewConceptName] = React.useState("");
   const [savingConcept, setSavingConcept] = React.useState(false);
@@ -120,6 +123,7 @@ export function Tree() {
           source: e.source as string,
           target: e.target as string,
           strength: e.strength,
+          relationship_type: e.relationship_type,
         })),
       );
       setSessions(sessionsRes.sessions || []);
@@ -242,22 +246,35 @@ export function Tree() {
     [courses, activeSemester],
   );
 
+  const courseProgress = React.useMemo(
+    () => courseProgressFor(scopedCourses, nodes),
+    [scopedCourses, nodes],
+  );
+  // Picking a course in the key centres the graph on it and fades the other
+  // courses behind it (they stay on the map); picking it again zooms back out.
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
+  const pickCourse = (courseId: string) => {
+    const next = courseFilter === courseId ? "all" : courseId;
+    setCourseFilter(next);
+    setZoomRequest((r) => ({ courseId: next === "all" ? null : next, seq: (r?.seq ?? 0) + 1 }));
+    setAddingConcept(false);
+    setNewConceptName("");
+  };
+
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return nodes.filter(n => {
-      if (courseFilter !== "all" && n.course_id !== courseFilter) return false;
       if (tier !== "all" && !n.is_subject_root && n.mastery_tier !== tier) return false;
       if (q && !n.name.toLowerCase().includes(q) && !n.subject.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [nodes, courseFilter, tier, query]);
+  }, [nodes, tier, query]);
 
   const filteredEdges = React.useMemo(() => {
     const ids = new Set(filteredNodes.map(n => n.id));
     return edges.filter(e => ids.has(typeof e.source === "string" ? e.source : "") && ids.has(typeof e.target === "string" ? e.target : ""));
   }, [edges, filteredNodes]);
 
-  const conceptCount = filteredNodes.filter(n => !n.is_subject_root).length;
 
   const sessionsForSelected = React.useMemo(() => {
     if (!selected) return [];
@@ -324,12 +341,22 @@ export function Tree() {
 
   const detailPanel = selected && (
     <>
-      <button className="btn btn--ghost btn--sm" onClick={() => setSelected(null)} aria-label="Close detail panel">
-        <Icon name="x" size={12} />
-      </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-        <span style={{ width: 10, height: 10, borderRadius: "50%", background: selected.color }} />
-        <span className="label-micro">{selected.subject}</span>
+      {/* Course on the left, close in the top-right corner. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: selected.color, flexShrink: 0 }} />
+          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {selected.subject}
+          </span>
+        </div>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => setSelected(null)}
+          aria-label="Close detail panel"
+          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
+        >
+          <Icon name="x" size={14} />
+        </button>
       </div>
       <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
         {selected.name}
@@ -443,14 +470,14 @@ export function Tree() {
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
-        actions={
-          <button className="btn btn--sm" onClick={() => setFullscreen(true)}>
-            <Icon name="max" size={13} /> Fullscreen
-          </button>
-        }
       />
 
+      {/* One toolbar. Left: search, course, and Add concept (it needs a single
+          course). Right: the mastery-status pills, kept as pills because their
+          colours double as the graph's legend. Course is a dropdown so the row
+          never wraps however many courses a student has. */}
       <div
+        data-testid="tree-toolbar"
         style={{
           padding: "14px 32px",
           display: "flex",
@@ -462,11 +489,12 @@ export function Tree() {
           flexShrink: 0,
         }}
       >
-        <div style={{ position: "relative", flex: "0 1 260px" }}>
+        <div style={{ position: "relative", flex: "0 1 220px" }}>
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search concepts…"
+            aria-label="Search concepts"
             style={{
               width: "100%", padding: "5px 10px 5px 28px", fontSize: 12,
               border: "1px solid var(--border)", borderRadius: "var(--r-full)",
@@ -477,54 +505,9 @@ export function Tree() {
             <Icon name="search" size={12} />
           </span>
         </div>
-        <FilterPills
-          options={[
-            { value: "all" as Tier, label: "All" },
-            ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
-              value: t as Tier,
-              label: TIER_META[t].label,
-              color: TIER_META[t].color,
-            })),
-          ]}
-          value={tier}
-          onChange={setTier}
-        />
-        <div style={{ flex: 1 }} />
-        <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {conceptCount} node{conceptCount === 1 ? "" : "s"}
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: "12px 32px 0",
-          display: "flex",
-          gap: 8,
-          borderBottom: "1px solid var(--border)",
-          flexWrap: "wrap",
-          paddingBottom: 12,
-        }}
-      >
-        <Pill active={courseFilter === "all"} onClick={() => setCourseFilter("all")}>All courses</Pill>
-        {scopedCourses.map((c) => (
-          <Pill
-            key={c.course_id}
-            testId={`graph-course-filter-${c.course_id}`}
-            active={courseFilter === c.course_id}
-            onClick={() => setCourseFilter(c.course_id)}
-            color={c.color || undefined}
-          >
-            <span style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: courseFilter === c.course_id ? "#fff" : c.color || "var(--accent)",
-              display: "inline-block",
-            }} />
-            {c.course_code || c.course_name}
-          </Pill>
-        ))}
         {courseFilter !== "all" && (
           addingConcept ? (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
               <input
                 data-testid="graph-add-concept-input"
                 autoFocus
@@ -536,7 +519,7 @@ export function Tree() {
                   if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
                 }}
                 style={{
-                  fontSize: 13, padding: "5px 10px", border: "1px solid var(--border)",
+                  fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
                   borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
                 }}
               />
@@ -553,18 +536,29 @@ export function Tree() {
             <button
               data-testid="graph-add-concept"
               className="btn btn--sm"
-              style={{ marginLeft: "auto" }}
               onClick={() => setAddingConcept(true)}
             >
               ＋ Add concept
             </button>
           )
         )}
+        {/* Right side: the mastery-status filter (its colours are the legend). */}
+        <div style={{ marginLeft: "auto" }}>
+          <FilterPills
+            options={[
+              { value: "all" as Tier, label: "All" },
+              ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
+                value: t as Tier,
+                label: TIER_META[t].label,
+                color: TIER_META[t].color,
+              })),
+            ]}
+            value={tier}
+            onChange={setTier}
+          />
+        </div>
       </div>
 
-      {courseFilter !== "all" && userId && (
-        <TopicChecklistPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
-      )}
 
       {/* The graph row absorbs whatever `<main>` has left after the TopBar and
           the filter row. `flex: 1` + `minHeight: 0` rather than a viewport
@@ -577,14 +571,55 @@ export function Tree() {
           {loading ? (
             <GraphPanelSkeleton />
           ) : (
-            <KnowledgeGraph
-              nodes={filteredNodes}
-              edges={filteredEdges}
-              width={size.w}
-              height={size.h}
-              highlightId={suggestId || selected?.id}
-              onNodeClick={(n) => setSelected(n)}
-            />
+            <>
+              <KnowledgeGraph
+                nodes={filteredNodes}
+                edges={filteredEdges}
+                width={size.w}
+                height={size.h}
+                highlightId={suggestId || selected?.id}
+                onNodeClick={(n) => setSelected(n)}
+                zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
+                legible
+                focusCourseId={keyHoverCourse ?? (courseFilter === "all" ? null : courseFilter)}
+                onHoverCourse={setGraphHoverCourse}
+                zoomRequest={zoomRequest}
+              />
+              {/* The course key picks the Tree's course: click one to centre it
+                  (others fade behind) and add concepts to it; again for all. */}
+              {scopedCourses.length > 0 && (
+                <CoursesKey
+                  courseProgress={courseProgress}
+                  placement="top-left"
+                  testIdPrefix="tree"
+                  rowTestId={(id) => `graph-course-filter-${id}`}
+                  activeCourseId={keyHoverCourse ?? graphHoverCourse}
+                  selectedCourseId={courseFilter === "all" ? null : courseFilter}
+                  onHoverCourse={setKeyHoverCourse}
+                  onSelectCourse={pickCourse}
+                  selectHint="Click to center this course, again to zoom out"
+                />
+              )}
+              {/* The graph's own top-right corner: a Fullscreen icon the
+                  width of the zoom stack, which sits directly below it. */}
+              <button
+                type="button"
+                data-testid="graph-fullscreen"
+                aria-label="Fullscreen"
+                title="Fullscreen"
+                className="btn btn--ghost btn--sm"
+                onClick={() => setFullscreen(true)}
+                style={{
+                  position: "absolute", top: FULLSCREEN_BTN.top, right: 12, zIndex: 5,
+                  width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h, padding: 0,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-panel)", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)", boxShadow: "var(--shadow-sm)",
+                }}
+              >
+                <Icon name="max" size={13} />
+              </button>
+            </>
           )}
         </div>
         {selected && !isMobile && (
@@ -669,7 +704,13 @@ function FullscreenGraph({
         height={size.h}
         highlightId={highlightId}
         onNodeClick={onNodeClick}
+        legible
       />
     </div>
   );
 }
+
+/** The graph-corner Fullscreen icon: as wide as the 2D zoom stack (36px:
+ *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
+const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
+

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services import gradescope_service as gs
 from services import request_limits
+from tests.split_patches import patch_gradescope
 
 
 client = TestClient(app)
@@ -164,8 +165,8 @@ class TestSyncAuthz:
         # NOT routes.gradescope.table, so mocking the latter alone would leave
         # this passing by accident via the suite's global stub.
         with (
-            patch("routes.gradescope.table", side_effect=_table_factory({})),
-            patch("routes.gradescope.enrollment_id_for", return_value=None),
+            patch_gradescope("table", side_effect=_table_factory({})),
+            patch_gradescope("enrollment_id_for", return_value=None),
         ):
             r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1"})
         assert r.status_code == 404
@@ -193,8 +194,8 @@ class TestLinkIsEnrollmentKeyed:
             return m
 
         with (
-            patch("routes.gradescope.table", side_effect=factory),
-            patch("routes.gradescope.enrollment_id_for", return_value="enr-1"),
+            patch_gradescope("table", side_effect=factory),
+            patch_gradescope("enrollment_id_for", return_value="enr-1"),
         ):
             r = client.post(
                 "/api/gradescope/link",
@@ -216,8 +217,8 @@ class TestLinkIsEnrollmentKeyed:
 
     def test_link_404s_when_the_user_has_no_enrollment(self):
         with (
-            patch("routes.gradescope.table", side_effect=_table_factory({})),
-            patch("routes.gradescope.enrollment_id_for", return_value=None),
+            patch_gradescope("table", side_effect=_table_factory({})),
+            patch_gradescope("enrollment_id_for", return_value=None),
         ):
             r = client.post(
                 "/api/gradescope/link",
@@ -241,12 +242,12 @@ class TestLinkIsEnrollmentKeyed:
             ]
         }
         with (
-            patch("routes.gradescope.table", side_effect=_table_factory(rows)),
-            patch(
-                "routes.gradescope.scoped_user_enrollments",
+            patch_gradescope("table", side_effect=_table_factory(rows)),
+            patch_gradescope(
+                "scoped_user_enrollments",
                 return_value=[{"id": "enr-1", "offering_id": "off-1"}],
             ),
-            patch("routes.gradescope.offering_course_id", return_value="course-1"),
+            patch_gradescope("offering_course_id", return_value="course-1"),
         ):
             r = client.get("/api/gradescope/links", params={"user_id": "u1"})
 
@@ -260,7 +261,7 @@ class TestRateLimiting:
     def test_courses_limited_after_10(self):
         # /courses caps at 10/5min. No creds → 404 for the allowed calls,
         # then 429 once the window is full.
-        with patch("routes.gradescope.table", side_effect=_table_factory({})):
+        with patch_gradescope("table", side_effect=_table_factory({})):
             statuses = [
                 client.get("/api/gradescope/courses", params={"user_id": "u1"}).status_code
                 for _ in range(11)
@@ -269,7 +270,7 @@ class TestRateLimiting:
         assert statuses[10] == 429
 
     def test_sync_limited_after_10(self):
-        with patch("routes.gradescope.table", side_effect=_table_factory({})):
+        with patch_gradescope("table", side_effect=_table_factory({})):
             statuses = [
                 client.post("/api/gradescope/sync/c1", params={"user_id": "u1"}).status_code
                 for _ in range(11)
@@ -282,7 +283,7 @@ class TestRateLimiting:
         # fourth must be rejected before launching a browser or sending Duo.
         body = {"user_id": "u1", "bu_username": "x", "bu_password": "y"}
         with (
-            patch("routes.gradescope.table", side_effect=_table_factory({})),
+            patch_gradescope("table", side_effect=_table_factory({})),
             patch.object(gs, "login_via_bu_sso", side_effect=gs.GradescopeAuthError("Unavailable")) as login,
         ):
             statuses = [
@@ -295,7 +296,7 @@ class TestRateLimiting:
 
     def test_limit_is_per_user(self):
         # u1 exhausts its window; u2 is unaffected.
-        with patch("routes.gradescope.table", side_effect=_table_factory({})):
+        with patch_gradescope("table", side_effect=_table_factory({})):
             for _ in range(11):
                 client.get("/api/gradescope/courses", params={"user_id": "u1"})
             other = client.get("/api/gradescope/courses", params={"user_id": "u2"}).status_code
@@ -457,7 +458,7 @@ class TestAuthenticationValidation:
     def test_credential_network_failure_returns_502_without_saving(self):
         saved = MagicMock()
         with (
-            patch("routes.gradescope.table", return_value=saved),
+            patch_gradescope("table", return_value=saved),
             patch.object(gs, "login", side_effect=gs.GradescopeFetchError("Couldn't reach Gradescope")),
         ):
             response = client.post("/api/gradescope/credentials", json={
@@ -579,13 +580,13 @@ class TestSyncPersistence:
         if fail_insert:
             tables["assignments"].insert.side_effect = RuntimeError("write failed")
         with (
-            patch("routes.gradescope.table", side_effect=lambda name: tables[name]),
-            patch("routes.gradescope._all_enrollments_for", return_value=["fall-enrollment"]),
-            patch("routes.gradescope._load_creds", return_value=MagicMock()),
-            patch("routes.gradescope._establish_connection"),
+            patch_gradescope("table", side_effect=lambda name: tables[name]),
+            patch_gradescope("_all_enrollments_for", return_value=["fall-enrollment"]),
+            patch_gradescope("_load_creds", return_value=MagicMock()),
+            patch_gradescope("_establish_connection"),
             patch.object(gs, "list_assignments", return_value=incoming),
-            patch("routes.gradescope.current_term", return_value={"id": "current-term"}),
-            patch("routes.gradescope.scoped_user_enrollments", return_value=[
+            patch_gradescope("current_term", return_value={"id": "current-term"}),
+            patch_gradescope("scoped_user_enrollments", return_value=[
                 {"id": eid, "offering_id": f"{eid}-offering"} for eid in current_enrollments
             ]),
         ):
@@ -618,7 +619,8 @@ class TestSyncPersistence:
         response, tables = self._sync([{"id": "new"}], fail_insert=True)
         assert response.status_code == 502
         tables["gradescope_course_links"].update.assert_not_called()
-        tables["gradescope_credentials"].update.assert_not_called()
+        # The failed attempt IS recorded (#770), but never as a completed sync.
+        assert "last_synced_at" not in tables["gradescope_credentials"].update.call_args.args[0]
 
     def test_duplicate_scraped_id_is_skipped_not_written_twice(self):
         response, tables = self._sync([
@@ -681,10 +683,10 @@ class TestSemesterScoping:
         from routes.gradescope import _all_enrollments_for
 
         with (
-            patch("routes.gradescope.scoped_user_enrollments", return_value=[
+            patch_gradescope("scoped_user_enrollments", return_value=[
                 {"id": "fall-enrollment", "offering_id": "fall"},
             ]) as scoped,
-            patch("routes.gradescope.term_id_for_label", return_value="fall-term"),
+            patch_gradescope("term_id_for_label", return_value="fall-term"),
         ):
             assert _all_enrollments_for("u1", "c1", "Fall 2025") == ["fall-enrollment"]
         scoped.assert_called_once_with("u1", course_id="c1", term_id="fall-term")
@@ -693,18 +695,18 @@ class TestSemesterScoping:
         from routes.gradescope import _all_enrollments_for
 
         with (
-            patch("routes.gradescope.scoped_user_enrollments", return_value=[
+            patch_gradescope("scoped_user_enrollments", return_value=[
                 {"id": "spring-enrollment", "offering_id": "spring"},
             ]) as scoped,
-            patch("routes.gradescope.term_id_for_label", return_value=None),
+            patch_gradescope("term_id_for_label", return_value=None),
         ):
             assert _all_enrollments_for("u1", "c1", "Missing term") == []
         scoped.assert_not_called()
 
     def test_links_for_an_unknown_semester_are_empty_not_every_term(self):
         with (
-            patch("routes.gradescope.scoped_user_enrollments") as scoped,
-            patch("routes.gradescope.term_id_for_label", return_value=None),
+            patch_gradescope("scoped_user_enrollments") as scoped,
+            patch_gradescope("term_id_for_label", return_value=None),
         ):
             r = client.get("/api/gradescope/links", params={"user_id": "u1", "semester": "Missing term"})
         assert r.json() == {"links": []}
@@ -714,8 +716,8 @@ class TestSemesterScoping:
         writes = MagicMock()
         writes.insert.side_effect = lambda payload: [{"id": "link", **payload}]
         with (
-            patch("routes.gradescope.table", return_value=writes),
-            patch("routes.gradescope._all_enrollments_for", return_value=["fall-enrollment"]),
+            patch_gradescope("table", return_value=writes),
+            patch_gradescope("_all_enrollments_for", return_value=["fall-enrollment"]),
         ):
             response = client.post("/api/gradescope/link", json={
                 "user_id": "u1", "sapling_course_id": "c1", "gradescope_course_id": "gs-fall", "semester": "Fall 2025",
@@ -730,8 +732,8 @@ class TestRemoveLink:
         links = MagicMock()
         links.delete.return_value = deleted
         with (
-            patch("routes.gradescope.table", return_value=links),
-            patch("routes.gradescope._all_enrollments_for", return_value=enrollments),
+            patch_gradescope("table", return_value=links),
+            patch_gradescope("_all_enrollments_for", return_value=enrollments),
         ):
             params = {"user_id": "u1"}
             if semester is not None:
@@ -764,7 +766,7 @@ class TestBuSsoCredentials:
         saved = MagicMock()
         cookies = {"_gradescope_session": "session-cookie", "signed_token": "remember-cookie"}
         with (
-            patch("routes.gradescope.table", return_value=saved),
+            patch_gradescope("table", return_value=saved),
             patch.object(gs, "login_via_bu_sso", return_value=cookies) as login,
             patch.object(gs, "login_with_cookies") as verify,
         ):
@@ -783,14 +785,16 @@ class TestBuSsoCredentials:
     def test_unusable_sso_cookie_is_never_saved(self):
         saved = MagicMock()
         with (
-            patch("routes.gradescope.table", return_value=saved),
+            patch_gradescope("table", return_value=saved),
             patch.object(gs, "login_via_bu_sso", return_value={"_gradescope_session": "invalid"}),
             patch.object(gs, "login_with_cookies", side_effect=gs.GradescopeAuthError("Session expired")),
         ):
             response = client.post("/api/gradescope/credentials/bu-sso", json={
                 "user_id": "u1", "bu_username": "student", "bu_password": "private-password",
             })
-        assert response.status_code == 401
+        # Typed, never 401: a 401 means Sapling's own session is gone (#770).
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "gradescope_auth_failed"
         saved.upsert.assert_not_called()
 
     def test_unexpected_sso_exception_does_not_expose_internals(self):
@@ -858,3 +862,253 @@ def test_bu_browser_never_fills_credentials_on_an_untrusted_redirect(url):
             gs.login_via_bu_sso("student", "private-password")
     assert find.call_count == 2  # school button and picker only, never credential fields
     browser.close.assert_called_once()
+
+
+# ── #770: connection state + typed Gradescope auth errors ─────────────────────
+#
+# 401 is reserved for "the Sapling session is invalid" — the frontend's global
+# handling owns it. A Gradescope credential failure is a different state with a
+# different remedy (reconnect Gradescope), so it travels as a typed non-401:
+#   422 gradescope_auth_failed      the credentials the user just SUBMITTED
+#   409 gradescope_reauth_required  the STORED credentials stopped working
+#   404 gradescope_not_connected    nothing stored (e.g. after a disconnect)
+
+
+def _creds(**overrides):
+    from routes.gradescope import StoredCreds
+    base = {"auth_mode": "cookies", "gradescope_session": "s", "updated_at": "2026-11-01T00:00:00+00:00"}
+    return StoredCreds(**{**base, **overrides})
+
+
+def _code(response):
+    return response.json()["error"]["code"]
+
+
+def _linked_sync_tables():
+    tables = {n: MagicMock() for n in ("gradescope_course_links", "gradescope_credentials", "assignments")}
+    tables["gradescope_course_links"].select.return_value = [
+        {"id": "link", "enrollment_id": "e1", "gradescope_course_id": "gs1"},
+    ]
+    return tables
+
+
+class TestTypedGradescopeAuthErrors:
+    def test_rejected_submitted_password_is_422_not_401(self):
+        saved = MagicMock()
+        with (
+            patch_gradescope("table", return_value=saved),
+            patch.object(gs, "login", side_effect=gs.GradescopeAuthError("Invalid email or password")),
+        ):
+            r = client.post("/api/gradescope/credentials", json={
+                "user_id": "u1", "email": "student@example.edu", "password": "wrong",
+            })
+        assert r.status_code == 422
+        assert _code(r) == "gradescope_auth_failed"
+        # The legacy detail and the coded message both stay human-readable.
+        assert r.json()["detail"] == "Invalid email or password"
+        assert r.json()["error"]["message"] == "Invalid email or password"
+        saved.upsert.assert_not_called()
+
+    def test_rejected_submitted_cookies_is_422(self):
+        saved = MagicMock()
+        with (
+            patch_gradescope("table", return_value=saved),
+            patch.object(gs, "login_with_cookies", side_effect=gs.GradescopeAuthError("Session expired")),
+        ):
+            r = client.post("/api/gradescope/credentials", json={
+                "user_id": "u1", "auth_mode": "cookies", "gradescope_session": "stale",
+            })
+        assert r.status_code == 422
+        assert _code(r) == "gradescope_auth_failed"
+        saved.upsert.assert_not_called()
+
+    def test_sync_with_rejected_stored_creds_is_409_and_marks_needs_reauth(self):
+        tables = _linked_sync_tables()
+        with (
+            patch_gradescope("table", side_effect=lambda n: tables[n]),
+            patch_gradescope("_all_enrollments_for", return_value=["e1"]),
+            patch_gradescope("_load_creds", return_value=_creds()),
+            patch_gradescope("_establish_connection", side_effect=gs.GradescopeAuthError("Session expired")),
+        ):
+            r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1", "semester": "Fall 2025"})
+        assert r.status_code == 409
+        assert _code(r) == "gradescope_reauth_required"
+        update = tables["gradescope_credentials"].update
+        update.assert_called_once()
+        written = update.call_args.args[0]
+        assert written["needs_reauth"] is True
+        assert written["last_sync_error"] == "auth_failed"
+        assert written["last_attempt_at"]
+        assert "last_synced_at" not in written
+        # Guarded on the credential version that failed: a re-save that landed
+        # mid-sync must not be flagged stale by this older attempt.
+        assert update.call_args.kwargs["filters"] == {
+            "user_id": "eq.u1", "updated_at": "eq.2026-11-01T00:00:00+00:00",
+        }
+        tables["assignments"].insert.assert_not_called()
+
+    def test_course_listing_with_rejected_stored_creds_is_409_and_marks_needs_reauth(self):
+        creds_table = MagicMock()
+        with (
+            patch_gradescope("table", return_value=creds_table),
+            patch_gradescope("_load_creds", return_value=_creds()),
+            patch_gradescope("_establish_connection", side_effect=gs.GradescopeAuthError("Session expired")),
+        ):
+            r = client.get("/api/gradescope/courses", params={"user_id": "u1"})
+        assert r.status_code == 409
+        assert _code(r) == "gradescope_reauth_required"
+        assert creds_table.update.call_args.args[0] == {"needs_reauth": True}
+
+    @pytest.mark.parametrize("was_stale", [True, False])
+    def test_successful_course_listing_clears_needs_reauth(self, was_stale):
+        creds_table = MagicMock()
+        with (
+            patch_gradescope("table", return_value=creds_table),
+            patch_gradescope("_load_creds", return_value=_creds(needs_reauth=was_stale)),
+            patch_gradescope("_establish_connection"),
+            patch.object(gs, "list_student_courses", return_value=[]),
+        ):
+            r = client.get("/api/gradescope/courses", params={"user_id": "u1"})
+        assert r.status_code == 200
+        if was_stale:
+            assert creds_table.update.call_args.args[0] == {"needs_reauth": False}
+        else:
+            creds_table.update.assert_not_called()  # no write churn when nothing changed
+
+    def test_upstream_outage_during_sync_records_fetch_failed_without_reauth(self):
+        tables = _linked_sync_tables()
+        with (
+            patch_gradescope("table", side_effect=lambda n: tables[n]),
+            patch_gradescope("_all_enrollments_for", return_value=["e1"]),
+            patch_gradescope("_load_creds", return_value=_creds()),
+            patch_gradescope("_establish_connection", side_effect=gs.GradescopeFetchError("down")),
+        ):
+            r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1", "semester": "Fall 2025"})
+        assert r.status_code == 502
+        written = tables["gradescope_credentials"].update.call_args.args[0]
+        assert written["last_sync_error"] == "fetch_failed"
+        assert "needs_reauth" not in written, "an outage says nothing about the credentials"
+
+    def test_sync_without_stored_creds_is_typed_not_connected(self):
+        tables = _linked_sync_tables()
+        with (
+            patch_gradescope("table", side_effect=lambda n: tables[n]),
+            patch_gradescope("_all_enrollments_for", return_value=["e1"]),
+            patch_gradescope("_load_creds", return_value=None),
+        ):
+            r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1", "semester": "Fall 2025"})
+        assert r.status_code == 404
+        assert _code(r) == "gradescope_not_connected"
+
+    def test_a_status_write_failure_never_masks_the_sync_answer(self):
+        tables = _linked_sync_tables()
+        tables["gradescope_credentials"].update.side_effect = RuntimeError("db down")
+        with (
+            patch_gradescope("table", side_effect=lambda n: tables[n]),
+            patch_gradescope("_all_enrollments_for", return_value=["e1"]),
+            patch_gradescope("_load_creds", return_value=_creds()),
+            patch_gradescope("_establish_connection", side_effect=gs.GradescopeAuthError("expired")),
+        ):
+            r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1", "semester": "Fall 2025"})
+        assert r.status_code == 409
+        assert _code(r) == "gradescope_reauth_required"
+
+
+class TestConnectionStatus:
+    def _status(self, rows):
+        with patch_gradescope("table", side_effect=_table_factory({"gradescope_credentials": rows})):
+            return client.get("/api/gradescope/status", params={"user_id": "u1"}).json()
+
+    def test_no_credentials_is_disconnected(self):
+        body = self._status([])
+        assert body["state"] == "disconnected"
+        assert body["connected"] is False and body["has_credentials"] is False
+        assert body["needs_reauth"] is False
+
+    def test_rejected_credentials_are_not_reported_as_connected(self):
+        body = self._status([{
+            "auth_mode": "cookies", "needs_reauth": True, "last_sync_error": "auth_failed",
+            "last_attempt_at": "2026-11-02T00:00:00+00:00", "last_synced_at": None, "updated_at": "x",
+        }])
+        assert body["state"] == "needs_reauth"
+        assert body["connected"] is False
+        assert body["has_credentials"] is True
+        assert body["last_sync_error"] == "auth_failed"
+        assert body["last_attempt_at"] == "2026-11-02T00:00:00+00:00"
+
+    def test_working_credentials_are_connected(self):
+        body = self._status([{"auth_mode": "password", "needs_reauth": False, "last_synced_at": "t"}])
+        assert body["state"] == "connected"
+        assert body["connected"] is True
+        assert body["last_synced_at"] == "t"
+
+
+class TestSyncOutcomeIsRecorded:
+    """Drives the TestSyncPersistence harness; only the outcome writes are new."""
+
+    _sync = TestSyncPersistence._sync
+
+    def test_success_clears_reauth_and_error_and_stamps_both_times(self):
+        response, tables = self._sync([{"id": "new", "name": "HW"}])
+        assert response.status_code == 200
+        written = tables["gradescope_credentials"].update.call_args.args[0]
+        assert written["needs_reauth"] is False
+        assert written["last_sync_error"] is None
+        assert written["last_synced_at"] == written["last_attempt_at"]
+
+    def test_partial_write_is_recorded_without_advancing_last_synced_at(self):
+        response, tables = self._sync([{"id": "new"}, {"id": "existing"}], fail_insert=True)
+        assert response.status_code == 200
+        written = tables["gradescope_credentials"].update.call_args.args[0]
+        assert written["last_sync_error"] == "partial_write"
+        assert written["needs_reauth"] is False, "the login worked"
+        assert "last_synced_at" not in written
+
+    def test_total_write_failure_is_recorded(self):
+        response, tables = self._sync([{"id": "new"}], fail_insert=True)
+        assert response.status_code == 502
+        written = tables["gradescope_credentials"].update.call_args.args[0]
+        assert written["last_sync_error"] == "write_failed"
+        assert "last_synced_at" not in written
+
+
+class TestCredentialLifecycle:
+    def test_a_fresh_save_clears_the_stale_markers(self):
+        saved = MagicMock()
+        with (
+            patch_gradescope("table", return_value=saved),
+            patch.object(gs, "login_with_cookies"),
+        ):
+            r = client.post("/api/gradescope/credentials", json={
+                "user_id": "u1", "auth_mode": "cookies", "gradescope_session": "fresh",
+            })
+        assert r.status_code == 200
+        payload = saved.upsert.call_args.args[0]
+        assert payload["needs_reauth"] is False
+        assert payload["last_sync_error"] is None
+
+    def test_bu_sso_save_clears_the_stale_markers(self):
+        saved = MagicMock()
+        with (
+            patch_gradescope("table", return_value=saved),
+            patch.object(gs, "login_via_bu_sso", return_value={"_gradescope_session": "s"}),
+            patch.object(gs, "login_with_cookies"),
+        ):
+            r = client.post("/api/gradescope/credentials/bu-sso", json={
+                "user_id": "u1", "bu_username": "student", "bu_password": "pw",
+            })
+        assert r.status_code == 200
+        payload = saved.upsert.call_args.args[0]
+        assert payload["needs_reauth"] is False
+        assert payload["last_sync_error"] is None
+
+    def test_disconnect_keeps_course_links(self):
+        # Decided default (#770): links survive a disconnect so reconnecting
+        # restores them; /status reports 'disconnected' and sync answers the
+        # typed gradescope_not_connected until credentials are saved again.
+        tables = {n: MagicMock() for n in ("gradescope_credentials", "gradescope_course_links")}
+        with patch_gradescope("table", side_effect=lambda n: tables[n]):
+            r = client.delete("/api/gradescope/credentials", params={"user_id": "u1"})
+        assert r.status_code == 200
+        tables["gradescope_credentials"].delete.assert_called_once()
+        tables["gradescope_course_links"].delete.assert_not_called()

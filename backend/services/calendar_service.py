@@ -34,10 +34,16 @@ def load_existing_assignment_keys(user_id: str) -> set:
 def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> int:
     """Insert assignments (deduped per the user's enrollment set, #16) on the
     enrollment-keyed schema. Each assignment must carry a ``course_id`` — it is
-    resolved to the user's enrollment (created if missing). Returns rows inserted."""
+    resolved to the user's EXISTING enrollment. Returns rows inserted.
+
+    A calendar/syllabus write never creates an enrollment (#766): with
+    ``create=True`` a save for a course the student had dropped silently
+    re-enrolled them. Assignments for a course the student isn't enrolled in
+    are skipped (and logged), like courseless ones."""
     from services.academics import enrollment_id_for
     existing_keys = load_existing_assignment_keys(user_id)
     rows = []
+    not_enrolled: set[str] = set()
     for a in assignments:
         title = (a.get("title") or "").strip()
         due_raw = (a.get("due_date") or "").strip()
@@ -47,8 +53,10 @@ def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str
         if key in existing_keys:
             continue
         course_id = a.get("course_id")
-        enrollment_id = enrollment_id_for(user_id, course_id, create=True) if course_id else None
+        enrollment_id = enrollment_id_for(user_id, course_id, create=False) if course_id else None
         if not enrollment_id:
+            if course_id:
+                not_enrolled.add(course_id)
             continue  # decision: every assignment is course-tied
         existing_keys.add(key)
         rows.append({
@@ -60,6 +68,11 @@ def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str
             "notes": encrypt_if_present(a.get("notes")),  # #126: encrypt at write
             "source": source,
         })
+    if not_enrolled:
+        logger.info(
+            "calendar: skipped assignments for %d course(s) user=%s is not "
+            "enrolled in: %s", len(not_enrolled), user_id, sorted(not_enrolled),
+        )
     if rows:
         table("assignments").insert(rows)
     return len(rows)

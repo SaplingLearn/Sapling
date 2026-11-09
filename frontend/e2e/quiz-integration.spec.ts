@@ -312,7 +312,7 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
     await expect(panel).toContainText(scriptedStem(offset + 2), { timeout: 30_000 });
     await chooseOption(page, label);
     await page.getByTestId("quiz-submit-answer").click();
-    await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+    await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
     await page.getByTestId("quiz-next").click();
   }
 
@@ -411,7 +411,7 @@ test("the note's Generate quiz gate holds, and the round trip reopens the note",
 /**
  * §6: a deep link into a term the student is not looking at says so ONCE and
  * then gets out of the way — the ordinary home renders underneath, and the
- * "Choose a topic" list offers only in-scope courses.
+ * topic list offers only in-scope courses.
  *
  * The seed makes CS101 an awkward probe: rich-user-active is enrolled in it in
  * BOTH Fall 2025 and Spring 2026, so no term excludes it while still leaving
@@ -440,9 +440,11 @@ test("a deep link outside the active semester toasts and falls back to the ordin
   // The topic list beside it groups only the in-scope courses.
   const list = page.getByTestId("quiz-pick-list");
   await expect(list).toBeVisible();
-  await expect(list).toContainText("CS101");
-  await expect(list).toContainText("MATH210");
-  await expect(list).not.toContainText("BIO110");
+  // Groups are headed by the course NAME (the code and colour live on the
+  // filter pills above the list since #849).
+  await expect(list).toContainText("Introduction to Computer Science");
+  await expect(list).toContainText("Linear Algebra");
+  await expect(list).not.toContainText("Cell Biology");
   await expect(page.getByTestId(`quiz-pick-${NODE_BIO_DNA}`)).toHaveCount(0);
   // Recursion is in scope: it is a row in the list unless it is the concept
   // already on the card, which the list does not offer twice.
@@ -507,7 +509,7 @@ test("screenshots for the lead", async ({ page }) => {
 
   // Question 2's answer is C, so choosing B is the wrong-answer reveal.
   await page.getByTestId("quiz-submit-answer").click();
-  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
   await page.getByTestId("quiz-next").click();
   await expect(panel).toContainText(scriptedStem(2), { timeout: 30_000 });
   await chooseOption(page, "B");
@@ -522,7 +524,7 @@ test("screenshots for the lead", async ({ page }) => {
   await expect(panel).toContainText(scriptedStem(3), { timeout: 30_000 });
   await chooseOption(page, "A");
   await page.getByTestId("quiz-submit-answer").click();
-  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct.");
+  await expect(page.getByTestId("quiz-review-verdict")).toContainText("Correct");
   await page.getByTestId("quiz-next").click();
 
   await expect(page.getByTestId("quiz-results")).toBeVisible({ timeout: 60_000 });

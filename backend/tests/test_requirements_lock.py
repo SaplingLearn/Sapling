@@ -14,7 +14,15 @@ import re
 
 from packaging.utils import canonicalize_name
 
-from tests.dependency_manifest import OCR_STACK, lock_pins, read, requirement_lines, requirements
+from tests.dependency_manifest import (
+    OCR_STACK,
+    WORKER_REQUIREMENTS,
+    lock_pins,
+    read,
+    requirement_lines,
+    requirements,
+    worker_requirements,
+)
 
 _SPEC = re.compile(r"[<>=!~]")
 
@@ -31,7 +39,8 @@ def test_no_requirement_is_completely_unconstrained():
     every one of them to an exact hashed version; requirements.txt is the
     manifest of intent, not the install plan.
     """
-    bare = [ln for ln in requirement_lines() if not _SPEC.search(ln)]
+    lines = requirement_lines() + requirement_lines(WORKER_REQUIREMENTS)
+    bare = [ln for ln in lines if not _SPEC.search(ln)]
     assert bare == [], f"dependencies with no version specifier at all: {bare}"
 
 
@@ -49,3 +58,15 @@ def test_lock_is_hash_pinned():
     lock = read("requirements.lock")
     # A real lock carries per-artifact hashes for --require-hashes installs.
     assert "--hash=sha256:" in lock
+
+
+def test_the_ocr_stack_lives_only_in_the_worker_requirements():
+    """#116: requirements.txt is the API image's set. An OCR package there would
+    put torch back into the api image (and it is never in the lock); a non-OCR
+    package in requirements-worker.txt would be missing from the api image and
+    from the lock CI installs."""
+    api = {canonicalize_name(r.name) for r in requirements()}
+    worker = {canonicalize_name(r.name) for r in worker_requirements()}
+    assert not api & OCR_STACK, f"OCR packages in requirements.txt: {sorted(api & OCR_STACK)}"
+    assert worker and worker <= OCR_STACK, f"not OCR stack: {sorted(worker - OCR_STACK)}"
+    assert not worker & set(lock_pins())

@@ -3,7 +3,7 @@
 import React, { Suspense } from "react";
 import { TopNav } from "./TopNav";
 import { SideNav } from "./SideNav";
-import { FloatingActions } from "./FloatingActions";
+import { ShellCornerActions } from "./ShellActions";
 import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
@@ -39,14 +39,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
       >
         <a href="#main-content" className="skip-link">Skip to content</a>
         <SideNav />
-        {/* The content column. Its wrapper exists only to anchor the two
-            olive corner pieces: they round the page's top-left and
-            bottom-left into the rail, sit outside the scrollport so they
-            never scroll away, and track the rail's width as it collapses
-            because they ride this column's left edge. See .shell-corner. */}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", position: "relative" }}>
-          <span aria-hidden className="shell-corner shell-corner--top" />
-          <span aria-hidden className="shell-corner shell-corner--bottom" />
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
           <main
             id="main-content"
             tabIndex={-1}
@@ -57,9 +50,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
             // so this — not <body> — is what scrolls. `useScrollLock` targets it.
             data-scroll-container=""
-            // No z-index: a stacking context here would trap every
-            // overlay inside it (graph full view, modals) below the
-            // .shell-corner pieces, which must sit above opaque screens.
             style={{
               flex: 1,
               overflowY: "auto",
@@ -69,8 +59,9 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           >
             <NavFeatureGate>{children}</NavFeatureGate>
           </main>
+          {/* Outside <main>, so it never scrolls with the page. */}
+          <ShellCornerActions />
         </div>
-        <FloatingActions />
         <Suspense fallback={null}>
           <FeedbackFlow />
           <SessionFeedbackGlobal />
@@ -109,7 +100,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
       >
         <NavFeatureGate>{children}</NavFeatureGate>
       </main>
-      <FloatingActions />
       <Suspense fallback={null}>
         <FeedbackFlow />
         <SessionFeedbackGlobal />

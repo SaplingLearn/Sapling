@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   adminSendTestBroadcast: vi.fn(),
   adminSendBroadcast: vi.fn(),
   adminPreviewBroadcast: vi.fn(),
+  adminResumeBroadcast: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -78,6 +79,10 @@ const fill = (subject: string, body: string) => {
   fireEvent.change(screen.getByTestId("email-body"), { target: { value: body } });
 };
 
+/** Both sends wait for the preview of the current draft; wait it out. */
+const previewed = (testId = "email-send-test") =>
+  waitFor(() => expect((screen.getByTestId(testId) as HTMLButtonElement).disabled).toBe(false), PREVIEW_WAIT);
+
 describe("EmailBroadcastsTab", () => {
   afterEach(() => {
     cleanup();
@@ -117,7 +122,7 @@ describe("EmailBroadcastsTab", () => {
     expect(send.disabled).toBe(true);
 
     fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
-    expect(send.disabled).toBe(false);
+    await previewed("email-send");
     expect(send.textContent).toBe("Send to 12 people");
 
     fireEvent.change(screen.getByTestId("email-body"), { target: { value: "   " } });
@@ -130,6 +135,7 @@ describe("EmailBroadcastsTab", () => {
     await screen.findByTestId("email-audience-waitlist_all");
     fill("News", "Hello there");
     fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
+    await previewed("email-send");
     fireEvent.click(screen.getByTestId("email-send"));
 
     const confirm = (await screen.findByTestId("email-send-confirm")) as HTMLButtonElement;
@@ -160,10 +166,38 @@ describe("EmailBroadcastsTab", () => {
     render(<EmailBroadcastsTab />);
     await screen.findByTestId("email-send-test");
     fill("Subj", "Body");
+    await previewed();
     fireEvent.click(screen.getByTestId("email-send-test"));
     await waitFor(() => expect(api.adminSendTestBroadcast).toHaveBeenCalledWith({ subject: "Subj", body: "Body" }));
     await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith(expect.stringContaining("admin@bu.edu")));
     expect(toastSpies.success.mock.calls[0][0]).toContain("sent");
+  });
+
+  it("keeps both sends disabled until the preview matches the current draft", async () => {
+    // #763: the preview's unknown_variables must describe THIS text, or a send
+    // could go out from a stale, clean-looking preview.
+    const pending = deferred<{ subject: string; html: string; unknown_variables: string[] }>();
+    render(<EmailBroadcastsTab />);
+    await screen.findByTestId("email-audience-waitlist_all");
+    fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
+    fill("News", "Hello");
+    await previewed("email-send"); // the default mock previews it
+
+    api.adminPreviewBroadcast.mockReturnValueOnce(pending.promise);
+    fill("News", "Hello {{frist_name}}");
+    const send = screen.getByTestId("email-send") as HTMLButtonElement;
+    const test = screen.getByTestId("email-send-test") as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    expect(test.disabled).toBe(true);
+    await waitFor(
+      () => expect(api.adminPreviewBroadcast).toHaveBeenLastCalledWith({ subject: "News", body: "Hello {{frist_name}}" }),
+      PREVIEW_WAIT,
+    );
+    expect(send.disabled).toBe(true); // still in flight
+
+    await act(async () => { pending.resolve({ subject: "News", html: "<p>x</p>", unknown_variables: ["frist_name"] }); });
+    expect(send.disabled).toBe(true); // current now, and it says no
+    expect(screen.getByTestId("email-unknown-variables")).toBeTruthy();
   });
 
   it("debounces the draft into a preview request and shows the HTML in a sandboxed iframe", async () => {
@@ -233,8 +267,10 @@ describe("EmailBroadcastsTab", () => {
     // The compose form still works, and a later good preview clears the error.
     api.adminPreviewBroadcast.mockResolvedValue({ subject: "Ok", html: "<p>ok</p>" });
     fill("Ok", "fine");
-    expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(false);
+    // No preview of this draft yet, so no sending from it either.
+    expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(true);
     await waitFor(() => expect(frame().getAttribute("srcdoc")).toBe("<p>ok</p>"), PREVIEW_WAIT);
+    expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByTestId("email-preview-error")).toBeNull();
   });
 
@@ -271,6 +307,83 @@ describe("EmailBroadcastsTab", () => {
 
     await act(async () => { vi.advanceTimersByTime(POLL_MS * 4); });
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a poll that was in flight when a new broadcast was sent", async () => {
+    // #763: the old list landing after the send used to erase the new row and,
+    // with nothing left `sending`, stop the polling.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const inFlight = deferred<{ broadcasts: unknown[] }>();
+    api.adminListBroadcasts
+      .mockResolvedValueOnce({ broadcasts: [broadcast({ id: "b1", status: "sending" })] })
+      .mockReturnValueOnce(inFlight.promise)
+      .mockResolvedValue({ broadcasts: [broadcast({ id: "b9", status: "sending", subject: "News" })] });
+    api.adminSendBroadcast.mockResolvedValue({ broadcast: broadcast({ id: "b9", status: "sending", subject: "News" }) });
+
+    render(<EmailBroadcastsTab />);
+    await screen.findByTestId("email-history-row-b1");
+    await act(async () => { vi.advanceTimersByTime(POLL_MS); }); // poll #2 now in flight
+
+    fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
+    fill("News", "Hello");
+    await previewed("email-send");
+    fireEvent.click(screen.getByTestId("email-send"));
+    fireEvent.change(await screen.findByTestId("email-send-confirm-input"), { target: { value: "SEND" } });
+    fireEvent.click(screen.getByTestId("email-send-confirm"));
+    await screen.findByTestId("email-history-row-b9");
+
+    // The stale list (b1 done, no b9) arrives late: ignored.
+    await act(async () => { inFlight.resolve({ broadcasts: [broadcast({ id: "b1", status: "sent" })] }); });
+    expect(screen.getByTestId("email-history-row-b9")).toBeTruthy();
+    expect(screen.getByTestId("email-history-status-b9").textContent).toBe("sending");
+
+    // ...and polling carries on for the new row.
+    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows partial and skipped outcomes honestly", async () => {
+    api.adminListBroadcasts.mockResolvedValue({ broadcasts: [
+      broadcast({ id: "p", status: "partial", sent_count: 2, failed_count: 1, resumable: true }),
+      broadcast({ id: "s", status: "skipped", sent_count: 0, skipped_count: 3 }),
+    ] });
+    render(<EmailBroadcastsTab />);
+    expect((await screen.findByTestId("email-history-status-p")).textContent).toBe("partial");
+    expect(screen.getByTestId("email-history-status-s").textContent).toBe("skipped");
+    expect(screen.getByTestId("email-history-resume-p")).toBeTruthy();
+    expect(screen.queryByTestId("email-history-resume-s")).toBeNull();
+  });
+
+  it("marks a stalled broadcast and resumes it", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    api.adminListBroadcasts.mockResolvedValue({ broadcasts: [
+      broadcast({ id: "b1", status: "sending", stale: true, resumable: true }),
+    ] });
+    api.adminResumeBroadcast.mockResolvedValue({
+      broadcast: broadcast({ id: "b1", status: "sending", stale: false, resumable: false }),
+    });
+    render(<EmailBroadcastsTab />);
+    expect((await screen.findByTestId("email-history-status-b1")).textContent).toBe("stalled");
+    // A stalled run isn't going anywhere: no polling until it's resumed.
+    await act(async () => { vi.advanceTimersByTime(POLL_MS * 2); });
+    expect(api.adminListBroadcasts).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId("email-history-resume-b1"));
+    await waitFor(() => expect(api.adminResumeBroadcast).toHaveBeenCalledWith("b1"));
+    await waitFor(() => expect(screen.getByTestId("email-history-status-b1").textContent).toBe("sending"));
+    expect(screen.queryByTestId("email-history-resume-b1")).toBeNull();
+    expect(toastSpies.success).toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    expect(api.adminListBroadcasts).toHaveBeenCalledTimes(2);
+  });
+
+  it("toasts a refused resume", async () => {
+    api.adminListBroadcasts.mockResolvedValue({ broadcasts: [broadcast({ id: "b1", status: "failed", resumable: true })] });
+    const body = { detail: "This broadcast is already being resumed." };
+    api.adminResumeBroadcast.mockRejectedValue(Object.assign(new Error("409"), { status: 409, body }));
+    render(<EmailBroadcastsTab />);
+    fireEvent.click(await screen.findByTestId("email-history-resume-b1"));
+    await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining("Resume failed")));
   });
 
   describe("personalization variables", () => {
@@ -405,6 +518,7 @@ describe("EmailBroadcastsTab", () => {
       render(<EmailBroadcastsTab />);
       await screen.findByTestId("email-send-test");
       fill("Subj", "Hi {{frist_name}}");
+      await previewed(); // the mock preview doesn't flag it; the server's 422 does
       fireEvent.click(screen.getByTestId("email-send-test"));
       await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith(`Test send failed: ${msg}`));
     });

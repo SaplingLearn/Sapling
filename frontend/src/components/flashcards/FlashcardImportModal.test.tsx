@@ -24,7 +24,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
@@ -44,14 +44,27 @@ const URL_CARDS = vi.hoisted(() => [
   { front: "Ribosome", back: "Protein synthesis", row: 2 },
 ]);
 
+// A "slow fetch": the click captures the onCards the tab was rendered with,
+// and the test delivers the reply later — after a tab switch / reopen (#769).
+const slow = vi.hoisted(() => ({ deliver: null as null | ((next: unknown) => void) }));
+
 vi.mock("./tabs/UrlTab", async () => {
-  const { createElement } = await import("react");
+  const { createElement, Fragment } = await import("react");
   return {
     UrlTab: ({ onCards }: { onCards: (next: typeof URL_CARDS) => void }) =>
       createElement(
-        "button",
-        { type: "button", onClick: () => onCards(URL_CARDS) },
-        "Inject mock deck",
+        Fragment,
+        null,
+        createElement(
+          "button",
+          { type: "button", onClick: () => onCards(URL_CARDS) },
+          "Inject mock deck",
+        ),
+        createElement(
+          "button",
+          { type: "button", onClick: () => { slow.deliver = onCards as (next: unknown) => void; } },
+          "Start slow fetch",
+        ),
       ),
   };
 });
@@ -76,18 +89,22 @@ const COURSE: EnrolledCourse = {
   term: "Spring 2026",
 };
 
-function renderModal() {
-  return render(
+function modal(open = true, courses: EnrolledCourse[] = [COURSE]) {
+  return (
     <ToastProvider>
       <FlashcardImportModal
-        open
+        open={open}
         onClose={() => {}}
-        courses={[COURSE]}
+        courses={courses}
         documents={[]}
         onImported={() => {}}
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
+}
+
+function renderModal() {
+  return render(modal());
 }
 
 // Accessible-name helpers. Tab buttons carry their bare label ("Paste",
@@ -166,5 +183,73 @@ describe("FlashcardImportModal shared deck across tabs (#183)", () => {
     fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
     expect(importButton(1)).toBeInTheDocument();
     expect(screen.getByText(/1 valid/)).toBeInTheDocument();
+  });
+});
+
+describe("FlashcardImportModal request scope (#769)", () => {
+  it("a request from a tab you left doesn't overwrite the deck", () => {
+    renderModal();
+
+    fireEvent.click(tabButton("URL"));
+    fireEvent.click(screen.getByRole("button", { name: "Start slow fetch" }));
+    fireEvent.click(tabButton("Paste"));
+    fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
+    expect(importButton(1)).toBeInTheDocument();
+
+    act(() => { slow.deliver?.(URL_CARDS); });
+    expect(importButton(1)).toBeInTheDocument();
+  });
+
+  it("leaving and re-entering the tab doesn't revive the old request", () => {
+    renderModal();
+
+    fireEvent.click(tabButton("URL"));
+    fireEvent.click(screen.getByRole("button", { name: "Start slow fetch" }));
+    fireEvent.click(tabButton("Paste"));
+    fireEvent.click(tabButton("URL"));
+
+    act(() => { slow.deliver?.(URL_CARDS); });
+    expect(importButton(0)).toBeInTheDocument();
+  });
+
+  it("a request from before close + reopen doesn't land in the new session", () => {
+    const { rerender } = renderModal();
+
+    fireEvent.click(tabButton("URL"));
+    fireEvent.click(screen.getByRole("button", { name: "Start slow fetch" }));
+    rerender(modal(false));
+    rerender(modal(true));
+
+    act(() => { slow.deliver?.(URL_CARDS); });
+    expect(importButton(0)).toBeInTheDocument();
+  });
+
+  it("the deck still lands when the request finishes on its own tab", () => {
+    renderModal();
+
+    fireEvent.click(tabButton("URL"));
+    fireEvent.click(screen.getByRole("button", { name: "Start slow fetch" }));
+    act(() => { slow.deliver?.(URL_CARDS); });
+    expect(importButton(2)).toBeInTheDocument();
+  });
+
+  it("a parent re-render with a new courses array doesn't wipe the deck mid-edit", () => {
+    const { rerender } = renderModal();
+
+    fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta\ngamma\tdelta" } });
+    expect(importButton(2)).toBeInTheDocument();
+
+    rerender(modal(true, [{ ...COURSE }]));
+    expect(importButton(2)).toBeInTheDocument();
+  });
+
+  it("reopening still resets the deck", () => {
+    const { rerender } = renderModal();
+
+    fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
+    expect(importButton(1)).toBeInTheDocument();
+    rerender(modal(false));
+    rerender(modal(true));
+    expect(importButton(0)).toBeInTheDocument();
   });
 });

@@ -4,7 +4,10 @@
  *
  * A `flag` is a backend `hide_<feature>` flag (services/feature_flags.py
  * NAV_FEATURES): "on" hides the destination from both navs, and
- * NavFeatureGate sends its routes to /dashboard. Dashboard has no flag; it is
+ * NavFeatureGate sends its routes to /dashboard; the backend also 404s the
+ * feature's own API (services/feature_flags.py NAV_FEATURE_API, #771), so a
+ * page that calls another feature's endpoint must be listed as an exemption
+ * there. Dashboard has no flag; it is
  * where a hidden feature's routes land. Pure data + string checks only.
  */
 export type NavItem = { href: string; label: string; icon: string; flag?: string };
@@ -15,24 +18,23 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Learn",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "home" },
-      { href: "/learn",     label: "Tutor",     icon: "brain", flag: "hide_tutor" },
-      { href: "/quiz",      label: "Quiz",      icon: "flask", flag: "hide_quiz" },
-      { href: "/tree",      label: "Tree",      icon: "tree",  flag: "hide_tree" },
-      { href: "/study",     label: "Study",     icon: "bolt",  flag: "hide_study" },
+      { href: "/learn",     label: "Tutor",     icon: "clover", flag: "hide_tutor" },
+      { href: "/tree",      label: "Tree",      icon: "trees",  flag: "hide_tree" },
+      { href: "/study",     label: "Study",     icon: "study",  flag: "hide_study" },
     ],
   },
   {
     label: "Organize",
     items: [
-      { href: "/library",  label: "Library",  icon: "book", flag: "hide_library" },
-      { href: "/calendar", label: "Calendar", icon: "cal",  flag: "hide_calendar" },
+      { href: "/library",  label: "Library",  icon: "library", flag: "hide_library" },
+      { href: "/calendar", label: "Calendar", icon: "calendar",  flag: "hide_calendar" },
     ],
   },
   {
     label: "Community",
     items: [
-      { href: "/social",       label: "Social",       icon: "users",  flag: "hide_social" },
-      { href: "/achievements", label: "Achievements", icon: "trophy", flag: "hide_achievements" },
+      { href: "/social",       label: "Social",       icon: "social",  flag: "hide_social" },
+      { href: "/achievements", label: "Achievements", icon: "achievements", flag: "hide_achievements" },
     ],
   },
   {
@@ -45,9 +47,23 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/**
+ * Flagged features that are NOT their own nav row: they live inside another
+ * destination (Quiz is reached from Study since #753) but keep a `hide_*`
+ * flag that hides their pages. `section` is the nav group they belong to, so
+ * the admin flags tab files them there.
+ */
+export type NestedNavFeature = { href: string; label: string; flag: string; section: string };
+export const NESTED_NAV_FEATURES: NestedNavFeature[] = [
+  { href: "/quiz", label: "Quiz", flag: "hide_quiz", section: "Learn" },
+];
+
 /** The `hide_*` flag guarding `pathname` (segment-boundary match), or null. */
 export function navFlagForPath(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
+  for (const item of NESTED_NAV_FEATURES) {
+    if (pathname === item.href || pathname.startsWith(item.href + "/")) return item.flag;
+  }
   for (const section of NAV_SECTIONS) {
     for (const item of section.items) {
       if (item.flag && (pathname === item.href || pathname.startsWith(item.href + "/"))) {

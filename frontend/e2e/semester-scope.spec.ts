@@ -26,10 +26,9 @@ test("dashboard defaults to all semesters; picking a term scopes it; All clears"
 }) => {
   await page.goto("/dashboard");
 
-  // Expand the "My courses" key overlay (collapsed by default). The toggle
-  // only mounts once enrollments have loaded, so Playwright's auto-wait on
-  // the click doubles as the "dashboard data arrived" gate.
-  await page.getByTestId("dashboard-courses-key-toggle").click();
+  // The "My courses" key only mounts once enrollments have loaded, so waiting
+  // for it doubles as the "dashboard data arrived" gate.
+  await expect(page.getByTestId("dashboard-courses-key")).toBeVisible({ timeout: 30_000 });
 
   const courseRow = (code: string) =>
     page.getByTestId("dashboard-course-code").filter({ hasText: code });

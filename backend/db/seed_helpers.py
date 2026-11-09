@@ -10,6 +10,8 @@ import os
 from collections import defaultdict
 from urllib.parse import urlparse
 
+import httpx
+
 from db.connection import table  # module-level so tests can monkeypatch it
 
 #: Same set as routes/auth.py TEST_AUTH_ENVS: e2e-up.sh accepts APP_ENV=test.
@@ -67,12 +69,40 @@ def upsert(table_name: str, row: dict, on_conflict: str) -> None:
     record(table_name, created=not exists)
 
 
+def _is_unique_violation(err: httpx.HTTPStatusError) -> bool:
+    """PostgREST's 409 for a UNIQUE/PK collision (23505). A 409 is also how it
+    answers a foreign-key violation (23503) — that one is a real seed bug and
+    must still raise."""
+    if err.response is None or err.response.status_code != 409:
+        return False
+    try:
+        return (err.response.json() or {}).get("code") == "23505"
+    except ValueError:
+        return False
+
+
+def _insert_unless_duplicate(table_name: str, row: dict) -> bool:
+    """INSERT `row`; False when a concurrent writer got there first.
+
+    The exists-check before it is check-then-insert, so it can lose a race:
+    with a live worker (E2E_WORKER=1, `jobs_queue` on) a course_context.refresh
+    job upserts the same `offering_concept_stats` rows while the integration
+    lane reseeds them. The row being there is all a seed wants, so a UNIQUE
+    collision counts as present instead of failing the seed."""
+    try:
+        table(table_name).insert(row)
+    except httpx.HTTPStatusError as err:
+        if not _is_unique_violation(err):
+            raise
+        return False
+    return True
+
+
 def insert_if_absent(table_name: str, row_id: str, row: dict) -> None:
     if exists_by(table_name, {"id": row_id}):
         record(table_name, created=False)
         return
-    table(table_name).insert({"id": row_id, **row})
-    record(table_name, created=True)
+    record(table_name, created=_insert_unless_duplicate(table_name, {"id": row_id, **row}))
 
 
 def insert_by_keys(table_name: str, row: dict, keys: str) -> None:
@@ -80,8 +110,7 @@ def insert_by_keys(table_name: str, row: dict, keys: str) -> None:
     if exists_by(table_name, {key: row[key] for key in keys.split(",")}):
         record(table_name, created=False)
         return
-    table(table_name).insert(row)
-    record(table_name, created=True)
+    record(table_name, created=_insert_unless_duplicate(table_name, row))
 
 
 def print_summary(order: list[str], header: str) -> int:

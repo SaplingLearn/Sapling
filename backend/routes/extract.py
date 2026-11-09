@@ -2,6 +2,7 @@ import os
 import sys
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from services.extraction_service import (
     extract_text_from_image_bytes,
@@ -76,7 +77,9 @@ async def extract_pdf(
     max_pages: int = Query(25, ge=1, le=200),
     lang: str = Query("eng"),
 ):
-    _enforce_ocr_limits(request)  # 401 unauthenticated, 429 rate-limited (#182)
+    # #182: 401 unauthenticated, 429 rate-limited. Off the loop (#117): the
+    # session check can read the account and the limiter can be a DB call.
+    await run_in_threadpool(_enforce_ocr_limits, request)
     if file.content_type not in ALLOWED_PDF_TYPES:
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     pdf_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
@@ -126,7 +129,9 @@ async def extract_image(
     file: UploadFile = File(...),
     lang: str = Query("eng"),
 ):
-    _enforce_ocr_limits(request)  # 401 unauthenticated, 429 rate-limited (#182)
+    # #182: 401 unauthenticated, 429 rate-limited. Off the loop (#117): the
+    # session check can read the account and the limiter can be a DB call.
+    await run_in_threadpool(_enforce_ocr_limits, request)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Only PNG/JPG/WEBP images are supported")
     image_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)

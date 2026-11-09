@@ -106,3 +106,12 @@ describe("flag off", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("one rule for build flags", () => {
+  it("the inline IS_TEST_MODE agrees with isTruthyBuildFlag (the analytics gate's rule)", async () => {
+    for (const flag of ["1", "true", "0", "false", "", "yes", "TRUE"]) {
+      const { IS_TEST_MODE, isTruthyBuildFlag } = await load(flag);
+      expect(IS_TEST_MODE, flag).toBe(isTruthyBuildFlag(flag));
+    }
+  });
+});

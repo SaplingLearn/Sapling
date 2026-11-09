@@ -136,7 +136,7 @@ describe("TopNav — dropdown behavior", () => {
     // matching on the <a> doesn't pick up the children correctly in
     // jsdom when an icon stub sits next to the label.
     expect(screen.getByText("Tutor")).toBeTruthy();
-    expect(screen.getByText("Quiz")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Quiz" })).toBeNull();
     expect(screen.getByText("Tree")).toBeTruthy();
     expect(screen.getByText("Study")).toBeTruthy();
   });

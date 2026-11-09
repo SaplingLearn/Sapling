@@ -118,8 +118,10 @@ def extract_page_with_gemini_vision(image_bytes: bytes) -> str:
     try:
         # #118: one usage row per transcribed page — this per-page loop is the
         # largest per-document LLM spend in the app, so it must show up in
-        # llm_usage. No user_id here: extraction is content-addressed and
-        # user-agnostic; the request-id contextvar still attributes the row.
+        # llm_usage. No user_id passed: extraction is content-addressed and
+        # user-agnostic, so log_llm_usage attributes the row to the acting
+        # user (the request's, or the queued upload's job user; #119) and
+        # the request-id contextvar correlates it.
         result = record_agent_usage(
             _run_from_anywhere(
                 ocr_vision_agent.run(

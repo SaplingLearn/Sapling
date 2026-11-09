@@ -9,6 +9,7 @@ import {
   adminEmailStatus,
   adminListBroadcasts,
   adminPreviewBroadcast,
+  adminResumeBroadcast,
   adminSendBroadcast,
   adminSendTestBroadcast,
 } from "@/lib/api";
@@ -24,7 +25,10 @@ import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
  * Admin "Email" tab: compose a plain-text broadcast, preview it, send a test
  * to yourself, then send it to an audience behind a typed confirmation. The
  * send is accepted (202) and delivered in the background, so the history
- * table polls while any broadcast is still `sending`.
+ * table polls while any broadcast is still `sending`. A run the server marks
+ * `stale` (no heartbeat: a deploy killed it) shows as "stalled", and it or a
+ * `failed`/`partial` one gets a Resume button, which re-runs it through the
+ * per-recipient dedupe so nobody gets it twice.
  *
  * The preview is the real email: the draft is debounced to
  * `POST /email/broadcasts/preview`, and the server-rendered HTML document is
@@ -50,8 +54,13 @@ const PREVIEW_HEIGHT = 720;
 const BROADCAST_CHIP: Record<EmailBroadcast["status"], string> = {
   sending: "chip chip--info",
   sent: "chip chip--accent",
+  partial: "chip chip--warn",
+  skipped: "chip",
   failed: "chip chip--warn",
 };
+
+/** The draft a preview was rendered for: Send waits until it is the current one. */
+const draftKey = (subject: string, body: string) => JSON.stringify([subject, body]);
 
 function people(n: number) {
   return `${n} ${n === 1 ? "person" : "people"}`;
@@ -98,9 +107,10 @@ export function EmailBroadcastsTab() {
   const confirmInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [preview, setPreview] = React.useState<EmailBroadcastPreview | null>(null);
-  // The trimmed subject the shown preview was rendered for, so its filled-in
-  // subject is only used while it still matches the draft.
-  const [previewFor, setPreviewFor] = React.useState<string | null>(null);
+  // The trimmed draft the shown preview was rendered for. Its filled-in
+  // subject is only shown, and both sends are only enabled, while it still
+  // matches the draft: otherwise `unknown_variables` may describe old text.
+  const [previewFor, setPreviewFor] = React.useState<{ subject: string; body: string } | null>(null);
   const [previewError, setPreviewError] = React.useState(false);
   // Only the latest preview request may update the pane; bumped on every
   // draft change (and on unmount) so an older, slower response is dropped.
@@ -114,7 +124,7 @@ export function EmailBroadcastsTab() {
         (r) => {
           if (seq !== previewSeq.current) return;
           setPreview(r);
-          setPreviewFor(previewSubject);
+          setPreviewFor({ subject: previewSubject, body: previewBody });
           setPreviewError(false);
         },
         () => {
@@ -180,26 +190,56 @@ export function EmailBroadcastsTab() {
     return () => { alive = false; };
   }, [toast]);
 
-  // Poll the history only while something is still going out.
-  const anySending = broadcasts.some((b) => b.status === "sending");
+  // Bumped whenever this tab changes the history itself (a send, a resume),
+  // so a poll that was already in flight when it did can't overwrite the new
+  // row with its older list (and stop the polling with it).
+  const historySeq = React.useRef(0);
+
+  // Poll the history only while something is still going out (a stale run
+  // isn't going anywhere until it's resumed).
+  const anySending = broadcasts.some((b) => b.status === "sending" && !b.stale);
   React.useEffect(() => {
     if (!anySending) return;
     const id = window.setInterval(() => {
+      const seq = historySeq.current;
       adminListBroadcasts().then(
-        (r) => setBroadcasts(r.broadcasts || []),
+        (r) => { if (seq === historySeq.current) setBroadcasts(r.broadcasts || []); },
         () => { /* transient; the next tick retries */ },
       );
     }, POLL_MS);
     return () => window.clearInterval(id);
   }, [anySending]);
 
+  const upsertBroadcast = (row: EmailBroadcast) => {
+    historySeq.current += 1;
+    setBroadcasts((prev) => [row, ...prev.filter((b) => b.id !== row.id)]);
+  };
+
+  const [resuming, setResuming] = React.useState<string | null>(null);
+  const resume = async (b: EmailBroadcast) => {
+    setResuming(b.id);
+    try {
+      const r = await adminResumeBroadcast(b.id);
+      upsertBroadcast(r.broadcast);
+      toast.success(`Resuming “${b.subject}”. Anyone it already reached is skipped.`);
+    } catch (err) {
+      toast.error(`Resume failed: ${sendErrorText(err)}`);
+    } finally {
+      setResuming(null);
+    }
+  };
+
   const selectedAudience = audiences.find((a) => a.key === audience) ?? null;
   const n = selectedAudience?.count ?? 0;
   const hasDraft = subject.trim().length > 0 && body.trim().length > 0;
   const variables = status?.variables ?? [];
+  const previewCurrent =
+    preview !== null && previewFor !== null &&
+    draftKey(previewFor.subject, previewFor.body) === draftKey(previewSubject, previewBody);
   const unknownVars = preview?.unknown_variables ?? [];
   const hasUnknown = unknownVars.length > 0;
-  const canSend = hasDraft && !hasUnknown && selectedAudience !== null && n > 0 && !sending;
+  const canSend =
+    hasDraft && previewCurrent && !hasUnknown && selectedAudience !== null && n > 0 && !sending;
   const notConfigured = status !== null && !status.configured;
   const confirmOk = confirmText.trim() === String(n) || confirmText.trim() === "SEND";
 
@@ -229,7 +269,7 @@ export function EmailBroadcastsTab() {
     setSending(true);
     try {
       const r = await adminSendBroadcast({ subject: subject.trim(), body: body.trim(), audience });
-      setBroadcasts((prev) => [r.broadcast, ...prev.filter((b) => b.id !== r.broadcast.id)]);
+      upsertBroadcast(r.broadcast);
       toast.success(`Sending to ${people(n)}. Progress shows in History below.`);
       setSubject("");
       setBody("");
@@ -362,7 +402,7 @@ export function EmailBroadcastsTab() {
               type="button"
               className="btn btn--ghost btn--sm"
               data-testid="email-send-test"
-              disabled={!hasDraft || hasUnknown || testing}
+              disabled={!hasDraft || !previewCurrent || hasUnknown || testing}
               onClick={() => void sendTest()}
             >
               {testing ? "Sending test…" : "Send test to me"}
@@ -398,7 +438,7 @@ export function EmailBroadcastsTab() {
               style={{ fontWeight: 600, padding: "12px 16px", borderBottom: "1px solid var(--border)", overflowWrap: "anywhere" }}
             >
               {previewSubject
-                ? (preview && previewFor === previewSubject ? preview.subject : previewSubject)
+                ? (preview && previewFor?.subject === previewSubject ? preview.subject : previewSubject)
                 : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(no subject)</span>}
             </div>
             {preview ? (
@@ -453,8 +493,21 @@ export function EmailBroadcastsTab() {
                     <td style={{ ...tdStyle, color: "var(--text-dim)" }}>{labelFor(b.audience)}</td>
                     <td style={tdStyle}>
                       <span className={BROADCAST_CHIP[b.status] ?? "chip"} data-testid={`email-history-status-${b.id}`}>
-                        {b.status}
+                        {b.stale ? "stalled" : b.status}
                       </span>
+                      {b.resumable && (
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm"
+                          data-testid={`email-history-resume-${b.id}`}
+                          title="Send it to everyone in this audience it hasn't reached yet."
+                          disabled={resuming !== null}
+                          onClick={() => void resume(b)}
+                          style={{ marginLeft: 8 }}
+                        >
+                          {resuming === b.id ? "Resuming…" : "Resume"}
+                        </button>
+                      )}
                     </td>
                     <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
                       <span style={{ fontFamily: "var(--font-mono)" }}>{b.sent_count}/{b.recipient_count}</span>

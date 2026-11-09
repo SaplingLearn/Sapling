@@ -10,7 +10,7 @@ import json
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import RedirectResponse
 
@@ -23,17 +23,18 @@ from config import (
     SECURE_COOKIES,
 )
 from db.connection import table
+from db.scope import service_route
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
-from services.auth_guard import require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id, guard_off_loop
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 from services.request_context import current_request_id
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
-# the single source of truth for CSRF handling — see routes/auth.py. These are
-# pure helpers with no request state, so importing them keeps the calendar
-# connect flow DRY without duplicating the security-critical bits.
-from routes.auth import (
+# the single source of truth for CSRF handling — see services/auth/oauth_state.py.
+# These are pure helpers with no request state, so importing them keeps the
+# calendar connect flow DRY without duplicating the security-critical bits.
+from services.auth.oauth_state import (
     _google_client_config,
     _encode_state,
     _decode_state,
@@ -224,7 +225,9 @@ def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
     return resp
 
 
-@router.get("/callback")
+# #115: Google's redirect carries no session; the user comes from the signed
+# state cookie -> service role under db_user_scope.
+@router.get("/callback", dependencies=[Depends(service_route)])
 def calendar_callback(
     request: FastAPIRequest,
     code: str = Query(None),
@@ -297,9 +300,9 @@ def calendar_callback(
 @router.post("/extract")
 async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id: str = Form(None)):
     if user_id:
-        require_self(user_id, request)
+        await guard_off_loop(require_self, user_id, request)
     else:
-        user_id = get_session_user_id(request)
+        user_id = await guard_off_loop(get_session_user_id, request)
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"

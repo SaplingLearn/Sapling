@@ -77,6 +77,74 @@ describe('uploadDocumentStream', () => {
 });
 
 /**
+ * #759: the outcome is a function of the server's terminal events, never a
+ * generic throw when the server sent a typed error.
+ */
+describe('uploadDocumentStream outcome', () => {
+  const sse = (type: string, step: string, message: string, data?: unknown) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, step, message, data })}\n\n`;
+  const respond = (...blocks: string[]) =>
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeStreamingResponse([blocks.join('')]),
+    );
+
+  it('result then done with a document_id is processed', async () => {
+    respond(
+      sse('status', 'start', 'go'),
+      sse('result', 'finalize', 'ok', { summary: { abstract: 'A.' } }),
+      sse('status', 'done', 'Saved.', { document_id: 'doc-9' }),
+    );
+    const out = await uploadDocumentStream(new FormData(), () => {});
+    expect(out).toEqual({
+      kind: 'processed',
+      documentId: 'doc-9',
+      result: { summary: { abstract: 'A.' } },
+    });
+  });
+
+  it('error:failed before any result resolves failed with the server message', async () => {
+    respond(
+      sse('status', 'start', 'go'),
+      sse('error', 'failed', 'No text could be read.', { request_id: 'rid-1' }),
+      sse('status', 'done', 'Failed.'),
+    );
+    const out = await uploadDocumentStream(new FormData(), () => {});
+    expect(out).toEqual({
+      kind: 'failed',
+      message: 'No text could be read.',
+      requestId: 'rid-1',
+      afterResult: false,
+    });
+  });
+
+  it('error:failed after a result is failed, not processed', async () => {
+    respond(
+      sse('result', 'finalize', 'ok', { summary: { abstract: 'A.' } }),
+      sse('error', 'failed', 'processed but could not be saved', { request_id: 'rid-2' }),
+      sse('status', 'done', 'Failed.'),
+    );
+    const out = await uploadDocumentStream(new FormData(), () => {});
+    expect(out).toMatchObject({ kind: 'failed', afterResult: true, requestId: 'rid-2' });
+  });
+
+  it('done without a document_id is failed (nothing confirmed saved)', async () => {
+    respond(
+      sse('result', 'finalize', 'ok', { summary: { abstract: 'A.' } }),
+      sse('status', 'done', 'Saved.'),
+    );
+    const out = await uploadDocumentStream(new FormData(), () => {});
+    expect(out.kind).toBe('failed');
+  });
+
+  it('throws when the stream closes with no terminal event', async () => {
+    respond(sse('status', 'start', 'go'), sse('progress', 'classify', 'x'));
+    await expect(uploadDocumentStream(new FormData(), () => {})).rejects.toThrow(
+      /ended before/i,
+    );
+  });
+});
+
+/**
  * Cross-origin auth contract: every direct fetch() in api.ts that targets an
  * auth-protected endpoint MUST send credentials: 'include' so the browser
  * attaches the SameSite=None session cookie configured for

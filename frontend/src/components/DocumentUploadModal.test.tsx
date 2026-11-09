@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Component tests for DocumentUploadModal — covers SSE-driven error UX:
- *   1. Terminal error event (`step="failed"`) -> toast.error
- *      (the only error step since #151b — `step="fallback"` died with the
- *      legacy pipeline)
- *   2. Retry button mints a fresh request_id on the second uploadDocumentStream call
- *   3. request_id is surfaced under the row with a working "copy" button
+ * Component tests for DocumentUploadModal — covers the upload state machine
+ * (#759): the row's terminal state is a function of uploadDocumentStream's
+ * resolved UploadOutcome (one toast per failure, the server's message kept),
+ * retry reuses the request_id, re-analyze starts clean, timeout vs cancel
+ * aborts are told apart, and every close route aborts in-flight uploads and
+ * fires onComplete when something was processed. Plus the request_id
+ * "Reference:" line with a working "copy" button.
  *
  * Plus the inline course-add flow (#186): a course added via the modal's
  * search must be immediately selectable in the per-file Course dropdown,
@@ -17,7 +18,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Hoisted mock module: vitest evaluates the vi.mock factory before imports,
@@ -38,7 +39,7 @@ import {
   uploadDocumentStream,
   addCourse,
   onboardingCoursesSearch,
-  type UploadEvent,
+  type UploadOutcome,
   type EnrolledCourse,
   type OnboardingCourse,
 } from "@/lib/api";
@@ -110,50 +111,46 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("DocumentUploadModal SSE error UX", () => {
-  it("emits toast.error on terminal SSE error event (step=failed)", async () => {
-    const events: UploadEvent[] = [
-      { type: "status", step: "start", message: "Document received." },
-      {
-        type: "error",
-        step: "failed",
-        message: "Could not read.",
-        data: { request_id: "trace-failed-1" },
-      },
-    ];
-    mockedUpload.mockImplementation(async (_fd, onEvent) => {
-      for (const e of events) onEvent(e);
-      throw new Error("Upload stream ended without a result event.");
-    });
+const FAILED: UploadOutcome = {
+  kind: "failed",
+  message: "Could not read.",
+  requestId: "trace-failed-1",
+  afterResult: false,
+};
 
-    const user = userEvent.setup();
-    renderModal();
-    await addFile(user);
+const PROCESSED: UploadOutcome = {
+  kind: "processed",
+  documentId: "doc-1",
+  result: {
+    classification: { category: "lecture_notes" },
+    summary: { abstract: "Fresh abstract." },
+    concepts: { concepts: [{ name: "Backprop" }] },
+  },
+};
 
-    await user.click(screen.getByRole("button", { name: /start upload/i }));
-
-    // Two toasts fire on a terminal failure today: the in-band error
-    // event handler runs `toast.error("Upload failed: …")`, and the
-    // outer catch block then runs another after the stream rejects.
-    // Pin that exact contract so a future de-dupe (or the opposite —
-    // accidentally suppressing both) shows up as a test failure.
-    await waitFor(() => {
-      expect(screen.getAllByText(/upload failed/i).length).toBe(2);
+/** Mock one upload that never settles on its own; returns its signal. */
+function hangUntilAborted() {
+  const seen: { signal?: AbortSignal } = {};
+  mockedUpload.mockImplementationOnce((_fd, _onEvent, signal) => {
+    seen.signal = signal;
+    return new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () =>
+        reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+      );
     });
   });
+  return seen;
+}
 
-  it("retry mints a fresh request_id on the second uploadDocumentStream call", async () => {
-    const failureEvents: UploadEvent[] = [
-      {
-        type: "error",
-        step: "failed",
-        message: "Could not read.",
-        data: { request_id: "trace-failed-1" },
-      },
-    ];
+describe("DocumentUploadModal SSE error UX", () => {
+  it("a typed server failure toasts ONCE and the row keeps the server's message (#759)", async () => {
     mockedUpload.mockImplementation(async (_fd, onEvent) => {
-      for (const e of failureEvents) onEvent(e);
-      throw new Error("Upload stream ended without a result event.");
+      onEvent({ type: "status", step: "start", message: "Document received." });
+      onEvent({
+        type: "error", step: "failed", message: "Could not read.",
+        data: { request_id: "trace-failed-1" },
+      });
+      return FAILED;
     });
 
     const user = userEvent.setup();
@@ -161,42 +158,84 @@ describe("DocumentUploadModal SSE error UX", () => {
     await addFile(user);
     await user.click(screen.getByRole("button", { name: /start upload/i }));
 
-    // Wait for the first call to settle and the Retry button to render.
+    await waitFor(() => {
+      expect(screen.getAllByText(/upload failed/i)).toHaveLength(1);
+    });
+    const row = screen.getByTestId("upload-modal-file-row-0");
+    expect(row).toHaveTextContent("Could not read.");
+    expect(row).not.toHaveTextContent(/ended without a result/i);
+    expect(row).toHaveTextContent("error");
+  });
+
+  it("a failure AFTER the result leaves the row in error, not processed (#759)", async () => {
+    mockedUpload.mockImplementation(async (_fd, onEvent) => {
+      onEvent({ type: "result", step: "finalize", message: "ok", data: PROCESSED.result });
+      onEvent({ type: "error", step: "failed", message: "processed but could not be saved" });
+      return { kind: "failed", message: "processed but could not be saved", afterResult: true };
+    });
+
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    const row = screen.getByTestId("upload-modal-file-row-0");
+    await waitFor(() => expect(row).toHaveTextContent("could not be saved"));
+    expect(row).not.toHaveTextContent("done");
+    expect(screen.queryByTestId("upload-modal-file-reanalyze-0")).not.toBeInTheDocument();
+    expect(screen.getByTestId("upload-modal-file-retry-0")).toBeInTheDocument();
+    expect(screen.getAllByText(/upload failed/i)).toHaveLength(1);
+  });
+
+  it("retry of the same file to the same course reuses the request_id (#759)", async () => {
+    mockedUpload.mockResolvedValue(FAILED);
+
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
     const retryBtn = await screen.findByRole("button", { name: /retry/i });
     expect(mockedUpload).toHaveBeenCalledTimes(1);
 
     // uploadDocumentStream signature: (formData, onEvent, signal, requestId).
-    // We're pinning the positional contract intentionally — if the call site
-    // ever switches to a named-options object, update REQUEST_ID_ARG_INDEX
-    // (and the matching call in lib/api.ts).
     const REQUEST_ID_ARG_INDEX = 3;
     const firstRequestId = mockedUpload.mock.calls[0][REQUEST_ID_ARG_INDEX];
     expect(typeof firstRequestId).toBe("string");
-    expect((firstRequestId as string).length).toBeGreaterThan(0);
 
     await user.click(retryBtn);
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    // The failed attempt's id came back on the error event; the retry sends
+    // it again so a document the server DID save is replayed, not re-run.
+    expect(mockedUpload.mock.calls[1][REQUEST_ID_ARG_INDEX]).toBe("trace-failed-1");
+  });
 
-    await waitFor(() => {
-      expect(mockedUpload).toHaveBeenCalledTimes(2);
-    });
-    const secondRequestId = mockedUpload.mock.calls[1][REQUEST_ID_ARG_INDEX];
-    expect(typeof secondRequestId).toBe("string");
-    expect(secondRequestId).not.toBe(firstRequestId);
+  it("re-analyze mints a fresh request_id and clears the previous result (#759)", async () => {
+    mockedUpload.mockResolvedValueOnce(PROCESSED);
+    const pending = hangUntilAborted();
+
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    const row = screen.getByTestId("upload-modal-file-row-0");
+    await waitFor(() => expect(row).toHaveTextContent("Fresh abstract."));
+    expect(row).toHaveTextContent("Backprop");
+
+    await user.click(screen.getByTestId("upload-modal-file-reanalyze-0"));
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    expect(mockedUpload.mock.calls[1][3]).not.toBe(mockedUpload.mock.calls[0][3]);
+    expect(row).not.toHaveTextContent("Fresh abstract.");
+    expect(row).not.toHaveTextContent("Backprop");
+    expect(pending.signal?.aborted).toBe(false);
   });
 
   it("surfaces request_id with a copy button on failed rows", async () => {
     const RID = "trace-failed-abc12345";
-    const events: UploadEvent[] = [
-      {
-        type: "error",
-        step: "failed",
-        message: "Could not read.",
-        data: { request_id: RID },
-      },
-    ];
     mockedUpload.mockImplementation(async (_fd, onEvent) => {
-      for (const e of events) onEvent(e);
-      throw new Error("Upload stream ended without a result event.");
+      onEvent({ type: "error", step: "failed", message: "Could not read.", data: { request_id: RID } });
+      return { kind: "failed", message: "Could not read.", requestId: RID, afterResult: false };
     });
 
     const user = userEvent.setup();
@@ -226,6 +265,138 @@ describe("DocumentUploadModal SSE error UX", () => {
     await waitFor(() => {
       expect(clipboardWrite).toHaveBeenCalledWith(RID);
     });
+  });
+
+  it("a transport error (no typed outcome) still toasts once with its message", async () => {
+    mockedUpload.mockRejectedValue(new Error("Network down"));
+
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    await waitFor(() => expect(screen.getAllByText(/upload failed/i)).toHaveLength(1));
+    expect(screen.getByTestId("upload-modal-file-row-0")).toHaveTextContent("Network down");
+  });
+});
+
+describe("DocumentUploadModal abort + close (#759)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the 4-minute timer aborts with the timeout message and no toast", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const pending = hangUntilAborted();
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    await waitFor(() => expect(pending.signal).toBeDefined());
+
+    await act(async () => {
+      vi.advanceTimersByTime(4 * 60 * 1000 + 1);
+    });
+
+    const row = screen.getByTestId("upload-modal-file-row-0");
+    await waitFor(() => expect(row).toHaveTextContent(/longer than 4 minutes/));
+    expect(row).toHaveTextContent("aborted");
+    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
+  });
+
+  it("closing with Cancel aborts in-flight uploads as a cancel, not a timeout", async () => {
+    const pending = hangUntilAborted();
+    const onClose = vi.fn();
+    const onComplete = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <DocumentUploadModal open userId="u1" courses={[COURSE]} onClose={onClose} onComplete={onComplete} />
+      </ToastProvider>,
+    );
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    await waitFor(() => expect(pending.signal).toBeDefined());
+
+    await user.click(screen.getByTestId("upload-modal-cancel"));
+
+    expect(pending.signal?.aborted).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // Nothing was processed and no course was added: nothing to refresh.
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(screen.queryByText(/longer than 4 minutes/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Cancel", "upload-modal-cancel"],
+    ["X", "upload-modal-close"],
+  ])("closing with %s after a processed upload fires onComplete", async (_label, testId) => {
+    mockedUpload.mockResolvedValue(PROCESSED);
+    const onClose = vi.fn();
+    const onComplete = vi.fn();
+
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <DocumentUploadModal open userId="u1" courses={[COURSE]} onClose={onClose} onComplete={onComplete} />
+      </ToastProvider>,
+    );
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("upload-modal-file-row-0")).toHaveTextContent("done"),
+    );
+
+    await user.click(screen.getByTestId(testId));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const uploaded = onComplete.mock.calls[0][0] as Array<{ docId?: string; status: string }>;
+    expect(uploaded.map(u => [u.status, u.docId])).toEqual([["processed", "doc-1"]]);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing via the backdrop after a processed upload fires onComplete", async () => {
+    mockedUpload.mockResolvedValue(PROCESSED);
+    const onComplete = vi.fn();
+
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <DocumentUploadModal open userId="u1" courses={[COURSE]} onClose={() => {}} onComplete={onComplete} />
+      </ToastProvider>,
+    );
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("upload-modal-file-row-0")).toHaveTextContent("done"),
+    );
+
+    // The backdrop is the modal card's parent; the card stops propagation.
+    await user.click(screen.getByTestId("upload-modal").parentElement as HTMLElement);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("the parent closing the modal directly aborts in-flight uploads", async () => {
+    const pending = hangUntilAborted();
+    const user = userEvent.setup();
+    const modal = (open: boolean) => (
+      <ToastProvider>
+        <DocumentUploadModal open={open} userId="u1" courses={[COURSE]} onClose={() => {}} onComplete={() => {}} />
+      </ToastProvider>
+    );
+    const { rerender } = render(modal(true));
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    await waitFor(() => expect(pending.signal).toBeDefined());
+    expect(pending.signal?.aborted).toBe(false);
+
+    rerender(modal(false));
+
+    expect(pending.signal?.aborted).toBe(true);
   });
 });
 

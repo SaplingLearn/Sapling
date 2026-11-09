@@ -11,7 +11,6 @@ import sys
 
 import pytest
 
-MAX = 3
 
 
 @pytest.fixture
@@ -37,10 +36,10 @@ def test_a_document_with_text_but_no_chunks_is_pending(mod):
 
 
 def test_a_document_without_text_is_terminally_failed(mod):
-    """Prod has two. Visible as failed, and spent so the sweeper never tries."""
+    """Prod has two. Visible, and terminal so the sweeper never tries — by the
+    stored status (#758), not by forcing the attempt counter to the budget."""
     assert mod.derive(has_text=False, chunk_count=0) == {
-        "index_status": "failed", "index_error": "no_extracted_text",
-        "index_attempts": MAX}
+        "index_status": "exhausted", "index_error": "no_extracted_text"}
 
 
 def test_chunks_win_over_missing_text(mod):
@@ -97,18 +96,18 @@ def prod_like(mod, monkeypatch):
 def test_dry_run_is_the_default_and_writes_nothing(mod, prod_like):
     summary = mod.main([])
     assert prod_like.writes == []
-    assert summary == {"indexed": 5, "pending": 0, "failed": 2}
+    assert summary == {"indexed": 5, "pending": 0, "exhausted": 2}
 
 
 def test_apply_reaches_the_measured_prod_outcome(mod, prod_like):
     summary = mod.main(["--apply"])
 
-    assert summary == {"indexed": 5, "pending": 0, "failed": 2}
+    assert summary == {"indexed": 5, "pending": 0, "exhausted": 2}
     by_status = {}
     for data, _ in prod_like.writes:
         by_status.setdefault(data["index_status"], 0)
         by_status[data["index_status"]] += 1
-    assert by_status == {"indexed": 5, "failed": 2}
+    assert by_status == {"indexed": 5, "exhausted": 2}
 
 
 def test_only_never_attempted_default_rows_are_touched(mod, prod_like):
@@ -150,5 +149,5 @@ def test_a_second_run_finds_nothing(mod, monkeypatch):
     monkeypatch.setattr(mod, "page_all", db.page_all)
     monkeypatch.setattr(mod, "table", db.table)
 
-    assert mod.main(["--apply"]) == {"indexed": 0, "pending": 0, "failed": 0}
+    assert mod.main(["--apply"]) == {"indexed": 0, "pending": 0, "exhausted": 0}
     assert db.writes == []

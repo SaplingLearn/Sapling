@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import type { EnrolledCourse } from "@/lib/api";
 import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 import type { ExtractedSyllabusCategory } from "@/lib/types";
 
 interface Props {
@@ -35,10 +36,31 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
   const [categories, setCategories] = React.useState<ExtractedSyllabusCategory[]>([]);
   const [assignments, setAssignments] = React.useState<ExtractedAssignment[]>([]);
 
+  // Run token (#770): one per dialog opening, bumped again by a cancel. An
+  // upload or course list from a previous opening (or a cancelled upload)
+  // must never jump the current dialog to `review` with another file's data.
+  const runRef = React.useRef(0);
+  // Read through a ref so the per-opening reset below keys on the opening
+  // alone — a toast identity change must never re-run it mid-dialog.
+  const toastRef = React.useRef(toast);
+  React.useEffect(() => { toastRef.current = toast; }, [toast]);
+
   React.useEffect(() => {
     if (!open) return;
+    const run = ++runRef.current;
     setStep("pick-course"); setCourseId(""); setDocId(""); setCategories([]); setAssignments([]);
-    getCourses(userId).then((res) => setCourses(res.courses));
+    getCourses(userId)
+      .then((res) => {
+        if (run === runRef.current) setCourses(res.courses);
+      })
+      .catch((err: unknown) => {
+        if (run !== runRef.current) return;
+        setCourses([]);
+        toastRef.current.error(`Couldn't load your courses: ${humanizeError(err, "Try again.")}`);
+      });
+    // Closing ends this opening's run: anything still in flight is stale.
+    const runs = runRef;
+    return () => { runs.current++; };
   }, [open, userId]);
 
   const total = categories.reduce((s, c) => s + Number(c.weight || 0), 0);
@@ -49,20 +71,31 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
       toast.error("Pick a course first");
       return;
     }
+    const run = ++runRef.current;
     setStep("upload");
     try {
       const res = await uploadSyllabus({ userId, courseId, file });
+      if (run !== runRef.current) return;
       setDocId(res.doc_id ?? res.id);
       setCategories(res.categories ?? []);
       setAssignments(res.assignments ?? []);
       setStep("review");
-    } catch (err: any) {
-      toast.error(`Upload failed: ${err.message}`);
+    } catch (err: unknown) {
+      if (run !== runRef.current) return;
+      toast.error(`Upload failed: ${humanizeError(err, "Try again.")}`);
       setStep("pick-course");
     }
   };
 
+  // Abandons the extraction client-side: the request can't be aborted (the
+  // upload helper takes no signal), so its answer is discarded on arrival.
+  const cancelUpload = () => {
+    runRef.current++;
+    setStep("pick-course");
+  };
+
   const handleSave = async () => {
+    const run = runRef.current;
     setStep("saving");
     try {
       await applySyllabus({
@@ -74,17 +107,22 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
         })),
         assignments,
       });
+      // The write landed either way, so it is always reported; only the
+      // navigation belongs to the opening that started it.
       toast.success("Syllabus applied");
+      if (run !== runRef.current) return;
       router.push(`/gradebook/${encodeURIComponent(courseId)}`);
       onClose();
-    } catch (err: any) {
-      toast.error(`Save failed: ${err.message}`);
-      setStep("review");
+    } catch (err: unknown) {
+      toast.error(`Save failed: ${humanizeError(err, "Try again.")}`);
+      if (run === runRef.current) setStep("review");
     }
   };
 
   return (
-    <Dialog open={open} onClose={onClose} title="Upload syllabus" size="lg" padding="20px">
+    // Not dismissible while saving: the apply is a write that can't be
+    // cancelled, and closing would hide whether it landed.
+    <Dialog open={open} onClose={onClose} dismissible={step !== "saving"} title="Upload syllabus" size="lg" padding="20px">
       {step === "pick-course" && (
         <>
           <label>
@@ -113,7 +151,12 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
       )}
 
       {step === "upload" && (
-        <p style={{ color: "var(--text-dim)" }}>Extracting syllabus…</p>
+        <>
+          <p style={{ color: "var(--text-dim)" }}>Extracting syllabus…</p>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button type="button" onClick={cancelUpload}>Cancel upload</button>
+          </div>
+        </>
       )}
 
       {step === "review" && (

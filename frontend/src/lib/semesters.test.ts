@@ -72,11 +72,25 @@ describe("currentTerm", () => {
     expect(currentTerm(SEMESTERS, "2026-01-04")?.label).toBe("Fall 2025");
   });
 
-  it("falls back to the highest sort_key when today sits in a gap", () => {
+  it("in a gap, picks the most recently started term, never a future one (#766)", () => {
+    const gappy = SEMESTERS.filter((s) => s.id !== "summer-2026");
+    // Summer gap with Fall 2026 already seeded: the term that just ended wins.
+    expect(currentTerm(gappy, "2026-07-01")?.label).toBe("Spring 2026");
     // Well past the last seeded term.
     expect(currentTerm(SEMESTERS, "2030-04-01")?.label).toBe("Fall 2026");
-    // Before the first seeded term — same rule, same answer.
-    expect(currentTerm(SEMESTERS, "2001-04-01")?.label).toBe("Fall 2026");
+    // Before the first seeded term: the soonest one.
+    expect(currentTerm(SEMESTERS, "2001-04-01")?.label).toBe("Fall 2025");
+  });
+
+  it("takes the server's current term over the browser clock (#766)", () => {
+    // Boundary day: the browser says Spring 2026 is still on, the server has
+    // already rolled to Summer.
+    expect(currentTerm(SEMESTERS, "2026-05-17", "summer-2026")?.label).toBe("Summer 2026");
+  });
+
+  it("falls back to the local rule when the server's id is missing or unknown", () => {
+    expect(currentTerm(SEMESTERS, "2026-03-01", null)?.label).toBe("Spring 2026");
+    expect(currentTerm(SEMESTERS, "2026-03-01", "no-such-term")?.label).toBe("Spring 2026");
   });
 
   it("breaks a range overlap on the higher sort_key, like the backend's order+limit", () => {

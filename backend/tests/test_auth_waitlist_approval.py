@@ -12,6 +12,7 @@ place the two can be matched).
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
 
+import secrets
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
+from tests.split_patches import set_auth_session_secret, set_auth_table
 
 _app = FastAPI()
 _app.include_router(auth_module.router, prefix="/api/auth")
@@ -47,7 +49,7 @@ def _tables(monkeypatch, *, users_rows, waitlist_rows=None, waitlist_error=None)
         factory("newsletter_emails").select.side_effect = waitlist_error
     else:
         factory("newsletter_emails").select.return_value = waitlist_rows or []
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
     return tables
 
 
@@ -57,7 +59,7 @@ def callback(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(auth_module, "_LOCAL_AUTO_APPROVE", False)
     monkeypatch.setattr(auth_module, "FRONTEND_URL", FRONTEND)
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -75,10 +77,13 @@ def callback(monkeypatch):
         }
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 
+        # Each drive is a fresh sign-in: a new nonce, since the callback now
+        # honours an OAuth state nonce only once (#756).
+        nonce = secrets.token_urlsafe(8)
         cookie = auth_module._encode_oauth_cookie(
-            {"n": "n1", "cv": "verifier", "popup_id": popup_id}
+            {"n": nonce, "cv": "verifier", "popup_id": popup_id}
         )
-        state = auth_module._encode_state({"action": "signin", "n": "n1"})
+        state = auth_module._encode_state({"action": "signin", "n": nonce})
         client = TestClient(_app)
         client.cookies.set(auth_module.OAUTH_STATE_COOKIE, cookie)
         resp = client.get(
@@ -293,7 +298,7 @@ def test_existing_unapproved_account_goes_to_pending(callback, monkeypatch):
 @pytest.fixture
 def pending(monkeypatch):
     """A client plus a pending token for EMAIL."""
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
 
     def _setup(*, waitlist_rows=None):
         tables = _tables(monkeypatch, users_rows=[], waitlist_rows=waitlist_rows)
@@ -325,7 +330,7 @@ def test_pending_token_rejects_tampering_and_expiry(pending, monkeypatch):
     assert auth_module._pending_token_email(
         auth_module.mint_session(EMAIL, secret="test-secret-key")
     ) is None
-    monkeypatch.setattr(auth_module, "_PENDING_TOKEN_TTL_SECONDS", -1)
+    monkeypatch.setattr("services.auth.pending._PENDING_TOKEN_TTL_SECONDS", -1)
     assert auth_module._pending_token_email(auth_module._mint_pending_token(EMAIL)) is None
 
 
@@ -333,13 +338,35 @@ def test_pending_status_not_on_waitlist(pending):
     tables, client, token = pending(waitlist_rows=[])
     resp = client.post("/api/auth/pending/status", json={"token": token})
     assert resp.status_code == 200
-    assert resp.json() == {"email": EMAIL, "on_waitlist": False}
+    assert resp.json() == {"email": EMAIL, "on_waitlist": False, "approved": False}
     tables["users"].select.assert_not_called()  # there is no account to look up
 
 
 def test_pending_status_on_waitlist_is_case_insensitive(pending):
     _, client, token = pending(waitlist_rows=[{"id": "w1", "email": "Student@BU.edu", "approved_at": None}])
     assert client.post("/api/auth/pending/status", json={"token": token}).json()["on_waitlist"] is True
+
+
+def test_pending_status_reports_an_approval_that_landed_after_sign_in(pending):
+    """#757: an admin approving the address while the student sits on /pending
+    used to leave the page able to say only "sign in again" — it could not
+    tell "approved" from "still waiting". The status now says which."""
+    _, client, token = pending(waitlist_rows=[
+        {"id": "w1", "email": "Student@BU.edu", "approved_at": None},
+        {"id": "w2", "email": EMAIL, "approved_at": APPROVED_AT},
+    ])
+    resp = client.post("/api/auth/pending/status", json={"token": token})
+    assert resp.json() == {"email": EMAIL, "on_waitlist": True, "approved": True}
+
+
+def test_waitlist_entries_returns_every_case_twin(monkeypatch):
+    """#757: admin writes must reach every case twin, not just the first."""
+    _tables(monkeypatch, users_rows=[], waitlist_rows=[
+        {"id": "w1", "email": "Student@bu.edu", "approved_at": None},
+        {"id": "w2", "email": "student@bu.edu", "approved_at": APPROVED_AT},
+        {"id": "w3", "email": "other@bu.edu", "approved_at": None},
+    ])
+    assert [r["id"] for r in auth_module._waitlist_entries(EMAIL)] == ["w2", "w1"]
 
 
 def test_pending_status_bad_token_is_401(pending):
@@ -351,7 +378,7 @@ def test_pending_join_adds_the_sign_in_email(pending):
     tables, client, token = pending(waitlist_rows=[])
     resp = client.post("/api/auth/pending/join", json={"token": token})
     assert resp.status_code == 200
-    assert resp.json() == {"email": EMAIL, "on_waitlist": True}
+    assert resp.json() == {"email": EMAIL, "on_waitlist": True, "approved": False}
     upsert = tables["newsletter_emails"].upsert.call_args
     assert upsert.args[0] == {"email": EMAIL, "first_name": None}
     assert upsert.kwargs["on_conflict"] == "email"
@@ -405,46 +432,77 @@ def welcome_sends(monkeypatch):
     return rec
 
 
-def _welcome_claim(tables, *, returns):
-    """users.update returns `returns` for the welcomed_at claim, [] otherwise."""
-    def _update(data, filters=None, **_kw):
-        return returns if "welcomed_at" in data else []
-    tables["users"].update.side_effect = _update
+def _welcome_state(tables, *, due=True, error=None):
+    """The `welcomed_at` read answers NULL (due) or a timestamp; every other
+    users read keeps the fixture's rows."""
+    other = tables["users"].select.return_value
+
+    def _select(columns="*", filters=None, **_kw):
+        if columns == "welcomed_at":
+            if error is not None:
+                raise error
+            return [{"welcomed_at": None if due else APPROVED_AT}]
+        return other
+    tables["users"].select.side_effect = _select
 
 
-def _welcome_claims(tables):
+def _welcome_stamps(tables):
     return [c for c in tables["users"].update.call_args_list if "welcomed_at" in c.args[0]]
 
 
 def test_first_approved_sign_in_sends_welcome_once(callback, monkeypatch, welcome_sends):
     tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
-    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    _welcome_state(tables, due=True)
     assert callback() == "/auth/callback"
-    (claim,) = _welcome_claims(tables)
-    # Conditional: only the sign-in that flips NULL gets the row back.
-    assert claim.kwargs["filters"] == {"id": "eq.user_112233", "welcomed_at": "is.null"}
     welcome_sends.assert_called_once()
     kw = welcome_sends.call_args.kwargs
     assert kw["kind"] == "welcome"
     assert kw["dedupe_key"] == "welcome:user_112233"
     assert kw["to"] == EMAIL
     assert "Ada" in kw["html"]
+    # `skipped` (no RESEND_API_KEY): welcomed_at is NOT stamped (#763).
+    assert _welcome_stamps(tables) == []
+
+
+def test_welcomed_at_is_stamped_only_after_the_welcome_is_sent(callback, monkeypatch, welcome_sends):
+    welcome_sends.return_value = "sent"
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_state(tables, due=True)
+    assert callback() == "/auth/callback"
+    (stamp,) = _welcome_stamps(tables)
+    assert stamp.kwargs["filters"] == {"id": "eq.user_112233", "welcomed_at": "is.null"}
+
+
+@pytest.mark.parametrize("first", ["skipped", "failed"])
+def test_a_skipped_or_failed_welcome_is_retried_next_sign_in(callback, monkeypatch, welcome_sends, first):
+    # #763: the claim used to stamp welcomed_at BEFORE the send, so a welcome
+    # skipped (no API key yet) or failed was never retried.
+    welcome_sends.side_effect = [first, "sent"]
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_state(tables, due=True)
+    assert callback() == "/auth/callback"
+    assert _welcome_stamps(tables) == []
+    assert callback() == "/auth/callback"
+    assert welcome_sends.call_count == 2
+    keys = {c.kwargs["dedupe_key"] for c in welcome_sends.call_args_list}
+    assert keys == {"welcome:user_112233"}  # one key: email_sends keeps it to one delivery
+    assert len(_welcome_stamps(tables)) == 1
 
 
 def test_already_welcomed_user_gets_no_welcome(callback, monkeypatch, welcome_sends):
-    # welcomed_at already set (incl. the deploy backfill): the claim matches no row.
+    # welcomed_at already set (incl. the deploy backfill).
     tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
-    _welcome_claim(tables, returns=[])
+    _welcome_state(tables, due=False)
     assert callback() == "/auth/callback"
-    assert len(_welcome_claims(tables)) == 1
+    assert _welcome_stamps(tables) == []
     welcome_sends.assert_not_called()
 
 
 def test_pending_user_is_not_welcomed(callback, monkeypatch, welcome_sends):
     tables = _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
-    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    _welcome_state(tables, due=True)
     assert callback() == "/pending"
-    assert _welcome_claims(tables) == []
+    assert _welcome_stamps(tables) == []
     welcome_sends.assert_not_called()
 
 
@@ -453,18 +511,27 @@ def test_waitlist_approved_new_account_is_welcomed(callback, monkeypatch, welcom
         monkeypatch, users_rows=[],
         waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
     )
-    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    _welcome_state(tables, due=True)
     assert callback() == "/auth/callback"
     welcome_sends.assert_called_once()
 
 
-def test_welcome_claim_failure_never_breaks_sign_in(callback, monkeypatch, welcome_sends):
+def test_welcome_check_failure_never_breaks_sign_in(callback, monkeypatch, welcome_sends):
     tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_state(tables, error=RuntimeError("column users.welcomed_at does not exist"))
+    assert callback() == "/auth/callback"
+    welcome_sends.assert_not_called()
+
+
+def test_welcome_stamp_failure_never_breaks_sign_in(callback, monkeypatch, welcome_sends):
+    welcome_sends.return_value = "sent"
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_state(tables, due=True)
 
     def _update(data, filters=None, **_kw):
         if "welcomed_at" in data:
-            raise RuntimeError("column users.welcomed_at does not exist")
+            raise RuntimeError("down")
         return []
     tables["users"].update.side_effect = _update
     assert callback() == "/auth/callback"
-    welcome_sends.assert_not_called()
+    welcome_sends.assert_called_once()

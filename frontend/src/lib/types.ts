@@ -20,6 +20,8 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: number;
+  /** Absent on synthesized course spokes and on older payloads. */
+  relationship_type?: "related" | "prerequisite" | "builds_on" | "part_of";
 }
 
 export interface KnowledgeGraph {
@@ -272,6 +274,12 @@ export interface UserSettings {
   accent_color: string | null;
   profile_visibility: string;
   activity_status_visible: boolean;
+  // Product-analytics opt-out (PostHog), account-wide: governs the browser's
+  // pageviews AND the backend's mirror (#677). The backend always sends it;
+  // it stays optional only so a response without it is handled explicitly:
+  // lib/analytics.ts treats it as `unset` — nothing starts in the browser,
+  // the Settings switch stays usable (shown off), and it is not re-read.
+  analytics_opt_out?: boolean;
 }
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
@@ -424,7 +432,8 @@ export interface EmailBroadcast {
   id: string;
   subject: string;
   audience: string;
-  status: "sending" | "sent" | "failed";
+  /** partial = some sent, some failed (or the run died part-way); skipped = nothing sent, nothing failed. */
+  status: "sending" | "sent" | "partial" | "skipped" | "failed";
   recipient_count: number;
   sent_count: number;
   skipped_count: number;
@@ -432,6 +441,11 @@ export interface EmailBroadcast {
   created_at: string;
   sent_at: string | null;
   created_by: string | null;
+  heartbeat_at?: string | null;
+  /** `sending` with no heartbeat for a while: the run is dead and can be resumed. */
+  stale?: boolean;
+  /** Stale, failed or partial: `POST /broadcasts/{id}/resume` will re-run it. */
+  resumable?: boolean;
 }
 
 /** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */
@@ -506,6 +520,88 @@ export interface PaginatedUsers {
   total: number;
   page: number;
   page_size: number;
+}
+
+// Admin account tools (`/api/admin/accounts`): seed by major, wipe, copy
+// between environments.
+export interface AdminAccountMajorCourse {
+  /** BU catalog code, e.g. "CAS CS 111". */
+  code: string;
+  name: string;
+}
+
+export interface AdminAccountMajor {
+  key: string;
+  label: string;
+  courses: AdminAccountMajorCourse[];
+}
+
+export interface AdminAccountsMeta {
+  /** This backend's APP_ENV ("local" | "staging" | "production" | …). */
+  env: string;
+  majors: AdminAccountMajor[];
+  sync: {
+    configured: boolean;
+    /** The peer's APP_ENV; null when not configured or the peer is unreachable. */
+    peer_env: string | null;
+  };
+}
+
+/** Rows touched per table, e.g. `{ notes: 8, flashcards: 24 }`. */
+export type AccountTableCounts = Record<string, number>;
+
+export type AccountCopyDirection = "push" | "pull";
+
+export interface AdminSeedAccountResult {
+  major: string;
+  wiped: AccountTableCounts;
+  created: AccountTableCounts;
+}
+
+export interface AdminWipeAccountResult {
+  wiped: AccountTableCounts;
+}
+
+export interface AdminCopyAccountResult {
+  direction: AccountCopyDirection;
+  peer_env: string;
+  counts: AccountTableCounts;
+}
+
+/** One enrolled course in an account summary. */
+export interface AdminAccountSummaryCourse {
+  code: string;
+  name: string;
+  term_id: string | null;
+}
+
+/**
+ * What an account holds on one environment (backend
+ * `services/account_summary.py`) — the review step's "will be deleted".
+ * `counts` keys are table names (`enrollments`, `assignments`, `graph_nodes`,
+ * `notes`, `documents`, `flashcards`, `quiz_attempts`, `sessions`,
+ * `study_guides`, `xp_events`, `user_achievements`).
+ */
+export interface AdminAccountSummary {
+  /** False: the account has never signed in on that environment. */
+  exists: boolean;
+  courses: AdminAccountSummaryCourse[];
+  counts: AccountTableCounts;
+  total_xp: number;
+  /** No counted rows and no XP. */
+  empty: boolean;
+}
+
+export interface AdminCopyPreviewSide {
+  env: string;
+  summary: AdminAccountSummary;
+}
+
+/** push: source = this env, destination = the peer; pull: the reverse. */
+export interface AdminCopyPreview {
+  direction: AccountCopyDirection;
+  source: AdminCopyPreviewSide;
+  destination: AdminCopyPreviewSide;
 }
 
 export interface LinkedConcept {

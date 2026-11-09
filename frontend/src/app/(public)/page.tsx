@@ -1,22 +1,8 @@
 'use client';
 
-/**
- * The Sapling landing page.
- *
- * Ported from `Sapling Landing v5.dc.html`. This is the page at `/` — it
- * replaced the previous marketing landing outright rather than sitting
- * beside it.
- *
- * The hero is the exception: the v5 title screen was judged not good enough
- * for the top of the page, so `Hero` is main's hero (the point-cloud canvas,
- * the floating cards, the Playfair wordmark) carried over as a section of its
- * own. Everything from the descent band down is v5's.
- *
- * Sections land incrementally; the engine drives whatever is mounted.
- */
-
 import { useEffect, useState } from 'react';
 import SignInModal from '@/components/marketing/SignInModal';
+import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { BetaModal } from '@/components/landing-v5/BetaModal';
@@ -32,14 +18,7 @@ import { Navbar } from '@/components/landing-v5/Navbar';
 import { NAV_LIGHT } from '@/components/landing-v5/navTheme';
 import { useLanding, type ScrambleStep } from '@/components/landing/useLanding';
 
-/**
- * Main's hero cascade: the wordmark leads and the tagline follows 200ms
- * behind, on the slots main's hero reads (1 = wordmark, 2 = tagline). v5's
- * default runs the other way round on slots 0/1, for a title screen that is
- * no longer mounted.
- */
 const HERO_CASCADE: ScrambleStep[] = [
-  { slot: 1, text: 'Sapling', durationMs: 1000 },
   { slot: 2, text: 'Grow Your Knowledge', durationMs: 1200, delayMs: 200 },
 ];
 
@@ -53,6 +32,9 @@ export default function LandingPage() {
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
   const [signInOpen, setSignInOpen] = useState(false);
+  // #756: a failed sign-in lands here as `/?error=<code>`; open the modal
+  // with that error's copy (e.g. account_deleted) instead of saying nothing.
+  const [signInError, clearSignInError] = useSignInErrorParam();
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
@@ -108,7 +90,14 @@ export default function LandingPage() {
         onGetStarted={() => actions.scrollToId('cta')}
       />
 
-      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} />
+      <SignInModal
+        open={signInOpen || signInError !== null}
+        onClose={() => {
+          setSignInOpen(false);
+          clearSignInError();
+        }}
+        errorCode={signInError}
+      />
 
       <BetaModal
         open={betaOpen}
@@ -123,7 +112,6 @@ export default function LandingPage() {
 
       <Hero
         heroMounted={state.heroMounted}
-        heroText1={state.heroText1}
         heroText2={state.heroText2}
         onBeta={() => setBetaOpen(true)}
       />

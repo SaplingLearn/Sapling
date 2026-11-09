@@ -20,9 +20,12 @@ in the ADR itself.
 """
 from unittest.mock import MagicMock, patch
 
+from tests.split_patches import patch_quiz
+
 import pytest
 
 from services.encryption import decrypt, encrypt
+from tests.split_patches import patch_tutor
 
 
 # ── Write ───────────────────────────────────────────────────────────────────
@@ -184,7 +187,7 @@ def test_the_catalog_block_decrypts_before_choosing_a_chunk():
         m.select.return_value = rows
         return m
 
-    with patch("routes.learn.table", side_effect=_table):
+    with patch_tutor("table", side_effect=_table):
         assert _get_catalog_chunk("CAS CS 330") == short_with_prereq
 
 
@@ -198,13 +201,13 @@ def test_the_quiz_drops_a_catalog_duplicate_after_encryption():
 
     catalog = "CS 330. Prerequisites: CS 112."
     with (
-        patch("routes.quiz._resolve_bu_code",
+        patch_quiz("_resolve_bu_code",
               return_value=BuCodeLookup(code="CAS CS 330", failed=False)),
-        patch("routes.quiz._get_catalog_chunk", return_value=catalog),
-        patch("routes.quiz.retrieve_chunks_detailed", return_value=Retrieval(
+        patch_quiz("_get_catalog_chunk", return_value=catalog),
+        patch_quiz("retrieve_chunks_detailed", return_value=Retrieval(
             chunks=[{"id": "c1", "chunk_text": catalog, "similarity": 0.9}],
         )),
-        patch("routes.quiz.table") as mock_table,
+        patch_quiz("table") as mock_table,
     ):
         mock_table.return_value.select_with_count.return_value = ([], 0)
         material = _course_material("course-uuid", "dp", user_id="u1")

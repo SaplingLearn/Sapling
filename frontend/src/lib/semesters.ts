@@ -32,29 +32,49 @@ function toISODate(today: Date | string): string {
 }
 
 /**
- * The term `today` falls in, mirroring `services/academics.py::current_term`:
- * the highest-`sort_key` term whose [start_date, end_date] contains today,
- * falling back to the highest `sort_key` overall when today sits in a gap.
+ * The current term. The SERVER decides it (#766): pass `serverCurrentId` —
+ * `GET /api/semesters`' `current_term_id` — and that row wins, because the
+ * browser's clock and timezone can disagree with the backend's on a boundary
+ * day, and the backend is what enrolls and resolves offerings.
  *
- * Both rules must stay identical to the backend's or the two disagree about
- * which semester is "current". Date bounds are compared as YYYY-MM-DD strings,
- * where lexicographic order is chronological order.
+ * Without it (the fetch failed, an older backend, or a frozen test-mode clock
+ * that must stay authoritative for determinism) this falls back to mirroring
+ * `services/academics.py::current_term` against `today`: the
+ * highest-`sort_key` term whose [start_date, end_date] contains today; in a
+ * gap, the most recently STARTED term (never a future one seeded ahead of
+ * time); before every term, the soonest. Date bounds are compared as
+ * YYYY-MM-DD strings, where lexicographic order is chronological order.
  */
 export function currentTerm(
   semesters: Semester[] | null | undefined,
   today: Date | string = new Date(),
+  serverCurrentId?: string | null,
 ): Semester | null {
   if (!semesters || semesters.length === 0) return null;
+  if (serverCurrentId) {
+    const fromServer = semesters.find((s) => s.id === serverCurrentId);
+    if (fromServer) return fromServer;
+  }
   const d = toISODate(today);
+  const start = (s: Semester) => (s.start_date || "").slice(0, 10);
   const byRank = [...semesters].sort((a, b) => (b.sort_key ?? 0) - (a.sort_key ?? 0));
   const containing = byRank.find(
     (s) =>
       s.start_date &&
       s.end_date &&
-      s.start_date.slice(0, 10) <= d &&
+      start(s) <= d &&
       s.end_date.slice(0, 10) >= d,
   );
-  return containing ?? byRank[0];
+  if (containing) return containing;
+  const dated = byRank.filter((s) => start(s));
+  const started = dated
+    .filter((s) => start(s) <= d)
+    .sort((a, b) => start(b).localeCompare(start(a)));
+  if (started.length) return started[0];
+  const upcoming = [...dated].sort(
+    (a, b) => start(a).localeCompare(start(b)) || (a.sort_key ?? 0) - (b.sort_key ?? 0),
+  );
+  return upcoming[0] ?? byRank[0];
 }
 
 function rankIndex(semesters: Semester[] | null | undefined): Map<string, number> {

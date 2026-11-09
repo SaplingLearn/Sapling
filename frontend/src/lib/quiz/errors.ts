@@ -34,6 +34,9 @@ export type QuizErrorCode =
   | "QUIZ_INTERNAL_ERROR"
   | "QUIZ_HTTP_ERROR"
   | "NETWORK"
+  /** Client-side only, like NETWORK: the request outlived its client ceiling
+   *  and was aborted (#760). Never on the wire. */
+  | "TIMEOUT"
   | "UNKNOWN";
 
 export interface QuizError {
@@ -77,6 +80,7 @@ export const QUIZ_ERROR_COPY: Record<QuizErrorCode, string> = {
   QUIZ_HTTP_ERROR: GENERIC_SERVER,
   UNKNOWN: GENERIC_SERVER,
   NETWORK: "You look offline. Check your connection and try again.",
+  TIMEOUT: "That's taking much longer than it should. Try again in a moment.",
 };
 
 /** Every code, in declaration order — handy for exhaustiveness tests. */
@@ -90,6 +94,7 @@ const RETRYABLE: ReadonlySet<QuizErrorCode> = new Set<QuizErrorCode>([
   "QUIZ_HTTP_ERROR",
   "UNKNOWN",
   "NETWORK",
+  "TIMEOUT",
 ]);
 
 /** Used when a 429 arrives without a `Retry-After` header (an in-process rate

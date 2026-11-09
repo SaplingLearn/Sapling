@@ -7,16 +7,15 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 
 const replace = vi.fn();
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace, push }) }));
 
 const setActiveUser = vi.fn();
-const confirmApproved = vi.fn();
 vi.mock('@/context/UserContext', () => ({
-  useUser: () => ({ setActiveUser, confirmApproved }),
+  useUser: () => ({ setActiveUser }),
 }));
 
 import SignInModal from './SignInModal';
@@ -148,5 +147,45 @@ describe('#741 an unapproved popup sign-in goes to /pending', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
+  });
+});
+
+describe('#756 sign-in error copy', () => {
+  beforeEach(() => {
+    channels.length = 0;
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ closed: false, focus() {}, close() {} }) as unknown as Window,
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('explains a deleted account instead of the generic error', () => {
+    render(<SignInModal open onClose={() => {}} errorCode="account_deleted" />);
+    const error = screen.getByTestId('signin-error').textContent ?? '';
+    expect(error).toContain('This account was deleted.');
+    expect(error).toContain('contact support');
+  });
+
+  it('shows a popup sign-in refused as account_deleted', () => {
+    render(<SignInModal open onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    act(() => {
+      channels[0].onmessage?.({
+        data: { type: 'sapling_signin', success: false, error: 'account_deleted' },
+      } as MessageEvent);
+    });
+    expect(screen.getByTestId('signin-error').textContent).toContain('This account was deleted.');
+  });
+
+  it("hides the landing's error once the student tries again", () => {
+    render(<SignInModal open onClose={() => {}} errorCode="session_expired" />);
+    expect(screen.queryByTestId('signin-error')).not.toBeNull();
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    expect(screen.queryByTestId('signin-error')).toBeNull();
   });
 });

@@ -12,26 +12,16 @@
 
 .quiz-question {
   /* ── Geometry the design pins ─────────────────────────────────────── */
-  --quiz-q-rail-top: 8px;      /* the rail's optical alignment with the header */
-  --quiz-q-stem-fs: 24px;      /* the --fs-* ramp has no 24px step */
-  --quiz-q-stem-mw: 560px;     /* the reading measure of the stem */
-  --quiz-q-stem-my: 48px;      /* the air above and below it */
+  --quiz-q-stem-fs: 26px;      /* the question is the page's headline */
+  --quiz-q-stem-mw: 720px;     /* the reading measure of the stem (~60 characters) */
+  --quiz-q-stem-my: 44px;      /* the air above and below it */
   --quiz-q-stem-mh: 72px;      /* reserved, so a one-line stem doesn't jump */
   --quiz-q-feedback-mh: 20px;  /* reserved for the verdict line */
-  --quiz-q-feedback-mt: 18px;
-  --quiz-q-aside-mt: 10px;
-  --quiz-q-skeleton-row: 55px; /* one `AnswerOption` row, while generating */
-  --quiz-q-skeleton-stem: 26px;
-  --quiz-q-skeleton-line: 13px;
-  /* The skeleton row's left inset is `AnswerOption`'s own (`padding: 17px 16px
-     17px 14px`, globals.css), so the placeholder starts where the answer text
-     will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
-     the same number today by coincidence, not by construction. */
-  --quiz-q-skeleton-inset: 14px;
-  --quiz-q-written-fs: 18px;   /* the answer line reads at near-stem size */
-  --quiz-q-numeric-w: 22ch;    /* a number needs a field, not the column */
-  --quiz-q-key-h: 34px;
-  --quiz-q-key-min-w: 44px;    /* touch-sized, on the decimal-pad screens */
+  --quiz-q-feedback-mt: 24px;
+  --quiz-q-aside-mt: 12px;
+  --quiz-q-numeric-w: 300px;   /* the narrowest a number's field gets (room for its reading) */
+  --quiz-q-key-h: 30px;
+  --quiz-q-key-min-w: 40px;
   --quiz-q-key-gap: 6px;
 
   display: flex;
@@ -44,34 +34,13 @@
   outline: none;
 }
 
-/* The ONE rule here that names a class from the shared `quiz.css`.
- *
- * Every other screen's wrapper is exactly its content column. This one is
- * FLANKED — a 64px progress rail on the left, a 64px spacer on the right — so
- * for the reading column itself to come out at `--quiz-col-question` the
- * wrapper has to be that much wider, and it has to stretch to full height for
- * the footer to reach the bottom. Scoped with `:has()` to a wrapper that
- * actually holds this screen, so the error card (which shares the `question`
- * layout) and every other screen are untouched. Where `:has()` is unsupported
- * the layout degrades to a narrower reading column and a footer that follows
- * the content — never to a broken one. */
+/* The ONE rule here that names a class from the shared `quiz.css`: the
+   column wrapper stretches to full height so the footer reaches the bottom of
+   the screen. Scoped with `:has()` to a wrapper holding this screen, so the
+   error card (which shares the `question` layout) is untouched; where `:has()`
+   is unsupported the footer simply follows the content. */
 .quiz-col--question:has(.quiz-question) {
-  max-width: calc(var(--quiz-col-question) + 2 * var(--quiz-rail));
   align-self: stretch;
-}
-
-.quiz-question__rail {
-  width: var(--quiz-rail);
-  flex-shrink: 0;
-  display: flex;
-  justify-content: center;
-  padding-top: var(--quiz-q-rail-top);
-}
-
-/* Mirrored on the right so the reading column stays optically centred. */
-.quiz-question__spacer {
-  width: var(--quiz-rail);
-  flex-shrink: 0;
 }
 
 .quiz-question__col {
@@ -104,23 +73,87 @@
   flex: 1;
 }
 
+/* The question pager: ‹ 1 2 3 4 5 ›. */
+.quiz-question__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quiz-question__step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.quiz-question__step:hover:not(:disabled) { background: var(--bg-soft); color: var(--text); }
+.quiz-question__step:disabled { opacity: 0.35; cursor: default; }
+.quiz-question__step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-full); }
+
+/* What kind of answer this question wants. In a mixed quiz it changes from
+   one question to the next, so it sits where the eye lands first. */
+.quiz-question__format {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--quiz-accent, var(--accent)) 10%, var(--bg-panel));
+  color: color-mix(in srgb, var(--quiz-accent, var(--accent)) 75%, var(--text));
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* ── Stem ───────────────────────────────────────────────────────────── */
+
+/* The stem and its source note, as one block: the block reserves the height
+   (so a one-line stem doesn't jump) and the note stays under its question. */
+.quiz-question__prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-sm);
+  margin: var(--quiz-q-stem-my) 0;
+  min-height: var(--quiz-q-stem-mh);
+}
 
 .quiz-question__stem {
   font-size: var(--quiz-q-stem-fs);
   line-height: 1.5;
   color: var(--text);
-  margin: var(--quiz-q-stem-my) 0;
+  margin: 0;
   max-width: var(--quiz-q-stem-mw);
-  min-height: var(--quiz-q-stem-mh);
   text-wrap: pretty;
+}
+
+.quiz-question__stem sup {
+  font-size: 0.62em;
+  line-height: 0;
+}
+
+/* Where the question came from — a quiet note under the stem, not a label. */
+.quiz-question__context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
 }
 
 /* ── Options ────────────────────────────────────────────────────────── */
 
-/* The rows bring their own bottom rule; the group supplies the top one. */
+/* A stack of tiles; each brings its own border. */
 .quiz-question__options {
-  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* ── Feedback ───────────────────────────────────────────────────────── */
@@ -136,10 +169,50 @@
   outline: none;
 }
 
+/* The verdict, once there is one. The outcome itself is shown ON the answer
+   (the chosen tile, the written field); this holds the plain `.card` with
+   the correction and the reason. */
+.quiz-question__feedback[data-outcome] {
+  animation: quiz-verdict-in var(--dur) var(--ease);
+}
+
+@keyframes quiz-verdict-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-question__feedback[data-outcome] { animation: none; }
+}
+
+.quiz-question__verdict-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--pad-md) var(--pad-lg);
+}
+
+.quiz-question__verdict-line {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+.quiz-question__verdict-expr {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 600;
+}
+
+.quiz-question__verdict-expr sup {
+  font-size: 0.7em;
+  line-height: 0;
+}
+
 .quiz-question__explanation {
-  margin: var(--pad-sm) 0 0;
-  font-size: var(--fs-md);
-  color: var(--text-muted);
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  color: var(--text-dim);
   max-width: var(--quiz-q-stem-mw);
 }
 
@@ -153,6 +226,11 @@
   align-items: center;
   gap: var(--pad-md);
   margin-top: var(--quiz-q-aside-mt);
+}
+
+/* The aside follows the verdict card rather than butting into it. */
+.quiz-question__feedback[data-outcome] + .quiz-question__aside {
+  margin-top: var(--pad-md);
 }
 
 /* The prototype's flag link is 12px, one step below the body text around it.
@@ -171,12 +249,19 @@
   min-height: var(--pad-xl);
 }
 
+/* Leave | pager | Submit. Three columns with equal outer tracks, so the
+   pager sits in the true centre whatever the two buttons' labels are
+   (Submit → Next → See results → Scoring…). */
 .quiz-question__footer {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: var(--pad-sm);
+  gap: var(--pad-md);
 }
+
+.quiz-question__footer > :first-child { justify-self: start; }
+.quiz-question__footer > .quiz-question__progress { grid-column: 2; }
+.quiz-question__footer > :last-child:not(.quiz-question__progress) { justify-self: end; }
 
 /* ── Keyboard hint ──────────────────────────────────────────────────── */
 
@@ -197,30 +282,115 @@
 
 /* ── Generating ─────────────────────────────────────────────────────── */
 
-.quiz-question__generating-copy {
-  margin: var(--pad-md) 0 0;
-  color: var(--text-muted);
-}
-
-/* The stem's placeholder keeps the real stem's box, so the skeleton and the
-   question that replaces it occupy the same space. */
-.quiz-question__stem--skeleton {
+/* A status panel where the question will be: what is being written, and a
+   bar that fills at the pace a generation usually takes. */
+.quiz-generating {
   display: flex;
   flex-direction: column;
   gap: var(--pad-sm);
-  justify-content: center;
+  margin: var(--quiz-q-stem-my) 0 0;
+  max-width: var(--quiz-q-stem-mw);
+  animation: quiz-fade-in var(--dur) var(--ease) both;
 }
 
-.quiz-question__skeleton-options {
-  border-top: 1px solid var(--border);
+.quiz-generating__title {
+  margin: 0;
+  font-size: var(--quiz-q-stem-fs);
+  line-height: 1.3;
+  color: var(--text);
 }
 
-.quiz-question__skeleton-row {
+.quiz-generating__detail {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.quiz-generating__bar {
+  position: relative;
+  height: 6px;
+  margin-top: var(--pad-md);
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+/* Paced, not measured: /generate answers in one piece. Quick at first, then
+   slowing so it never reaches the end before the quiz does; a soft sheen
+   keeps it visibly alive while it waits near the top. */
+.quiz-generating__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--quiz-accent, var(--accent));
+  transform-origin: left center;
+  transform: scaleX(0.04);
+  animation: quiz-generating-fill 16s cubic-bezier(0.08, 0.7, 0.2, 1) forwards;
+}
+
+.quiz-generating__fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-100%);
+  animation: quiz-generating-sheen 1.6s ease-in-out infinite;
+}
+
+@keyframes quiz-generating-fill {
+  to { transform: scaleX(0.94); }
+}
+
+@keyframes quiz-generating-sheen {
+  to { transform: translateX(100%); }
+}
+
+/* Only when it is taking longer than usual. */
+.quiz-generating__slow {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  opacity: 0;
+  animation: quiz-fade-in var(--dur-slow) var(--ease) 12s forwards;
+}
+
+@keyframes quiz-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Arriving, and scoring ────────────────────────────────────────────── */
+
+/* Each question (keyed on its id) rises in: from the generating panel, from
+   Next, and from the pager alike. */
+.quiz-question__body {
   display: flex;
-  align-items: center;
-  height: var(--quiz-q-skeleton-row);
-  padding: 0 var(--pad-md) 0 var(--quiz-q-skeleton-inset);
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  animation: quiz-question-in 260ms var(--ease) both;
+}
+
+@keyframes quiz-question-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+/* Scoring: the finished question steps back while the score is worked out,
+   so the move to the results screen reads as one transition. */
+.quiz-question__body,
+.quiz-question__header {
+  transition: opacity var(--dur) var(--ease);
+}
+
+.quiz-question[data-phase="submitting"] .quiz-question__body,
+.quiz-question[data-phase="submitting"] .quiz-question__header {
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-generating,
+  .quiz-question__body { animation: none; }
+  .quiz-generating__fill { animation: none; transform: scaleX(0.6); }
+  .quiz-generating__fill::after { animation: none; }
+  .quiz-generating__slow { animation: none; opacity: 1; }
 }
 
 /* ── Leave dialog ───────────────────────────────────────────────────── */
@@ -390,61 +560,171 @@
   border-color: var(--border-strong);
 }
 
+/* ── Written answers (`WrittenAnswer`) ─────────────────────────────── */
+
+.quiz-question__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .quiz-question__written {
   display: grid;
-  gap: var(--pad-sm);
+  gap: var(--pad-md);
+}
+
+/* Once the answer is marked, the symbol keys and the entry rules have done
+   their job; the verdict card takes their place. */
+.quiz-question__written[data-marked] .quiz-written__keys,
+.quiz-question__written[data-marked] .quiz-written__problem,
+.quiz-question__written[data-marked] .quiz-question__format-hint {
+  display: none;
 }
 
 .quiz-question__format-hint {
   margin: 0;
+  max-width: var(--quiz-q-stem-mw);
   color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.quiz-written {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+/* The answer field is the app's `.field`, at the answer tiles' text size so
+   it doesn't read smaller than the choices on a multiple-choice question. */
+.field.quiz-question__written-input {
+  padding: 10px 12px;
+  font-size: var(--answer-text-fs);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.field.quiz-question__written-input:disabled {
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  opacity: 1;
+}
+
+.field.quiz-question__written-input[aria-invalid="true"] {
+  border-color: var(--err);
+}
+
+/* Marked: the field's border carries the outcome, as `.field:focus` carries
+   focus. Nothing else about it changes. */
+.quiz-written[data-verdict="correct"] .field { border-color: var(--positive); }
+.quiz-written[data-verdict="incorrect"] .field { border-color: var(--err); }
+
+.quiz-written__input--short_answer { font-family: var(--font-serif); }
+
+/* The field and, once marked, the result at its right end. */
+.quiz-written__field {
+  position: relative;
+  width: 100%;
+}
+
+/* A number's field is short, so its keys sit on the same line beside it and
+   the row reads as one unit rather than a stub with empty space after it.
+   On a narrow screen the keys wrap underneath, as on the other formats. */
+.quiz-written[data-format="numeric"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--pad-md);
+}
+
+/* The field takes whatever the keys leave, so the row ends on the column's
+   right edge like every other answer; it never gets narrower than a number
+   plus its reading needs, and below that the keys wrap underneath. */
+.quiz-written[data-format="numeric"] .quiz-written__field {
+  flex: 1 1 var(--quiz-q-numeric-w);
+}
+
+/* Beside the field the keys match its height, so the row reads as one bar. */
+.quiz-written[data-format="numeric"] .quiz-written__key {
+  height: 44px;
+  min-width: 44px;
+}
+
+.quiz-written[data-format="numeric"] .quiz-written__problem {
+  flex-basis: 100%;
+}
+
+/* Room for the result (and, on a number, the reading), so neither ever
+   sits on top of the answer. Reserved up front on a number so the text
+   doesn't reflow when the reading first appears. */
+.quiz-written[data-verdict] .field.quiz-question__written-input,
+.quiz-written[data-format="numeric"] .field.quiz-question__written-input {
+  padding-right: 120px;
+}
+
+/* A number's reading, at the field's right end. */
+.quiz-written__reading {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* A problem with what's typed, under the keys. */
+.quiz-written__problem {
+  margin: 0;
   font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
-/* The input, its symbol keys and its read-back (`WrittenAnswer`). */
-.quiz-written {
-  display: grid;
-  gap: var(--pad-sm);
-  justify-items: start;
+.quiz-written__status {
+  --status-tone: var(--positive);
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--status-tone);
+  pointer-events: none;
 }
 
-.quiz-question__written-input {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: var(--pad-md);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-panel);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--quiz-q-written-fs);
-  line-height: 1.4;
+.quiz-written[data-verdict="incorrect"] .quiz-written__status {
+  --status-tone: var(--err);
 }
 
-.quiz-question__written-input::placeholder {
-  color: var(--text-muted);
+/* The same filled mark as the answer tiles' ✓ / ✕. */
+.quiz-written__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-full);
+  background: var(--status-tone);
+  color: #fff;
 }
 
-.quiz-question__written-input:focus-visible {
-  outline: 2px solid var(--border-strong);
-  outline-offset: 2px;
-}
-
-.quiz-question__written-input[aria-invalid="true"] {
-  border-color: var(--state-struggle);
-}
-
-/* A number is short: a field sized to it, digits aligned. */
-.quiz-written__input--numeric {
-  max-width: var(--quiz-q-numeric-w);
-  font-variant-numeric: tabular-nums;
-}
-
-/* An expression is code-like: monospace, so x, × and 1 stay distinct. */
+/* A number and an expression are typeset in the field, so they use the
+   reading serif. Not monospace: it gives every superscript a full-width
+   cell, so x²³ reads as "x² ³". Not the UI sans: its 1 and l, 0 and O are
+   too close for an answer someone is checking digit by digit. */
+.quiz-written__input--numeric,
 .quiz-written__input--symbolic {
-  font-family: var(--font-mono);
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums;
 }
 
 .quiz-written__keys {
@@ -453,6 +733,8 @@
   gap: var(--quiz-q-key-gap);
 }
 
+/* `.btn--sm` proportions, in the same serif as the field the keys type into
+   (monospace would space the ² in "x²" a full cell away). */
 .quiz-written__key {
   min-width: var(--quiz-q-key-min-w);
   height: var(--quiz-q-key-h);
@@ -461,7 +743,7 @@
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-serif);
   font-size: var(--fs-md);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
@@ -469,16 +751,30 @@
 
 .quiz-written__key:hover:not(:disabled) {
   border-color: var(--border-strong);
-  background: color-mix(in srgb, var(--text) 4%, var(--bg-panel));
+  background: var(--bg-subtle);
 }
 
 .quiz-written__key:focus-visible {
-  outline: 2px solid var(--border-strong);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+/* The "123" toggle reads as a control, not a character: the UI face, and
+   pressed while its row is open. */
+.quiz-written__key--toggle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.quiz-written__key--toggle[aria-expanded="true"] {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
 .quiz-written__key:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
@@ -489,14 +785,29 @@
 }
 
 .quiz-written__readback[data-ok="false"] {
-  color: var(--state-struggle);
+  color: var(--err);
 }
 
 .quiz-written__value {
   color: var(--text);
+  font-family: var(--font-serif);
   font-size: var(--fs-md);
 }
 
-.quiz-written__expr {
-  font-family: var(--font-mono);
+
+/* Phones: a smaller stem, and the header wraps rather than squeezes. */
+@media (max-width: 640px) {
+  .quiz-question {
+    --quiz-q-key-min-w: 36px;
+    --quiz-q-key-gap: 4px;
+    --quiz-q-stem-fs: 20px;
+    --quiz-q-stem-my: 24px;
+  }
+  .quiz-question__header { flex-wrap: wrap; row-gap: var(--pad-sm); }
+  /* The pager takes its own row above the two buttons. */
+  .quiz-question__footer { grid-template-columns: 1fr 1fr; row-gap: var(--pad-md); }
+  .quiz-question__footer > .quiz-question__progress { grid-column: 1 / -1; grid-row: 1; justify-self: center; }
+  .quiz-question__footer > :first-child { grid-row: 2; }
+  .quiz-question__footer > :last-child:not(.quiz-question__progress) { grid-row: 2; grid-column: 2; }
+  .quiz-question__aside { flex-wrap: wrap; gap: var(--pad-sm); }
 }

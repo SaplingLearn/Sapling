@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from db.connection import table
+from db.scope import service_route
 from services import academics
 from services.auth_guard import require_self
 from services.gamification_service import events_since, me_payload, read_me_inputs
@@ -29,7 +30,8 @@ from services.http_cache import (
     conditional,
     make_etag,
 )
-from services.profiles import get_display_names
+from services.profiles import LIVE_USER_FILTER, get_display_names
+from services.streak_service import effective_streak
 
 router = APIRouter()
 
@@ -61,7 +63,10 @@ def get_me(user_id: str, request: Request):
     # users.daily_goal_xp yet. If a settings path starts writing it, add it to
     # make_etag's args here or clients will keep serving a stale 304 after it
     # changes.
-    etag = make_etag(user_id, inputs.total_xp, inputs.level, inputs.earned_count)
+    # streak + the UTC day are inputs because the effective streak (#767)
+    # drops to 0 at a day boundary with nothing else changing.
+    etag = make_etag(user_id, inputs.total_xp, inputs.level, inputs.earned_count,
+                     inputs.streak, datetime.now(timezone.utc).date().isoformat())
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
@@ -93,7 +98,9 @@ def _private_ids() -> set[str]:
     return {r["user_id"] for r in rows}
 
 
-@router.get("/leaderboard")
+# #115: a cross-user projection (everyone's weekly XP, friends, privacy flags)
+# -> service role; the scope filter and privacy rules are applied in code.
+@router.get("/leaderboard", dependencies=[Depends(service_route)])
 def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     require_self(user_id, request)
     if scope not in SCOPES:
@@ -119,6 +126,15 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     hidden = _private_ids() - {user_id} if scope in ("everyone", "school") else set()
 
     ids = [k for k in weekly if k not in hidden]
+    # Live accounts only (#115): a soft-deleted student keeps their xp_events,
+    # but must not keep a place (or a name) on anyone's board. The read the
+    # rows need anyway decides it, BEFORE ranking, so ranks have no gaps.
+    users = table("users").select(
+        "id,level,total_xp,streak_count,last_active_date",
+        filters={"id": f"in.({','.join(ids)})", **LIVE_USER_FILTER},
+    ) if ids else []
+    by_id = {u["id"]: u for u in users or []}
+    ids = [i for i in ids if i in by_id or i == user_id]
     ranked = sorted(ids, key=lambda i: (-weekly.get(i, 0), i))
 
     # The ETag has to key on the ranking ITSELF, not on (count, total). Those
@@ -132,17 +148,15 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     # Still NOT covered, same caveat as daily_goal_xp on /me above: level,
     # streak_count and display name are rendered here but aren't etag inputs,
     # so a rename alone won't bust the cache. `no-cache` keeps that to one
-    # stale revalidation rather than a 30s blind window.
-    etag = make_etag(user_id, scope, *[f"{i}:{weekly.get(i, 0)}" for i in ranked])
+    # stale revalidation rather than a 30s blind window. The UTC day IS an
+    # input: the effective streak (#767) lapses to 0 at a day boundary.
+    etag = make_etag(user_id, scope, now.date().isoformat(),
+                     *[f"{i}:{weekly.get(i, 0)}" for i in ranked])
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
 
-    users = table("users").select(
-        "id,level,total_xp,streak_count", filters={"id": f"in.({','.join(ids)})"}
-    ) if ids else []
     names = get_display_names(ids) if ids else {}
-    by_id = {u["id"]: u for u in users or []}
     rows, you = [], None
     for rank, uid in enumerate(ranked, start=1):
         u = by_id.get(uid, {})
@@ -155,7 +169,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
             "stage": stage_for_level(level).get("name"),
             "total_xp": int(u.get("total_xp") or 0),
             "week_xp": weekly.get(uid, 0),
-            "streak": int(u.get("streak_count") or 0),
+            "streak": effective_streak(u),
             "is_you": uid == user_id,
         }
         rows.append(row)
@@ -181,7 +195,9 @@ def get_activity(user_id: str, request: Request):
     # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
     # yet. If a settings path starts writing it, add it to make_etag's args
     # here or clients will keep serving a stale 304 after it changes.
-    etag = make_etag(user_id, len(events),
+    # The UTC day is an input: the week chart is relative to today and the
+    # effective streak (#767) lapses to 0 at a day boundary.
+    etag = make_etag(user_id, today.date().isoformat(), len(events),
                      sum(int(e.get("amount") or 0) for e in events))
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
@@ -212,7 +228,7 @@ def get_activity(user_id: str, request: Request):
         trend.append({"label": label, "xp": total})
 
     urow = table("users").select(
-        "streak_count,daily_goal_xp", filters={"id": f"eq.{user_id}"}
+        "streak_count,last_active_date,daily_goal_xp", filters={"id": f"eq.{user_id}"}
     )
     u = urow[0] if urow else {}
     week_total = sum(d["xp"] for d in week)
@@ -228,6 +244,6 @@ def get_activity(user_id: str, request: Request):
             "daily_avg": round(week_total / len(active)) if active else 0,
             "best_day": best["xp"],
             "best_day_label": best["day"],
-            "streak": int(u.get("streak_count") or 0),
+            "streak": effective_streak(u),
         },
     }, etag, REVALIDATE_CACHE_CONTROL)

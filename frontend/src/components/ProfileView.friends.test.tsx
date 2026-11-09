@@ -41,14 +41,20 @@ vi.mock("@/lib/api", () => ({
   fetchFriends: vi.fn(),
   fetchFriendRequests: vi.fn(),
   sendFriendRequest: vi.fn(),
+  acceptFriendRequest: vi.fn(),
+  cancelFriendRequest: vi.fn(),
 }));
 
 import { AddFriendAction } from "./ProfileView";
-import { fetchFriends, fetchFriendRequests, sendFriendRequest } from "@/lib/api";
+import {
+  fetchFriends, fetchFriendRequests, sendFriendRequest, acceptFriendRequest, cancelFriendRequest,
+} from "@/lib/api";
 
 const mockedFetchFriends = vi.mocked(fetchFriends);
 const mockedFetchFriendRequests = vi.mocked(fetchFriendRequests);
 const mockedSend = vi.mocked(sendFriendRequest);
+const mockedAccept = vi.mocked(acceptFriendRequest);
+const mockedCancel = vi.mocked(cancelFriendRequest);
 
 function emptyRequests() {
   return { incoming: [], outgoing: [] };
@@ -140,5 +146,77 @@ describe("AddFriendAction", () => {
     // Resynced from the optimistic "pending" flip to the server's "friends".
     await waitFor(() => expect(screen.getByTestId("profile-friend-status")).toBeInTheDocument());
     expect(screen.queryByTestId("profile-add-friend")).toBeNull();
+  });
+
+  // #764 ────────────────────────────────────────────────────────────────────
+
+  it("offers Accept (not Add friend) when this profile already sent the viewer a request", async () => {
+    mockedFetchFriends.mockResolvedValue({ friends: [] });
+    mockedFetchFriendRequests.mockResolvedValue({
+      incoming: [{ id: "in1", from_user_id: "profileUser1", name: "Ada", created_at: "2026-01-01" }],
+      outgoing: [],
+    });
+    mockedAccept.mockResolvedValue({ accepted: true });
+
+    render(<AddFriendAction profileUserId="profileUser1" />);
+
+    const accept = await screen.findByTestId("profile-accept-friend");
+    expect(screen.queryByTestId("profile-add-friend")).toBeNull();
+    fireEvent.click(accept);
+
+    await waitFor(() => expect(mockedAccept).toHaveBeenCalledWith("in1", "viewer1"));
+    await waitFor(() => expect(screen.getByTestId("profile-friend-status")).toBeInTheDocument());
+    expect(mockedSend).not.toHaveBeenCalled();
+  });
+
+  it("cancels an outgoing request back to Add friend", async () => {
+    mockedFetchFriends.mockResolvedValue({ friends: [] });
+    mockedFetchFriendRequests.mockResolvedValue({
+      incoming: [],
+      outgoing: [{ id: "r1", to_user_id: "profileUser1", name: "Ada", created_at: "2026-01-01" }],
+    });
+    mockedCancel.mockResolvedValue({ cancelled: true });
+
+    render(<AddFriendAction profileUserId="profileUser1" />);
+
+    fireEvent.click(await screen.findByTestId("profile-cancel-friend-request"));
+
+    await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("r1", "viewer1"));
+    await waitFor(() => expect(screen.getByTestId("profile-add-friend")).toHaveTextContent("Add friend"));
+    expect(screen.getByTestId("profile-add-friend")).not.toBeDisabled();
+    expect(screen.queryByTestId("profile-cancel-friend-request")).toBeNull();
+  });
+
+  it("a request just sent can be cancelled using the id the send returned", async () => {
+    mockedFetchFriends.mockResolvedValue({ friends: [] });
+    mockedFetchFriendRequests.mockResolvedValue(emptyRequests());
+    mockedSend.mockResolvedValue({ request: { id: "new1" } });
+    mockedCancel.mockResolvedValue({ cancelled: true });
+
+    render(<AddFriendAction profileUserId="profileUser1" />);
+    fireEvent.click(await screen.findByTestId("profile-add-friend"));
+    fireEvent.click(await screen.findByTestId("profile-cancel-friend-request"));
+
+    await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("new1", "viewer1"));
+  });
+
+  it("resets when the viewed profile changes, and ignores the old profile's late answer", async () => {
+    let resolveFirst: (v: { friends: { user_id: string; name: string; level: number; total_xp: number }[] }) => void = () => {};
+    mockedFetchFriends
+      .mockImplementationOnce(() => new Promise((res) => { resolveFirst = res; }))
+      .mockResolvedValue({ friends: [] });
+    mockedFetchFriendRequests.mockResolvedValue(emptyRequests());
+
+    const { rerender } = render(<AddFriendAction profileUserId="profileUser1" />);
+    rerender(<AddFriendAction profileUserId="profileUser2" />);
+
+    const btn = await screen.findByTestId("profile-add-friend");
+    expect(btn).toHaveTextContent("Add friend");
+
+    // profileUser1's slow answer ("friends") arrives late and must not land.
+    resolveFirst({ friends: [{ user_id: "profileUser1", name: "Ada", level: 1, total_xp: 0 }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("profile-friend-status")).toBeNull();
+    expect(screen.getByTestId("profile-add-friend")).toHaveTextContent("Add friend");
   });
 });

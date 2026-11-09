@@ -14,7 +14,9 @@ def get_flags(request: Request):
         user_id = get_session_user_id(request)
     except HTTPException:
         user_id = None
-    return JSONResponse(
-        {"flags": feature_flags.resolved_client_flags(user_id)},
-        headers={"Cache-Control": "private, no-store"},
-    )
+    body: dict = {"flags": feature_flags.resolved_client_flags(user_id)}
+    # #771: these answers are the fail-closed "off" of an unreadable store,
+    # not configuration — the client keeps its last-known map instead.
+    if feature_flags.store_unreadable():
+        body["degraded"] = True
+    return JSONResponse(body, headers={"Cache-Control": "private, no-store"})

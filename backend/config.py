@@ -110,6 +110,32 @@ def validate_config() -> None:
             + ", ".join(missing)
             + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET for local dev.)"
         )
+    _warn_db_user_scope_config()
+
+
+def _warn_db_user_scope_config() -> None:
+    """#115 (RLS step 2): warn at boot when the `db_user_scope` flag could be
+    moved past `off` without the keys the user-scoped client needs
+    (SUPABASE_JWT_SIGNING_KEY + SUPABASE_ANON_KEY, db/user_jwt.py). Never
+    raises: the flag lives in the DB and is off by default, so a deployment
+    without the keys is fine until someone flips it — at which point enforce
+    answers 503 (fail closed) and shadow skips its comparisons. An env
+    override already asking for shadow/enforce makes it an ERROR."""
+    import logging
+
+    from db import user_jwt
+
+    problems = user_jwt.config_problems()
+    if not problems:
+        return
+    log = logging.getLogger("sapling.config")
+    override = (os.getenv("SAPLING_FLAG_DB_USER_SCOPE") or "").strip().lower()
+    msg = ("db_user_scope cannot leave 'off' on this deployment (%s): enforce would "
+           "answer 503 and shadow would skip its comparisons. See .env.example.")
+    if override in ("shadow", "enforce"):
+        log.error("SAPLING_FLAG_DB_USER_SCOPE=%s but " + msg, override, "; ".join(problems))
+    elif not IS_LOCAL:
+        log.warning(msg, "; ".join(problems))
 
 
 # ── Mastery tiers (#557) ────────────────────────────────────────────────────
@@ -136,6 +162,16 @@ MASTERY_STRUGGLING_MIN = 0.1
 
 
 def get_mastery_tier(score: float) -> str:
+    """The tier for a score. Persisted on graph_nodes.mastery_tier (#766):
+    the atomic ``apply_mastery_delta`` SQL function takes these thresholds as
+    parameters (never its own literals) and re-tiers a node on every write; a
+    threshold change leaves untouched rows stale until
+    ``scripts/backfill_mastery_tiers.py --apply``.
+
+    "unexplored" covers BOTH never-studied and studied-but-below-the-floor;
+    ``graph_nodes.times_studied == 0`` is what tells them apart. The stored
+    vocabulary is exactly these four ('subject_root' is a get_graph payload
+    marker only, never persisted)."""
     if score >= MASTERY_MASTERED_MIN:
         return "mastered"
     elif score >= MASTERY_LEARNING_MIN:
@@ -179,6 +215,30 @@ def canopy_metrics_token() -> str:
     return (os.getenv("CANOPY_METRICS_TOKEN") or "").strip()
 
 
+# ── Cross-environment account copy (admin account tools) ────────────────────
+#
+# OPTIONAL and deliberately absent from `validate_config`: with any of these
+# unset the copy feature is inert (the admin route answers 503, the internal
+# `/api/internal/account-sync/*` routes answer 404). Read at call time and
+# stripped, like `canopy_metrics_token`, so a rotation needs no code change and
+# a pasted trailing newline cannot fail as a silent 401.
+
+
+def account_sync_peer_url() -> str:
+    """The OTHER environment's backend base URL (no trailing slash), or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_URL") or "").strip().rstrip("/")
+
+
+def account_sync_peer_token() -> str:
+    """Bearer token we SEND to the peer's internal account-sync routes, or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_TOKEN") or "").strip()
+
+
+def account_sync_inbound_token() -> str:
+    """Bearer token our internal account-sync routes ACCEPT, or "" (= routes 404)."""
+    return (os.getenv("ACCOUNT_SYNC_INBOUND_TOKEN") or "").strip()
+
+
 def build_commit() -> str:
     """Short git SHA of the running build, or "unknown".
 
@@ -200,3 +260,68 @@ def build_commit() -> str:
     generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
     raw = railway or generic
     return raw[:7].lower() or "unknown"
+
+
+# ── PostHog (optional product analytics, ADR 0028) ──────────────────────────
+#
+# All of these are OPTIONAL and deliberately absent from `validate_config`: unset
+# means the PostHog seam (services/posthog_client.py) is fully inert — no
+# client, no threads, no network. Whether a set token is actually USED is
+# decided there (`disabled_reason`), not here: it is also forced off under
+# pytest, APP_ENV=test and any non-"real" SAPLING_MODEL_MODE; the runtime
+# switch is the product_analytics feature flag. Read at call time, not import
+# time (like `canopy_metrics_token`), so tests need no reload.
+
+POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com"  # US cloud ingestion
+
+
+def posthog_project_token() -> str:
+    """The project (public, write-only) token events are captured with."""
+    return (os.getenv("POSTHOG_PROJECT_TOKEN") or "").strip()
+
+
+def posthog_host() -> str:
+    """Ingestion host. Defaults to US cloud."""
+    return (os.getenv("POSTHOG_HOST") or POSTHOG_DEFAULT_HOST).strip().rstrip("/")
+
+
+def posthog_personal_api_key() -> str:
+    """Personal API key (scope `person:write`) — used ONLY by the account-
+    deletion person delete, never handed to the capture client (a personal key
+    there would start feature-flag polling, i.e. background network)."""
+    return (os.getenv("POSTHOG_PERSONAL_API_KEY") or "").strip()
+
+
+def posthog_project_id() -> str:
+    """Numeric project id for the private REST API (person deletion)."""
+    return (os.getenv("POSTHOG_PROJECT_ID") or "").strip()
+
+
+#: The ONLY ingestion hosts an API host is ever derived from. The personal API
+#: key (`person:write`) is sent to whatever posthog_api_host() returns, so a
+#: derivation must never be able to point it at a host that is not PostHog's
+#: own app: a string rewrite of an arbitrary POSTHOG_HOST (a reverse proxy, a
+#: typo, a self-hosted ingest) would hand the key to that host.
+_POSTHOG_INGEST_TO_API_HOST = {
+    "https://us.i.posthog.com": "https://us.posthog.com",
+    "https://eu.i.posthog.com": "https://eu.posthog.com",
+    # The app hosts also accept ingestion; they ARE the API hosts.
+    "https://us.posthog.com": "https://us.posthog.com",
+    "https://eu.posthog.com": "https://eu.posthog.com",
+}
+
+
+def posthog_api_host() -> str | None:
+    """Private REST API host for the personal-key calls (person deletion), or
+    None when it cannot be determined safely.
+
+    The ingestion host (`us.i.posthog.com`) does not serve `/api/projects/...`;
+    the app host does. POSTHOG_API_HOST, when set, is used as-is (self-hosted
+    or proxied setups must name their API host explicitly). Otherwise it is
+    derived ONLY from the PostHog-cloud hosts (us/eu, ingestion or app); any other
+    POSTHOG_HOST returns None and the caller WARNs and skips rather than
+    guessing where to send the key."""
+    explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return _POSTHOG_INGEST_TO_API_HOST.get(posthog_host().lower())

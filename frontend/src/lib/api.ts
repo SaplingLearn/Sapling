@@ -7,6 +7,8 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
+  AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -101,6 +103,42 @@ function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
   return { code, requestId };
 }
 
+// ── Global 401 (#756) ─────────────────────────────────────────────────────────
+// A 401 from any session-authenticated call means the server no longer honours
+// this browser's session (expired, signed out elsewhere, account deleted). Until
+// #756 nothing noticed until the next profile refetch, so a dead session kept
+// its identity — and its analytics identify — in the tab. fetchJSON now tells
+// the listeners (UserContext tears the identity down); it still throws, so each
+// caller's own error handling is unchanged.
+
+type SessionExpiredListener = () => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+
+/** Subscribe to "a session-authenticated call answered 401". Returns the
+ * unsubscribe. */
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+/** The /pending endpoints authenticate with the pending token in their body,
+ * not the session cookie: their 401 says nothing about a session. */
+function isSessionAuthenticated(path: string): boolean {
+  return !path.startsWith('/api/auth/pending/');
+}
+
+function notifySessionExpired(): void {
+  for (const listener of [...sessionExpiredListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error('[api] session-expired listener failed', err);
+    }
+  }
+}
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -113,6 +151,7 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
+  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);
@@ -175,6 +214,9 @@ export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/lo
 export interface PendingStatus {
   email: string;
   on_waitlist: boolean;
+  /** #757: an admin approved the address since this sign-in; a fresh
+   * sign-in now gets in (the pending token itself is never a session). */
+  approved?: boolean;
 }
 export const getPendingStatus = (token: string) =>
   fetchJSON<PendingStatus>('/api/auth/pending/status', {
@@ -233,9 +275,11 @@ export const addCourse = (userId: string, courseId: string, color?: string, nick
     body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}), ...(term ? { term } : {}) }),
   });
 
-export const deleteCourse = (userId: string, courseId: string) =>
+// Drops ONE term's enrollment (#766): `term` is the semester label to drop;
+// omitted = the backend's current term. Other terms' gradebooks survive.
+export const deleteCourse = (userId: string, courseId: string, term?: string) =>
   fetchJSON<{ deleted: boolean }>(
-    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}`,
+    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}${term ? `?term=${encodeURIComponent(term)}` : ''}`,
     { method: 'DELETE' }
   );
 
@@ -295,6 +339,18 @@ export const startSession = (
     }),
   });
 
+/**
+ * One id per student turn (#761/#762), sent UNCHANGED on the stream, its
+ * JSON fallback and any Retry of that turn: the backend dedupes the turn's
+ * writes on it and replays an already-persisted reply (`replayed: true`)
+ * instead of running the turn twice. Must match `^[A-Za-z0-9_\-]{8,128}$`.
+ */
+export function newTurnId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export const sendChat = (
   sessionId: string,
   userId: string,
@@ -302,8 +358,9 @@ export const sendChat = (
   mode: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[] }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -312,6 +369,7 @@ export const sendChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     }),
   });
 
@@ -326,6 +384,8 @@ export interface ChatResult {
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** The server already had this `turn_id`'s reply and replayed it (#761). */
+  replayed?: boolean;
 }
 
 interface StreamEvent {
@@ -460,6 +520,7 @@ export const streamChat = (
   useSharedContext = true,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  turnId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/chat/stream',
@@ -470,6 +531,7 @@ export const streamChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     },
     handlers,
   );
@@ -804,14 +866,46 @@ export interface UploadEvent {
   data?: Record<string, unknown> | null;
 }
 
+/**
+ * How an upload stream ended (#759) — a function of the server's terminal
+ * events alone:
+ *   - `error:failed` (with or without an earlier `result`) → `failed`, with
+ *     the server's message. A post-result failure means nothing was saved.
+ *   - `result` then `status:done` carrying a `document_id` → `processed`.
+ *   - `status:done` without a saved document → `failed`.
+ * `result` is the `result` event's data: a DocumentProcessingResult dump
+ * (an idempotent replay sends the same shape plus `id`/`replayed`).
+ */
+export interface UploadResultData {
+  id?: string;
+  replayed?: boolean;
+  classification?: { category?: string; is_syllabus?: boolean };
+  summary?: { abstract?: string };
+  concepts?: { concepts?: Array<{ name?: string; description?: string }> };
+  [key: string]: unknown;
+}
+
+export type UploadOutcome =
+  | { kind: 'processed'; documentId: string; result: UploadResultData }
+  | { kind: 'failed'; message: string; requestId?: string; afterResult: boolean };
+
+/**
+ * Streams POST /api/documents/upload. Resolves to an UploadOutcome whenever
+ * the server reached a terminal event; rejects only on transport failure
+ * (HTTP error before the stream opened, network drop, abort) or a stream
+ * that closed with no terminal event.
+ */
 export async function uploadDocumentStream(
   formData: FormData,
   onEvent: (event: UploadEvent) => void,
   signal?: AbortSignal,
   requestId?: string,
-): Promise<any> {
+): Promise<UploadOutcome> {
   const { streamSSE } = await import('./sse');
-  let finalDoc: any = null;
+  let result: UploadResultData | null = null;
+  let failure: { message: string; requestId?: string } | null = null;
+  let done = false;
+  let documentId: string | undefined;
   const headers: Record<string, string> = {};
   if (requestId) headers['X-Request-ID'] = requestId;
   for await (const e of streamSSE<UploadEvent>(
@@ -819,21 +913,38 @@ export async function uploadDocumentStream(
     { method: 'POST', body: formData, signal, credentials: 'include', headers },
   )) {
     onEvent(e.data);
+    const data = (e.data.data ?? {}) as Record<string, unknown>;
     if (e.event === 'result') {
-      // result.data carries the full DocumentProcessingResult (orchestrator)
-      // OR the legacy-fallback persisted row. Both expose `id`/`document_id`.
-      finalDoc = e.data.data ?? null;
-    }
-    if (e.event === 'status' && e.data.step === 'done') {
-      // The done event carries { document_id } when the row persisted.
-      const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
-      if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
-        finalDoc = { ...finalDoc, id: docIdFromDone };
+      result = data as UploadResultData;
+    } else if (e.event === 'error' && e.data.step === 'failed') {
+      failure = {
+        message: e.data.message,
+        requestId: typeof data.request_id === 'string' ? data.request_id : undefined,
+      };
+    } else if (e.event === 'status' && e.data.step === 'done') {
+      done = true;
+      if (typeof data.document_id === 'string' && data.document_id) {
+        documentId = data.document_id;
       }
     }
   }
-  if (!finalDoc) throw new Error('Upload stream ended without a result event.');
-  return finalDoc;
+  if (failure) {
+    return {
+      kind: 'failed',
+      message: failure.message || 'Document processing failed. Please try again.',
+      requestId: failure.requestId,
+      afterResult: result !== null,
+    };
+  }
+  if (result && documentId) return { kind: 'processed', documentId, result };
+  if (done) {
+    return {
+      kind: 'failed',
+      message: 'The server finished without saving the document. Please try again.',
+      afterResult: result !== null,
+    };
+  }
+  throw new Error('Upload stream ended before the server finished.');
 }
 
 export const updateDocumentCategory = (documentId: string, userId: string, category: string) =>
@@ -867,11 +978,19 @@ export interface GenerateFlashcardsResponse {
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
-// documents; omitted = current term. JSON.stringify drops it when unset.
-export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
+// documents; omitted = every term. `courseId` (#829) scopes the documents to
+// the selected course by id — without it the backend matches `topic` against
+// the student's enrolled courses. JSON.stringify drops either when unset.
+export const generateFlashcards = (
+  userId: string,
+  topic: string,
+  count = 5,
+  semester?: string,
+  courseId?: string,
+) =>
   fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count, semester }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
 
 // `semester` scopes the list to that term's offerings (term-less cards stay
@@ -1151,6 +1270,45 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
 export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
+// Admin — account tools (backend routes/admin_accounts.py; spec
+// docs/superpowers/specs/2026-11-08-admin-account-tools-design.md). Each write
+// sends the action word as `confirm` — the backend 400s without it; the UI
+// first shows a review (summary / copy-preview: what will be deleted) and
+// makes the admin type the account's email before calling these.
+export const adminAccountsMeta = () =>
+  fetchJSON<AdminAccountsMeta>('/api/admin/accounts/meta');
+
+/** Read-only: what the account holds on this environment (the seed/wipe review). 404 unknown. */
+export const adminAccountSummary = (userId: string) =>
+  fetchJSON<AdminAccountSummary>(`/api/admin/accounts/${encodeURIComponent(userId)}/summary`);
+
+/** Read-only: both sides of a copy (the copy review). 503 unconfigured, 502 peer down. */
+export const adminCopyPreview = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyPreview>(
+    `/api/admin/accounts/${encodeURIComponent(userId)}/copy-preview?direction=${direction}`,
+  );
+
+/** Wipe-then-seed the account with `major`'s mock semester (replaces, never stacks). */
+export const adminSeedAccount = (userId: string, major: string) =>
+  fetchJSON<AdminSeedAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/seed`, {
+    method: 'POST',
+    body: JSON.stringify({ major, confirm: 'SEED' }),
+  });
+
+/** Remove the account's academic/study data; the account itself is kept. */
+export const adminWipeAccount = (userId: string) =>
+  fetchJSON<AdminWipeAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/wipe`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'WIPE' }),
+  });
+
+/** push = overwrite the peer env's copy with ours; pull = overwrite ours with the peer's. */
+export const adminCopyAccount = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ direction, confirm: 'COPY' }),
+  });
+
 // Admin — feedback (#520; decrypted server-side, admin-only)
 export type AdminFeedbackEntry = {
   id: string; user_id: string; user_name: string; type: string; rating: number;
@@ -1385,6 +1543,12 @@ export const adminSendBroadcast = (payload: { subject: string; body: string; aud
 export const adminListBroadcasts = () =>
   fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
+/** Re-run a stalled/failed/partial broadcast through the per-recipient dedupe (202). */
+export const adminResumeBroadcast = (id: string) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>(`/api/admin/email/broadcasts/${encodeURIComponent(id)}/resume`, {
+    method: 'POST',
+  });
+
 // Admin — audit
 export const adminAuditLog = (params?: {
   page?: number; page_size?: number; action?: string; target_type?: string; actor_id?: string;
@@ -1524,7 +1688,9 @@ export interface Semester {
 }
 
 export const getSemesters = () =>
-  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
+  // current_term_id: the server's current term (#766) — prefer it over the
+  // browser clock (lib/semesters.ts::currentTerm).
+  fetchJSON<{ semesters: Semester[]; current_term_id?: string | null }>('/api/semesters');
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
 
@@ -1690,11 +1856,25 @@ export const uploadSyllabus = (input: {
 
 export type GradescopeAuthMode = 'password' | 'cookies';
 
+/** #770: `disconnected` = no saved credentials (course links may survive);
+ *  `needs_reauth` = saved, but Gradescope rejected them on the last login. */
+export type GradescopeConnectionState = 'disconnected' | 'needs_reauth' | 'connected';
+
+/** Machine code for the last sync attempt's failure (null = it succeeded). */
+export type GradescopeSyncError = 'auth_failed' | 'fetch_failed' | 'write_failed' | 'partial_write';
+
 export interface GradescopeStatus {
   has_credentials: boolean;
   auth_mode: GradescopeAuthMode | null;
   last_synced_at: string | null;
   credentials_updated_at?: string | null;
+  // Optional so a backend without the #770 migration still type-checks; read
+  // it through components/Gradebook/gradescopeState.ts, which derives it.
+  state?: GradescopeConnectionState;
+  connected?: boolean;
+  needs_reauth?: boolean;
+  last_attempt_at?: string | null;
+  last_sync_error?: GradescopeSyncError | null;
 }
 
 export type GradescopeConnectInput =
@@ -1797,11 +1977,82 @@ export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, 
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
-  fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
-    { method: 'POST' },
+/** A Gradescope sync still running on the job queue (#116, `jobs_queue` on):
+ *  POST /sync answers 202 with this once it outlasts the server's wait, and
+ *  so does GET /sync/{course}/status until the sync ends. */
+export interface GradescopeSyncPending {
+  pending: true;
+  sync_id: string;
+  stage: string;
+  detail?: string;
+}
+
+export const isGradescopeSyncPending = (value: unknown): value is GradescopeSyncPending =>
+  typeof value === 'object' && value !== null && (value as { pending?: unknown }).pending === true;
+
+const gradescopeSyncPath = (userId: string, saplingCourseId: string, semester?: string, suffix = '') =>
+  `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}${suffix}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`;
+
+/** The latest queued sync of a course: pending while it runs, then exactly
+ *  what the POST would have answered (the counts, or the same typed error). */
+export const getGradescopeSyncStatus = (userId: string, saplingCourseId: string, semester?: string) =>
+  fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+    gradescopeSyncPath(userId, saplingCourseId, semester, '/status'),
   );
+
+export const GRADESCOPE_SYNC_POLL_MS = 3000;
+/** ~10 minutes of polling before giving up with the "still running" error. */
+const GRADESCOPE_SYNC_MAX_POLLS = 200;
+
+export interface GradescopeSyncOptions {
+  /** Called once when the server says the sync is still running (a 202, or
+   *  its 504 "still running" answer); polling for the outcome follows. */
+  onPending?: () => void;
+  pollMs?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sync a linked course. Inline (flag off) this is one POST, unchanged. A
+ *  queued sync that outlasts the server's wait answers 202 (or 504); the sync
+ *  keeps running, so this polls the status route until it ends and resolves
+ *  or rejects exactly as the POST would have. */
+export async function syncGradescopeCourse(
+  userId: string,
+  saplingCourseId: string,
+  semester?: string,
+  options: GradescopeSyncOptions = {},
+): Promise<GradescopeSyncResult> {
+  let stillRunning: ApiError;
+  try {
+    const res = await fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+      gradescopeSyncPath(userId, saplingCourseId, semester),
+      { method: 'POST' },
+    );
+    if (!isGradescopeSyncPending(res)) return res;
+    const detail = res.detail || 'This Gradescope sync is taking longer than usual.';
+    stillRunning = new ApiError(JSON.stringify({ detail }), 504, { body: { detail } });
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 504) throw err;
+    stillRunning = err;
+  }
+  options.onPending?.();
+  const pollMs = options.pollMs ?? GRADESCOPE_SYNC_POLL_MS;
+  for (let i = 0; i < GRADESCOPE_SYNC_MAX_POLLS; i++) {
+    await sleep(pollMs);
+    let status: GradescopeSyncResult | GradescopeSyncPending;
+    try {
+      status = await getGradescopeSyncStatus(userId, saplingCourseId, semester);
+    } catch (err) {
+      if (!(err instanceof ApiError)) continue; // a network blip: poll again
+      // Nothing staged (a proxy timeout on the inline path): keep the 504.
+      if (err.status === 404) throw stillRunning;
+      throw err; // the sync's own outcome, answered as the POST would have
+    }
+    if (!isGradescopeSyncPending(status)) return status;
+  }
+  throw stillRunning;
+}
 
 // ── Notes ──────────────────────────────────────────────────────────────────
 
@@ -1961,3 +2212,9 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// #764: the sender withdraws a pending friend request.
+export const cancelFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ cancelled: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });

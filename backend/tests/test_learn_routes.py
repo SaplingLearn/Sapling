@@ -4,12 +4,20 @@ Unit tests for routes/learn.py
 Tests pure helper functions directly (no HTTP layer needed).
 Route-level tests use FastAPI's TestClient with Gemini and DB mocked.
 """
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
 from tests.agent_run_fakes import run_result, textless_run_result
+from tests.db_fakes import add_async_twins, fake_table, with_async_twins
+from tests.split_patches import patch_tutor
+
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 
 client = TestClient(app)
 
@@ -19,8 +27,8 @@ client = TestClient(app)
 class TestGetCourseIdForTopic:
     def test_empty_topic_returns_empty(self):
         from routes.learn import _get_course_id_for_topic
-        with patch("routes.learn.table"):
-            assert _get_course_id_for_topic("", "u1") == ""
+        with patch_tutor("table"):
+            assert asyncio.run(_get_course_id_for_topic("", "u1")) == ""
 
     def test_matches_enrolled_course_code(self):
         from routes.learn import _get_course_id_for_topic
@@ -44,8 +52,8 @@ class TestGetCourseIdForTopic:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
-            assert _get_course_id_for_topic("math", "u1") == "cid-math"
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(_get_course_id_for_topic("math", "u1")) == "cid-math"
 
     def test_matches_enrolled_course_name(self):
         from routes.learn import _get_course_id_for_topic
@@ -67,8 +75,8 @@ class TestGetCourseIdForTopic:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
-            assert _get_course_id_for_topic("biology 101", "u1") == "cid-bio"
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(_get_course_id_for_topic("biology 101", "u1")) == "cid-bio"
 
     def test_matches_graph_subject_label(self):
         from routes.learn import _get_course_id_for_topic
@@ -94,8 +102,8 @@ class TestGetCourseIdForTopic:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
-            assert _get_course_id_for_topic("CS - Intro", "u1") == "cid-x"
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(_get_course_id_for_topic("CS - Intro", "u1")) == "cid-x"
 
     def test_concept_node_with_course_id(self):
         from routes.learn import _get_course_id_for_topic
@@ -114,15 +122,15 @@ class TestGetCourseIdForTopic:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
-            assert _get_course_id_for_topic("Recursion", "u1") == "cid-from-node"
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(_get_course_id_for_topic("Recursion", "u1")) == "cid-from-node"
 
     def test_unknown_topic_returns_empty(self):
         from routes.learn import _get_course_id_for_topic
         mock = MagicMock()
         mock.select.return_value = []
-        with patch("routes.learn.table", return_value=mock):
-            assert _get_course_id_for_topic("UnknownXyzzy", "u1") == ""
+        with patch_tutor("table", return_value=add_async_twins(mock)):
+            assert asyncio.run(_get_course_id_for_topic("UnknownXyzzy", "u1")) == ""
 
 
 # ── GET /api/learn/sessions/{user_id} ────────────────────────────────────────
@@ -138,12 +146,13 @@ class TestListSessions:
             if name == "sessions":
                 mock.select.return_value = sessions
             elif name == "messages":
-                mock.select.return_value = [{"id": "m1"}, {"id": "m2"}]
+                # count=exact over a one-row body: the total, not every id
+                mock.select_with_count.return_value = ([{"id": "m1"}], 2)
             else:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.learn.table", side_effect=factory):
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
             r = client.get("/api/learn/sessions/user_andres")
 
         assert r.status_code == 200
@@ -159,15 +168,65 @@ class TestListSessions:
         def factory(name):
             mock = MagicMock()
             mock.select.return_value = sessions if name == "sessions" else []
+            mock.select_with_count.return_value = ([], 0)
             return mock
 
-        with patch("routes.learn.table", side_effect=factory):
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
             r = client.get("/api/learn/sessions/user_andres")
 
         assert r.json()["sessions"][0]["is_active"] is False
+        assert r.json()["sessions"][0]["message_count"] == 0
+
+    def test_message_counts_are_head_counts_with_bounded_concurrency(self):
+        """One count=exact read per session with a one-row body (never every
+        message id), at most _SESSION_COUNT_CONCURRENCY in flight at once."""
+        from routes import learn
+
+        sessions = [{"id": f"s{i}", "topic": "T", "mode": "socratic",
+                     "started_at": "2026-01-01T00:00:00", "ended_at": None} for i in range(30)]
+        live, peak, calls = [0], [0], []
+
+        async def count(cols, filters=None, limit=None, **_k):
+            calls.append((cols, limit))
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+            await asyncio.sleep(0.01)
+            live[0] -= 1
+            return [{"id": "m"}], int(filters["session_id"][4:])
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.return_value = sessions if name == "sessions" else []
+            mock = add_async_twins(mock)
+            mock.aselect_with_count = AsyncMock(side_effect=count)
+            return mock
+
+        with patch_tutor("table", side_effect=factory):
+            r = client.get("/api/learn/sessions/user_andres?limit=30")
+        assert r.status_code == 200
+        assert [s["message_count"] for s in r.json()["sessions"]] == list(range(30))
+        assert calls == [("id", 1)] * 30
+        assert peak[0] == learn._SESSION_COUNT_CONCURRENCY
+
+    @pytest.mark.parametrize("asked,sent", [(10, 10), (500, 100), (0, 100), (-3, 100)])
+    def test_limit_is_clamped(self, asked, sent):
+        seen = {}
+
+        def factory(name):
+            mock = MagicMock()
+
+            def select(cols, filters=None, order=None, limit=None, **_k):
+                seen["limit"] = limit
+                return []
+            mock.select.side_effect = select
+            return mock
+
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            r = client.get(f"/api/learn/sessions/user_andres?limit={asked}")
+        assert r.status_code == 200 and seen["limit"] == sent
 
     def test_empty_sessions(self):
-        with patch("routes.learn.table") as t:
+        with patch_tutor("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get("/api/learn/sessions/user_andres")
         assert r.status_code == 200
@@ -178,7 +237,7 @@ class TestListSessions:
 
 class TestResumeSession:
     def test_returns_404_when_session_not_found(self):
-        with patch("routes.learn.table") as t:
+        with patch_tutor("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get("/api/learn/sessions/nonexistent-id/resume")
         assert r.status_code == 404
@@ -198,7 +257,7 @@ class TestResumeSession:
                 mock.select.return_value = messages
             return mock
 
-        with patch("routes.learn.table", side_effect=factory):
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
             r = client.get("/api/learn/sessions/s1/resume?user_id=u1")
 
         assert r.status_code == 200
@@ -228,8 +287,8 @@ class TestModeSwitch:
     def _patches(self, user_name: str, topic: str):
         """table factory + display-name patch for the mode-switch greeting."""
         return (
-            patch("routes.learn.table", side_effect=self._make_table_factory(topic)),
-            patch("routes.learn.get_display_name", return_value=user_name),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory(topic))),
+            patch_tutor("get_display_name", return_value=user_name),
         )
 
     def test_returns_200_with_reply(self):
@@ -323,7 +382,7 @@ class TestRenameSession:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
             r = client.patch(
                 "/api/learn/sessions/s1",
                 json={"user_id": "u1", "topic": "  New Topic  "},
@@ -383,7 +442,7 @@ class TestRenameSession:
             m.select.return_value = []
             return m
 
-        with patch("routes.learn.table", side_effect=factory):
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
             r = client.patch(
                 "/api/learn/sessions/s1",
                 json={"user_id": "u1", "topic": "Renamed"},
@@ -391,7 +450,7 @@ class TestRenameSession:
         assert r.status_code == 404
 
     def test_missing_session_returns_404(self):
-        with patch("routes.learn.table") as t:
+        with patch_tutor("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.patch(
                 "/api/learn/sessions/nonexistent",
@@ -474,8 +533,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("Recursion is a function calling itself."))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post()
         assert r.status_code == 200
@@ -493,9 +552,9 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=UsageLimitExceeded("token cap"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 413
@@ -508,9 +567,9 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=RuntimeError("boom"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 502
@@ -524,8 +583,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=UnexpectedModelBehavior("bad output"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post()
         assert r.status_code == 502
@@ -539,9 +598,9 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("\n"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 502
@@ -571,12 +630,12 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=textless_run_result(PRIOR))
         with (
-            patch(
-                "routes.learn.table",
-                side_effect=self._make_table_factory(history_rows=history_rows),
+            patch_tutor(
+                "table",
+                side_effect=with_async_twins(self._make_table_factory(history_rows=history_rows)),
             ),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post(message="And what is memoization?")
 
@@ -607,13 +666,13 @@ class TestChatViaAgent:
             return mock
 
         with (
-            patch("routes.learn.table", side_effect=factory),
-            patch(
-                "routes.learn.decrypt_if_present",
+            patch_tutor("table", side_effect=with_async_twins(factory)),
+            patch_tutor(
+                "decrypt_if_present",
                 side_effect=lambda v: (v or "").replace("ENC:", "") if v else v,
             ) as decrypt_mock,
         ):
-            history = _load_message_history("s1")
+            history = asyncio.run(_load_message_history("s1"))
 
         # Once per row.
         assert decrypt_mock.call_count == 2
@@ -657,10 +716,10 @@ class TestChatViaAgent:
             return mock
 
         with (
-            patch("routes.learn.table", side_effect=factory),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch(
-                "routes.learn.encrypt_if_present",
+            patch_tutor("table", side_effect=with_async_twins(factory)),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor(
+                "encrypt_if_present",
                 side_effect=lambda v: f"ENC:{v}" if v else v,
             ) as encrypt_mock,
         ):
@@ -715,9 +774,9 @@ class TestChatViaAgent:
             return mock
 
         with (
-            patch("routes.learn.table", side_effect=factory),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.encrypt_if_present", side_effect=lambda v: v),
+            patch_tutor("table", side_effect=with_async_twins(factory)),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("encrypt_if_present", side_effect=lambda v: v),
         ):
             r = self._post(message="Explain Big-O")
 
@@ -730,8 +789,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post(model_pref="smart")
         assert r.status_code == 200
@@ -744,8 +803,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post(model_pref="fast")
         assert r.status_code == 200
@@ -758,8 +817,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post()
         assert r.status_code == 200
@@ -774,8 +833,8 @@ class TestChatViaAgent:
             agent = MagicMock()
             agent.run = AsyncMock(return_value=run_result("ok"))
             with (
-                patch("routes.learn.table", side_effect=self._make_table_factory()),
-                patch("routes.learn.agent_for_mode", return_value=agent),
+                patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+                patch_tutor("agent_for_mode", return_value=agent),
             ):
                 r = self._post(**({"model_pref": pref} if pref else {}))
             assert r.status_code == 200
@@ -793,8 +852,8 @@ class TestChatViaAgent:
         agent.model = MagicMock(spec=GoogleModel)
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post()
         assert r.status_code == 200
@@ -823,8 +882,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post(model_pref="fast")
         assert r.status_code == 200
@@ -837,8 +896,8 @@ class TestChatViaAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch_tutor("table", side_effect=with_async_twins(self._make_table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
         ):
             r = self._post(message="What is X?", use_shared_context=False)
         assert r.status_code == 200
@@ -877,11 +936,11 @@ class TestStartSessionAgent:
 
     def _stack(self, agent, mocks):
         return (
-            patch("routes.learn.table", side_effect=self._table_factory(mocks)),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn._get_course_id_for_topic", return_value="c1"),
-            patch("routes.learn.resolve_offering", return_value="off-1"),
-            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+            patch_tutor("table", side_effect=with_async_twins(self._table_factory(mocks))),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("_get_course_id_for_topic", return_value="c1"),
+            patch_tutor("resolve_offering", return_value="off-1"),
+            patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         )
 
     def test_happy_path_stashes_pending_and_returns_greeting(self):
@@ -1007,9 +1066,9 @@ class TestActionAgent:
         agent.run = AsyncMock(return_value=run_result("Here's a scaffold."))
         saved = []
         with (
-            patch("routes.learn.table", side_effect=self._table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
+            patch_tutor("table", side_effect=with_async_twins(self._table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message", side_effect=lambda *a, **k: saved.append(a)),
         ):
             r = self._post()
         assert r.status_code == 200
@@ -1026,9 +1085,9 @@ class TestActionAgent:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=UsageLimitExceeded("token cap"))
         with (
-            patch("routes.learn.table", side_effect=self._table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 413
@@ -1038,9 +1097,9 @@ class TestActionAgent:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=RuntimeError("boom"))
         with (
-            patch("routes.learn.table", side_effect=self._table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 502
@@ -1056,9 +1115,9 @@ class TestActionAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=textless_run_result(PRIOR))
         with (
-            patch("routes.learn.table", side_effect=self._table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-            patch("routes.learn.save_message") as save,
+            patch_tutor("table", side_effect=with_async_twins(self._table_factory())),
+            patch_tutor("agent_for_mode", return_value=agent),
+            patch_tutor("save_message") as save,
         ):
             r = self._post()
         assert r.status_code == 502
@@ -1073,7 +1132,7 @@ class TestFallbackWriteStateStamp:
 
     def test_chat_via_agent_stamps_write_state_on_blank_reply(self):
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -1087,9 +1146,9 @@ class TestFallbackWriteStateStamp:
         agent.run = AsyncMock(return_value=run_result("\n"))
 
         with (
-            patch("routes.learn._prepare_chat_run",
+            patch_tutor("_prepare_chat_run",
                   return_value=(agent, "msg", {}, deps)),
-            patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
+            patch_tutor("record_agent_usage", side_effect=lambda r, **k: r),
         ):
             import routes.learn as learn_routes
 
@@ -1103,7 +1162,7 @@ class TestFallbackWriteStateStamp:
 
     def test_chat_via_agent_stamp_false_without_writes(self):
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -1117,9 +1176,9 @@ class TestFallbackWriteStateStamp:
         agent.run = AsyncMock(return_value=run_result("\n"))
 
         with (
-            patch("routes.learn._prepare_chat_run",
+            patch_tutor("_prepare_chat_run",
                   return_value=(agent, "msg", {}, deps)),
-            patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
+            patch_tutor("record_agent_usage", side_effect=lambda r, **k: r),
         ):
             import routes.learn as learn_routes
 

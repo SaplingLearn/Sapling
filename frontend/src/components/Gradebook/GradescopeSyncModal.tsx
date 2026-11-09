@@ -15,6 +15,12 @@ import {
 } from "@/lib/api";
 import { extractErrorDetail, humanizeError, statusOf } from "@/lib/errorMessage";
 import { useScrollLock } from "@/lib/useScrollLock";
+import {
+  GRADESCOPE_AUTH_FAILED,
+  gradescopeConnectionState,
+  gradescopeErrorCode,
+  needsGradescopeSignIn,
+} from "./gradescopeState";
 
 interface Props {
   open: boolean;
@@ -69,9 +75,9 @@ function buSsoErrorCopy(e: unknown): string {
   if (/captcha/i.test(head)) {
     return "BU asked for a CAPTCHA. The automated flow can't solve those. Use the cookie-paste option instead.";
   }
-  if (status === 401) {
+  if (gradescopeErrorCode(e) === GRADESCOPE_AUTH_FAILED) {
     // Status-less so a diagnostic detail falls back to BU copy, not the
-    // generic 401 "sign in again" meant for Sapling's own session.
+    // generic status copy. (A 401 is Sapling's own session, never this.)
     return humanizeError({ detail }, "BU sign-in failed. Try again, or connect with session cookies instead.");
   }
   return humanizeError(e, "SSO failed unexpectedly.");
@@ -120,6 +126,10 @@ function GradescopeSyncDialog({
 
   // Sync result
   const [result, setResult] = React.useState<GradescopeSyncResult | null>(null);
+  // A queued sync (#116) that outlasted the server's wait: it keeps running
+  // and the dialog polls for its outcome. It may be closed meanwhile; the
+  // poll carries on and still refreshes the gradebook when the sync ends.
+  const [syncPending, setSyncPending] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const submitting = React.useRef(false);
   const active = React.useRef(true);
@@ -147,36 +157,60 @@ function GradescopeSyncDialog({
     if (mounted && !dialogRef.current?.contains(document.activeElement)) dialogRef.current?.focus();
   }, [mounted, stage]);
 
-  const failVerification = React.useCallback((e: unknown) => {
-    if (!active.current) return;
+  // Run token for the stage loaders (#770). refreshState runs from the open
+  // effect AND from handlers (after a credential save, "Retry connection");
+  // chooseCourse from refreshState and from "Change course" / an ambiguous
+  // sync. Each start supersedes whatever loader was in flight, so a slower,
+  // older answer can never move the dialog off the stage a newer one chose.
+  const runRef = React.useRef(0);
+  const beginRun = React.useCallback(() => ++runRef.current, []);
+  const isLatest = React.useCallback(
+    (run: number) => active.current && run === runRef.current,
+    [],
+  );
+
+  const failVerification = React.useCallback((run: number, e: unknown) => {
+    if (!isLatest(run)) return;
     setError(humanizeError(e, "Couldn't verify the Gradescope connection."));
-    setStage(statusOf(e) === 401 ? "choose-mode" : "verification-error");
-  }, []);
+    // Only a typed Gradescope rejection means "sign in to Gradescope again".
+    // A 401 is Sapling's own session and is left to the app's session handling.
+    setStage(needsGradescopeSignIn(e) ? "choose-mode" : "verification-error");
+  }, [isLatest]);
 
   // Listing courses is a full live Gradescope login + scrape (rate-limited
   // server-side), so it only runs when the user actually has to pick one.
   // It doubles as the check that saved credentials still authenticate.
   const chooseCourse = React.useCallback(async () => {
+    const run = beginRun();
     setStage("loading");
     try {
       const gs = await listGradescopeCourses(userId);
-      if (!active.current) return;
+      if (!isLatest(run)) return;
       setCourses(gs.courses);
       setStage("link");
     } catch (e: unknown) {
-      failVerification(e);
+      failVerification(run, e);
     }
-  }, [userId, failVerification]);
+  }, [userId, beginRun, isLatest, failVerification]);
 
   const refreshState = React.useCallback(async () => {
+    const run = beginRun();
     setError(null);
     setStage("loading");
     try {
       const status = await getGradescopeStatus(userId);
-      if (!active.current) return;
+      if (!isLatest(run)) return;
       setLastSyncedAt(status.last_synced_at);
-      if (!status.has_credentials) {
+      const state = gradescopeConnectionState(status);
+      if (state === "disconnected") {
         // No saved creds — let the user pick how they want to connect.
+        setStage("choose-mode");
+        return;
+      }
+      if (state === "needs_reauth") {
+        // Gradescope already rejected the saved sign-in; a sync would only
+        // fail the same way, so go straight to reconnecting.
+        setError("Gradescope rejected your saved sign-in. Reconnect to keep syncing.");
         setStage("choose-mode");
         return;
       }
@@ -184,13 +218,13 @@ function GradescopeSyncDialog({
       // credentials still work, so verify them here with one live listing.
       if (!saplingCourseId) {
         const gs = await listGradescopeCourses(userId);
-        if (!active.current) return;
+        if (!isLatest(run)) return;
         setCourses(gs.courses);
         setStage("connected");
         return;
       }
       const links = await listGradescopeLinks(userId, semester);
-      if (!active.current) return;
+      if (!isLatest(run)) return;
       const myLink = links.links.find((l) => l.sapling_course_id === saplingCourseId);
       setLastSyncedAt(myLink?.last_synced_at ?? null);
       if (!myLink) {
@@ -202,9 +236,9 @@ function GradescopeSyncDialog({
       setLinkedGsCourseId(myLink.gradescope_course_id);
       setStage("ready");
     } catch (e: unknown) {
-      failVerification(e);
+      failVerification(run, e);
     }
-  }, [userId, saplingCourseId, semester, chooseCourse, failVerification]);
+  }, [userId, saplingCourseId, semester, chooseCourse, beginRun, isLatest, failVerification]);
 
   React.useEffect(() => {
     setResult(null);
@@ -339,10 +373,23 @@ function GradescopeSyncDialog({
     if (!saplingCourseId || submitting.current) return;
     submitting.current = true;
     setError(null);
+    setSyncPending(false);
     setStage("syncing");
+    let wentPending = false;
     try {
-      const res = await syncGradescopeCourse(userId, saplingCourseId, semester);
-      if (!active.current) return;
+      const res = await syncGradescopeCourse(userId, saplingCourseId, semester, {
+        onPending: () => {
+          wentPending = true;
+          if (active.current) setSyncPending(true);
+        },
+      });
+      if (!active.current) {
+        // Closed while a queued sync was still running (the pending note
+        // allows that): it has finished now, so refresh the gradebook as the
+        // note promised. A sync that never went pending reports nothing.
+        if (wentPending) onSynced?.();
+        return;
+      }
       setResult(res);
       setStage("done");
       onSynced?.();
@@ -350,24 +397,41 @@ function GradescopeSyncDialog({
       if (!active.current) return;
       setError(humanizeError(e, "Sync failed"));
       const status = statusOf(e);
-      if (status === 401) setStage("choose-mode");
+      // The typed Gradescope rejection, never a bare 401 (Sapling's session).
+      if (needsGradescopeSignIn(e)) setStage("choose-mode");
       // More than one link matches: re-picking replaces them with one, so a
       // retry can't hit the same ambiguity again.
       else if (status === 409) void chooseCourse();
       else setStage("ready");
     } finally {
       submitting.current = false;
+      if (active.current) setSyncPending(false);
     }
   }
 
   async function onResetCredentials() {
+    // Never while a save, link or sync is in flight: deleting the credentials
+    // under a running sync would leave it to report into the sign-in screen.
+    if (submitting.current) return;
     if (!window.confirm("Remove your Gradescope credentials? You'll need to re-enter them to sync again.")) return;
+    if (submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
+    // Supersede any loader still in flight so it can't move the dialog off
+    // the sign-in choices once the credentials are gone.
+    const run = beginRun();
     try {
       await deleteGradescopeCredentials(userId);
+      if (!isLatest(run)) return;
       setLinkedGsCourseId(null);
+      setError(null);
       setStage("choose-mode");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Couldn't remove credentials");
+      if (!isLatest(run)) return;
+      setError(humanizeError(e, "Couldn't remove credentials"));
+    } finally {
+      submitting.current = false;
+      setSaving(false);
     }
   }
 
@@ -389,12 +453,12 @@ function GradescopeSyncDialog({
         padding: 16,
       }}
       onClick={() => {
-        if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+        if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
-          if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+          if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
         }
         if (event.key !== "Tab") return;
         const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
@@ -795,10 +859,11 @@ function GradescopeSyncDialog({
                   type="button"
                   className="btn btn--ghost"
                   onClick={onResetCredentials}
+                  disabled={saving}
                 >
                   Disconnect
                 </button>
-                <button type="button" className="btn btn--primary" onClick={onClose}>
+                <button type="button" className="btn btn--primary" onClick={onClose} disabled={saving}>
                   Done
                 </button>
               </div>
@@ -836,12 +901,21 @@ function GradescopeSyncDialog({
                   Last sync · {new Date(lastSyncedAt).toLocaleString()}
                 </p>
               )}
+              {stage === "syncing" && syncPending && (
+                <p
+                  role="status"
+                  style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}
+                >
+                  Still syncing — this one is taking longer than usual. We&apos;ll refresh
+                  your gradebook when it finishes.
+                </p>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <button
                   type="button"
                   className="btn btn--ghost"
                   onClick={() => void chooseCourse()}
-                  disabled={stage === "syncing"}
+                  disabled={stage === "syncing" || saving}
                 >
                   Change course
                 </button>
@@ -849,7 +923,7 @@ function GradescopeSyncDialog({
                   type="button"
                   className="btn btn--ghost"
                   onClick={onResetCredentials}
-                  disabled={stage === "syncing"}
+                  disabled={stage === "syncing" || saving}
                 >
                   Use different account
                 </button>
@@ -858,7 +932,7 @@ function GradescopeSyncDialog({
                     type="button"
                     className="btn"
                     onClick={onClose}
-                    disabled={stage === "syncing"}
+                    disabled={(stage === "syncing" && !syncPending) || saving}
                   >
                     Close
                   </button>
@@ -866,7 +940,7 @@ function GradescopeSyncDialog({
                     type="button"
                     className="btn btn--primary"
                     onClick={onSyncNow}
-                    disabled={stage === "syncing"}
+                    disabled={stage === "syncing" || saving}
                   >
                     {stage === "syncing" ? "Syncing…" : "Sync now"}
                   </button>

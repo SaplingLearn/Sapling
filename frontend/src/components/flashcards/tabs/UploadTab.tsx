@@ -74,7 +74,7 @@ export function UploadTab({ onCards }: Props) {
       }}
       onClick={() => inputRef.current?.click()}
     >
-      <Icon name="up" size={20} />
+      <Icon name="upload" size={20} />
       <div style={{ marginTop: 8, fontSize: 13 }}>
         {busy ? "Parsing…" : "Drop or click to upload .csv, .tsv, .txt, .json, .xlsx, .apkg"}
       </div>

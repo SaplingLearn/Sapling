@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
 import routes.calendar as cal
+from tests.split_patches import set_auth_session_secret
 
 # Mount ONLY the calendar router so these tests don't pull in main.py's full
 # router + logfire stack (mirrors test_auth_state.py).
@@ -34,7 +35,7 @@ _app.include_router(cal.router, prefix="/api/calendar")
 def _signed_state(monkeypatch):
     # The reused OAuth cookie/state helpers read routes.auth.SESSION_SECRET;
     # set it so state cookies are HMAC-signed (the production path) in tests.
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
 
 
 def _mock_flow(monkeypatch, *, token="acc", refresh="ref", expiry=None):

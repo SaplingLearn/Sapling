@@ -7,6 +7,8 @@ export interface CustomSelectOption<T extends string = string> {
   label: React.ReactNode;
   description?: React.ReactNode;
   disabled?: boolean;
+  /** `data-testid` on this option's row in the open listbox. */
+  testId?: string;
 }
 
 interface CustomSelectProps<T extends string = string> {
@@ -20,6 +22,10 @@ interface CustomSelectProps<T extends string = string> {
   align?: "left" | "right";
   className?: string;
   style?: React.CSSProperties;
+  /** Merged over the trigger button's own style (e.g. a pill radius). */
+  triggerStyle?: React.CSSProperties;
+  /** `data-testid` on the trigger button. */
+  testId?: string;
 }
 
 export function CustomSelect<T extends string = string>({
@@ -33,6 +39,8 @@ export function CustomSelect<T extends string = string>({
   align = "left",
   className,
   style,
+  triggerStyle,
+  testId,
 }: CustomSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
@@ -117,6 +125,7 @@ export function CustomSelect<T extends string = string>({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-label={ariaLabel}
+        data-testid={testId}
         disabled={disabled}
         onClick={() => !disabled && setOpen(o => !o)}
         onKeyDown={onButtonKey}
@@ -136,6 +145,7 @@ export function CustomSelect<T extends string = string>({
           opacity: disabled ? 0.6 : 1,
           textAlign: "left",
           transition: "border-color var(--dur-fast) var(--ease)",
+          ...triggerStyle,
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -176,6 +186,7 @@ export function CustomSelect<T extends string = string>({
               <li
                 key={opt.value}
                 role="option"
+                data-testid={opt.testId}
                 aria-selected={isSelected}
                 aria-disabled={opt.disabled}
                 onMouseEnter={() => setHighlighted(idx)}

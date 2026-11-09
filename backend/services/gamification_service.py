@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from db.connection import MAX_ROWS, page_all, table
 from services.growth import stage_for_level, xp_into_level
+from services.streak_service import effective_streak
 
 # Every read in this module pages through `db.connection.page_all`, which
 # carries the rationale: PostgREST caps a response at `max_rows` and reports
@@ -70,7 +71,7 @@ class MeInputs:
 
 def read_me_inputs(user_id: str) -> MeInputs:
     rows = table("users").select(
-        "total_xp,level,streak_count,longest_streak,daily_goal_xp",
+        "total_xp,level,streak_count,last_active_date,longest_streak,daily_goal_xp",
         filters={"id": f"eq.{user_id}"},
     )
     u = rows[0] if rows else {}
@@ -101,7 +102,8 @@ def read_me_inputs(user_id: str) -> MeInputs:
         user_id=user_id,
         total_xp=int(u.get("total_xp") or 0),
         level=int(u.get("level") or 1),
-        streak=int(u.get("streak_count") or 0),
+        # #767: a lapsed streak keeps its stored count until the next activity.
+        streak=effective_streak(u),
         longest_streak=int(u.get("longest_streak") or 0),
         daily_goal_xp=int(u.get("daily_goal_xp") or 50),
         earned_count=sum(1 for _ in earned),

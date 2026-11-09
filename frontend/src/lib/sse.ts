@@ -28,6 +28,19 @@ export type SSEEvent<T = unknown> = {
  *
  * If opts.idleTimeoutMs is set, rejects if no data arrives within that time.
  */
+/** `{ code }` when `body` is a JSON envelope carrying `error.code`. */
+function errorCodeOf(body: string): { code?: string } {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("{")) return {};
+  try {
+    const parsed = JSON.parse(trimmed) as { error?: { code?: unknown } } | null;
+    const code = parsed?.error?.code;
+    return typeof code === "string" ? { code } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function* streamSSE<T = unknown>(
   url: string,
   init: RequestInit,
@@ -41,8 +54,13 @@ export async function* streamSSE<T = unknown>(
     // JSON `detail` payload that carries no status field of its own. The
     // chat ladder needs this: an HTTP 413 (body too large) fails
     // identically on the JSON fallback, so it must not be retried there.
+    //
+    // The typed `error.code` from the coded envelope rides along too, as
+    // fetchJSON's ApiError exposes it — the tutor branches on
+    // `SESSION_ENDED` (a 409 for a turn on an ended session, #762).
     throw Object.assign(new Error(body || `HTTP ${res.status}`), {
       status: res.status,
+      ...errorCodeOf(body),
     });
   }
   if (!res.body) {

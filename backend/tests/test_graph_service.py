@@ -6,7 +6,7 @@ All Supabase calls are mocked so no live DB connection is needed.
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import services.graph_service as gs
 from services.graph_service import (
@@ -18,6 +18,10 @@ from services.graph_service import (
     get_recommendations,
     ensure_user_exists,
 )
+
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -119,8 +123,9 @@ class TestEnsureUserExists:
 
 class TestGetGraph:
     def test_empty_graph_returns_zero_stats(self):
+        today = datetime.now(timezone.utc).date().isoformat()
         factory = _mock_table({
-            "users": [{"streak_count": 5}],
+            "users": [{"streak_count": 5, "last_active_date": today}],
             "graph_nodes": [],
             "graph_edges": [],
             "enrollments": [],
@@ -132,6 +137,20 @@ class TestGetGraph:
         assert result["stats"]["streak"] == 5
         assert result["nodes"] == []
         assert result["edges"] == []
+
+    def test_lapsed_streak_reads_zero(self):
+        # #767: the stored count is only reset on next activity; a student last
+        # active three days ago has no streak, whatever streak_count says.
+        stale = (datetime.now(timezone.utc).date() - timedelta(days=3)).isoformat()
+        factory = _mock_table({
+            "users": [{"streak_count": 12, "last_active_date": stale}],
+            "graph_nodes": [],
+            "graph_edges": [],
+            "enrollments": [],
+        })
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+        assert result["stats"]["streak"] == 0
 
     def test_counts_each_mastery_tier(self):
         nodes = [
@@ -441,30 +460,103 @@ class TestAddCourse:
 # ── delete_course ─────────────────────────────────────────────────────────────
 
 class TestDeleteCourse:
-    def test_unenrolls_user_from_course(self):
-        # The user has one offering of the abstract course → delete that enrollment.
-        factory, mocks = _cached_mock_table({
-            "course_offerings": [{"id": "off-1"}],
-            "enrollments": [{"offering_id": "off-1"}],
-        })
+    """#766: a drop removes ONE term's enrollment, never every term's — an
+    enrollment cascades to that term's assignments/grades/checklists."""
+
+    _TERMS = {"off-fall": {"id": "fall-2025"}, "off-spring": {"id": "spring-2026"}}
+
+    def _run(self, *, held, term=None, current="spring-2026", label_map=None):
+        factory, mocks = _cached_mock_table({})
+        label_map = label_map if label_map is not None else {
+            "Fall 2025": "fall-2025", "Spring 2026": "spring-2026",
+        }
         with patch("services.graph_service.table", side_effect=factory), \
-             patch("services.academics.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=held), \
+             patch("services.academics.term_for_offering", side_effect=self._TERMS.get), \
+             patch("services.academics.term_id_for_label", side_effect=label_map.get), \
+             patch("services.academics.current_term",
+                   return_value={"id": current} if current else None), \
+             patch("services.course_context_service.update_course_context") as ucc:
+            result = delete_course("u1", "cs101", term)
+        deleted = [
+            c.args[0]["offering_id"] for c in mocks["enrollments"].delete.call_args_list
+        ] if "enrollments" in mocks else []
+        return result, deleted, ucc
+
+    def test_default_drops_only_the_current_terms_enrollment(self):
+        result, deleted, ucc = self._run(held=["off-fall", "off-spring"])
+        assert result == {"deleted": True}
+        # The past term's enrollment (and its gradebook) survives.
+        assert deleted == ["eq.off-spring"]
+        ucc.assert_called_once_with("off-spring")
+
+    def test_explicit_term_drops_only_that_term(self):
+        result, deleted, _ = self._run(held=["off-fall", "off-spring"], term="Fall 2025")
+        assert result == {"deleted": True}
+        assert deleted == ["eq.off-fall"]
+
+    def test_unknown_term_label_is_an_error_and_deletes_nothing(self):
+        result, deleted, _ = self._run(held=["off-fall"], term="Winter 1999")
+        assert result["deleted"] is False and "error" in result
+        assert deleted == []
+
+    def test_no_term_and_only_past_enrollment_refuses(self):
+        # Without a term the caller means "this term"; silently dropping the
+        # student's Fall gradebook instead is exactly the bug.
+        result, deleted, _ = self._run(held=["off-fall"])
+        assert result["deleted"] is False and "error" in result
+        assert deleted == []
+
+    def test_not_enrolled_is_an_idempotent_noop(self):
+        result, deleted, _ = self._run(held=[])
+        assert result == {"deleted": False}
+        assert deleted == []
+
+    def test_graph_nodes_are_never_touched(self):
+        factory, mocks = _cached_mock_table({})
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-spring"]), \
+             patch("services.academics.term_for_offering", side_effect=self._TERMS.get), \
+             patch("services.academics.current_term", return_value={"id": "spring-2026"}), \
              patch("services.course_context_service.update_course_context"):
-            result = delete_course("u1", "course-id-1")
-
-        assert result == {"deleted": True}
-        mocks["enrollments"].delete.assert_called_once()
-
-    def test_unenroll_with_no_prior_nodes(self):
-        # No offerings for the course → nothing to delete, still succeeds.
-        factory, _ = _cached_mock_table({"course_offerings": [], "enrollments": []})
-        with patch("services.graph_service.table", side_effect=factory), \
-             patch("services.academics.table", side_effect=factory):
-            result = delete_course("u1", "empty-course-id")
-        assert result == {"deleted": True}
+            delete_course("u1", "cs101")
+        assert "graph_nodes" not in mocks and "graph_edges" not in mocks
 
 
 # ── apply_graph_update ────────────────────────────────────────────────────────
+
+#: Stand-in for graph_nodes as the ``apply_mastery_delta`` SQL function sees it
+#: (#766): id → stored row copy. ``_bulk_factory`` seeds it with the existing
+#: nodes and every upserted node; ``_fake_mastery_rpc`` applies deltas to it
+#: exactly as the migration's function does (clamp, tier, times_studied + 1).
+_FAKE_NODE_STORE: dict = {}
+
+
+def _fake_mastery_rpc(name, params):
+    assert name == "apply_mastery_delta"
+    node = _FAKE_NODE_STORE.get(params["p_node_id"])
+    if node is None:
+        return []
+    before = float(node.get("mastery_score") or 0.0)
+    after = max(0.0, min(1.0, before + params["p_delta"]))
+    tier = (
+        "mastered" if after >= params["p_mastered_min"]
+        else "learning" if after >= params["p_learning_min"]
+        else "struggling" if after >= params["p_struggling_min"]
+        else "unexplored"
+    )
+    node.update(mastery_score=after, mastery_tier=tier,
+                times_studied=(node.get("times_studied") or 0) + 1)
+    return [{"before_score": before, "after_score": after, "new_tier": tier}]
+
+
+@pytest.fixture(autouse=True)
+def _mastery_rpc():
+    _FAKE_NODE_STORE.clear()
+    with patch("services.graph_service.rpc", side_effect=_fake_mastery_rpc) as m:
+        yield m
+    _FAKE_NODE_STORE.clear()
+
 
 def _bulk_factory(existing_nodes=None, existing_edges=None):
     """Factory that returns a fresh mock per table; bulk-fetch returns the given rows.
@@ -476,13 +568,20 @@ def _bulk_factory(existing_nodes=None, existing_edges=None):
     nodes = list(existing_nodes or [])
     edges = list(existing_edges or [])
     mocks = {}
+    for n in nodes:
+        _FAKE_NODE_STORE[n["id"]] = dict(n)
+
+    def _upsert(data, **kw):
+        for d in [data] if isinstance(data, dict) else list(data):
+            _FAKE_NODE_STORE.setdefault(d["id"], dict(d))
+        return [data] if isinstance(data, dict) else list(data)
 
     def factory(name):
         if name not in mocks:
             m = MagicMock()
             if name == "graph_nodes":
                 m.select.return_value = nodes
-                m.upsert.side_effect = lambda data, **kw: [data] if isinstance(data, dict) else list(data)
+                m.upsert.side_effect = _upsert
             elif name == "graph_edges":
                 m.select.return_value = edges
                 m.upsert.return_value = []
@@ -524,6 +623,32 @@ class TestApplyGraphUpdate:
         # mastery_events column is gone (replaced by node_mastery_events).
         assert "mastery_events" not in payload
         assert kwargs["on_conflict"] == "user_id,course_id,concept_name"
+
+    def test_course_context_refresh_runs_inline_by_default(self):
+        factory, _ = _bulk_factory(existing_nodes=[])
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "updated_nodes": [], "new_edges": []}
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1")
+        refresh.assert_called_once_with("off-1", user_id="u1")
+
+    def test_course_context_refresh_is_handed_to_defer(self):
+        # The refresh can make an LLM call; a route that passes `defer` (the quiz
+        # submit passes background_tasks.add_task) must not wait on it.
+        factory, _ = _bulk_factory(existing_nodes=[])
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "updated_nodes": [], "new_edges": []}
+        deferred = []
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1", defer=deferred.append)
+            refresh.assert_not_called()
+            assert len(deferred) == 1
+            deferred[0]()
+        refresh.assert_called_once_with("off-1", user_id="u1")
 
     def test_skips_insert_for_existing_node_case_insensitive(self):
         existing = [
@@ -622,10 +747,100 @@ class TestApplyGraphUpdate:
         assert result[0]["after"] == pytest.approx(0.6)
         # Mastery change should reference the canonical stored name, not the LLM's
         assert result[0]["concept"] == "Algebra"
-        # Scalar columns updated; the dropped JSON blob is no longer written.
-        update_payload = mocks["graph_nodes"].update.call_args[0][0]
-        assert update_payload["mastery_score"] == pytest.approx(0.6)
-        assert "mastery_events" not in update_payload
+        # #766: the score is no longer written back by a Python
+        # read-modify-write; the atomic SQL function applies the DELTA.
+        mocks["graph_nodes"].update.assert_not_called()
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.6)
+        assert _FAKE_NODE_STORE["n1"]["mastery_tier"] == "learning"
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 3
+
+    # ── #766: the mastery update is atomic ────────────────────────────────
+
+    def _update(self, existing, delta=0.2, user="u1"):
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": delta}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
+            return apply_graph_update(user, graph_update, course_id="c1"), mocks
+
+    def test_rpc_gets_the_delta_and_configs_thresholds(self, _mastery_rpc):
+        from config import (
+            MASTERY_LEARNING_MIN, MASTERY_MASTERED_MIN, MASTERY_STRUGGLING_MIN,
+        )
+        self._update([{"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                       "times_studied": 2, "course_id": "c1"}])
+        _mastery_rpc.assert_called_once_with("apply_mastery_delta", {
+            "p_node_id": "n1",
+            "p_user_id": "u1",
+            "p_delta": pytest.approx(0.2),
+            "p_mastered_min": MASTERY_MASTERED_MIN,
+            "p_learning_min": MASTERY_LEARNING_MIN,
+            "p_struggling_min": MASTERY_STRUGGLING_MIN,
+        })
+
+    def test_concurrent_writers_compose_instead_of_losing_an_update(self):
+        # Two writers (a quiz submit and a tutor turn) both bulk-read the node
+        # at 0.4. The old Python read-modify-write had each write back
+        # 0.4 + 0.2, so the store ended at 0.6 with times_studied 3; deltas
+        # applied in SQL compose to 0.8 / 4.
+        stale = {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                 "times_studied": 2, "course_id": "c1"}
+        first, _ = self._update([dict(stale)])
+        # The second writer's bulk read predates the first commit: it still
+        # sees 0.4. (_bulk_factory would re-seed the store from that stale
+        # row, so restore the committed state the database actually holds.)
+        committed = dict(_FAKE_NODE_STORE["n1"])
+        factory2, _ = _bulk_factory(existing_nodes=[dict(stale)])
+        _FAKE_NODE_STORE["n1"] = committed
+        graph_update = {"new_nodes": [], "new_edges": [],
+                        "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2}]}
+        with patch("services.graph_service.table", side_effect=factory2), \
+             patch("services.course_context_service.update_course_context"):
+            second = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert first[0]["after"] == pytest.approx(0.6)
+        # The second writer's before/after are what was actually applied.
+        assert second[0]["before"] == pytest.approx(0.6)
+        assert second[0]["after"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 4
+
+    def test_a_node_deleted_under_us_is_skipped(self, _mastery_rpc):
+        _mastery_rpc.side_effect = lambda *_a, **_k: []
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "course_id": "c1"}])
+        assert result == []
+        assert "node_mastery_events" not in mocks
+
+    def test_missing_function_falls_back_to_the_legacy_write(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "404", request=req, response=httpx.Response(404, request=req))
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "times_studied": 2,
+                                       "course_id": "c1"}])
+        assert result[0]["after"] == pytest.approx(0.6)
+        payload = mocks["graph_nodes"].update.call_args[0][0]
+        assert payload["mastery_score"] == pytest.approx(0.6)
+        assert payload["mastery_tier"] == "learning"
+        assert payload["times_studied"] == 3
+        assert mocks["graph_nodes"].update.call_args.kwargs["filters"] == {
+            "id": "eq.n1", "user_id": "eq.u1",
+        }
+
+    def test_other_rpc_errors_propagate(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "500", request=req, response=httpx.Response(500, request=req))
+        with pytest.raises(httpx.HTTPStatusError):
+            self._update([{"id": "n1", "concept_name": "Algebra",
+                           "mastery_score": 0.4, "course_id": "c1"}])
 
     def test_mastery_change_appends_event_row(self):
         """A mastery change appends exactly one append-only node_mastery_events row
@@ -1271,12 +1486,12 @@ def test_graph_route_passes_semester_through():
 
     captured = {}
 
-    def fake_get_graph(user_id, semester=None):
+    async def fake_get_graph(user_id, semester=None):
         captured["user_id"] = user_id
         captured["semester"] = semester
         return {"nodes": [], "edges": [], "stats": {}}
 
-    with patch.object(graph_route, "get_graph", side_effect=fake_get_graph):
+    with patch.object(graph_route, "aget_graph", side_effect=fake_get_graph):
         client = TestClient(app)
         resp = client.get("/api/graph/user_andres?semester=Spring%202026")
 
@@ -1365,3 +1580,204 @@ def test_create_course_route_passes_term_through():
 
     assert resp.status_code == 200
     assert captured["term"] == "Fall 2026"
+
+
+# ── DELETE /api/graph/{user_id}/courses/{course_id} (#766) ───────────────────
+
+class TestRemoveCourseRoute:
+    def _client(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+
+    def test_forwards_term_query_param(self):
+        with patch("routes.graph.delete_course", return_value={"deleted": True}) as dc:
+            r = self._client().delete("/api/graph/u1/courses/cs101?term=Fall%202025")
+        assert r.status_code == 200
+        dc.assert_called_once_with("u1", "cs101", "Fall 2025")
+
+    def test_error_is_a_404(self):
+        with patch("routes.graph.delete_course",
+                   return_value={"deleted": False, "error": "Unknown term: X"}):
+            r = self._client().delete("/api/graph/u1/courses/cs101?term=X")
+        assert r.status_code == 404
+
+
+# ── async read twins (#117, docs/design/async-db-client.md §4.1 wave 1) ──────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+_PARITY_GRAPHS = {
+    "empty": {"users": [{"streak_count": 5, "last_active_date": None}],
+              "graph_nodes": [], "graph_edges": [], "enrollments": []},
+    "full": {
+        "users": [{"streak_count": 2,
+                   "last_active_date": datetime.now(timezone.utc).date().isoformat()}],
+        "enrollments": [
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-1"),
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-2"),
+            _enrollment_row("c2", "MA", "Math", term="Fall 2025"),
+        ],
+        "graph_nodes": [
+            {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+             "mastery_score": 0.5, "course_id": "c1", "times_studied": 2, "user_id": "u1"},
+            {"id": "n2", "concept_name": "Sets", "mastery_tier": "mastered",
+             "mastery_score": 0.9, "course_id": "c2", "times_studied": 1, "user_id": "u1"},
+        ],
+        "graph_edges": [
+            {"id": "e1", "source_node_id": "n1", "target_node_id": "n2", "strength": 0.4},
+            {"id": "e2", "source_node_id": "n1", "target_node_id": "gone", "strength": 0.4},
+        ],
+        "node_mastery_events": [
+            {"node_id": "n1", "delta": 0.2, "reason": "r", "created_at": _now_iso()},
+        ],
+    },
+}
+
+
+class TestAsyncReadTwins:
+    """Each `a*` twin returns exactly what its sync sibling returns over the
+    same rows (the routes' behaviour must not depend on which one ran)."""
+
+    @staticmethod
+    def _both(fn, afn, data, *args, extra_patches=()):
+        import asyncio
+        import copy
+        from contextlib import ExitStack
+
+        from tests.db_fakes import with_async_twins
+
+        out = []
+        for run in (lambda: fn(*args), lambda: asyncio.run(afn(*args))):
+            factory, mocks = _cached_mock_table(copy.deepcopy(data))
+            with ExitStack() as stack:
+                stack.enter_context(patch(
+                    "services.graph_service.table", side_effect=with_async_twins(factory)))
+                for p in extra_patches:
+                    stack.enter_context(p())
+                out.append((run(), {n: m.method_calls for n, m in mocks.items()}))
+        return out
+
+    @pytest.mark.parametrize("scenario", sorted(_PARITY_GRAPHS))
+    def test_aget_graph_matches_get_graph(self, scenario):
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS[scenario], "u1")
+        assert asynced == sync
+
+    def test_aget_graph_semester_scope_matches(self):
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value="t-fall"),
+            lambda: patch("services.academics.user_course_ids_for_term", return_value={"c2"}),
+        )
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS["full"], "u1", "Fall 2025",
+            extra_patches=patches)
+        assert asynced == sync
+        assert {n["id"] for n in asynced["nodes"]} == {"n2", "subject_root__c2"}
+
+    def test_aget_graph_inserts_a_missing_user_like_the_sync_one(self):
+        data = {"users": [], "graph_nodes": [], "graph_edges": [], "enrollments": []}
+        (_, sync_calls), (_, async_calls) = self._both(gs.get_graph, gs.aget_graph, data, "u1")
+        inserts = [c for c in async_calls["users"] if c[0] == "insert"]
+        assert inserts == [c for c in sync_calls["users"] if c[0] == "insert"]
+        assert inserts and inserts[0].args[0] == {"id": "u1", "streak_count": 0}
+
+    def test_aget_courses_matches_get_courses(self):
+        data = {**_PARITY_GRAPHS["full"], "graph_nodes": [{"id": "n1"}, {"id": "n2"}]}
+        (sync, _), (asynced, _) = self._both(gs.get_courses, gs.aget_courses, data, "u1")
+        assert asynced == sync
+        assert [c["course_id"] for c in asynced] == ["c1", "c2"]
+
+    def test_aget_graph_runs_its_independent_reads_concurrently(self):
+        """#117 review: the enrollments, nodes, edges and streak reads used to
+        be awaited one after another. Each waits here until all four have
+        started, so a sequential run never gets past the first."""
+        import asyncio
+
+        rows = _PARITY_GRAPHS["full"]
+
+        async def go():
+            barrier = asyncio.Barrier(4)
+
+            def factory(name):
+                mock = MagicMock()
+
+                async def aselect(cols="*", filters=None, **_k):
+                    if name == "users" and cols == "id":  # aensure_user_exists: first, alone
+                        return [{"id": "u1"}]
+                    if name in ("enrollments", "graph_nodes", "graph_edges", "users"):
+                        await asyncio.wait_for(barrier.wait(), 2)
+                    return rows.get(name, [])
+                mock.aselect = AsyncMock(side_effect=aselect)
+                return mock
+
+            with patch("services.graph_service.table", side_effect=factory):
+                return await gs.aget_graph("u1")
+
+        graph = asyncio.run(go())
+        assert {"n1", "n2"} <= {n["id"] for n in graph["nodes"]}
+
+    def test_aget_courses_counts_concurrently_and_keeps_order(self):
+        import asyncio
+
+        enrollments = [_enrollment_row(f"c{i}", f"C{i}", f"Course {i}") for i in range(20)]
+        live, peak = [0], [0]
+
+        def factory(name):
+            mock = MagicMock()
+
+            async def aselect(cols="*", filters=None, **_k):
+                if name == "enrollments":
+                    return enrollments
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+                await asyncio.sleep(0.01)
+                live[0] -= 1
+                return [{"id": f"n{j}"} for j in range(int(filters["course_id"][len("eq.c"):]))]
+            mock.aselect = AsyncMock(side_effect=aselect)
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            courses = asyncio.run(gs.aget_courses("u1"))
+        assert [c["course_id"] for c in courses] == [f"c{i}" for i in range(20)]
+        assert [c["node_count"] for c in courses] == list(range(20))
+        assert peak[0] == gs._COURSE_COUNT_CONCURRENCY
+
+    def test_aget_courses_empty_on_enrollment_read_failure(self):
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.side_effect = Exception("DB error")
+            return mock
+
+        with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(gs.aget_courses("u1")) == []
+
+    @pytest.mark.parametrize("semester,allowed", [
+        (None, None), ("Fall 2025", {"c1"}), ("Fall 2025", set()), ("Nope", None),
+    ])
+    def test_aget_recommendations_matches(self, semester, allowed):
+        data = {"graph_nodes": [
+            {"concept_name": "A", "mastery_score": 0.1, "mastery_tier": "struggling"},
+            {"concept_name": "B", "mastery_score": 0.0, "mastery_tier": "unexplored"},
+            {"concept_name": "C", "mastery_score": 0.6, "mastery_tier": "learning"},
+        ]}
+        term = None if semester == "Nope" else "t-fall"
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value=term),
+            lambda: patch("services.academics.user_course_ids_for_term",
+                          return_value=allowed or set()),
+        )
+        (sync, sync_calls), (asynced, async_calls) = self._both(
+            gs.get_recommendations, gs.aget_recommendations, data, "u1", semester,
+            extra_patches=patches)
+        assert asynced == sync
+        sync_reads = [c for c in sync_calls.get("graph_nodes", []) if c[0] == "select"]
+        async_reads = [c for c in async_calls.get("graph_nodes", []) if c[0] == "select"]
+        assert async_reads == sync_reads
+        assert bool(sync) == (semester is None or bool(allowed))

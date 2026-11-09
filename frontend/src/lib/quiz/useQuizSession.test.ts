@@ -42,7 +42,7 @@ vi.mock("@/lib/api", async importActual => {
   return { ...actual, fetchGamificationMe: gamification.fetchGamificationMe };
 });
 
-import { useQuizSession } from "./useQuizSession";
+import { GENERATE_TIMEOUT_MS, useQuizSession } from "./useQuizSession";
 import { resetQuizConfigCache } from "./useQuizConfig";
 import { STORAGE_KEY, loadSession } from "./session";
 import type { EntryRequest } from "./source";
@@ -179,6 +179,8 @@ describe("start → answer → answer → submit", () => {
       // G5: an ordinary start practises nothing, and the client omits the
       // wire key entirely for a null source (see api.test.ts).
       sourceAttemptId: null,
+      // #760: every generation can be cancelled or timed out.
+      signal: expect.any(AbortSignal),
     });
 
     act(() => result.current.actions.select(1));
@@ -201,7 +203,7 @@ describe("start → answer → answer → submit", () => {
     expect(quizApi.submitQuiz).toHaveBeenCalledWith("attempt-1", [
       { question_id: 1, selected_label: "B" },
       { question_id: 2, selected_label: "C" },
-    ]);
+    ], expect.any(AbortSignal));
     expect(result.current.session.result).toEqual(SUBMIT_RESULT);
     expect(result.current.session.xp).toEqual({ before: 100, after: 130, streak: 4 });
     // The stored record is cleared once the attempt is scored.
@@ -885,5 +887,134 @@ describe("exits and persistence", () => {
     act(() => result.current.actions.next());
     expect(result.current.session.phase).toBe("active");
     expect(result.current.session.cursor).toBe(1);
+  });
+});
+
+describe("#760 — pending requests: per-request tracking, cancel, timeout", () => {
+  /** A promise the test settles by hand. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  }
+
+  /** Rejects on its signal's abort, the way `fetch` does. */
+  function abortable<T>(signal: AbortSignal | undefined) {
+    const d = deferred<T>();
+    signal?.addEventListener("abort", () => d.reject(new DOMException("aborted", "AbortError")));
+    return d.promise;
+  }
+
+  it("cancels a hung generation: aborts it, goes home, and ignores a late reply", async () => {
+    const gen = deferred<GenerateResult>();
+    let signal: AbortSignal | undefined;
+    quizApi.generateQuiz.mockImplementation((p: { signal?: AbortSignal }) => {
+      signal = p.signal;
+      return gen.promise; // ignores the abort: the late-reply case
+    });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    expect(result.current.session.phase).toBe("generating");
+    expect(result.current.pending).toBe(true);
+
+    act(() => result.current.actions.cancel());
+    expect(signal?.aborted).toBe(true);
+    expect(result.current.session.phase).toBe("home");
+    expect(result.current.pending).toBe(false);
+
+    await act(async () => { gen.resolve(generated(2)); });
+    expect(result.current.session.phase).toBe("home");
+  });
+
+  it("lets the student exit a generation in flight", async () => {
+    let signal: AbortSignal | undefined;
+    quizApi.generateQuiz.mockImplementation((p: { signal?: AbortSignal }) => {
+      signal = p.signal;
+      return new Promise(() => {});
+    });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    act(() => result.current.actions.exit("/dashboard"));
+    expect(signal?.aborted).toBe(true);
+    expect(push).toHaveBeenCalledWith("/dashboard");
+    expect(result.current.session.phase).toBe("home");
+  });
+
+  it("times out a generation that never answers, with a retryable error", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      quizApi.generateQuiz.mockImplementation((p: { signal?: AbortSignal }) =>
+        abortable<GenerateResult>(p.signal),
+      );
+      const { result } = mount();
+      await waitFor(() => expect(result.current.config).not.toBeNull());
+      act(() => result.current.actions.start(START));
+      expect(result.current.session.phase).toBe("generating");
+
+      await act(async () => { vi.advanceTimersByTime(GENERATE_TIMEOUT_MS + 1); });
+      await waitFor(() => expect(result.current.session.phase).toBe("error"));
+      expect(result.current.session.error?.code).toBe("QUIZ_GENERATION_TIMEOUT");
+      expect(result.current.session.error?.retryable).toBe(true);
+      expect(result.current.pending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a hung submit back onto the final verdict, and See results submits again", async () => {
+    quizApi.generateQuiz.mockResolvedValue(generated(1));
+    let signal: AbortSignal | undefined;
+    quizApi.submitQuiz.mockImplementationOnce(
+      (_id: string, _answers: unknown, s?: AbortSignal) => {
+        signal = s;
+        return abortable<SubmitResult>(s);
+      },
+    );
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    act(() => result.current.actions.select(1));
+    act(() => { result.current.actions.submitAnswer(); });
+    await waitFor(() => expect(result.current.session.phase).toBe("submitting"));
+    expect(result.current.pending).toBe(true);
+
+    await act(async () => { result.current.actions.cancel(); });
+    expect(signal?.aborted).toBe(true);
+    expect(result.current.session.phase).toBe("answered");
+    // The aborted chain must not surface its AbortError as a submit failure.
+    expect(result.current.session.error).toBeNull();
+    await waitFor(() => expect(result.current.pending).toBe(false));
+
+    act(() => result.current.actions.next());
+    await waitFor(() => expect(result.current.session.phase).toBe("results"));
+    expect(quizApi.submitQuiz).toHaveBeenCalledTimes(2);
+  });
+
+  it("one call finishing does not clear pending while another is still in flight", async () => {
+    const resume = deferred<AttemptDetail>();
+    quizApi.getAttempt.mockReturnValue(resume.promise);
+    const gen = deferred<GenerateResult>();
+    quizApi.generateQuiz.mockReturnValue(gen.promise);
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+
+    act(() => result.current.actions.resume("attempt-0"));
+    act(() => result.current.actions.start(START));
+    expect(result.current.pending).toBe(true);
+
+    // The resume settles first (as not resumable). Under the old shared boolean
+    // its `finally` cleared `pending` with the generation still running.
+    await act(async () => { resume.resolve({ resumable: false } as AttemptDetail); });
+    expect(result.current.pending).toBe(true);
+    // …and its FAILED never replaced the generation on screen.
+    expect(result.current.session.phase).toBe("generating");
+
+    await act(async () => { gen.resolve(generated(2)); });
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    expect(result.current.pending).toBe(false);
   });
 });
