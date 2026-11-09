@@ -13,8 +13,6 @@
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simNodes.map()": 30,
     "src/components/quiz/home/QuizHome.tsx::QuizHome": 87,
     "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
-    "src/components/quiz/question/QuizQuestion.tsx::QuizQuestion": 108,
-    "src/components/quiz/question/WrittenAnswer.tsx::WrittenAnswer": 27,
     "src/components/screens/Dashboard.tsx::Dashboard": 48,
     "src/components/screens/Dashboard.tsx::Dashboard>load": 29,
     "src/components/screens/Learn.tsx::LearnInner": 76,
