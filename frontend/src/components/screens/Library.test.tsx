@@ -14,7 +14,12 @@ let navSections: { label: string; items: { href: string }[] }[] = [];
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 vi.mock("@/lib/useNavSections", () => ({ useVisibleNavSections: () => navSections }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+  // The Library seeds its course/type filters from the URL (the Study hub
+  // links in with ?course=…&type=study_guide); unset here = no filter.
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("../DocumentUploadModal", () => ({
   DocumentUploadModal: ({ open }: { open: boolean }) => (open ? <div data-testid="upload-modal" /> : null),
 }));

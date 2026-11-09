@@ -10,18 +10,19 @@ afterEach(cleanup);
 beforeEach(() => { flagState.flags = {}; flagState.ready = true; });
 
 describe("Study tools", () => {
-  it("offers Quiz alongside the study guide and flashcards", () => {
+  it("points each tool at its own page, never the retired ?mode= panes", () => {
     render(<StudyTabs mode="guide" />);
     expect(screen.getByRole("link", { name: "Quiz" }).getAttribute("href")).toBe("/quiz");
-    expect(screen.getByRole("link", { name: "Study Guide" }).getAttribute("href")).toBe("/study?mode=guide");
-    expect(screen.getByRole("link", { name: "Flashcards" }).getAttribute("href")).toBe("/study?mode=cards");
+    expect(screen.getByRole("link", { name: "Study Guide" }).getAttribute("href"))
+      .toBe("/library?type=study_guide");
+    expect(screen.getByRole("link", { name: "Flashcards" }).getAttribute("href")).toBe("/flashcards");
   });
 
-  it("switches existing study modes without leaving the page", () => {
-    const change = vi.fn();
-    render(<StudyTabs mode="guide" onChange={change} />);
-    fireEvent.click(screen.getByRole("link", { name: "Flashcards" }));
-    expect(change).toHaveBeenCalledWith("cards");
+  it("navigates rather than switching a pane in place", () => {
+    render(<StudyTabs mode="guide" />);
+    const flashcards = screen.getByRole("link", { name: "Flashcards" });
+    // No preventDefault handler left: a plain click is the navigation.
+    expect(fireEvent.click(flashcards)).toBe(true);
   });
 
   it("marks Quiz selected on the quiz page", () => {

@@ -2,7 +2,7 @@
 // Library: course/folder explorer for a student's uploaded documents.
 // Spec: design handoff "Sapling Library.dc.html" (markup + Component logic).
 import React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DocumentUploadModal } from "../DocumentUploadModal";
 import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
@@ -65,8 +65,19 @@ export function Library() {
   const [loadError, setLoadError] = React.useState(false);
   const loadReq = useLatestRequest();
 
-  const [loc, setLoc] = React.useState<Loc>("all");
-  const [type, setType] = React.useState<Category | "all">("all");
+  // Opened from somewhere that already knows what the student wants to see —
+  // the Study hub's Study Guide button is /library?course=…&type=study_guide.
+  // These seed the filters; they are not kept in sync afterwards, so the
+  // chips stay the plain client state they were.
+  const searchParams = useSearchParams();
+  const [loc, setLoc] = React.useState<Loc>(() => {
+    const course = searchParams.get("course");
+    return course ? (`c:${course}` as Loc) : "all";
+  });
+  const [type, setType] = React.useState<Category | "all">(() => {
+    const wanted = searchParams.get("type");
+    return wanted && wanted in TYPES ? (wanted as Category) : "all";
+  });
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<SortKey>("recent");
   const [view, setView] = React.useState<"list" | "panel">("list");

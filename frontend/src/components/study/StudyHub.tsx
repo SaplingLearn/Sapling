@@ -12,6 +12,9 @@
  *   study guides ....... getCachedStudyGuides
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
  *   roadmap categories . getTopicChecklist (routes/topic_checklist.py)
+ *
+ * Its three tool buttons leave for pages of their own (@/lib/toolHrefs):
+ * Study Guide -> the Library, Flashcards -> /flashcards, Quiz -> /quiz.
  */
 import React from "react";
 import { useRouter } from "next/navigation";
@@ -36,6 +39,8 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import type { AttemptSummary } from "@/lib/quiz/types";
 import { getStudyDaily, setStudyDailyGoal, type StudyDaily } from "@/lib/studyApi";
 import { getTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi";
+import { libraryHref, flashcardsHref } from "@/lib/toolHrefs";
+import { StudyHubSkeleton } from "../Skeleton";
 import s from "./StudyHub.module.css";
 import {
   conceptsForCourse,
@@ -120,6 +125,7 @@ const sameName = (a?: string | null, b?: string | null) =>
 
 export function StudyHub({
   courses,
+  coursesReady = true,
   semester,
   semesterReady,
   initialCourseId,
@@ -127,6 +133,10 @@ export function StudyHub({
   today: todayProp,
 }: {
   courses: EnrolledCourse[];
+  /** False until the course list has actually been fetched. An empty list
+   *  means "no courses" only once this is true — before it, `courses` is just
+   *  the initial `[]` and the "Add a course" empty state would be a lie. */
+  coursesReady?: boolean;
   semester: string;
   semesterReady: boolean;
   initialCourseId?: string | null;
@@ -300,16 +310,11 @@ export function StudyHub({
   /* ── navigation to the tool pages ─────────────────────────────────────── */
   const quizHref = (ids: string[]) =>
     buildQuizHref(ids.length === 1 ? { concept: ids[0] } : { course: cid }, { kind: "link", returnTo: "/study" });
-  const cardsHref = (names: string[]) => {
-    const p = new URLSearchParams({ mode: "cards", course: cid });
-    if (names.length) p.set("concepts", names.join("|"));
-    return `/study?${p.toString()}`;
-  };
-  const guideHref = () => {
-    const p = new URLSearchParams({ mode: "guide", course: cid });
-    if (exam) p.set("exam", exam.id);
-    return `/study?${p.toString()}`;
-  };
+  const cardsHref = (names: string[]) => flashcardsHref(cid, names);
+  // Study guides are Library documents now, so the button opens this course's
+  // study-guide shelf rather than the retired generator pane. The selected
+  // exam has nothing to narrow there — the Library files by course and type.
+  const guideHref = () => libraryHref(cid, "study_guide");
   const weakPicks = () => Object.fromEntries(topics.filter(t => t.st === "review" || t.st === "progress").map(t => [t.id, true]));
   const goTool = (k: "quiz" | "cards" | "guide") => {
     if (k === "guide") { router.push(guideHref()); return; }
@@ -461,6 +466,13 @@ export function StudyHub({
   const pillDot: React.CSSProperties = { width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
   const monoLabel: React.CSSProperties = { fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#6F6857" };
   const popover: React.CSSProperties = { background: "#FDFCF9", border: "1px solid rgba(42,39,31,0.14)", borderRadius: 14, boxShadow: "0 16px 40px rgba(25,37,11,0.18)" };
+
+  // The hub paints nothing real until it knows the student's courses AND has
+  // their concepts: without this it rendered the "Add a course" empty state,
+  // then the chrome, then the roadmap, in three visible steps.
+  if (!coursesReady || !semesterReady || (!!courses.length && !graph)) {
+    return <StudyHubSkeleton isMobile={isMobile} />;
+  }
 
   if (!courses.length) {
     return (
@@ -620,7 +632,7 @@ export function StudyHub({
       </header>
 
       {/* ── exam tabs + tools ── */}
-      <div style={{ gridColumn: 1, gridRow: 2, display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+      <div key={cid} className={s.paneEnter} style={{ gridColumn: 1, gridRow: 2, display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0, flexWrap: isMobile ? "wrap" : "nowrap" }}>
         <div role="tablist" aria-label="Exams" style={{ flex: 1, minWidth: 0, alignSelf: "stretch", display: "flex", gap: 36, overflowX: "auto", overflowY: "hidden" }}>
           {exams.map(e => {
             const on = !!exam && e.id === exam.id;
@@ -648,7 +660,7 @@ export function StudyHub({
       </div>
 
       {/* ── readiness band ── */}
-      <section aria-label="Readiness" style={{ gridColumn: 1, gridRow: 3, display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 540px", alignItems: "start", gap: isMobile ? 24 : 48, padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
+      <section aria-label="Readiness" key={`${cid}:${exam?.id ?? ""}`} className={s.examEnter} style={{ gridColumn: 1, gridRow: 3, display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 540px", alignItems: "start", gap: isMobile ? 24 : 48, padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
         {/* Top-anchored, not centred: the prerequisite warning below the legend
             appears and disappears with the selected concept, and centring made
             the readiness % jump ~35px whenever it did. */}
@@ -789,21 +801,22 @@ export function StudyHub({
       </section>
 
       {/* ── roadmap ── */}
-      <section aria-label="Roadmap" className={s.scroll} onScroll={onPaneScroll}
+      <section aria-label="Roadmap" key={cid} className={`${s.scroll} ${s.paneEnter}`} onScroll={onPaneScroll}
         style={{ gridColumn: 1, gridRow: 4, minHeight: 0, overflowY: isMobile ? "visible" : "auto", scrollbarGutter: "stable", padding: "22px 6px 28px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={monoLabel}>Roadmap</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "26px 20px", alignItems: "start" }}>
-          {columns.map(col => (
-            <div key={col.key} style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          {columns.map((col, ci) => (
+            <div key={col.key} className={s.colEnter}
+              style={{ "--i": Math.min(ci, 6), display: "flex", flexDirection: "column", gap: 8, minWidth: 0 } as React.CSSProperties}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 4 }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
                   <span style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</span>
                   <span style={{ fontSize: 13, color: "#6F6857", fontVariantNumeric: "tabular-nums" }}>{col.frac}</span>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: "4px 3px" }}>
-                  {col.bars.map((b, i) => <span key={i} style={{ height: 4, borderRadius: 2, background: b }} />)}
+                  {col.bars.map((b, i) => <span key={i} className={s.bar} style={{ height: 4, borderRadius: 2, background: b }} />)}
                 </div>
               </div>
               {col.shown.map(({ t, isSel, isNext, isHot, rel, dim }) => {
@@ -815,11 +828,11 @@ export function StudyHub({
                   { label: "Study Guide", icon: "file" as const, bg: "#F1E3C4", fg: "#8A6420", href: guideHref() },
                 ];
                 return (
-                  <div key={t.id} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`}
+                  <div key={t.id} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} className={s.tile}
                     onClick={() => set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id })}
                     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id }); } }}
                     onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
-                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#EBF0E1" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer", transition: "opacity 160ms, box-shadow 160ms" }}>
+                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#EBF0E1" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
                     <span style={{ position: "relative", width: 34, height: 34, flexShrink: 0 }}>
                       <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
                         <circle cx="17" cy="17" r="14" fill="none" stroke="#E6E2D9" strokeWidth="3.5" />

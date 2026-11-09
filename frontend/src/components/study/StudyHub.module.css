@@ -37,3 +37,50 @@
   background-color: rgba(68, 93, 34, 0.45); border: 2px solid transparent;
   background-clip: padding-box; min-height: 24px;
 }
+
+/* ── motion ──────────────────────────────────────────────────────────────────
+   Clicking around the hub used to swap content with no in-between: a new
+   course, a new exam tab or a new concept selection simply replaced what was
+   there. These are plain CSS animations and transitions, so they cost no
+   JS chunk and the app-wide prefers-reduced-motion reset in globals.css
+   (the `*, *::before, *::after` rule) collapses every one of them. */
+
+@keyframes studyPaneEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The main column, re-keyed on the selected course: a course switch reads as
+   the page turning rather than as a flicker. */
+.paneEnter { animation: studyPaneEnter 260ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+
+/* The readiness + focus block, re-keyed on the selected exam tab. Shorter than
+   the course swap — the surrounding chrome doesn't change, so a long one reads
+   as lag. */
+.examEnter { animation: studyPaneEnter 190ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+
+/* Roadmap columns arrive left to right. The delay is set inline per column
+   (--i), capped there so a long roadmap doesn't trail. */
+.colEnter { animation: studyPaneEnter 240ms cubic-bezier(0.2, 0.85, 0.35, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+
+/* Concept tiles: selection, prerequisite highlighting and the legend filter
+   all change a tile's border, background and opacity. Easing them is what
+   makes hovering a tile feel like it's pointing at its prerequisites rather
+   than redrawing the roadmap. */
+.tile {
+  transition: border-color 160ms ease, background-color 160ms ease,
+              opacity 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.tile:hover { transform: translateY(-1px); }
+
+/* The readiness ring and the mastery bars grow to their value instead of
+   appearing at it. */
+.ring { transition: stroke-dasharray 520ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+.bar { transition: width 420ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+
+/* Popovers (course menu, bell, tile menu, AI pace) and the modals. */
+@keyframes studyPop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.pop { animation: studyPop 150ms cubic-bezier(0.2, 0.85, 0.35, 1) both; transform-origin: top; }

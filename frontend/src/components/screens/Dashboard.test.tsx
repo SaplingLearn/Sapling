@@ -191,7 +191,7 @@ describe("Home: header", () => {
     expect(within(upNext).getByRole("link")).toHaveAttribute("href", "/study?course=c-MATH210");
     const reviews = screen.getByTestId("home-quick-reviews");
     await waitFor(() => expect(reviews).toHaveTextContent("2 Concepts"));
-    expect(within(reviews).getByRole("link")).toHaveAttribute("href", "/study?mode=cards");
+    expect(within(reviews).getByRole("link")).toHaveAttribute("href", "/flashcards");
   });
 
   it("types the greeting, then fades in one of the original quotes", async () => {

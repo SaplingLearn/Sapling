@@ -87,9 +87,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-const renderHub = () => render(
+const renderHub = (props: Partial<React.ComponentProps<typeof StudyHub>> = {}) => render(
   <ToastProvider>
-    <StudyHub courses={[COURSE]} semester="" semesterReady isMobile={false} today={TODAY} />
+    <StudyHub courses={[COURSE]} coursesReady semester="" semesterReady isMobile={false} today={TODAY} {...props} />
   </ToastProvider>,
 );
 
@@ -144,6 +144,28 @@ describe("StudyHub", () => {
     await waitFor(() => expect(within(roadmap).getByText("Foundations")).toBeTruthy());
   });
 
+  it("shows a skeleton while loading, never the add-a-course empty state", async () => {
+    // The course list has not come back yet: an empty `courses` here means
+    // "not loaded", not "this student has none".
+    renderHub({ courses: [], coursesReady: false });
+    expect(screen.getByRole("status", { name: "Loading your study hub" })).toBeTruthy();
+    expect(screen.queryByText(/Add a course to get a study roadmap/)).toBeNull();
+  });
+
+  it("keeps the skeleton up until the concepts land", async () => {
+    renderHub();
+    expect(screen.getByRole("status", { name: "Loading your study hub" })).toBeTruthy();
+    // Once the graph resolves the real hub replaces it.
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Loading your study hub" })).toBeNull());
+    expect(screen.getByTestId("readiness-pct")).toBeTruthy();
+  });
+
+  it("shows the empty state once the load finishes with no courses", async () => {
+    renderHub({ courses: [], coursesReady: true });
+    expect(await screen.findByText(/Add a course to get a study roadmap/)).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Loading your study hub" })).toBeNull();
+  });
+
   it("bell lists every deadline with a colored countdown", async () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
@@ -180,10 +202,11 @@ describe("StudyHub", () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study?mode=guide&course=c1&exam=e2");
+    // Study guides are Library documents now, filed by course and type.
+    expect(push).toHaveBeenLastCalledWith("/library?course=c1&type=study_guide");
     fireEvent.click(screen.getByRole("button", { name: "Flashcards" }));
     fireEvent.click(screen.getByText("Start Flashcards · 2 Concepts"));
-    expect(push).toHaveBeenLastCalledWith("/study?mode=cards&course=c1&concepts=Loops%7CRecursion");
+    expect(push).toHaveBeenLastCalledWith("/flashcards?course=c1&concepts=Loops%7CRecursion");
   });
 
   it("legend chips filter the roadmap and tiles open their action menu", async () => {

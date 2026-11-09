@@ -14,7 +14,10 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 vi.mock("@/lib/useNavSections", () => ({ useVisibleNavSections: () => [] }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("../DocumentUploadModal", () => ({ DocumentUploadModal: () => null }));
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),

@@ -498,7 +498,7 @@ export function Dashboard() {
           <ActionCard
             testId="home-quick-reviews" label="Quick Reviews"
             title={reviewCount === null ? "Flashcards" : reviewCount === 0 ? "All Caught Up" : `${reviewCount} ${reviewCount === 1 ? "Concept" : "Concepts"}`}
-            href={canStudy ? "/study?mode=cards" : "/learn"} icon={CardsIcon}
+            href={canStudy ? "/flashcards" : "/learn"} icon={CardsIcon}
             bg="#E8F0F8" border="#C9D9EC" accent="#2E5F96" linkClass={styles.linkBlue}
           />
         </section>
