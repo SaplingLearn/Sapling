@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { OnboardingTakeover } from '@/components/onboarding/OnboardingTakeover';
 import SignInModal from '@/components/marketing/SignInModal';
 import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
@@ -38,6 +39,11 @@ export default function LandingPage() {
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
+
+  // Get Started plays onboarding over the landing (the original zoom-in
+  // hand-off) for everyone, as a new student creating an account: no sign-in
+  // or "already onboarded" check up front. A guest signs in at Finish.
+  const [onboarding, setOnboarding] = useState(false);
 
   // The document scrollbar is hidden while the landing is mounted: the page
   // is a guided scroll cinema and the bar reads as stray chrome against the
@@ -87,8 +93,10 @@ export default function LandingPage() {
         theme={navTheme}
         onLogoClick={actions.scrollTop}
         onSignIn={() => setSignInOpen(true)}
-        onGetStarted={() => actions.scrollToId('cta')}
+        onGetStarted={() => setOnboarding(true)}
       />
+
+      {onboarding && <OnboardingTakeover />}
 
       <SignInModal
         open={signInOpen || signInError !== null}

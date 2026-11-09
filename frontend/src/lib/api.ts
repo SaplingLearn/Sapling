@@ -1168,10 +1168,11 @@ export interface OnboardingProfilePayload {
   first_name: string;
   last_name: string;
   year: string;
-  majors: string[];
-  minors: string[];
+  /** No longer asked for by the redesigned onboarding; the backend defaults both. */
+  majors?: string[];
+  minors?: string[];
   course_ids: string[];
-  learning_style: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
+  learning_style?: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
 }
 
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>

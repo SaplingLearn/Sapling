@@ -29,9 +29,12 @@ interface SignInModalProps {
   open: boolean;
   onClose: () => void;
   errorCode?: string | null;
+  /** Called after a successful popup sign-in instead of routing away, for a
+   * caller that carries on in place (onboarding saving a guest's answers). */
+  onSignedIn?: () => void;
 }
 
-export default function SignInModal({ open, onClose, errorCode }: SignInModalProps) {
+export default function SignInModal({ open, onClose, errorCode, onSignedIn }: SignInModalProps) {
   const router = useRouter();
   const { setActiveUser } = useUser();
   const [closing, setClosing] = useState(false);
@@ -185,7 +188,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         });
         // #715: a new account on a local backend waits for its sample data
         // on the hold screen; anywhere else this is /onboarding, as before.
-        void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
+        if (onSignedIn) onSignedIn();
+        else void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
         onClose();
       } else if (data.error === "not_approved" && data.pendingToken) {
         // An unapproved account: /pending shows where it stands (on the

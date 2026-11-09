@@ -28,6 +28,25 @@ interface CustomSelectProps<T extends string = string> {
   testId?: string;
 }
 
+const LIST_MAX = 280;
+const LIST_MIN = 120;
+const LIST_GAP = 4;
+
+/** The box the open list must fit inside: the viewport, narrowed by every
+ *  ancestor that clips or scrolls vertically (a list that runs past a
+ *  scrolling panel's edge makes the panel scroll instead of showing it). */
+function clipBox(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (getComputedStyle(p).overflowY === "visible") continue;
+    const r = p.getBoundingClientRect();
+    top = Math.max(top, r.top);
+    bottom = Math.min(bottom, r.bottom);
+  }
+  return { top, bottom };
+}
+
 export function CustomSelect<T extends string = string>({
   value,
   options,
@@ -46,6 +65,8 @@ export function CustomSelect<T extends string = string>({
   const [highlighted, setHighlighted] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
+  // Opens downward unless there isn't room there and there is more above.
+  const [place, setPlace] = useState<{ up: boolean; max: number }>({ up: false, max: LIST_MAX });
 
   const selectedIndex = useMemo(() => options.findIndex(o => o.value === value), [options, value]);
   const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
@@ -57,7 +78,8 @@ export function CustomSelect<T extends string = string>({
       if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      // Handled: an Esc that closes the list shouldn't also close what it sits in.
+      if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -66,6 +88,20 @@ export function CustomSelect<T extends string = string>({
       document.removeEventListener("keydown", onKey);
     };
   }, [open, selectedIndex]);
+
+  // Measured as the list opens, so it lays out once in the right place.
+  const toggle = () => {
+    const el = wrapperRef.current;
+    if (!open && el) {
+      const r = el.getBoundingClientRect();
+      const box = clipBox(el);
+      const below = box.bottom - r.bottom - LIST_GAP * 2;
+      const above = r.top - box.top - LIST_GAP * 2;
+      const up = below < Math.min(LIST_MAX, 200) && above > below;
+      setPlace({ up, max: Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below)) });
+    }
+    setOpen(o => !o);
+  };
 
   const commit = useCallback((idx: number) => {
     const opt = options[idx];
@@ -78,7 +114,7 @@ export function CustomSelect<T extends string = string>({
     if (disabled) return;
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      setOpen(o => !o);
+      toggle();
       return;
     }
   };
@@ -127,7 +163,7 @@ export function CustomSelect<T extends string = string>({
         aria-label={ariaLabel}
         data-testid={testId}
         disabled={disabled}
-        onClick={() => !disabled && setOpen(o => !o)}
+        onClick={() => !disabled && toggle()}
         onKeyDown={onButtonKey}
         style={{
           display: "inline-flex",
@@ -159,12 +195,13 @@ export function CustomSelect<T extends string = string>({
           id={listboxId}
           tabIndex={-1}
           onKeyDown={onListKey}
-          ref={el => el?.focus()}
+          ref={el => el?.focus({ preventScroll: true })}
           className="fade-in"
           style={{
             position: "absolute",
             zIndex: 100,
-            top: "calc(100% + 4px)",
+            top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`,
+            bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto",
             left: align === "left" ? 0 : "auto",
             right: align === "right" ? 0 : "auto",
             minWidth: "100%",
@@ -175,7 +212,7 @@ export function CustomSelect<T extends string = string>({
             border: "1px solid var(--border-strong)",
             borderRadius: "var(--r-md)",
             boxShadow: "var(--shadow-lg)",
-            maxHeight: 280,
+            maxHeight: place.max,
             overflowY: "auto",
           }}
         >
