@@ -362,7 +362,8 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
 - After a bare `make e2e-up`, `.e2e/stack.json` tells the Playwright harness
   which slot to hit, and `source .e2e/env.sh` sets up a shell for the oracles.
   A bare `e2e-up` is refused on a slot a cycle holds.
-- Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on main and on every PR.
+- Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on pushes to main only
+  (CI cost) — a PR's browser lane runs locally in a slot before merge.
 - **One cycle per checkout.** `.e2e/` (PIDs, logs, manifest) and
   `frontend/.next` belong to the checkout, so a second cycle in the same one is
   refused (`.e2e/cycle.lock`). Parallel runs come from separate worktrees.
