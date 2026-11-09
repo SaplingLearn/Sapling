@@ -85,7 +85,7 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
         ) from e
 
 
-def _course_meta(offering_id: str | None, cache: dict) -> dict:
+async def _course_meta(offering_id: str | None, cache: dict) -> dict:
     """Resolve an offering to its abstract course id + human labels.
 
     Notes key on the OFFERING (a course taught in a term), but the notetaker
@@ -97,10 +97,10 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
     if not offering_id:
         return {"course_id": None, "course_code": None, "course_name": None}
     if offering_id not in cache:
-        course_id = offering_course_id(offering_id)
+        course_id = await asyncio.to_thread(offering_course_id, offering_id)
         course = {}
         if course_id:
-            rows = table("courses").select(
+            rows = await table("courses").aselect(
                 "id,course_code,course_name",
                 filters={"id": f"eq.{course_id}"}, limit=1,
             )
@@ -169,7 +169,7 @@ async def list_user_notes(
     # resolve the courses row once.
     meta_cache: dict = {}
     for n in notes:
-        n.update(_course_meta(n.get("offering_id"), meta_cache))
+        n.update(await _course_meta(n.get("offering_id"), meta_cache))
     # ETag from each note's (id, updated_at) — any create/edit/delete changes the
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
@@ -203,7 +203,7 @@ async def create(body: CreateNoteBody, request: Request):
     )
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
-    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    note.update(await _course_meta(note.get("offering_id") or offering_id, {}))
     # create_note (services/notes_service.py) inserts a single notes row per
     # call and this route calls it exactly once — award immediately after it
     # returns, keyed on the freshly-created note id so a client retry is an
@@ -235,7 +235,7 @@ async def read(note_id: str, request: Request, user_id: str):
         raise HTTPException(status_code=404, detail="Note not found.")
     # Same offering → course_id/label enrichment as the list route (F4), so a
     # single-note read returns a consistent shape.
-    note.update(_course_meta(note.get("offering_id"), {}))
+    note.update(await _course_meta(note.get("offering_id"), {}))
     return note
 
 

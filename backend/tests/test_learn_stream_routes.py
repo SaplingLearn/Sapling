@@ -3,9 +3,15 @@
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.db_fakes import fake_table
+
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 
 client = TestClient(app)
 
@@ -35,7 +41,7 @@ class TestChatStream:
             from services.agent_events import SaplingEvent
             yield SaplingEvent(type="status", step="start", message="Starting.")
             yield SaplingEvent(type="token", step="reply", message="", data={"delta": "Hi"})
-            kwargs["on_complete"]("Hi", {}, [])
+            await kwargs["on_complete"]("Hi", {}, [])
             yield SaplingEvent(type="done", step="reply", message="Complete.",
                                data={"reply": "Hi", "graph_update": {}, "mastery_changes": []})
 
@@ -44,7 +50,7 @@ class TestChatStream:
              patch("routes.learn._prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
              patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
+             patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=history_sentinel), \
@@ -99,7 +105,7 @@ class TestChatStream:
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
              patch("routes.learn._chat_turn_json", turn), \
              patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
+             patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=[]):
@@ -128,7 +134,7 @@ class TestChatStream:
         with patch("routes.learn.require_self",
                    side_effect=HTTPException(status_code=403, detail="forbidden")) as guard, \
              patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
+             patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"), \
              patch("routes.learn._prepare_chat_run") as prep:
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "someone-else",
@@ -157,7 +163,7 @@ class TestStartSessionStream:
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
              patch("routes.learn.get_graph", return_value={"nodes": []}), \
-             patch("routes.learn.table") as tbl:
+             patch("routes.learn.table", return_value=fake_table()) as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
             })
@@ -217,7 +223,7 @@ class TestStartSessionStream:
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
              patch("routes.learn.get_graph", return_value={"nodes": []}), \
-             patch("routes.learn.table") as tbl:
+             patch("routes.learn.table", return_value=fake_table()) as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
             })
@@ -272,7 +278,7 @@ class TestSseCompressionOptOut:
              patch("routes.learn._prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
              patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
+             patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=[]):

@@ -29,6 +29,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -148,16 +149,31 @@ def raise_if_discarded(session_id: str | None, user_id: str | None = None) -> No
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
 
-def require_session_open(session_id: str) -> None:
-    """Before a turn runs on a materialised session: 409 SESSION_ENDED if it
-    has ended, 404 if its row is gone (deleted since the ownership check)."""
-    rows = table("sessions").select(
-        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
-    )
+async def araise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
+    """:func:`raise_if_discarded` for event-loop callers (#117 wave 3)."""
+    raise_if_discarded(session_id, user_id)
+
+
+def _raise_unless_open(rows: list) -> None:
     if not rows:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     if rows[0].get("ended_at"):
         raise session_ended_error()
+
+
+def require_session_open(session_id: str) -> None:
+    """Before a turn runs on a materialised session: 409 SESSION_ENDED if it
+    has ended, 404 if its row is gone (deleted since the ownership check)."""
+    _raise_unless_open(table("sessions").select(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    ))
+
+
+async def arequire_session_open(session_id: str) -> None:
+    """:func:`require_session_open` over the async seam (#117 wave 3)."""
+    _raise_unless_open(await table("sessions").aselect(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    ))
 
 # Per-session locks serialising every pending -> materialised/discarded
 # transition. PENDING_SESSIONS is a plain module dict, so it is per-process:
@@ -209,11 +225,28 @@ def session_owned_by(
     pending = PENDING_SESSIONS.get(session_id)
     if pending is not None:
         return allow_pending and pending.get("user_id") == user_id
-    rows = table("sessions").select(
+    return _row_owned_by(table("sessions").select(
         "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
+    ), user_id)
+
+
+def _row_owned_by(rows: list, user_id: str) -> bool:
     owner = rows[0].get("user_id") if rows else None
     return bool(owner) and owner == user_id
+
+
+async def asession_owned_by(
+    session_id: str | None, user_id: str | None, *, allow_pending: bool = True
+) -> bool:
+    """:func:`session_owned_by` over the async seam (#117 wave 3)."""
+    if not session_id or not user_id:
+        return False
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        return allow_pending and pending.get("user_id") == user_id
+    return _row_owned_by(await table("sessions").aselect(
+        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+    ), user_id)
 
 
 def require_session_owner(
@@ -226,3 +259,32 @@ def require_session_owner(
     """
     if not session_owned_by(session_id, user_id, allow_pending=allow_pending):
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+async def arequire_session_owner(
+    session_id: str | None, user_id: str | None, *, allow_pending: bool = True
+) -> None:
+    """:func:`require_session_owner` over the async seam (#117 wave 3)."""
+    if not await asession_owned_by(session_id, user_id, allow_pending=allow_pending):
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+def _parse_utc(iso: str) -> datetime:
+    parsed = datetime.fromisoformat(iso)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def elapsed_minutes(started_at_iso: str, *, until: str | None = None) -> int:
+    """Whole minutes since ``started_at_iso``, robust to both timestamp shapes
+    in the wild: tz-aware ISO (TIMESTAMPTZ reads via PostgREST, and every write
+    after the #248 sweep) and legacy naive strings (pre-sweep ``utcnow()``
+    writes), which are UTC by construction. The old inline
+    ``utcnow() - fromisoformat(...)`` raised TypeError on the aware shape and
+    silently reported 0. Returns 0 for anything unparseable. ``until`` (an
+    ISO timestamp, e.g. the stored ended_at) replaces "now" as the end."""
+    try:
+        started = _parse_utc(started_at_iso)
+        end = _parse_utc(until) if until else datetime.now(timezone.utc)
+        return int((end - started).total_seconds() / 60)
+    except Exception:
+        return 0

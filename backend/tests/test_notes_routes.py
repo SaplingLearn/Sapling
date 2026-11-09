@@ -12,6 +12,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.db_fakes import add_async_twins
+
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 def fake_get_note(*, body="B"):
@@ -88,7 +92,7 @@ class TestListNotes:
         with (
             patch("routes.notes.list_notes", side_effect=fake_list),
             patch("routes.notes.offering_course_id", return_value="c1") as oc,
-            patch("routes.notes.table", return_value=_FakeCoursesTable()),
+            patch("routes.notes.table", return_value=add_async_twins(_FakeCoursesTable())),
         ):
             r = client.get("/api/notes/user/u1")
         assert r.status_code == 200
@@ -213,7 +217,7 @@ class TestGetNote:
         with (
             patch("routes.notes.get_note", side_effect=fake_get),
             patch("routes.notes.offering_course_id", return_value="c1"),
-            patch("routes.notes.table", return_value=_FakeCoursesTable()),
+            patch("routes.notes.table", return_value=add_async_twins(_FakeCoursesTable())),
         ):
             r = client.get("/api/notes/n1?user_id=u1")
         assert r.status_code == 200

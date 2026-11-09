@@ -26,6 +26,7 @@ from agents.decision import decision_agent
 from main import app
 from services import decisions, events_service, feature_flags, tutor_router
 from tests.agent_run_fakes import run_result
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -457,7 +458,7 @@ def test_json_chat_routes_the_turn_once_after_persisting(router_on):
         return spy(**kw)
 
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.save_message", side_effect=save),
         patch("routes.learn.observe_tutor_turn", side_effect=observe),
@@ -487,7 +488,7 @@ def test_stream_failing_before_persist_then_json_retry_is_one_decision(router_on
     saved: list = []
 
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
@@ -510,13 +511,13 @@ def test_successful_stream_is_one_decision_with_the_served_model(router_on, sink
     from services.agent_events import SaplingEvent
 
     async def fake_stream(**kwargs):
-        extra = kwargs["on_complete"]("streamed reply", {}, [])
+        extra = await kwargs["on_complete"]("streamed reply", {}, [])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
 
     spy = _RouterSpy()
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=MagicMock()),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
@@ -545,14 +546,14 @@ def test_streamed_turn_usage_row_carries_the_request_id(router_on):
 
     async def fake_stream(**kwargs):
         kwargs["on_usage"](_served_by("streamed", "claude-sonnet-5-5"))
-        extra = kwargs["on_complete"]("streamed", {}, [])
+        extra = await kwargs["on_complete"]("streamed", {}, [])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
 
     usage_calls: list = []
     spy = _RouterSpy()
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=MagicMock()),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
@@ -586,7 +587,7 @@ def test_streamed_continuation_usage_row_carries_the_request_id(router_on, path)
             {"user_id": "user_andres", "topic": "Recursion", "mode": "socratic"})
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.record_agent_usage",
@@ -614,7 +615,7 @@ def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
     spy = _RouterSpy()
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
@@ -632,7 +633,7 @@ def test_json_chat_without_a_pref_logs_the_default_model(router_on):
     agent.run = AsyncMock(return_value=_served_by("reply", "claude-sonnet-5-5"))
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -648,7 +649,7 @@ def test_failed_json_turn_routes_nothing(router_on):
     agent.run = AsyncMock(side_effect=RuntimeError("model down"))
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -662,7 +663,7 @@ def test_off_decides_nothing_at_the_persist_point(sink):
     agent.run = AsyncMock(return_value=run_result("reply"))
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -695,7 +696,7 @@ def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
     monkeypatch.setattr(tutor_router, "_route", no_route)
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -714,7 +715,7 @@ def test_function_mode_labels_the_tier_the_turn_really_ran_on(router_on, monkeyp
     agent.run = AsyncMock(return_value=_served_by("reply", "function:chat_tutor"))
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -746,7 +747,7 @@ def test_json_turn_labels_the_model_the_run_reports(router_on, monkeypatch):
     agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-flash-lite-preview-09"))
     spy = _RouterSpy()
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
@@ -781,13 +782,13 @@ def test_stream_labels_the_model_its_run_reports(router_on):
 
     async def fake_stream(**kwargs):
         kwargs["on_usage"](_served_by("streamed", "gemini-2.5-pro-exp"))
-        extra = kwargs["on_complete"]("streamed", {}, [])
+        extra = await kwargs["on_complete"]("streamed", {}, [])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
 
     spy = _RouterSpy()
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=MagicMock()),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.observe_tutor_turn", side_effect=spy),
@@ -802,7 +803,7 @@ def test_router_failure_cannot_fail_the_turn():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
     with (
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("services.tutor_router.decisions.router_backends", side_effect=RuntimeError("boom")),
     ):
@@ -817,12 +818,12 @@ def test_router_failure_cannot_fail_a_persisted_stream(router_on):
     from services.agent_events import SaplingEvent
 
     async def fake_stream(**kwargs):
-        extra = kwargs["on_complete"]("streamed reply", {}, [])
+        extra = await kwargs["on_complete"]("streamed reply", {}, [])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
 
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
         patch("routes.learn.agent_for_mode", return_value=MagicMock()),
         patch("routes.learn._consume_pending"),
         patch("routes.learn.observe_tutor_turn", side_effect=RuntimeError("boom")),
@@ -847,7 +848,7 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
         spy = _RouterSpy()
 
         with (
-            patch("routes.learn.table", side_effect=_table_factory),
+            patch("routes.learn.table", side_effect=with_async_twins(_table_factory)),
             patch("routes.learn.agent_for_mode", return_value=agent),
             patch("routes.learn.offering_course_id", return_value="c1"),
             patch("routes.learn._get_course_info", return_value={"course_code": "CS101"}),
