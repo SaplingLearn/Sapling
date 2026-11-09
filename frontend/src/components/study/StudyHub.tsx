@@ -94,7 +94,7 @@ function CardsIcon({ size }: { size: number }) {
 /* Prerequisite warning glyph: Sapling's leaf-shaped error badge (exclamation
    knocked out, so the banner's cream shows through), in the warning amber the
    design's round icon used rather than the badge's source green. */
-function WarnIcon({ size = 18 }: { size?: number }) {
+function WarnIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
       <path
@@ -489,10 +489,10 @@ export function StudyHub({
   const qr = quickReviews(topics, today);
 
   /* ── render helpers ───────────────────────────────────────────────────── */
-  const iconBtn: React.CSSProperties = { width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: 12, background: "transparent", color: "#3F3B31", cursor: "pointer", position: "relative" };
-  const pillBase: React.CSSProperties = { display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 16px 0 6px", border: 0, borderRadius: 22, ...INHERIT_FONT, fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer" };
-  const pillDot: React.CSSProperties = { width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
-  const monoLabel: React.CSSProperties = { fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#6F6857" };
+  const iconBtn: React.CSSProperties = { width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: "var(--r-md)", background: "transparent", color: "#3F3B31", cursor: "pointer", position: "relative" };
+  const pillBase: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, height: 34, padding: "0 12px 0 4px", border: 0, borderRadius: 17, ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer" };
+  const pillDot: React.CSSProperties = { width: 26, height: 26, borderRadius: "50%", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
+  const monoLabel: React.CSSProperties = { fontFamily: MONO, fontSize: "var(--fs-xs)", letterSpacing: "0.14em", textTransform: "uppercase", color: "#6F6857" };
   const popover: React.CSSProperties = { background: "#FDFCF9", border: "1px solid rgba(42,39,31,0.14)", borderRadius: 14, boxShadow: "0 16px 40px rgba(25,37,11,0.18)" };
 
   // The hub paints nothing real until it knows the student's courses AND has
@@ -518,7 +518,7 @@ export function StudyHub({
   {
     let w = 0;
     for (; kS < focusPres.length; kS++) {
-      const cw = 34 + focusPres[kS].name.length * 7.4 + 6;
+      const cw = 28 + focusPres[kS].name.length * 6.4 + 5;
       const reserve = kS < focusPres.length - 1 ? 80 : 0;
       if (w + cw + reserve > 400) break;
       w += cw;
@@ -545,39 +545,39 @@ export function StudyHub({
     <div
       className={s.hub}
       style={{
-        color: "#1A1814", fontFamily: SANS, fontSize: 15, lineHeight: 1.45,
+        color: "#1A1814", fontFamily: SANS, fontSize: "var(--fs-md)", lineHeight: 1.45,
         WebkitFontSmoothing: "antialiased",
       }}
     >
       {/* ── header ── */}
-      <header className={s.areaHeader} style={{ display: "flex", alignItems: "center", gap: 20, paddingBottom: 18 }}>
-        <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Study</h1>
+      <header className={s.areaHeader} style={{ display: "flex", alignItems: "center", gap: 16, paddingBottom: 12 }}>
+        <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Study</h1>
         {/* Was a hard 320px, which ellipsed "Introduction to Computer Science"
             even on a 1920 screen with room to spare. It now takes what the
             header has and caps only so a long name can't crowd out the bell
             and settings beside it. */}
         <div style={{ position: "relative", flex: isMobile ? "1 1 100%" : "0 1 auto", minWidth: 0, maxWidth: 560 }}>
           <button className={s.hoverCourse} onClick={() => set({ menu: st.menu === "course" ? null : "course" })} aria-haspopup="listbox" aria-expanded={st.menu === "course"}
-            style={{ display: "inline-flex", alignItems: "center", gap: 10, maxWidth: "100%", height: 44, padding: "0 12px", border: 0, borderRadius: 12, background: "transparent", ...INHERIT_FONT, color: "#1A1814", cursor: "pointer" }}>
-            <span style={{ width: 11, height: 11, borderRadius: "50%", background: course?.color || "#6F6857", flexShrink: 0 }} />
-            <span style={{ fontSize: 17, fontWeight: 700, whiteSpace: "nowrap" }}>{course?.course_code || course?.course_name}</span>
-            {course?.course_code && <span style={{ minWidth: 0, fontSize: 16, color: "#3F3B31", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{course.course_name}</span>}
-            <Icon name="chevron-down" size={11} />
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, maxWidth: "100%", height: 36, padding: "0 10px", border: 0, borderRadius: "var(--r-md)", background: "transparent", ...INHERIT_FONT, color: "#1A1814", cursor: "pointer" }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: course?.color || "#6F6857", flexShrink: 0 }} />
+            <span style={{ fontSize: "var(--fs-base)", fontWeight: 700, whiteSpace: "nowrap" }}>{course?.course_code || course?.course_name}</span>
+            {course?.course_code && <span style={{ minWidth: 0, fontSize: "var(--fs-md)", color: "#3F3B31", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{course.course_name}</span>}
+            <Icon name="chevron-down" size={10} />
           </button>
           {st.menu === "course" && (
             <>
               <div onClick={() => set({ menu: null })} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-              <div role="listbox" aria-label="Courses" style={{ position: "absolute", left: 0, top: 50, zIndex: 31, width: 280, ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
+              <div role="listbox" aria-label="Courses" style={{ position: "absolute", left: 0, top: 42, zIndex: 31, width: 260, ...popover, borderRadius: "var(--r-md)", boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
                 {courses.map(o => {
                   const on = o.course_id === cid;
                   const n = assessFor(o.course_id).filter(e => daysTo(e.iso, today) >= 0).length;
                   return (
                     <button key={o.course_id} role="option" aria-selected={on} className={s.hoverOption} onClick={() => pickCourse(o.course_id)}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", border: 0, borderRadius: 8, background: on ? "#F2F6EE" : "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-                      <span style={{ width: 9, height: 9, borderRadius: "50%", background: o.color || "#6F6857", flexShrink: 0 }} />
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", border: 0, borderRadius: "var(--r-sm)", background: on ? "#F2F6EE" : "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: o.color || "#6F6857", flexShrink: 0 }} />
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 14, fontWeight: 700 }}>{o.course_code || o.course_name}</span>
-                        <span style={{ display: "block", fontSize: 13, color: "#6F6857" }}>{o.course_name} · {n} upcoming</span>
+                        <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 700 }}>{o.course_code || o.course_name}</span>
+                        <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "#6F6857" }}>{o.course_name} · {n} upcoming</span>
                       </span>
                     </button>
                   );
@@ -587,20 +587,20 @@ export function StudyHub({
           )}
         </div>
 
-        <div aria-label="Notifications" style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 10 }}>
+        <div aria-label="Notifications" style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 8 }}>
           {ai && (
             <div onMouseEnter={() => set({ aiOpen: true })} onMouseLeave={() => set({ aiOpen: false })} style={{ position: "relative" }}>
               <div role="button" tabIndex={0} aria-expanded={st.aiOpen} onFocus={() => set({ aiOpen: true })} onBlur={() => set({ aiOpen: false })}
                 style={{ ...pillBase, background: "#F2F6EE", color: "#293C0E" }}>
-                <span style={{ ...pillDot, color: "#445D22" }}><Icon name="clover" size={16} /></span>{ai.title}
+                <span style={{ ...pillDot, color: "#445D22" }}><Icon name="clover" size={14} /></span>{ai.title}
               </div>
               {st.aiOpen && (
                 <div style={{ position: "absolute", right: isMobile ? "auto" : 0, left: isMobile ? 0 : "auto", top: "100%", paddingTop: 8, zIndex: 31 }}>
-                  <div role="tooltip" style={{ width: isMobile ? 300 : 400, ...popover, borderRadius: 16, boxShadow: "0 16px 40px rgba(25,37,11,0.16)", padding: "16px 18px", display: "flex", gap: 12 }}>
-                    <span style={{ width: 34, height: 34, borderRadius: "50%", background: "#F2F6EE", color: "#445D22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="clover" size={17} /></span>
-                    <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: "#293C0E" }}>{ai.title}</span>
-                      <span style={{ fontSize: 15, color: "#3F3B31", textWrap: "pretty" } as React.CSSProperties}>{ai.body}</span>
+                  <div role="tooltip" style={{ width: isMobile ? 280 : 340, ...popover, borderRadius: "var(--r-lg)", boxShadow: "0 16px 40px rgba(25,37,11,0.16)", padding: "12px 14px", display: "flex", gap: 10 }}>
+                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#F2F6EE", color: "#445D22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="clover" size={14} /></span>
+                    <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontSize: "var(--fs-base)", fontWeight: 700, color: "#293C0E" }}>{ai.title}</span>
+                      <span style={{ fontSize: "var(--fs-md)", color: "#3F3B31", textWrap: "pretty" } as React.CSSProperties}>{ai.body}</span>
                     </span>
                   </div>
                 </div>
@@ -613,7 +613,7 @@ export function StudyHub({
             return (
               <button className={s.hoverDue} onClick={() => router.push("/calendar")} title={`Due ${when} · ${fmtDow(due.iso)}`}
                 style={{ ...pillBase, background: "#FBF1DC", color: "#8A6420" }}>
-                <span style={{ ...pillDot, color: "#8A6420" }}><Icon name="calendar" size={15} /></span>
+                <span style={{ ...pillDot, color: "#8A6420" }}><Icon name="calendar" size={13} /></span>
                 <span>{due.title} due {when}</span>
               </button>
             );
@@ -623,66 +623,66 @@ export function StudyHub({
         <div style={{ position: "relative" }}>
           <button className={s.hoverIcon} onClick={() => set({ menu: st.menu === "bell" ? null : "bell" })} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={st.menu === "bell"} title="Upcoming deadlines"
             style={{ ...iconBtn, background: st.menu === "bell" ? "#F0ECE3" : "transparent" }}>
-            <Icon name="nofitication" size={22} />
+            <Icon name="nofitication" size={18} />
             {soon > 0 && (
-              <span style={{ position: "absolute", top: 4, right: 3, minWidth: 18, height: 18, padding: "0 5px", boxSizing: "border-box", borderRadius: 9, background: "#C4534B", color: "#FFFFFF", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>{soon}</span>
+              <span style={{ position: "absolute", top: 2, right: 1, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: "#C4534B", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>{soon}</span>
             )}
           </button>
           {st.menu === "bell" && (
             <>
               <div onClick={() => set({ menu: null })} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-              <div role="dialog" aria-label="Upcoming deadlines" style={{ position: "absolute", right: 0, top: 52, zIndex: 31, width: 380, maxWidth: "calc(100vw - 32px)", ...popover, padding: 8, display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "8px 10px 10px" }}>
-                  <span style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 600 }}>Upcoming Deadlines</span>
-                  <span style={{ fontSize: 13, color: "#6F6857" }}>{course?.course_code || course?.course_name}</span>
+              <div role="dialog" aria-label="Upcoming deadlines" style={{ position: "absolute", right: 0, top: 44, zIndex: 31, width: 320, maxWidth: "calc(100vw - 32px)", ...popover, padding: 6, display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "6px 8px 8px" }}>
+                  <span style={{ fontFamily: SERIF, fontSize: "var(--fs-lg)", fontWeight: 600 }}>Upcoming Deadlines</span>
+                  <span style={{ fontSize: "var(--fs-sm)", color: "#6F6857" }}>{course?.course_code || course?.course_name}</span>
                 </div>
-                {upcoming.length === 0 && <div style={{ padding: "4px 10px 12px", fontSize: 14, color: "#6F6857" }}>Nothing due for this course.</div>}
+                {upcoming.length === 0 && <div style={{ padding: "4px 8px 10px", fontSize: "var(--fs-md)", color: "#6F6857" }}>Nothing due for this course.</div>}
                 {upcoming.map(e => {
                   const n = daysTo(e.iso, today);
                   return (
                     <button key={e.id} className={s.hoverOption} onClick={() => set(e.type === "Homework" ? { menu: null } : { menu: null, exam: e.id, topic: null, lvl: null })}
-                      style={{ display: "flex", alignItems: "center", gap: 12, padding: 10, border: 0, borderRadius: 10, background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[e.type], flexShrink: 0 }} />
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.title}</span>
-                        <span style={{ display: "block", fontSize: 13, color: "#6F6857" }}>{e.type} · {fmtDow(e.iso)}</span>
+                        <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.title}</span>
+                        <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "#6F6857" }}>{e.type} · {fmtDow(e.iso)}</span>
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: countFg(n), whiteSpace: "nowrap" }}>{countdown(n)}</span>
+                      <span style={{ fontSize: "var(--fs-sm)", fontWeight: 700, color: countFg(n), whiteSpace: "nowrap" }}>{countdown(n)}</span>
                     </button>
                   );
                 })}
-                <button onClick={openManage} style={{ marginTop: 4, padding: 10, border: 0, borderTop: "1px solid rgba(42,39,31,0.10)", borderRadius: "0 0 8px 8px", background: "transparent", color: "#445D22", ...INHERIT_FONT, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Manage Dates</button>
+                <button onClick={openManage} style={{ marginTop: 4, padding: 8, border: 0, borderTop: "1px solid rgba(42,39,31,0.10)", borderRadius: "0 0 8px 8px", background: "transparent", color: "#445D22", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 700, cursor: "pointer" }}>Manage Dates</button>
               </div>
             </>
           )}
         </div>
         <button className={s.hoverIcon} onClick={openManage} aria-label="Manage exams and deadlines" title="Add or change exams and deadlines" style={iconBtn}>
-          <Icon name="setting" size={22} />
+          <Icon name="setting" size={18} />
         </button>
       </header>
 
       {/* ── exam tabs + tools ── */}
-      <div key={cid} className={`${s.areaTabs} ${s.paneEnter}`} style={{ display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0 }}>
-        <div role="tablist" aria-label="Exams" style={{ flex: 1, minWidth: 0, alignSelf: "stretch", display: "flex", gap: 36, overflowX: "auto", overflowY: "hidden" }}>
+      <div key={cid} className={`${s.areaTabs} ${s.paneEnter}`} style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0 }}>
+        <div role="tablist" aria-label="Exams" style={{ flex: 1, minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
           {exams.map(e => {
             const on = !!exam && e.id === exam.id;
             return (
               <button key={e.id} role="tab" aria-selected={on} className={on ? undefined : s.hoverTab} onClick={() => set({ exam: e.id, topic: null, hover: null, lvl: null })}
-                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, flexShrink: 0, padding: "4px 0 12px", border: 0, borderBottom: `3px solid ${on ? "#445D22" : "transparent"}`, background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-                <span style={{ fontSize: 17, fontWeight: 700, color: on ? "#1A1814" : "#6F6857", whiteSpace: "nowrap" }}>{e.title}</span>
-                <span style={{ fontSize: 13, color: "#6F6857", whiteSpace: "nowrap" }}>{fmtDow(e.iso, today)}</span>
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, flexShrink: 0, padding: "0 0 8px", border: 0, borderBottom: `2px solid ${on ? "#445D22" : "transparent"}`, background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
+                <span style={{ fontSize: "var(--fs-base)", fontWeight: 700, color: on ? "#1A1814" : "#6F6857", whiteSpace: "nowrap" }}>{e.title}</span>
+                <span style={{ fontSize: "var(--fs-sm)", color: "#6F6857", whiteSpace: "nowrap" }}>{fmtDow(e.iso, today)}</span>
               </button>
             );
           })}
           {exams.length === 0 && (
-            <button onClick={openManage} style={{ alignSelf: "center", padding: "0 0 10px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, color: "#445D22", cursor: "pointer" }}>+ Add Exam or Deadline</button>
+            <button onClick={openManage} style={{ alignSelf: "center", padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 700, color: "#445D22", cursor: "pointer" }}>+ Add Exam or Deadline</button>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, paddingBottom: 10 }}>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, paddingBottom: 8 }}>
           {TOOLS.map(tl => (
             <button key={tl.key} className={s.hoverTool} onClick={() => goTool(tl.key)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 10, height: 44, padding: "0 16px 0 6px", border: "1px solid rgba(42,39,31,0.14)", borderRadius: 12, background: "#FDFCF9", color: "#1A1814", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-              <span style={{ width: 32, height: 32, borderRadius: 9, background: tl.bg, color: tl.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={tl.icon} size={16} /></span>
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 34, padding: "0 12px 0 4px", border: "1px solid rgba(42,39,31,0.14)", borderRadius: "var(--r-md)", background: "#FDFCF9", color: "#1A1814", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              <span style={{ width: 26, height: 26, borderRadius: 7, background: tl.bg, color: tl.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={tl.icon} size={14} /></span>
               {tl.title}
             </button>
           ))}
@@ -690,29 +690,29 @@ export function StudyHub({
       </div>
 
       {/* ── readiness band ── */}
-      <section aria-label="Readiness" key={`${cid}:${exam?.id ?? ""}`} className={`${s.areaReady} ${s.readyGrid} ${s.examEnter}`} style={{ padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
+      <section aria-label="Readiness" key={`${cid}:${exam?.id ?? ""}`} className={`${s.areaReady} ${s.readyGrid} ${s.examEnter}`} style={{ padding: "16px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
         {/* Top-anchored, not centred: the prerequisite warning below the legend
             appears and disappears with the selected concept, and centring made
             the readiness % jump ~35px whenever it did. */}
-        <div style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: 22, minWidth: 0, paddingTop: 10 }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 22 }}>
-            <span data-testid="readiness-pct" style={{ fontFamily: SERIF, fontSize: 88, fontWeight: 600, lineHeight: 0.9, letterSpacing: "-0.03em" }}>{graph ? `${pct}%` : "–"}</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 4 }}>
-              <span style={{ fontSize: 20, fontWeight: 700 }}>{exam ? `Ready for ${exam.title}` : `${course?.course_code || course?.course_name} Mastery`}</span>
+        <div style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: 14, minWidth: 0, paddingTop: 2 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
+            <span data-testid="readiness-pct" style={{ fontFamily: SERIF, fontSize: 36, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{graph ? `${pct}%` : "–"}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingBottom: 2 }}>
+              <span style={{ fontSize: "var(--fs-lg)", lineHeight: 1.25, fontWeight: 700 }}>{exam ? `Ready for ${exam.title}` : `${course?.course_code || course?.course_name} Mastery`}</span>
               {trend !== 0 && (
-                <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: "#3F3B31" }}>
-                  <span style={{ height: 24, padding: "0 9px", borderRadius: 12, background: trend > 0 ? "#E1ECD7" : "#F6E3E1", color: trend > 0 ? "#49671D" : "#A8443F", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-md)", color: "#3F3B31" }}>
+                  <span style={{ height: 20, padding: "0 8px", borderRadius: 10, background: trend > 0 ? "#E1ECD7" : "#F6E3E1", color: trend > 0 ? "#49671D" : "#A8443F", fontSize: "var(--fs-xs)", fontWeight: 700, display: "inline-flex", alignItems: "center" }}>
                     {trend > 0 ? "+" : "−"}{Math.abs(trend)}% this week
                   </span>
                 </span>
               )}
             </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div role="img" aria-label={`Overall mastery ${pct} percent`} style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div role="img" aria-label={`Overall mastery ${pct} percent`} style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {squaresOrder(topics).map(t => (
                 <button key={t.id} className={s.hoverSeg} onClick={() => set({ topic: sel && sel.id === t.id ? null : t.id })} title={`${t.name} · ${ST_LABEL[t.st]}`} aria-label={`${t.name} · ${ST_LABEL[t.st]}`}
-                  style={{ width: 20, height: 20, flexShrink: 0, padding: 0, border: 0, borderRadius: 5, background: TC[t.st], opacity: st.lvl && t.st !== st.lvl ? 0.3 : 1, boxShadow: sel && sel.id === t.id ? "0 0 0 2px #FAF8F3, 0 0 0 3.5px #445D22" : "none", cursor: "pointer" }} />
+                  style={{ width: 14, height: 14, flexShrink: 0, padding: 0, border: 0, borderRadius: 4, background: TC[t.st], opacity: st.lvl && t.st !== st.lvl ? 0.3 : 1, boxShadow: sel && sel.id === t.id ? "0 0 0 1.5px #FAF8F3, 0 0 0 3px #445D22" : "none", cursor: "pointer" }} />
               ))}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -720,8 +720,8 @@ export function StudyHub({
                 const on = st.lvl === k;
                 return (
                   <button key={k} aria-pressed={on} className={on ? undefined : s.hoverLegend} onClick={() => set({ lvl: on ? null : k })} title="Highlight these on the roadmap"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 32, padding: "0 12px 0 10px", border: 0, borderRadius: 16, background: on ? "#E1ECD7" : "#F0ECE3", ...INHERIT_FONT, fontSize: 14, color: "#1A1814", cursor: "pointer" }}>
-                    <span style={{ width: 11, height: 11, borderRadius: 3, background: TC[k] }} />
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px 0 8px", border: 0, borderRadius: 13, background: on ? "#E1ECD7" : "#F0ECE3", ...INHERIT_FONT, fontSize: "var(--fs-sm)", color: "#1A1814", cursor: "pointer" }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: TC[k] }} />
                     <span style={{ fontWeight: 700 }}>{topics.filter(t => t.st === k).length}</span>
                     <span style={{ color: "#3F3B31" }}>{ST_LABEL[k]}</span>
                   </button>
@@ -739,11 +739,11 @@ export function StudyHub({
               which on a narrow column (or with the side nav expanded) cut the
               warning off mid-word and left the reason hidden behind a
               tooltip. */}
-          <div aria-hidden={!(warnLeft && focus) || undefined} style={{ marginTop: -8, minHeight: 61, flexShrink: 0 }}>
+          <div aria-hidden={!(warnLeft && focus) || undefined} style={{ marginTop: -4, minHeight: 52, flexShrink: 0 }}>
             {warnLeft && focus && (
               <div
                 data-testid="focus-gap-warning"
-                style={{ minHeight: 61, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.45, color: "#6B4E12" }}
+                style={{ minHeight: 52, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: "var(--r-md)", background: "#FBF1DC", fontSize: "var(--fs-sm)", lineHeight: 1.45, color: "#6B4E12" }}
               >
                 <WarnIcon />
                 <span style={{ textWrap: "pretty" } as React.CSSProperties}>
@@ -755,35 +755,35 @@ export function StudyHub({
         </div>
 
         {focus ? (
-          <div data-testid="focus-card" style={{ position: "relative", borderRadius: 20, background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div data-testid="focus-card" style={{ position: "relative", borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#E1ECD7" }}>{rec && focus.id === rec.id ? "Up Next" : focus.group}</span>
+              <span style={{ fontFamily: MONO, fontSize: "var(--fs-xs)", letterSpacing: "0.14em", textTransform: "uppercase", color: "#E1ECD7" }}>{rec && focus.id === rec.id ? "Up Next" : focus.group}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-              <span style={{ position: "relative", width: 68, height: 68, flexShrink: 0 }}>
-                <svg width="68" height="68" viewBox="0 0 68 68" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
-                  <circle cx="34" cy="34" r="29" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6" />
-                  <circle cx="34" cy="34" r="29" fill="none" stroke={focusArc} strokeWidth="6" strokeLinecap="round" strokeDasharray={ring(focus.m, 29)} />
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <span style={{ position: "relative", width: 54, height: 54, flexShrink: 0 }}>
+                <svg width="54" height="54" viewBox="0 0 54 54" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
+                  <circle cx="27" cy="27" r="23" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="5" />
+                  <circle cx="27" cy="27" r="23" fill="none" stroke={focusArc} strokeWidth="5" strokeLinecap="round" strokeDasharray={ring(focus.m, 23)} />
                 </svg>
-                <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 700 }}>{focus.m}%</span>
+                <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "var(--fs-base)", fontWeight: 700 }}>{focus.m}%</span>
               </span>
               <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 600, lineHeight: 1.15, letterSpacing: "-0.01em" }}>{focus.name}</span>
-                <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 6, fontSize: 14, color: "rgba(255,255,255,0.86)" }}>
+                <span style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.01em" }}>{focus.name}</span>
+                <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 6, fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
                   {focusPres.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
                   {focusPres.slice(0, kS).map(t => (
-                    <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px", borderRadius: 13, background: "rgba(255,255,255,0.12)", color: "#FFFFFF", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: TC[t.st] }} />{t.name}
+                    <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 8px", borderRadius: 11, background: "rgba(255,255,255,0.12)", color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: TC[t.st] }} />{t.name}
                     </span>
                   ))}
                   {restP.length > 0 && (
                     <span onMouseEnter={() => set({ moreOpen: true })} onMouseLeave={() => set({ moreOpen: false })} style={{ position: "relative", flexShrink: 0 }}>
-                      <span tabIndex={0} onFocus={() => set({ moreOpen: true })} onBlur={() => set({ moreOpen: false })} style={{ display: "inline-flex", alignItems: "center", height: 26, padding: "0 10px", borderRadius: 13, background: "rgba(255,255,255,0.22)", color: "#FFFFFF", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", cursor: "default" }}>+{restP.length} more</span>
+                      <span tabIndex={0} onFocus={() => set({ moreOpen: true })} onBlur={() => set({ moreOpen: false })} style={{ display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, background: "rgba(255,255,255,0.22)", color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 700, whiteSpace: "nowrap", cursor: "default" }}>+{restP.length} more</span>
                       {st.moreOpen && (
                         <span style={{ position: "absolute", left: 0, top: "100%", paddingTop: 6, zIndex: 25 }}>
-                          <span style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, padding: "10px 12px", ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)" }}>
+                          <span style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 180, padding: "8px 10px", ...popover, borderRadius: "var(--r-md)", boxShadow: "0 14px 36px rgba(25,37,11,0.16)" }}>
                             {restP.map(t => (
-                              <span key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, color: "#1A1814", whiteSpace: "nowrap" }}>
+                              <span key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-md)", fontWeight: 600, color: "#1A1814", whiteSpace: "nowrap" }}>
                                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: TC[t.st] }} />{t.name}
                               </span>
                             ))}
@@ -796,36 +796,36 @@ export function StudyHub({
               </div>
             </div>
             {warnInCard ? (
-              <div style={{ minHeight: 78, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.4, color: "#6B4E12" }}>
+              <div style={{ minHeight: 64, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: "var(--r-md)", background: "#FBF1DC", fontSize: "var(--fs-sm)", lineHeight: 1.4, color: "#6B4E12" }}>
                 <WarnIcon /><span style={{ textWrap: "pretty" } as React.CSSProperties}>{focus.gap}</span>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", columnGap: 16, rowGap: 8, height: 78, boxSizing: "border-box", padding: "12px 14px", borderRadius: 12, background: "rgba(0,0,0,0.16)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", columnGap: 12, rowGap: 6, height: 64, boxSizing: "border-box", padding: "9px 12px", borderRadius: "var(--r-md)", background: "rgba(0,0,0,0.16)" }}>
                 <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontFamily: MONO, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#E1ECD7" }}>Last Quiz</span>
-                  <span style={{ display: "block", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lq ? `${lq.concept_name || focus.name} Quiz` : "No quiz yet"}</span>
+                  <span style={{ display: "block", fontFamily: MONO, fontSize: "var(--fs-2xs)", letterSpacing: "0.12em", textTransform: "uppercase", color: "#E1ECD7" }}>Last Quiz</span>
+                  <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lq ? `${lq.concept_name || focus.name} Quiz` : "No quiz yet"}</span>
                 </span>
                 <span style={{ textAlign: "right" }}>
-                  <span style={{ display: "block", fontSize: 22, fontWeight: 700, lineHeight: 1.1, color: quizColor }}>{lq ? `${lqp}%` : "–"}</span>
-                  <span style={{ display: "block", fontSize: 13, color: "rgba(255,255,255,0.8)" }}>{lq ? `${lq.score}/${lq.total} correct · ${fmtWhen(lq.completed_at || lq.created_at, today)}` : "Take one to measure it"}</span>
+                  <span style={{ display: "block", fontSize: "var(--fs-xl)", fontWeight: 700, lineHeight: 1.1, color: quizColor }}>{lq ? `${lqp}%` : "–"}</span>
+                  <span style={{ display: "block", fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.8)" }}>{lq ? `${lq.score}/${lq.total} correct · ${fmtWhen(lq.completed_at || lq.created_at, today)}` : "Take one to measure it"}</span>
                 </span>
-                <span style={{ gridColumn: "1 / 3", height: 6, borderRadius: 3, background: "rgba(255,255,255,0.16)", overflow: "hidden" }}>
-                  <span style={{ display: "block", width: lq ? `${lqp}%` : "0%", height: "100%", borderRadius: 3, background: quizColor }} />
+                <span style={{ gridColumn: "1 / 3", height: 4, borderRadius: 2, background: "rgba(255,255,255,0.16)", overflow: "hidden" }}>
+                  <span style={{ display: "block", width: lq ? `${lqp}%` : "0%", height: "100%", borderRadius: 2, background: quizColor }} />
                 </span>
               </div>
             )}
           </div>
         ) : (
-          <div style={{ borderRadius: 20, background: "var(--sidenav-bg)", color: "#FFFFFF", padding: 26, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+          <div style={{ borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: 18, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
             {topics.length ? (
               <>
-                <span style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600 }}>Every concept is mastered</span>
-                <span style={{ fontSize: 15, color: "rgba(255,255,255,0.86)" }}>Keep them fresh with a mixed quiz before the exam.</span>
+                <span style={{ fontFamily: SERIF, fontSize: "var(--fs-xl)", fontWeight: 600 }}>Every concept is mastered</span>
+                <span style={{ fontSize: "var(--fs-md)", color: "rgba(255,255,255,0.86)" }}>Keep them fresh with a mixed quiz before the exam.</span>
               </>
             ) : (
               <>
-                <span style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600 }}>{graph ? "No concepts yet" : "Loading concepts"}</span>
-                <span style={{ fontSize: 15, color: "rgba(255,255,255,0.86)" }}>{graph ? "Upload course material in the Library to build this course's roadmap." : "One moment."}</span>
+                <span style={{ fontFamily: SERIF, fontSize: "var(--fs-xl)", fontWeight: 600 }}>{graph ? "No concepts yet" : "Loading concepts"}</span>
+                <span style={{ fontSize: "var(--fs-md)", color: "rgba(255,255,255,0.86)" }}>{graph ? "Upload course material in the Library to build this course's roadmap." : "One moment."}</span>
               </>
             )}
           </div>
@@ -837,11 +837,11 @@ export function StudyHub({
           the section keeps it over whatever follows (the rail, once the
           narrow layout stacks it underneath). */}
       <section aria-label="Roadmap" key={`roadmap:${cid}`} className={`${s.areaRoadmap} ${s.paneEnter}`}
-        style={{ position: "relative", zIndex: st.tileMenu ? 2 : undefined, padding: "22px 6px 28px 0" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
+        style={{ position: "relative", zIndex: st.tileMenu ? 2 : undefined, padding: "16px 6px 24px 0" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={monoLabel}>Roadmap</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "26px 20px", alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "20px 16px", alignItems: "start" }}>
           {/* Stacking: every column is its own stacking context (its colEnter
               opacity/transform animation), and so is any hovered (lifted) or
               dimmed tile. A z-index on the menu alone is therefore trapped
@@ -849,14 +849,14 @@ export function StudyHub({
               tile that own the open menu are lifted above their siblings. */}
           {columns.map((col, ci) => (
             <div key={col.key} className={s.colEnter}
-              style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: col.shown.some(x => x.t.id === st.tileMenu) ? 2 : undefined, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 } as React.CSSProperties}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 4 }}>
+              style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: col.shown.some(x => x.t.id === st.tileMenu) ? 2 : undefined, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } as React.CSSProperties}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingBottom: 2 }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</span>
-                  <span style={{ fontSize: 13, color: "#6F6857", fontVariantNumeric: "tabular-nums" }}>{col.frac}</span>
+                  <span style={{ fontSize: "var(--fs-base)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</span>
+                  <span style={{ fontSize: "var(--fs-sm)", color: "#6F6857", fontVariantNumeric: "tabular-nums" }}>{col.frac}</span>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: "4px 3px" }}>
-                  {col.bars.map((b, i) => <span key={i} className={s.bar} style={{ height: 4, borderRadius: 2, background: b }} />)}
+                  {col.bars.map((b, i) => <span key={i} className={s.bar} style={{ height: 3, borderRadius: 2, background: b }} />)}
                 </div>
               </div>
               {col.shown.map(({ t, isSel, isNext, isHot, rel, dim }) => {
@@ -873,34 +873,34 @@ export function StudyHub({
                     onClick={() => set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id })}
                     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id }); } }}
                     onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
-                    style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#F2F6EE" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
-                    <span style={{ position: "relative", width: 34, height: 34, flexShrink: 0 }}>
-                      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
-                        <circle cx="17" cy="17" r="14" fill="none" stroke="#E6E2D9" strokeWidth="3.5" />
-                        <circle cx="17" cy="17" r="14" fill="none" stroke={TC[t.st]} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={ring(t.m, 14)} />
-                        <circle cx="17" cy="17" r="9.5" fill={t.st === "new" ? "transparent" : TC[t.st]} />
+                    style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: "var(--r-md)", background: isSel ? "#F2F6EE" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
+                    <span style={{ position: "relative", width: 28, height: 28, flexShrink: 0 }}>
+                      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
+                        <circle cx="14" cy="14" r="11.5" fill="none" stroke="#E6E2D9" strokeWidth="3" />
+                        <circle cx="14" cy="14" r="11.5" fill="none" stroke={TC[t.st]} strokeWidth="3" strokeLinecap="round" strokeDasharray={ring(t.m, 11.5)} />
+                        <circle cx="14" cy="14" r="7.5" fill={t.st === "new" ? "transparent" : TC[t.st]} />
                       </svg>
                       <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF" }}>
-                        {t.st === "mastered" && <Icon name="check" size={12} />}
+                        {t.st === "mastered" && <Icon name="check" size={10} />}
                       </span>
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                      <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.25, textWrap: "pretty" } as React.CSSProperties}>{t.name}</span>
-                      <span style={{ fontSize: 13, color: SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.st === "new" ? "Not Started" : `${ST_LABEL[t.st]} · ${t.m}%`}</span>
+                      <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty" } as React.CSSProperties}>{t.name}</span>
+                      <span style={{ fontSize: "var(--fs-xs)", color: SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.st === "new" ? "Not Started" : `${ST_LABEL[t.st]} · ${t.m}%`}</span>
                     </span>
-                    {isNext && !isSel && <span style={{ position: "absolute", top: -10, right: 10, height: 20, padding: "0 8px", borderRadius: 10, background: "#445D22", color: "#FFFFFF", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>Next</span>}
-                    {rel && <span style={{ position: "absolute", top: -10, right: 10, height: 20, padding: "0 8px", borderRadius: 10, background: rel === "Unlocks" ? "#E3ECF5" : "#F7EEDC", color: rel === "Unlocks" ? "#2E5F96" : "#7A5A1C", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>{rel}</span>}
-                    {warn && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0 }}><WarnIcon size={16} /></span>}
+                    {isNext && !isSel && <span style={{ position: "absolute", top: -8, right: 8, height: 16, padding: "0 6px", borderRadius: 8, background: "#445D22", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>Next</span>}
+                    {rel && <span style={{ position: "absolute", top: -8, right: 8, height: 16, padding: "0 6px", borderRadius: 8, background: rel === "Unlocks" ? "#E3ECF5" : "#F7EEDC", color: rel === "Unlocks" ? "#2E5F96" : "#7A5A1C", fontSize: "var(--fs-2xs)", fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>{rel}</span>}
+                    {warn && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0 }}><WarnIcon size={14} /></span>}
                     {menuOpen && (
                       <>
                         <div role="menu" aria-label={`${t.name} actions`} onClick={e => e.stopPropagation()}
                           // Enter/Space on an item must follow the link, not reach the tile's toggle.
                           onKeyDown={e => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
-                          style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 220, ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
+                          style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 200, ...popover, borderRadius: "var(--r-md)", boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 4, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
                           {actions.map(ac => (
                             <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }}
-                              style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 8px", border: 0, borderRadius: 8, background: "transparent", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, color: "#1A1814", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
-                              <span style={{ width: 28, height: 28, borderRadius: 8, background: ac.bg, color: ac.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ac.icon} size={14} /></span>
+                              style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 6px", border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "#1A1814", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
+                              <span style={{ width: 24, height: 24, borderRadius: 6, background: ac.bg, color: ac.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ac.icon} size={12} /></span>
                               {ac.label}
                             </Link>
                           ))}
@@ -912,16 +912,16 @@ export function StudyHub({
               })}
               {col.hidden.length > 0 && (
                 <button className={s.hoverMore} onClick={() => set({ openCols: { ...st.openCols, [col.key]: !col.open } })}
-                  style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 12px", border: "1px dashed rgba(42,39,31,0.22)", borderRadius: 12, background: "transparent", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, color: "#3F3B31", cursor: "pointer" }}>
-                  <span style={{ display: "flex", gap: 3 }}>{col.hidden.map(x => <span key={x.t.id} style={{ width: 8, height: 8, borderRadius: 2, background: TC[x.t.st] }} />)}</span>
+                  style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 10px", border: "1px dashed rgba(42,39,31,0.22)", borderRadius: "var(--r-md)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-sm)", fontWeight: 600, color: "#3F3B31", cursor: "pointer" }}>
+                  <span style={{ display: "flex", gap: 3 }}>{col.hidden.map(x => <span key={x.t.id} style={{ width: 7, height: 7, borderRadius: 2, background: TC[x.t.st] }} />)}</span>
                   <span style={{ flex: 1, textAlign: "left", whiteSpace: "nowrap" }}>{col.open ? "Show Less" : `${col.hidden.length} more mastered`}</span>
-                  <span style={{ display: "flex", flexShrink: 0, transform: col.open ? "rotate(180deg)" : "none" }}><Icon name="chevron-down" size={11} /></span>
+                  <span style={{ display: "flex", flexShrink: 0, transform: col.open ? "rotate(180deg)" : "none" }}><Icon name="chevron-down" size={10} /></span>
                 </button>
               )}
             </div>
           ))}
         </div>
-        {graph && topics.length === 0 && <div style={{ fontSize: 14, color: "#6F6857" }}>Concepts from this course&apos;s knowledge graph will appear here.</div>}
+        {graph && topics.length === 0 && <div style={{ fontSize: "var(--fs-md)", color: "#6F6857" }}>Concepts from this course&apos;s knowledge graph will appear here.</div>}
       </section>
 
       {/* ── right column ── */}
@@ -1024,27 +1024,27 @@ export function StudyHub({
           )}
         </section>
 
-        <section aria-label="Recent activity" style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 22, borderTop: "1px solid rgba(42,39,31,0.10)" }}>
-          <span style={{ ...monoLabel, marginBottom: 8 }}>Recent Activity</span>
-          {recent.length === 0 && <span style={{ fontSize: 14, color: "#6F6857" }}>Quizzes, flashcards, and study guides for this course will show up here.</span>}
+        <section aria-label="Recent activity" style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 16, borderTop: "1px solid rgba(42,39,31,0.10)" }}>
+          <span style={{ ...monoLabel, marginBottom: 6 }}>Recent Activity</span>
+          {recent.length === 0 && <span style={{ fontSize: "var(--fs-md)", color: "#6F6857" }}>Quizzes, flashcards, and study guides for this course will show up here.</span>}
           {recent.map(rc => {
             const ic = rc.kind === "quiz" ? { bg: "#EBDDEE", fg: "#7A4A78", name: "bulb" as const } : rc.kind === "cards" ? { bg: "#E1ECD7", fg: "#445D22", name: "cards" as const } : { bg: "#F1E3C4", fg: "#8A6420", name: "file" as const };
             return (
-              <div key={rc.key} style={{ display: "grid", gridTemplateColumns: "32px minmax(0, 1fr)", columnGap: 12, padding: "10px 0" }}>
-                <span style={{ width: 32, height: 32, borderRadius: 9, background: ic.bg, color: ic.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ic.name} size={15} /></span>
-                <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div key={rc.key} style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr)", columnGap: 10, padding: "8px 0" }}>
+                <span style={{ width: 28, height: 28, borderRadius: 7, background: ic.bg, color: ic.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ic.name} size={13} /></span>
+                <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rc.title}</span>
-                      <span style={{ display: "block", fontSize: 13, color: "#6F6857" }}>{rc.meta}</span>
+                      <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rc.title}</span>
+                      <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "#6F6857" }}>{rc.meta}</span>
                     </span>
-                    {rc.result && <span style={{ fontSize: 15, fontWeight: 700, color: rc.resultColor, whiteSpace: "nowrap" }}>{rc.result}</span>}
+                    {rc.result && <span style={{ fontSize: "var(--fs-md)", fontWeight: 700, color: rc.resultColor, whiteSpace: "nowrap" }}>{rc.result}</span>}
                   </div>
                   {rc.chips.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                       {rc.chips.map(ch => (
                         <button key={ch.id} onClick={() => byId.has(ch.id) && set({ topic: ch.id })} title="Mastery change from this quiz"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px", border: 0, borderRadius: 13, background: ch.delta >= 0 ? "#E1ECD7" : "#F6E3E1", color: "#1A1814", ...INHERIT_FONT, fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>
+                          style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 8px", border: 0, borderRadius: 11, background: ch.delta >= 0 ? "#E1ECD7" : "#F6E3E1", color: "#1A1814", ...INHERIT_FONT, fontSize: "var(--fs-xs)", whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>
                           {ch.name}<span style={{ fontWeight: 700, color: ch.delta >= 0 ? "#49671D" : "#A8443F" }}>{ch.delta >= 0 ? "+" : "−"}{Math.abs(ch.delta)}%</span>
                         </button>
                       ))}
