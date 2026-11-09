@@ -195,9 +195,12 @@ button.ob-school:hover { transform: translateY(-2px); }
   text-transform: uppercase; color: var(--ob-mut); text-shadow: var(--ob-tsh);
 }
 .ob-label--gap { padding-top: 6px; }
-.ob-years { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; width: 100%; }
+/* Each button sizes to its word plus the same padding, and the row's spare
+   width is shared out equally, so every label sits centred with even space. */
+.ob-years { display: flex; gap: 8px; width: 100%; }
 .ob-choice {
-  height: 40px; min-width: 0; padding: 0 8px; white-space: nowrap;
+  flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center;
+  height: 40px; min-width: 0; padding: 0 12px; white-space: nowrap;
   border-radius: 10px; border: 1.5px solid var(--ob-line); background: var(--ob-pan2); color: var(--ob-fg2);
   font: 500 12.5px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: all 140ms;
@@ -209,8 +212,21 @@ button.ob-school:hover { transform: translateY(-2px); }
   border: none; background: var(--ob-brand); color: #FFFFFF; font: 600 13px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
 }
 .ob-chip span { font-size: 15px; opacity: .7; }
+/* The search field and its results are one box: a shared border, the field
+   as its header row, the list scrolling beneath a hairline. */
+.ob-search {
+  width: 100%; border-radius: 16px; border: 1.5px solid var(--ob-line); overflow: hidden;
+  background: var(--ob-pan); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.ob-search:focus-within { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
+.ob-search .ob-input--search {
+  border: none; border-bottom: 1px solid var(--ob-line); border-radius: 0;
+  background: var(--ob-pan2); box-shadow: none;
+}
+.ob-search .ob-input--search:focus { box-shadow: none; }
 .ob-results {
-  width: 100%; border-radius: 16px; max-height: 218px; overflow-y: auto; overscroll-behavior: contain;
+  width: 100%; max-height: 218px; overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--ob-acc) transparent;
 }
 .ob-result {
@@ -406,6 +422,8 @@ button.ob-school:hover { transform: translateY(-2px); }
 @media (max-width: 720px) {
   .ob-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ob-schools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ob-years { flex-wrap: wrap; }
+  .ob-choice { flex-basis: calc(33.333% - 6px); }
   .ob-keys { display: none; }
   /* Key hints are hidden here, so the strip spans the screen. */
   .ob-progress { left: 16px; right: 16px; bottom: 20px; gap: 6px; }

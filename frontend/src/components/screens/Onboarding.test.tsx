@@ -75,6 +75,12 @@ HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElemen
 
 const continueBtn = () => screen.getByTestId("onboarding-continue") as HTMLButtonElement;
 
+/** The birthday fields are CustomSelects: open one, click its option. */
+function pickDob(field: string, value: string) {
+  fireEvent.click(screen.getByTestId(`onboarding-dob-${field}`));
+  fireEvent.click(screen.getByTestId(`onboarding-dob-${field}-${value}`));
+}
+
 describe("Onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -120,13 +126,13 @@ describe("Onboarding", () => {
 
     // Birthday: under 13 blocks, 13+ continues.
     const thisYear = new Date().getFullYear();
-    fireEvent.change(screen.getByTestId("onboarding-dob-month"), { target: { value: "1" } });
-    fireEvent.change(screen.getByTestId("onboarding-dob-day"), { target: { value: "1" } });
-    fireEvent.change(screen.getByTestId("onboarding-dob-year"), { target: { value: String(thisYear - 10) } });
+    pickDob("month", "1");
+    pickDob("day", "1");
+    pickDob("year", String(thisYear - 10));
     expect(screen.getByRole("alert").textContent).toContain("13 and up");
     expect(continueBtn().disabled).toBe(true);
     fireEvent.click(screen.getByTestId("onboarding-dob-fix"));
-    fireEvent.change(screen.getByTestId("onboarding-dob-year"), { target: { value: String(thisYear - 16) } });
+    pickDob("year", String(thisYear - 16));
     expect(screen.getByText(/under 18/)).toBeTruthy();
     fireEvent.click(continueBtn());
 

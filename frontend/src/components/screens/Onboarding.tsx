@@ -27,6 +27,7 @@ import type { UserSettings } from "@/lib/types";
 import { onboardingRedirect } from "@/lib/localSeed";
 import SignInModal from "@/components/marketing/SignInModal";
 import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
+import { CustomSelect } from "@/components/CustomSelect";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { statusOf } from "@/lib/errorMessage";
 import { OnboardingGraph, type GraphPhase, type GraphZoom } from "@/components/onboarding/OnboardingGraph";
@@ -436,6 +437,8 @@ export function Onboarding({ takeover = false }: {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A control already used this key (an open dropdown's Enter or Esc).
+      if (e.defaultPrevented) return;
       const tag = (e.target as HTMLElement | null)?.tagName || "";
       if (e.key === "Enter") {
         if (/^(BUTTON|A|SELECT|TEXTAREA)$/.test(tag) || consent) return;
@@ -727,21 +730,28 @@ function yearOptions(): [string, string][] {
   return Array.from({ length: 70 }, (_, i) => [String(thisYear - i), String(thisYear - i)]);
 }
 
+/** The app's own dropdown, dressed as the design's birthday fields. */
+const OB_SELECT_TRIGGER: React.CSSProperties = {
+  height: 50, padding: "0 16px", borderRadius: 14, border: "1.5px solid var(--ob-line)",
+  background: "var(--ob-pan2)", color: "var(--ob-fg)", font: "500 15px 'Momo Trust Sans', sans-serif",
+  backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+};
+
 function DobSelect({ label, value, options, width, onChange }: {
   label: string; value: string; options: [string, string][]; width: number; onChange: (v: string) => void;
 }) {
+  const id = `onboarding-dob-${label.toLowerCase()}`;
   return (
-    <select
-      data-testid={`onboarding-dob-${label.toLowerCase()}`}
-      className="ob-select"
-      aria-label={label}
+    <CustomSelect
+      testId={id}
+      ariaLabel={label}
+      placeholder={label}
       value={value}
-      onChange={e => onChange(e.target.value)}
+      onChange={onChange}
+      options={options.map(([v, l]) => ({ value: v, label: l, testId: `${id}-${v}` }))}
       style={{ minWidth: width }}
-    >
-      <option value="">{label}</option>
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
+      triggerStyle={OB_SELECT_TRIGGER}
+    />
   );
 }
 
@@ -790,14 +800,38 @@ function CourseStep({ year, courses, onYear, onCourses }: {
         ))}
       </div>
       <div className="ob-label ob-label--gap">Your courses</div>
-      <input
-        data-testid="onboarding-course-search"
-        className="ob-input ob-input--search"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        aria-label="Search courses"
-        placeholder="Search by code or name, like CS 111"
-      />
+      {/* One box: the search field and its results read as a single control. */}
+      <div className="ob-search">
+        <input
+          data-testid="onboarding-course-search"
+          className="ob-input ob-input--search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          aria-label="Search courses"
+          placeholder="Search by code or name, like CS 111"
+        />
+        <div className="ob-results">
+          {shown.map(c => {
+            const added = picked.has(c.id);
+            return (
+              <button
+                key={c.id}
+                data-testid={`onboarding-course-result-${c.id}`}
+                className="ob-result"
+                aria-pressed={added}
+                onClick={() => toggle(c)}
+              >
+                <span className="ob-result-code">{c.course_code}</span>
+                <span className="ob-result-name">{c.course_name}</span>
+                <span className="ob-result-action">{added ? "Added ✓" : "Add"}</span>
+              </button>
+            );
+          })}
+          {loaded && shown.length === 0 && (
+            <div className="ob-empty">No matches yet. Try the course code, like &quot;MA 123&quot;.</div>
+          )}
+        </div>
+      </div>
       {courses.length > 0 && (
         <div className="ob-chips">
           {courses.map(c => (
@@ -813,28 +847,6 @@ function CourseStep({ year, courses, onYear, onCourses }: {
           ))}
         </div>
       )}
-      <div className="ob-label" style={{ paddingTop: 4 }}>{query.trim() ? "Matches" : "Popular at Boston University"}</div>
-      <div className="ob-panel ob-results">
-        {shown.map(c => {
-          const added = picked.has(c.id);
-          return (
-            <button
-              key={c.id}
-              data-testid={`onboarding-course-result-${c.id}`}
-              className="ob-result"
-              aria-pressed={added}
-              onClick={() => toggle(c)}
-            >
-              <span className="ob-result-code">{c.course_code}</span>
-              <span className="ob-result-name">{c.course_name}</span>
-              <span className="ob-result-action">{added ? "Added ✓" : "Add"}</span>
-            </button>
-          );
-        })}
-        {loaded && shown.length === 0 && (
-          <div className="ob-empty">No matches yet. Try the course code, like &quot;MA 123&quot;.</div>
-        )}
-      </div>
     </div>
   );
 }
