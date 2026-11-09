@@ -888,7 +888,7 @@ export function StudyHub({
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: -8 }}>
             {week.map((d, i) => {
               const isToday = i === week.length - 1;
-              return <span key={d.date} style={{ textAlign: "center", fontFamily: MONO, fontSize: 12, fontWeight: isToday ? 700 : 500, color: isToday ? "#1A1814" : "#6F6857" }}>{fmtDow(d.date)[0]}</span>;
+              return <span key={d.date} style={{ textAlign: "center", fontFamily: MONO, fontSize: 12, fontWeight: isToday ? 700 : 500, color: isToday ? "#1A1814" : "#6F6857" }}>{fmtDow(d.date).split(",")[0]}</span>;
             })}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
