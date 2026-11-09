@@ -241,6 +241,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
 | `quiz-proposal` | the "Ready for you" primary proposal card |
 | `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
+| `quiz-plan-reason` | why the learner model proposes the card's concept, and its skill meter ("Due for review — … Skill meter: 62%.") — on the plan's own suggestion only, with `quiz_concept_plan` on (learning-loop spec §13 A143) |
 | `quiz-pick-reset` | "← Back to the suggestion", beside the eyebrow once a concept has been picked off the list (the eyebrow then reads "Your pick") |
 | `quiz-definition-pending` | the definition's placeholder while its sentence is fetched (nothing remembered for that concept yet) |
 | `quiz-start` | "Start" on that card |
@@ -294,6 +295,12 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
+| `quiz-results-learning` | the "Your skill meters" block (`results/LearningBlock`) — present only when the submit returned a `learning` block (`quiz_results_routing`, learning-loop spec §13 A147) |
+| `quiz-results-change` | one skill meter that moved: "{concept}: rose from B% to A% (still / now {band})" — the quizzed concept and the prerequisites and dependents its answers reached |
+| `quiz-results-no-change` | the line shown instead when no meter moved |
+| `quiz-results-due` | how many concepts are due for review, and when this concept comes back |
+| `quiz-next-step-review` | "Review what's due ({n})" — Study's review queue; only when the server's next step is review and the learning loop is on for the student |
+| `quiz-next-step-learn` | "Practise {concept} in Learn" — the weakest concept the student is ready for, a deep link that opens a Learn session on it |
 | `quiz-missed-list` | the "to look at" section |
 | `quiz-missed-{questionId}` | one missed item |
 | `quiz-missed-explain-{questionId}` | its "Show explanation" disclosure |
