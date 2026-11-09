@@ -32,7 +32,8 @@ export interface MissedItem {
   chosenText: string;
   correctLabel: string;
   correctText: string;
-  /** Written results carry answer text rather than multiple-choice labels. */
+  /** A typed answer: `chosenText` / `correctText` ARE the answers (there are
+   *  no option letters), so the line reads "You wrote 4 · the answer is 2". */
   written: boolean;
   explanation: string;
   /** The question's index in the attempt (`QuizItem.index`) — with the attempt
@@ -70,9 +71,9 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: written ? (r.selected.trim() ? "Your answer" : "") : r.selected,
+        chosenLabel: written ? "" : r.selected,
         chosenText: textFor(r.selected),
-        correctLabel: written ? "Expected" : r.correct_answer,
+        correctLabel: written ? "" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         written,
         explanation: r.explanation,
@@ -121,7 +122,9 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
             {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
             <p className="quiz-missed__line">
               {item.written
-                ? `${item.chosenText.trim() ? `Your answer: ${item.chosenText}` : "No answer"} · Expected: ${item.correctText}`
+                ? item.chosenText.trim()
+                  ? `You wrote ${item.chosenText} · the answer is ${item.correctText}`
+                  : `No answer · the answer is ${item.correctText}`
                 : item.chosenLabel
                   ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
                   : `No answer · the answer is ${item.correctLabel}`}

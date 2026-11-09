@@ -26,7 +26,6 @@ import type { GraphNode } from "@/lib/types";
 import { colorFor, metaLine } from "@/lib/quiz/proposals";
 
 /** Diameters from the design; the tokens live in `home.css`. */
-const COURSE_DOT = 9;
 const ROW_DOT = 14;
 /** How long a row must be pointed at or focused before it counts as intent. */
 const INTENT_DWELL_MS = 350;
@@ -76,26 +75,13 @@ export function TopicList({
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
       {groups.map(({ course, nodes }) => {
-        const color = colorFor(nodes[0], course);
         return (
           <section key={course.course_id} aria-label={headed ? undefined : course.course_name}>
             {headed && (
-              <div className="quiz-home__pick-group">
-                {/* `dot`, not the default `node`: the course mark is a flat
-                    circle, and the glow the node variant adds reads as a halo. */}
-                <ConceptNode
-                  size={COURSE_DOT}
-                  variant={{ kind: "dot" }}
-                  isRoot
-                  nodeId={`subject_root__${course.course_id}`}
-                  mastery={0}
-                  tier="mastered"
-                  courseColor={color}
-                />
-                <span className="label-micro">
-                  {course.course_code} · {course.course_name}
-                </span>
-              </div>
+              // The course's NAME, quietly. Its code and colour are already on
+              // the filter pill above, and its colour again on every row's
+              // dot — a third coloured mark here only repeated them.
+              <h3 className="quiz-home__pick-group">{course.course_name || course.course_code}</h3>
             )}
 
             {nodes
@@ -124,7 +110,7 @@ export function TopicList({
                       courseColor={colorFor(node, course)}
                     />
                   </span>
-                  <span className="h-serif quiz-home__row-name">{node.concept_name}</span>
+                  <span className="quiz-home__row-name">{node.concept_name}</span>
                   <span className="quiz-home__row-spacer" />
                   <span className="quiz-home__row-meta">{metaLine(node)}</span>
                 </button>

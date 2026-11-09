@@ -2,7 +2,7 @@
  * When a passive feedback prompt may open.
  *
  * ShellFrame mounts two feedback prompts: FeedbackFlow (the "What's clicking?"
- * pulse, 45s after the shell mounts) and SessionFeedbackGlobal ("How was that
+ * pulse, 2 minutes after the shell mounts) and SessionFeedbackGlobal ("How was that
  * session?", when the student leaves /learn after a session's wrap-up). A live
  * walkthrough found both within ~15 minutes of a first session, the pulse
  * landing on top of the check-in. Every rule that decides whether one opens
@@ -20,12 +20,16 @@
  *    that already had a prompt. The pulse counts against the session the
  *    student is in or has just wrapped up (`noteLearningSession`); the session
  *    prompt counts against the session it asks about.
- * 4. Cooldowns. The pulse's 3 days and the session prompt's 2 days (both older
- *    than this module), plus a 24h gap between ANY two prompts: the per-kind
+ * 4. Cooldowns. The pulse's 14 days and the session prompt's 7 days (#849), plus
+ *    a 24h gap between ANY two prompts: the per-kind
  *    cooldowns never looked at each other, so a pulse on the dashboard still
  *    let the session prompt follow minutes later. A day is the unit a student
  *    studies in, so this means at most one ask per study day while the per-kind
- *    cooldowns still let each kind run every 2-3 days.
+ *    cooldowns keep each kind rare.
+ * 5. Not a new student, and not over a quiz (#849). The pulse waits until 3
+ *    days after this browser first showed the shell to the student
+ *    (`notePulseFirstSeen`), and it skips a page under /quiz without
+ *    recording anything (FeedbackFlow), so a later page may still ask.
  *
  * A prompt is recorded when it OPENS, so a dismissal (Not now, Skip, the close
  * button, the backdrop, even closing the tab) counts as shown.
@@ -157,8 +161,12 @@ export function takeEndedSession(): EndedSession | null {
 // ── 4. The pacing record ──────────────────────────────────────────────────
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const PULSE_COOLDOWN_MS = 3 * DAY_MS;
-export const SESSION_PROMPT_COOLDOWN_MS = 2 * DAY_MS;
+export const PULSE_COOLDOWN_MS = 14 * DAY_MS;
+export const SESSION_PROMPT_COOLDOWN_MS = 7 * DAY_MS;
+/** A new student isn't asked how it's going in their first days (the pulse only). */
+export const PULSE_GRACE_MS = 3 * DAY_MS;
+/** When this browser first showed the pulse's shell to the student (ms since epoch). */
+export const FIRST_SEEN_KEY = "sapling_feedback_first_seen";
 export const ANY_PROMPT_GAP_MS = DAY_MS;
 
 /** When each kind last opened (ms since epoch). The keys predate this module. */
@@ -187,10 +195,21 @@ function readPromptedSessions(): string[] {
 
 const within = (last: number, window: number, now: number) => last > 0 && now - last <= window;
 
+/** Start the pulse's new-student grace, once: the first mount stamps it. */
+export function notePulseFirstSeen(now = Date.now()): void {
+  try {
+    if (!readTime(FIRST_SEEN_KEY)) localStorage.setItem(FIRST_SEEN_KEY, String(now));
+  } catch {}
+}
+
 /** May a prompt of `kind` open now, counted against `sessionId` (null: none)?
  *  Holds and the slot are checked separately. */
 export function mayPrompt(kind: FeedbackOwner, sessionId: string | null, now = Date.now()): boolean {
   try {
+    if (kind === "global") {
+      const firstSeen = readTime(FIRST_SEEN_KEY);
+      if (!firstSeen || now - firstSeen <= PULSE_GRACE_MS) return false;
+    }
     if (within(readTime(LAST_PROMPT_KEY[kind]), COOLDOWN_MS[kind], now)) return false;
     const lastAny = Math.max(readTime(LAST_PROMPT_KEY.global), readTime(LAST_PROMPT_KEY.session));
     if (within(lastAny, ANY_PROMPT_GAP_MS, now)) return false;

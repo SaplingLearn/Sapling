@@ -56,8 +56,9 @@ import {
   currentLearningSession,
   ENDED_SESSION_KEY,
   feedbackHeld,
+  FIRST_SEEN_KEY,
 } from "@/lib/feedbackPacing";
-import { FeedbackFlow } from "../FeedbackFlow";
+import { FeedbackFlow, PULSE_DELAY_MS } from "../FeedbackFlow";
 import { LoopLearn } from "./LoopLearn";
 import crisisFixture from "@/test-utils/crisisSupport.json";
 
@@ -2260,9 +2261,11 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
   it("with the shell's pulse: it never opens over an open check, and opens once the session wraps up", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "check" });
+    // A settled student: past the pulse's new-student grace (#849).
+    localStorage.setItem(FIRST_SEEN_KEY, String(Date.now() - 30 * 24 * 60 * 60 * 1000));
     render(<FeedbackFlow />);
     await withCheckItem();
-    act(() => { vi.advanceTimersByTime(45_000); });
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
     act(() => { vi.advanceTimersByTime(10 * 60_000); });
     expect(screen.queryByText(PULSE)).toBeNull();
 

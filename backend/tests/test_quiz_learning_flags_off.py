@@ -25,7 +25,9 @@ Re-verified after the merge with main (spec §13 A148): at the main sync's tip
 before the quiz merge (4b09d765, main's quiz changes included) every digest
 here is unchanged, so "flags off" there and here is still 50e9ded8's. The one
 harness change: main's route claims its rate limit through the async twin
-(`aclaim_rate_limit`, #117), so that is what the flow patches.
+(`aclaim_rate_limit`, #117), so that is what the flow patches. Main's #849
+passes `defer=background_tasks.add_task` to the graph write; the fake
+accepts it and records nothing new, and every digest is still unchanged.
 """
 
 from __future__ import annotations
@@ -325,7 +327,9 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
     tables = _Tables(written)
     evidence_calls: list = []
 
-    def apply(user_id, update, course_id=None):
+    # #849: the route hands the class-aggregate refresh to `defer`; the fake
+    # writes nothing there, so no digest below moves.
+    def apply(user_id, update, course_id=None, *, defer=None):
         evidence_calls.append({"user_id": user_id, "update": update, "course_id": course_id})
         return [
             {"node_id": e["node_id"], "before": 0.35, "after": 0.4 + 0.01 * i}

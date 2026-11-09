@@ -460,7 +460,10 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
 
     apply_mock.assert_called_once()
     assert apply_mock.call_args.args[0] == "user_andres"
-    assert apply_mock.call_args.kwargs == {"course_id": "course1"}
+    kwargs = apply_mock.call_args.kwargs
+    assert set(kwargs) == {"course_id", "defer"} and kwargs["course_id"] == "course1"
+    # #849: the class-aggregate refresh runs after the response.
+    assert getattr(kwargs["defer"], "__name__", "") == "add_task"
     (raw,) = apply_mock.call_args.args[1]["evidence"]
     evidence = Evidence(**raw)
     assert evidence.node_id == "node1" and evidence.question_hash == qh

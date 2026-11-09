@@ -3484,11 +3484,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                 ),
             ),
         )
-        applied = (
-            apply_graph_update(user_id, {"evidence": evidence}, course_id=node.get("course_id"))
-            if evidence
-            else []
-        )
+        # #849: the class-aggregate refresh this write triggers can make an LLM
+        # call; it runs after the response, never inside the submit.
+        applied = apply_graph_update(
+            user_id, {"evidence": evidence}, course_id=node.get("course_id"), defer=background_tasks.add_task,
+        ) if evidence else []
     except Exception:
         logger.exception(
             "quiz: mastery update failed after scoring quiz_id=%s concept=%s",

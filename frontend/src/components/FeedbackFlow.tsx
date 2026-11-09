@@ -1,13 +1,14 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import {
   currentLearningSession,
   mayPrompt,
+  notePulseFirstSeen,
   recordPrompt,
   releaseFeedbackSlot,
   tryClaimFeedbackSlot,
@@ -15,7 +16,11 @@ import {
 } from "@/lib/feedbackPacing";
 import { useToast } from "./ToastProvider";
 
-const DELAY_MS = 45_000;
+/** How long a page is open before the pulse comes due. */
+export const PULSE_DELAY_MS = 2 * 60_000;
+/** Never over a task in progress: on these paths the pulse skips and waits
+ *  for a later page instead (nothing is recorded, so the chance isn't spent). */
+const NO_PULSE_PATHS = ["/quiz"];
 // Numeric scale (serif numeral) keeps the tone "quiet library,"
 // not mobile-game. Labels on hover for clarity.
 const RATINGS: { value: number; label: string }[] = [
@@ -37,8 +42,9 @@ const OPTIONS = [
 ];
 
 interface FeedbackFlowProps {
-  /** Passive mode: comes due 45s after mount; opens when lib/feedbackPacing.ts
-   *  allows (never mid-learning, one per session, cooldowns). */
+  /** Passive mode: comes due PULSE_DELAY_MS after mount; opens when
+   *  lib/feedbackPacing.ts allows (past the new-student grace, never
+   *  mid-learning or over a quiz, one per session, cooldowns). */
   passive?: boolean;
   /** Manual mode: caller controls open state. */
   open?: boolean;
@@ -50,6 +56,11 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   const toast = useToast();
   const searchParams = useSearchParams();
   const testOverride = searchParams.get("testFeedback") === "global";
+  const pathname = usePathname();
+  // Read when the timer fires, not when it was set: the student may have
+  // started a quiz in the meantime.
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   const [open, setOpen] = useState<boolean>(openProp ?? false);
   const [rating, setRating] = useState<number | null>(null);
@@ -62,21 +73,30 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   useEffect(() => {
     if (!passive) return;
     if (!isAuthenticated) return;
-    // Not worth a timer while a cooldown has it spent anyway.
+    // The new-student grace counts from the first time the pulse could ask.
+    notePulseFirstSeen();
+    // Not worth a timer while the grace or a cooldown has it spent anyway.
     if (!testOverride && !mayPrompt("global", null)) return;
     let cancelWait = () => {};
-    // Due at 45s, but a learning activity in progress holds it until the next
-    // natural break; then pacing decides again, against the session the
-    // student is in by then. Spent there → dropped, never re-queued. The
-    // session prompt may also be on screen (#762): then skip, not stack.
+    // Due at PULSE_DELAY_MS, but a learning activity in progress holds it until
+    // the next natural break; then pacing decides again, against the session
+    // the student is in by then. Spent there → dropped, never re-queued. Over a
+    // quiz it skips without recording, so a later page may still ask (the path
+    // is read when it fires, not when it was set). The session prompt may also
+    // be on screen (#762): then skip, not stack.
     const show = () => {
+      if (!testOverride && NO_PULSE_PATHS.some((p) => pathnameRef.current?.startsWith(p))) return;
       const session = currentLearningSession();
       if (!testOverride && !mayPrompt("global", session)) return;
       if (!tryClaimFeedbackSlot("global")) return;
       recordPrompt("global", session); // on open: a dismissal counts as shown
       setOpen(true);
     };
-    const t = setTimeout(() => { cancelWait = whenFeedbackFree(show); }, DELAY_MS);
+    // The test hook shows it, not paces it.
+    const t = setTimeout(
+      () => { cancelWait = whenFeedbackFree(show); },
+      testOverride ? 1_000 : PULSE_DELAY_MS,
+    );
     return () => { clearTimeout(t); cancelWait(); };
   }, [passive, isAuthenticated, testOverride]);
 

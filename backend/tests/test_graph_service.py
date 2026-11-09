@@ -589,6 +589,36 @@ class TestApplyGraphUpdate:
         assert "mastery_events" not in payload
         assert kwargs["on_conflict"] == "user_id,course_id,concept_name"
 
+    def test_course_context_refresh_runs_inline_by_default(self):
+        factory, _ = _bulk_factory(existing_nodes=[])
+        # No `updated_nodes` key: PKG-14b refuses it outright (graded evidence is
+        # the only mastery writer), and a new node is enough to touch the course.
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "new_edges": []}
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1")
+        refresh.assert_called_once_with("off-1", user_id="u1")
+
+    def test_course_context_refresh_is_handed_to_defer(self):
+        # The refresh can make an LLM call; a route that passes `defer` (the quiz
+        # submit passes background_tasks.add_task) must not wait on it.
+        factory, _ = _bulk_factory(existing_nodes=[])
+        # No `updated_nodes` key: PKG-14b refuses it outright (graded evidence is
+        # the only mastery writer), and a new node is enough to touch the course.
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "new_edges": []}
+        deferred = []
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1", defer=deferred.append)
+            refresh.assert_not_called()
+            assert len(deferred) == 1
+            deferred[0]()
+        refresh.assert_called_once_with("off-1", user_id="u1")
+
     def test_skips_insert_for_existing_node_case_insensitive(self):
         existing = [
             {"id": "n1", "concept_name": "Linear Regression", "mastery_score": 0.3,

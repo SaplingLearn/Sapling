@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
@@ -1049,12 +1051,24 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
     )
 
 
+def _refresh_course_contexts(user_id: str, course_ids: frozenset[str]) -> None:
+    """Refresh the class aggregates of each of this user's offerings of
+    `course_ids`, one `_refresh_course_context` per offering: a failed refresh
+    is logged and never fails the graph write it follows."""
+    from services.academics import user_offering_ids_for_course
+
+    for cid in course_ids:
+        for offering_id in user_offering_ids_for_course(user_id, cid):
+            _refresh_course_context(offering_id, user_id)
+
+
 def apply_graph_update(
     user_id: str,
     graph_update: dict,
     course_id: str | None = None,
     *,
     retention: float | None = None,
+    defer: Callable[[Callable[[], None]], object] | None = None,
 ) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -1063,6 +1077,13 @@ def apply_graph_update(
     `retention` (PKG-12, a PKG-03 reopen) is the FSRS retention target the
     evidence branch schedules `fsrs_due_at` at; None keeps
     FSRS_RETENTION_DEFAULT. Only the evidence branch reads it.
+
+    `defer`: where to run the class-aggregate refresh this update triggers
+    (`refresh_course_context` for each touched offering). That refresh can make
+    an LLM call (the offering summary, regenerated whenever the stats change),
+    and nothing the caller returns depends on it — so a route that can run work
+    after its response passes `background_tasks.add_task` here. Omitted, the
+    refresh runs inline, as it always has.
 
     Concept dedup is case- and whitespace-insensitive: "Linear Regression",
     "linear regression", and " Linear  Regression " all resolve to the same node.
@@ -1240,10 +1261,11 @@ def apply_graph_update(
     if touched_courses:
         # touched_courses holds abstract course ids (the graph key). Analytics is
         # offering-scoped, so refresh each of this user's offerings of those courses.
-        from services.academics import user_offering_ids_for_course
-        for cid in touched_courses:
-            for offering_id in user_offering_ids_for_course(user_id, cid):
-                _refresh_course_context(offering_id, user_id)
+        refresh = partial(_refresh_course_contexts, user_id, frozenset(touched_courses))
+        if defer is not None:
+            defer(refresh)
+        else:
+            refresh()
 
     # The knowledge graph is the ONLY thing that advances these three stats, so
     # this is the only place they can be dispatched from. Without it `rooted`,

@@ -39,7 +39,8 @@ test("written quiz: equivalent answers survive reload and produce persisted resu
   await page.getByTestId("quiz-key-brackets").click();
   await page.keyboard.type("x + 1");
   await expect(written).toHaveValue("2(x + 1)");
-  await expect(page.getByTestId("quiz-written-readback")).toContainText("2(x + 1)");
+  // A valid expression needs no read-back: the field itself shows it as read.
+  await expect(page.getByTestId("quiz-written-readback")).toHaveCount(0);
   // Enter submits from the written input, as it does from an answer row.
   await written.press("Enter");
   await expectResults(page);

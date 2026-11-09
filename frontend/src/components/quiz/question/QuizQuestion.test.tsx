@@ -630,6 +630,11 @@ describe("QuizQuestion — the verdict", () => {
         }),
       ),
     );
+    // The last question, but two were skipped: Next goes back for them.
+    expect(screen.getByTestId("quiz-next")).toHaveTextContent("Next");
+
+    const done = { selectedIndex: 0, verdict: { isCorrect: true, correctIndex: 0, explanation: "" } };
+    rerender(props(makeSession({ phase: "answered", cursor: 2, items: [item(0, done), item(1, done), item(2, done)] })));
     expect(screen.getByTestId("quiz-next")).toHaveTextContent("See results");
 
     rerender(props(makeSession({ phase: "submitting" })));
@@ -698,13 +703,17 @@ describe("QuizQuestion — flag and generating", () => {
     expect(screen.getByTestId("quiz-flag")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows the skeleton while the quiz is being written, and says so", () => {
+  it("shows a status with a progress bar while the quiz is being written", () => {
     const { container } = renderScreen(
       makeSession({ phase: "generating", items: [], attemptId: null }),
     );
     expect(screen.getByTestId("quiz-generating")).toBeInTheDocument();
-    expect(screen.getByText("Writing your quiz…")).toBeInTheDocument();
-    expect(container.querySelectorAll(".quiz-question__skeleton-row")).toHaveLength(4);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Writing your quiz");
+    expect(status).toHaveTextContent(/questions on Recursion/);
+    expect(container.querySelector(".quiz-generating__bar .quiz-generating__fill")).not.toBeNull();
+    // No skeleton of a layout the quiz may not have.
+    expect(container.querySelector(".quiz-question__skeleton-row")).toBeNull();
     expect(screen.queryByTestId("quiz-answer-options")).toBeNull();
   });
 
@@ -860,4 +869,77 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
     expect(actions.select).not.toHaveBeenCalled();
     expect(actions.requestLeave).not.toHaveBeenCalled();
   });
+});
+
+describe("QuizQuestion — each format looks like itself", () => {
+  it.each([
+    ["multiple_choice", "Multiple choice"],
+    ["short_answer", "Short answer"],
+    ["numeric", "Numeric"],
+    ["symbolic", "Algebra"],
+  ] as const)("tags a %s question with its format", (type, label) => {
+    const options = type === "multiple_choice" ? question(1).options : [];
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options } })] }));
+    expect(screen.getByTestId("quiz-format-tag")).toHaveTextContent(label);
+  });
+
+  it("raises the exponents in an algebra stem", () => {
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type: "symbolic", options: [], question: "Expand (x + 1)^2." } })] }));
+    const stem = document.getElementById("quiz-question-stem")!;
+    expect(stem).toHaveTextContent("Expand (x + 1)2.");
+    expect(stem.querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("marks the verdict card with its outcome, and leaves it bare before one", () => {
+    const view = renderScreen(makeSession());
+    expect(screen.getByTestId("quiz-review-verdict")).not.toHaveAttribute("data-outcome");
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }), item(1), item(2),
+    ] }));
+    expect(screen.getByTestId("quiz-review-verdict")).toHaveAttribute("data-outcome", "correct");
+  });
+
+  it("folds the symbol keys and entry rules away once a written answer is marked", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "symbolic", options: [] }, answerText: "x^2",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "x^2 + 1" } })] }));
+    expect(document.querySelector(".quiz-question__written")).toHaveAttribute("data-marked", "true");
+    expect(screen.getByTestId("quiz-review-verdict").querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("keeps the tally on the rail as you go, and holds it back in at-end mode", () => {
+    const marked = [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }),
+      item(1, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "" } }),
+      item(2),
+    ];
+    const dots = () => Array.from(document.querySelectorAll(".progress-dots__dot")).map(d => d.getAttribute("data-outcome"));
+    const view = renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked }));
+    expect(dots()).toEqual(["correct", "incorrect", null]);
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked,
+      config: { count: 3, difficulty: "easy", feedback: "at-end" } }));
+    expect(dots()).toEqual([null, null, null]);
+  });
+
+  it("puts the outcome on the chosen answer, and announces it in the verdict", () => {
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "Because." } }), item(1), item(2),
+    ] }));
+    expect(screen.getByTestId("quiz-answer-option-A").querySelector(".answer-option__status")).toHaveTextContent("Incorrect");
+    expect(screen.getByTestId("quiz-answer-option-B").querySelector(".answer-option__status")).toBeNull();
+    const verdict = screen.getByTestId("quiz-review-verdict");
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Incorrect.");
+    expect(verdict.querySelector(".card")).toHaveTextContent("Because.");
+  });
+
+  it("marks a written answer on its own field", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "base case",
+        verdict: { isCorrect: true, correctIndex: -1, explanation: "", correctAnswer: "base case" } })] }));
+    expect(document.querySelector(".quiz-written__field .quiz-written__status")).toHaveTextContent("Correct");
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Correct.");
+  });
+
 });

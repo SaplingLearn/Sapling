@@ -27,6 +27,7 @@ export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_model_pref', // chat/ModelToggle.tsx
   'ach:seen-ids', // screens/Achievements.tsx
   'sapling_last_feedback', // lib/feedbackPacing.ts: pulse (FeedbackFlow.tsx) cooldown
+  'sapling_feedback_first_seen', // lib/feedbackPacing.ts: pulse new-student grace
   'sapling_last_session_feedback', // lib/feedbackPacing.ts: session prompt cooldown
   'sapling_feedback_sessions', // lib/feedbackPacing.ts: sessions that had a prompt
   'sapling_session_end_count', // Learn.tsx / SessionFeedbackFlow.tsx

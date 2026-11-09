@@ -283,6 +283,7 @@ export function QuizResults({
             correctLabel: asking.correctLabel,
             correctText: asking.correctText,
             explanation: asking.explanation,
+            written: asking.written,
           }}
         />
       )}

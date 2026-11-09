@@ -79,7 +79,7 @@ def _make_table(questions=None):
     return factory
 
 
-def _bkt_graph(user_id, graph_update, course_id=None):
+def _bkt_graph(user_id, graph_update, course_id=None, *, retention=None, defer=None):
     """PKG-14b: a stand-in graph that applies each evidence with the real BKT
     update from the node's 0.5, reporting before/after the way
     apply_graph_update does — so a submit's direction is the evidence's."""
@@ -648,6 +648,10 @@ class TestSubmitQuizMasteryWrite:
         # user_id first, abstract course id passed (graph keys on abstract).
         assert args[0] == "user_andres"
         assert kwargs["course_id"] == "course1"
+        # The class-aggregate refresh (an LLM call when the stats changed) runs
+        # after the response, never inside the submit the student waits on.
+        assert callable(kwargs["defer"])
+        assert getattr(kwargs["defer"], "__name__", "") == "add_task"
         # PKG-14b: graded evidence only — one mc evidence per question.
         payload = args[1]
         assert set(payload) == {"evidence"}

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /**
  * The shell's two passive feedback prompts and their pacing
- * (lib/feedbackPacing.ts): the "What's clicking?" pulse (FeedbackFlow, due 45s
- * after load) and "How was that session?" (SessionFeedbackGlobal, on leaving
- * /learn after a wrap-up). A live walkthrough had the pulse land mid check-in,
- * right after the first diagnostic answer, and the session prompt follow when
- * the student went on to /study. #762: both are full-screen modals that once
- * stacked on each other, and the last-session context once outlived its session.
+ * (lib/feedbackPacing.ts): the "What's clicking?" pulse (FeedbackFlow, due
+ * PULSE_DELAY_MS after load) and "How was that session?" (SessionFeedbackGlobal,
+ * on leaving /learn after a wrap-up). A live walkthrough had the pulse land mid
+ * check-in, right after the first diagnostic answer, and the session prompt
+ * follow when the student went on to /study. #762: both are full-screen modals
+ * that once stacked on each other, and the last-session context once outlived
+ * its session.
  *
  * `Learning` stands in for LoopLearn's half of the contract, which
  * LoopLearn.test.tsx pins: it holds prompts while its session is open and, at
@@ -27,16 +28,18 @@ vi.mock("@/context/UserContext", () => ({
 }));
 vi.mock("@/lib/api", () => ({ submitFeedback: vi.fn(async () => ({})) }));
 
-import { FeedbackFlow } from "./FeedbackFlow";
+import { FeedbackFlow, PULSE_DELAY_MS } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { ToastProvider } from "./ToastProvider";
 import { __resetScrollLocksForTests } from "@/lib/useScrollLock";
 import {
   __resetFeedbackPacingForTests,
   ANY_PROMPT_GAP_MS,
+  FIRST_SEEN_KEY,
   mayPrompt,
   noteLearningSession,
   PULSE_COOLDOWN_MS,
+  PULSE_GRACE_MS,
   recordPrompt,
   rememberEndedSession,
   SESSION_PROMPT_COOLDOWN_MS,
@@ -45,7 +48,7 @@ import {
 
 const PULSE = "What's clicking?";
 const SESSION = "How was that session?";
-const PULSE_DELAY = 45_000;
+const PULSE_DELAY = PULSE_DELAY_MS;
 const ENDED_KEY = "sapling_last_session_context";
 
 type Phase = "probe" | "check" | "close";
@@ -103,6 +106,8 @@ beforeEach(() => {
   nav.pathname = "/learn";
   nav.search = "";
   localStorage.clear();
+  // A settled student: past the new-student grace, so the pulse may ask.
+  localStorage.setItem(FIRST_SEEN_KEY, String(Date.now() - 30 * 24 * 60 * 60 * 1000));
   sessionStorage.clear();
   __resetFeedbackPacingForTests();
 });
@@ -228,7 +233,7 @@ describe("a dismissal counts as shown", () => {
 });
 
 describe("cross-session cooldowns", () => {
-  it("each kind keeps its cooldown (pulse 3 days, session prompt 2 days), and any two prompts are a day apart", () => {
+  it("each kind keeps its cooldown (pulse 14 days, session prompt 7 days), and any two prompts are a day apart", () => {
     const t0 = Date.now();
     recordPrompt("global", null, t0);
     expect(mayPrompt("global", null, t0 + PULSE_COOLDOWN_MS)).toBe(false);
@@ -237,6 +242,7 @@ describe("cross-session cooldowns", () => {
     expect(mayPrompt("session", null, t0 + ANY_PROMPT_GAP_MS + 1)).toBe(true);
 
     localStorage.clear();
+    localStorage.setItem(FIRST_SEEN_KEY, String(t0 - 30 * 24 * 60 * 60 * 1000)); // still settled
     recordPrompt("session", null, t0);
     expect(mayPrompt("session", null, t0 + SESSION_PROMPT_COOLDOWN_MS)).toBe(false);
     expect(mayPrompt("session", null, t0 + SESSION_PROMPT_COOLDOWN_MS + 1)).toBe(true);
@@ -308,5 +314,32 @@ describe("the end-of-session prompt's trigger", () => {
     const view = render(<Shell />);
     navigate(view, "/dashboard"); // the nav link drops the query string
     expect(screen.getByText(SESSION)).toBeInTheDocument();
+  });
+});
+
+describe("how often the pulse asks", () => {
+  it("never asks a new student in their first days", () => {
+    localStorage.removeItem(FIRST_SEEN_KEY);
+    render(<Shell />);
+    advance(PULSE_DELAY);
+    expect(screen.queryByText(PULSE)).toBeNull();
+    // ...and starts the clock for when it may.
+    expect(Number(localStorage.getItem(FIRST_SEEN_KEY))).toBeGreaterThan(0);
+    expect(PULSE_GRACE_MS).toBeGreaterThan(0);
+  });
+
+  it("waits out the cooldown after it last asked", () => {
+    localStorage.setItem("sapling_last_feedback", String(Date.now() - PULSE_COOLDOWN_MS + 60_000));
+    render(<Shell />);
+    advance(PULSE_DELAY);
+    expect(screen.queryByText(PULSE)).toBeNull();
+  });
+
+  it("never opens over a quiz, and doesn't spend its chance there", () => {
+    nav.pathname = "/quiz";
+    render(<Shell />);
+    advance(PULSE_DELAY);
+    expect(screen.queryByText(PULSE)).toBeNull();
+    expect(localStorage.getItem("sapling_last_feedback")).toBeNull();
   });
 });

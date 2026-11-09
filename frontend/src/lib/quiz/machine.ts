@@ -70,6 +70,8 @@ export type QuizEvent =
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
   | { type: "NEXT" }
+  /** Show question `index` — back to one already answered, or ahead to skip. */
+  | { type: "GO_TO"; index: number }
   | { type: "REQUEST_LEAVE" }
   | { type: "CANCEL_LEAVE" }
   | { type: "CONFIRM_LEAVE" }
@@ -188,8 +190,26 @@ export function queueOf(scope: QuizScope): string[] {
   return scope.kind === "course" || scope.kind === "due" ? scope.queue : [];
 }
 
+/** Not yet recorded. A multiple-choice item restored from the server can
+ *  carry its selection without a verdict, so a selection alone counts as
+ *  recorded there — which is why GO_TO drops an unsubmitted draft selection
+ *  when the student moves off it. */
+export function isUnanswered(item: QuizItem): boolean {
+  return !item.verdict && (isWrittenType(item.question.type) || item.selectedIndex === null);
+}
+
 export function firstUnansweredIndex(items: QuizItem[]): number {
-  return items.findIndex(i => !i.verdict && (isWrittenType(i.question.type) || i.selectedIndex === null));
+  return items.findIndex(isUnanswered);
+}
+
+/** The next question still to answer after `from`, wrapping round to any the
+ *  student skipped; -1 once every question is answered. */
+export function nextUnansweredIndex(items: QuizItem[], from: number): number {
+  for (let step = 1; step <= items.length; step++) {
+    const index = (from + step) % items.length;
+    if (isUnanswered(items[index])) return index;
+  }
+  return -1;
 }
 
 export function isLastItem(session: QuizSession, index = session.cursor): boolean {
@@ -297,9 +317,13 @@ function advanceAfterAnswer(session: QuizSession, index: number): QuizSession {
   if (session.config.feedback === "as-you-go") {
     return { ...session, phase: "answered", cursor: index };
   }
-  return isLastItem(session, index)
+  // At-end moves straight on — to the next question still unanswered, which
+  // is not always index + 1 once the student can skip around. Submitting
+  // waits until every question is answered, not until the last one is.
+  const next = nextUnansweredIndex(session.items, index);
+  return next < 0
     ? { ...session, phase: "submitting", cursor: index }
-    : { ...session, phase: "active", cursor: index + 1 };
+    : { ...session, phase: "active", cursor: next };
 }
 
 export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
@@ -432,9 +456,29 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
 
     case "NEXT": {
       if (session.phase !== "answered") return session;
-      return isLastItem(session)
+      // On to the next question still unanswered (skipped ones included);
+      // results once there are none.
+      const next = nextUnansweredIndex(session.items, session.cursor);
+      return next < 0
         ? { ...session, phase: "submitting" }
-        : { ...session, phase: "active", cursor: session.cursor + 1 };
+        : { ...session, phase: "active", cursor: next };
+    }
+
+    case "GO_TO": {
+      // Moving between questions, either way. Never mid-request or mid-dialog:
+      // only from a question that is on screen and waiting.
+      if (session.phase !== "active" && session.phase !== "answered") return session;
+      const target = session.items[event.index];
+      if (!target || event.index === session.cursor) return session;
+      // An unsubmitted multiple-choice pick is dropped on the way out: a
+      // selection with no verdict reads as RECORDED (see isUnanswered), and a
+      // draft must never be mistaken for an answer the server has. A written
+      // draft is kept — its text never counts as recorded.
+      const current = session.items[session.cursor];
+      const left = current && !current.verdict && !isWrittenType(current.question.type) && session.phase === "active"
+        ? withItem(session, session.cursor, { selectedIndex: null })
+        : session;
+      return { ...left, cursor: event.index, phase: isUnanswered(target) ? "active" : "answered" };
     }
 
     case "FINISH": {
