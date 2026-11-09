@@ -199,7 +199,8 @@ def _assert_anchor_moved():
     ADR 0024): the retry right after the failure is not a teach attempt."""
     from routes import learn_loop
 
-    assert learn_loop._FAILED_TURN_ANCHORS.pop("s1") == NOW
+    anchor = learn_loop._FAILED_TURN_ANCHORS.pop("s1")
+    assert anchor == NOW
 
 
 def test_a_retry_after_a_failure_is_timed_from_the_failure(gate_on, seams):

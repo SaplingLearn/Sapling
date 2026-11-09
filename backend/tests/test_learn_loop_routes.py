@@ -2755,7 +2755,8 @@ def test_a_probe_opener_for_a_course_without_check_items_introduces_the_plan(gat
         else:
             reply, sid = r.json()["initial_message"], r.json()["session_id"]
         assert reply == want
-        assert PENDING_SESSIONS.pop(sid)["assistant_reply"] == want
+        pending_session = PENDING_SESSIONS.pop(sid)
+        assert pending_session["assistant_reply"] == want
 
 
 def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seams):
@@ -2774,7 +2775,8 @@ def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seam
     evs = _sse_events(r.text)
     done = evs[-1]["data"]
     assert done["graph_state"] == {"nodes": []} and done["session_id"] in PENDING_SESSIONS
-    assert PENDING_SESSIONS.pop(done["session_id"])["loop"] is True
+    pending_session = PENDING_SESSIONS.pop(done["session_id"])
+    assert pending_session["loop"] is True
     assert evs[0]["data"] == {"phase": "teach"} and [e["type"] for e in evs].count("check") == 0
 
 
@@ -3067,7 +3069,8 @@ def test_opener_at_the_hard_level_serves_the_template_not_a_429(gate_on, seams):
     body = r.json()
     assert body["initial_message"] == _LOOP_OPENER_TEMPLATE and body["budget"]["level"] == "hard"
     agent.run.assert_not_called()
-    assert PENDING_SESSIONS.pop(body["session_id"])["assistant_reply"] == _LOOP_OPENER_TEMPLATE
+    pending_session = PENDING_SESSIONS.pop(body["session_id"])
+    assert pending_session["assistant_reply"] == _LOOP_OPENER_TEMPLATE
 
 
 def test_opener_stream_at_the_hard_level_carries_the_budget_event(gate_on, seams):

@@ -270,7 +270,8 @@ def test_the_loop_quiz_ask_stream_records_help_before_the_first_token(gate_on, s
     evs = _routes._sse_events(r.text)
     done = evs[-1]["data"]
     assert order == ["help", "stream"]
-    assert PENDING_SESSIONS.pop(done["session_id"])["loop_state"]["phase"] == "teach"
+    pending_session = PENDING_SESSIONS.pop(done["session_id"])
+    assert pending_session["loop_state"]["phase"] == "teach"
 
 
 def test_a_failed_help_write_is_a_503_and_no_model_runs(gate_on, seams):
@@ -301,7 +302,8 @@ def test_a_plain_loop_session_still_probes_first(gate_on, seams):
     ):
         r = client.post("/api/learn/loop/start-session", json={"user_id": "u1", "topic": "Recursion"})
     assert r.status_code == 200
-    assert "loop_state" not in PENDING_SESSIONS.pop(r.json()["session_id"])
+    pending_session = PENDING_SESSIONS.pop(r.json()["session_id"])
+    assert "loop_state" not in pending_session
     record.assert_not_called()
 
 

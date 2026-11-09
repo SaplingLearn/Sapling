@@ -70,7 +70,8 @@ def test_canonical_queue_and_receipt_share_pricing_without_duplicate_write(monke
     assert len(queued) == 1 and queued[0][0] == "llm_usage"
     # spec §13 A137: the queued row also names its course (None here); a receipt
     # never does, because checklist_budget_reconcile admits only its fixed keys
-    assert queued[0][1].pop("course_id") is None and "course_id" not in row
+    queued_course = queued[0][1].pop("course_id")
+    assert queued_course is None and "course_id" not in row
     assert {k: v for k, v in row.items() if k not in {"id", "created_at"}} == queued[0][1]
     assert row["cost_usd"] == llm_pricing.cost_usd(MODEL, 1000, 500, cached_tokens=200)
 

@@ -367,12 +367,14 @@ def test_the_notes_chat_agents_graph_writes_are_screened(posed, records):
             return asyncio.run(apply_graph_update_tool(ctx, update))
 
     run(guard)
-    assert applied.pop() == {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}]}
+    filed = applied.pop()
+    assert filed == {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}]}
     records.help.assert_called_once_with(
         "u2", "qh-other", params.INTEGRITY_HELP_RUNG, source="outside"
     )
     run(None)
-    assert [n["concept_name"] for n in applied.pop()["new_nodes"]] == [
+    filed = applied.pop()
+    assert [n["concept_name"] for n in filed["new_nodes"]] == [
         "Recursion",
         "The Call Stack",
     ]
@@ -385,7 +387,8 @@ def test_the_notes_chat_agents_graph_writes_are_screened(posed, records):
         active=True,
     )
     run(own)
-    assert [n["concept_name"] for n in applied.pop()["new_nodes"]] == [
+    filed = applied.pop()
+    assert [n["concept_name"] for n in filed["new_nodes"]] == [
         "Recursion",
         "The Call Stack",
     ]
