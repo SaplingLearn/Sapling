@@ -303,6 +303,12 @@ export function Dashboard() {
   const concepts = React.useMemo(() => nodes.filter((n) => !n.is_subject_root), [nodes]);
   const byId = React.useMemo(() => new Map(concepts.map((n) => [n.id, n])), [concepts]);
   const prereqs = React.useMemo(() => buildPrereqs(concepts, edges), [concepts, edges]);
+  // Course hubs are labelled with just the course code ("CS132"), never the
+  // full course name.
+  const courseCodeLabel = React.useCallback((n: GraphNode) => {
+    const c = courses.find((co) => co.course_id === n.course_id) ?? courses.find((co) => co.course_name === n.subject);
+    return c?.course_code || null;
+  }, [courses]);
   const courseLabel = React.useCallback((id: string | null | undefined) => {
     const c = id ? courses.find((co) => co.course_id === id) : undefined;
     return c ? c.course_code || c.course_name : null;
@@ -624,6 +630,8 @@ export function Dashboard() {
             focusCourseId={keyHoverCourse ?? zoomedCourse}
             onHoverCourse={setGraphHoverCourse}
             zoomRequest={zoomRequest}
+            rootRadius={ROOT_RADIUS}
+            rootLabel={courseCodeLabel}
           />
           <CoursesKey
             courseProgress={courseProgress}
@@ -677,6 +685,7 @@ export function Dashboard() {
           <FullscreenGraph
             nodes={nodes}
             edges={edges}
+            rootLabel={courseCodeLabel}
             highlightId={suggestNode?.id}
             onNodeClick={(n) => { setFullscreen(false); router.push(learnHrefForNode(n)); }}
           />
@@ -689,11 +698,15 @@ export function Dashboard() {
 
 type HomeCourse = { id: string; code: string; name: string; rgb: string };
 
+/** Course (hub) nodes on Home: larger than the 22px default, labelled by code. */
+const ROOT_RADIUS = 34;
+
 function FullscreenGraph({
-  nodes, edges, highlightId, onNodeClick,
+  nodes, edges, highlightId, onNodeClick, rootLabel,
 }: {
   nodes: GraphNode[]; edges: GraphEdge[];
   highlightId?: string;
+  rootLabel?: (n: GraphNode) => string | null;
   onNodeClick: (n: GraphNode) => void;
 }) {
   const [size, setSize] = React.useState({ w: 1200, h: 700 });
@@ -706,7 +719,7 @@ function FullscreenGraph({
   }, []);
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
-      <KnowledgeGraph legible nodes={nodes} edges={edges} width={size.w} height={size.h} highlightId={highlightId} onNodeClick={onNodeClick} />
+      <KnowledgeGraph legible nodes={nodes} edges={edges} width={size.w} height={size.h} highlightId={highlightId} onNodeClick={onNodeClick} rootRadius={ROOT_RADIUS} rootLabel={rootLabel} />
     </div>
   );
 }

@@ -97,6 +97,11 @@ type Props = {
   /** Legible: zoom to a course (null = back out to the whole graph); a new
    *  `seq` asks again for the same course. */
   zoomRequest?: { courseId: string | null; seq: number } | null;
+  /** Radius of the course (subject-root) nodes; default 22. */
+  rootRadius?: number;
+  /** Label under each course node (e.g. its course code). When set, course
+   *  labels show in legible mode too; when it returns null the name is used. */
+  rootLabel?: (n: GraphNode) => string | null;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -112,6 +117,8 @@ type DragState =
 const MIN_ZOOM = 0.4;
 /** Smallest on-screen node radius (px) in legible mode. */
 const MIN_SCREEN_R = 7;
+/** With a `rootRadius` set, course hubs never draw smaller than this on screen. */
+const ROOT_MIN_SCREEN_R = 18;
 
 /** Where a line from (x1, y1) to (x2, y2) should stop to end `inset` short. */
 function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
@@ -156,6 +163,8 @@ function KnowledgeGraph2DImpl({
   focusCourseId = null,
   onHoverCourse,
   zoomRequest = null,
+  rootRadius,
+  rootLabel,
 }: Props) {
   const mastery = colorMode === "mastery";
   const legibleRef = React.useRef(legible);
@@ -174,10 +183,12 @@ function KnowledgeGraph2DImpl({
       new Map(
         nodes.map((n) => [
           n.id,
-          (!n.is_subject_root && importance?.get(n.id)) || radiusFor(n.mastery_score, n.is_subject_root),
+          n.is_subject_root && rootRadius
+            ? rootRadius
+            : (!n.is_subject_root && importance?.get(n.id)) || radiusFor(n.mastery_score, n.is_subject_root),
         ]),
       ),
-    [nodes, importance],
+    [nodes, importance, rootRadius],
   );
   // Read by the per-tick writer and the collide force, outside React renders.
   const radiusRef = React.useRef(radiusMap);
@@ -421,7 +432,7 @@ function KnowledgeGraph2DImpl({
         "collide",
         forceCollide<SimNode>().radius((d) =>
           d.is_subject_root
-            ? 40
+            ? Math.max(40, (radiusRef.current.get(d.id) ?? 22) + 18)
             : legibleRef.current
               ? (radiusRef.current.get(d.id) ?? 8) + 13
               : 20 + (d.mastery_score || 0) * 6,
@@ -835,7 +846,9 @@ function KnowledgeGraph2DImpl({
   const zoomLabels = labelOpacityAt(view.scale);
   // Legible nodes never shrink below MIN_SCREEN_R on screen, however far out.
   const drawRadius = (n: GraphNode) =>
-    legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
+    n.is_subject_root && rootRadius
+      ? Math.max(nodeRadius(n), ROOT_MIN_SCREEN_R / view.scale)
+      : legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
   // Labels of focused concepts stay readable however far out the view is.
   const focusFont = (size: number) => size / Math.min(1, view.scale);
   // O(1) endpoint resolution for edges whose source/target is still an id
@@ -1056,18 +1069,19 @@ function KnowledgeGraph2DImpl({
                       strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
                     />
                   )}
-                  {n.is_subject_root && !legible && (
+                  {n.is_subject_root && (rootLabel || !legible) && (
                     <text
+                      data-testid="graph-root-label"
                       x={0}
-                      y={r + 16}
+                      y={r + (rootLabel ? focusFont(17) : 16)}
                       textAnchor="middle"
                       fontFamily="var(--font-display)"
-                      fontSize={13}
+                      fontSize={rootLabel ? focusFont(15) : 13}
                       fontWeight={600}
                       fill={color}
                       pointerEvents="none"
                     >
-                      {n.name}
+                      {(rootLabel && rootLabel(n)) || n.name}
                     </text>
                   )}
                   {!n.is_subject_root && (

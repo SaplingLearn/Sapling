@@ -96,6 +96,10 @@ type Props = {
   focusCourseId?: string | null;
   onHoverCourse?: (courseId: string | null) => void;
   zoomRequest?: { courseId: string | null; seq: number } | null;
+  /** 2D only: course-node radius (default 22). */
+  rootRadius?: number;
+  /** 2D only: label under course nodes, e.g. the course code. */
+  rootLabel?: (n: GraphNode) => string | null;
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
