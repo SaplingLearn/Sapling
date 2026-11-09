@@ -1,7 +1,5 @@
 {
   "_comment": "Phase 4 (#118) ratchet: ceilings for today's offenders. Entries may only be lowered or deleted (python scripts/code_size_ratchet.py --shrink). Enforced by tests/test_code_size_ratchet.py.",
-  "complexity": {
-    "services/graph_service.py::apply_graph_update": 28
-  },
+  "complexity": {},
   "route_file_lines": {}
 }

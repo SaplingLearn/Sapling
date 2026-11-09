@@ -54,7 +54,6 @@ max-complexity = 25
 "routes/profile.py" = ["F401"]
 "routes/social.py" = ["F841"]
 "services/flashcards/importing.py" = ["F401"]
-"services/graph_service.py" = ["C901"]
 "services/notes_service.py" = ["E741"]
 "tests/**" = ["C901"]
 "tests/evals/concept_extraction.py" = ["F401"]
