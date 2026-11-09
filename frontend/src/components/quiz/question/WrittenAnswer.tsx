@@ -227,12 +227,6 @@ export function WrittenAnswer({
         ) : reading?.ok && readBack}
       </div>
 
-      {/* Directly under the field, with its line held open, so a problem
-          appearing never pushes the keys out from under the cursor. */}
-      {type !== "short_answer" && (
-        <p className="quiz-written__problem">{!verdict && reading && !reading.ok && readBack}</p>
-      )}
-
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
           {keys.map(key => (
@@ -252,6 +246,10 @@ export function WrittenAnswer({
           ))}
         </div>
       )}
+
+      {/* A problem with what's typed goes UNDER the keys, so it appearing
+          never pushes them out from under the cursor. */}
+      {!verdict && reading && !reading.ok && <p className="quiz-written__problem">{readBack}</p>}
     </div>
   );
 }

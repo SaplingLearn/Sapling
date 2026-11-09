@@ -517,7 +517,7 @@
 
 .quiz-written {
   display: grid;
-  gap: var(--pad-sm);
+  gap: 8px;
   justify-items: start;
 }
 
@@ -577,11 +577,9 @@
   pointer-events: none;
 }
 
-/* The line under the field: only ever a problem with what's typed. Held
-   open (one line) so it appearing moves nothing below it. */
+/* A problem with what's typed, under the keys. */
 .quiz-written__problem {
-  min-height: calc(var(--fs-sm) * 1.5);
-  margin: -2px 0 0;
+  margin: 0;
   font-size: var(--fs-sm);
   line-height: 1.5;
 }
