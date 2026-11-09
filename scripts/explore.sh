@@ -57,6 +57,8 @@ EXPLORE_DIR="$REPO_ROOT/.explore"
 # Explore runs in an E2E SLOT like every other lane (scripts/lib/e2e-slot.sh).
 # E2E_SLOT picks one; otherwise the cycle takes the first free slot.
 CYCLE="$REPO_ROOT/scripts/e2e-cycle.sh"
+# The ownership test (e2e_held_cycle_pid) and manifest reader (e2e_manifest_slot).
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 
 # @playwright/mcp version pin (determinism beats freshness). Checked via
 # `npm view @playwright/mcp version` on 2026-07-28 — see task-5-report.md.
@@ -340,7 +342,10 @@ do_up() {
   # --new: a hold this checkout already runs (someone else's, started since
   # the check above) is a failure here, never adopted as ours.
   "$CYCLE" --new --background || die "the E2E stack did not come up — see .e2e/cycle.log"
-  EXPLORE_CYCLE_PID="$(held_cycle_pid)" || die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  if ! EXPLORE_CYCLE_PID="$(held_cycle_pid)"; then
+    "$CYCLE" --stop >/dev/null 2>&1 || true   # never leave a stack nobody tracks
+    die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  fi
 
   # The stack is ours: NOW arm do_down as the boot-failure safety net (it
   # stops EXPLORE_CYCLE_PID even if .explore/ can't be written), so a failure
