@@ -630,7 +630,6 @@ export function Dashboard() {
             focusCourseId={keyHoverCourse ?? zoomedCourse}
             onHoverCourse={setGraphHoverCourse}
             zoomRequest={zoomRequest}
-            rootRadius={ROOT_RADIUS}
             rootLabel={courseCodeLabel}
           />
           <CoursesKey
@@ -698,9 +697,6 @@ export function Dashboard() {
 
 type HomeCourse = { id: string; code: string; name: string; rgb: string };
 
-/** Course (hub) nodes on Home: larger than the 22px default, labelled by code. */
-const ROOT_RADIUS = 34;
-
 function FullscreenGraph({
   nodes, edges, highlightId, onNodeClick, rootLabel,
 }: {
@@ -719,7 +715,7 @@ function FullscreenGraph({
   }, []);
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
-      <KnowledgeGraph legible nodes={nodes} edges={edges} width={size.w} height={size.h} highlightId={highlightId} onNodeClick={onNodeClick} rootRadius={ROOT_RADIUS} rootLabel={rootLabel} />
+      <KnowledgeGraph legible nodes={nodes} edges={edges} width={size.w} height={size.h} highlightId={highlightId} onNodeClick={onNodeClick} rootLabel={rootLabel} />
     </div>
   );
 }

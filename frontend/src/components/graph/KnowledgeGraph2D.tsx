@@ -97,8 +97,6 @@ type Props = {
   /** Legible: zoom to a course (null = back out to the whole graph); a new
    *  `seq` asks again for the same course. */
   zoomRequest?: { courseId: string | null; seq: number } | null;
-  /** Radius of the course (subject-root) nodes; default 22. */
-  rootRadius?: number;
   /** Label under each course node (e.g. its course code). When set, course
    *  labels show in legible mode too; when it returns null the name is used. */
   rootLabel?: (n: GraphNode) => string | null;
@@ -161,7 +159,6 @@ function KnowledgeGraph2DImpl({
   focusCourseId = null,
   onHoverCourse,
   zoomRequest = null,
-  rootRadius,
   rootLabel,
 }: Props) {
   const mastery = colorMode === "mastery";
@@ -181,12 +178,10 @@ function KnowledgeGraph2DImpl({
       new Map(
         nodes.map((n) => [
           n.id,
-          n.is_subject_root && rootRadius
-            ? rootRadius
-            : (!n.is_subject_root && importance?.get(n.id)) || radiusFor(n.mastery_score, n.is_subject_root),
+          (!n.is_subject_root && importance?.get(n.id)) || radiusFor(n.mastery_score, n.is_subject_root),
         ]),
       ),
-    [nodes, importance, rootRadius],
+    [nodes, importance],
   );
   // Read by the per-tick writer and the collide force, outside React renders.
   const radiusRef = React.useRef(radiusMap);
@@ -430,7 +425,7 @@ function KnowledgeGraph2DImpl({
         "collide",
         forceCollide<SimNode>().radius((d) =>
           d.is_subject_root
-            ? Math.max(40, (radiusRef.current.get(d.id) ?? 22) + 18)
+            ? 40
             : legibleRef.current
               ? (radiusRef.current.get(d.id) ?? 8) + 13
               : 20 + (d.mastery_score || 0) * 6,
@@ -1013,14 +1008,7 @@ function KnowledgeGraph2DImpl({
                     <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
                   )}
                   {variant === "organism" && (
-                    <circle
-                      cx={0}
-                      cy={0}
-                      r={r + (n.is_subject_root && rootRadius ? GLOW.pad * (rootRadius / radiusFor(0, true)) : GLOW.pad)}
-                      fill={color}
-                      opacity={GLOW.opacity}
-                      filter="url(#soft)"
-                    />
+                    <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
                   )}
                   {isHl && (
                     <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
