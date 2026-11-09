@@ -12,6 +12,7 @@
  * `?return=` is otherwise an open redirect off a link a student would trust.
  */
 
+import { START_PARAM } from "@/lib/toolHrefs";
 import type { QuizSource, SourceKind } from "./types";
 
 export interface EntryRequest {
@@ -25,6 +26,9 @@ export interface EntryRequest {
   scope?: "due";
   /** An attempt id to resume. */
   attempt?: string;
+  /** `?start=1`: start the named concept / course queue on arrival rather
+   *  than offering it on the home (the Study hub's Quiz buttons). */
+  start?: boolean;
   source: QuizSource;
 }
 
@@ -93,6 +97,7 @@ export function parseEntry(params: URLSearchParams): EntryRequest {
   if (course) entry.course = course;
   if (scope) entry.scope = scope;
   if (attempt) entry.attempt = attempt;
+  if (trimmed(params, START_PARAM) === "1") entry.start = true;
   return entry;
 }
 
@@ -101,6 +106,7 @@ export function parseEntry(params: URLSearchParams): EntryRequest {
 export function buildQuizHref(
   target: { concept?: string; course?: string; scope?: "due"; attempt?: string },
   source: QuizSource,
+  opts: { start?: boolean } = {},
 ): string {
   const params = new URLSearchParams();
   if (target.concept) params.set("concept", target.concept);
@@ -111,6 +117,7 @@ export function buildQuizHref(
   params.set("from", source.kind);
   if (isSafeReturnPath(source.returnTo)) params.set("return", source.returnTo);
   if (source.noteId) params.set("note", source.noteId);
+  if (opts.start) params.set(START_PARAM, "1");
 
   return `/quiz?${params.toString()}`;
 }

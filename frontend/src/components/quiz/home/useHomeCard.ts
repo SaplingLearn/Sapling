@@ -292,7 +292,19 @@ export function useHomeCard({ home, entry, session, actions, onPickedChange, red
     reducedMotion,
   });
   const copy = cardCopy(home, entry, session, { mode, card, pickedId, arrival, entryCourse });
-  return { mode, card, suggested, pickedId, dueQueue: arrival.dueQueue, startQueue, startCard, ...swap, ...copy };
+  return {
+    mode,
+    card,
+    suggested,
+    pickedId,
+    /** The concept the link named, resolved on this term (`null`: none, or another term). */
+    arrivalConceptId: arrival.conceptId,
+    dueQueue: arrival.dueQueue,
+    startQueue,
+    startCard,
+    ...swap,
+    ...copy,
+  };
 }
 
 /** The topic list's search and course filter, and the rows they leave. */
