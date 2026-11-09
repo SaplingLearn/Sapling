@@ -99,19 +99,20 @@
 .hub {
   position: relative;
   display: grid;
-  /* 1:1 with the 1920x1080 design: a 360px rail, a 56px gap and 56/48 side
-     padding put the main column at 1200px, roadmap tiles at x256 and the
-     focus card's right edge at x1455 — the positions measured off the
-     reference screenshot.
+  /* Sized to the rest of the app (Dashboard, Calendar, Gradebook): the 1920
+     design's 360px rail, 56px gap and 56px sides read oversized beside them,
+     so the rail tops out at 340px and the gap and sides are 40px.
      CLAMPED, not fixed, so the rail gives ground as the container narrows (a
      fixed one charged the whole loss to the main column when the side nav
-     expanded). 20.94cqi of the 1720px container at 1920 is 360px, so the
-     design width is exact and every width below scales down. */
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 20.94cqi, 360px);
-  grid-template-rows: auto auto auto auto;
+     expanded). */
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 19.8cqi, 340px);
+  /* The rail spans rows 2-4; when it is taller than the main column, its
+     extra height goes to the roadmap row (1fr), not into the gaps under the
+     exam tabs and the readiness band. */
+  grid-template-rows: auto auto auto 1fr;
   align-content: start;
-  column-gap: 56px;
-  padding: 32px 48px 32px 56px;
+  column-gap: 40px;
+  padding: 24px 40px 32px 40px;
   box-sizing: border-box;
 }
 
@@ -136,20 +137,18 @@
    their minimums holds the Up Next card where the design puts it — beside the
    figure, not pushed below it — on a narrow window or with the side nav
    expanded. The warning under the legend takes the extra lines instead. */
-/* Reference: the focus card is 540px at x916-1455, leaving the readiness
-   figure 612px beside it. The card is clamped so BOTH give ground as the
-   column narrows — a rigid 540 drove the figure's column to zero and the
-   card painted over "Ready for <exam>". 31.4cqi of 1720 is 540px, so the
-   design width is exact. */
+/* The focus card is clamped so BOTH give ground as the column narrows — a
+   rigid 540 drove the figure's column to zero and the card painted over
+   "Ready for <exam>". It tops out at 460px, matching the app's card scale. */
 .readyGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(330px, 31.4cqi, 540px);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 26.7cqi, 460px);
   align-items: start;
-  gap: 48px;
+  gap: 32px;
 }
 
 /* Below this the 360px rail no longer leaves the roadmap a usable column
-   (220px tiles plus the readiness pair), so the rail goes under the main
+   (200px tiles plus the readiness pair), so the rail goes under the main
    column and everything gets the full width. */
 @container studyhub (max-width: 1060px) {
   .hub {
@@ -167,7 +166,7 @@
   .areaHeader, .areaTabs { flex-wrap: wrap; }
 }
 
-/* Past here the two floors (270 + 330 + 48) no longer fit, so the card does
+/* Past here the two floors (270 + 300 + 32) no longer fit, so the card does
    finally go under the figure — there is no width left to hold it beside. */
 @container studyhub (max-width: 730px) {
   .readyGrid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
