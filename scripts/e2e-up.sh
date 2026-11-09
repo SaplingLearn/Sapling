@@ -231,7 +231,9 @@ echo "▶ E2E slot $E2E_SLOT: frontend :$FRONTEND_PORT, backend :$BACKEND_PORT, 
 if command -v ss >/dev/null 2>&1; then
   for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
     if ss -ltn 2>/dev/null | grep -q ":$port "; then
-      echo "✗ port $port is already in use by an untracked process — stop your dev server first"
+      echo "✗ port $port is already in use by an untracked process — a server left over from an earlier run on this slot, or someone else's:"
+      ss -ltnp 2>/dev/null | grep ":$port " | sed 's/^/    /'
+      echo "  Stop it (or pick another E2E_SLOT) and re-run."
       exit 1
     fi
   done
@@ -296,6 +298,10 @@ echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this
 export POSTHOG_PROJECT_TOKEN=
 export POSTHOG_PERSONAL_API_KEY=
 echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
+# The servers never inherit the cycle's locks (fds 8/9, scripts/e2e-cycle.sh):
+# a server that outlived its teardown would otherwise hold the slot's lock
+# forever and the slot would silently drop out of rotation. Without them, a
+# leftover server fails the next boot's port check loudly instead.
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a
@@ -304,7 +310,7 @@ echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this st
 (
   cd backend || exit 1
   $DETACH "$VENV_PY" -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
-    >"$E2E_DIR/backend.log" 2>&1 &
+    >"$E2E_DIR/backend.log" 2>&1 8>&- 9>&- &
   echo $! >"$E2E_DIR/backend.pid"
 ) || { echo "✗ could not start backend"; exit 1; }
 wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
@@ -320,7 +326,7 @@ if [ "${E2E_WORKER:-0}" = "1" ]; then
   echo "▶ Starting job worker (python -m worker, log: .e2e/worker.log)…"
   (
     cd backend || exit 1
-    $DETACH "$VENV_PY" -m worker --poll-interval 1 >"$E2E_DIR/worker.log" 2>&1 &
+    $DETACH "$VENV_PY" -m worker --poll-interval 1 >"$E2E_DIR/worker.log" 2>&1 8>&- 9>&- &
     echo $! >"$E2E_DIR/worker.pid"
   ) || { echo "✗ could not start worker"; exit 1; }
 fi
@@ -335,7 +341,7 @@ if [ "${E2E_FRONTEND:-test}" = "dev" ]; then
   echo "▶ Starting frontend (next dev on :$FRONTEND_PORT, E2E_FRONTEND=dev, log: .e2e/frontend.log)…"
   (
     cd frontend || exit 1
-    BACKEND_URL="$E2E_BACKEND_URL" $DETACH npx next dev -p "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
+    BACKEND_URL="$E2E_BACKEND_URL" $DETACH npx next dev -p "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 8>&- 9>&- &
     echo $! >"$E2E_DIR/frontend.pid"
   ) || { echo "✗ could not start frontend"; exit 1; }
 else
@@ -347,7 +353,7 @@ echo "▶ Starting frontend (next start on :$FRONTEND_PORT, log: .e2e/frontend.l
 # Same setsid-simple-command shape as the backend launch above.
 (
   cd frontend || exit 1
-  $DETACH npm run start:test -- --port "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
+  $DETACH npm run start:test -- --port "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 8>&- 9>&- &
   echo $! >"$E2E_DIR/frontend.pid"
 ) || { echo "✗ could not start frontend"; exit 1; }
 fi
