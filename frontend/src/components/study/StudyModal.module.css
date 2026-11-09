@@ -1,0 +1,72 @@
+/* The Study hub's centred modal (Exams and Deadlines).
+
+   The overlay is fixed to the viewport and portalled to <body>: the old
+   backdrop was `position: absolute` inside the hub, so it covered the hub's
+   own box only and left a paper-coloured band wherever the page was shorter
+   than the viewport or scrolled. The dialog sits at the design's top offset
+   (capped for short viewports) and scrolls inside itself once it is taller
+   than the space left.
+
+   The entrance is `Dialog`'s (components/Dialog.tsx): the backdrop fades and
+   the card fades up from scale(0.96) translateY(8px) over var(--dur) on
+   var(--ease). It is a keyframe animation rather than Dialog's transition on
+   `useOverlayBehaviour`'s `visible` flag: these modals mount with their open
+   state, and the mount and the flag can commit in the same frame, so a
+   transition had no "before" style to start from and the card just popped in.
+   A keyframe plays on insertion. The app-wide prefers-reduced-motion reset in
+   globals.css collapses it; the explicit rule below says so locally too. */
+
+@keyframes studyModalScrim {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes studyModalCard {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  box-sizing: border-box;
+  padding: min(var(--study-modal-top, 110px), 12vh) 16px 24px;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(25, 37, 11, 0.32);
+  animation: studyModalScrim var(--dur) var(--ease) both;
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: var(--study-modal-width, 760px);
+  max-width: 100%;
+  max-height: min(var(--study-modal-max-h, 820px), 100%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 26px 28px;
+  background: #FDFCF9;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(25, 37, 11, 0.28);
+  /* Portalled out of the hub, so it re-declares the hub's text defaults. */
+  color: #1A1814;
+  font-family: var(--font-sans), 'SUSE', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  outline: none;
+  transform-origin: 50% 0;
+  animation: studyModalCard var(--dur) var(--ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop, .dialog { animation: none; }
+}

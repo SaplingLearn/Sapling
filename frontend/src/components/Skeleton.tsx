@@ -492,6 +492,91 @@ export function FlashcardsSkeleton() {
   );
 }
 
+/**
+ * The Study hub while its courses and concepts load (#v3). Mirrors the real
+ * layout — header, readiness block, focus card, roadmap columns, right rail —
+ * so nothing jumps when the data lands, and so the "Add a course" empty state
+ * is never flashed at a student who simply has not finished loading.
+ */
+export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading your study hub"
+      role="status"
+      style={{
+        height: isMobile ? "auto" : "100%", minHeight: isMobile ? "100%" : 640,
+        display: "grid",
+        gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 360px",
+        columnGap: 56, alignContent: "start",
+        padding: isMobile ? "20px 16px 24px" : "32px 48px 0 56px",
+        boxSizing: "border-box", background: "#FAF8F3",
+      }}
+    >
+      <div style={{ gridColumn: isMobile ? "1" : "1 / 3", display: "flex", alignItems: "center", gap: 20, paddingBottom: 18 }}>
+        <Skeleton width={110} height={34} radius={10} />
+        <Skeleton width={240} height={20} />
+        <Skeleton width={120} height={20} style={{ marginLeft: "auto" }} />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 28 }}>
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <Skeleton width={120} height={16} />
+              <Skeleton width={90} height={12} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 300px) minmax(0, 1fr)", gap: 28, alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Skeleton width={180} height={52} radius={12} />
+            <div style={{ display: "flex", gap: 6 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} width={18} height={18} radius={4} />
+              ))}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} width={104} height={28} radius={999} />
+              ))}
+            </div>
+          </div>
+          <Skeleton height={180} radius={20} style={{ opacity: 0.75 }} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Skeleton width={90} height={11} />
+          <div style={{ display: "flex", gap: 24 }}>
+            {Array.from({ length: 3 }).map((_, col) => (
+              <div key={col} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                <Skeleton width="70%" height={15} />
+                <Skeleton width="100%" height={4} radius={2} />
+                {Array.from({ length: 2 }).map((_, row) => (
+                  <Skeleton key={row} height={62} radius={12} />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {!isMobile && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
+          <Skeleton width={120} height={11} />
+          <Skeleton width={150} height={40} />
+          <Skeleton height={96} radius={12} />
+          <Skeleton height={56} radius={14} />
+          <Skeleton width={130} height={11} />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} height={38} radius={10} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AdminTableSkeleton({ rows = 8 }: { rows?: number }) {
   return (
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>

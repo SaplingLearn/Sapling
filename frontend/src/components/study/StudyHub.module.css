@@ -1,0 +1,178 @@
+/* Hover states and scrollbars from "Sapling Study v2" (style-hover attributes). */
+.hoverCourse:hover { background: #F0ECE3 !important; }
+.hoverOption:hover { background: #F2F6EE !important; }
+.hoverDue:hover { background: #F7E6BF !important; }
+.hoverIcon:hover { background: #F0ECE3 !important; color: #1A1814 !important; }
+.hoverTab:hover { border-bottom-color: rgba(68, 93, 34, 0.4) !important; }
+.hoverTabOn:hover { border-bottom-color: #445D22; }
+.hoverTool:hover { border-color: rgba(68, 93, 34, 0.45) !important; }
+.hoverSeg { transition: transform 120ms ease; }
+.hoverSeg:hover { transform: scale(1.15); }
+.hoverLegend:hover { background: #F2F6EE !important; }
+.hoverMore:hover { background: #F0ECE3 !important; color: #1A1814 !important; }
+.hoverQr:hover { background: #D6E3F0 !important; border-color: #A9C3E0 !important; }
+.hoverQrStart:hover { background: #23497A !important; }
+.hoverRemove:hover { background: #F6E3E1 !important; }
+.hoverAdd:hover { background: #F2F6EE !important; }
+
+
+/* Always-visible thin green bar (Quick Reviews list). */
+.catScroll { scrollbar-width: thin; scrollbar-color: rgba(68, 93, 34, 0.45) transparent; }
+.catScroll::-webkit-scrollbar { width: 10px; }
+.catScroll::-webkit-scrollbar-track { background: transparent; }
+.catScroll::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.catScroll::-webkit-scrollbar-thumb {
+  background-color: rgba(68, 93, 34, 0.45); border: 2px solid transparent;
+  background-clip: padding-box; min-height: 24px;
+}
+
+/* ── motion ──────────────────────────────────────────────────────────────────
+   Clicking around the hub used to swap content with no in-between: a new
+   course, a new exam tab or a new concept selection simply replaced what was
+   there. These are plain CSS animations and transitions, so they cost no
+   JS chunk and the app-wide prefers-reduced-motion reset in globals.css
+   (the `*, *::before, *::after` rule) collapses every one of them. */
+
+@keyframes studyPaneEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The main column, re-keyed on the selected course: a course switch reads as
+   the page turning rather than as a flicker. */
+.paneEnter { animation: studyPaneEnter 260ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+
+/* The readiness + focus block, re-keyed on the selected exam tab. Shorter than
+   the course swap — the surrounding chrome doesn't change, so a long one reads
+   as lag. */
+.examEnter { animation: studyPaneEnter 190ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+
+/* Roadmap columns arrive left to right. The delay is set inline per column
+   (--i), capped there so a long roadmap doesn't trail. */
+.colEnter { animation: studyPaneEnter 240ms cubic-bezier(0.2, 0.85, 0.35, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+
+/* Concept tiles: selection, prerequisite highlighting and the legend filter
+   all change a tile's border, background and opacity. Easing them is what
+   makes hovering a tile feel like it's pointing at its prerequisites rather
+   than redrawing the roadmap. */
+.tile {
+  transition: border-color 160ms ease, background-color 160ms ease,
+              opacity 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.tile:hover { transform: translateY(-1px); }
+
+/* The readiness ring and the mastery bars grow to their value instead of
+   appearing at it. */
+.ring { transition: stroke-dasharray 520ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+.bar { transition: width 420ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+
+/* Popovers (course menu, bell, tile menu, AI pace) and the modals. */
+@keyframes studyPop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.pop { animation: studyPop 150ms cubic-bezier(0.2, 0.85, 0.35, 1) both; transform-origin: top; }
+
+/* ── responsive layout ───────────────────────────────────────────────────────
+   The hub used to size itself from ONE JS breakpoint (useIsMobile, 768px)
+   while its desktop grid needed roughly 1500px: a fixed 360px rail beside the
+   main column, and inside that a fixed 540px focus card beside the readiness
+   figure. Everything from ~1440px down drove the readiness column to zero and
+   the card painted over "Ready for <exam>".
+
+   Width now comes from the CONTAINER, not the viewport, because the side nav
+   collapses (64px) and expands (~200px): a viewport media query is wrong in
+   one of those two states, a container query is right in both.
+
+   The hub also no longer clips itself to the viewport. The roadmap and the
+   right rail used to be their own scrollports, so reading further down the
+   roadmap meant finding and scrolling that inner pane while the page itself
+   stayed put. Both now grow with their content and the SHELL scrolls (it is
+   already the app's scrollport: ShellFrame sets flex:1 / overflow-y:auto), so
+   one scroll gesture moves the whole page. */
+
+.shell {
+  container-type: inline-size;
+  container-name: studyhub;
+}
+
+.hub {
+  position: relative;
+  display: grid;
+  /* Sized to the rest of the app (Dashboard, Calendar, Gradebook): the 1920
+     design's 360px rail, 56px gap and 56px sides read oversized beside them,
+     so the rail tops out at 340px and the gap and sides are 40px.
+     CLAMPED, not fixed, so the rail gives ground as the container narrows (a
+     fixed one charged the whole loss to the main column when the side nav
+     expanded). */
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 19.8cqi, 340px);
+  /* The rail spans rows 2-4; when it is taller than the main column, its
+     extra height goes to the roadmap row (1fr), not into the gaps under the
+     exam tabs and the readiness band. */
+  grid-template-rows: auto auto auto 1fr;
+  align-content: start;
+  column-gap: 40px;
+  padding: 24px 40px 32px 40px;
+  box-sizing: border-box;
+}
+
+.areaHeader  { grid-column: 1 / 3; grid-row: 1; }
+.areaTabs    { grid-column: 1; grid-row: 2; }
+.areaReady   { grid-column: 1; grid-row: 3; }
+.areaRoadmap { grid-column: 1; grid-row: 4; }
+.areaRail {
+  grid-column: 2;
+  grid-row: 2 / 5;
+  /* Side bleed for the Quick Reviews pop-up shadow; absorbed by the column
+     gap and the page padding, so the content sits where it looks like it
+     does. The narrow layout drops it — there is no gap to bleed into, and it
+     pushed the rail past the viewport edge. */
+  padding: 6px 42px 0 40px;
+  margin: 0 -40px;
+}
+
+/* The readiness figure beside its focus card. BOTH tracks flex, each with a
+   floor: the card used to be a rigid 540px, which drove the readiness column
+   to zero long before the page ran out of room. Keeping both columns down to
+   their minimums holds the Up Next card where the design puts it — beside the
+   figure, not pushed below it — on a narrow window or with the side nav
+   expanded. The warning under the legend takes the extra lines instead. */
+/* The focus card is clamped so BOTH give ground as the column narrows — a
+   rigid 540 drove the figure's column to zero and the card painted over
+   "Ready for <exam>". It tops out at 460px, matching the app's card scale. */
+.readyGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 26.7cqi, 460px);
+  align-items: start;
+  gap: 32px;
+}
+
+/* Below this the 360px rail no longer leaves the roadmap a usable column
+   (200px tiles plus the readiness pair), so the rail goes under the main
+   column and everything gets the full width. */
+@container studyhub (max-width: 1060px) {
+  .hub {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    padding: 28px 28px 32px;
+  }
+  .areaHeader, .areaTabs, .areaReady, .areaRoadmap, .areaRail {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .areaRail { padding: 6px 2px 0 0; margin: 0; }
+  .readyGrid { gap: 24px; }
+  /* The header and the exam-tab row hold more than fits in one line here. */
+  .areaHeader, .areaTabs { flex-wrap: wrap; }
+}
+
+/* Past here the two floors (270 + 300 + 32) no longer fit, so the card does
+   finally go under the figure — there is no width left to hold it beside. */
+@container studyhub (max-width: 730px) {
+  .readyGrid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+}
+
+@container studyhub (max-width: 700px) {
+  .hub { padding: 20px 16px 24px; }
+  .readyGrid { gap: 20px; }
+}

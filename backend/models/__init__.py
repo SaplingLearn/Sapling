@@ -323,10 +323,12 @@ class OnboardingBody(BaseModel):
     first_name: str
     last_name: str
     year: str
-    majors: list[str] = Field(min_length=1)
+    # The redesigned onboarding (school -> year + courses) no longer asks for
+    # majors or a learning style; both stay accepted for older clients.
+    majors: list[str] = []
     minors: list[str] = []
     course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
-    learning_style: str
+    learning_style: Optional[str] = None
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────
