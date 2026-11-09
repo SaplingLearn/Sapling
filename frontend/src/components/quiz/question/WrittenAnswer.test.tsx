@@ -80,4 +80,28 @@ describe("WrittenAnswer", () => {
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledOnce();
   });
+
+  it("adds no read-back when the number already reads as typed", () => {
+    render(<Harness type="numeric" initial="15" />);
+    expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("");
+    expect(input()).not.toHaveAttribute("aria-describedby", expect.stringContaining("quiz-written-readback"));
+  });
+
+  it("gives each format its own surface", () => {
+    const { container, unmount } = render(<Harness type="short_answer" />);
+    expect(container.querySelector(".quiz-written__line")).not.toBeNull();
+    unmount();
+    const numeric = render(<Harness type="numeric" />);
+    expect(numeric.container.querySelector(".quiz-written__readout")).not.toBeNull();
+    numeric.unmount();
+    const symbolic = render(<Harness type="symbolic" />);
+    expect(symbolic.container.querySelector(".quiz-written__sheet .quiz-written__preview")).not.toBeNull();
+  });
+
+  it("carries the verdict on the field once the answer is marked", () => {
+    const { container } = render(
+      <WrittenAnswer type="short_answer" value="x" disabled verdict="incorrect" onChange={vi.fn()} onSubmit={vi.fn()} describedBy="hint" />,
+    );
+    expect(container.querySelector(".quiz-written")).toHaveAttribute("data-verdict", "incorrect");
+  });
 });

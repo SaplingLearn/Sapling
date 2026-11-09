@@ -15,6 +15,11 @@
  *   plain warning for what the grammar refuses (functions, equations, an
  *   unclosed bracket).
  *
+ * Each also has its own surface, so the screen looks like the kind of answer
+ * it wants: a ruled line to write a term on, a readout that shows the number
+ * the grader will read, and a worksheet whose lower half typesets the
+ * expression as it is typed.
+ *
  * Enter submits from all three. The screen's own Enter handler skips typing
  * targets (it would steal a textarea's newline), so the input forwards Enter
  * itself — a single-line answer has no newline to lose.
@@ -67,6 +72,8 @@ export interface WrittenAnswerProps {
   type: WrittenType;
   value: string;
   disabled: boolean;
+  /** Set once the verdict is shown: the field itself says how it was marked. */
+  verdict?: "correct" | "incorrect" | null;
   onChange: (value: string) => void;
   /** Enter in the input — the screen's primary action, when it is enabled. */
   onSubmit: () => void;
@@ -80,6 +87,7 @@ export function WrittenAnswer({
   type,
   value,
   disabled,
+  verdict = null,
   onChange,
   onSubmit,
   describedBy,
@@ -106,9 +114,18 @@ export function WrittenAnswer({
     if (!value.trim()) return null;
     if (type === "numeric") {
       const n = numericValue(value);
+      if (n !== null && formatNumber(n) === value.trim()) return null; // "15" reads as 15: nothing to add
       return n === null
         ? { ok: false, node: "Not a number the grader can read yet." }
-        : { ok: true, node: <>Reads as <span className="quiz-written__value">{formatNumber(n)}</span></> };
+        : {
+            ok: true,
+            node: (
+              <>
+                <span className="quiz-written__readback-label">Reads as </span>
+                <span className="quiz-written__value">{formatNumber(n)}</span>
+              </>
+            ),
+          };
     }
     if (type === "symbolic") {
       const problem = symbolicProblem(value);
@@ -117,7 +134,7 @@ export function WrittenAnswer({
         ok: true,
         node: (
           <>
-            Reads as{" "}
+            <span className="quiz-written__readback-label">Reads as </span>
             <span className="quiz-written__value quiz-written__expr">
               {expressionParts(value).map((part, i) =>
                 part.sup ? <sup key={i}>{part.text}</sup> : <React.Fragment key={i}>{part.text}</React.Fragment>,
@@ -130,33 +147,65 @@ export function WrittenAnswer({
     return null;
   })();
 
+  const input = (
+    <input
+      ref={inputRef}
+      id="quiz-written-answer"
+      data-testid="quiz-written-answer"
+      type="text"
+      className={`quiz-question__written-input quiz-written__input--${type}`}
+      aria-labelledby={labelledBy}
+      aria-describedby={readBack ? `${describedBy} quiz-written-readback` : describedBy}
+      aria-invalid={readBack && !readBack.ok ? true : undefined}
+      inputMode={type === "numeric" ? "decimal" : "text"}
+      placeholder={PLACEHOLDER[type]}
+      maxLength={2000}
+      value={value}
+      disabled={disabled}
+      onChange={event => onChange(event.target.value)}
+      onKeyDown={event => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        onSubmit();
+      }}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={type === "short_answer"}
+    />
+  );
+
+  const readBackLine = (
+    <p
+      id="quiz-written-readback"
+      className="quiz-written__readback"
+      data-testid="quiz-written-readback"
+      data-ok={readBack ? (readBack.ok ? "true" : "false") : undefined}
+      aria-live="polite"
+    >
+      {/* Rendered (empty) before anything is typed, so the readout and the
+          worksheet hold their size instead of growing on the first key. */}
+      {readBack?.node ?? (type === "symbolic" ? <span className="quiz-written__readback-label">Your expression will appear here</span> : null)}
+    </p>
+  );
+
   return (
-    <div className="quiz-written" data-format={type}>
-      <input
-        ref={inputRef}
-        id="quiz-written-answer"
-        data-testid="quiz-written-answer"
-        type="text"
-        className={`quiz-question__written-input quiz-written__input--${type}`}
-        aria-labelledby={labelledBy}
-        aria-describedby={readBack ? `${describedBy} quiz-written-readback` : describedBy}
-        aria-invalid={readBack && !readBack.ok ? true : undefined}
-        inputMode={type === "numeric" ? "decimal" : "text"}
-        placeholder={PLACEHOLDER[type]}
-        maxLength={2000}
-        value={value}
-        disabled={disabled}
-        onChange={event => onChange(event.target.value)}
-        onKeyDown={event => {
-          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-          event.preventDefault();
-          onSubmit();
-        }}
-        autoComplete="off"
-        autoCorrect="off"
-        autoCapitalize="off"
-        spellCheck={type === "short_answer"}
-      />
+    <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
+      {type === "short_answer" && <div className="quiz-written__line">{input}</div>}
+
+      {type === "numeric" && (
+        <div className="quiz-written__readout">
+          {input}
+          {readBackLine}
+        </div>
+      )}
+
+      {type === "symbolic" && (
+        <div className="quiz-written__sheet">
+          {input}
+          <div className="quiz-written__preview">{readBackLine}</div>
+        </div>
+      )}
 
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
@@ -176,18 +225,6 @@ export function WrittenAnswer({
             </button>
           ))}
         </div>
-      )}
-
-      {readBack && (
-        <p
-          id="quiz-written-readback"
-          className="quiz-written__readback"
-          data-testid="quiz-written-readback"
-          data-ok={readBack.ok ? "true" : "false"}
-          aria-live="polite"
-        >
-          {readBack.node}
-        </p>
       )}
     </div>
   );

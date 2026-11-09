@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expressionParts, formatNumber, numericValue, symbolicProblem } from "./answerFormats";
+import { expressionParts, formatNumber, numericValue, superscriptParts, symbolicProblem } from "./answerFormats";
 
 describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   it.each([
@@ -67,5 +67,19 @@ describe("expressionParts", () => {
 
   it("leaves a dangling caret as typed", () => {
     expect(expressionParts("x^")).toEqual([{ text: "x^", sup: false }]);
+  });
+});
+
+describe("superscriptParts — a stem's exponents, and nothing else", () => {
+  it("raises exponents but leaves hyphens and asterisks alone", () => {
+    expect(superscriptParts("Expand (x + 1)^2 - 2x for a well-known *case*")).toEqual([
+      { text: "Expand (x + 1)", sup: false },
+      { text: "2", sup: true },
+      { text: " - 2x for a well-known *case*", sup: false },
+    ]);
+  });
+
+  it("returns prose without a caret as one part", () => {
+    expect(superscriptParts("What is a base case?")).toEqual([{ text: "What is a base case?", sup: false }]);
   });
 });

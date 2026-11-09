@@ -23,6 +23,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Check, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
@@ -30,6 +31,7 @@ import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
+import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { AskPanel, type AskSeed } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
@@ -92,6 +94,29 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+/** What each format is called on screen — the same names the Format setting
+ *  uses, so "Algebra" in the settings is "Algebra" on the question. */
+const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
+  multiple_choice: { label: "Multiple choice", Icon: ListChecks },
+  short_answer: { label: "Short answer", Icon: PenLine },
+  numeric: { label: "Numeric", Icon: Hash },
+  symbolic: { label: "Algebra", Icon: Sigma },
+};
+
+/** Where the question's grounding came from, said plainly. */
+const MATERIAL_CONTEXT = {
+  course_material: { text: "Course material provided for this question", Icon: BookOpen },
+  catalog: { text: "Course catalog context provided", Icon: Library },
+  general: { text: "General practice: no matching course material was found", Icon: Sparkles },
+} as const;
+
+/** Parts with `<sup>` for the raised ones. */
+function renderParts(parts: ExpressionPart[]): React.ReactNode {
+  return parts.map((part, i) =>
+    part.sup ? <sup key={i}>{part.text}</sup> : <React.Fragment key={i}>{part.text}</React.Fragment>,
+  );
+}
+
 /** The key as the end of a sentence: one full stop, unless it already ends in
  *  terminal punctuation ("Why?" stays "Why?", never "Why?." or "respiration. ."). */
 function withFullStop(answer: string): string {
@@ -128,6 +153,10 @@ export function QuizQuestion({
   const options = item?.question.options ?? [];
   const selectedIndex = item?.selectedIndex ?? null;
   const written = isWrittenType(item?.question.type);
+  // A type this client doesn't know is answered by choosing, exactly as the
+  // backend treats it, so it wears the multiple-choice tag too.
+  const format = written ? (item?.question.type as string) : "multiple_choice";
+  const formatTag = FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
   const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
   const answeredCount = items.filter(i => i.verdict !== null).length;
   const isLast = cursor >= total - 1;
@@ -299,6 +328,12 @@ export function QuizQuestion({
         {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
       </span>
       <span className="quiz-question__header-gap" />
+      {phase !== "generating" && item && (
+        <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
+          <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
+          {formatTag.label}
+        </span>
+      )}
       {difficulty && <Badge bg="var(--bg-soft)">{difficulty}</Badge>}
     </div>
   );
@@ -328,9 +363,11 @@ export function QuizQuestion({
           <p className="label-micro quiz-question__generating-copy" role="status">
             Writing your quiz…
           </p>
-          <div className="quiz-question__stem quiz-question__stem--skeleton">
-            <Skeleton height="var(--quiz-q-skeleton-stem)" width="92%" />
-            <Skeleton height="var(--quiz-q-skeleton-stem)" width="64%" />
+          <div className="quiz-question__prompt">
+            <div className="quiz-question__stem quiz-question__stem--skeleton">
+              <Skeleton height="var(--quiz-q-skeleton-stem)" width="92%" />
+              <Skeleton height="var(--quiz-q-skeleton-stem)" width="64%" />
+            </div>
           </div>
           <div className="quiz-question__skeleton-options" aria-hidden="true">
             {SKELETON_ROWS.map((width, i) => (
@@ -359,6 +396,8 @@ export function QuizQuestion({
   // letter is optional and the copy has to survive without it.
   const correctLabel =
     verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.label : undefined;
+
+  const context = item?.question.material_context ? MATERIAL_CONTEXT[item.question.material_context] : null;
 
   const optionState = (index: number): AnswerState => {
     if (!showVerdict || !verdict) return selectedIndex === index ? "selected" : "default";
@@ -390,14 +429,21 @@ export function QuizQuestion({
       <div className="quiz-question__col">
         {header}
 
-        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">{item?.question.question ?? ""}</h2>
-        {item?.question.material_context && (
-          <p className="label-micro" data-testid="quiz-material-context">
-            {item.question.material_context === "course_material" ? "Course material provided for this question"
-              : item.question.material_context === "catalog" ? "Course catalog context provided"
-                : "General concept practice · no matching course material retrieved"}
+        <div className="quiz-question__prompt">
+        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
+          {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
+              the exponents so the question reads the way it would be printed. */}
+          {format === "symbolic"
+            ? renderParts(superscriptParts(item?.question.question ?? ""))
+            : item?.question.question ?? ""}
+        </h2>
+        {context && (
+          <p className="quiz-question__context" data-testid="quiz-material-context">
+            <context.Icon size={13} strokeWidth={2} aria-hidden="true" />
+            {context.text}
           </p>
         )}
+        </div>
 
         {!written && (
           <p className="quiz-question__hint" id="quiz-keyboard-hint">
@@ -407,8 +453,25 @@ export function QuizQuestion({
         )}
 
         {written ? (
-          <div className="quiz-question__written">
-            <label htmlFor="quiz-written-answer" className="label-micro" id="quiz-written-label">Your answer</label>
+          <div
+            className={`quiz-question__written quiz-question__written--${format}`}
+            data-marked={showVerdict && verdict ? "true" : undefined}
+          >
+            {/* The accessible name ("Your answer, <stem>"); on screen the format
+                tag and the field's own shape already say what goes here. */}
+            <label htmlFor="quiz-written-answer" className="quiz-question__sr" id="quiz-written-label">Your answer</label>
+            <WrittenAnswer
+              type={(item?.question.type ?? "short_answer") as WrittenType}
+              value={item?.answerText ?? ""}
+              disabled={!selectable}
+              verdict={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : null}
+              onChange={text => actions.write?.(text)}
+              onSubmit={() => {
+                if (primary.enabled) primary.activate();
+              }}
+              describedBy="quiz-format-hint"
+              labelledBy="quiz-written-label quiz-question-stem"
+            />
             {/* Visible, unlike the keyboard hint: these are the rules the
                 grader applies, so a sighted student needs them as much as a
                 screen-reader user does. */}
@@ -419,17 +482,6 @@ export function QuizQuestion({
                   ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
                   : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
             </p>
-            <WrittenAnswer
-              type={(item?.question.type ?? "short_answer") as WrittenType}
-              value={item?.answerText ?? ""}
-              disabled={!selectable}
-              onChange={text => actions.write?.(text)}
-              onSubmit={() => {
-                if (primary.enabled) primary.activate();
-              }}
-              describedBy="quiz-format-hint"
-              labelledBy="quiz-written-label quiz-question-stem"
-            />
           </div>
         ) : <div
           ref={optionsRef}
@@ -460,23 +512,32 @@ export function QuizQuestion({
           ref={feedbackRef}
           className="quiz-question__feedback"
           data-testid="quiz-review-verdict"
+          data-outcome={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : undefined}
           aria-live="polite"
           tabIndex={-1}
         >
           {showVerdict && verdict && (
             <>
-              <span>
-                {verdict.isCorrect
-                  ? "Correct."
-                  : verdict.correctAnswer
-                    ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
-                  : correctLabel
-                    ? `Not quite — the answer is ${correctLabel}.`
-                    : "Not quite."}
+              <span className="quiz-question__verdict-mark" aria-hidden="true">
+                {verdict.isCorrect ? <Check size={15} strokeWidth={3} /> : <X size={15} strokeWidth={3} />}
               </span>
-              {verdict.explanation && (
-                <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
-              )}
+              <div className="quiz-question__verdict-body">
+                <p className="quiz-question__verdict-line">
+                  {verdict.isCorrect
+                    ? "Correct."
+                    : verdict.correctAnswer && format === "symbolic"
+                      ? <>Not quite — the expected answer is{" "}
+                          <span className="quiz-question__verdict-expr">{renderParts(expressionParts(verdict.correctAnswer.trim().replace(/[.]$/, "")))}</span>.</>
+                    : verdict.correctAnswer
+                      ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
+                    : correctLabel
+                      ? `Not quite — the answer is ${correctLabel}.`
+                      : "Not quite."}
+                </p>
+                {verdict.explanation && (
+                  <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+                )}
+              </div>
             </>
           )}
         </div>

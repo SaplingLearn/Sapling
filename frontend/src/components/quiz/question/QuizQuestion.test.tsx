@@ -745,3 +745,41 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
     expect(actions.requestLeave).not.toHaveBeenCalled();
   });
 });
+
+describe("QuizQuestion — each format looks like itself", () => {
+  it.each([
+    ["multiple_choice", "Multiple choice"],
+    ["short_answer", "Short answer"],
+    ["numeric", "Numeric"],
+    ["symbolic", "Algebra"],
+  ] as const)("tags a %s question with its format", (type, label) => {
+    const options = type === "multiple_choice" ? question(1).options : [];
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options } })] }));
+    expect(screen.getByTestId("quiz-format-tag")).toHaveTextContent(label);
+  });
+
+  it("raises the exponents in an algebra stem", () => {
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type: "symbolic", options: [], question: "Expand (x + 1)^2." } })] }));
+    const stem = document.getElementById("quiz-question-stem")!;
+    expect(stem).toHaveTextContent("Expand (x + 1)2.");
+    expect(stem.querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("marks the verdict card with its outcome, and leaves it bare before one", () => {
+    const view = renderScreen(makeSession());
+    expect(screen.getByTestId("quiz-review-verdict")).not.toHaveAttribute("data-outcome");
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }), item(1), item(2),
+    ] }));
+    expect(screen.getByTestId("quiz-review-verdict")).toHaveAttribute("data-outcome", "correct");
+  });
+
+  it("folds the symbol keys and entry rules away once a written answer is marked", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "symbolic", options: [] }, answerText: "x^2",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "x^2 + 1" } })] }));
+    expect(document.querySelector(".quiz-question__written")).toHaveAttribute("data-marked", "true");
+    expect(screen.getByTestId("quiz-review-verdict").querySelector("sup")).toHaveTextContent("2");
+  });
+});

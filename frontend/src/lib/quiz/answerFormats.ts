@@ -81,7 +81,18 @@ export type ExpressionPart = { text: string; sup: boolean };
  * input's preview renders with `<sup>`.
  */
 export function expressionParts(raw: string): ExpressionPart[] {
-  const pretty = (s: string) => s.replace(/\*/g, "·").replace(/-/g, "−");
+  return superscriptParts(raw, s => s.replace(/\*/g, "·").replace(/-/g, "−"));
+}
+
+/**
+ * Exponents raised and nothing else touched — for a question STEM, where a `-`
+ * may be a hyphen in prose and a `*` emphasis, so only `^n` is read as maths.
+ * `Expand (x + 1)^2` → Expand (x + 1)².
+ */
+export function superscriptParts(
+  raw: string,
+  pretty: (s: string) => string = s => s,
+): ExpressionPart[] {
   const parts: ExpressionPart[] = [];
   const exponent = /\^(\(([^()]*)\)|[+-]?\d+(?:\.\d+)?|[A-Za-z])/g;
   let last = 0;
