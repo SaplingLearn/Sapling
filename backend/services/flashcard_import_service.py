@@ -8,17 +8,22 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
+import socket
 import sqlite3
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TypedDict
 
+import httpcore
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
@@ -180,18 +185,257 @@ _QUIZLET_PAYLOAD_RE = re.compile(
 )
 
 
+class QuizletURLRejected(QuizletBlocked):
+    """Raised when the URL the STUDENT submitted fails the SSRF policy: not
+    http(s), not an allowlisted Quizlet host, a non-default port, embedded
+    credentials, or a host that resolves to a non-public IP. The route maps
+    it to a 400 (the student's input is wrong), unlike the 422 a plain
+    QuizletBlocked gets. A redirect HOP failing the policy is upstream
+    behaviour, not a bad input, so it raises plain QuizletBlocked (422) and
+    the UI offers its Paste-tab fallback."""
+
+
+# The ONLY hosts the server will fetch for a Quizlet import. Quizlet serves
+# sets from the apex and www; country/mobile subdomains are not accepted —
+# a student can paste the canonical quizlet.com link instead.
+_QUIZLET_HOSTS = frozenset({"quizlet.com", "www.quizlet.com"})
+_QUIZLET_MAX_REDIRECTS = 5
+_QUIZLET_TIMEOUT_SECONDS = 15.0
+# getaddrinfo has no timeout of its own; a hung resolver would otherwise pin
+# the request thread for the OS resolver's full retry schedule.
+_QUIZLET_DNS_TIMEOUT_SECONDS = 5.0
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_URL_REJECTED_MSG = "Only https://quizlet.com set links can be imported."
+_REDIRECTED_AWAY_MSG = (
+    "Quizlet redirected away from quizlet.com, so the set could not be "
+    "fetched. Try exporting the set and pasting the text instead."
+)
+_TOO_MANY_REDIRECTS_MSG = (
+    "Quizlet redirected too many times, so the set could not be fetched. "
+    "Try exporting the set and pasting the text instead."
+)
+# NAT64 well-known prefix (RFC 6052): the low 32 bits ARE the IPv4 target.
+_NAT64_WKP = ipaddress.IPv6Network("64:ff9b::/96")
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 transition wrapper actually reaches, if any:
+    IPv4-mapped (``::ffff:a.b.c.d``), NAT64 well-known prefix
+    (``64:ff9b::a.b.c.d`` — what a DNS64 resolver answers on an IPv6-only
+    host) and 6to4 (``2002:AABB:CCDD::``). Teredo (2001::/32) is left to the
+    generic checks, which already refuse it as non-global."""
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip in _NAT64_WKP:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.sixtofour is not None:
+        return ip.sixtofour
+    return None
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True only for a globally routable unicast address.
+
+    ``is_global`` alone is not enough: it is True for multicast (224/4), so
+    every disqualifying property is checked explicitly. An IPv6 wrapper that
+    embeds an IPv4 target (mapped / NAT64 / 6to4) is judged as the IPv4
+    address it reaches — the wrapper prefix itself is ``is_reserved``, which
+    would otherwise refuse every IPv6-only/DNS64 deployment."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None:
+            ip = embedded
+    return ip.is_global and not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _getaddrinfo_bounded(host: str) -> list:
+    """``socket.getaddrinfo`` with a wall-clock bound. The lookup runs on a
+    throwaway worker thread; on timeout the caller stops waiting (the worker
+    finishes or dies on its own — it holds no locks and nothing reads it)."""
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="quizlet-dns")
+    try:
+        future = pool.submit(socket.getaddrinfo, host, 443, type=socket.SOCK_STREAM)
+        try:
+            return future.result(timeout=_QUIZLET_DNS_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            raise QuizletBlocked("Could not reach Quizlet: DNS lookup timed out")
+    finally:
+        pool.shutdown(wait=False)
+
+
+class _QuizletResolver:
+    """Per-scrape DNS: each host is resolved ONCE (bounded), every address
+    must be public, and the answer is cached for the rest of the scrape.
+
+    The same object backs both the pre-fetch URL check and the connection
+    (``_PinnedQuizletBackend``), so the socket can only ever be opened to an
+    address this check approved — a DNS answer that changes between check
+    and connect (rebinding) never reaches a socket."""
+
+    def __init__(self) -> None:
+        self._cache: dict[str, tuple[str, ...]] = {}
+
+    def resolve(self, host: str) -> tuple[str, ...]:
+        cached = self._cache.get(host)
+        if cached is not None:
+            return cached
+        try:
+            infos = _getaddrinfo_bounded(host)
+        except (socket.gaierror, UnicodeError) as e:
+            raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+        addrs: list[str] = []
+        for info in infos:
+            addr = str(info[4][0]).split("%", 1)[0]  # drop an IPv6 zone id
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                raise QuizletURLRejected(_URL_REJECTED_MSG)
+            if not _is_public_ip(ip):
+                logger.warning("quizlet import refused: %s resolved to %s", host, ip)
+                raise QuizletURLRejected(_URL_REJECTED_MSG)
+            if addr not in addrs:
+                addrs.append(addr)
+        if not addrs:
+            raise QuizletBlocked("Could not reach Quizlet: no addresses")
+        self._cache[host] = tuple(addrs)
+        return self._cache[host]
+
+
+class _PinnedQuizletBackend(httpcore.SyncBackend):
+    """httpcore network backend that connects ONLY to addresses the scrape's
+    resolver approved, and only for an allowlisted host.
+
+    httpcore passes the URL's hostname here and later uses that same
+    hostname for TLS SNI + certificate verification, and httpx sends it as
+    the Host header — so connecting to the pinned IP changes nothing about
+    the request except WHICH socket it rides."""
+
+    def __init__(self, resolver: _QuizletResolver) -> None:
+        self._resolver = resolver
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        if host.lower().rstrip(".") not in _QUIZLET_HOSTS or port != 443:
+            raise QuizletBlocked(_REDIRECTED_AWAY_MSG)
+        try:
+            addrs = self._resolver.resolve(host)
+        except QuizletURLRejected:
+            # Every URL is validated (and so resolved + cached) before it is
+            # fetched; reaching here means the pre-check was bypassed.
+            raise QuizletBlocked(_REDIRECTED_AWAY_MSG) from None
+        last_exc: Exception | None = None
+        for addr in addrs:
+            try:
+                return super().connect_tcp(
+                    addr,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except httpcore.ConnectError as e:
+                last_exc = e
+        assert last_exc is not None  # addrs is never empty
+        raise last_exc
+
+
+class _PinnedQuizletTransport(httpx.HTTPTransport):
+    """An HTTPTransport whose connection pool dials through
+    ``_PinnedQuizletBackend``. httpx (0.28, pinned in requirements) does not
+    expose ``network_backend``, so the pool is rebuilt here with httpx's
+    default TLS context (certifi, or SSL_CERT_FILE — the CA bundle the old
+    ``httpx.get`` used; only PROXY env is ignored, via the client's
+    ``trust_env=False``). ``test_pinned_transport_dials_only_the_checked_ip`` drives a
+    real request through it, so an httpx upgrade that changes this seam
+    fails loudly instead of silently un-pinning."""
+
+    def __init__(self, resolver: _QuizletResolver) -> None:
+        super().__init__(trust_env=False)
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(),
+            network_backend=_PinnedQuizletBackend(resolver),
+        )
+
+
+def _quizlet_client(resolver: _QuizletResolver) -> httpx.Client:
+    """The ONE client a scrape reuses across hops. ``trust_env=False`` so
+    HTTP(S)_PROXY / ALL_PROXY env vars can never route the fetch through a
+    proxy (which would dial the proxy, not the checked address)."""
+    return httpx.Client(
+        transport=_PinnedQuizletTransport(resolver),
+        trust_env=False,
+        timeout=_QUIZLET_TIMEOUT_SECONDS,
+        headers={"User-Agent": "Mozilla/5.0 (Sapling flashcard import)"},
+        follow_redirects=False,
+    )
+
+
+def _validate_quizlet_url(
+    url: str | httpx.URL, resolver: _QuizletResolver, *, submitted: bool = False
+) -> httpx.URL:
+    """Return the parsed URL if it passes the SSRF policy, else raise
+    QuizletURLRejected. Applied to the submitted URL AND every redirect hop.
+
+    Only the SUBMITTED URL may be upgraded from ``http://`` to ``https://``
+    (students paste http links; Quizlet would 301 them to https anyway). A
+    redirect hop that downgrades to http is refused."""
+    try:
+        parsed = url if isinstance(url, httpx.URL) else httpx.URL(str(url).strip())
+    except (httpx.InvalidURL, TypeError, ValueError):
+        raise QuizletURLRejected(_URL_REJECTED_MSG)
+    if submitted and parsed.scheme == "http" and parsed.port in (None, 80):
+        parsed = parsed.copy_with(scheme="https", port=None)
+    host = (parsed.host or "").lower().rstrip(".")
+    if (
+        parsed.scheme != "https"
+        or host not in _QUIZLET_HOSTS
+        or parsed.port not in (None, 443)
+        or parsed.userinfo
+    ):
+        raise QuizletURLRejected(_URL_REJECTED_MSG)
+    resolver.resolve(host)
+    return parsed
+
+
 def scrape_quizlet_url(url: str) -> list[Card]:
     """Best-effort fetch of a public Quizlet set. Raises QuizletBlocked on
-    bot wall, login redirect, or unparseable payload."""
-    try:
-        resp = httpx.get(
-            url,
-            timeout=15.0,
-            headers={"User-Agent": "Mozilla/5.0 (Sapling flashcard import)"},
-            follow_redirects=True,
-        )
-    except httpx.HTTPError as e:
-        raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+    bot wall, login redirect, unparseable payload, or a redirect that leaves
+    the policy (off-host, too many hops), and QuizletURLRejected (a
+    QuizletBlocked subclass) when the SUBMITTED URL is not a Quizlet URL
+    resolving to a public address.
+
+    Redirects are followed by hand (never ``follow_redirects=True``) so each
+    hop is re-validated before it is fetched — the input is user-supplied, so
+    an unchecked hop is a server-side request forgery. One client (one
+    resolver cache, one pinned pool) serves every hop."""
+    resolver = _QuizletResolver()
+    current = _validate_quizlet_url(url, resolver, submitted=True)
+    with _quizlet_client(resolver) as client:
+        for _ in range(_QUIZLET_MAX_REDIRECTS + 1):
+            try:
+                resp = client.get(current)
+            except httpx.HTTPError as e:
+                raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+            if resp.status_code not in _REDIRECT_STATUSES:
+                break
+            location = resp.headers.get("location")
+            if not location:
+                raise QuizletBlocked(f"Quizlet returned status {resp.status_code}")
+            try:
+                current = _validate_quizlet_url(current.join(location), resolver)
+            except QuizletURLRejected:
+                logger.warning("quizlet import: redirect refused (%s)", location[:200])
+                raise QuizletBlocked(_REDIRECTED_AWAY_MSG) from None
+            except (httpx.InvalidURL, TypeError, ValueError):
+                raise QuizletBlocked(_REDIRECTED_AWAY_MSG) from None
+        else:
+            raise QuizletBlocked(_TOO_MANY_REDIRECTS_MSG)
 
     if resp.status_code != 200:
         raise QuizletBlocked(f"Quizlet returned status {resp.status_code}")

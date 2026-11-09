@@ -119,6 +119,45 @@ class TestImportParse:
         assert r.status_code == 422
         assert "blocked" in r.json()["detail"].lower()
 
+    def test_url_rejected_returns_400(self):
+        from services.flashcard_import_service import QuizletURLRejected
+        body = {"user_id": "u1", "source": "url", "payload": "http://169.254.169.254/"}
+        with _mock_self(), patch(
+            "routes.flashcards.scrape_quizlet_url",
+            side_effect=QuizletURLRejected("Only https://quizlet.com set links can be imported."),
+        ):
+            r = client.post("/api/flashcards/import/parse", json=body)
+        assert r.status_code == 400
+        assert "quizlet.com" in r.json()["detail"]
+
+    def test_url_ssrf_target_rejected_end_to_end(self):
+        # No scraper patch: the real policy runs and refuses before any fetch.
+        body = {"user_id": "u1", "source": "url", "payload": "http://169.254.169.254/latest/meta-data/"}
+        with _mock_self(), patch("services.flashcard_import_service._quizlet_client") as g:
+            r = client.post("/api/flashcards/import/parse", json=body)
+        assert r.status_code == 400
+        g.assert_not_called()
+
+    def test_url_redirected_away_returns_422_not_400(self):
+        # A redirect leaving quizlet.com is upstream behaviour, not a bad
+        # student URL: 422 so the URL tab offers its Paste fallback.
+        import httpx
+
+        def handler(request):
+            return httpx.Response(302, headers={"location": "http://169.254.169.254/"})
+
+        body = {"user_id": "u1", "source": "url", "payload": "https://quizlet.com/123/abc"}
+        with _mock_self(), patch(
+            "services.flashcard_import_service.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("104.16.1.1", 443))],
+        ), patch(
+            "services.flashcard_import_service._quizlet_client",
+            side_effect=lambda resolver: httpx.Client(transport=httpx.MockTransport(handler)),
+        ):
+            r = client.post("/api/flashcards/import/parse", json=body)
+        assert r.status_code == 422
+        assert "redirected away" in r.json()["detail"]
+
     def test_parse_ocr_route(self):
         body = {
             "user_id": "u1",
