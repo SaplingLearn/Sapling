@@ -27,15 +27,20 @@ const REAL_TREE_TIMEOUT_MS = 180_000;
 
 type Entries = Record<string, number>;
 
-function warnSlack(slack: string[]): void {
+function slackMessage(slack: string[]): string {
+  return [
+    "complexity baseline has slack:",
+    ...slack,
+    "Lock in the improvement: run `npm run complexity:shrink` and commit complexity-baseline.json.",
+  ].join("\n  ");
+}
+
+// Slack only warns: on stderr, and as a test annotation (which the default
+// reporter prints and GitHub Actions shows as a warning on the run).
+async function warnSlack(slack: string[], annotate?: (message: string, type: string) => Promise<unknown>) {
   if (slack.length === 0) return;
-  console.warn(
-    [
-      "complexity baseline has slack:",
-      ...slack,
-      "Lock in the improvement: run `npm run complexity:shrink` and commit complexity-baseline.json.",
-    ].join("\n  "),
-  );
+  console.warn(slackMessage(slack));
+  await annotate?.(slackMessage(slack), "warning");
 }
 
 describe("the frontend tree against complexity-baseline.json", () => {
@@ -58,11 +63,11 @@ describe("the frontend tree against complexity-baseline.json", () => {
     ).toEqual([]);
   });
 
-  it("only warns about slack", () => {
+  it("only warns about slack", async ({ annotate }) => {
     // A function that got simpler should have its ceiling lowered, or the
     // headroom becomes room for the next regression; failing on it would let
     // two independently-green PRs leave main red.
-    warnSlack(ratchet.shrinkable(baseline, current));
+    await warnSlack(ratchet.shrinkable(baseline, current), annotate);
   });
 
   it("uses the Phase 4 limit", () => {
@@ -135,13 +140,13 @@ describe("ratchet rules", () => {
     expect(ratchet.compare({ a: 30, b: 30 }, { a: 27 }, 25)).toEqual([]);
   });
 
-  it("reports slack without failing", () => {
+  it("reports slack without failing", async () => {
     expect(ratchet.shrinkable({ a: 30, b: 30, c: 30 }, { a: 27, c: 30 })).toEqual([
       "a: now 27, baselined at 30, lower it",
       "b: back under the limit, delete its entry",
     ]);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    warnSlack(ratchet.shrinkable({ a: 30 }, { a: 27 }));
+    await warnSlack(ratchet.shrinkable({ a: 30 }, { a: 27 }));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("lower it"));
     warn.mockRestore();
   });
