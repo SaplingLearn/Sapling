@@ -40,8 +40,8 @@ def _do_social_cache_write():
 
 
 def _do_learn_message_write():
-    from routes.learn import save_message
-    save_message("sess-1", "user", "hello")
+    from routes.learn import save_message_sync
+    save_message_sync("sess-1", "user", "hello")
 
 
 @pytest.mark.parametrize(

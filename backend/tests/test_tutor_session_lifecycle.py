@@ -17,6 +17,7 @@ Pins the state machine routes/learn.py + services/tutor_sessions.py enforce:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +29,11 @@ from main import app
 from services import tutor_sessions
 from services.encryption import encrypt_if_present, encrypt_json
 from tests.agent_run_fakes import run_result
+from tests.db_fakes import with_async_twins
+
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 
 client = TestClient(app)
 
@@ -87,7 +93,7 @@ def h():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A tutor reply."))
     with (
-        patch("routes.learn.table", side_effect=lambda n: tables(n)),
+        patch("routes.learn.table", side_effect=with_async_twins(lambda n: tables(n))),
         patch("routes.learn.agent_for_mode", return_value=agent),
         patch("routes.learn.get_display_name", return_value="Life Student"),
         patch("routes.learn.events_service.log_event") as log_event,
@@ -272,14 +278,14 @@ def test_turn_racing_a_discard_does_not_write_for_a_missing_row(h, reason, statu
         "user_id": USER, "mode": "socratic", "topic": "T", "offering_id": None,
         "assistant_reply": "Hi!", "graph_update": {},
     })
-    real_owner_check = learn.require_session_owner
+    real_owner_check = learn.arequire_session_owner
 
-    def owner_check_then_discard(session_id, user_id, **kw):
-        real_owner_check(session_id, user_id, **kw)  # passes: still pending
+    async def owner_check_then_discard(session_id, user_id, **kw):
+        await real_owner_check(session_id, user_id, **kw)  # passes: still pending
         with tutor_sessions.materialization_lock(session_id):
             tutor_sessions.discard_pending(session_id, user_id=user_id, reason=reason)
 
-    with patch("routes.learn.require_session_owner", side_effect=owner_check_then_discard):
+    with patch("routes.learn.arequire_session_owner", side_effect=owner_check_then_discard):
         r = client.post("/api/learn/chat", json={
             "session_id": SESSION, "user_id": USER, "message": "hi",
         })
@@ -293,7 +299,7 @@ def test_delete_leaves_a_tombstone_that_stops_an_inflight_write(h):
     r = client.delete(f"/api/learn/sessions/{SESSION}", params={"user_id": USER})
     assert r.status_code == 200
     with pytest.raises(Exception) as exc:
-        learn.save_message(SESSION, "assistant", "late reply")
+        asyncio.run(learn.save_message(SESSION, "assistant", "late reply"))
     assert getattr(exc.value, "status_code", None) == 404
 
 
@@ -366,7 +372,7 @@ def test_retry_history_skips_the_orphan_user_row_of_its_own_turn(h):
         {"id": "m0", "role": "assistant", "content": encrypt_if_present("Earlier.")},
         {"id": user_id, "role": "user", "content": encrypt_if_present("hi")},
     ]
-    history = learn._load_message_history(SESSION, exclude_id=user_id)
+    history = asyncio.run(learn._load_message_history(SESSION, exclude_id=user_id))
     assert len(history) == 1
 
 

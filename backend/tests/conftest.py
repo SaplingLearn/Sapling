@@ -134,6 +134,9 @@ def _db_user_scope_off(request, monkeypatch):
     if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", "off")
+    # #117: likewise for `stateless_tutor_sessions`, read on every tutor
+    # session lookup; tests/test_tutor_sessions_store.py turns it on per test.
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
 
 
 @pytest.fixture(autouse=True)
