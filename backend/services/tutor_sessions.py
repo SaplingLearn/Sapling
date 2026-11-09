@@ -485,6 +485,29 @@ async def arequire_owned_open(session_id: str, user_id: str) -> None:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     _raise_unless_open(rows)
 
+
+async def aopen_stored(session_id: str, user_id: str) -> None:
+    """A turn's entry check with the flag on, for a session not pending in
+    this process. The ``sessions`` row first (the turn needs it anyway): a
+    live session — every turn after the first — answers in that one read,
+    404 unless it is ``user_id``'s, 409 SESSION_ENDED once ended. Only a
+    session with no row yet costs the ``materialize_tutor_session`` call,
+    which answers its tombstones (ended 409 / deleted 404) or writes it; a
+    turn that lost the materialisation race re-reads the row the winner
+    wrote. A discard landing after this check is caught by the turn's write
+    (``routes/learn.py::save_message``)."""
+    rows = await table("sessions").aselect(
+        "user_id,ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if rows:
+        if not _row_owned_by(rows, user_id):
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+        _raise_unless_open(rows)
+        return
+    if not await amaterialize_stored(session_id, user_id):
+        await arequire_owned_open(session_id, user_id)
+
+
 # Per-session locks serialising every pending -> materialised/discarded
 # transition. PENDING_SESSIONS is a plain module dict, so it is per-process:
 # a pending session is only ever visible to the worker that started it, and a

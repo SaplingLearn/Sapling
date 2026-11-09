@@ -38,9 +38,8 @@ from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     aget_pending,
-    amaterialize_stored,
+    aopen_stored,
     araise_if_discarded,
-    arequire_owned_open,
     arequire_session_open,
     arequire_session_owner,
     astash_pending,
@@ -550,7 +549,7 @@ def _message_row(session_id: str, role: str, content: str, graph_update, message
 
 async def save_message(
     session_id: str, role: str, content: str, graph_update: dict = None,
-    *, message_id: str | None = None,
+    *, message_id: str | None = None, store_check: bool = True,
 ):
     """Write one transcript row.
 
@@ -560,8 +559,13 @@ async def save_message(
     ``message_id`` (#761): a turn-derived id (``_turn_message_id``) makes the
     write idempotent — a retried turn re-writes the same id and the duplicate
     is ignored, so a retry after a partial persist never duplicates the row.
+
+    ``store_check=False``: this turn's earlier write read the store; memory only.
     """
-    await araise_if_discarded(session_id)
+    if store_check:
+        await araise_if_discarded(session_id)
+    else:
+        raise_if_discarded_here(session_id)
     row = _message_row(session_id, role, content, graph_update, message_id)
     if message_id:
         await table("messages").aupsert(row, on_conflict="id", ignore_duplicates=True)
@@ -764,15 +768,12 @@ async def _open_turn_session(session_id: str, user_id: str) -> None:
     test_learn_session_ownership.py).
 
     With `stateless_tutor_sessions` on (#117) a session not pending in THIS
-    process goes to the table: one atomic call answers tombstones and
-    materialises a pending session, one `sessions` read the rest. This
+    process goes to `aopen_stored` (one `sessions` read when live). This
     process's own tombstones are checked first on both paths (no I/O).
     """
     raise_if_discarded_here(session_id, user_id)
     if session_id not in PENDING_SESSIONS and await astored():
-        if not await amaterialize_stored(session_id, user_id):
-            await arequire_owned_open(session_id, user_id)
-        return
+        return await aopen_stored(session_id, user_id)
     await araise_if_discarded(session_id, user_id)
     await arequire_session_owner(session_id, user_id)
     if await _consume_pending_off_loop(session_id, user_id):
@@ -1231,7 +1232,7 @@ async def _save_turn_rows(
     await save_message(body.session_id, "user", body.message, message_id=user_row_id)
     try:
         await save_message(body.session_id, "assistant", reply, graph_update,
-                           message_id=assistant_row_id)
+                           message_id=assistant_row_id, store_check=False)
     except Exception as exc:
         if not body.turn_id:
             exc.sapling_wrote = True

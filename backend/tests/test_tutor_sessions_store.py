@@ -59,6 +59,7 @@ class _FakeDB:
         }
         self.rpcs: list[str] = []
         self.touched: set[str] = set()
+        self.reads: list[str] = []
 
     # ── table() ──
     def table(self, name):
@@ -67,6 +68,7 @@ class _FakeDB:
         m = MagicMock(name=f"table({name})")
 
         def select(_cols="*", filters=None, limit=None, **_k):
+            self.reads.append(name)
             out = [dict(r) for r in rows if _match(r, filters)]
             return out[:limit] if limit else out
 
@@ -339,6 +341,50 @@ def test_a_memory_tombstone_answers_409_with_the_flag_on(db, monkeypatch):
     assert r.status_code == 409, r.text
     assert r.json()["error"]["code"] == ts.SESSION_ENDED_CODE
     assert "materialize_tutor_session" not in db.rpcs, "answered from memory, no I/O"
+
+
+def _live_session(db) -> str:
+    sid = _start()
+    _replica_hop()
+    assert _chat(sid).status_code == 200  # the first turn materialises it
+    db.rpcs.clear()
+    db.reads.clear()
+    _replica_hop()
+    return sid
+
+
+def test_a_turn_on_a_live_stored_session_skips_the_materialise_call(db):
+    """#117 review: every turn used to call materialize_tutor_session first
+    and read the tombstone table once per written row. A live session now
+    answers from its sessions row, and the turn reads the store once."""
+    sid = _live_session(db)
+    assert _chat(sid).status_code == 200
+    assert "materialize_tutor_session" not in db.rpcs
+    assert db.reads.count("sessions") >= 1
+    assert db.reads.count("tutor_pending_sessions") == 1
+
+
+def test_a_live_session_ended_on_the_other_replica_still_refuses(db):
+    sid = _live_session(db)
+    r = client.post("/api/learn/end-session", json={"session_id": sid, "user_id": USER})
+    assert r.status_code == 200
+    _replica_hop()
+    r = _chat(sid)
+    assert r.status_code == 409 and r.json()["error"]["code"] == ts.SESSION_ENDED_CODE
+    assert _chat(sid, uid=OTHER).status_code == 404
+
+
+def test_a_delete_tombstone_written_mid_turn_still_stops_the_write(db):
+    """The delete's tombstone lands before its row delete: a turn that saw the
+    row is refused at its write (the one store read), as before."""
+    sid = _live_session(db)
+    db.rows["tutor_pending_sessions"].append({
+        "session_id": sid, "user_id": USER, "state": "deleted",
+        "discarded_at": _now().isoformat(), "stashed_at": _now().isoformat(),
+    })
+    before = len(db.rows["messages"])
+    assert _chat(sid).status_code == 404
+    assert len(db.rows["messages"]) == before
 
 
 def test_flag_off_never_touches_the_store(db, monkeypatch):
