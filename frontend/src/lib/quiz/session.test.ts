@@ -53,20 +53,6 @@ describe("saveSession / loadSession", () => {
     expect(loadSession()).toEqual(s);
   });
 
-  it("round-trips each question's stated confidence (learning-loop spec §13 A132)", () => {
-    const base = session("active");
-    const question = { id: 1, question: "Q1?", options: [{ label: "A", text: "a" }], difficulty: "medium" };
-    const s: QuizSession = {
-      ...base,
-      items: [
-        { index: 0, question, selectedIndex: null, verdict: null, flagged: false, confidence: "fairly_sure" },
-        { index: 1, question: { ...question, id: 2 }, selectedIndex: null, verdict: null, flagged: false, confidence: null },
-      ],
-    };
-    persistSession(s);
-    expect(loadSession()?.items.map(i => i.confidence)).toEqual(["fairly_sure", null]);
-  });
-
   it("returns null when nothing is stored", () => {
     expect(loadSession()).toBeNull();
   });

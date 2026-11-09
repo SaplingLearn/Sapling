@@ -37,8 +37,7 @@ import { ApiError } from "@/lib/api";
 const FINAL_DRAFT = {
   first_name: "Ada", last_name: "Lovelace", school: "Boston University", year: "junior",
   majors: ["Math"], minors: [], course_ids: ["c1"], course_cache: [],
-  // PKG-14b: the learning-style step is gone, so the final step is index 4
-  step: 4,
+  learning_style: "visual", step: 5,
 };
 
 describe("#757 onboarding draft is per account", () => {
@@ -65,7 +64,7 @@ describe("#757 onboarding draft is per account", () => {
     localStorage.setItem(onboardingDraftKey("user_a"), JSON.stringify(FINAL_DRAFT));
     render(<Onboarding />);
     await waitFor(() => expect(screen.getByTestId("onboarding-continue").textContent).toBe("Enter Sapling →"));
-    expect(JSON.parse(localStorage.getItem(onboardingDraftKey("user_a"))!).step).toBe(4);
+    expect(JSON.parse(localStorage.getItem(onboardingDraftKey("user_a"))!).step).toBe(5);
   });
 
   it("an already-onboarded account (409) goes to the dashboard and drops its draft", async () => {

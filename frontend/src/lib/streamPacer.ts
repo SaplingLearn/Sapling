@@ -31,9 +31,6 @@ export interface StreamPacer {
   drain(): Promise<void>;
   /** Release everything queued right now, synchronously. */
   flush(): void;
-  /** Drop everything queued WITHOUT releasing it (a retracted stream: the
-   *  withdrawn text must never be shown). Pending `drain()`s resolve. */
-  discard(): void;
 }
 
 export function createStreamPacer(
@@ -92,12 +89,6 @@ export function createStreamPacer(
       if (timer !== null) clearTimeout(timer);
       timer = null;
       release(backlog.length);
-      settle();
-    },
-    discard() {
-      if (timer !== null) clearTimeout(timer);
-      timer = null;
-      backlog = "";
       settle();
     },
   };

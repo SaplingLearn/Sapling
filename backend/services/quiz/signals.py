@@ -78,8 +78,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
 from db.connection import like_literal, pg_quote_value, table
-from learning.void_store import voided_event_ids
-from services.session_modes import NOT_REVIEW
 from services.timestamps import calendar_days_since
 from services.tool_signals import Expect, report_empty_result
 
@@ -276,15 +274,9 @@ def _velocity(concept_node_id: str) -> float | None:
     try:
         from services.graph_service import _compute_velocity
 
-        # spec §13 A123: a void row (graded against an item staff retired) is
-        # no part of the velocity — left out before the cap, as get_graph does
-        voided = voided_event_ids(node_id=concept_node_id)
-        filters = {"node_id": f"eq.{concept_node_id}"}
-        if voided:
-            filters["id"] = f"not.in.({','.join(pg_quote_value(v) for v in sorted(voided))})"
         rows = table("node_mastery_events").select(
             "delta,created_at",
-            filters=filters,
+            filters={"node_id": f"eq.{concept_node_id}"},
             # desc + limit so the cap keeps the NEWEST events; asc + limit
             # would keep the oldest, which is the opposite of what a 14-day
             # window wants.
@@ -546,7 +538,6 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(scope.offering_ids)})",
-                **NOT_REVIEW,  # learning-loop review sessions are not tutoring
                 # Started recently OR never finished. `started_at` alone
                 # excludes the dashboard's first-class "Where you left off"
                 # resume flow: a session is not auto-ended and has no age

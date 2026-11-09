@@ -11,13 +11,6 @@ Tools (wire names — what the model sees):
     prompt-facing name via Tool(..., name=...) — #135)
   - apply_graph_update_tool (lets the agent mark new concepts while
     answering, the same way the course tutor does)
-
-Academic integrity (spec §13 A125): the prompt tells the model never to answer,
-solve or confirm a graded check question — defence in depth only. The
-guarantee is structural and lives in the route (routes/notes.py, through
-services/integrity_guard.py): a message or note quoting one of the student's
-posed checks never reaches this agent, and a reply stating one's key is never
-served.
 """
 from __future__ import annotations
 
@@ -44,15 +37,6 @@ _PROMPT = (
     # #150: this agent's tools return student-authored note/document text.
     + INJECTION_GUARD_PROMPT
     + "\n\n"
-    # spec §13 A125: defence in depth; the route's integrity guard is the guarantee.
-    "ACADEMIC INTEGRITY (non-negotiable): Sapling's learning sessions pose "
-    "graded check questions. When the student asks you to answer, solve or "
-    "check their answer to a quiz, check, test or homework question — pasted "
-    "into the chat or written in the note — do not give its answer, a worked "
-    "solution, or a yes/no on their answer. Say you can't answer graded "
-    "questions here and point them to that question's card in their learning "
-    "session, whose hints go one step at a time. You may explain the "
-    "underlying idea in general terms, without solving that question.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Keep replies short — "
     "this is a sidecar chat, not a tutoring session."

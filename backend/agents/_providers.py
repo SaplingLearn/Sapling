@@ -61,26 +61,8 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe", "concept_edges", "concept_prune",
     "ocr_vision",
+    "decision",
     "topic_checklist",
-    # Learning loop series (spec §2 slots): check-item generation (PKG-04).
-    "check_items",
-    # The drafted items' alignment check: rubric vs question, concept tag (§13 A119).
-    "check_items_verify",
-    # The drafted items' key check: a blind independent solve, and the
-    # free-text key match on the same slot (§13 A124).
-    "check_items_solve",
-    # The quiz's item gates (§13 A145): the A119 concept check, the A124 blind
-    # solve and key match, run on generated quiz questions on a model other
-    # than the quiz writer's.
-    "quiz_check",
-    # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
-    "grader", "grader_second",
-    # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
-    "decision", "learning_decision",
-    # The loop tutor's three tier slots — ONE agent, slot chosen per run (PKG-07; spec §3.5, A15).
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
-    # The end-of-session close: summary, self-evaluation, if-then plan (PKG-09; spec §13 A12).
-    "session_close",
 ]
 
 
@@ -130,66 +112,6 @@ _DEFAULTS: dict[AgentTask, str] = {
     # backend (the variant name predates the provider swap) and the fallback
     # when Jev is unavailable.
     "decision": "claude-haiku-5-5",
-    # ── Learning loop slots (spec §2/§3.5) ──────────────────────────────
-    # These stay on Gemini until the loop's own Claude eval pass: their
-    # per-run settings are Gemini-shaped (thinking budgets, the Flex tier on
-    # check_items) and their quality gates (grader agreement, served-turn
-    # ceiling compliance, no-reveal) were recorded on Gemini. ADR 0030's
-    # provider inference keeps them working unchanged; moving a slot is a
-    # default change plus an `_ANTHROPIC_EFFORT` entry once measured.
-    #
-    # Ingest-time check-item drafting (PKG-04): single-shot structured
-    # generation off the request path; SAPLING_MODEL_CHECK_ITEMS overrides.
-    "check_items": "gemini-2.5-flash-lite",
-    # The drafted items' alignment check (spec §13 A119): per item, does the
-    # question ask for each rubric criterion, and which listed concept does it
-    # test. On Claude from the start, and NOT pending: the pending set guards
-    # quality gates recorded on Gemini, and this slot was born after ADR 0030
-    # with no gate on either provider — its baseline is recorded on Claude.
-    # A different model family from the check_items default, so the check is
-    # not the drafter grading itself.
-    "check_items_verify": "claude-haiku-5-5",
-    # The drafted items' key check (spec §13 A124): a blind independent solve
-    # of each item (agents/check_items_solve.py) and, for a free-text pair code
-    # cannot settle, the key match (agents/check_items_key_match.py). On Claude,
-    # NOT in the pending set, for A119's reason — the set guards quality gates
-    # recorded on Gemini, and this slot was born after ADR 0030 with no gate on
-    # either provider, so its baseline is recorded on Claude — and for one of
-    # its own: the solve must come from a different model family than the
-    # gemini-2.5-flash-lite drafter, or a correlated solver would agree with
-    # its own family's mistakes and a wrong key would pass as "verified". A
-    # Gemini default would have to join the pending set with nothing pending.
-    # When check_items moves to a claude-* model (A111's runbook), move this
-    # slot off that model too, for the same reason.
-    "check_items_solve": "claude-haiku-5-5",
-    # The quiz's item gates (spec §13 A145): the A119 concept check, the A124
-    # blind solve and the key match, run by their own agents on generated quiz
-    # questions with this slot's model. The solve must come from a model other
-    # than the quiz writer's (A124: a solver sharing the writer's mistakes
-    # passes a wrong key as verified), and the quiz writes on Haiku, so the
-    # checks run on the other Claude model. The gate itself refuses to verify
-    # a key when both slots resolve to one model
-    # (services/quiz_learning.py::checks_independent). Pointing it at a
-    # gemini-* model (SAPLING_MODEL_QUIZ_CHECK) keeps it independent at a
-    # fraction of the cost: the owner's call (the cost projection's "Quiz item
-    # gates" section).
-    "quiz_check": "claude-sonnet-5-5",
-    # The rubric grader (PKG-05): short per-item binary judgments (spec §2).
-    "grader": "gemini-2.5-flash-lite",
-    # One second opinion on a DIFFERENT model, same agent and prompt (spec
-    # §3.5, A22); thinking is pinned off per run in agents/grader.py.
-    "grader_second": "gemini-2.5-flash",
-    # The loop's own closed judgments (ADR 0032), separate from the
-    # observe-only `decision` seam above.
-    "learning_decision": "gemini-2.5-flash-lite",
-    # Loop tutor tier slots (PKG-07, spec §3.5, A15): ONE loop_tutor_agent;
-    # routes/learn_loop.py picks the slot per run from learning.policy.model_tier
-    # and never reads model_pref, so these defaults ARE the routing.
-    "loop_tutor_lite": "gemini-2.5-flash-lite",
-    "loop_tutor": "gemini-2.5-flash",
-    "loop_tutor_deep": "gemini-2.5-pro",
-    # Session close (PKG-09): single-shot, tool-less, structured.
-    "session_close": "gemini-2.5-flash-lite",
 }
 
 
@@ -202,17 +124,7 @@ _DEFAULTS: dict[AgentTask, str] = {
 # and a slot pointed back at Gemini (SAPLING_MODEL_<TASK>=gemini-*) falls back
 # to its Claude default. `SAPLING_MODEL_FALLBACK_<TASK>` overrides the name,
 # the same ADR-0008 tuning knob the primary has; the flag still gates.
-#
-# Learning-loop slots: a slot still on its Gemini default (the pending set)
-# has no Claude default, so it falls back to nothing; its entry is the Gemini
-# model a Claude flip falls back to, the one its quality gates were recorded
-# on. The two key/alignment checks (A119 check_items_verify, A124
-# check_items_solve) have NO fallback (None): they must come from a different
-# model family than the gemini-* drafter, or a correlated check would pass the
-# drafter's own mistakes, and an unavailable check already fails closed
-# (the item is held), which is the safe outage behaviour. The quiz's
-# `quiz_check` (A145) has none for the same reason.
-_GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
+_GEMINI_FALLBACKS: dict[AgentTask, str] = {
     "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
@@ -234,22 +146,6 @@ _GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
     "concept_prune": "gemini-2.5-flash",
     "ocr_vision": "gemini-2.5-flash",
     "decision": "gemini-2.5-flash-lite",
-    # Learning loop (see above): each pending slot's Gemini default.
-    "check_items": "gemini-2.5-flash-lite",
-    "check_items_verify": None,
-    "check_items_solve": None,
-    "grader": "gemini-2.5-flash-lite",
-    "grader_second": "gemini-2.5-flash",
-    "learning_decision": "gemini-2.5-flash-lite",
-    "loop_tutor_lite": "gemini-2.5-flash-lite",
-    "loop_tutor": "gemini-2.5-flash",
-    "loop_tutor_deep": "gemini-2.5-pro",
-    "session_close": "gemini-2.5-flash-lite",
-    # The quiz's item gates (A145) check on a model other than the quiz
-    # writer's (services/quiz_learning.py::checks_independent compares the
-    # SLOTS' models, not a fallback's), and an unavailable check is no
-    # evidence: no fallback, like the loop's own two checks above.
-    "quiz_check": None,
 }
 
 # Per-request timeout, seconds. On a plain request it is the TOTAL deadline
@@ -288,30 +184,6 @@ def timeout_for(task: AgentTask | None) -> float:
     if task is None:
         return _PROBE_TIMEOUT_S
     return _SLOT_TIMEOUT_S.get(task, _DEFAULT_TIMEOUT_S)
-
-
-def _settings_timeout_s(model_settings: Any) -> float | None:
-    """The HTTP timeout an agent or run set for itself, in seconds (a number,
-    or an httpx.Timeout's longest phase), or None when it set none."""
-    raw = model_settings.get("timeout") if isinstance(model_settings, dict) else None
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-        return float(raw)
-    if isinstance(raw, httpx.Timeout):
-        phases = [v for v in (raw.connect, raw.read, raw.write, raw.pool) if v is not None]
-        return float(max(phases)) if phases else None
-    return None
-
-
-def deadline_for(task: AgentTask | None, model_settings: Any = None) -> float:
-    """The per-attempt bound `call_with_retries` enforces: the slot's timeout,
-    or a LONGER one the agent or run set for itself (the learning loop's Flex
-    drafting waits up to FLEX_TIMEOUT_S for the queued tier), so the run's own
-    HTTP timeout can still fire first as the slack intends. Never shorter than
-    the slot's: a run that pins a short timeout (ocr_vision) keeps the slot's
-    deadline."""
-    own = _settings_timeout_s(model_settings)
-    slot = timeout_for(task)
-    return max(slot, own) if own is not None else slot
 
 
 def fallback_model_name_for(task: AgentTask, primary_name: str) -> str | None:
@@ -381,105 +253,7 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "concept_prune": "medium",
     "ocr_vision": "medium",
     "decision": "low",
-    # Learning-loop slots. They default to Gemini until their Claude eval pass
-    # (`LOOP_SLOTS_PENDING_CLAUDE_EVAL` below); these are the levels an env flip
-    # to a claude-* model runs at, chosen by ADR 0030's mapping: the slots that
-    # ran on Flash-Lite (no thinking) → `low`, full Flash → `medium`, Pro → `high`.
-    # check_items authors the assessment items themselves, so it takes the
-    # quality-side level despite its Flash-Lite origin.
-    "check_items": "medium",
-    # A119: closed yes/no judgments per criterion and a pick from a listed set —
-    # the grader's and the decision seam's kind of work, so their level.
-    "check_items_verify": "low",
-    # A124: the solve works each item out (a computation, an application, a
-    # transfer question at difficulty 3) — the item author's kind of work, so
-    # check_items' level; the key match rides the slot.
-    "check_items_solve": "medium",
-    # A145 †: the quiz checks on the step-up model, at its lowest effort: the
-    # questions are single-concept practice items, and Sonnet's thinking is
-    # billed at $10/MTok. Measured with the live smoke before the flag is on.
-    "quiz_check": "low",
-    "grader": "low",
-    "grader_second": "medium",
-    "learning_decision": "low",
-    "loop_tutor_lite": "low",
-    "loop_tutor": "medium",
-    "loop_tutor_deep": "high",
-    "session_close": "low",
 }
-
-#: Learning-loop slots that still DEFAULT to Gemini (ADR 0030's one sanctioned
-#: exception, pinned by tests/test_anthropic_provider.py). Their quality gates —
-#: grader rubric agreement, served-turn ceiling compliance and no-reveal, check-
-#: item validity — were recorded on Gemini, and a grader verdict is learning
-#: evidence: no default moves to Claude before its eval dataset is re-recorded
-#: live against Claude and passes its baselines. Remove a slot from this set in
-#: the same change that flips its `_DEFAULTS` entry.
-LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset({
-    "check_items", "grader", "grader_second", "learning_decision",
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
-})
-
-
-# ── The evidence-slot guard (spec §13 A128) ──────────────────────────────
-#
-# The slots whose output IS learning evidence or what evidence is graded
-# against — the items and their keys (check_items, its alignment check and
-# its blind key solve), the grader and its second opinion, the loop's typed
-# decisions, the tutor tiers whose turns the gates were measured on, and the
-# session close. Their quality gates were recorded on specific models (A111,
-# A119, A124); an env flip (`SAPLING_MODEL_<SLOT>`) moves one with no code
-# change, and nothing said so at runtime — `LOOP_SLOTS_PENDING_CLAUDE_EVAL`
-# was read only by tests. Now a slot resolved to a model outside its
-# evaluated set logs ONE warning per process and emits ONE
-# `system.unevaluated_slot` event (slot, model — no secrets), at boot
-# (`check_slot_guards`, the lifespan) and wherever the slot's model is
-# resolved (`model_for`). Warn only: it never blocks a run.
-EVIDENCE_SLOTS: tuple[AgentTask, ...] = (
-    "check_items", "check_items_verify", "check_items_solve",
-    "grader", "grader_second", "learning_decision",
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
-)
-
-#: The models each evidence slot's quality gates were recorded and passed on:
-#: today exactly its default. A pending slot's set holds no claude-* model
-#: until its A111 eval pass moves it (that change adds the model here, flips
-#: the default and leaves the pending set together). check_items_verify and
-#: check_items_solve were built and accepted on claude-haiku-5-5 (A119, A124).
-EVALUATED_MODELS: dict[AgentTask, frozenset[str]] = {
-    "check_items": frozenset({"gemini-2.5-flash-lite"}),
-    "check_items_verify": frozenset({"claude-haiku-5-5"}),
-    "check_items_solve": frozenset({"claude-haiku-5-5"}),
-    "grader": frozenset({"gemini-2.5-flash-lite"}),
-    "grader_second": frozenset({"gemini-2.5-flash"}),
-    "learning_decision": frozenset({"gemini-2.5-flash-lite"}),
-    "loop_tutor_lite": frozenset({"gemini-2.5-flash-lite"}),
-    "loop_tutor": frozenset({"gemini-2.5-flash"}),
-    "loop_tutor_deep": frozenset({"gemini-2.5-pro"}),
-    "session_close": frozenset({"gemini-2.5-flash-lite"}),
-}
-
-#: Slots whose verdict must come from a DIFFERENT model than another slot's:
-#: (slot, the slot it must be independent of, the rule). A22: the grader's
-#: second opinion "runs on a different model" (§3.5 GRADER_SECOND_OPINION_SLOT)
-#: — the same model again is a correlated resample, not a second opinion.
-#: A22/A124 (f): `canonical_verified` is set only by an INDEPENDENT second-model
-#: agreement — the blind solve must run off the drafter's model, or a solver
-#: sharing the drafter's mistakes passes a wrong key as verified.
-INDEPENDENT_SLOTS: tuple[tuple[AgentTask, AgentTask, str], ...] = (
-    ("grader_second", "grader", "A22"),
-    ("check_items_solve", "check_items", "A124"),
-)
-
-#: Reasons a slot's model is outside its evaluated set.
-PENDING_CLAUDE_EVAL = "pending_claude_eval"  # a pending slot on claude-* (A111)
-NOT_EVALUATED = "not_evaluated"  # any other model outside the set
-
-_slot_guard_lock = threading.Lock()
-#: (slot, model) pairs already warned about in this process (once each).
-_slot_warned: set[tuple[str, str]] = set()
-#: (slot, model, independent_of) violations already reported in this process.
-_independence_warned: set[tuple[str, str, str]] = set()
 
 
 # Slots whose runs are TOOL LOOPS — several requests per run, each resending
@@ -491,34 +265,6 @@ _independence_warned: set[tuple[str, str, str]] = set()
 # and they rarely repeat a prefix in time to read it back.
 _ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz", "note_chat"})
 
-#: Learning-loop slots whose STATIC prefix (tool definitions + system prompt,
-#: identical for every student and every run of the slot's agents) is long
-#: enough to cache, cached with ONE explicit breakpoint on the last static
-#: system block (`anthropic_cache_instructions`; spec §13 A137). Claude Haiku
-#: 5.5 and Sonnet 5.5 cache a prefix of 512 tokens or more; measured offline as
-#: characters / 4 from the request pydantic-ai builds: grader and its second
-#: opinion ~1,480 tokens, check_items ~1,650 (its top-up ~1,380),
-#: check_items_verify ~570, the loop tutor tiers ~2,000. Their calls recur well
-#: inside the 5-minute TTL: several grades per session, a drafting pass sends
-#: its calls seconds apart, a tutor turn every minute or so, and every student
-#: shares the one prefix. Below the minimum, left out: session_close (~450,
-#: one call per session), learning_decision (~130) and check_items_solve
-#: (~380; its key match rides the slot).
-#:
-#: Not automatic caching (`anthropic_cache`): its breakpoint follows the LAST
-#: block, which on these slots is per-request content. A grader or drafting
-#: call ends in the answer or the passages, and a tutor turn's history is
-#: re-enveloped with a fresh nonce every turn (A63) while its second request
-#: declares no tools (`_tools_until_first_round`), so an entry written at the
-#: end would never be read: a 1.25x write on every call. The breakpoint at the
-#: end of the static prefix is read by every later call within the TTL.
-#: Settings of the claude-* model only: a Gemini slot (every pending slot's
-#: default, A111) and function mode are unchanged.
-_ANTHROPIC_CACHED_PREFIX_TASKS: frozenset[AgentTask] = frozenset({
-    "check_items", "check_items_verify", "grader", "grader_second",
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
-})
-
 
 def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:
     settings = AnthropicModelSettings(max_tokens=_ANTHROPIC_MAX_TOKENS)
@@ -526,8 +272,6 @@ def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:
         settings["anthropic_effort"] = _ANTHROPIC_EFFORT[task]
     if task in _ANTHROPIC_CACHED_TASKS:
         settings["anthropic_cache"] = True
-    if task in _ANTHROPIC_CACHED_PREFIX_TASKS:
-        settings["anthropic_cache_instructions"] = True
     return settings
 
 
@@ -896,7 +640,7 @@ class _ResilientModelMixin:
             return await _resilience.call_with_retries(
                 self._site(),
                 lambda: send(messages, settings, model_request_parameters),
-                deadline_s=deadline_for(self._res_task, model_settings) + _DEADLINE_SLACK_S,
+                deadline_s=timeout_for(self._res_task) + _DEADLINE_SLACK_S,
             )
         except Exception as exc:
             fallback = await self._fallback_for(exc)
@@ -935,7 +679,7 @@ class _ResilientModelMixin:
                 # Streams get no total deadline — only time-to-first-chunk
                 # here, and the HTTP read timeout between chunks after it.
                 stream = await _resilience.call_with_retries(
-                    self._site(), _open, deadline_s=deadline_for(self._res_task, model_settings)
+                    self._site(), _open, deadline_s=timeout_for(self._res_task)
                 )
             except Exception as exc:
                 fallback = await self._fallback_for(exc)
@@ -1375,29 +1119,6 @@ def model_name_for(task: AgentTask) -> str:
     return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
 
 
-#: The Claude request ceiling every claude-* slot carries (thinking included);
-#: public so a per-run setting that must REPLACE a Gemini-sized cap can restate it.
-ANTHROPIC_MAX_TOKENS = _ANTHROPIC_MAX_TOKENS
-
-
-def slot_provider(task: AgentTask) -> ProviderName:
-    """The provider a slot resolves to now (its SAPLING_MODEL_* override, else its
-    default). A config read like `model_name_for`; it never builds a Model."""
-    return provider_for_model(model_name_for(task))
-
-
-def settings_for_slot(task: AgentTask, *, google: Any, anthropic: Any) -> Any:
-    """Agent- or run-level settings shaped for the provider `task` serves on.
-
-    The knobs do not translate (see the per-task settings above): a Gemini
-    thinking BUDGET is a 400 on Claude 5.x, the Gemini Flex `service_tier` is
-    not an Anthropic tier, and a Gemini-sized `max_tokens` truncates a Claude
-    reply, whose adaptive thinking counts against it. A slot that sets any of
-    these states both shapes here, so flipping its model between providers is
-    a configuration change, not a code change. Either shape may be None."""
-    return anthropic if slot_provider(task) == "anthropic" else google
-
-
 def provider_model(
     name: str, *, task: AgentTask | None = None, fallback: bool = True
 ) -> "Model":
@@ -1443,143 +1164,6 @@ def clear_override_model_cache() -> None:
     override_model.cache_clear()
 
 
-def unevaluated_reason(task: str, model: str) -> str | None:
-    """Why `model` on evidence slot `task` is outside its evaluated set
-    (PENDING_CLAUDE_EVAL or NOT_EVALUATED), or None — evaluated, or not an
-    evidence slot. A pending slot on any claude-* model is unevaluated even if
-    its set ever named one: it leaves the pending set when its eval passes."""
-    if task not in EVALUATED_MODELS:
-        return None
-    bare = _bare_model_name(model)
-    try:
-        anthropic = provider_for_model(bare) == "anthropic"
-    except ValueError:
-        anthropic = False  # an unknown name is outside every set
-    if task in LOOP_SLOTS_PENDING_CLAUDE_EVAL and anthropic:
-        return PENDING_CLAUDE_EVAL
-    return None if bare in EVALUATED_MODELS[task] else NOT_EVALUATED
-
-
-def _emit_system_event(event_type: str, payload: dict) -> None:
-    """One category-`system` event (a fact about this process, never a
-    student's activity). Imported here, at call time: this module is below
-    every service. Never raises."""
-    try:
-        from services.events_service import SYSTEM_CATEGORY, log_event
-
-        log_event(event_type, category=SYSTEM_CATEGORY, payload=payload)
-    except Exception:  # pragma: no cover - log_event itself never raises
-        _logger.debug("%s not emitted", event_type, exc_info=True)
-
-
-def note_slot_model(task: str, model: str) -> str | None:
-    """The A128 guard where a slot's model is resolved: when evidence slot
-    `task` runs `model` outside its evaluated set, ONE WARNING and ONE
-    `system.unevaluated_slot` event per process per (slot, model). Returns
-    the reason (or None). Warn only — never blocks, never raises."""
-    try:
-        reason = unevaluated_reason(task, model)
-        if reason is None:
-            return None
-        bare = _bare_model_name(model)
-        with _slot_guard_lock:
-            if (task, bare) in _slot_warned:
-                return reason
-            _slot_warned.add((task, bare))
-        _logger.warning(
-            "evidence slot %r runs %r, outside its evaluated models %s (%s; spec §13 "
-            "A128). Its quality gates were not recorded on this model — run the "
-            "slot's evals (A111 (d)) before relying on its evidence.",
-            task, bare, sorted(EVALUATED_MODELS[task]), reason,
-        )
-        _emit_system_event(
-            "system.unevaluated_slot", {"slot": task, "model": bare, "reason": reason}
-        )
-        return reason
-    except Exception:
-        _logger.debug("evidence-slot guard failed for %r", task, exc_info=True)
-        return None
-
-
-def unevaluated_slots() -> list[dict]:
-    """Every evidence slot whose configured model (its SAPLING_MODEL_* override,
-    else its default) is outside its evaluated set now: [{slot, model, reason}].
-    A configuration read; it never builds a Model."""
-    out = []
-    for task in EVIDENCE_SLOTS:
-        model = _bare_model_name(model_name_for(task))
-        reason = unevaluated_reason(task, model)
-        if reason is not None:
-            out.append({"slot": task, "model": model, "reason": reason})
-    return out
-
-
-def slot_independence_violations() -> list[dict]:
-    """The INDEPENDENT_SLOTS pairs that resolve to the SAME model now:
-    [{slot, model, independent_of, rule}]."""
-    out = []
-    for task, other, rule in INDEPENDENT_SLOTS:
-        model = _bare_model_name(model_name_for(task))
-        if model == _bare_model_name(model_name_for(other)):
-            out.append({"slot": task, "model": model, "independent_of": other, "rule": rule})
-    return out
-
-
-def slot_warnings() -> list[dict]:
-    """The active A128 warnings, for the admin learning-loop panel: each
-    unevaluated evidence slot (`kind: "unevaluated"`) and each independence
-    violation (`kind: "not_independent"`). [] outside real model mode, where
-    no configured model runs (the FunctionModel seam stands in for all)."""
-    if model_mode() != "real":
-        return []
-    return [{"kind": "unevaluated", **w} for w in unevaluated_slots()] + [
-        {"kind": "not_independent", **v} for v in slot_independence_violations()
-    ]
-
-
-def check_slot_guards() -> list[dict]:
-    """The boot check (main.py's lifespan, real mode only): every evidence
-    slot's resolved model through `note_slot_model`, then every independence
-    violation — an ERROR and one `system.slot_not_independent` event per
-    process each. Warn only (spec §13 A128): grading runs on, and the A22
-    rules it weakens are the admin panel's to show. Never raises; returns the
-    active warnings."""
-    if model_mode() != "real":
-        return []
-    try:
-        for task in EVIDENCE_SLOTS:
-            note_slot_model(task, model_name_for(task))
-        for v in slot_independence_violations():
-            key = (v["slot"], v["model"], v["independent_of"])
-            with _slot_guard_lock:
-                if key in _independence_warned:
-                    continue
-                _independence_warned.add(key)
-            _logger.error(
-                "slot %r resolves to %r, the same model as %r: its verdicts are not "
-                "independent (spec §13 %s; %s). Point SAPLING_MODEL_%s at another model.",
-                v["slot"], v["model"], v["independent_of"], v["rule"],
-                "the grader's second opinion runs on a different model" if v["rule"] == "A22"
-                else "the key solve must not run on the drafter's model",
-                v["slot"].upper(),
-            )
-            _emit_system_event(
-                "system.slot_not_independent",
-                {"slot": v["slot"], "model": v["model"], "independent_of": v["independent_of"]},
-            )
-        return slot_warnings()
-    except Exception:
-        _logger.warning("the evidence-slot guard could not run at boot", exc_info=True)
-        return []
-
-
-def reset_slot_guard_for_tests() -> None:
-    """Test-only: forget which slots were already warned about."""
-    with _slot_guard_lock:
-        _slot_warned.clear()
-        _independence_warned.clear()
-
-
 def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
@@ -1589,17 +1173,14 @@ def model_for(task: AgentTask) -> "Model":
     (#354/#436 — see `_LoopSafeProviderMixin`) for whichever provider that
     name implies (ADR 0030), so the caller never has to think about which
     event loop it ends up running on. In function mode, returns a
-    FunctionModel (see the seam notes above). An evidence slot resolved to a
-    model outside its evaluated set is reported once (`note_slot_model`, A128).
+    FunctionModel (see the seam notes above).
     """
     global _BUILT_UNDER
     mode = _model_mode()
     if _BUILT_UNDER is None:
         _BUILT_UNDER = mode
     if mode == "real":
-        name = model_name_for(task)
-        note_slot_model(task, name)
-        return provider_model(name, task=task)
+        return provider_model(model_name_for(task), task=task)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":

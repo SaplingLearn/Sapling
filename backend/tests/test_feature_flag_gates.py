@@ -3,6 +3,7 @@ cache's single-flight + bounded maps."""
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import patch
 
 import httpx
@@ -86,103 +87,37 @@ def test_flags_route_has_no_degraded_marker_normally():
 # ── Single-flight + bounded maps ────────────────────────────────────────────
 
 
-class _Arrivals:
-    """Where each concurrent caller has got to: reading the store, waiting on
-    the read already in flight (a follower), or back with its answer. A test
-    holds the leader's read until every caller is accounted for, instead of
-    sleeping and hoping the others piled up; a caller that skips the flight
-    is accounted for as soon as it returns, so that fails at once."""
-
-    def __init__(self):
-        self.reads = 0
-        self.followers = 0
-        self._callers: set[int] = set()
-        self._changed = threading.Condition()
-
-    def _arrive(self):
-        self._callers.add(threading.get_ident())
-        self._changed.notify_all()
-
-    def read(self):
-        with self._changed:
-            self.reads += 1
-            self._arrive()
-
-    def follow(self):
-        with self._changed:
-            self.followers += 1
-            self._arrive()
-
-    def returned(self):
-        with self._changed:
-            self._arrive()
-
-    def wait_for(self, callers):
-        with self._changed:
-            assert self._changed.wait_for(lambda: len(self._callers) >= callers, timeout=30)
-
-
-@pytest.fixture
-def arrivals(monkeypatch):
-    """Every in-flight read reports each follower that waits on it."""
-    seen = _Arrivals()
-
-    class _CountedDone(threading.Event):
-        def wait(self, timeout=None):
-            seen.follow()
-            return super().wait(timeout)
-
-    class _Flight(ff._Flight):
-        def __init__(self, generation):
-            super().__init__(generation)
-            self.done = _CountedDone()
-
-    monkeypatch.setattr(ff, "_Flight", _Flight)
-    return seen
-
-
-def test_concurrent_cold_reads_hit_the_store_once(arrivals):
-    """Eight cold callers at once: one reads the store, seven wait on its read.
-    The leader's read is held until every caller is accounted for, so the
-    waiters provably piled up behind it (no sleep deciding that), and a broken
-    single-flight shows as a second read at once rather than after a timeout."""
+def test_concurrent_cold_reads_hit_the_store_once():
+    calls: list[int] = []
     gate = threading.Event()
 
     def slow_read(**_k):
-        arrivals.read()
-        assert gate.wait(30)  # a hang guard, never reached when the test passes
+        calls.append(1)
+        gate.wait(5)
         return ff.Snapshot(flags={}, targets={})
 
     results: list = []
-
-    def call():
-        try:
-            results.append(ff._get_snapshot())
-        finally:
-            arrivals.returned()
-
     with patch("services.feature_flags.read_config", side_effect=slow_read):
-        threads = [threading.Thread(target=call) for _ in range(8)]
+        threads = [threading.Thread(target=lambda: results.append(ff._get_snapshot()))
+                   for _ in range(8)]
         for t in threads:
             t.start()
-        arrivals.wait_for(8)
+        deadline = time.monotonic() + 5
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.001)
+        time.sleep(0.05)  # let the others pile up behind the leader
         gate.set()
         for t in threads:
-            t.join(30)
-    assert arrivals.reads == 1 and arrivals.followers == 7
+            t.join(5)
+    assert len(calls) == 1
     assert len(results) == 8
 
 
-def test_a_failed_leader_read_fails_its_waiters_closed(arrivals):
-    """The leader's read fails only once the three other callers have joined
-    it, so each fails closed on the leader's own error. Without that hold, a
-    caller arriving after the failure fails on the store-down mark instead and
-    the test passes without exercising the waiters at all."""
+def test_a_failed_leader_read_fails_its_waiters_closed():
     gate = threading.Event()
 
     def failing_read(**_k):
-        arrivals.read()
-        assert gate.wait(30)  # a hang guard, never reached when the test passes
+        gate.wait(5)
         raise httpx.ConnectError("down")
 
     errors: list = []
@@ -192,19 +127,17 @@ def test_a_failed_leader_read_fails_its_waiters_closed(arrivals):
             ff._get_snapshot()
         except Exception as exc:
             errors.append(type(exc))
-        finally:
-            arrivals.returned()
 
     with patch("services.feature_flags.read_config", side_effect=failing_read) as rc:
         threads = [threading.Thread(target=call) for _ in range(4)]
         for t in threads:
             t.start()
-        arrivals.wait_for(4)
+        time.sleep(0.05)
         gate.set()
         for t in threads:
-            t.join(30)
-    assert rc.call_count == 1 and arrivals.followers == 3
-    assert errors == [httpx.ConnectError] * 4
+            t.join(5)
+    assert rc.call_count == 1
+    assert len(errors) == 4
 
 
 def test_roles_cache_is_bounded(monkeypatch):

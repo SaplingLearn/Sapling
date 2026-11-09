@@ -130,40 +130,11 @@ describe("answerQuestion", () => {
     });
   });
 
-  it("omits time_ms — nothing reads it back (G10)", async () => {
+  it("omits time_ms and confidence — nothing reads them back (G10)", async () => {
     await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1 });
     const body = JSON.parse(lastCall()[1].body as string) as Record<string, unknown>;
     expect("time_ms" in body).toBe(false);
-  });
-
-  // Learning-loop spec §13 A132: the stated confidence is A127's label, sent
-  // only when one was chosen — a skip is absent, never a default level.
-  it.each(["guessing", "fairly_sure", "sure"] as const)("sends a chosen confidence as its label (%s)", async level => {
-    await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1, confidence: level });
-    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
-      question_index: 0,
-      selected_index: 1,
-      question_id: 1,
-      confidence: level,
-    });
-  });
-
-  it.each([undefined, null])("sends no confidence key at all for a skip (%s)", async confidence => {
-    await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1, confidence });
-    const body = JSON.parse(lastCall()[1].body as string) as Record<string, unknown>;
     expect("confidence" in body).toBe(false);
-  });
-
-  it("carries the confidence beside a written answer too", async () => {
-    await answerQuestion("a-1", {
-      questionIndex: 0, selectedIndex: null, questionId: 1, answerText: "base case", confidence: "sure",
-    });
-    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
-      question_index: 0,
-      answer_text: "base case",
-      question_id: 1,
-      confidence: "sure",
-    });
   });
 
   it("url-encodes the attempt id", async () => {

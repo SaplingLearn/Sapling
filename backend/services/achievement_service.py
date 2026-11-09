@@ -6,7 +6,6 @@ Called synchronously after events to grant achievements when thresholds are met.
 import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
-from services.session_modes import NOT_REVIEW
 from db.scope import runs_as_service
 from services.gradebook import grades
 from services.encryption import decrypt_numeric
@@ -143,8 +142,7 @@ def _count_own(table_name: str, **extra: str):
 # `patch.object(achievement_service, "<helper>", ...)` reaches the dispatch.
 _STAT_READERS = {
     "login_streak": lambda user_id: _stat_login_streak(user_id),
-    # learning loop A73: a daily review session is not a tutor session
-    "session_count": _count_own("sessions", **NOT_REVIEW),
+    "session_count": _count_own("sessions"),
     "documents_uploaded": _count_own("documents"),
     "quizzes_completed": lambda user_id: _stat_quizzes_completed(user_id),
     "rooms_joined": _count_own("room_members"),
@@ -209,7 +207,7 @@ def _session_stat(user_id: str, trigger_type: str) -> int:
     check_achievements compares it with `<`.
     """
     rows = table("sessions").select(
-        "started_at,ended_at", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW}
+        "started_at,ended_at", filters={"user_id": f"eq.{user_id}"}
     ) or []
     lower_is_better = trigger_type in LOWER_IS_BETTER
     best = NO_QUALIFYING_VALUE if lower_is_better else 0

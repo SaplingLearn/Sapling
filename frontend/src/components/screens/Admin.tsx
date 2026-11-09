@@ -279,7 +279,6 @@ function UsersTab() {
                       {assignFor === u.id ? (
                         <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                           <CustomSelect
-                            ariaLabel="Role to add"
                             size="sm"
                             value={assignRoleId}
                             onChange={v => setAssignRoleId(v)}
@@ -680,7 +679,6 @@ function CosmeticsTab() {
         <div className="label-micro" style={{ marginBottom: 10 }}>Create cosmetic</div>
         <LabeledField label="Type">
           <CustomSelect<CosmeticType>
-            ariaLabel="Type"
             value={form.type}
             onChange={v => setForm(f => ({ ...f, type: v, asset_url: "", css_value: "" }))}
             options={COSMETIC_TYPES.map(t => ({ value: t, label: t.replace("_", " ") }))}
@@ -729,7 +727,6 @@ function CosmeticsTab() {
         )}
         <LabeledField label="Rarity">
           <CustomSelect<RarityTier>
-            ariaLabel="Rarity"
             value={form.rarity}
             onChange={v => setForm(f => ({ ...f, rarity: v }))}
             options={RARITIES.map(r => ({ value: r, label: r }))}

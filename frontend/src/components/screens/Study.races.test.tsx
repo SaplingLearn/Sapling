@@ -26,11 +26,6 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 
-// The legacy flashcard reviewer (#769): Study renders it when the learning
-// loop's status probe says inactive (the PKG-14b kill-switch path).
-vi.mock("../learn/useLoopStatus", () => ({
-  useLoopStatus: () => ({ status: false, retry: () => {} }),
-}));
 vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));

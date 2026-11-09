@@ -11,10 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from db.connection import table
-from learning.flashcard_fsrs import flashcard_fsrs_update
-from learning.gate import learning_loop_for_request
-from learning.params import FLASHCARD_RATING_TO_FSRS
-from services import events_service, integrity_guard
+from services import events_service
 from services.academics import resolve_offering
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
@@ -36,19 +33,6 @@ from services.flashcards import (
     gemini_cleanup_cards,
     gemini_cloze,
     generate_flashcards as _generate,
-)
-from services.flashcards.cards import (  # noqa: F401  (re-export, #118)
-    _FSRS_LIST_COLS,
-    _LEGACY_LIST_COLS,
-    _loop_order,
-    _order_due_rows,
-)
-from services.flashcards.integrity import (  # noqa: F401  (re-export, #118)
-    _CLOZE_BLANK,
-    _card_text,
-    cleanup_withheld,
-    open_card_guard,
-    screen_cards,
 )
 from services.flashcards.context import (  # noqa: F401  (re-export, #118)
     _COURSE_DOC_COLS,
@@ -82,10 +66,7 @@ class GenerateFlashcardsBody(BaseModel):
 class FlashcardRatingBody(BaseModel):
     user_id: str
     card_id: str
-    # 1 = forgot, 2 = hard, 3 = easy. With the learning loop on (PKG-11) this
-    # maps to FSRS Again/Hard/Good via learning.params.FLASHCARD_RATING_TO_FSRS
-    # and any other value is a 422; the legacy path stores any int as-is.
-    rating: int
+    rating: int  # 1 = forgot, 2 = hard, 3 = easy
 
 
 class CardInput(BaseModel):
@@ -136,28 +117,6 @@ def llm_http_error(exc: BaseException) -> HTTPException:
     return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
 
 
-# ── Integrity guard (spec §13 A125; services/flashcards/integrity.py) ─────────
-
-
-def _integrity_guard(user_id: str, texts) -> integrity_guard.Guard:
-    """The guard around one generator: 409 (nothing generated) when the text
-    the student sent quotes one of their posed checks. Off with the loop (the
-    gate is read here, at route entry, once)."""
-    guard = open_card_guard(user_id, texts, active=learning_loop_for_request(user_id))
-    if guard.refused:
-        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
-    return guard
-
-
-def _screen_cards(guard: integrity_guard.Guard, cards: list) -> tuple[list, int]:
-    """The cards the guard lets through and how many it withheld; 409 when it
-    withheld every card: nothing is left to serve."""
-    kept, withheld = screen_cards(guard, cards)
-    if cards and not kept:
-        raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
-    return kept, withheld
-
-
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
@@ -167,8 +126,6 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
     require_self(body.user_id, request)
-    # spec §13 A125: the topic is the text this request sends the model
-    guard = _integrity_guard(body.user_id, (body.topic,))
 
     # 1. Session summary (optional extra context). require_self only proves
     #    the caller is body.user_id; the session must ALSO be theirs, or this
@@ -209,7 +166,6 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         )
     except Exception as e:
         raise llm_http_error(e) from e
-    cards, withheld = _screen_cards(guard, cards)  # A125: before anything is stored
 
     now = datetime.now(timezone.utc).isoformat()
     rows_to_insert = [
@@ -266,16 +222,13 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         for row in rows_to_insert
     ]
 
-    out = {
+    return {
         "flashcards": response_cards,
         "context_used": {
             "documents_found": len(documents),
             "weak_concepts_found": len(weak_concepts),
         }
     }
-    if withheld:
-        out["withheld"] = withheld  # A125: cards held back for stating a posed check's key
-    return out
 
 
 @router.get("/user/{user_id}")
@@ -284,18 +237,14 @@ def get_flashcards(
     request: Request,
     topic: str | None = None,
     semester: str | None = None,
-    due_only: bool = False,
 ):
     require_self(user_id, request)
-    # PKG-11 / PKG-14b (spec §11.2): FSRS scheduling for every student, no
-    # gate — the kill switch does not bring the legacy list order back.
 
     if not user_id:
         return {"flashcards": []}
 
     try:
-        rows, due = _loop_order(list_flashcards(user_id, topic, semester), datetime.now(timezone.utc))
-        return {"flashcards": due if due_only else rows, "due_count": len(due)}
+        return {"flashcards": list_flashcards(user_id, topic, semester)}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
@@ -306,15 +255,10 @@ def get_flashcards(
 @router.post("/rate")
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
-    # PKG-11 / PKG-14b (spec §11.2): every rating is an FSRS review, no gate.
-    fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(body.rating)
-    if fsrs_rating is None:
-        raise HTTPException(status_code=422, detail="rating must be one of 1, 2, 3")
 
-    cols = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
     try:
         rows = table("flashcards").select(
-            cols,
+            "id,times_reviewed",
             filters={"id": f"eq.{body.card_id}", "user_id": f"eq.{body.user_id}"},
             limit=1,
         )
@@ -324,17 +268,15 @@ def rate_card(body: FlashcardRatingBody, request: Request):
     if not rows:
         raise HTTPException(status_code=404, detail="Flashcard not found")
 
-    now = datetime.now(timezone.utc)
     current = rows[0]["times_reviewed"] or 0
-    payload = {
-        "times_reviewed": current + 1,
-        "last_rating": body.rating,
-        "last_reviewed_at": now.isoformat(),
-    }
-    # PKG-12 reopen: the pure helper learning/review.py shares; it returns
-    # the three legacy columns above (same values) plus the FSRS five.
-    payload.update(flashcard_fsrs_update(rows[0], body.rating, now=now))
-    table("flashcards").update(payload, filters={"id": f"eq.{body.card_id}"})
+    table("flashcards").update(
+        {
+            "times_reviewed": current + 1,
+            "last_rating": body.rating,
+            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
+        },
+        filters={"id": f"eq.{body.card_id}"},
+    )
     events_service.log_event(
         "flashcard.reviewed",
         category="usage",
@@ -354,7 +296,7 @@ def rate_card(body: FlashcardRatingBody, request: Request):
             body.user_id, body.card_id,
         )
 
-    return {"ok": True, "due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
+    return {"ok": True}
 
 
 @router.delete("/{card_id}")
@@ -444,7 +386,6 @@ def import_parse(body: ImportParseBody, request: Request):
         if len(file_bytes) > _MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="File exceeds 5MB limit")
 
-        withheld = 0
         try:
             if body.source == "xlsx":
                 cards = parse_xlsx(file_bytes)
@@ -452,26 +393,14 @@ def import_parse(body: ImportParseBody, request: Request):
                 cards = parse_anki_apkg(file_bytes)
             else:  # ocr
                 filename = (body.options or {}).get("filename", "image.png")
-                # spec §13 A125: the photographed page's text is what this request
-                # sends the card model — guarded once it is text, before the model
-                guards: list[integrity_guard.Guard] = []
-                cards = extract_cards_from_image(
-                    file_bytes,
-                    filename=filename,
-                    screen=lambda text: guards.append(_integrity_guard(body.user_id, (text,))),
-                )
-                if guards:
-                    cards, withheld = _screen_cards(guards[0], cards)
+                cards = extract_cards_from_image(file_bytes, filename=filename)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Parser error: {e}")
-        out = {"cards": cards, "errors": []}
-        if withheld:
-            out["withheld"] = withheld
-        return out
+        return {"cards": cards, "errors": []}
 
     if body.source == "url":
         try:
@@ -497,13 +426,11 @@ def import_generate(body: ImportGenerateBody, request: Request):
             headers={"Retry-After": str(retry)},
         )
 
-    guard = None
     if body.source == "paste":
         if not body.text:
             raise HTTPException(status_code=400, detail="`text` is required for paste source")
         source_text = body.text
-        guard = _integrity_guard(body.user_id, (source_text,))  # spec §13 A125
-    else:  # library_doc: stored course material, not request text (A125: unguarded)
+    else:  # library_doc
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
         source_text = library_doc_source_text(body.user_id, body.document_id)
@@ -514,9 +441,6 @@ def import_generate(body: ImportGenerateBody, request: Request):
         cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
     except Exception as e:
         raise llm_http_error(e) from e
-    withheld = 0
-    if guard is not None:
-        cards, withheld = _screen_cards(guard, cards)
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
     # generation (the cards come back for review; /import/commit only
@@ -536,7 +460,7 @@ def import_generate(body: ImportGenerateBody, request: Request):
             },
         )
 
-    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}
+    return {"cards": cards}
 
 
 @router.post("/import/cleanup")
@@ -552,18 +476,10 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
         )
 
     cards = [{"front": c.front, "back": c.back} for c in body.cards]
-    # spec §13 A125: the cards' own text is what this request sends the model
-    guard = _integrity_guard(body.user_id, [t for c in cards for t in (c["front"], c["back"])])
     try:
         out = gemini_cleanup_cards(cards)
     except Exception as e:
         raise llm_http_error(e) from e
-    withheld = cleanup_withheld(guard, out)
-    if withheld:
-        # A cleaned card stating a posed check's key: the cleanup is withheld
-        # whole and the student's own cards come back as they sent them — a
-        # cleanup must never lose a card the student wrote.
-        return {"cards": cards, "withheld": withheld}
     return {"cards": out}
 
 
@@ -579,10 +495,8 @@ def import_cloze(body: ImportClozeBody, request: Request):
             headers={"Retry-After": str(retry)},
         )
 
-    guard = _integrity_guard(body.user_id, (body.paragraph,))  # spec §13 A125
     try:
         cards = gemini_cloze(body.paragraph)
     except Exception as e:
         raise llm_http_error(e) from e
-    cards, withheld = _screen_cards(guard, cards)
-    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}
+    return {"cards": cards}

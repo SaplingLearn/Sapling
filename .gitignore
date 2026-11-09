@@ -21,7 +21,6 @@ yarn-error.log*
 
 # ---- Python ----
 .venv/
-.venv-analysis/
 .venv-loadtest/
 venv/
 __pycache__/

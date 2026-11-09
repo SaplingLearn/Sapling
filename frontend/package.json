@@ -22,8 +22,7 @@
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && wrangler dev",
     "cf:deploy": "opennextjs-cloudflare build && wrangler deploy",
-    "cf:deploy:staging": "opennextjs-cloudflare build && wrangler deploy --env staging",
-    "postinstall": "node scripts/apply-security-patches.mjs"
+    "cf:deploy:staging": "opennextjs-cloudflare build && wrangler deploy --env staging"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.3",
@@ -64,20 +63,16 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitest/coverage-v8": "^4.1.12",
-    "axe-core": "4.11.1",
+    "@vitest/coverage-v8": "^4.1.5",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.8",
+    "eslint-config-next": "^16.2.6",
     "jsdom": "^29.1.1",
     "pg": "^8.22.0",
     "typescript": "^5",
-    "vitest": "^4.1.12",
+    "vitest": "^4.1.5",
     "wrangler": "^4.158.0"
   },
   "overrides": {
-    "katex": "$katex",
-    "@node-minify/core": {
-      "glob": "10.5.0"
-    }
+    "katex": "$katex"
   }
 }

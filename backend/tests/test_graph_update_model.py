@@ -1,11 +1,5 @@
 """#118: apply_graph_update's typed input (GraphUpdate) and its import fix.
 
-The learning loop's PKG-14b (spec §11.2; §13 A149 ported it onto this model):
-graded evidence is the only mastery writer, so GraphUpdate carries the topology
-(`new_nodes` / `new_edges`) and `evidence`, and a dict naming the retired flat
-`updated_nodes` delta is refused before any read or write. The evidence path
-itself is pinned by tests/test_learning_evidence_apply.py.
-
 * the legacy dict and the model drive byte-identical writes;
 * the model is exactly as lenient as the dict-walking code it replaced
   (blank entries skipped, junk scalars defaulted, unknown keys ignored), and
@@ -32,7 +26,7 @@ import pytest
 from pydantic import ValidationError
 
 import services.graph_service as gs
-from services.graph_update_model import GraphUpdate, NewEdge, NewNode
+from services.graph_update_model import GraphUpdate, NewEdge, NewNode, UpdatedNode
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -61,9 +55,13 @@ def _run(graph_update, *, course_id="c1", existing=EXISTING, refresh=None):
             setattr(m, v, verb(v))
         return m
 
+    def rpc(fn, params):
+        log.append(("rpc", fn, json.dumps(params)))
+        return [{"before_score": 0.3, "after_score": 0.45}]
+
     fixed_now = MagicMock()
     fixed_now.now.return_value.isoformat.return_value = "2026-11-08T00:00:00+00:00"
-    with patch.object(gs, "table", table), \
+    with patch.object(gs, "table", table), patch.object(gs, "rpc", rpc), \
             patch.object(gs.uuid, "uuid4", lambda: f"uuid-{next(ids)}"), \
             patch.object(gs, "datetime", fixed_now), \
             patch.object(gs, "touch_streak_safe", lambda u: log.append(("streak", u))), \
@@ -83,6 +81,13 @@ MIXED = {
         {"concept_name": "big o"},                      # in-batch duplicate
         {"concept_name": "   "},                        # blank: skipped
         {"concept_name": "Trees", "initial_mastery": 9},  # clamped to 1.0
+    ],
+    "updated_nodes": [
+        {"concept_name": " loops ", "mastery_delta": 0.15, "reason": "quiz",
+         "event_type": " quiz_correct "},
+        {"concept_name": "Loops", "mastery_delta": "junk", "event_type": "  "},
+        {"concept_name": "Unknown", "mastery_delta": 0.2},
+        {"concept_name": None},
     ],
     "new_edges": [
         {"source": "loops", "target": " big  o", "strength": 0},  # 0 → 0.5 (as before)
@@ -104,17 +109,22 @@ class TestDictAndModelAreEquivalent:
     def test_model_built_from_sub_models_matches_dict(self):
         model = GraphUpdate(
             new_nodes=[NewNode(concept_name="X", initial_mastery=0.2)],
+            updated_nodes=[UpdatedNode(concept_name="Loops", mastery_delta=0.1)],
             new_edges=[NewEdge(source="X", target="Loops")],
         )
         as_dict = {
             "new_nodes": [{"concept_name": "X", "initial_mastery": 0.2}],
+            "updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.1}],
             "new_edges": [{"source": "X", "target": "Loops"}],
         }
         assert _run(model) == _run(as_dict)
 
     def test_mixed_batch_writes_exactly_these_rows(self):
         result, log = _run(MIXED)
-        assert result == []  # topology moves no mastery (PKG-14b: evidence only)
+        assert result == [
+            {"concept": "Loops", "before": 0.3, "after": 0.45},
+            {"concept": "Loops", "before": 0.3, "after": 0.45},
+        ]
         writes = [(t, v, json.loads(body)) for t, v, body in
                   (e for e in log if e[0] in ("graph_nodes", "graph_edges", "node_mastery_events")
                    and e[1] != "select")]
@@ -122,8 +132,11 @@ class TestDictAndModelAreEquivalent:
         assert [(r["concept_name"], r["mastery_score"]) for r in node_rows] == [
             ("Big O", 0.4), ("Trees", 1.0),
         ]
-        assert not [w for w in writes if w[0] == "node_mastery_events"]
-        assert ("streak", "u1") not in log     # no mastery moved: no study day
+        events = [w[2][0][0] for w in writes if w[0] == "node_mastery_events"]
+        assert events[0]["event_type"] == "quiz_correct"
+        assert events[0]["reason"] == "quiz" and events[0]["delta"] == 0.15
+        assert "event_type" not in events[1]       # blank → omitted, column stays NULL
+        assert events[1]["delta"] == 0.0 and events[1]["reason"] == ""
         edges = [w[2][0][0] for w in writes if w[0] == "graph_edges"]
         assert [(e["strength"], e["relationship_type"]) for e in edges] == [
             (0.5, "related"), (1.0, "prerequisite"),
@@ -143,25 +156,23 @@ class TestLenience:
     def test_explicit_none_fields_keep_their_old_defaults(self):
         m = GraphUpdate.model_validate({
             "new_nodes": [{"concept_name": None, "initial_mastery": None}],
+            "updated_nodes": [{"concept_name": "A", "mastery_delta": None, "reason": None}],
             "new_edges": [{"source": "a", "target": "b", "strength": None,
                            "relationship_type": None}],
-            "evidence": None,
         })
         assert m.new_nodes[0].concept_name == "" and m.new_nodes[0].initial_mastery == 0.0
-        # relationship_type was always written verbatim, None included.
+        # reason / relationship_type were always written verbatim, None included.
+        assert m.updated_nodes[0].reason is None and m.updated_nodes[0].mastery_delta == 0.0
         assert m.new_edges[0].strength == 0.5 and m.new_edges[0].relationship_type is None
-        assert m.evidence == []  # `graph_update.get("evidence") or []`, as the writer read it
 
-    def test_new_node_name_collapses_whitespace(self):
+    def test_updated_node_name_is_strip_only(self):
+        assert UpdatedNode.model_validate({"concept_name": "  a   b "}).concept_name == "a   b"
         assert NewNode.model_validate({"concept_name": "  a   b "}).concept_name == "a b"
 
     @pytest.mark.parametrize("bad, exc", [
-        # PKG-14b: the retired flat delta is refused outright, whatever it holds.
-        ({"updated_nodes": None}, ValueError),
-        ({"updated_nodes": [{"concept_name": "Loops"}]}, ValueError),
+        ({"updated_nodes": None}, ValidationError),
         ({"new_nodes": ["not a mapping"]}, ValidationError),
         ({"new_edges": [{"source": 7, "target": "x"}]}, AttributeError),
-        ({"evidence": ["not a mapping"]}, ValidationError),
     ])
     def test_input_that_crashed_still_raises_before_any_write(self, bad, exc):
         update = {"new_nodes": [{"concept_name": "Written first before #118"}], **bad}
@@ -175,9 +186,8 @@ class TestLenience:
 
 class TestImportFix:
     HELPERS = (
-        "apply_graph_update", "_existing_node_rows", "_existing_nodes_by_name",
-        "_upsert_new_nodes", "_refuse_flat_deltas", "_void_question_hash",
-        "_after_void", "_validated_evidence", "_upsert_new_edges",
+        "apply_graph_update", "_existing_nodes_by_name", "_upsert_new_nodes",
+        "_mastery_event_row", "_apply_mastery_updates", "_upsert_new_edges",
         "_refresh_touched_course_contexts", "_dispatch_graph_achievements",
     )
 
@@ -242,8 +252,8 @@ class TestImportFix:
         def boom(offering_id, user_id):
             raise RuntimeError("context down")
         with caplog.at_level(logging.WARNING, logger="services.graph_service"):
-            result, log = _run({"new_nodes": [{"concept_name": "Recursion"}]}, refresh=boom)
-        assert result == []  # the update itself completed
-        assert any(e[0] == "graph_nodes" and e[1] == "upsert" for e in log)
+            result, _ = _run({"updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.1}]},
+                             refresh=boom)
+        assert result  # the graph write still reports its change
         rec = [r for r in caplog.records if "course-context refresh failed" in r.getMessage()]
         assert rec and rec[0].exc_info and "off-c1" in rec[0].getMessage()

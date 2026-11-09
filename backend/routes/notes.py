@@ -2,16 +2,11 @@
 
 CRUD lives here; agent-backed actions (summarize, extract concepts, chat,
 generate quiz, send to tutor) come in Phase 4 below.
-
-The model-calling actions run the crisis screen, then the learning loop's
-integrity guard (spec §13 A125): services/note_guard.py says which actions and
-why.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -25,9 +20,7 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
-from learning.gate import learning_loop_for_request
-from services import crisis_support, events_service, integrity_guard
-from services.note_guard import note_chat_texts, note_texts, open_note_guard
+from services import events_service
 from services.academics import (
     course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
     term_id_for_label, user_offering_ids_for_course,
@@ -378,17 +371,6 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
-async def _integrity_guard(
-    user_id: str, surface: str, texts: Iterable[str | None]
-) -> integrity_guard.Guard:
-    """Spec §13 A125: the request's integrity guard (services/note_guard.py).
-    Off with the loop (the kill switch; the gate is read here, at route entry,
-    once)."""
-    return await open_note_guard(
-        user_id, surface, texts, active=learning_loop_for_request(user_id)
-    )
-
-
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -406,17 +388,6 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # docs/safety/crisis-support.md: no summary is generated or saved; the crisis
-    # screen runs BEFORE the A125 guard (services/note_guard.py says why).
-    if crisis := await crisis_support.screen_async(body.user_id, "note_summarize", *note_texts(note)):
-        return crisis_support.json_body(crisis)
-    # spec §13 A125: a note holding one of the student's posed checks is never
-    # handed to the model; a summary stating one's key is never saved or served
-    guard = await _integrity_guard(
-        body.user_id, "note_summary", (note.get("title"), note.get("body"))
-    )
-    if guard.refused:
-        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
@@ -428,8 +399,6 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         feature="notes", task="note_summary", user_id=body.user_id,
     )
     summary_text = result.output.summary
-    if not await asyncio.to_thread(guard.screen, summary_text):
-        raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
     return {"summary": summary_text}
 
@@ -442,20 +411,6 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # crisis support: no concepts are extracted, merged or linked (the crisis
-    # screen first, then the A125 integrity guard, as in summarize)
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "note_extract_concepts", *note_texts(note)
-    ):
-        return crisis_support.json_body(crisis)
-    # spec §13 A125: as summarize; a concept name the note itself holds is the
-    # student's own word (never scanned), any other name stating a posed
-    # check's key is dropped before it is filed or returned
-    guard = await _integrity_guard(
-        body.user_id, "note_concepts", (note.get("title"), note.get("body"))
-    )
-    if guard.refused:
-        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
@@ -467,9 +422,6 @@ async def extract_concepts(
         feature="notes", task="note_concepts", user_id=body.user_id,
     )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
-    keep = await asyncio.to_thread(guard.screen_each, names, own=guard.own_text)
-    withheld = keep.count(False)
-    names = [n for n, ok in zip(names, keep) if ok]
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
     )
@@ -482,10 +434,7 @@ async def extract_concepts(
     linked = await link_prechecked_concepts(
         note_id=note_id, node_ids=[n["id"] for n in nodes]
     )
-    out = {"concepts": names, "linked": linked}
-    if withheld:
-        out["withheld"] = withheld
-    return out
+    return {"concepts": names, "linked": linked}
 
 
 class NoteChatBody(BaseModel):
@@ -499,25 +448,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # crisis support: the message, and the note the chat agent reads — its title,
-    # body and tags (the crisis screen first, then the A125 integrity guard, as
-    # in summarize)
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "note_chat", *note_chat_texts(body.message, note)
-    ):
-        return crisis_support.json_body(crisis, degraded=False)
-    # spec §13 A125: the message and the note the agent grounds in (its
-    # read_active_note tool serves this very row, deps.note) are checked against
-    # the student's posed items before any model call; the reply after it
-    guard = await _integrity_guard(
-        body.user_id, "note_chat", note_chat_texts(body.message, note)
-    )
-    if guard.refused:
-        return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    deps.note = note
-    deps.integrity = guard  # the agent's graph writes are screened too
     try:
         result = record_agent_usage(
             await note_chat_agent.run(
@@ -543,8 +475,6 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
             status_code=500,
             detail="Something went wrong answering that.",
         ) from e
-    if not await asyncio.to_thread(guard.screen, result.output):
-        return {"reply": integrity_guard.WITHHELD_REPLY, "degraded": False, "integrity": "withheld"}
     return {"reply": result.output, "degraded": False}
 
 
@@ -556,11 +486,6 @@ async def send_to_tutor(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # crisis support: nothing is handed to the tutor (no topic, no preface)
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "note_send_to_tutor", *note_texts(note)
-    ):
-        return crisis_support.json_body(crisis)
     title = (note.get("title") or "").strip() or "Untitled note"
     topic = title.splitlines()[0][:80]
     preface_parts: list[str] = []

@@ -38,9 +38,25 @@ async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
             filters={"user_id": f"eq.{user_id}"},
         )
-        matched, abstract_course_id = _enrolled_course_match(enrolled, topic_trim)
-        if matched:
-            return abstract_course_id
+        for row in enrolled:
+            offering = row.get("course_offerings", {})
+            if not isinstance(offering, dict):
+                continue
+            abstract_course_id = offering.get("course_id")
+            course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+            course_code = course.get("course_code", "") or ""
+            course_name = course.get("course_name", "") or ""
+
+            # Match on course_code (exact or case-insensitive)
+            if course_code and topic_trim.upper() == course_code.upper():
+                return abstract_course_id
+            # Match on course_name
+            if course_name and topic_trim.lower() == course_name.lower():
+                return abstract_course_id
+            # Same label as graph subject roots (graph_service)
+            label = f"{course_code} - {course_name}" if course_code else course_name
+            if label and topic_trim == label:
+                return abstract_course_id
     except Exception as e:
         print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
     
@@ -71,76 +87,6 @@ async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
         if row.get("course_id"):
             return row["course_id"]
     
-    return ""
-
-
-def _enrolled_course_match(enrolled, topic_trim: str) -> tuple[bool, str | None]:
-    """(matched, abstract course id) for the first enrolled course whose code,
-    name or graph subject-root label is the topic. Shared by
-    `_get_course_id_for_topic` and its sync twin."""
-    for row in enrolled:
-        offering = row.get("course_offerings", {})
-        if not isinstance(offering, dict):
-            continue
-        abstract_course_id = offering.get("course_id")
-        course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
-        course_code = course.get("course_code", "") or ""
-        course_name = course.get("course_name", "") or ""
-
-        # Match on course_code (exact or case-insensitive)
-        if course_code and topic_trim.upper() == course_code.upper():
-            return True, abstract_course_id
-        # Match on course_name
-        if course_name and topic_trim.lower() == course_name.lower():
-            return True, abstract_course_id
-        # Same label as graph subject roots (graph_service)
-        label = f"{course_code} - {course_name}" if course_code else course_name
-        if label and topic_trim == label:
-            return True, abstract_course_id
-    return False, None
-
-
-def _get_course_id_for_topic_sync(topic: str, user_id: str) -> str:
-    """`_get_course_id_for_topic` for sync callers: the learning loop's
-    session opener (routes/learn_loop.py), which resolves the course in sync
-    code. The same three reads in the same order, the same matching."""
-    if not topic:
-        return ""
-    topic_trim = topic.strip()
-    if not topic_trim:
-        return ""
-    try:
-        enrolled = table("enrollments").select(
-            "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
-            filters={"user_id": f"eq.{user_id}"},
-        )
-        matched, abstract_course_id = _enrolled_course_match(enrolled, topic_trim)
-        if matched:
-            return abstract_course_id
-    except Exception as e:
-        print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
-    node_rows = table("graph_nodes").select(
-        "course_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "concept_name": f"eq.{topic_trim}",
-        },
-        limit=10,
-    )
-    for row in (node_rows or []):
-        if row.get("course_id"):
-            return row["course_id"]
-    subject_rows = table("graph_nodes").select(
-        "course_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "subject": f"eq.{topic_trim}",
-        },
-        limit=1,
-    )
-    for row in (subject_rows or []):
-        if row.get("course_id"):
-            return row["course_id"]
     return ""
 
 

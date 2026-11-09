@@ -402,12 +402,11 @@ export function Settings() {
                 </button>
               </div>
               <div className="settings-field-row">
-                <label className="label-micro" htmlFor="settings-field-username">Username</label>
+                <div className="label-micro">Username</div>
                 <div>
                   <div style={{ position: "relative" }}>
-                    <span aria-hidden style={{ position: "absolute", left: 10, top: 9, fontSize: 13, color: "var(--text-muted)" }}>@</span>
+                    <span style={{ position: "absolute", left: 10, top: 9, fontSize: 13, color: "var(--text-muted)" }}>@</span>
                     <input
-                      id="settings-field-username"
                       value={usernameDraft}
                       onChange={e => setUsernameDraft(e.target.value)}
                       onBlur={async () => {
@@ -455,9 +454,8 @@ export function Settings() {
                 ] as const
               ).map(([label, key]) => (
                 <div key={key} className="settings-field-row">
-                  <label className="label-micro" htmlFor={`settings-field-${key}`}>{label}</label>
+                  <div className="label-micro">{label}</div>
                   <input
-                    id={`settings-field-${key}`}
                     defaultValue={settings[key] ?? ""}
                     onBlur={(e) => {
                       const v = e.target.value.trim();
@@ -531,7 +529,6 @@ export function Settings() {
                 </div>
                 <div style={{ minWidth: 180 }}>
                   <CustomSelect
-                    ariaLabel="Layout"
                     size="sm"
                     value={layoutPref}
                     onChange={(v) => setLayoutPref(v as LayoutPref)}
@@ -563,7 +560,6 @@ export function Settings() {
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
                   <div style={{ minWidth: 180 }}>
                     <CustomSelect
-                      ariaLabel={label}
                       size="sm"
                       value={(settings[key] as string) ?? options[0]}
                       onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
@@ -748,7 +744,6 @@ export function Settings() {
             <button
               key={t}
               data-testid={`settings-tab-${t}`}
-              aria-current={tab === t ? "true" : undefined}
               onClick={() => setTab(t)}
               style={{
                 display: "block",
@@ -861,8 +856,7 @@ function AnalyticsPreference({
             response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
             never your name or email, and never what you type or the text of your notes, documents,
             messages or AI replies. Turning it off stops all of this within about a minute.{" "}
-            {/* Underlined: a link inside running text must not rely on colour alone (WCAG 1.4.1). */}
-            <Link href="/privacy" style={{ color: "var(--accent)", textDecoration: "underline" }}>Privacy Policy</Link>
+            <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
             {ANALYTICS_NOTES[state]}

@@ -3,29 +3,18 @@
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useUser } from "@/context/UserContext";
+import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
 import {
-  mayPrompt,
-  recordPrompt,
-  releaseFeedbackSlot,
-  takeEndedSession,
-  tryClaimFeedbackSlot,
-  whenFeedbackFree,
-} from "@/lib/feedbackPacing";
-import { SessionFeedbackFlow, type SessionFeedbackContext } from "./SessionFeedbackFlow";
+  SessionFeedbackFlow,
+  SESSION_COOLDOWN_MS,
+  SESSION_COOLDOWN_KEY,
+  type SessionFeedbackContext,
+} from "./SessionFeedbackFlow";
 
 const LEARN_PATH = "/learn";
+// Written by Learn.tsx when a session ends.
+const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 
-/**
- * "How was that session?" — asked when the student leaves /learn after a
- * session's wrap-up (the ended session LoopLearn / Learn.tsx remember). Leaving
- * mid-session asks nothing: the session is not over. lib/feedbackPacing.ts
- * decides whether it opens: never while a learning activity holds prompts (it
- * waits for the release), at most one prompt per session, and the cooldowns.
- *
- * `?testFeedback=session` on /learn (the Figma recipes) skips the wrap-up and
- * pacing checks for the next leave; it is latched while on /learn because the
- * link out drops the query string.
- */
 export function SessionFeedbackGlobal() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -35,40 +24,36 @@ export function SessionFeedbackGlobal() {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<SessionFeedbackContext | undefined>();
   const prevPath = useRef(pathname);
-  const forcedOnLearn = useRef(false);
-  const cancelWait = useRef<() => void>(() => {});
 
   useEffect(() => {
-    const wasOnLearn = prevPath.current?.startsWith(LEARN_PATH) ?? false;
-    const nowOnLearn = pathname?.startsWith(LEARN_PATH) ?? false;
-    prevPath.current = pathname;
-    if (nowOnLearn) {
-      if (testOverride) forcedOnLearn.current = true;
+    if (!isAuthenticated) {
+      prevPath.current = pathname;
       return;
     }
-    const forced = forcedOnLearn.current || testOverride;
-    forcedOnLearn.current = false;
-    if (!isAuthenticated || !wasOnLearn) return;
-    // Consumed on every leave: the wrap-up's natural break is this one.
-    const ended = takeEndedSession();
-    if (!ended && !forced) return;
-    const sessionId = ended?.sessionId ?? null;
-    cancelWait.current();
-    cancelWait.current = whenFeedbackFree(() => {
-      if (!forced && !mayPrompt("session", sessionId)) return;
-      // One feedback prompt at a time (#762): if the pulse is up, skip this
-      // one — nothing is recorded, so it isn't spent.
-      if (!tryClaimFeedbackSlot("session")) return;
-      recordPrompt("session", sessionId); // on open: a dismissal counts as shown
-      setContext(ended ?? undefined);
-      setOpen(true);
-    });
+    const wasOnLearn = prevPath.current?.startsWith(LEARN_PATH) ?? false;
+    const nowOnLearn = pathname?.startsWith(LEARN_PATH) ?? false;
+    if (wasOnLearn && !nowOnLearn) {
+      const last = Number(localStorage.getItem(SESSION_COOLDOWN_KEY) ?? "0");
+      const now = Date.now();
+      // One feedback prompt at a time (#762): if the passive pulse is up,
+      // skip this one — no cooldown recorded, so it isn't spent.
+      if ((testOverride || !last || now - last > SESSION_COOLDOWN_MS) && tryClaimFeedbackSlot("session")) {
+        let ctx: SessionFeedbackContext | undefined;
+        try {
+          const raw = sessionStorage.getItem(LAST_SESSION_CTX_KEY);
+          if (raw) ctx = JSON.parse(raw);
+          // Consumed: left in place it would label every later prompt this
+          // tab shows with a session from long before (#762).
+          sessionStorage.removeItem(LAST_SESSION_CTX_KEY);
+        } catch {}
+        setContext(ctx);
+        setOpen(true);
+      }
+    }
+    prevPath.current = pathname;
   }, [pathname, isAuthenticated, testOverride]);
 
-  useEffect(() => () => {
-    cancelWait.current();
-    releaseFeedbackSlot("session");
-  }, []);
+  useEffect(() => () => releaseFeedbackSlot("session"), []);
 
   const close = () => {
     setOpen(false);

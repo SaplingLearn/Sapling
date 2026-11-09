@@ -5,19 +5,30 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import { CustomSelect } from "@/components/CustomSelect";
+import { Icon } from "@/components/Icon";
 import {
   onboardingCoursesSearch,
   submitOnboardingProfile,
   type OnboardingCourse,
+  type OnboardingProfilePayload,
 } from "@/lib/api";
 import { onboardingRedirect } from "@/lib/localSeed";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { statusOf } from "@/lib/errorMessage";
 
+type LearningStyleId = OnboardingProfilePayload["learning_style"];
+
 const YEARS = ["freshman", "sophomore", "junior", "senior", "graduate", "other"] as const;
 
-/** Welcome, name, school, majors, courses (PKG-14b removed the learning-style step). */
-const STEP_COUNT = 5;
+// Real Icon names (from components/Icon.tsx), not decorative dingbats.
+// Dingbats look clever but carry no shared meaning; icons do.
+const LEARNING_STYLES: { id: LearningStyleId; title: string; description: string; icon: string }[] = [
+  { id: "visual",   title: "Visual",          description: "I learn best through diagrams, graphs, and visuals.",             icon: "tree" },
+  { id: "reading",  title: "Reading/Writing", description: "I prefer text — notes, explanations, and written practice.",     icon: "book" },
+  { id: "auditory", title: "Auditory",        description: "I absorb material best when I hear or discuss it.",              icon: "users" },
+  { id: "hands-on", title: "Hands-on",        description: "I learn by doing — exercises, labs, and practical application.", icon: "flask" },
+  { id: "mixed",    title: "A mix of all",    description: "I learn best through a blend of modes.",                          icon: "sparkle" },
+];
 
 /** The pre-#757 key, shared by every account on the browser: one student's
  * half-finished draft prefilled the next one's form. Never read; dropped. */
@@ -37,6 +48,7 @@ interface Draft {
   minors: string[];
   course_ids: string[];
   course_cache: OnboardingCourse[];
+  learning_style: LearningStyleId | null;
   step: number;
 }
 
@@ -49,6 +61,7 @@ const EMPTY_DRAFT: Draft = {
   minors: [],
   course_ids: [],
   course_cache: [],
+  learning_style: null,
   step: 0,
 };
 
@@ -59,18 +72,13 @@ function loadDraft(userId: string): Draft {
     const raw = localStorage.getItem(onboardingDraftKey(userId));
     if (!raw) return EMPTY_DRAFT;
     const parsed = JSON.parse(raw);
-    // PKG-14b: the learning-style step is gone (spec §11.2). A draft saved by the
-    // six-step flow may carry `learning_style` (dropped) or sit on step 5
-    // (clamped onto the last step that still exists).
-    const { learning_style: _dropped, ...rest } = parsed ?? {};
-    void _dropped;
-    const step = Math.min(Math.max(Number(rest.step) || 0, 0), STEP_COUNT - 1);
-    return { ...EMPTY_DRAFT, ...rest, step };
+    return { ...EMPTY_DRAFT, ...parsed };
   } catch {
     return EMPTY_DRAFT;
   }
 }
 
+const STEP_COUNT = 6;
 
 export function Onboarding() {
   const router = useRouter();
@@ -146,12 +154,13 @@ export function Onboarding() {
       case 2: return draft.school.trim().length > 0 && draft.year.length > 0;
       case 3: return draft.majors.length > 0;
       case 4: return draft.course_ids.length > 0;
+      case 5: return draft.learning_style !== null;
       default: return false;
     }
   }, [draft]);
 
   const finish = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || !draft.learning_style) return;
     setSubmitting(true);
     try {
       await submitOnboardingProfile({
@@ -162,6 +171,7 @@ export function Onboarding() {
         majors: draft.majors,
         minors: draft.minors,
         course_ids: draft.course_ids,
+        learning_style: draft.learning_style,
       });
       try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
       toast.success("Welcome to Sapling!");
@@ -257,6 +267,12 @@ export function Onboarding() {
             onSelect={(ids, cache) => setDraft(prev => ({ ...prev, course_ids: ids, course_cache: cache }))}
           />
         )}
+        {draft.step === 5 && (
+          <StepLearningStyle
+            value={draft.learning_style}
+            onChange={v => setField("learning_style", v)}
+          />
+        )}
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 32 }}>
           {draft.step > 0 && (
@@ -350,7 +366,6 @@ function StepSchool({ school, year, onSchool, onYear }: {
       <TextInput data-testid="onboarding-school" value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
       <FieldLabel>Year</FieldLabel>
       <CustomSelect<string>
-        ariaLabel="Year"
         value={year}
         placeholder="Select your year…"
         options={YEARS.map(y => ({ value: y, label: y.charAt(0).toUpperCase() + y.slice(1) }))}
@@ -526,6 +541,50 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
                 <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>{c.course_name}</span>
               </span>
               {selected && <span>✓</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StepLearningStyle({ value, onChange }: {
+  value: LearningStyleId | null;
+  onChange: (v: LearningStyleId) => void;
+}) {
+  return (
+    <div>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>How do you learn best?</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>
+        The AI tutor adjusts its tone and pacing to match.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {LEARNING_STYLES.map(s => {
+          const selected = value === s.id;
+          return (
+            <button
+              data-testid={`onboarding-learning-style-${s.id}`}
+              key={s.id}
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(s.id)}
+              style={{
+                padding: "var(--pad-md)",
+                border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+                background: selected ? "var(--accent-soft)" : "var(--bg-panel)",
+                borderRadius: "var(--r-md)",
+                textAlign: "left",
+                transition: "all var(--dur-fast) var(--ease)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <span style={{ color: selected ? "var(--accent)" : "var(--text-dim)", display: "inline-flex" }}>
+                  <Icon name={s.icon} size={16} />
+                </span>
+                <span style={{ fontWeight: 600, fontSize: "var(--fs-base)", color: selected ? "var(--accent)" : "var(--text)" }}>{s.title}</span>
+              </div>
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", lineHeight: 1.4 }}>{s.description}</div>
             </button>
           );
         })}

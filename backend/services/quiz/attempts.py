@@ -22,8 +22,6 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.timestamps import parse_ts
 from services.quiz.wire import _strip_answer_key, _written_response_text
-from learning import quiz_evidence
-from learning.evidence import stated_confidence
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -334,14 +332,7 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
             "selected_index": body.selected_index,
             "is_correct": _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
-            # Learning-loop spec §13 A132: the stated label's
-            # STUDENT_CONFIDENCE_LEVELS value, or None for a skip; an idk
-            # written answer states none (A127 (c)). Submit carries it onto
-            # the question's evidence.
-            "confidence": stated_confidence(
-                body.confidence,
-                idk=written and quiz_evidence.is_idk_answer(body.answer_text),
-            ),
+            "confidence": body.confidence,
         }
         if written:
             row["answer_text"] = encrypt_json({"text": body.answer_text})

@@ -17,7 +17,7 @@ from agents.deps import SaplingDeps
 from agents.document import DocumentProcessingResult
 from services import document_jobs, document_pipeline, events_service
 from services.agent_events import SaplingEvent, sapling_event_to_sse
-from services.concept_prereqs import upload_prereqs_on
+from services.document_indexing import schedule_document_index
 from services.documents.persistence import (
     _existing_doc_by_request_id,
     _graph_backstop,
@@ -30,7 +30,6 @@ from services.documents.post_roll import (
     _invalidate_study_guide_cache,
     _refresh_course_context,
     _spawn_post_roll,
-    _stream_index_steps,
 )
 from services.documents.upload import (
     UNREADABLE_DOCUMENT_DETAIL,
@@ -178,16 +177,8 @@ async def upload_event_stream(
         # classify -> summary/concepts(/syllabus) in parallel -> graph
         # merge, each boundary relayed as its progress events (#835: the
         # same steps and events a queued upload's worker records).
-        # Spec §13 A118: upload_prereq_edges, resolved ONCE for this upload
-        # and this student. It picks the extraction variant and gates the
-        # edge write after the merge (agents.document). Off: the pre-A118
-        # request, and no read of the course's concepts. Threaded: a cold
-        # flag cache reads.
-        prereqs_on = await asyncio.to_thread(upload_prereqs_on, user_id)
         final_output: DocumentProcessingResult | None = None
-        async with aclosing(document_pipeline.run_document_agents(
-            extracted_text, deps, prerequisites=prereqs_on,
-        )) as steps:
+        async with aclosing(document_pipeline.run_document_agents(extracted_text, deps)) as steps:
             async for step in steps:
                 for ev in document_pipeline.step_events(step):
                     yield sapling_event_to_sse(ev)
@@ -323,15 +314,16 @@ async def upload_event_stream(
     # logs its exception; drain_post_roll waits for them at shutdown.
     if not adopted:
         try:
-            post_roll = [
+            _spawn_post_roll(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 # update_course_context aggregates an OFFERING (#759).
                 ("update_course_context", _refresh_course_context, offering_id, user_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
-            ]
-            concept_names = [c.name for c in final_output.concepts.concepts]
-            post_roll += await _stream_index_steps(doc_id, user_id, course_id, concept_names)
-            _spawn_post_roll(*post_roll)
+                # #482: the id only. The indexer reads everything else off
+                # the stored row, which is what lets the sweeper re-drive
+                # this same work if the attempt below dies with the process.
+                ("index_document", schedule_document_index, doc_id, user_id),
+            )
         except Exception:
             logger.exception("Post-roll spawn failed for '%s' (document %s saved)",
                              filename, doc_id)

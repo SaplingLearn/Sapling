@@ -37,7 +37,7 @@ EK125 = Course(
     nickname="MATLAB",
     color="#2563EB",
     concepts=[
-        Concept(name="Vectors and Matrices", mastery=0.96,
+        Concept(name="Vectors and Matrices", mastery=0.91,
                 description="Creating arrays with [ ], colon notation and linspace; indexing with "
                             "row/column subscripts and `end`; size, numel and reshape."),
         Concept(name="Element-wise Operators", mastery=0.84,
@@ -338,7 +338,7 @@ EK301 = Course(
     nickname="Statics",
     color="#EA580C",
     concepts=[
-        Concept(name="Force Vectors", mastery=0.96,
+        Concept(name="Force Vectors", mastery=0.86,
                 description="Resolving forces into Cartesian components, unit vectors and direction cosines, "
                             "and position vectors r = (xB − xA)i + (yB − yA)j + (zB − zA)k."),
         Concept(name="Free-Body Diagrams", mastery=0.78,
@@ -631,7 +631,7 @@ MA225 = Course(
     nickname="Calc III",
     color="#7C3AED",
     concepts=[
-        Concept(name="Dot and Cross Products", mastery=0.96,
+        Concept(name="Dot and Cross Products", mastery=0.83,
                 description="u·v = |u||v|cos θ for angles and projections; u×v perpendicular to both, with "
                             "|u×v| equal to the parallelogram area."),
         Concept(name="Lines and Planes in Space", mastery=0.76,
@@ -908,7 +908,7 @@ PY211 = Course(
     nickname="Physics 1",
     color="#16A34A",
     concepts=[
-        Concept(name="One-Dimensional Kinematics", mastery=0.96,
+        Concept(name="One-Dimensional Kinematics", mastery=0.89,
                 description="Displacement, velocity and acceleration; the constant-acceleration equations "
                             "v = v₀ + at, x = x₀ + v₀t + ½at², v² = v₀² + 2aΔx."),
         Concept(name="Projectile Motion", mastery=0.8,

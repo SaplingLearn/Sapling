@@ -23,7 +23,6 @@ from services.quiz.attempts import (
     _sweep_abandoned,
 )
 from services.quiz.wire import _is_wire_question, _strip_answer_key, _written_response_text
-from learning import quiz_evidence
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -109,8 +108,7 @@ async def list_attempts(
             "difficulty": r.get("difficulty"),
             "mastery_before": before,
             "mastery_after": after,
-            # PKG-14b: p_after − p_before (the legacy per-quiz delta key is gone).
-            "p_delta": delta,
+            "mastery_delta": delta,
             "created_at": r.get("created_at"),
             "completed_at": r.get("completed_at"),
         })
@@ -129,14 +127,7 @@ async def get_attempt(attempt_id: str, request: Request):
         order="question_index.asc",
     ) or []
     responses = [
-        {
-            **r,
-            "answer_text": _written_response_text(r) if r.get("answer_text") else None,
-            # Learning-loop spec §13 A132: the stated confidence as the label
-            # the answer body takes (the stored number is the §3.3 rule's
-            # scale), so a resumed question shows the level that was stated.
-            "confidence": quiz_evidence.stored_label(r.get("confidence")),
-        }
+        {**r, "answer_text": _written_response_text(r) if r.get("answer_text") else None}
         for r in responses
     ]
     last_activity = max(

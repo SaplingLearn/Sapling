@@ -1,4 +1,9 @@
 {
+  "src/components/CustomSelect.tsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
   "src/components/Dialog.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 2
@@ -22,6 +27,11 @@
   "src/components/Gradebook/AssignmentModal.tsx": {
     "no-restricted-syntax": {
       "count": 12
+    }
+  },
+  "src/components/SessionFeedbackGlobal.tsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
     }
   },
   "src/components/TopNav.test.tsx": {

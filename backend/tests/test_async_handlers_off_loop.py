@@ -244,8 +244,7 @@ def test_quiz_list_attempts_on_the_async_seam(wire, monkeypatch, async_mode):
     assert body["total"] == 1
     (attempt,) = body["attempts"]
     assert attempt["concept_name"] == "Loops" and attempt["status"] == "in_progress"
-    # learning-loop PKG-14b: the per-attempt delta is p_after - p_before
-    assert attempt["p_delta"] == 0.1
+    assert attempt["mastery_delta"] == 0.1
 
     reads = {("GET", "quiz_attempts"), ("GET", "graph_nodes"), ("GET", "quiz_responses")}
     if async_mode == "on":

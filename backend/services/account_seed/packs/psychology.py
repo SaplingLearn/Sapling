@@ -39,7 +39,7 @@ PS101 = Course(
     nickname="Intro Psych",
     color="#E0697B",
     concepts=[
-        Concept(name="Classical Conditioning", mastery=0.96,
+        Concept(name="Classical Conditioning", mastery=0.88,
                 description="Pavlov's paradigm: US, UR, CS and CR; acquisition, extinction, spontaneous "
                             "recovery, and Watson and Rayner's Little Albert study."),
         Concept(name="Operant Conditioning", mastery=0.81,
@@ -386,7 +386,7 @@ PS211 = Course(
     nickname="Exp Design (Stats)",
     color="#3E7CB1",
     concepts=[
-        Concept(name="Scales of Measurement", mastery=0.96,
+        Concept(name="Scales of Measurement", mastery=0.84,
                 description="Nominal, ordinal, interval and ratio scales and which statistics each allows."),
         Concept(name="Descriptive Statistics", mastery=0.79,
                 description="Mean, median, mode, range, variance and standard deviation; skew and its "
@@ -739,7 +739,7 @@ PS231 = Course(
     nickname="Physio Psych",
     color="#2FA38B",
     concepts=[
-        Concept(name="Neuron Structure", mastery=0.96,
+        Concept(name="Neuron Structure", mastery=0.86,
                 description="Dendrites, soma, axon hillock, myelinated axon and terminals; glial cells "
                             "including oligodendrocytes, Schwann cells and astrocytes."),
         Concept(name="Neuroanatomy: Brain Regions", mastery=0.8,
@@ -1073,7 +1073,7 @@ PS241 = Course(
     nickname="Dev Psych",
     color="#F2A541",
     concepts=[
-        Concept(name="Piaget's Stages of Cognitive Development", mastery=0.96,
+        Concept(name="Piaget's Stages of Cognitive Development", mastery=0.9,
                 description="Sensorimotor, preoperational, concrete operational and formal operational "
                             "stages; object permanence, conservation and egocentrism."),
         Concept(name="Attachment Theory", mastery=0.83,

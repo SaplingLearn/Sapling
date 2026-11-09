@@ -22,10 +22,8 @@ Rows go in over raw psycopg (the lane's rule: never assert through the layer
 under test); the read goes through the app, exactly as Canopy's poll does.
 
 The lane re-seeds the rich baseline before every test, so the row-backed tables
-are NOT empty: those assertions are deltas (after minus before). Since PKG-13 the
-seed also writes an `llm_usage` row (the budget-cap journey's spend), so this
-module clears `events` and `llm_usage` before each test (`_empty_sources`) —
-the tests that rely on empty sources still assert it first.
+are NOT empty: those assertions are deltas (after minus before). `events` and
+`llm_usage` are not seeded, which the tests that rely on it assert first.
 """
 import re
 import time
@@ -34,17 +32,6 @@ import uuid
 import pytest
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(autouse=True)
-def _empty_sources(db_conn):
-    """Start every test with no `events` / `llm_usage` rows: the reseeded
-    baseline carries the budget-cap journey's `llm_usage` row (PKG-13), which
-    would otherwise read as a measured source here. Runs after the lane's
-    truncate + reseed (db_conn is the lane's local-only connection)."""
-    db_conn.execute("DELETE FROM llm_usage")
-    db_conn.execute("DELETE FROM events")
-    yield
 
 URL = "/api/internal/metrics"
 TOKEN = "itest-canopy-metrics-token-5b1f0c7e9a3d4f68"
@@ -98,25 +85,22 @@ def _enabled(monkeypatch):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _function_is_in_the_schema_cache(db_conn, _hermetic_egress_floor):
+def _function_is_in_the_schema_cache(db_conn):
     """PostgREST serves /rpc/<name> from a schema cache; a function created
     after it booted is a 404 until it reloads. The migration NOTIFYs, but the
-    reload is asynchronous — ask again and wait for it rather than flake.
-    A module fixture runs before any test's own lift, so it lifts the session
-    egress floor for its own wait only."""
+    reload is asynchronous — ask again and wait for it rather than flake."""
     from db.connection import rpc
 
     db_conn.execute("NOTIFY pgrst, 'reload schema'")
     deadline = time.monotonic() + 15
-    with _hermetic_egress_floor.supabase():
-        while True:
-            try:
-                rpc("canopy_metrics", {})
-                return
-            except Exception:
-                if time.monotonic() > deadline:
-                    raise
-                time.sleep(0.5)
+    while True:
+        try:
+            rpc("canopy_metrics", {})
+            return
+        except Exception:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.5)
 
 
 def _event(db_conn, user_id, age, event_type="chat.message_sent", category="usage"):

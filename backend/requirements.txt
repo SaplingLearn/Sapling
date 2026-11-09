@@ -11,7 +11,6 @@ pillow==13.0.0
 pypdf==6.21.4
 pypdfium2==5.10.1
 httpx==0.28.1
-# AESGCM column format remains compatible; 50 closes the audited legacy range.
 cryptography>=50.0.2,<51
 mammoth==1.12.0
 python-pptx==1.0.2
@@ -65,10 +64,8 @@ grimp==3.18
 # >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
 # the #646 continuation appends run-level `run(instructions=...)` (added in
 # 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
-# >=1.107.7 + the `anthropic` extra. 1.107.7 is the maintained backport that
-# closes the audited 1.x advisories without migrating the run_stream_events
-# contract to 2.x (the lock pairs graph/evals). The Claude slots (ADR 0030) rely
-# on the 1.107 AnthropicModelProfile fields (`anthropic_supports_forced_tool_choice`,
+# >=1.107.0 + the `anthropic` extra: the Claude slots (ADR 0030) rely on the
+# 1.107 AnthropicModelProfile fields (`anthropic_supports_forced_tool_choice`,
 # `anthropic_disallows_sampling_settings`, native `output_config` structured
 # output) that `agents/_providers.py` sets for Claude 5.x model names. The
 # `google` extra stays: RAG embeddings remain on Gemini (Anthropic has no
@@ -78,12 +75,6 @@ pydantic-ai-slim[google,anthropic]>=1.107.7,<2
 # surface; 1.107.9 itself tightens its extra to `anthropic<1`. An unpinned
 # resolve jumps to the 2.x SDK.
 anthropic>=0.108.0,<1
-
-# Jev decision backend (learning loop PKG-15; spec §3.6, §13 A24, ADR 0027).
-# EXACT pin (invariant 24): Jev's confidence thresholds are tuned against one SDK
-# + one model (jev-1.13.0). Imported ONLY by agents/_jev.py.
-typesafe-sdk==0.7.2
-
 # <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
 # returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
 # 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
@@ -102,7 +93,7 @@ sse-starlette>=2.0
 # Eval suite (record-and-replay, see backend/tests/evals/_replay.py).
 # Used by `python -m tests.evals.*` and the .github/workflows/evals.yml job.
 # Not imported at runtime by any production code path.
-pydantic-evals>=1.107.7,<2
+pydantic-evals>=0.0.5
 
 # Optional cross-worker cache (#97). Only imported at runtime when REDIS_URL is
 # set; the app runs identically without it (services/cache.py degrades to no-op).
@@ -114,20 +105,6 @@ redis>=5.0,<9
 # and by tests/dependency_manifest.py. Listed explicitly so it never depends on
 # arriving transitively; requirements.lock pins the exact version.
 packaging>=24
-
-# Audited security minimums for dependencies already used by the fast stack.
-# README.md and docs/local-supabase.md also support unlocked pip installs;
-# minimums prevent an already-installed vulnerable transitive from satisfying
-# that path. CI and Docker continue to enforce the complete hash-pinned lock.
-# TypeSafe's httpx2 client requires the matching httpcore2 release.
-anyio>=4.14.2,<5
-httpx2==2.16.0
-httpcore2==2.16.0
-httplib2>=0.32.0,<1
-oauthlib>=4.0.0,<5
-pyasn1>=0.6.4,<0.7
-soupsieve>=2.9.0,<3
-urllib3>=2.8.0,<3
 
 # PostHog product analytics, LLM analytics and error tracking
 # (services/posthog_client.py, ADR 0028). Optional at runtime: unset
