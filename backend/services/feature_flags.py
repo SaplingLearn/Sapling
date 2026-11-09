@@ -9,7 +9,18 @@ user rule → role rule (highest roles.display_priority, then lowest role id)
 → percentage rollout (stable sha256 bucket) → default. Anything unreadable or
 invalid resolves to variants[0] ("off"). Reads come from a per-process
 snapshot (30 s, `FEATURE_FLAGS_SNAPSHOT_TTL_S`); admin writes call
-`clear_feature_flags_cache()` (#98). A user's roles are cached 60 s
+`clear_feature_flags_cache()` (#98), which clears only THIS process. Other
+replicas see the write through `feature_flags_version` (#117): a trigger bumps
+it on every flag write, and a process serving flag reads re-reads it at most
+every `FEATURE_FLAGS_VERSION_CHECK_S` (5 s) and drops its snapshot when it
+moved. Convergence across replicas is therefore ~5 s while requests flow (and
+never worse than the snapshot TTL: a missing version table leaves exactly the
+TTL behaviour; a version read that finds the store unreachable marks it
+unreadable like a failed snapshot read, so an outage costs one bounded read
+per window). The check only validates a WARM snapshot: a reload files the new
+snapshot under the version already known (older or equal, so at worst one
+extra reload), and reads the row only when none is known yet. It is off when
+either interval is 0. A user's roles are cached 60 s
 (`FEATURE_FLAGS_ROLES_TTL_S`). Both TTLs are read at call time; 0 means
 "always read fresh" (the E2E stack exports 0 so a per-test DB reset is seen
 immediately).
@@ -154,6 +165,23 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Study-room live chat authenticates Supabase Realtime with a "
             "backend-minted, member-scoped token instead of the anon key "
             "(RLS step 2e). Needs SUPABASE_JWT_SIGNING_KEY.", True),
+    # #117 (docs/design/async-db-client.md §3): whether the `a*` twins of
+    # table()'s verbs use the native httpx.AsyncClient ("on") or run the sync
+    # verb on a worker thread ("off": today's client and limiter, reached from
+    # an async def without blocking the loop). Per user; resolved once per
+    # request and memoized beside db_user_scope. Server-only. Kill switch:
+    # SAPLING_FLAG_ASYNC_DB_CLIENT=off. Graduate after one release at 100%.
+    FlagDef("async_db_client", ("off", "on"),
+            "Serve async handlers' database calls from the native async HTTP "
+            "client instead of a worker thread.", False),
+    # #117 (design §5): the per-key rate limiter as a Postgres counter
+    # (`claim_rate_limit()` SQL function) instead of per-process memory, so
+    # two replicas share one budget. Resolved GLOBALLY (user_id=None): the
+    # limiter keys are not always a user. Off = today's in-memory limiter; a
+    # failing DB call falls back to it. Server-only.
+    FlagDef("stateless_rate_limit", ("off", "on"),
+            "Keep rate-limit counters in Postgres so every replica shares one "
+            "budget. Global: per-user rules and rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
@@ -199,8 +227,10 @@ _STORE_ERRORS: tuple[type[BaseException], ...] = (StoreUnreadable, httpx.HTTPErr
 
 SNAPSHOT_TTL_ENV = "FEATURE_FLAGS_SNAPSHOT_TTL_S"
 ROLES_TTL_ENV = "FEATURE_FLAGS_ROLES_TTL_S"
+VERSION_CHECK_ENV = "FEATURE_FLAGS_VERSION_CHECK_S"
 DEFAULT_SNAPSHOT_TTL_S = 30.0
 DEFAULT_ROLES_TTL_S = 60.0
+DEFAULT_VERSION_CHECK_S = 5.0
 
 _lock = threading.Lock()
 _snapshot: tuple[float, Snapshot] | None = None
@@ -210,6 +240,12 @@ _snapshot: tuple[float, Snapshot] | None = None
 _generation = 0
 _roles: dict[str, tuple[float, tuple[tuple[str, int], ...]]] = {}
 _warned: set[str] = set()
+#: #117: `feature_flags_version.version` as of the snapshot in hand (None =
+#: unknown: no version checks, the TTL alone governs), and when it was last
+#: confirmed. One thread checks at a time; the rest keep serving the snapshot.
+_version: int | None = None
+_version_checked = 0.0
+_version_lock = threading.Lock()
 #: Bounds on the two per-process maps keyed by caller input (#771): one entry
 #: per student ever resolved (roles) and one per distinct warning. Past the
 #: cap the oldest role entry goes (a re-read costs one bounded query); the
@@ -252,6 +288,12 @@ def roles_ttl_s() -> float:
     return _ttl(ROLES_TTL_ENV, DEFAULT_ROLES_TTL_S)
 
 
+def version_check_s() -> float:
+    """How often a serving process re-reads `feature_flags_version`; 0 turns
+    the cross-replica check off (the snapshot TTL alone then bounds it)."""
+    return _ttl(VERSION_CHECK_ENV, DEFAULT_VERSION_CHECK_S)
+
+
 def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
     if key not in _warned:
         if len(_warned) >= WARNED_MAX:
@@ -261,11 +303,104 @@ def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
 
 
 def clear_feature_flags_cache() -> None:
-    global _snapshot, _generation, _store_down_until
+    _clear()
+
+
+def _clear(version: int | None = None) -> None:
+    """Drop the snapshot. `version`: the version the next snapshot may be
+    filed under (one just read, so not newer than that snapshot); None = the
+    next load reads it again."""
+    global _snapshot, _generation, _store_down_until, _version
     with _lock:
         _snapshot = None
         _generation += 1
         _store_down_until = 0.0  # a write just went through: read again
+        _version = version
+
+
+def _version_checks_on() -> bool:
+    """FEATURE_FLAGS_VERSION_CHECK_S=0, or a snapshot TTL of 0 (every read is
+    fresh anyway), turns the version row off entirely: never read."""
+    return version_check_s() > 0 and snapshot_ttl_s() > 0
+
+
+def _is_outage(exc: BaseException) -> bool:
+    """The store did not answer (transport, timeout, 5xx). A 4xx is an
+    answer -- e.g. the version table not migrated yet -- not an outage."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.HTTPError)
+
+
+def _read_version(*, mark_down: bool = True) -> int | None:
+    """`feature_flags_version.version`, or None when it cannot be known (no
+    table yet, an empty or odd answer, a failed read). Never raises. An
+    unreachable store is marked unreadable (`mark_down`; not on the admin
+    path), so nothing re-reads it -- version or config -- inside the window."""
+    try:
+        with service_scope():  # #115: part of the flag store
+            rows = table("feature_flags_version").select(
+                "version", filters={"id": "eq.true"}, timeout=STORE_TIMEOUT_S,
+            )
+    except Exception as exc:
+        if mark_down and _is_outage(exc):
+            _mark_store_down()
+        _warn_once("version", "feature_flags_version unreadable (%s); flag changes "
+                   "reach this process within the snapshot TTL only", type(exc).__name__)
+        return None
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return None
+    v = rows[0].get("version")
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _version_due() -> bool:
+    """Whether the snapshot in hand should be re-validated against the
+    version row before it is served. Never inside the unreadable window.
+    Caller holds no lock."""
+    if not _version_checks_on():
+        return False
+    interval = version_check_s()
+    with _lock:
+        if _version is None or _snapshot is None:
+            return False
+        now = time.monotonic()
+        return now >= _store_down_until and now - _version_checked >= interval
+
+
+def _baseline_version(*, mark_down: bool = True) -> int | None:
+    """The version to file a newly read snapshot under: the one already
+    known when there is one (it is not newer than the new snapshot, so a
+    write in between costs one extra reload, never a missed write), else a
+    read of the row -- once per process, and after a local clear."""
+    if not _version_checks_on():
+        return None
+    with _lock:
+        known = _version
+    if known is not None:
+        return known
+    return _read_version(mark_down=mark_down)
+
+
+def _maybe_check_version() -> None:
+    """#117: drop the snapshot when another process changed the flag store
+    (the trigger moved `feature_flags_version`). One checker at a time; a
+    concurrent caller keeps serving the snapshot instead of waiting."""
+    global _version_checked
+    if not _version_due() or not _version_lock.acquire(blocking=False):
+        return
+    try:
+        with _lock:
+            seen = _version
+        current = _read_version()
+        with _lock:
+            _version_checked = time.monotonic()
+        if current is not None and current != seen:
+            # Read before the reload, so it is a safe baseline for it: the
+            # reload does not read the version row again.
+            _clear(current)
+    finally:
+        _version_lock.release()
 
 
 def clear_user_roles_cache(user_id: str | None = None) -> None:
@@ -311,8 +446,10 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
         # The admin path (ADR 0029): the connection's normal timeout, and an
         # admin read never marks the store down — it only clears the mark
         # when it succeeds.
+        version = _baseline_version(mark_down=False)
         snap = read_config()
-        return _store_snapshot(snap, generation)
+        return _store_snapshot(snap, generation, version)
+    _maybe_check_version()
     with _lock:
         generation = _generation
         if _snapshot and time.monotonic() - _snapshot[0] < ttl:
@@ -337,13 +474,21 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
         assert flight.result is not None
         return flight.result
     try:
+        # The version BEFORE the config: the snapshot is then at least as new
+        # as the version it is filed under (a write in between only causes
+        # one extra reload on the next check). Usually no read at all (a
+        # version is already known); when it read and found the store
+        # unreachable, fail closed now rather than wait on the config too.
+        version = _baseline_version()
+        if version is None and store_unreadable():
+            raise StoreUnreadable("flag store unreadable (version read)")
         try:
             snap = read_config(timeout=STORE_TIMEOUT_S)
         except _STORE_ERRORS:
             _mark_store_down()  # callers fail closed; nothing re-reads for a while
             raise
         flight.result = snap
-        return _store_snapshot(snap, generation)
+        return _store_snapshot(snap, generation, version)
     except BaseException as exc:
         flight.error = exc
         raise
@@ -354,12 +499,13 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
         flight.done.set()
 
 
-def _store_snapshot(snap: Snapshot, generation: int) -> Snapshot:
-    global _snapshot, _store_down_until
+def _store_snapshot(snap: Snapshot, generation: int, version: int | None = None) -> Snapshot:
+    global _snapshot, _store_down_until, _version, _version_checked
     with _lock:
         _store_down_until = 0.0  # the store answered
         if generation == _generation:  # no clear landed while we were reading
             _snapshot = (time.monotonic(), snap)
+            _version, _version_checked = version, time.monotonic()
     # The store answered: a later outage is news again, so let it warn.
     for key in REGISTRY:
         _warned.discard(f"store:{key}")
@@ -491,6 +637,8 @@ def cached_explain(key: str, user_id: str | None) -> Resolution | None:
         cached = _snapshot
         down = time.monotonic() < _store_down_until
     if cached is not None and time.monotonic() - cached[0] < snapshot_ttl_s():
+        if _version_due():
+            return None  # re-validating against feature_flags_version is a read
         snap = cached[1]
         roles = None
         if user_id and any(t["target_type"] == "role" for t in snap.targets.get(key, [])):

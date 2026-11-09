@@ -39,6 +39,7 @@ from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from gradescopeapi.classes.connection import GSConnection
 from pydantic import BaseModel, Field
 
@@ -386,7 +387,10 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
     # Strictest cap: each call launches a Chromium that pins a worker thread for
     # up to duo_timeout_seconds and fires a Duo push at the user's phone.
-    _enforce_gs_rate_limit(body.user_id, "bu-sso", limit=3, window_sec=600)
+    # #117: off the loop -- with `stateless_rate_limit` on, the limiter is a
+    # PostgREST call.
+    await run_in_threadpool(_enforce_gs_rate_limit, body.user_id, "bu-sso",
+                            limit=3, window_sec=600)
 
     try:
         # sync_playwright wants its own event loop; run the whole flow in
@@ -428,7 +432,8 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         "_gradescope_session": cookies.get("_gradescope_session"),
         "signed_token": cookies.get("signed_token") or None,
     })
-    table("gradescope_credentials").upsert(
+    await run_in_threadpool(  # #117: an async handler; keep the write off the loop
+        table("gradescope_credentials").upsert,
         {
             "user_id": body.user_id,
             "auth_mode": "cookies",

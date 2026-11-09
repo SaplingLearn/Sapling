@@ -28,7 +28,7 @@ from models import (
 )
 from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id, guard_off_loop
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
@@ -493,8 +493,11 @@ class _AvatarUploadBody(BaseModel):
 
 
 @router.post("/{user_id}/avatar")
-async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
-    await guard_off_loop(require_self, user_id, request)
+def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
+    # #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
+    # guard's account read, the PostgREST calls and the Storage PUT below
+    # never block the event loop (it awaited nothing else).
+    require_self(user_id, request)
     _get_user_or_404(user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL

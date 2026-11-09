@@ -61,8 +61,10 @@ def _clear_rate_limit_state():
     from services import request_limits
 
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
     yield
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
 
 
 @pytest.fixture(autouse=True)
@@ -374,6 +376,29 @@ def _hermetic_supabase_client(request, monkeypatch):
     for verb in ("get", "post", "patch", "delete"):
         getattr(fake_client, verb).side_effect = _empty_response
     monkeypatch.setattr(dbconn, "_client", fake_client)
+
+    # #117: the async twin's per-loop client gets the same net, so an `a*`
+    # call that escapes a test's `table` patch is caught exactly as a sync one.
+    from unittest.mock import AsyncMock
+
+    import db.async_connection as adb
+
+    fake_async = MagicMock(name="hermetic_supabase_async_client")
+    for verb in ("get", "post", "patch", "delete"):
+        setattr(fake_async, verb, AsyncMock(side_effect=_empty_response))
+    monkeypatch.setattr(adb, "_async_client", lambda: fake_async)
+
+
+@pytest.fixture
+def no_sync_db_on_loop(monkeypatch):
+    """Opt-in (#117, docs/design/async-db-client.md §4.2): a sync PostgREST
+    call made ON a running event loop raises `db.async_connection.SyncDbOnLoop`
+    instead of only logging `db.sync_on_loop`. A converted router's test
+    module uses it so a blocking call creeping back fails CI."""
+    import db.async_connection as adb
+
+    monkeypatch.setattr(adb, "RAISE_ON_SYNC_ON_LOOP", True)
+    yield
 
 
 class UnstubbedEmailEgress(RuntimeError):

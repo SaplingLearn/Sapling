@@ -118,6 +118,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
     ("services/feature_flags.py", "_user_roles", "service_scope"): "flag store (decides db_user_scope itself)",
     ("services/feature_flags.py", "read_config", "service_scope"): "flag store (decides db_user_scope itself)",
+    ("services/feature_flags.py", "_read_version", "service_scope"):
+        "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
     ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
         "#116 gradescope_syncs is service-only (bucket E): staged sync",
@@ -138,6 +140,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):
         "other users' account state (deleted_at) for cross-user lists",
+    ("services/request_limits.py", "_claim_db", "service_scope"):
+        "#117 stateless_rate_limit: rate_limit_hits + claim_rate_limit() are service-only",
+    ("services/request_limits.py", "_aclaim_db", "service_scope"):
+        "#117 stateless_rate_limit: the async twin of _claim_db",
+    ("services/request_limits.py", "_refund_db", "service_scope"):
+        "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",

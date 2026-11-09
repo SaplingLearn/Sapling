@@ -173,6 +173,11 @@ async def _start(stack: AsyncExitStack) -> None:
     # The decision seam's pooled Jev client (#642) for this loop: closed after
     # the tutor-router drain below, whose decisions still use it.
     stack.push_async_callback(typesafe_client.aclose_clients)
+    # #117: the async DB seam's per-loop httpx.AsyncClient (built lazily on
+    # first use, flag `async_db_client`); closed after every request-path
+    # producer below has drained.
+    from db import async_connection
+    stack.push_async_callback(async_connection.aclose_clients)
     # Let in-flight tutor-router decisions finish before the client and the
     # events worker close: each one emits a decision.made row (bounded by the
     # router's own backstop).

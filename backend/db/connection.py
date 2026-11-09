@@ -7,6 +7,7 @@ from typing import Iterator, Optional
 import httpx
 from dotenv import load_dotenv
 
+from db import async_connection as _aconn
 from db import scope as _scope
 from db import scope_report as _scope_report
 
@@ -46,6 +47,7 @@ def _scope_headers(target: Optional[str] = None, write_op: Optional[str] = None,
     service role. Raises (enforce only) rather than ever falling back.
     `write_op` names a write/rpc, so shadow can note what it knows about it
     without running it twice (db/scope.py::note_shadow_write)."""
+    _aconn.note_sync_call(target)  # #117: db.sync_on_loop when this blocks a loop
     scoped = _scope.resolve_headers(target)
     if scoped is None and write_op is not None:
         _scope.note_shadow_write(target or "?", write_op, data, filters)
@@ -211,8 +213,10 @@ def _shadow_compare(name, url, params, headers, timeout, service_count, service_
         _shadow_slots.release()
 
 
-class SupabaseTable:
-    """Thin synchronous wrapper around Supabase PostgREST REST API."""
+class SupabaseTable(_aconn.AsyncTableMixin):
+    """Thin synchronous wrapper around Supabase PostgREST REST API. The
+    coroutine twins (`aselect`, `ainsert`, ...) come from the mixin
+    (db/async_connection.py, #117)."""
 
     def __init__(self, name: str):
         self.name = name

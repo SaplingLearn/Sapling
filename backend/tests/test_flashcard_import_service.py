@@ -87,7 +87,16 @@ class TestDedup:
 
 class TestRateLimit:
     def setup_method(self):
-        svc._rate_state.clear()
+        svc.clear_rate_state()
+
+    def test_clear_rate_state_drops_only_flashcard_keys(self):
+        from services import request_limits
+
+        svc.check_rate_limit("u1")
+        request_limits.check_rate_limit("ocr:u1", limit=1, window_sec=60)
+        svc.clear_rate_state()
+        assert "flashcard_import:u1" not in request_limits._rate_state
+        assert len(request_limits._rate_state["ocr:u1"]) == 1
 
     def test_allows_first_5_calls(self):
         for _ in range(5):

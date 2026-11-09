@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
@@ -40,7 +41,7 @@ from services.quiz_config import (
     mastery_after,
     quiz_config_payload,
 )
-from services.request_limits import claim_rate_limit, refund_rate_limit
+from services.request_limits import aclaim_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
@@ -374,12 +375,29 @@ def _recent_activity(attempt_ids: set[str]) -> dict[str, str]:
     if not attempt_ids:
         return {}
     rows = table("quiz_responses").select(
-        "attempt_id,answered_at",
-        filters={
-            "attempt_id": f"in.({','.join(sorted(attempt_ids))})",
-            "answered_at": f"gte.{_abandon_cutoff().isoformat()}",
-        },
+        "attempt_id,answered_at", filters=_activity_filters(attempt_ids),
     ) or []
+    return _latest_answers(rows)
+
+
+async def _arecent_activity(attempt_ids: set[str]) -> dict[str, str]:
+    """`_recent_activity` on the async seam (#117), for `async def` readers."""
+    if not attempt_ids:
+        return {}
+    rows = await table("quiz_responses").aselect(
+        "attempt_id,answered_at", filters=_activity_filters(attempt_ids),
+    ) or []
+    return _latest_answers(rows)
+
+
+def _activity_filters(attempt_ids: set[str]) -> dict:
+    return {
+        "attempt_id": f"in.({','.join(sorted(attempt_ids))})",
+        "answered_at": f"gte.{_abandon_cutoff().isoformat()}",
+    }
+
+
+def _latest_answers(rows: list[dict]) -> dict[str, str]:
     latest: dict[str, str] = {}
     for r in rows:
         aid, ts = r.get("attempt_id"), r.get("answered_at")
@@ -1732,7 +1750,8 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
     """
     if not body.source_attempt_id:
         return None
-    rows = table("quiz_attempts").select(
+    rows = await run_in_threadpool(  # #117: on the loop otherwise
+        table("quiz_attempts").select,
         # score/total are plaintext scalars (#521) and ride along for free:
         # they are the only evidence that a pre-#537 attempt with no recorded
         # responses missed anything at all (see _missed_something).
@@ -1818,7 +1837,8 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         # them is a discrepancy whoever sent the list wants to know about.
         missed_something = True
     else:
-        found = missed_question_hashes(body.source_attempt_id, stored)
+        found = await run_in_threadpool(
+            missed_question_hashes, body.source_attempt_id, stored)
         hashes = found.hashes
         missed_something = _missed_something(attempt, found)
     # Only questions in the CURRENT wire shape can be re-served: the client
@@ -1999,7 +2019,10 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 "hard, or adaptive."
             ),
         )
-    node_rows = table("graph_nodes").select(
+    # #117: this handler runs on the event loop, so every sync PostgREST call
+    # below hops off it (tests/test_no_sync_db_in_async_handlers.py).
+    node_rows = await run_in_threadpool(
+        table("graph_nodes").select,
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
@@ -2025,7 +2048,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # first, so probing can't consume a victim's quota) and BEFORE the
     # model call. Neither rejection is a backend failure, so neither emits
     # quiz.generation_failed.
-    retry_after, slot = claim_rate_limit(
+    retry_after, slot = await aclaim_rate_limit(
         f"quiz_generate:{body.user_id}",
         limit=QUIZ_GENERATE_RATE_LIMIT,
         window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
@@ -2057,7 +2080,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
 
-    if missing > 0 and _daily_spend_exceeded(body.user_id):
+    if missing > 0 and await run_in_threadpool(_daily_spend_exceeded, body.user_id):
         logger.warning(
             "quiz: daily spend cap reached user=%s request_id=%s",
             body.user_id, request_id,
@@ -2162,7 +2185,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
     try:
-        _insert_attempt(attempt_row)
+        await run_in_threadpool(_insert_attempt, attempt_row)
     except Exception as e:
         # #760: the quiz was generated (and billed) but there is no row to
         # serve it from, so the student got nothing. Same three duties as
@@ -2252,7 +2275,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
 
 
 @router.get("/attempts")
-def list_attempts(
+async def list_attempts(
     request: Request,
     user_id: str,
     limit: int = 20,
@@ -2260,17 +2283,21 @@ def list_attempts(
 ):
     """#542 D4: paginated attempt history for the signed-in user — the
     plaintext scalars (#521/#527) finally get their reader. No question
-    payloads here (and therefore no answer keys)."""
-    require_self(user_id, request)
+    payloads here (and therefore no answer keys).
+
+    #117: the first handler converted end to end onto the async DB seam
+    (docs/design/async-db-client.md §4): its reads are `a*` calls, and the
+    sync guard and the sweep's writes hop to a worker thread."""
+    await guard_off_loop(require_self, user_id, request)
     limit = max(1, min(limit, 100))
     # Clamp BOTH ends: an unbounded offset is stringified into PostgREST's
     # offset param and Postgres rejects it as bigint-out-of-range — a 500
     # where an empty page is the honest answer.
     offset = max(0, min(offset, _MAX_HISTORY_OFFSET))
     # Lazy lifecycle sweep (#542 D2) — the read paths keep statuses honest.
-    _sweep_abandoned(user_id)
+    await run_in_threadpool(_sweep_abandoned, user_id)
 
-    rows, total = table("quiz_attempts").select_with_count(
+    rows, total = await table("quiz_attempts").aselect_with_count(
         "id,concept_node_id,difficulty,score,total,mastery_before,"
         "mastery_after,completed_at,abandoned_at,created_at",
         filters={"user_id": f"eq.{user_id}"},
@@ -2287,7 +2314,7 @@ def list_attempts(
     node_ids = sorted({r["concept_node_id"] for r in rows if r.get("concept_node_id")})
     nodes: dict[str, dict] = {}
     if node_ids:
-        node_rows = table("graph_nodes").select(
+        node_rows = await table("graph_nodes").aselect(
             "id,concept_name,course_id",
             filters={"id": f"in.({','.join(node_ids)})", "user_id": f"eq.{user_id}"},
         ) or []
@@ -2301,7 +2328,7 @@ def list_attempts(
         if not r.get("completed_at") and not r.get("abandoned_at")
     }
     try:
-        activity = _recent_activity(open_ids)
+        activity = await _arecent_activity(open_ids)
     except Exception:
         logger.exception("quiz: history activity read failed user=%s", user_id)
         activity = {}
