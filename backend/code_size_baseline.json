@@ -5,7 +5,6 @@
     "services/graph_service.py::apply_graph_update": 28
   },
   "route_file_lines": {
-    "routes/admin.py": 1005,
     "routes/admin_analytics.py": 696,
     "routes/auth.py": 1173,
     "routes/documents.py": 1500,

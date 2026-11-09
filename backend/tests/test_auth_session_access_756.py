@@ -363,19 +363,21 @@ def _cached(*uids):
 
 def test_admin_unapprove_drops_the_cached_state(monkeypatch):
     import routes.admin as admin_module
+    from tests.split_patches import ADMIN_MODULES, setattr_in
 
     _cached("user_bob")
     users = MagicMock()
     users.update.return_value = [{"id": "user_bob", "email": None}]
-    monkeypatch.setattr(admin_module, "table", lambda name: users)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", lambda name: users)
     monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
-    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
+    setattr_in(monkeypatch, ADMIN_MODULES, "log_admin_action", lambda **_k: None)
     admin_module.unapprove_user("user_bob", MagicMock())
     assert "user_bob" not in auth_guard._account_state_cache
 
 
 def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
     import routes.admin as admin_module
+    from tests.split_patches import ADMIN_MODULES, setattr_in
     import routes.auth as auth_routes
     from models import AllowlistEmailBody
 
@@ -388,9 +390,9 @@ def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
             tables[name].update.return_value = []
         return tables[name]
 
-    monkeypatch.setattr(admin_module, "table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
-    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
+    setattr_in(monkeypatch, ADMIN_MODULES, "log_admin_action", lambda **_k: None)
     monkeypatch.setattr(auth_routes, "_waitlist_entries", lambda *_a, **_k: [
         {"id": "w1", "email": "bob@bu.edu", "joined_user_id": "user_bob"},
     ])
