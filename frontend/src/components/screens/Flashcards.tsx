@@ -359,11 +359,19 @@ function FlashcardsMode({
           {loading && <FlashcardsSkeleton />}
           {filtered.length === 0 && !loading && (
             <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
-              <div className="h-serif" style={{ fontSize: 20 }}>No cards here yet</div>
+              <div className="h-serif" style={{ fontSize: 20 }}>
+                {concepts.length ? `No cards for ${concepts.join(", ")} yet` : "No cards here yet"}
+              </div>
               <div style={{ fontSize: 13, marginTop: 6 }}>
-                {courseId === "all"
-                  ? "Pick a course and generate cards from your library material."
-                  : "Generate cards for this course to start reviewing."}
+                {/* Arriving from a concept's "Make Flashcards", the generate
+                    button already targets that concept — say so, instead of
+                    the course-level copy that reads as though the concept was
+                    dropped on the way in. */}
+                {concepts.length
+                  ? `Generate cards to start reviewing ${concepts.length === 1 ? "it" : "them"}.`
+                  : courseId === "all"
+                    ? "Pick a course and generate cards from your library material."
+                    : "Generate cards for this course to start reviewing."}
               </div>
             </div>
           )}

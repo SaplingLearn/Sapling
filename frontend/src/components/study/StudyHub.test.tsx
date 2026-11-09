@@ -166,6 +166,27 @@ describe("StudyHub", () => {
     expect(screen.queryByRole("status", { name: "Loading your study hub" })).toBeNull();
   });
 
+  it("a concept's own menu sends every tool to THAT concept", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    // Open the struggling concept's tile menu.
+    fireEvent.click(screen.getByTestId("tile-rec"));
+    const menu = await screen.findByRole("menu");
+    const href = (name: RegExp) =>
+      within(menu).getByRole("menuitem", { name }).getAttribute("href");
+    expect(href(/Quiz Me/)).toContain("concept=rec");
+    expect(href(/Flashcards/)).toBe("/flashcards?course=c1&concepts=Recursion");
+    // The course's material FOR this concept, not its study-guide shelf.
+    expect(href(/Study Guide/)).toBe("/library?course=c1&q=Recursion");
+  });
+
+  it("the toolbar's Study Guide stays course-level", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
+    expect(push).toHaveBeenLastCalledWith("/library?course=c1&type=study_guide");
+  });
+
   it("bell lists every deadline with a colored countdown", async () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
@@ -218,8 +239,10 @@ describe("StudyHub", () => {
     fireEvent.click(screen.getByTestId("tile-loop"));
     const menu = screen.getByRole("menu");
     expect(within(menu).getByText("1 Flashcards")).toBeTruthy();
-    fireEvent.click(within(menu).getByText("Quiz Me"));
-    expect(push).toHaveBeenLastCalledWith(expect.stringContaining("/quiz?concept=loop"));
+    // The menu items are real links now (middle-click / open-in-new-tab),
+    // so the destination is the href rather than a router.push argument.
+    expect(within(menu).getByRole("menuitem", { name: /Quiz Me/ }).getAttribute("href"))
+      .toContain("/quiz?concept=loop");
   });
 
   it("Exams and Deadlines writes through the calendar endpoints", async () => {

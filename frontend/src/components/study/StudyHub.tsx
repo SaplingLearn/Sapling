@@ -18,6 +18,7 @@
  */
 import React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Icon } from "../Icon";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -39,7 +40,7 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import type { AttemptSummary } from "@/lib/quiz/types";
 import { getStudyDaily, setStudyDailyGoal, type StudyDaily } from "@/lib/studyApi";
 import { getTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi";
-import { libraryHref, flashcardsHref } from "@/lib/toolHrefs";
+import { studyGuideHref, flashcardsHref } from "@/lib/toolHrefs";
 import { StudyHubSkeleton } from "../Skeleton";
 import s from "./StudyHub.module.css";
 import {
@@ -304,10 +305,10 @@ export function StudyHub({
   const quizHref = (ids: string[]) =>
     buildQuizHref(ids.length === 1 ? { concept: ids[0] } : { course: cid }, { kind: "link", returnTo: "/study" });
   const cardsHref = (names: string[]) => flashcardsHref(cid, names);
-  // Study guides are Library documents now, so the button opens this course's
-  // study-guide shelf rather than the retired generator pane. The selected
-  // exam has nothing to narrow there — the Library files by course and type.
-  const guideHref = () => libraryHref(cid, "study_guide");
+  // Study guides are Library documents now. For one concept this opens the
+  // course's material FOR that concept; with no concept, the course's
+  // study-guide shelf. (The selected exam has nothing to narrow there.)
+  const guideHref = (concept?: string) => studyGuideHref(cid, concept);
   const weakPicks = () => Object.fromEntries(topics.filter(t => t.st === "review" || t.st === "progress").map(t => [t.id, true]));
   const goTool = (k: "quiz" | "cards" | "guide") => {
     if (k === "guide") { router.push(guideHref()); return; }
@@ -822,7 +823,7 @@ export function StudyHub({
                 const actions = [
                   { label: "Quiz Me", icon: "bulb" as const, bg: "#EBDDEE", fg: "#7A4A78", href: quizHref([t.id]) },
                   { label: n ? `${n} Flashcards` : "Make Flashcards", icon: "cards" as const, bg: "#DCE8CE", fg: "#445D22", href: cardsHref([t.name]) },
-                  { label: "Study Guide", icon: "file" as const, bg: "#F1E3C4", fg: "#8A6420", href: guideHref() },
+                  { label: "Study Guide", icon: "file" as const, bg: "#F1E3C4", fg: "#8A6420", href: guideHref(t.name) },
                 ];
                 return (
                   <div key={t.id} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} className={s.tile}
@@ -852,11 +853,11 @@ export function StudyHub({
                         <div onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }} style={{ position: "fixed", inset: -2000, zIndex: 20, cursor: "default" }} />
                         <div role="menu" style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 220, ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
                           {actions.map(ac => (
-                            <button key={ac.label} role="menuitem" className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); router.push(ac.href); }}
-                              style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 8px", border: 0, borderRadius: 8, background: "transparent", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, color: "#1A1814", textAlign: "left", cursor: "pointer" }}>
+                            <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }}
+                              style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 8px", border: 0, borderRadius: 8, background: "transparent", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, color: "#1A1814", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
                               <span style={{ width: 28, height: 28, borderRadius: 8, background: ac.bg, color: ac.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ac.icon} size={14} /></span>
                               {ac.label}
-                            </button>
+                            </Link>
                           ))}
                         </div>
                       </>

@@ -78,7 +78,10 @@ export function Library() {
     const wanted = searchParams.get("type");
     return wanted && wanted in TYPES ? (wanted as Category) : "all";
   });
-  const [query, setQuery] = React.useState("");
+  // `q` seeds the search the same way `course`/`type` seed the filters — the
+  // Study hub links in with a concept name so the shelf opens on that
+  // concept's material.
+  const [query, setQuery] = React.useState(() => searchParams.get("q") ?? "");
   const [sort, setSort] = React.useState<SortKey>("recent");
   const [view, setView] = React.useState<"list" | "panel">("list");
   const [sel, setSel] = React.useState<string | null>(null);
