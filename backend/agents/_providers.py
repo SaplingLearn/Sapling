@@ -59,7 +59,7 @@ AgentTask = Literal[
     "study_guide", "social_summary",
     "flashcard",
     "course_summary", "quiz_context",
-    "concept_scan", "concept_describe",
+    "concept_scan", "concept_describe", "concept_edges",
     "ocr_vision",
     "decision",
     "topic_checklist",
@@ -99,6 +99,8 @@ _DEFAULTS: dict[AgentTask, str] = {
     "quiz_context": "claude-haiku-5-5",
     "concept_scan": "claude-haiku-5-5",
     "concept_describe": "claude-haiku-5-5",
+    # How a course's concepts depend on each other (the graph's ring depth).
+    "concept_edges": "claude-haiku-5-5",
     # Page-image OCR (handwritten/scanned coursework). Must be a
     # vision-capable model; every Claude model takes image input.
     "ocr_vision": "claude-haiku-5-5",
@@ -138,6 +140,7 @@ _GEMINI_FALLBACKS: dict[AgentTask, str] = {
     "quiz_context": "gemini-2.5-flash-lite",
     "concept_scan": "gemini-2.5-flash-lite",
     "concept_describe": "gemini-2.5-flash-lite",
+    "concept_edges": "gemini-2.5-flash",
     "ocr_vision": "gemini-2.5-flash",
     "decision": "gemini-2.5-flash-lite",
 }
@@ -160,6 +163,7 @@ _SLOT_TIMEOUT_S: dict[AgentTask, float] = {
     "course_summary": 180.0,
     "topic_checklist": 180.0,
     "flashcard": 180.0,
+    "concept_edges": 180.0,
     "note_chat": 180.0,
     # Streamed in the SSE routes: the read (inter-chunk) bound.
     "chat_tutor": 180.0,
@@ -240,6 +244,8 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "quiz_context": "low",
     "concept_scan": "low",
     "concept_describe": "low",
+    # Relational reasoning over a whole course (up to ~110 concepts at once).
+    "concept_edges": "medium",
     "ocr_vision": "medium",
     "decision": "low",
 }
