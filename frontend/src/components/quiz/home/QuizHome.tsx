@@ -46,7 +46,6 @@ import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
 import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
-import { consumeStartParam } from "@/lib/toolHrefs";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
 import { LiveNeighbourhood } from "./LiveNeighbourhood";
@@ -305,44 +304,9 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   // A queued session is QUEUE_COUNT questions per concept by default (R-4).
   // That is what the card starts with AND what its Adjust dialog opens on —
   // otherwise "Start · 5 medium" would quietly run three-question attempts.
-  const effectiveConfig: SessionConfig = React.useMemo(
-    () => (queued ? { ...session.config, count: QUEUE_COUNT } : session.config),
-    [queued, session.config],
-  );
-
-  // ── Arriving to start (`?start=1`) ────────────────────────────────────
-  //
-  // The Study hub's Quiz and Quiz Me ask for a quiz, not for this home: once
-  // the graph is in and /config has landed, start what the link named — the
-  // concept, or the course's queue. `armed` waits one more render because the
-  // session adopts /config's defaults in its own effect, which runs after this
-  // one; starting in the same commit would quiz on the pre-config defaults. A
-  // link that doesn't resolve (another term, nothing due in the course) leaves
-  // the student on the home with its usual explanation. Either way the marker
-  // is dropped, so a reload or a Back here never starts a second quiz.
-  const [armed, setArmed] = React.useState(false);
-  const autoStarted = React.useRef(false);
-  React.useEffect(() => {
-    if (!entry.start || autoStarted.current) return;
-    if (session.phase !== "home") {
-      // Arrived into a session already under way (a stored one resumed): the
-      // link has nothing left to start, and must not fire when it ends.
-      autoStarted.current = true;
-      consumeStartParam();
-      return;
-    }
-    if (home.status !== "ready" || !config) return;
-    if (!armed) {
-      setArmed(true);
-      return;
-    }
-    autoStarted.current = true;
-    const named = entry.course
-      ? mode === "course"
-      : mode === "concept" && !pickedId && Boolean(selection.conceptId && card);
-    if (named) startCard(effectiveConfig);
-    consumeStartParam();
-  }, [entry.start, entry.course, session.phase, home.status, config, armed, mode, pickedId, selection.conceptId, card, startCard, effectiveConfig]);
+  const effectiveConfig: SessionConfig = queued
+    ? { ...session.config, count: QUEUE_COUNT }
+    : session.config;
 
   // ── Dialogs ───────────────────────────────────────────────────────────
 

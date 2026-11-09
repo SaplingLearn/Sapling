@@ -152,17 +152,3 @@ describe("buildQuizHref", () => {
     expect(entry.source).toEqual(source);
   });
 });
-
-describe("the start marker", () => {
-  it("is written only when asked for, after the source", () => {
-    expect(buildQuizHref({ concept: "n1" }, { kind: "link", returnTo: "/study" }, { start: true }))
-      .toBe("/quiz?concept=n1&from=link&return=%2Fstudy&start=1");
-    expect(buildQuizHref({ concept: "n1" }, { kind: "link" })).toBe("/quiz?concept=n1&from=link");
-  });
-
-  it("round-trips through parseEntry, and only as `1`", () => {
-    expect(parse("course=c1&from=link&start=1").start).toBe(true);
-    expect(parse("course=c1&from=link&start=yes").start).toBeUndefined();
-    expect(parse("course=c1&from=link").start).toBeUndefined();
-  });
-});

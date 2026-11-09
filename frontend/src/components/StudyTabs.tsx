@@ -3,7 +3,6 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useFlagMap } from "@/context/FlagsContext";
-import { libraryHref, flashcardsHref } from "@/lib/toolHrefs";
 
 const StudyHighlight = dynamic(
   () => import("./screens/StudyMotion").then(module => module.StudyToggleHighlight),
@@ -12,24 +11,28 @@ const StudyHighlight = dynamic(
 
 type StudyMode = "guide" | "cards" | "quiz";
 
-/**
- * The Study tool nav. Each tab is a page of its own now — the in-place
- * `onChange` switch is gone with the tabbed Study screen that owned it, so
- * these are plain links (which also makes middle-click and Open-in-new-tab
- * behave, where the old handler only stepped aside for modifier clicks).
- */
-export function StudyTabs({ mode }: { mode: StudyMode }) {
+export function StudyTabs({ mode, onChange }: { mode: StudyMode; onChange?: (mode: "guide" | "cards") => void }) {
   const { flags, ready } = useFlagMap();
   const tabs = [
-    { mode: "guide", label: "Study Guide", href: libraryHref(null, "study_guide") },
-    { mode: "cards", label: "Flashcards", href: flashcardsHref() },
+    { mode: "guide", label: "Study Guide", href: "/study?mode=guide" },
+    { mode: "cards", label: "Flashcards", href: "/study?mode=cards" },
     { mode: "quiz", label: "Quiz", href: "/quiz" },
   ] as const;
 
   return (
     <nav className="study-tabs" aria-label="Study tools">
       {tabs.filter(tab => tab.mode !== "quiz" || (ready && flags.hide_quiz !== "on")).map(tab => (
-        <Link key={tab.mode} href={tab.href} aria-current={mode === tab.mode ? "page" : undefined}>
+        <Link
+          key={tab.mode}
+          href={tab.href}
+          aria-current={mode === tab.mode ? "page" : undefined}
+          onClick={event => {
+            if (onChange && tab.mode !== "quiz" && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+              event.preventDefault();
+              onChange(tab.mode);
+            }
+          }}
+        >
           {mode === tab.mode && <StudyHighlight />}
           {tab.label}
         </Link>
