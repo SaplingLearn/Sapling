@@ -83,7 +83,7 @@ def test_patch_learning_loop_beta_alone_writes_nothing():
     with (
         _mock_self(),
         patch("routes.profile.table", side_effect=table_side_effect),
-        patch("routes.profile.update_course_context") as refresh,
+        patch("routes.profile.refresh_course_context") as refresh,
         patch("routes.profile.resync_user_chunk_visibility") as resync,
     ):
         r = client.patch(f"/api/profile/{USER_ID}/settings", json={FLAG: True})

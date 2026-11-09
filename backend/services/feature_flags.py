@@ -283,8 +283,10 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Resolved for the student whose action triggered the work. It covers
     # course-context aggregation (course_context_service.
     # refresh_course_context), the upload's first indexing attempt
-    # (document_indexing.schedule_document_index) and the upload pipeline
-    # itself (services/document_jobs.py). On WITHOUT a running `python -m
+    # (document_indexing.schedule_document_index), the upload pipeline
+    # itself (services/document_jobs.py) and, with the learning loop on, the
+    # upload's index-then-draft check-item chain (services/check_item_jobs.py).
+    # On WITHOUT a running `python -m
     # worker`, aggregation and indexing only queue (class aggregates go stale;
     # the index sweeper still recovers unindexed documents in production) and
     # uploads wait PICKUP_GRACE_SECONDS, then run inline. Hence default off.

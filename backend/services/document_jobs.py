@@ -1084,7 +1084,9 @@ def _process(row: dict, run: _Run) -> None:
         logger.warning("document.process: upload %s saved as %s but the row moved on",
                        upload_id, doc_id)
     if fresh:
-        _post_roll(docs, user_id=user_id, offering_id=offering_id, doc_id=doc_id)
+        _post_roll(docs, user_id=user_id, offering_id=offering_id, doc_id=doc_id,
+                   course_id=course_id,
+                   concept_names=[c.name for c in result.concepts.concepts])
 
 
 def _done(run: _Run, doc_id: str, stored: dict, **progress: Any) -> None:
@@ -1101,18 +1103,31 @@ async def _run_agents(row: dict, text: str, run: _Run):
     Returns (result, merged concept count)."""
     from agents import WORKER_LIMITS
     from agents.classifier import classifier_agent
-    from agents.concept_extraction import concept_extraction_agent
+    from agents.concept_extraction import concept_extraction_agent, extraction_run_args
     from agents.deps import SaplingDeps
     from agents.document import DocumentProcessingResult
     from agents.summary import summary_agent
     from agents.syllabus_extraction import syllabus_extraction_agent
     from agents.tools.graph import apply_concepts_to_graph
     from agents.usage import record_agent_usage
+    from services.concept_prereqs import (
+        course_concept_names,
+        upload_prereqs_on,
+        write_document_prerequisites,
+    )
 
     user_id, course_id = row["user_id"], row["course_id"]
     request_id = row.get("request_id")
     deps = SaplingDeps(user_id=user_id, course_id=course_id, supabase=None,
                        request_id=request_id)
+    # Spec §13 A118: upload_prereq_edges, resolved ONCE for this upload and
+    # this student, exactly as the inline route does: off, the pre-A118
+    # extraction request and no read of the course's concepts.
+    prereqs_on = await asyncio.to_thread(upload_prereqs_on, user_id)
+    existing_concepts = (
+        await asyncio.to_thread(course_concept_names, user_id, course_id)
+        if prereqs_on else ()
+    )
 
     def usage(r, task):
         return record_agent_usage(r, feature="document", task=task,
@@ -1126,7 +1141,10 @@ async def _run_agents(row: dict, text: str, run: _Run):
                             is_syllabus=classification.is_syllabus)
 
     summary_task = summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    concepts_task = concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    concepts_task = concept_extraction_agent.run(
+        **extraction_run_args(text, prerequisites=prereqs_on, existing_concepts=existing_concepts),
+        deps=deps, usage_limits=WORKER_LIMITS,
+    )
     syllabus = None
     if classification.is_syllabus:
         syllabus_task = syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
@@ -1140,22 +1158,36 @@ async def _run_agents(row: dict, text: str, run: _Run):
     await asyncio.to_thread(run.advance, MERGING, None, concept_count=len(concepts.concepts))
 
     merged = await apply_concepts_to_graph(user_id, course_id, [c.name for c in concepts.concepts])
+    if prereqs_on:
+        # A118: the extraction's prerequisite relations, validated in code and
+        # written as edges once the nodes exist. Best-effort (never raises).
+        await asyncio.to_thread(write_document_prerequisites, user_id, course_id, concepts)
     return DocumentProcessingResult(
         classification=classification, summary=summary, concepts=concepts,
         syllabus=syllabus, graph_updated=merged > 0,
     ), merged
 
 
-def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str) -> None:
+def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str,
+               course_id: str, concept_names: list[str]) -> None:
     """The streaming route's post-roll, run in the worker after the row is
-    saved. Each step best-effort, as there."""
+    saved. Each step best-effort, as there. With the learning loop on, the
+    indexing is the loop's ordered index-then-draft chain (PKG-04,
+    `_index_then_check_items`: its own `check_items.document` job), as in the
+    route."""
+    import config
     from services.document_indexing import schedule_document_index
 
+    if config.LEARNING_LOOP_ENABLED:
+        index_step = ("index_then_check_items", docs._index_then_check_items,
+                      (doc_id, user_id, course_id, concept_names))
+    else:
+        index_step = ("index_document", schedule_document_index, (doc_id, user_id))
     steps = (
         ("invalidate_study_guide_cache", docs._invalidate_study_guide_cache, (user_id, offering_id)),
         ("update_course_context", docs._refresh_course_context, (offering_id, user_id)),
         ("check_upload_achievements", docs._check_upload_achievements, (user_id,)),
-        ("index_document", schedule_document_index, (doc_id, user_id)),
+        index_step,
     )
     for label, fn, args in steps:
         try:

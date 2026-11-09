@@ -5032,7 +5032,8 @@ def _documents_route_helpers():
 
 def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
     """Drive /upload/sync with the orchestrator mocked, returning
-    (index_document mock, generate_for_document mock, queue mock)."""
+    (index_document mock, generate_for_document mock, queue mock,
+    schedule_document_index mock — main's #116 first indexing attempt)."""
     import config
 
     tdr = _documents_route_helpers()
@@ -5048,14 +5049,15 @@ def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
         patch("routes.documents.index_document") as idx,
         patch("routes.documents.generate_for_document") as gen,
         patch("routes.documents.queue_generation_for_document") as queue,
-        patch("routes.documents.update_course_context"),
+        patch("routes.documents.schedule_document_index") as sched,
+        patch("routes.documents._refresh_course_context"),
         patch("routes.documents._check_upload_achievements"),
     ):
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "doc-1"}]
         r = tdr._make_upload()
         assert r.status_code == 200, r.text
-    return idx, gen, queue
+    return idx, gen, queue, sched
 
 
 def _fn_name(fn) -> str:
@@ -5065,13 +5067,15 @@ def _fn_name(fn) -> str:
 
 class TestUploadHook:
     def test_flag_off_schedules_index_document_only(self, monkeypatch):
-        idx, gen, queue = _upload_sync_with(monkeypatch, flag=False, mode="real")
-        idx.assert_called_once_with("doc-1")
+        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=False, mode="real")
+        # main's #116 entry point: inline index_document, or a document.index job
+        sched.assert_called_once_with("doc-1", "u1")
+        idx.assert_not_called()
         gen.assert_not_called()
         queue.assert_not_called()
 
     def test_flag_off_background_tasks_are_unchanged(self, monkeypatch):
-        """Byte-identical flag-off post-roll: the same four tasks as before."""
+        """Byte-identical flag-off post-roll: main's four tasks, unchanged."""
         from fastapi import BackgroundTasks
 
         added = []
@@ -5081,14 +5085,15 @@ class TestUploadHook:
         _upload_sync_with(monkeypatch, flag=False, mode="function")
         assert [name for name, _ in added] == [
             "_invalidate_study_guide_cache",
-            "update_course_context",
+            "_refresh_course_context",
             "_check_upload_achievements",
-            "index_document",
+            "schedule_document_index",
         ]
-        assert added[-1][1] == ("doc-1",)
+        assert added[-1][1] == ("doc-1", "u1")
 
     def test_flag_on_real_mode_indexes_in_background_then_queues_the_drafting(self, monkeypatch):
-        idx, gen, queue = _upload_sync_with(monkeypatch, flag=True, mode="real")
+        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=True, mode="real")
+        sched.assert_not_called()  # the loop's chain indexes instead
         # TestClient runs BackgroundTasks before returning: indexing ran, then
         # the drafting was QUEUED on check_item_service's own pool — never run
         # on the shared request threadpool.
@@ -5107,12 +5112,13 @@ class TestUploadHook:
         monkeypatch.setattr(
             BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append(_fn_name(fn))
         )
-        idx, gen, queue = _upload_sync_with(monkeypatch, flag=True, mode="function")
+        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=True, mode="function")
+        sched.assert_not_called()
         idx.assert_called_once_with("doc-1")
         gen.assert_called_once()
         assert gen.call_args[1]["flex"] is True, "ingest-time generation is background prefill"
         queue.assert_not_called()
-        assert "_index_then_check_items" not in added and "index_document" not in added
+        assert "_index_then_check_items" not in added and "schedule_document_index" not in added
 
     @pytest.mark.parametrize("mode", ["function", "real"])
     def test_index_then_check_items_orders_the_two(self, mode):
@@ -5256,7 +5262,9 @@ class TestSseUploadHook:
             "check_upload_achievements",
             "index_document",
         ]
-        assert spawned[-1][2:] == ("doc-1",)
+        # main's #116 entry point, with the uploader for the jobs_queue flag
+        assert spawned[-1][1].__name__ == "schedule_document_index"
+        assert spawned[-1][2:] == ("doc-1", "u1")
         idx.assert_not_called()  # spawned, not called inline
         gen.assert_not_called()
 
@@ -5444,7 +5452,7 @@ class TestWithdrawal:
                     "routes.profile.table",
                     side_effect=tpr.TestShareClassContextToggleRefresh()._tables(),
                 ),
-                patch("routes.profile.update_course_context"),
+                patch("routes.profile.refresh_course_context"),
                 patch("routes.profile.resync_user_chunk_visibility") as resync,
                 patch("routes.profile.retire_items_for_uploader") as retire,
             ):
