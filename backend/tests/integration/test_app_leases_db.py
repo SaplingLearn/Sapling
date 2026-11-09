@@ -4,6 +4,7 @@ against real Postgres.
 SQL only (no app imports): tests/test_pg_lease.py pins what the app does with
 the answers; this pins the SQL itself — first-claim wins, a renewal by the same
 holder extends, an expired lease is taken over, release is holder-fenced,
+renew_lease extends only a row its holder still holds (never recreates one),
 bad arguments are refused, and the opportunistic prune is bounded.
 """
 import psycopg
@@ -20,6 +21,11 @@ def _claim(conn, key, holder, ttl=60) -> bool:
 def _release(conn, key, holder) -> bool:
     return conn.execute("SELECT public.release_lease(%s, %s) AS ok",
                         (key, holder)).fetchone()["ok"]
+
+
+def _renew(conn, key, holder, ttl=60) -> bool:
+    return conn.execute("SELECT public.renew_lease(%s, %s, %s) AS ok",
+                        (key, holder, ttl)).fetchone()["ok"]
 
 
 def _row(conn, key):
@@ -65,6 +71,21 @@ def test_release_is_fenced_on_the_holder(db_conn):
     assert _release(db_conn, "w3t:a", "h1") is True
     assert _row(db_conn, "w3t:a") is None
     assert _release(db_conn, "w3t:a", "h1") is False
+
+
+def test_renew_extends_only_the_holders_live_row_and_never_recreates_one(db_conn):
+    assert _claim(db_conn, "w3t:a", "h1", ttl=5)
+    before = _row(db_conn, "w3t:a")
+    assert _renew(db_conn, "w3t:a", "h1", ttl=600) is True
+    after = _row(db_conn, "w3t:a")
+    assert after["expires_at"] > before["expires_at"]
+    assert after["acquired_at"] == before["acquired_at"]
+    assert _renew(db_conn, "w3t:a", "h2") is False
+    assert _row(db_conn, "w3t:a")["holder"] == "h1"
+    # A renewal that lands after its own release brings nothing back.
+    assert _release(db_conn, "w3t:a", "h1") is True
+    assert _renew(db_conn, "w3t:a", "h1") is False
+    assert _row(db_conn, "w3t:a") is None
 
 
 @pytest.mark.parametrize("args", [
