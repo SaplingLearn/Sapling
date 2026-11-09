@@ -94,6 +94,9 @@ afterEach(() => {
 const open = async (user: User = ADA) => {
   const utils = render(<AccountToolsDialog user={user} onClose={onClose} />);
   await screen.findByTestId("admin-account-env-badge");
+  // Dialog moves focus in on a 20ms timer. Let it land before a test reviews,
+  // or a review that settles first has its focus taken by the late timer.
+  await waitFor(() => expect(document.activeElement).not.toBe(document.body));
   return utils;
 };
 
@@ -296,13 +299,13 @@ describe("AccountToolsDialog flows", () => {
     );
     expect(btn("admin-account-review-confirm").disabled).toBe(true);
     expect(screen.queryByTestId("admin-account-confirm-input")).toBeNull();
-    expect(document.activeElement).toBe(btn("admin-account-review-back"));
+    await waitFor(() => expect(document.activeElement).toBe(btn("admin-account-review-back")));
   });
 
   it("focuses the confirm input once the review is ready", async () => {
     await open();
     await review("admin-account-wipe");
-    expect(document.activeElement).toBe(screen.getByTestId("admin-account-confirm-input"));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("admin-account-confirm-input")));
   });
 
   it("drops a review response that lands after Back", async () => {
