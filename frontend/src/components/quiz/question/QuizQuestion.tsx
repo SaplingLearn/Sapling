@@ -482,7 +482,7 @@ export function QuizQuestion({
                 screen-reader user does. */}
             <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
               {item?.question.type === "symbolic"
-                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
+                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
                 : item?.question.type === "numeric"
                   ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
                   : "Write a brief answer. Capitalization and extra spacing do not affect your score."}

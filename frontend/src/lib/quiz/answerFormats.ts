@@ -70,6 +70,16 @@ export function symbolicProblem(raw: string): string | null {
     if (depth < 0) return "There's a “)” without a matching “(”.";
   }
   if (depth > 0) return "A bracket isn't closed yet.";
+  // The grader takes a power only as one whole number from -8 to 8
+  // (quiz_algebra._Parser.power). Anything else is refused at submit, so say
+  // so now — but not while the power is still being typed (`x^`, `x^-`).
+  for (const m of text.matchAll(/\^/g)) {
+    const rest = text.slice((m.index ?? 0) + 1);
+    if (/^\s*[+-]?\s*$/.test(rest)) continue;
+    if (!/^\s*[+-]?\s*[0-8](?![\d.])/.test(rest)) {
+      return "Powers must be whole numbers from −8 to 8, like x² or x⁻³.";
+    }
+  }
   return null;
 }
 

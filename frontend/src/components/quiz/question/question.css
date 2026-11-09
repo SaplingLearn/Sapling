@@ -656,6 +656,20 @@
   outline-offset: 2px;
 }
 
+/* The "123" toggle reads as a control, not a character: the UI face, and
+   pressed while its row is open. */
+.quiz-written__key--toggle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.quiz-written__key--toggle[aria-expanded="true"] {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
 .quiz-written__key:disabled {
   opacity: 0.45;
   cursor: default;
@@ -673,7 +687,7 @@
 
 .quiz-written__value {
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-serif);
   font-size: var(--fs-md);
 }
 
@@ -682,6 +696,8 @@
    the width instead of giving a third of the screen to symmetry. */
 @media (max-width: 640px) {
   .quiz-question {
+    --quiz-q-key-min-w: 36px;
+    --quiz-q-key-gap: 4px;
     --quiz-q-stem-fs: 20px;
     --quiz-q-stem-my: 24px;
   }

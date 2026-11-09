@@ -123,4 +123,36 @@ describe("WrittenAnswer", () => {
     );
     expect(container.querySelector(".quiz-written")).toHaveAttribute("data-verdict", "incorrect");
   });
+
+  it("gives algebra a plus key, and a 123 toggle for the digits a phone keyboard hides", () => {
+    render(<Harness type="symbolic" initial="x" />);
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-plus"));
+    expect(input().value).toBe("x+");
+    const toggle = screen.getByTestId("quiz-key-more");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("quiz-key-digit-3")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByTestId("quiz-key-digit-3"));
+    fireEvent.click(screen.getByTestId("quiz-key-point"));
+    fireEvent.click(screen.getByTestId("quiz-key-digit-5"));
+    expect(input().value).toBe("x+3.5");
+  });
+
+  it("gives numbers a space key, for a mixed number the decimal pad can't type", () => {
+    render(<Harness type="numeric" initial="1" />);
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-space"));
+    fireEvent.click(screen.getByTestId("quiz-key-fraction"));
+    expect(input().value).toBe("1 /");
+    expect(screen.queryByTestId("quiz-key-more")).toBeNull();
+  });
+
+  it("warns about a power the grader refuses, under the keys", () => {
+    render(<Harness type="symbolic" initial="x^10" />);
+    const problem = screen.getByTestId("quiz-written-readback");
+    expect(problem).toHaveTextContent("whole numbers from −8 to 8");
+    expect(input()).toHaveAttribute("aria-invalid", "true");
+  });
 });

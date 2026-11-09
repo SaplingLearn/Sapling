@@ -164,3 +164,13 @@ describe("prettyNumber / asciiNumber — the numeric field typeset in place", ()
     expect(numericValue(asciiNumber("−1.5×10⁻³"))).toBeCloseTo(-0.0015);
   });
 });
+
+describe("symbolicProblem — powers the grader accepts", () => {
+  it.each(["x^2", "x^-3", "x^ 8", "2(x+1)^2 - x^0", "x^"])("accepts %j (or waits for it)", text => {
+    expect(symbolicProblem(text)).toBeNull();
+  });
+
+  it.each(["x^10", "x^9", "x^n", "x^(n+1)", "x^1.5", "x^23"])("warns about %j before it is submitted", text => {
+    expect(symbolicProblem(text)).toMatch(/whole numbers from −8 to 8/);
+  });
+});

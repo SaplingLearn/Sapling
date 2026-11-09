@@ -51,26 +51,41 @@ interface Key {
   ariaLabel: string;
 }
 
+// The keys cover what each format's grader accepts that a phone keyboard
+// hides: the decimal pad has digits and a point but no minus, slash, percent,
+// exponent or space; the text keyboard puts + ^ ( ) and every digit behind a
+// layer switch. (Grammar: services/quiz_grading.py::numeric_value and
+// services/quiz_algebra.py.)
+
 const NUMERIC_KEYS: Key[] = [
   { id: "minus", label: "−", insert: "-", ariaLabel: "Insert minus sign" },
   { id: "fraction", label: "/", insert: "/", ariaLabel: "Insert fraction bar" },
   { id: "percent", label: "%", insert: "%", ariaLabel: "Insert percent sign" },
   { id: "exponent", label: "×10ⁿ", insert: "e", ariaLabel: "Insert times ten to the power (e notation)" },
+  // A mixed number (1 1/2) needs a space, which the decimal pad doesn't have.
+  { id: "space", label: "1 ½", insert: " ", ariaLabel: "Insert a space, for a mixed number such as 1 1/2" },
 ];
 
 const SYMBOLIC_KEYS: Key[] = [
   { id: "squared", label: "x²", insert: "^2", ariaLabel: "Insert squared" },
   { id: "power", label: "xⁿ", insert: "^", ariaLabel: "Insert power" },
   { id: "brackets", label: "( )", insert: "()", caret: 1, ariaLabel: "Insert brackets" },
+  { id: "plus", label: "+", insert: "+", ariaLabel: "Insert plus sign" },
+  { id: "minus", label: "−", insert: "-", ariaLabel: "Insert minus sign" },
   { id: "times", label: "×", insert: "*", ariaLabel: "Insert multiplication sign" },
   { id: "divide", label: "÷", insert: "/", ariaLabel: "Insert division sign" },
-  { id: "minus", label: "−", insert: "-", ariaLabel: "Insert minus sign" },
+];
+
+/** Behind the "123" toggle: what the text keyboard keeps on another layer. */
+const SYMBOLIC_MORE: Key[] = [
+  ..."1234567890".split("").map(d => ({ id: `digit-${d}`, label: d, insert: d, ariaLabel: `Insert ${d}` })),
+  { id: "point", label: ".", insert: ".", ariaLabel: "Insert decimal point" },
 ];
 
 const PLACEHOLDER: Record<WrittenType, string> = {
   short_answer: "Type your answer",
   numeric: "e.g. 42, 3/4, 0.75, 75% or 3×10⁸",
-  symbolic: "e.g. 2(x + 1) or x^2 − 1",
+  symbolic: "e.g. 2(x + 1) or x² − 1",
 };
 
 export interface WrittenAnswerProps {
@@ -100,6 +115,8 @@ export function WrittenAnswer({
 }: WrittenAnswerProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
+  const more = type === "symbolic" ? SYMBOLIC_MORE : [];
+  const [moreOpen, setMoreOpen] = React.useState(false);
 
   // Algebra and numbers are typeset IN the field: the session holds the
   // ASCII the grader reads, the input shows it the way it will be read
@@ -184,6 +201,22 @@ export function WrittenAnswer({
     </span>
   );
 
+  const keyButton = (key: Key) => (
+    <button
+      key={key.id}
+      type="button"
+      className="quiz-written__key"
+      data-testid={`quiz-key-${key.id}`}
+      aria-label={key.ariaLabel}
+      disabled={disabled}
+      // Keep focus (and the cursor) in the input.
+      onMouseDown={event => event.preventDefault()}
+      onClick={() => insert(key)}
+    >
+      {key.label}
+    </button>
+  );
+
   return (
     <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
       <div className="quiz-written__field">
@@ -229,21 +262,28 @@ export function WrittenAnswer({
 
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
-          {keys.map(key => (
+          {keys.map(key => keyButton(key))}
+          {more.length > 0 && (
             <button
-              key={key.id}
               type="button"
-              className="quiz-written__key"
-              data-testid={`quiz-key-${key.id}`}
-              aria-label={key.ariaLabel}
+              className="quiz-written__key quiz-written__key--toggle"
+              data-testid="quiz-key-more"
+              aria-expanded={moreOpen}
+              aria-controls="quiz-written-more"
+              aria-label={moreOpen ? "Hide number keys" : "Show number keys"}
               disabled={disabled}
-              // Keep focus (and the cursor) in the input.
               onMouseDown={event => event.preventDefault()}
-              onClick={() => insert(key)}
+              onClick={() => setMoreOpen(open => !open)}
             >
-              {key.label}
+              123
             </button>
-          ))}
+          )}
+        </div>
+      )}
+
+      {more.length > 0 && moreOpen && (
+        <div className="quiz-written__keys" id="quiz-written-more" role="group" aria-label="Insert a number">
+          {more.map(key => keyButton(key))}
         </div>
       )}
 
