@@ -1,10 +1,12 @@
 import React from "react";
 
-export const SAPLING_WORDMARK_SRC = "/design/sapling/originals/logo-letters.svg";
+/** The wordmark (jack_h.v2): one raster everywhere, so the landing, the app
+ *  chrome and onboarding all show the same mark. */
+export const SAPLING_WORDMARK_SRC = "/sapling-wordmark.png";
 
-export const SAPLING_WORDMARK_LIGHT_SRC = "/design/sapling/originals/logo-letters.svg";
+export const SAPLING_WORDMARK_LIGHT_SRC = "/sapling-wordmark.png";
 
-const ASPECT = 395.02 / 1294.89;
+const ASPECT = 384 / 1255;
 
 export function SaplingWordmark({
   width,
@@ -20,7 +22,7 @@ export function SaplingWordmark({
   className?: string;
 }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- a static vector; next/image adds nothing for SVG
+    // eslint-disable-next-line @next/next/no-img-element -- a static asset sized by the caller
     <img
       src={tone === "light" ? SAPLING_WORDMARK_LIGHT_SRC : SAPLING_WORDMARK_SRC}
       alt={decorative ? "" : "Sapling"}
