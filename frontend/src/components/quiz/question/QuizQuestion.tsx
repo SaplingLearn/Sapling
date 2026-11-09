@@ -24,7 +24,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Check, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
-import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
+import { AnswerOption, Badge, Button, Chip, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
@@ -510,7 +510,7 @@ export function QuizQuestion({
 
         <div
           ref={feedbackRef}
-          className="quiz-question__feedback"
+          className={`quiz-question__feedback${showVerdict && verdict ? " card" : ""}`}
           data-testid="quiz-review-verdict"
           data-outcome={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : undefined}
           aria-live="polite"
@@ -518,14 +518,20 @@ export function QuizQuestion({
         >
           {showVerdict && verdict && (
             <>
-              <span className="quiz-question__verdict-mark" aria-hidden="true">
-                {verdict.isCorrect ? <Check size={15} strokeWidth={3} /> : <X size={15} strokeWidth={3} />}
-              </span>
-              <div className="quiz-question__verdict-body">
-                <p className="quiz-question__verdict-line">
-                  {verdict.isCorrect
-                    ? "Correct."
-                    : verdict.correctAnswer && format === "symbolic"
+              {/* The outcome is the app's own status chip — the same pill as the
+                  difficulty badge, in its correct / error variants. */}
+              <Chip
+                variant={verdict.isCorrect ? "accent" : "err"}
+                icon={verdict.isCorrect
+                  ? <Check size={12} strokeWidth={3} aria-hidden="true" />
+                  : <X size={12} strokeWidth={3} aria-hidden="true" />}
+                className="quiz-question__verdict-chip"
+              >
+                {verdict.isCorrect ? "Correct" : "Incorrect"}
+              </Chip>
+              {!verdict.isCorrect && (
+                <p className="quiz-question__verdict-line h-sans">
+                  {verdict.correctAnswer && format === "symbolic"
                       ? <>Not quite — the expected answer is{" "}
                           <span className="quiz-question__verdict-expr">{renderParts(expressionParts(verdict.correctAnswer.trim().replace(/[.]$/, "")))}</span>.</>
                     : verdict.correctAnswer
@@ -534,10 +540,10 @@ export function QuizQuestion({
                       ? `Not quite — the answer is ${correctLabel}.`
                       : "Not quite."}
                 </p>
-                {verdict.explanation && (
-                  <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
-                )}
-              </div>
+              )}
+              {verdict.explanation && (
+                <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+              )}
             </>
           )}
         </div>

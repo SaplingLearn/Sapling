@@ -177,54 +177,36 @@
   outline: none;
 }
 
-/* The verdict, once there is one: a card whose edge and mark carry the
-   outcome, with the sentence and the reason inside it. */
-.quiz-question__feedback[data-outcome] {
-  --verdict-tone: var(--positive);
+/* The verdict, once there is one: a plain `.card` (the app's panel) holding
+   the status chip, the sentence when there is something to correct, and the
+   reason. The outcome colour lives in the chip and nowhere else. */
+.quiz-question__feedback.card {
   display: flex;
-  gap: var(--pad-md);
+  flex-direction: column;
   align-items: flex-start;
-  padding: var(--pad-md) var(--pad-lg) var(--pad-md) var(--pad-md);
-  border: 1px solid color-mix(in srgb, var(--verdict-tone) 30%, var(--border));
-  border-left: 4px solid var(--verdict-tone);
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--verdict-tone) 6%, var(--bg-panel));
+  gap: var(--pad-sm);
+  padding: var(--pad-md) var(--pad-lg);
   animation: quiz-verdict-in var(--dur) var(--ease);
 }
 
-.quiz-question__feedback[data-outcome="incorrect"] {
-  --verdict-tone: var(--state-struggle);
+/* The card takes focus when the verdict lands (so it is announced); the
+   app-wide `:focus-visible` rule would square its corners and ring it. */
+.quiz-question__feedback.card:focus-visible {
+  border-radius: var(--r-lg);
+  outline: none;
 }
 
 @keyframes quiz-verdict-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quiz-question__feedback[data-outcome] { animation: none; }
-}
-
-.quiz-question__verdict-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: var(--r-full);
-  background: var(--verdict-tone);
-  color: #fff;
-}
-
-.quiz-question__verdict-body {
-  min-width: 0;
-  padding-top: 3px;
+  .quiz-question__feedback.card { animation: none; }
 }
 
 .quiz-question__verdict-line {
   margin: 0;
   font-size: var(--fs-lg);
-  font-weight: 600;
-  line-height: 1.4;
   color: var(--text);
 }
 
@@ -240,7 +222,7 @@
 }
 
 .quiz-question__explanation {
-  margin: 6px 0 0;
+  margin: 0;
   font-size: var(--fs-base);
   line-height: 1.6;
   color: var(--text-dim);
@@ -260,7 +242,7 @@
 }
 
 /* The aside follows the verdict card rather than butting into it. */
-.quiz-question__feedback[data-outcome] + .quiz-question__aside {
+.quiz-question__feedback.card + .quiz-question__aside {
   margin-top: var(--pad-md);
 }
 
