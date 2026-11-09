@@ -399,7 +399,7 @@ cat <<DONE
      frontend  http://localhost:$FRONTEND_PORT   (test-profile production build)
      backend   http://localhost:$BACKEND_PORT   (health: /api/health)
      Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (project $SUPABASE_PROJECT_ID)
-   PIDs + logs: .e2e/          Tear down: make e2e-down
+   PIDs + logs: .e2e/          Torn down by its cycle (a held stack: make e2e-down)
    Harnesses read .e2e/stack.json; a shell can \`source .e2e/env.sh\`.
    Harness sign-in: POST /api/auth/test-login with a seeded rich-* user (#381).
 DONE
