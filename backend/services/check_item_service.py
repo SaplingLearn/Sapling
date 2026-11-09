@@ -2816,6 +2816,67 @@ class _SplitGroup:
                 ledger.mark_solo(k, fp)
 
 
+def _concepts_by_key(
+    concept_names: Iterable[str], max_concepts: int | None
+) -> tuple[dict[str, str], list[str]]:
+    """`generate_for_concepts`' concepts: names de-duplicated by concept_key
+    (first name wins), and the first `max_concepts` of their keys."""
+    names_by_key: dict[str, str] = {}
+    for name in concept_names:
+        key = concept_key(name)
+        if key and key not in names_by_key:
+            names_by_key[key] = name
+    keys = list(names_by_key)
+    if max_concepts is not None:
+        keys = keys[:max_concepts]
+    return names_by_key, keys
+
+
+def _concepts_to_draft(
+    course_id: str,
+    keys: list[str],
+    names_by_key: dict[str, str],
+    chunks: list[dict],
+    min_chunk_score: int,
+) -> tuple[list[tuple[str, str, list[dict]]], int, int]:
+    """The keys still to draft, each with its ranked passages, in order:
+    (todo, skipped — already at CHECK_ITEM_INITIAL_PER_CONCEPT items, checked
+    BEFORE any agent call —, unmatched — no passage scores >= the floor)."""
+    skipped = unmatched = 0
+    todo: list[tuple[str, str, list[dict]]] = []
+    for key in keys:
+        if count_items(course_id, key) >= CHECK_ITEM_INITIAL_PER_CONCEPT:
+            skipped += 1
+            continue
+        ranked = rank_chunks_for_concept(
+            names_by_key[key], chunks, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
+        )
+        if not ranked:
+            unmatched += 1
+            continue
+        todo.append((key, names_by_key[key], ranked))
+    return todo, skipped, unmatched
+
+
+def _rerank_without(
+    batch: list, chunks: list[dict], gone: set[str], min_chunk_score: int
+) -> tuple[list, int]:
+    """A batch re-ranked without the documents a re-check found withdrawn:
+    (the concepts that kept a passage, how many lost every one)."""
+    remaining = [c for c in chunks if c.get("doc_id") not in gone]
+    kept = []
+    lost = 0
+    for key, name, _ in batch:
+        ranked = rank_chunks_for_concept(
+            name, remaining, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
+        )
+        if ranked:
+            kept.append((key, name, ranked))
+        else:
+            lost += 1
+    return kept, lost
+
+
 def generate_for_concepts(
     *,
     user_id: str | None,
@@ -2864,30 +2925,12 @@ def generate_for_concepts(
         logger.info("check items: no source passages for course %s; nothing to draft", course_id)
         return _NOTHING
 
-    names_by_key: dict[str, str] = {}
-    for name in concept_names:
-        key = concept_key(name)
-        if key and key not in names_by_key:
-            names_by_key[key] = name
+    names_by_key, keys = _concepts_by_key(concept_names, max_concepts)
     # A119: the concepts a draft may be found to test (and re-tagged into)
     scope = dict(names_by_key)
-    keys = list(names_by_key)
-    if max_concepts is not None:
-        keys = keys[:max_concepts]
-
-    skipped = unmatched = 0
-    todo: list[tuple[str, str, list[dict]]] = []
-    for key in keys:
-        if count_items(course_id, key) >= CHECK_ITEM_INITIAL_PER_CONCEPT:
-            skipped += 1
-            continue
-        ranked = rank_chunks_for_concept(
-            names_by_key[key], chunks, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
-        )
-        if not ranked:
-            unmatched += 1
-            continue
-        todo.append((key, names_by_key[key], ranked))
+    todo, skipped, unmatched = _concepts_to_draft(
+        course_id, keys, names_by_key, chunks, min_chunk_score
+    )
     ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
     stalled = [
         key for key, _, ranked in todo
@@ -2939,17 +2982,8 @@ def generate_for_concepts(
         batch, group = queue.popleft()
         split = group is not None
         if gone:
-            remaining = [c for c in chunks if c.get("doc_id") not in gone]
-            kept = []
-            for key, name, _ in batch:
-                ranked = rank_chunks_for_concept(
-                    name, remaining, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
-                )
-                if ranked:
-                    kept.append((key, name, ranked))
-                else:
-                    unmatched += 1
-            batch = kept
+            batch, lost = _rerank_without(batch, chunks, gone, min_chunk_score)
+            unmatched += lost
             if not batch:
                 continue
         names = [name for _, name, _ in batch]

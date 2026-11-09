@@ -1000,6 +1000,43 @@ def _unavailable_after(exc: BaseException) -> GradeResult:
     return GradeResult(unavailable=True, budget_capped=isinstance(exc, BudgetCapped))
 
 
+async def _graded_runs(message, deps: SaplingDeps, *, labels, item, screen, suspicious: bool):
+    """`grade`'s model runs: the first, and when it is malformed, needs
+    confirming or is below the confidence floor, ONE second opinion on the
+    grader_second slot (spec §3.4, A22). Returns (runs, first-run verdicts,
+    invalid_primary, confirming, second_opinion). A first run that addresses
+    the grader beside a screen flag gets no second opinion (`grade` refuses
+    it). Raises what the runs raise (`_GRADER_FAILURES` take the caller's
+    outage path), and UnexpectedModelBehavior for a malformed second opinion."""
+    second_opinion = False  # set once the verdict stands on the grader_second run (A22)
+    runs = [await _run_once(message, deps)]
+    invalid_primary = _invalid_verdict_fields(runs[0], labels)
+    first = {} if invalid_primary else parse_labelled(runs[0].item_results, labels)
+    refusing = bool(screen.exempted and runs[0].addresses_grader)  # refused by grade()
+    confirming = not invalid_primary and not refusing and _needs_confirmation(
+        runs[0],
+        first,
+        suspicious=suspicious,
+        conflicted=_conflicted(runs[0], first, item),
+    )
+    if not refusing and (
+        invalid_primary or confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE
+    ):
+        # spec §3.4: ONE second opinion, on the grader_second slot (A22)
+        # A malformed returned primary is replaced, never confirmed or
+        # used for support. Exceptions still take the outage path.
+        if invalid_primary:
+            logger.warning(
+                "grader primary returned invalid verdicts in %s; requesting one replacement",
+                invalid_primary,
+            )
+        runs.append(await _run_once(message, deps, second_opinion=True))
+        if _invalid_verdict_fields(runs[-1], labels):
+            raise UnexpectedModelBehavior("grader returned invalid verdicts")
+        second_opinion = True
+    return runs, first, invalid_primary, confirming, second_opinion
+
+
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
@@ -1070,34 +1107,10 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         item, format=format, student_answer=student_answer, labels=labels
     )
     suspicious = bool(answer_guard.suspicion(student_answer, **terms))
-    second_opinion = False  # set once the verdict stands on the grader_second run (A22)
-    confirming = False
     try:
-        runs = [await _run_once(message, deps)]
-        invalid_primary = _invalid_verdict_fields(runs[0], labels)
-        first = {} if invalid_primary else parse_labelled(runs[0].item_results, labels)
-        refusing = bool(screen.exempted and runs[0].addresses_grader)  # refused below
-        confirming = not invalid_primary and not refusing and _needs_confirmation(
-            runs[0],
-            first,
-            suspicious=suspicious,
-            conflicted=_conflicted(runs[0], first, item),
+        runs, first, invalid_primary, confirming, second_opinion = await _graded_runs(
+            message, deps, labels=labels, item=item, screen=screen, suspicious=suspicious,
         )
-        if not refusing and (
-            invalid_primary or confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE
-        ):
-            # spec §3.4: ONE second opinion, on the grader_second slot (A22)
-            # A malformed returned primary is replaced, never confirmed or
-            # used for support. Exceptions still take the outage path below.
-            if invalid_primary:
-                logger.warning(
-                    "grader primary returned invalid verdicts in %s; requesting one replacement",
-                    invalid_primary,
-                )
-            runs.append(await _run_once(message, deps, second_opinion=True))
-            if _invalid_verdict_fields(runs[-1], labels):
-                raise UnexpectedModelBehavior("grader returned invalid verdicts")
-            second_opinion = True
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
         return _unavailable_after(exc)
