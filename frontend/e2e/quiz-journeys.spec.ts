@@ -476,8 +476,8 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
 
   // …and the attempt finishes normally from there.
   await page.getByTestId("quiz-next").click();
-  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct.");
-  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct.");
+  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct");
+  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct");
   await expectResults(page);
   await expect(page.getByTestId("quiz-results-score")).toHaveText(
     `${QUIZ_LENGTH - 1} of ${QUIZ_LENGTH} correct`,
