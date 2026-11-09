@@ -37,13 +37,14 @@ import type { GamificationMe, GraphNode as ApiNode, GraphEdge as ApiEdge, Note }
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { HomeGraph, HATCH, type GraphMode, type HomeCourse } from "../home/HomeGraph";
+import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Chevron, ComingUp, LastSession, LevelStreak, RecentNotes, Roadmap, type LevelInfo } from "../home/HomeAside";
 import {
   DEFAULT_QUOTE,
   buildPrereqs,
   courseFocus,
-  daysUntil,
   dueAtMs,
   dueDateParts,
   dueReviewConcepts,
@@ -72,8 +73,6 @@ function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return { source: e.source as string, target: e.target as string, strength: e.strength, relationship_type: e.relationship_type };
 }
 
-const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DIVIDER = "1px solid rgba(42,39,31,0.10)";
 
 /** One of the two action cards (Up Next, Quick Reviews). */
@@ -174,9 +173,17 @@ export function Dashboard() {
   const [extrasKey, setExtrasKey] = React.useState(0);
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
-  const [courseSel, setCourseSel] = React.useState<string | null>(null);
-  const [courseMenuOpen, setCourseMenuOpen] = React.useState(false);
-  const [mode, setMode] = React.useState<GraphMode>("graph");
+  const [fullscreen, setFullscreen] = React.useState(false);
+  // The "My courses" key and the graph, wired together (the original Home
+  // graph): hovering a course row fades the other courses; hovering a concept
+  // lights its course's row; clicking a row zooms the graph to that course,
+  // clicking it again zooms back out.
+  const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
+  const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
+  const zoomedCourse = zoomRequest?.courseId ?? null;
+  const zoomToCourse = (courseId: string) =>
+    setZoomRequest((r) => ({ courseId: r?.courseId === courseId ? null : courseId, seq: (r?.seq ?? 0) + 1 }));
 
   // Client-only clock (no SSR/CSR drift); test mode pins it via now().
   const [nowMs, setNowMs] = React.useState<number>(0);
@@ -201,7 +208,7 @@ export function Dashboard() {
   const shownQuote = quote ?? DEFAULT_QUOTE;
 
   // ── Graph size ──
-  const [size, setSize] = React.useState({ w: 1164, h: 700 });
+  const [size, setSize] = React.useState({ w: 720, h: 420 });
   const roRef = React.useRef<ResizeObserver | null>(null);
   const graphRef = React.useCallback((el: HTMLDivElement | null) => {
     roRef.current?.disconnect();
@@ -261,6 +268,14 @@ export function Dashboard() {
     if (userReady && userId && semesterHydrated) load();
   }, [userReady, userId, semesterHydrated, load]);
 
+  useScrollLock(fullscreen);
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [fullscreen]);
+
   React.useEffect(() => {
     if (!userReady || !userId) return;
     let cancelled = false;
@@ -292,6 +307,8 @@ export function Dashboard() {
     const c = id ? courses.find((co) => co.course_id === id) : undefined;
     return c ? c.course_code || c.course_name : null;
   }, [courses]);
+
+  const courseProgress = React.useMemo(() => courseProgressFor(scopedCourses, nodes), [scopedCourses, nodes]);
 
   const homeCourses = React.useMemo<HomeCourse[]>(() => {
     const list: HomeCourse[] = scopedCourses.map((c) => ({
@@ -329,20 +346,7 @@ export function Dashboard() {
     return [...withConcepts].sort((a, b) => concepts.filter((n) => n.course_id === b.id).length - concepts.filter((n) => n.course_id === a.id).length)[0].id;
   }, [homeCourses, concepts, sortedDue]);
 
-  const graphCourse = courseSel && (courseSel === "all" || homeCourses.some((c) => c.id === courseSel))
-    ? courseSel
-    : primaryCourse ?? "all";
   const primaryFocus = primaryCourse ? focusByCourse.get(primaryCourse) : undefined;
-
-  const goalNote = React.useCallback((courseId: string) => {
-    const exam = sortedDue.find((a) => isExam(a) && a.course_id === courseId);
-    if (!exam || !nowMs) return "Your Goal";
-    const kind = /quiz/i.test(exam.assignment_type || exam.title) ? "Quiz" : "Exam";
-    const d = new Date(dueAtMs(exam.due_date));
-    const days = daysUntil(exam.due_date, nowMs);
-    const when = days <= 0 ? "Today's" : days === 1 ? "Tomorrow's" : days < 7 ? `${WEEKDAY_LONG[d.getDay()]}'s` : `the ${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
-    return `Your Goal · On ${when} ${kind}`;
-  }, [sortedDue, nowMs]);
 
   const studyHref = (courseId?: string | null) =>
     canStudy ? (courseId ? `/study?course=${encodeURIComponent(courseId)}` : "/study") : "/learn";
@@ -452,30 +456,7 @@ export function Dashboard() {
   }
 
   const firstName = userName ? userName.split(" ")[0] : "";
-  const focusedCourse = homeCourses.find((c) => c.id === graphCourse);
-  const legendRgb = focusedCourse?.rgb ?? homeCourses.find((c) => c.id === primaryCourse)?.rgb ?? "192,96,32";
-  const goalId = graphCourse !== "all" ? focusByCourse.get(graphCourse)?.goalId : null;
-  const goalName = goalId ? byId.get(goalId)?.name : undefined;
-  const treeShown = mode === "tree" && !!goalName;
-  const selectCourse = (id: string) => {
-    setCourseMenuOpen(false);
-    setCourseSel(id);
-    if (id === "all") setMode("graph");
-  };
-  const toTree = () => {
-    if (graphCourse === "all" && primaryCourse) setCourseSel(primaryCourse);
-    setMode("tree");
-  };
   const { text: quoteText, by: quoteBy } = splitQuote(shownQuote);
-
-  const legend = [
-    { word: "Mastered", bg: `rgba(${legendRgb},1)` },
-    { word: "Learning", bg: `rgba(${legendRgb},0.78)` },
-    { word: "Struggling", bg: `rgba(${legendRgb},0.55)` },
-    { word: "Not Started", bg: `rgba(${legendRgb},0.28)` },
-    { word: "Ready to Learn", bg: `rgba(${legendRgb},0.28)`, ring: `0 0 0 2px #FAF8F3, 0 0 0 3.5px rgba(${legendRgb},0.45)` },
-    { word: "Needs a Refresh", bg: `rgba(${legendRgb},1)`, hatch: HATCH },
-  ];
 
   const header = (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: isMobile ? 18 : 40, maxWidth: 1164, flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -575,110 +556,12 @@ export function Dashboard() {
     </div>
   );
 
-  const curLabel = graphCourse === "all" ? "All courses" : focusedCourse?.code ?? "Course";
-  const courseMenu = (
-    <div style={{ marginLeft: "auto", position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setCourseMenuOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={courseMenuOpen}
-        aria-label="Choose a course"
-        data-testid="home-course-menu"
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 8, height: 34, padding: "0 12px", borderRadius: 10,
-          border: "1px solid rgba(42,39,31,0.16)", background: "#FDFCF9", color: "#1A1814", fontFamily: "inherit",
-          fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-        }}
-      >
-        {graphCourse === "all" ? (
-          <span style={{ display: "inline-flex", gap: 2 }}>
-            {homeCourses.map((c) => <span key={c.id} style={{ width: 7, height: 7, borderRadius: "50%", background: `rgb(${c.rgb})` }} />)}
-          </span>
-        ) : (
-          <span style={{ width: 9, height: 9, borderRadius: "50%", background: `rgb(${focusedCourse?.rgb ?? legendRgb})` }} />
-        )}
-        {curLabel}
-        <span style={{ color: "#6F6857", display: "flex" }}><Icon name="chevron-down" size={11} /></span>
-      </button>
-      {courseMenuOpen && (
-        <>
-          <div onClick={() => setCourseMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-          <div
-            role="listbox"
-            aria-label="Courses"
-            style={{
-              position: "absolute", right: 0, top: 40, zIndex: 41, width: 260, background: "#FDFCF9",
-              border: "1px solid rgba(42,39,31,0.14)", borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.14)",
-              padding: 6, display: "flex", flexDirection: "column", gap: 2,
-            }}
-          >
-            {[{ id: "all", label: "All courses", sub: `${homeCourses.length} ${homeCourses.length === 1 ? "course" : "courses"}`, rgb: null as string | null },
-              ...homeCourses.map((c) => ({ id: c.id, label: c.code, sub: c.name, rgb: c.rgb as string | null }))].map((ct) => {
-              const on = graphCourse === ct.id;
-              return (
-                <button
-                  key={ct.id}
-                  data-testid={`home-course-option-${ct.id}`}
-                  type="button"
-                  role="option"
-                  aria-selected={on}
-                  onClick={() => selectCourse(ct.id)}
-                  className={styles.option}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", border: 0, borderRadius: 8,
-                    background: on ? "#F2F6EE" : "transparent", color: "#1A1814", fontFamily: "inherit", fontSize: 14, textAlign: "left", cursor: "pointer",
-                  }}
-                >
-                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: ct.rgb ? `rgb(${ct.rgb})` : "transparent", flexShrink: 0, border: ct.rgb ? 0 : "1.5px solid #8A8372", boxSizing: "border-box" }} />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontWeight: 600 }}>{ct.label}</span>
-                    {ct.sub && <span style={{ display: "block", fontSize: 13, color: "#6F6857" }}>{ct.sub}</span>}
-                  </span>
-                  {on && <span style={{ color: "#445D22", display: "flex" }}><Icon name="check" size={13} /></span>}
-                </button>
-              );
-            })}
-            <div style={{ height: 1, background: "rgba(42,39,31,0.10)", margin: "4px 6px" }} />
-            <button
-              type="button"
-              data-testid="home-manage-courses"
-              onClick={() => { setCourseMenuOpen(false); setCoursesOpen(true); }}
-              className={styles.option}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", border: 0, borderRadius: 8, background: "transparent", color: "#445D22", fontFamily: "inherit", fontSize: 14, fontWeight: 600, textAlign: "left", cursor: "pointer" }}
-            >
-              <Icon name="setting" size={13} /> Courses & Semesters
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-
-  const toggleBtn = (on: boolean): React.CSSProperties => ({
-    border: 0, padding: "5px 12px", borderRadius: 8, fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer",
-    background: on ? "#FDFCF9" : "transparent", color: on ? "#445D22" : "#3F3B31",
-  });
-
   const graphSection = (
-    <section
-      aria-label="Prerequisite family tree"
-      style={{ flex: 1, minHeight: isMobile ? 520 : 0, marginTop: 22, display: "flex", flexDirection: "column", maxWidth: 1164 }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", rowGap: 8, paddingBottom: 10, borderBottom: DIVIDER }}>
-        <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 600, whiteSpace: "nowrap" }}>
-          {treeShown ? `What ${goalName} is built on` : "Knowledge Graph"}
-        </span>
-        {courseMenu}
-        <div role="tablist" aria-label="Graph view" style={{ display: "flex", gap: 2, padding: 3, background: "#F4F1EA", borderRadius: 10, fontSize: 14 }}>
-          <button type="button" data-testid="home-mode-graph" role="tab" aria-selected={!treeShown} onClick={() => setMode("graph")} style={toggleBtn(!treeShown)}>Graph</button>
-          <button type="button" data-testid="home-mode-tree" role="tab" aria-selected={treeShown} onClick={toTree} style={toggleBtn(treeShown)}>Family Tree</button>
-        </div>
-      </div>
+    <section aria-label="Knowledge graph" style={{ flex: 1, minHeight: isMobile ? 520 : 0, marginTop: 22, marginBottom: 24, display: "flex", flexDirection: "column", gap: 12, maxWidth: 1164 }}>
       {suggestNode && !suggestDismissed && (
         <div
           data-testid="home-suggest"
-          style={{ marginTop: 12, padding: "10px 14px", display: "flex", gap: 12, alignItems: "center", borderRadius: 14, background: "#EBF0E1", border: "1px solid #D3DEC2", fontSize: 14 }}
+          style={{ padding: "10px 14px", display: "flex", gap: 12, alignItems: "center", borderRadius: 14, background: "#EBF0E1", border: "1px solid #D3DEC2", fontSize: 14 }}
         >
           <div style={{ flex: 1 }}><strong>Try this next:</strong> {suggestNode.name}</div>
           <button
@@ -695,46 +578,62 @@ export function Dashboard() {
           </button>
         </div>
       )}
-      <div ref={graphRef} style={{ position: "relative", flex: 1, minHeight: isMobile ? 420 : 360 }}>
-        {concepts.length === 0 && homeCourses.length === 0 ? (
-          <div data-testid="home-graph-empty" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", textAlign: "center", color: "#6F6857", fontSize: 15 }}>
-            <div>
-              <div style={{ marginBottom: 12 }}>Your knowledge graph grows as you add courses and study.</div>
-              <button type="button" data-testid="home-add-courses" className={styles.primary} onClick={() => setCoursesOpen(true)}
-                style={{ height: 34, padding: "0 14px", border: 0, background: "#445D22", color: "#FFFFFF", borderRadius: 9, fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                Add your courses
-              </button>
-            </div>
+      {/* The original Home knowledge graph (KnowledgeGraph + the CoursesKey
+          overlay and its own controls), sitting transparent on the page like
+          the v3 design: no card, just the heading row over a divider. */}
+      <div
+        data-testid="home-graph-panel"
+        style={{ position: "relative", minHeight: 420, display: "flex", flexDirection: "column", flex: 1, background: "transparent" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingBottom: 10, borderBottom: DIVIDER }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, minWidth: 0 }}>
+            <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 600, whiteSpace: "nowrap" }}>Knowledge Graph</span>
+            <span style={{ fontSize: 14, color: "#6F6857", whiteSpace: "nowrap" }}>
+              {concepts.length} concepts across {scopedCourses.length} courses
+            </span>
           </div>
-        ) : (
-          <HomeGraph
-            nodes={concepts}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              type="button"
+              data-testid="dashboard-courses-manage"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setCoursesOpen(true)}
+            >
+              Courses &amp; Semesters
+            </button>
+            <button
+              type="button"
+              data-testid="home-graph-fullscreen"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setFullscreen(true)}
+              aria-label="Fullscreen graph"
+            >
+              <Icon name="max" size={12} />
+            </button>
+          </div>
+        </div>
+        <div ref={graphRef} style={{ position: "relative", flex: 1, minHeight: 260 }}>
+          <KnowledgeGraph
+            legible
+            nodes={nodes}
             edges={edges}
-            prereqs={prereqs}
-            courses={homeCourses}
-            course={graphCourse}
-            mode={mode}
-            focus={focusByCourse}
-            goalNote={goalNote}
-            nowMs={nowMs}
             width={size.w}
             height={size.h}
-            highlightId={suggestNode && !suggestDismissed ? suggestNode.id : null}
-            onSelectCourse={selectCourse}
-            onOpen={(n) => router.push(learnHrefForNode(n))}
+            highlightId={suggestNode?.id}
+            onNodeClick={(n) => router.push(learnHrefForNode(n))}
+            focusCourseId={keyHoverCourse ?? zoomedCourse}
+            onHoverCourse={setGraphHoverCourse}
+            zoomRequest={zoomRequest}
           />
-        )}
-      </div>
-      <div data-testid="home-legend" style={{ display: "flex", alignItems: "center", gap: 20, padding: "10px 0 18px", borderTop: DIVIDER, fontSize: 14, color: "#3F3B31", flexWrap: "wrap" }}>
-        {legend.map((lg) => (
-          <span key={lg.word} style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-            <span style={{ position: "relative", width: 14, height: 14, borderRadius: "50%", background: lg.bg, boxShadow: lg.ring ?? "none", boxSizing: "border-box", overflow: "hidden" }}>
-              <span style={{ position: "absolute", inset: 0, background: lg.hatch ?? "none" }} />
-            </span>
-            {lg.word}
-          </span>
-        ))}
-        {graphCourse === "all" && <span style={{ marginLeft: "auto", color: "#6F6857" }}>Click a Course to Focus on It</span>}
+          <CoursesKey
+            courseProgress={courseProgress}
+            activeCourseId={keyHoverCourse ?? graphHoverCourse}
+            onHoverCourse={setKeyHoverCourse}
+            selectedCourseId={zoomedCourse}
+            onSelectCourse={zoomToCourse}
+            selectHint="Click to zoom to this course, again to zoom out"
+          />
+        </div>
       </div>
     </section>
   );
@@ -764,7 +663,50 @@ export function Dashboard() {
         {graphSection}
       </div>
       {aside}
+      {fullscreen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+            <div>
+              <div className="label-micro">Knowledge graph · fullscreen</div>
+              <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
+            </div>
+            <button type="button" data-testid="home-graph-fullscreen-close" className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)} aria-label="Exit fullscreen">
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+          <FullscreenGraph
+            nodes={nodes}
+            edges={edges}
+            highlightId={suggestNode?.id}
+            onNodeClick={(n) => { setFullscreen(false); router.push(learnHrefForNode(n)); }}
+          />
+        </div>
+      )}
       <ManageCoursesModal open={coursesOpen} userId={userId} courses={courses} onClose={() => setCoursesOpen(false)} onChanged={load} />
+    </div>
+  );
+}
+
+type HomeCourse = { id: string; code: string; name: string; rgb: string };
+
+function FullscreenGraph({
+  nodes, edges, highlightId, onNodeClick,
+}: {
+  nodes: GraphNode[]; edges: GraphEdge[];
+  highlightId?: string;
+  onNodeClick: (n: GraphNode) => void;
+}) {
+  const [size, setSize] = React.useState({ w: 1200, h: 700 });
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((e) => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
+    if (ref.current) ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={ref} style={{ flex: 1, position: "relative" }}>
+      <KnowledgeGraph legible nodes={nodes} edges={edges} width={size.w} height={size.h} highlightId={highlightId} onNodeClick={onNodeClick} />
     </div>
   );
 }

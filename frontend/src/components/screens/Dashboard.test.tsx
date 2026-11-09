@@ -5,7 +5,8 @@
  *   - every card is derived from real data: pills, Up Next, Quick Reviews,
  *     Last Session, Roadmap, Recent Notes, Coming Up, level and streak;
  *   - the quote is editable and remembered per user;
- *   - the Graph / Family Tree toggle and the latest-load-wins race (#769).
+ *   - the original knowledge graph card (KnowledgeGraph + CoursesKey) and
+ *     the latest-load-wins race (#769).
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -33,7 +34,11 @@ vi.mock("@/lib/useNavSections", () => ({
     items: ["/learn", "/study", "/calendar", "/notetaker"].filter((h) => !navState.hidden.includes(h)).map((href) => ({ href, label: href, icon: "x" })),
   }],
 }));
-vi.mock("../ManageCoursesModal", () => ({ ManageCoursesModal: () => null }));
+// The original force graph needs a real canvas; its own tests cover it.
+vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => <div data-testid="knowledge-graph" /> }));
+vi.mock("../ManageCoursesModal", () => ({
+  ManageCoursesModal: ({ open }: { open: boolean }) => (open ? <div data-testid="manage-courses-modal" /> : null),
+}));
 vi.mock("../Icon", () => ({ Icon: () => null }));
 
 vi.mock("@/lib/api", () => ({
@@ -109,42 +114,40 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const openCourseMenu = async () => {
-  fireEvent.click(await screen.findByTestId("home-course-menu"));
-  return within(screen.getByRole("listbox", { name: "Courses" }));
+// Course codes in the original "My courses" key overlaid on the graph.
+const keyCodes = async () => {
+  const key = await screen.findByTestId("dashboard-courses-key");
+  return within(key).getAllByTestId("dashboard-course-code").map((el) => el.textContent?.trim());
 };
 
 describe("Home: semester scoping", () => {
-  it("defaults to All semesters: every course listed, one unscoped fetch", async () => {
+  it("defaults to All semesters: every course keyed, one unscoped fetch", async () => {
     render(<Dashboard />);
-    const menu = await openCourseMenu();
-    expect(menu.getByText("BIO-101")).toBeInTheDocument();
-    expect(menu.getByText("PSY-110")).toBeInTheDocument();
+    await waitFor(async () => expect(await keyCodes()).toEqual(expect.arrayContaining(["BIO-101", "PSY-110"])));
     expect(getGraph).toHaveBeenCalledTimes(1);
     expect(getGraph).toHaveBeenCalledWith("u1", undefined);
   });
 
-  it("scopes the course list and the graph fetch to a stored semester", async () => {
+  it("scopes the course key and the graph fetch to a stored semester", async () => {
     window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
     render(<Dashboard />);
-    const menu = await openCourseMenu();
-    expect(menu.getByText("PSY-110")).toBeInTheDocument();
-    expect(menu.queryByText("BIO-101")).toBeNull();
+    await waitFor(async () => expect(await keyCodes()).toEqual(["PSY-110"]));
     expect(getGraph).toHaveBeenCalledWith("u1", "Fall 2025");
     expect(getGraph).not.toHaveBeenCalledWith("u1", undefined);
     expect(getFlashcards).toHaveBeenCalledWith("u1", undefined, "Fall 2025");
   });
 
-  it("keeps the Courses & Semesters hub reachable from the course menu", async () => {
+  it("opens the Courses & Semesters hub from the graph card", async () => {
     render(<Dashboard />);
-    const menu = await openCourseMenu();
-    expect(menu.getByTestId("home-manage-courses")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("dashboard-courses-manage"));
+    expect(screen.getByTestId("manage-courses-modal")).toBeInTheDocument();
   });
 
-  it("shows an empty graph state when there are no courses", async () => {
+  it("keeps the course key away when there are no courses", async () => {
     vi.mocked(getCourses).mockResolvedValue({ courses: [] });
     render(<Dashboard />);
-    expect(await screen.findByTestId("home-graph-empty")).toHaveTextContent("Add your courses");
+    await screen.findByTestId("knowledge-graph");
+    expect(screen.queryByTestId("dashboard-courses-key")).toBeNull();
   });
 });
 
@@ -269,30 +272,21 @@ describe("Home: right column", () => {
 });
 
 describe("Home: knowledge graph", () => {
-  it("switches to the family tree of the course goal", async () => {
+  it("renders the original graph card with its concept count", async () => {
     vi.mocked(getCourses).mockResolvedValue({ courses: [course("MATH210", "Spring 2026", "Linear Algebra")] });
     vi.mocked(getGraph).mockResolvedValue(GRAPH);
     render(<Dashboard />);
-    await screen.findAllByTestId("home-graph-node");
+    expect(await screen.findByTestId("knowledge-graph")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Graph")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Family Tree" }));
-    expect(await screen.findByText("What Eigenvalues is built on")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Graph" }));
-    expect(await screen.findByText("Knowledge Graph")).toBeInTheDocument();
+    expect(screen.getByText(/concepts across 1 courses/)).toBeInTheDocument();
   });
 
-  it("opens the tutor from a node's hover card", async () => {
-    vi.mocked(getCourses).mockResolvedValue({ courses: [course("MATH210", "Spring 2026", "Linear Algebra")] });
-    vi.mocked(getGraph).mockResolvedValue(GRAPH);
+  it("opens and closes the fullscreen graph", async () => {
     render(<Dashboard />);
-    const nodes = await screen.findAllByTestId("home-graph-node");
-    const det = nodes.find((n) => n.getAttribute("data-node-id") === "det") as HTMLElement;
-    expect(det).toHaveAttribute("aria-label", expect.stringContaining("You Are Here · Step 1 of 2"));
-    fireEvent.mouseEnter(det);
-    const card = screen.getByTestId("home-graph-card");
-    expect(card).toHaveTextContent("60%");
-    fireEvent.click(within(card).getByRole("button", { name: /Continue/ }));
-    expect(push).toHaveBeenCalledWith("/learn?topic=Determinants&mode=socratic&course=c-MATH210");
+    fireEvent.click(await screen.findByTestId("home-graph-fullscreen"));
+    expect(screen.getByText("Press Esc to exit")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Press Esc to exit")).toBeNull());
   });
 });
 

@@ -23,6 +23,7 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada" }),
 }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: vi.fn(() => false) }));
+vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => null }));
 vi.mock("../ManageCoursesModal", () => ({ ManageCoursesModal: () => null }));
 vi.mock("../Icon", () => ({ Icon: () => null }));
 

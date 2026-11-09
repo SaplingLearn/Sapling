@@ -9,6 +9,5 @@
 .pillDeadline:hover { background: #F7E6BF; color: #8A6420; }
 .noteLink { color: #1A1814; text-decoration: none; }
 .noteLink:hover .noteTitle { color: #445D22; }
-.option:hover { background: #F2F6EE !important; }
 .primary:hover { background: #597536 !important; }
 .focusRing:focus-visible { outline: 2px solid #597536; outline-offset: 2px; border-radius: 6px; }
