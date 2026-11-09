@@ -14,7 +14,6 @@
     "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
     "src/components/screens/Dashboard.tsx::Dashboard": 48,
     "src/components/screens/Dashboard.tsx::Dashboard>load": 29,
-    "src/components/screens/Learn.tsx::LearnInner": 76,
     "src/components/screens/Settings.tsx::Settings": 26,
     "src/components/screens/Study.tsx::GuideMode": 44,
     "src/components/screens/Tree.tsx::Tree": 31,
