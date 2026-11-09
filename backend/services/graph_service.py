@@ -20,7 +20,9 @@ from services.streak_service import effective_streak, touch_streak_safe
 # Module imports, not names: tests patch these on their home modules, and a
 # call-time attribute lookup keeps those patches effective (#118 removed the
 # function-local imports that hid an ImportError under a broad except).
-from services import academics, achievement_service, course_context_service
+# course_context_service is the one exception, imported in
+# _refresh_touched_course_contexts: see there.
+from services import academics, achievement_service
 from services.graph_update_model import (  # noqa: F401  (_coerce_unit: re-export, #118)
     GraphUpdate,
     NewEdge,
@@ -1120,6 +1122,14 @@ def _refresh_touched_course_contexts(user_id: str, touched_courses: set) -> None
     Best-effort — the graph is already written — but a failure is logged, not
     swallowed.
     """
+    # Function-level on purpose: course_context_service runs the course-summary
+    # agent, so a top-level import drags the agents stack into every
+    # graph_service importer and closes a loop (agents.tools.graph ->
+    # graph_service -> course_context_service -> agents.course_summary). It
+    # sits OUTSIDE the try below: an ImportError is a bug and propagates; only
+    # the refresh's runtime failure is logged and passed over.
+    from services import course_context_service
+
     for cid in touched_courses:
         for offering_id in academics.user_offering_ids_for_course(user_id, cid):
             try:

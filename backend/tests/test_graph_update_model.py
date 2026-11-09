@@ -192,10 +192,19 @@ class TestImportFix:
     )
 
     def test_no_function_local_imports_on_the_update_path(self):
+        """No import under a broad except. The ONE function-level import is
+        course_context_service's in _refresh_touched_course_contexts (it keeps
+        the agents stack and its loop off graph_service's import), and it is a
+        top-level statement of that function, outside any try."""
         for name in self.HELPERS:
-            tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(gs, name))))
-            local = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
-            assert not local, f"{name} imports inside the function"
+            fn = ast.parse(textwrap.dedent(inspect.getsource(getattr(gs, name)))).body[0]
+            local = [n for n in ast.walk(fn) if isinstance(n, (ast.Import, ast.ImportFrom))]
+            if name != "_refresh_touched_course_contexts":
+                assert not local, f"{name} imports inside the function"
+                continue
+            assert [ast.unparse(n) for n in local] == [
+                "from services import course_context_service"]
+            assert local[0] in fn.body, "the import must not sit inside a try/loop"
 
     @pytest.mark.parametrize("first", [
         "services.graph_service",
@@ -208,13 +217,36 @@ class TestImportFix:
         code = (
             f"import {first}\n"
             "import services.graph_service as gs\n"
-            "assert gs.course_context_service.refresh_course_context\n"
+            "from services import course_context_service\n"
+            "assert course_context_service.refresh_course_context\n"
             "assert gs.achievement_service.check_achievements\n"
             "assert gs.academics.user_offering_ids_for_course\n"
         )
         proc = subprocess.run([sys.executable, "-c", code], cwd=BACKEND,
                               capture_output=True, text=True, timeout=120)
         assert proc.returncode == 0, proc.stderr
+
+    def test_importing_graph_service_stays_off_the_agents_stack(self):
+        code = (
+            "import sys\n"
+            "import services.graph_service\n"
+            "assert 'services.course_context_service' not in sys.modules\n"
+            "assert not [m for m in sys.modules if m == 'agents' or m.startswith('agents.')]\n"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], cwd=BACKEND,
+                              capture_output=True, text=True, timeout=120)
+        assert proc.returncode == 0, proc.stderr
+
+    def test_a_refresh_import_error_propagates(self, monkeypatch):
+        """A broken course_context_service import is a bug, not a failed
+        refresh: it must surface, never be logged and passed over."""
+        import services
+
+        monkeypatch.setitem(sys.modules, "services.course_context_service", None)
+        monkeypatch.delattr(services, "course_context_service", raising=False)
+        with patch("services.academics.user_offering_ids_for_course", lambda u, c: ["off-c1"]):
+            with pytest.raises(ImportError):
+                gs._refresh_touched_course_contexts("u1", {"c1"})
 
     def test_refresh_failure_is_logged_not_swallowed(self, caplog):
         def boom(offering_id, user_id):
