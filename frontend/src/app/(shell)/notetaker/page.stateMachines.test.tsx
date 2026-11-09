@@ -326,7 +326,7 @@ describe("notes chat", () => {
     fireEvent.change(chatInput(), { target: { value: "explain recursion" } });
     fireEvent.keyDown(chatInput(), { key: "Enter" });
 
-    // The chat rail is inert (hidden from assistive tech) until fullscreen, hence `hidden: true`.
+    // The chat rail is aria-hidden until fullscreen, hence `hidden: true`.
     const alert = await screen.findByRole("alert", { hidden: true });
     expect(alert).toHaveTextContent("Sorry — something went wrong. Try again?");
     expect((chatInput() as HTMLInputElement).value).toBe("explain recursion");

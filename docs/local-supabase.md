@@ -265,11 +265,8 @@ With the local stack up and `backend/.env` active, from `backend/`:
       RUN_INTEGRATION=1 python -m pytest -m integration -q
 
 These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
-encryption round-trips, migrated schema). Skipped by default. Before EVERY test the
-suite truncates every mutable table and re-seeds the rich baseline
-(`tests/integration/conftest.py::_reset_between_tests`; the reference tables in its
-`_TRUNCATE_DENYLIST` are kept), so running it wipes anything you created by hand in
-the local database. It refuses to run against a non-local `SUPABASE_DB_URL`.
+encryption round-trips, migrated schema). Skipped by default. The suite seeds the
+rich dataset (idempotent) on first run and never resets your DB.
 
 The function-mode variables are not optional. The quiz subcutaneous tests (#545)
 drive the write paths through real HTTP, so without the seam they would call live

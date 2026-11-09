@@ -71,8 +71,7 @@ _MASTERED = {"user_id": "eq.u1", "mastery_tier": "eq.mastered"}
 # trigger_type -> (populated value, empty value, reads in order)
 DIRECT = {
     "login_streak": (7, 0, [("users", "streak_count", _ID)]),
-    # learning loop A73: a daily review session is no tutor session (NOT_REVIEW)
-    "session_count": (3, 0, [("sessions", "user_id", {**_U, "mode": "neq.review"})]),
+    "session_count": (3, 0, [("sessions", "user_id", _U)]),
     "documents_uploaded": (2, 0, [("documents", "user_id", _U)]),
     "quizzes_completed": (4, 0, [("quiz_attempts", "user_id", {
         "user_id": "eq.u1", "completed_at": "not.is.null", "score": "not.is.null",

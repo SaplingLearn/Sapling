@@ -68,26 +68,11 @@ def test_unknown_env_override_fails_at_model_construction(monkeypatch):
 
 
 def test_every_default_slot_is_claude():
-    """The swap itself: no agent slot still defaults to Gemini — except the
-    learning-loop slots awaiting their Claude eval pass, which are named, and
-    only those (LOOP_SLOTS_PENDING_CLAUDE_EVAL)."""
-    from agents._providers import LOOP_SLOTS_PENDING_CLAUDE_EVAL
-
-    claude = {t: m for t, m in _DEFAULTS.items() if t not in LOOP_SLOTS_PENDING_CLAUDE_EVAL}
-    assert {provider_for_model(m) for m in claude.values()} == {"anthropic"}
+    """The swap itself: no agent slot still defaults to Gemini."""
+    assert {provider_for_model(m) for m in _DEFAULTS.values()} == {"anthropic"}
     assert set(_ANTHROPIC_EFFORT) == set(_DEFAULTS), (
         "every slot needs an explicit Claude effort level"
     )
-
-
-def test_the_pending_loop_slots_are_exactly_the_gemini_defaults():
-    """The exception cannot grow silently: every slot in the pending set still
-    defaults to Gemini, and every Gemini default is in the pending set. Moving a
-    slot to Claude means flipping its default AND leaving the set together."""
-    from agents._providers import LOOP_SLOTS_PENDING_CLAUDE_EVAL
-
-    gemini = {t for t, m in _DEFAULTS.items() if provider_for_model(m) == "google"}
-    assert gemini == set(LOOP_SLOTS_PENDING_CLAUDE_EVAL)
 
 
 def test_provider_model_strips_a_provider_qualifier():

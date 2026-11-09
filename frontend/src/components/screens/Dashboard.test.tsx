@@ -18,7 +18,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
@@ -36,12 +36,6 @@ vi.mock("@/context/UserContext", () => ({
 }));
 
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
-// Spec §13 A126: the shell's "retention check due" read (nothing due by default).
-const retention = vi.hoisted(() => ({ due: false, courseIds: [] as string[] }));
-vi.mock("@/context/RetentionDueContext", async (original) => ({
-  ...await original<typeof import("@/context/RetentionDueContext")>(),
-  useRetentionDue: () => ({ ...retention, refresh: () => {} }),
-}));
 // "topnav" renders the legacy My Courses panel, the easiest surface to assert
 // on; the CoursesKey empty-state test flips this to "sidebar".
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
@@ -93,8 +87,6 @@ function course(code: string, term: string): EnrolledCourse {
 beforeEach(() => {
   layoutState.pref = "topnav";
   userState.name = "Ada";
-  retention.due = false;
-  retention.courseIds = [];
   window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
@@ -239,26 +231,5 @@ describe("Dashboard async races (#769)", () => {
     await act(async () => { vi.advanceTimersByTime(5_000); });
     expect(quote()).toHaveAttribute("aria-hidden", "false");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Grace");
-  });
-});
-
-describe("Dashboard retention-check notice (spec §13 A126)", () => {
-  it.each(["topnav", "sidebar"])("is absent while nothing is due (%s layout)", async (pref) => {
-    layoutState.pref = pref;
-    render(<Dashboard />);
-    await waitFor(() => expect(getGraph).toHaveBeenCalled());
-    expect(screen.queryByTestId("dashboard-retention-due")).toBeNull();
-  });
-
-  it.each(["topnav", "sidebar"])("links to the due course's retention check (%s layout)", async (pref) => {
-    layoutState.pref = pref;
-    retention.due = true;
-    retention.courseIds = ["c-BIO-101", "c-PSY-110"];
-    render(<Dashboard />);
-    const notice = await screen.findByTestId("dashboard-retention-due");
-    expect(notice.textContent).toContain("A retention check is due.");
-    fireEvent.click(within(notice).getByTestId("dashboard-retention-open"));
-    // a nudge only: opening a check commits its pose, so the student opens it on Study
-    expect(push).toHaveBeenCalledWith("/study?retention-course=c-BIO-101");
   });
 });

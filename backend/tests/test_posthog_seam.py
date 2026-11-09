@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import sys
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -319,11 +320,7 @@ class TestMirror:
     def test_real_client_capture_is_non_blocking(self, monkeypatch, no_network):
         """The request thread only enqueues onto OUR queue; our worker hands
         the event to posthog-python, whose own consumer uploads. With every
-        socket refused, log_event still returns immediately.
-
-        "Immediately" without a clock: capture is held until log_event has
-        returned, so a request thread that sent the event itself, or waited for
-        the worker to send it, would never be released."""
+        socket refused, log_event still returns immediately."""
         from posthog import Posthog
 
         monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
@@ -334,23 +331,20 @@ class TestMirror:
             import threading
 
             threads: list[str] = []
-            released: list[bool] = []
-            request_returned = threading.Event()
             real_capture = client.capture
-
-            def held_capture(*a, **k):
-                threads.append(threading.current_thread().name)
-                # The 30 s is a hang guard: the passing path is released at once.
-                released.append(request_returned.wait(30))
-                return real_capture(*a, **k)
-
-            monkeypatch.setattr(client, "capture", held_capture)
+            monkeypatch.setattr(
+                client, "capture",
+                lambda *a, **k: threads.append(threading.current_thread().name)
+                or real_capture(*a, **k),
+            )
             posthog_client.set_client_for_tests(client)
+            started = time.monotonic()
             events_service.log_event("note.created", category="usage", user_id=USER_ID)
-            request_returned.set()
+            elapsed = time.monotonic() - started
+            assert elapsed < 0.5
             # Handed to the SDK by OUR worker, not on the request thread.
             _drain()
-            assert threads == ["posthog-send"] and released == [True]
+            assert threads == ["posthog-send"]
         finally:
             posthog_client.set_client_for_tests(None)
             # The consumer's one upload attempt hits the refused socket and
@@ -2381,9 +2375,10 @@ class TestProductAnalyticsFlag:
         monkeypatch.setattr(feature_flags, "read_config", down)
         for _ in range(50):
             events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        started = time.monotonic()
         posthog_client.flush(timeout_seconds=3)
+        assert time.monotonic() - started < 2.0
         assert posthog_client._queue.unfinished_tasks == 0
-        # One bounded read, then the negative cache: 50 items never cost 50 reads.
         assert len(reads) == 1
         fake_client.capture.assert_not_called()
 

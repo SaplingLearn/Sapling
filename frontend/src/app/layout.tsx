@@ -4,10 +4,8 @@ import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { UserProvider } from '@/context/UserContext';
 import { FlagsProvider } from '@/context/FlagsContext';
-import { RetentionDueProvider } from '@/context/RetentionDueContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { StreamedRevealGuard } from '@/components/StreamedRevealGuard';
 import './globals.css';
 
 /*
@@ -150,15 +148,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${aleo.variable} ${gummi.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
     >
       <body>
-        {/* First, above every provider: a server-streamed page is revealed and
-            hydrated before any post-hydration update reaches it (lib/streamedReveal.ts). */}
-        <StreamedRevealGuard />
         <ErrorBoundary>
           <ToastProvider>
             <UserProvider>
-              <FlagsProvider>
-                <RetentionDueProvider>{children}</RetentionDueProvider>
-              </FlagsProvider>
+              <FlagsProvider>{children}</FlagsProvider>
             </UserProvider>
           </ToastProvider>
         </ErrorBoundary>

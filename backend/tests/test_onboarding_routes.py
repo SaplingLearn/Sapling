@@ -250,8 +250,7 @@ class TestSaveOnboardingProfile:
         assert profile_data["year"] == "junior"
         assert profile_data["majors"] == ["Computer Science"]
         assert profile_data["minors"] == ["Mathematics"]
-        # PKG-14b: the payload may still carry it (older client); it is ignored.
-        assert "learning_style" not in profile_data
+        assert profile_data["learning_style"] == "visual"
 
         # Two enrollments were created, keyed on offering_id (not course_id)
         assert tables["enrollments"].insert.call_count == 2

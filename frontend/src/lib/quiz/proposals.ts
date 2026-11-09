@@ -14,7 +14,7 @@
  * or build a queue (R4 §2). The full node list is already loaded for the
  * "pick something specific" list, so the rule is reproduced over that instead of
  * fetching a second, thinner answer. The codebase has precedent for mirroring
- * with a citation (`Learn.tsx::tierForScore` mirrors `learning/bkt.py::tier_for`).
+ * with a citation (`Learn.tsx::tierForScore` mirrors `config.py::get_mastery_tier`).
  *
  * TODO(#537-followup: enriched /recommendations) — once the endpoint returns
  * node_id / course_id / mastery_score / last_studied_at, delete this mirror and
@@ -35,7 +35,7 @@ import type { GraphNode } from "@/lib/types";
 import { queueOf } from "./machine";
 import { daysAgo, relativeStudied } from "./relativeTime";
 import { QUEUE_MAX } from "./session";
-import type { AttemptSummary, PlanReason, PlannedConcept, QuizPlan, QuizSession } from "./types";
+import type { AttemptSummary, QuizSession } from "./types";
 
 /** The tiers `get_recommendations` considers worth suggesting. `mastered` and
  *  `subject_root` are excluded by the same filter. */
@@ -51,8 +51,6 @@ export interface Candidate {
   color: string;
   rationale: string;
   lastAttempt?: AttemptSummary;
-  /** Spec §13 A143: the learner model's proposal — why, and the skill meter. */
-  plan?: { reason: PlanReason; pKnown: number };
 }
 
 /** The membership half of the rule: is this node one the student owes time to? */
@@ -290,98 +288,6 @@ export function entrySelection(
   }
 
   return { conceptId: null, courseId: entry.course ?? null, unresolved: false };
-}
-
-// ── The learner model's plan (learning-loop spec §13 A143) ──────────────────
-//
-// With `quiz_concept_plan` on, the backend ranks the concepts from the learner
-// model (`GET /api/quiz/plan`, `backend/learning/quiz_plan.py`): reviews whose
-// FSRS date has passed first, most overdue first; then concepts the student
-// holds an open misconception on; then concepts whose prerequisites are
-// proficient but which are not yet. These replace the mirror above — the
-// graph's mastery tier — as the home's proposals and its "due" queue. The
-// plan is intersected with the scoped graph, so a concept outside the active
-// semester never appears.
-
-/** "62%" — the skill meter, as the card and the rows read it. */
-export function skillPercent(pKnown: number): string {
-  return `${Math.round(pKnown * 100)}%`;
-}
-
-/** Why the learner model proposes a concept, in a student's words. */
-export function planReasonCopy(reason: PlanReason): string {
-  switch (reason) {
-    case "due":
-      return "Due for review — bring it back before it fades.";
-    case "misconception":
-      return "You've mixed this one up before — this round checks it again.";
-    default:
-      return "Ready to learn — everything it builds on is solid.";
-  }
-}
-
-/** The short form for an alternative row. */
-function planRowCopy(concept: PlannedConcept): string {
-  const skill = `skill ${skillPercent(concept.p_known)}`;
-  switch (concept.reason) {
-    case "due":
-      return `${skill} · due for review`;
-    case "misconception":
-      return `${skill} · mixed up before`;
-    default:
-      return `${skill} · ready to learn`;
-  }
-}
-
-/** The plan's concepts as candidates, in the plan's order, over the scoped
- *  graph only. */
-export function rankFromPlan(
-  plan: QuizPlan,
-  nodes: GraphNode[],
-  courses: EnrolledCourse[],
-  attempts: AttemptSummary[],
-): Candidate[] {
-  const byId = new Map(nodes.filter(n => !n.is_subject_root).map(n => [n.id, n]));
-  const out: Candidate[] = [];
-  for (const concept of plan.concepts) {
-    const node = byId.get(concept.node_id);
-    if (!node) continue;
-    const course = courseFor(node, courses);
-    const lastAttempt = latestCompletedAttempt(node.id, attempts);
-    out.push({
-      node,
-      course,
-      color: colorFor(node, course),
-      rationale: planRowCopy(concept),
-      plan: { reason: concept.reason, pKnown: concept.p_known },
-      ...(lastAttempt ? { lastAttempt } : {}),
-    });
-  }
-  return out;
-}
-
-/** "Practice this course" from the plan: the course's proposed concepts in
- *  the plan's order, capped at `QUEUE_MAX` — never a concept the learner model
- *  does not propose (not ready, or proficient and not yet due). */
-export function courseQueueFromPlan(candidates: Candidate[], courseId: string): string[] {
-  return candidates
-    .filter(c => c.plan && c.node.course_id === courseId)
-    .slice(0, QUEUE_MAX)
-    .map(c => c.node.id);
-}
-
-/** "Review everything due" from the plan: the concepts whose FSRS review is
- *  due, in the plan's (overdue-first) order, over the scoped graph. */
-export function dueFromPlan(
-  plan: QuizPlan,
-  nodes: GraphNode[],
-): { conceptIds: string[]; count: number; courseCount: number } {
-  const scoped = new Map(nodes.map(n => [n.id, n]));
-  const due = plan.concepts.filter(c => c.reason === "due" && scoped.has(c.node_id));
-  const courses = new Set(
-    due.map(c => scoped.get(c.node_id)?.course_id).filter((id): id is string => Boolean(id)),
-  );
-  return { conceptIds: due.map(c => c.node_id), count: due.length, courseCount: courses.size };
 }
 
 /**

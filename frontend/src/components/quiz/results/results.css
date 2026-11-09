@@ -160,7 +160,6 @@
   font-size: var(--fs-md);
   color: var(--text-muted);
   margin: var(--quiz-results-line-gap) 0 0;
-  overflow-wrap: anywhere;
 }
 
 .quiz-missed__actions {
@@ -177,52 +176,6 @@
   color: var(--text-dim);
   margin: var(--quiz-results-line-gap) 0 0;
   text-wrap: pretty;
-}
-
-/* ── What changed (learning-loop spec §13 A147) ─────────────────────── */
-
-/* The skill meters that moved, what is due, the next step. Plain sentences
-   under a small heading: a sentence carries the change, never colour alone. */
-.quiz-learning {
-  width: 100%;
-  margin-top: var(--quiz-results-gap-block);
-  padding-left: var(--quiz-results-item-inset);
-  border-left: var(--quiz-results-bar) solid var(--quiz-accent, var(--accent));
-}
-
-.quiz-learning__title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-.quiz-learning__changes {
-  list-style: none;
-  padding: 0;
-  margin: var(--quiz-results-line-gap) 0 0;
-}
-
-.quiz-learning__change,
-.quiz-learning__line {
-  font-size: var(--fs-md);
-  color: var(--text-dim);
-  margin: var(--quiz-results-line-gap) 0 0;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
-
-.quiz-learning__next {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--quiz-results-exits-gap);
-  margin-top: var(--quiz-results-item-gap);
-}
-
-.quiz-learning__next-label {
-  font-size: var(--fs-md);
-  color: var(--text-muted);
 }
 
 /* ── Arriving ─────────────────────────────────────────────────────────

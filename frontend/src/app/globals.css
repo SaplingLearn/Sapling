@@ -39,10 +39,9 @@
   --brand-forest-bright-hover: #4B6627;
   /* The SideNav rail's fill; read by the rail and the ShellFrame corners.
      A light olive, a step above --brand-forest-bright, so the rail sits back
-     from the forest CTAs — and AA for the rail's text: pure white is 4.85:1
-     here and the 96% cream labels 4.61:1 (spec §13 A135; it was #688443, where
-     white was 4.23:1). Going lighter means dark rail text. */
-  --sidenav-bg: #5f7a3b;
+     from the forest CTAs. Deliberately past the AA line: pure white is 4.23:1
+     here (AA for normal text needs 4.5:1). Going lighter means dark rail text. */
+  --sidenav-bg: #688443;
 
   /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
      the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
@@ -82,28 +81,19 @@
   --border-strong: rgba(42, 39, 31, 0.18);
   --text:      var(--ink-800);
   --text-dim:  var(--ink-600);
-  /* WCAG AA: ≥4.5:1 on every surface token — paper, panel, subtle, inset,
-     --bg-soft and the four -soft tints (4.51:1 on --err-soft, the darkest).
-     Was #6f6857, which missed on --bg-soft (4.45:1); spec §13 A135. */
-  --text-muted:#696252;
+  --text-muted:#6f6857;  /* WCAG AA: darkened from --ink-400 (#8a8372, 3.4:1) to ≥4.5:1 on paper/inset */
   /* --accent (sage) is a distinct ROLE (highlights/focus), NOT a primary green.
-     Do not consolidate into --brand-forest. As text (links, the current step)
-     it is AA on every surface token, the -soft tints included (4.57:1 on
-     --err-soft); it was --brand-forest-bright (#597536), which missed on the
-     tints (4.29:1 on --warn-soft) — spec §13 A135. */
-  --accent:    #4e6a2d;
+     Do not consolidate into --brand-forest. */
+  --accent:    var(--brand-forest-bright);  /* sage retired → brighter forest (highlight/focus role) */
   --accent-fg: #ffffff;
   --accent-soft: var(--sap-50);
   --accent-border: var(--sap-200);
 
-  /* Each status colour is AA text on its own -soft fill (the .chip--* pairs):
-     --warn 4.77:1, --err 4.70:1, --info 4.82:1. --warn (was #b4562c, 4.01:1)
-     and --info (was #3e6f8a, 4.43:1) were darkened for it — spec §13 A135. */
-  --warn: #a34c26;
+  --warn: #b4562c;
   --warn-soft: #f7e6d8;
   --err:  #a83a3a;
   --err-soft: #f5d8d3;
-  --info: #3a6984;
+  --info: #3e6f8a;
   --info-soft: #dfe9ef;
 
   /* Knowledge-status palette (mastery/progress/struggle legend + graph dots).
@@ -122,7 +112,7 @@
   --fallback-muted: #9a9a9a;
 
   /* Dashboard alert one-offs (streak shield / notification dot). Kept distinct
-     from --warn (#a34c26) / --err (#a83a3a), whose values differ. */
+     from --warn (#b4562c) / --err (#a83a3a), whose values differ. */
   --alert-warn: #e87734;
   --alert-err:  #e94b5c;
 
@@ -616,18 +606,16 @@ body { font-size: 14px; line-height: 1.5; }
    light-on-dark colours through every row, it re-declares the semantic tokens
    its children already read (text, border, the --bg-soft active fill, the
    focus --accent), so SideNav keeps speaking in shell tokens and the swap
-   lives here. Text is #fff and the dim/muted tints stay near-opaque: on the
-   rail fill (--sidenav-bg, #5f7a3b) the 96% cream is 4.61:1, AA. The selected
-   row's --bg-soft is a dark wash, not a light one, so its white label gains
-   contrast (6.1:1; hover, half the wash, 5.4:1) — a cream wash dropped the
-   selected label to 3.2:1 (spec §13 A135). Its fill, --sidenav-bg, is
+   lives here. On #688443 pure white is 4.23:1, just under AA's 4.5:1, so
+   text is #fff and the dim/muted tints stay near-opaque to lose as little
+   as possible. Its fill, --sidenav-bg, is
    declared on :root so every shell layout uses the same rail fill. */
 [data-app-sidenav] {
   --text:        #ffffff;
   --text-dim:    rgba(255, 255, 255, 0.98);
   --text-muted:  rgba(255, 255, 255, 0.96);
   --border:      rgba(250, 248, 243, 0.14);
-  --bg-soft:     rgba(18, 17, 13, 0.16);
+  --bg-soft:     rgba(250, 248, 243, 0.16);
   --accent:      #faf8f3;
 }
 

@@ -29,12 +29,8 @@ class NoteContext(BaseModel):
     linked_concepts: list[LinkedConcept]
 
 
-async def read_active_note(note_id: str, user_id: str, *, note: dict | None = None) -> NoteContext:
-    """The note and its linked concepts. `note`: a row the caller already read
-    (spec §13 A125: the notes-chat route's screened snapshot) — served as is,
-    never re-read, when it is this note."""
-    if not (isinstance(note, dict) and note.get("id") == note_id):
-        note = await get_note(note_id=note_id, user_id=user_id)
+async def read_active_note(note_id: str, user_id: str) -> NoteContext:
+    note = await get_note(note_id=note_id, user_id=user_id)
     if not note:
         return NoteContext(title="", body="", tags=[], linked_concepts=[])
     concepts_raw = await list_linked_concepts(note_id=note_id, user_id=user_id)
@@ -74,11 +70,7 @@ async def read_active_note_tool(
     note_id = ctx.deps.session_id
     if not note_id:
         return NoteContext(title="", body="", tags=[], linked_concepts=[])
-    # spec §13 A125: the route's screened snapshot when it has one, so the model
-    # reads exactly the text the integrity guard checked
-    note = await read_active_note(
-        note_id=note_id, user_id=ctx.deps.user_id, note=getattr(ctx.deps, "note", None)
-    )
+    note = await read_active_note(note_id=note_id, user_id=ctx.deps.user_id)
     return NoteContext(
         title=neutralize_delimiters(note.title),
         body=wrap_untrusted(note.body, source="student note body"),

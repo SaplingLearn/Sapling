@@ -443,7 +443,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     await inlineAddCourse(user);
     await addFile(user);
 
-    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
+    await user.click(screen.getByRole("button", { name: "Course" }));
     // Both the enrolled course and the just-added one are options.
     expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
@@ -469,7 +469,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     // The row's course select defaults to the just-added course, not the
     // "Pick a course" placeholder (pre-#186 the default was courses[0] of
     // the stale prop, i.e. empty).
-    expect(screen.getByRole("button", { name: /^Course\b/ })).toHaveTextContent("MATH200");
+    expect(screen.getByRole("button", { name: "Course" })).toHaveTextContent("MATH200");
   });
 
   it("resets inline-added courses when the modal is closed and reopened", async () => {
@@ -489,7 +489,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
 
     await inlineAddCourse(user);
     await addFile(user);
-    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
+    await user.click(screen.getByRole("button", { name: "Course" }));
     expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
 
     // Close (parent refreshes `courses` via onComplete in the real flow)
@@ -498,7 +498,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     rerender(modal(true));
 
     await addFile(user);
-    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
+    await user.click(screen.getByRole("button", { name: "Course" }));
     expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /MATH200/ })).not.toBeInTheDocument();
   });

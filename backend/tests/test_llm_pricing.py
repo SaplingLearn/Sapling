@@ -280,23 +280,9 @@ def test_claude_cache_reads_and_writes_are_repriced():
     assert cost == pytest.approx(expected)
 
 
-def test_gemini_cache_reads_bill_at_the_cached_input_rate():
-    """Spec §13 A21: Gemini's implicit-cache reads bill at CACHED_INPUT_PRICING
-    (10% of input), whichever report carries them — RunUsage's cache reads or
-    the run site's explicit `cached_tokens` — and the two are not double-counted."""
-    in_rate = llm_pricing.MODEL_PRICING["gemini-2.5-flash"][0]
-    cached_rate = llm_pricing.CACHED_INPUT_PRICING["gemini-2.5-flash"]
-    expected = round((200 * in_rate + 800 * cached_rate) / 1000, 10)
-    assert llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cache_read_tokens=800) == expected
-    assert llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cached_tokens=800) == expected
-    assert llm_pricing.cost_usd(
-        "gemini-2.5-flash", 1000, 0, cached_tokens=800, cache_read_tokens=800
-    ) == expected
-
-
-def test_a_model_without_a_cached_rate_bills_cached_input_at_full_rate():
-    assert llm_pricing.cost_usd("gemini-2.0-flash", 1000, 0, cache_read_tokens=800) == (
-        llm_pricing.cost_usd("gemini-2.0-flash", 1000, 0)
+def test_gemini_cache_tokens_keep_the_full_input_rate():
+    assert llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cache_read_tokens=800) == (
+        llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0)
     )
 
 

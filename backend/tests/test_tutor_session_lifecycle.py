@@ -94,10 +94,6 @@ def h():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A tutor reply."))
     with (
-        # These routes are the learning loop's kill-switch path (spec §11.6): the
-        # loop owns them while the gate is on, so the legacy lifecycle under test
-        # runs with it off. The gate is read in the route (owner decision 00).
-        patch("routes.learn.learning_loop_for_request", return_value=False),
         patch_tutor("table", side_effect=with_async_twins(lambda n: tables(n))),
         patch_tutor("agent_for_mode", return_value=agent),
         patch_tutor("get_display_name", return_value="Life Student"),

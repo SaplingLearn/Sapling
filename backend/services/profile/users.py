@@ -8,7 +8,6 @@ import httpx
 
 from db.connection import table
 from services.encryption import decrypt_if_present
-from services.session_modes import NOT_REVIEW
 from services.profile.errors import UserNotFound
 
 
@@ -18,7 +17,7 @@ _USERS_COLS = "id,email,streak_count,created_at"
 # Profile columns live on `user_profiles` (1:1 with users). 🔒 = encrypted at rest.
 _PROFILE_COLS = (
     "user_id,username,name,first_name,last_name,avatar_url,"
-    "year,majors,minors,bio,location,website"
+    "year,majors,minors,bio,location,website,learning_style"
 )
 _PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
 
@@ -179,7 +178,7 @@ def _get_user_stats(user_id: str) -> dict:
     )
     streak = effective_streak(user[0] if user else None)
 
-    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW})
+    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
     session_count = len(sessions) if sessions else 0
 
     docs = table("documents").select("id", filters={"user_id": f"eq.{user_id}"})

@@ -34,14 +34,11 @@ import type { SessionConfig } from "@/lib/quiz/machine";
 import { savePrefs } from "@/lib/quiz/prefs";
 import {
   colorFor,
-  courseQueueFromPlan,
   entrySelection,
   latestCompletedAttempt,
   metaLine,
-  planReasonCopy,
   queueFor,
   rationaleFor,
-  skillPercent,
   type Candidate,
 } from "@/lib/quiz/proposals";
 import { QUEUE_COUNT, QUEUE_MAX } from "@/lib/quiz/session";
@@ -112,16 +109,10 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   }, [home.status, selection.unresolved, toast]);
 
   const courseQueue = React.useMemo(
-    () => (entry.course
-      ? home.planned
-        ? courseQueueFromPlan(home.candidates, entry.course)
-        : queueFor("course", home.nodes, entry.course)
-      : []),
-    [entry.course, home.nodes, home.planned, home.candidates],
+    () => (entry.course ? queueFor("course", home.nodes, entry.course) : []),
+    [entry.course, home.nodes],
   );
-  // The tier ranking's due queue, or with `quiz_concept_plan` the learner
-  // model's (spec §13 A143): the hook decides, so the card and the queue agree.
-  const dueQueue = home.dueQueue;
+  const dueQueue = React.useMemo(() => queueFor("due", home.nodes), [home.nodes]);
 
   // A concept picked off the topic list (or the neighbourhood). It belongs to
   // the arrival it was made on: a new entry (another deep link) starts from
@@ -222,9 +213,9 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
 
   const meta =
     mode === "course"
-      ? `${courseQueue.length} concepts ${home.planned ? "to practise" : "due"}`
+      ? `${courseQueue.length} concepts due`
       : mode === "due"
-        ? `${home.due.count} concepts across ${home.due.courseCount} courses · starting with the ${Math.min(home.due.count, QUEUE_MAX)} ${home.planned ? "most overdue" : "weakest"}`
+        ? `${home.due.count} concepts across ${home.due.courseCount} courses · starting with the ${Math.min(home.due.count, QUEUE_MAX)} weakest`
         : card
           ? metaLine(card.node)
           : "";
@@ -234,13 +225,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   const rationale =
     mode === "concept" && !pickedId && selection.conceptId && card
       ? DEEP_LINK_RATIONALE[entry.source.kind] ?? DEFAULT_DEEP_LINK_RATIONALE
-      : null;
-  // Spec §13 A143: why the learner model proposes the card's concept, and its
-  // skill meter — on the plan's own suggestion only (a pick or a deep link is
-  // the student's choice, explained above or not at all).
-  const planLine =
-    mode === "concept" && !pickedId && !selection.conceptId && card?.plan
-      ? `${planReasonCopy(card.plan.reason)} Skill meter: ${skillPercent(card.plan.pKnown)}.`
       : null;
 
   // R-8's sentence, fetched by the hook for the concept the CARD shows — a deep
@@ -471,11 +455,6 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
 
       {meta && <p className="quiz-home__meta">{meta}</p>}
       {rationale && <p className="quiz-home__rationale">{rationale}</p>}
-      {planLine && (
-        <p className="quiz-home__rationale" data-testid="quiz-plan-reason">
-          {planLine}
-        </p>
-      )}
       {/* Keyed on its text: the AI sentence replacing the built stand-in a
           moment later fades in rather than snapping. */}
       {definitionPending && (

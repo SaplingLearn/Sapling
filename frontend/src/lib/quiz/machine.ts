@@ -11,7 +11,6 @@
  * to see whether an event was accepted.
  */
 
-import type { StudentConfidence } from "@/lib/api";
 import { QUIZ_ERROR_COPY } from "./errors";
 import type { EntryRequest } from "./source";
 import type {
@@ -56,16 +55,6 @@ export type QuizEvent =
   | { type: "GENERATE_FAILED"; error: QuizError }
   | { type: "SELECT"; index: number }
   | { type: "WRITE"; text: string }
-  /**
-   * Learning-loop spec §13 A132: the current question's optional stated
-   * confidence (A127's "Guessing" / "Fairly sure" / "Sure"; null takes a
-   * choice back). Answer state like SELECT and WRITE: it lives on the item
-   * until `/answer` carries it, so choosing makes no request and Submit never
-   * waits on it. Accepted only while the current item is live (`active`, no
-   * verdict) — once recorded, the server keeps the first response, so a
-   * change afterwards would describe an answer it never went with.
-   */
-  | { type: "CONFIDENCE"; level: StudentConfidence | null }
   | { type: "SUBMIT_ANSWER" }
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
@@ -273,7 +262,6 @@ function itemsFor(questions: WireQuestion[]): QuizItem[] {
     selectedIndex: null,
     verdict: null,
     flagged: false,
-    confidence: null,
   }));
 }
 
@@ -406,14 +394,6 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       if (session.phase !== "active") return session;
       if (!session.items[session.cursor]) return session;
       return withItem(session, session.cursor, { selectedIndex: event.index });
-    }
-
-    case "CONFIDENCE": {
-      if (session.phase !== "active") return session;
-      const item = session.items[session.cursor];
-      if (!item || item.verdict) return session;
-      if ((item.confidence ?? null) === event.level) return session;
-      return withItem(session, session.cursor, { confidence: event.level });
     }
 
     case "SUBMIT_ANSWER": {
@@ -656,22 +636,16 @@ function resumeFrom(
   const items: QuizItem[] = (detail.questions ?? []).map((question, index) => {
     const previous = storedById.get(question.id);
     const selected = selectedByIndex.get(index);
-    const response = responsesByIndex.get(index);
     return {
       index,
       question,
       selectedIndex: selected ?? previous?.selectedIndex ?? null,
-      answerText: response?.answer_text ?? previous?.answerText,
+      answerText: responsesByIndex.get(index)?.answer_text ?? previous?.answerText,
       verdict: selected === undefined ? null : previous?.verdict ?? (
         isWrittenType(question.type) && responsesByIndex.has(index)
           ? { isCorrect: responsesByIndex.get(index)!.is_correct, correctIndex: -1, explanation: "" }
           : null),
       flagged: previous?.flagged ?? false,
-      // §13 A132: an answered question's stated confidence is the one its
-      // recorded response carries (null = none was stated) — the server's word,
-      // like the answer itself. An unanswered one keeps the choice this browser
-      // saved before it left.
-      confidence: response ? response.confidence ?? null : previous?.confidence ?? null,
     };
   });
 

@@ -31,7 +31,7 @@ import sys
 # Allow ``python db/seed_staging.py`` as well as ``python -m db.seed_staging``.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from learning.bkt import tier_for  # noqa: E402  (tier ↔ score stay consistent; PKG-14b)
+from config import get_mastery_tier  # noqa: E402  (tier ↔ score stay consistent)
 from db import seed_helpers as h  # noqa: E402
 from services.encryption import encrypt_if_present  # noqa: E402
 
@@ -153,6 +153,7 @@ def seed_user() -> None:
             "year": "Sophomore",
             "majors": ["Computer Science"],
             "minors": ["Mathematics"],
+            "learning_style": "visual",
         },
         on_conflict="user_id",
     )
@@ -234,7 +235,7 @@ def seed_graph() -> None:
                     "concept_name": concept,
                     "subject": subject,
                     "mastery_score": score,
-                    "mastery_tier": tier_for(score),
+                    "mastery_tier": get_mastery_tier(score),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )

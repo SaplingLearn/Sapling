@@ -139,12 +139,6 @@ class CourseMaterial(NamedTuple):
     #: That is a claim about data we never read. Same reasoning as
     #: `resolution_failed`, one layer down.
     retrieval_failed: bool = False
-    #: The retrieved document chunks in `block`, as {"id", "text"} passages:
-    #: what the A124 blind solve reads when the quiz item gates check a
-    #: generated question (learning-loop spec §13 A145). Carried, never sent:
-    #: the prompt is `block`. The catalog is no passage (it describes the
-    #: course, not the concept).
-    passages: tuple = ()
 
     @property
     def chunk_count(self) -> int:
@@ -299,11 +293,6 @@ def _course_material(
         course_chunks=None if chunks else _course_chunk_coverage(bu_code, user_id),
         bu_code=bu_code,
         retrieval_failed=retrieval.failed,
-        passages=tuple(
-            {"id": str(c["id"]) if c.get("id") else None, "text": c.get("chunk_text") or ""}
-            for c in chunks
-            if isinstance(c, dict)
-        ),
     )
 
 

@@ -43,7 +43,7 @@ CS111 = Course(
     nickname="CS 111 Python",
     color="#3B82F6",
     concepts=[
-        Concept(name="Variables and Expressions", mastery=0.96,
+        Concept(name="Variables and Expressions", mastery=0.93,
                 description="Binding names to values, operator precedence, integer vs float division (// vs /), and the % modulus operator."),
         Concept(name="Conditionals and Boolean Logic", mastery=0.88,
                 description="if/elif/else chains, and/or/not, short-circuit evaluation, and writing boolean expressions that read like the spec."),
@@ -380,7 +380,7 @@ CS112 = Course(
     concepts=[
         Concept(name="Java Classes and Interfaces", mastery=0.84,
                 description="Encapsulation with private fields, constructors, interfaces like Bag<T> and List<T>, and generics in Java."),
-        Concept(name="Arrays and ArrayLists", mastery=0.96,
+        Concept(name="Arrays and ArrayLists", mastery=0.9,
                 description="Fixed-size arrays vs resizable array-backed lists; O(1) indexing and the cost of shifting on insert/remove."),
         Concept(name="Linked Lists", mastery=0.79,
                 description="Nodes with a next reference; insertion and deletion by relinking, traversal with a trailing pointer, and dummy head nodes."),
@@ -677,7 +677,7 @@ CS131 = Course(
     nickname="CS 131 Discrete",
     color="#F59E0B",
     concepts=[
-        Concept(name="Propositional Logic", mastery=0.96,
+        Concept(name="Propositional Logic", mastery=0.81,
                 description="Connectives, truth tables, implication and its contrapositive, logical equivalence, De Morgan's laws."),
         Concept(name="Sets and Set Operations", mastery=0.77,
                 description="Union, intersection, difference, complement, power sets, Cartesian products and set-builder notation."),
@@ -969,7 +969,7 @@ CS210 = Course(
     nickname="CS 210 Systems",
     color="#8B5CF6",
     concepts=[
-        Concept(name="Binary and Two's Complement", mastery=0.96,
+        Concept(name="Binary and Two's Complement", mastery=0.86,
                 description="Unsigned and signed integer encodings; negating with ~x + 1; ranges like -128..127 for 8 bits; overflow."),
         Concept(name="C Pointers and Arrays", mastery=0.76,
                 description="Address-of (&) and dereference (*), pointer arithmetic scaled by type size, and arrays decaying to pointers."),

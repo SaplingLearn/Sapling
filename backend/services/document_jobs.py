@@ -965,9 +965,7 @@ def _process(row: dict, run: _Run) -> None:
         logger.warning("document.process: upload %s saved as %s but the row moved on",
                        upload_id, doc_id)
     if fresh:
-        _post_roll(docs, user_id=user_id, offering_id=offering_id, doc_id=doc_id,
-                   course_id=course_id,
-                   concept_names=[c.name for c in result.concepts.concepts])
+        _post_roll(docs, user_id=user_id, offering_id=offering_id, doc_id=doc_id)
 
 
 def _done(run: _Run, doc_id: str, stored: dict, **progress: Any) -> None:
@@ -986,16 +984,11 @@ async def _run_agents(row: dict, text: str, run: _Run):
 
     from agents.deps import SaplingDeps
     from services import document_pipeline as dp
-    from services.concept_prereqs import upload_prereqs_on
 
     deps = SaplingDeps(user_id=row["user_id"], course_id=row["course_id"], supabase=None,
                        request_id=row.get("request_id"))
-    # Spec §13 A118: upload_prereq_edges, resolved ONCE for this upload and
-    # this student, exactly as the inline route does: off, the pre-A118
-    # extraction request and no read of the course's concepts.
-    prereqs_on = await asyncio.to_thread(upload_prereqs_on, row["user_id"])
     result, merged = None, 0
-    async with aclosing(dp.run_document_agents(text, deps, prerequisites=prereqs_on)) as steps:
+    async with aclosing(dp.run_document_agents(text, deps)) as steps:
         async for step in steps:
             if step.name == dp.CLASSIFIED:
                 await asyncio.to_thread(run.advance, EXTRACTING_CONCEPTS, None,
@@ -1008,26 +1001,16 @@ async def _run_agents(row: dict, text: str, run: _Run):
     return result, merged
 
 
-def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str,
-               course_id: str, concept_names: list[str]) -> None:
+def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str) -> None:
     """The streaming route's post-roll, run in the worker after the row is
-    saved. Each step best-effort, as there. With the learning loop on, the
-    indexing is the loop's ordered index-then-draft chain (PKG-04,
-    `_index_then_check_items`: its own `check_items.document` job), as in the
-    route."""
-    import config
+    saved. Each step best-effort, as there."""
     from services.document_indexing import schedule_document_index
 
-    if config.LEARNING_LOOP_ENABLED:
-        index_step = ("index_then_check_items", docs._index_then_check_items,
-                      (doc_id, user_id, course_id, concept_names))
-    else:
-        index_step = ("index_document", schedule_document_index, (doc_id, user_id))
     steps = (
         ("invalidate_study_guide_cache", docs._invalidate_study_guide_cache, (user_id, offering_id)),
         ("update_course_context", docs._refresh_course_context, (offering_id, user_id)),
         ("check_upload_achievements", docs._check_upload_achievements, (user_id,)),
-        index_step,
+        ("index_document", schedule_document_index, (doc_id, user_id)),
     )
     for label, fn, args in steps:
         try:

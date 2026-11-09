@@ -502,27 +502,3 @@ describe("Settings patch(): rollback + per-field saving (#769)", () => {
     expect(email).toHaveAttribute("aria-checked", "false");
   });
 });
-
-describe("Settings — labels and the current tab (spec §13 A135)", () => {
-  it("every profile field is labelled by its row's label", async () => {
-    vi.mocked(fetchSettings).mockResolvedValue(settings());
-    vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
-    render(<Settings />);
-    expect(await screen.findByRole("textbox", { name: "Display name" })).toHaveValue("Rich Active");
-    expect(screen.getByRole("textbox", { name: "Username" })).toHaveValue("rich-active");
-    for (const name of ["Bio", "Location", "Website"]) {
-      expect(screen.getByRole("textbox", { name })).toBeInTheDocument();
-    }
-  });
-
-  it("the tab rail marks the open tab", async () => {
-    vi.mocked(fetchSettings).mockResolvedValue(settings());
-    vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
-    render(<Settings />);
-    await screen.findByRole("textbox", { name: "Display name" });
-    expect(screen.getByTestId("settings-tab-profile")).toHaveAttribute("aria-current", "true");
-    fireEvent.click(screen.getByTestId("settings-tab-data"));
-    expect(screen.getByTestId("settings-tab-data")).toHaveAttribute("aria-current", "true");
-    expect(screen.getByTestId("settings-tab-profile")).not.toHaveAttribute("aria-current");
-  });
-});

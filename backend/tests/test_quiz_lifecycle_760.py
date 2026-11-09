@@ -81,11 +81,6 @@ def _submit_factory(*, nodes, update_calls, score_write_error=None):
             mock.update.side_effect = _update
         elif name == "graph_nodes":
             mock.select.return_value = nodes
-        elif name == "quiz_evidence_claims":
-            # The learning loop's farm guard (spec §13 A94/A100): every hash is a
-            # fresh claim, so the attempt's evidence reaches apply_graph_update.
-            mock.insert_ignore_duplicates.side_effect = lambda rows, **kw: rows
-            mock.update.return_value = []
         else:
             mock.select.return_value = []
             mock.update.return_value = []

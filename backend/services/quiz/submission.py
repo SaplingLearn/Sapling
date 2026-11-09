@@ -10,7 +10,7 @@ underscores included) are unchanged, and routes/quiz.py re-exports them.
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
@@ -20,27 +20,21 @@ from agents._providers import UnregisteredHandlerError
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage
-from db.connection import pg_quote_value, table
-from db.scope import runs_as_service
+from db.connection import table
 from models import SubmitQuizBody
 from services import events_service
 from services import llm_budget
+from services.quiz.config import mastery_after
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.graph_service import apply_graph_update
-from services import quiz_learning
-from services.feature_flags import flag_on
-from learning import quiz_evidence, quiz_gates
-from learning.help_ledger import max_help_many
-from learning.params import RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
 from services.quiz.context import get_quiz_context, save_quiz_context
 from services.quiz.distractors import build_distractor_profile
 from services.gamification_service import me_snapshot
 from services.xp_service import XpAward, award_xp_safe
 from services.request_context import current_request_id
-from services.quiz.identity import wire_question_hash
 from services.quiz.attempts import (
     _already_completed,
     _attempt_not_found,
@@ -131,219 +125,10 @@ def _gamification_block(
     return {**paid, **snapshot}
 
 
-def _quiz_evidence(
-    concept_node_id: str,
-    questions: list,
-    results: list[dict],
-    stated: list[float | None] | None = None,
-) -> list[dict]:
-    """PKG-11: one `learning.evidence.Evidence` dict per graded question.
-
-    Every quiz format conservatively uses the existing "mc" likelihood
-    bucket (spec §3.1, §13 A10). Multiple choice records a selected label;
-    short_answer, numeric and symbolic record typed text and deterministically
-    compare it with stored keys. Typed input alone supplies neither the reason
-    required by "mc_reasoned" nor rubric/reference-grounded "free_response"
-    evidence, so it does not earn a strong channel.
-
-    `question_hash` reads the stored identity (E5) or recomputes it; None when
-    the stored item has none. The caller applies the same rolling replay guard
-    and help-ledger floor to every format. Otherwise Evidence keeps its model
-    defaults, including rung 0 and derived weight; quiz grades do not invent
-    learning-check planning provenance. The student's self-reported confidence
-    is NOT Evidence.confidence (that field is grader confidence, spec §5): it
-    is `student_confidence` (spec §13 A132, as A127 (f)), `stated[i]` for the
-    i-th question, written only when one was stated — an evidence dict without
-    one is exactly the dict it was before A132.
-    """
-    stated = stated or []
-    out = []
-    for i, (question, result) in enumerate(zip(questions, results)):
-        ev = {
-            "node_id": concept_node_id,
-            "channel": "mc",
-            "correct": bool(result["correct"]),
-            "question_hash": wire_question_hash(question),
-            "check_item_id": None,
-            "session_id": None,
-        }
-        confidence = stated[i] if i < len(stated) else None
-        if confidence is not None:
-            ev["student_confidence"] = confidence
-        out.append(ev)
-    return out
-
-
-def _lint_gate(
-    user_id: str,
-    quiz_id: str,
-    concept_node_id: str,
-    questions: list,
-    results: list[dict],
-    evidence: list[dict],
-) -> list[dict]:
-    """Learning-loop spec §13 A132: keep an answer to a flawed item out of
-    mastery evidence. `evidence[i]` is `questions[i]`'s (`_quiz_evidence`).
-    An item carrying one of `quiz_evidence.EVIDENCE_EXCLUDING_FLAGS` (its
-    stored `lint_flags`, or the linter's answer now for a question stored
-    without them) writes nothing, whichever way it was answered, and claims
-    no farm-guard window (this runs first). One `quiz.evidence_excluded`
-    event per such item: ids, codes and the outcome only. The score and the
-    results are not touched."""
-    kept: list[dict] = []
-    for question, result, ev in zip(questions, results, evidence):
-        flags = quiz_evidence.question_lint_flags(question)
-        # Spec §13 A145: a question its item gate did not verify is no
-        # evidence either ([] for a question stored without a gate: every one
-        # while quiz_item_gates is off).
-        excluded_by = quiz_evidence.evidence_exclusion(flags) + quiz_gates.evidence_exclusion(question)
-        if not excluded_by:
-            kept.append(ev)
-            continue
-        events_service.log_event(
-            "quiz.evidence_excluded",
-            category=events_service.SYSTEM_CATEGORY,
-            user_id=user_id,
-            request_id=current_request_id(),
-            payload={
-                "quiz_id": quiz_id,
-                "concept_node_id": concept_node_id,
-                "question_hash": ev.get("question_hash"),
-                "flags": flags,
-                "excluded_by": excluded_by,
-                "correct": bool(result.get("correct")),
-            },
-        )
-    return kept
-
-
-#: † spec §13 A100 (tightens A94): a quiz question earns at most one evidence per
-#: student per this ROLLING window (never a UTC calendar day: two submits either
-#: side of midnight were two evidences ten minutes apart)
-QUIZ_EVIDENCE_WINDOW_HOURS = 24
-_CLAIMS = "quiz_evidence_claims"  # migration 20261001060408
-
-
-@runs_as_service  # spec §13 A148: quiz_evidence_claims is service-only (learning loop)
-def _claim_quiz_evidence(user_id: str, attempt_id: str, hashes: list[str], now: datetime) -> set[str]:
-    """Spec §13 A100: the hashes THIS submit may write evidence for — the ones it
-    claims in quiz_evidence_claims, by two database-arbitrated statements: an
-    insert that ignores an existing (student, hash) row (a fresh hash), then a
-    conditional update of a claim older than the window (a stale one). Two
-    concurrent submits sharing a hash: exactly one claims it. Raises on a failed
-    store call (the caller writes nothing)."""
-    wanted = sorted(set(hashes))
-    if not wanted:
-        return set()
-    stamp = now.isoformat()
-    claims = table(_CLAIMS)
-    inserted = claims.insert_ignore_duplicates(
-        [
-            {"user_id": user_id, "question_hash": qh, "attempt_id": attempt_id, "claimed_at": stamp}
-            for qh in wanted
-        ],
-        on_conflict="user_id,question_hash",
-    ) or []
-    claimed = {r["question_hash"] for r in inserted if r.get("question_hash") in wanted}
-    stale = [qh for qh in wanted if qh not in claimed]
-    if stale:
-        cutoff = now - timedelta(hours=QUIZ_EVIDENCE_WINDOW_HOURS)
-        renewed = claims.update(
-            {"attempt_id": attempt_id, "claimed_at": stamp},
-            filters={
-                "user_id": f"eq.{user_id}",
-                "question_hash": f"in.({','.join(pg_quote_value(qh) for qh in stale)})",
-                "claimed_at": f"lt.{cutoff.isoformat()}",
-            },
-        ) or []
-        claimed |= {r["question_hash"] for r in renewed if r.get("question_hash") in stale}
-    return claimed
-
-
-def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dict]:
-    """Owner decision 2 (spec §13 A94, tightened by A100): quiz farming. A question
-    counts at most ONCE per (student, question_hash) per rolling
-    QUIZ_EVIDENCE_WINDOW_HOURS — decided by the guard's OWN claim journal
-    (`_claim_quiz_evidence`), never by counting the evidence rows, so a
-    concurrent submit and a dropped evidence insert both stay closed. Within
-    one attempt a repeated hash counts once; questions with no hash count ONCE
-    per (student, node, attempt). A failed claim writes nothing (fail closed:
-    the score stands, mastery does not move)."""
-    hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
-    try:
-        claimed = _claim_quiz_evidence(user_id, attempt_id, hashes, datetime.now(timezone.utc))
-    except Exception:
-        logger.warning("quiz: evidence claim failed; the attempt moves nothing", exc_info=True)
-        return []
-    out: list[dict] = []
-    used: set[str] = set()
-    hashless_seen = False
-    for ev in evidence:
-        qh = ev.get("question_hash")
-        if qh:
-            if qh not in claimed or qh in used:
-                continue
-            used.add(qh)
-        else:
-            if hashless_seen:
-                continue
-            hashless_seen = True
-        out.append(ev)
-    return out
-
-
-def _help_floor(user_id: str, evidence: list[dict]) -> list[dict]:
-    """Spec §13 A99: quiz evidence carries the help ledger's floor (A93). A
-    question the student had help on — a quiz-ask session about it
-    (services/quiz_ask.py, RUNG_NO_CREDIT_MIN), or any loop help on the same
-    hash — is graded at that rung: assisted at RUNG_ASSISTED_MIN.., no upward
-    credit at RUNG_NO_CREDIT_MIN.. (`learning.evidence.evidence_weight`). One
-    batched read (`help_ledger.max_help_many`); a failed read floors EVERY
-    hashed question at RUNG_NO_CREDIT_MIN (fail closed). Hashless questions have
-    no ledger identity, so nothing can be recorded against them either."""
-    hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
-    if not hashes:
-        return evidence
-    try:
-        floors = max_help_many(user_id, hashes)
-    except Exception:
-        logger.warning("quiz: help ledger unreadable; hashed questions carry no credit", exc_info=True)
-        floors = dict.fromkeys(hashes, RUNG_NO_CREDIT_MIN)
-    for ev in evidence:
-        floor = int(floors.get(ev.get("question_hash"), 0) or 0)
-        if floor >= RUNG_ASSISTED_MIN:
-            ev["max_rung"] = floor
-            ev["assisted"] = True
-    return evidence
-
-
-def _mastery_span(applied, default_before: float) -> tuple[float, float]:
-    """PKG-11: (first before, last after) over the changes the graph reported.
-
-    The loop path applies one evidence per question, so the attempt's
-    before/after snapshot spans the whole sequence. An unrecognisable
-    return degrades to "no change", as the legacy reduction does.
-    """
-    recognised = [
-        c for c in (applied or [])
-        if isinstance(c, dict) and c.get("after") is not None
-    ]
-    if not recognised:
-        return default_before, default_before
-    before = recognised[0].get("before", default_before)
-    return before, recognised[-1]["after"]
-
-
 def _grade_submission(
     body: SubmitQuizBody, questions: list[dict],
-) -> tuple[list[dict], list[dict], int, list[float | None]]:
-    """Grade a claimed attempt: (results, graded_answers, score, stated).
-
-    `stated[i]` is the confidence the student stated on question i's
-    recorded response (learning-loop spec §13 A132), as the exact
-    STUDENT_CONFIDENCE_LEVELS value (`quiz_evidence.evidence_confidence`), or
-    None: skipped, idk, or answered only through the submit payload, which
-    carries no statement."""
+) -> tuple[list[dict], list[dict], int]:
+    """Grade a claimed attempt: (results, graded_answers, score)."""
     # #541 C4: responses recorded through /attempts/{id}/answer are the
     # source of truth — a payload answer for the same question is ignored
     # (the recorded response was graded at answer time; letting the final
@@ -351,14 +136,10 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index,answer_text,confidence",
+        "question_index,selected_index,answer_text",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
-    stated = [
-        quiz_evidence.evidence_confidence((recorded_by_index.get(i) or {}).get("confidence"))
-        for i in range(len(questions))
-    ]
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
     results = []
@@ -415,7 +196,7 @@ def _grade_submission(
             "explanation": q.get("explanation", ""),
         })
 
-    return results, graded_answers, score, stated
+    return results, graded_answers, score
 
 
 def _release_submit_claim(quiz_id: str, claim_stamp: str) -> None:
@@ -538,7 +319,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise _already_completed()
 
     try:
-        results, graded_answers, score, stated = _grade_submission(body, questions)
+        results, graded_answers, score = _grade_submission(body, questions)
         total = len(questions)
         # The score lands FIRST and alone (#760): everything after it is
         # best-effort, so nothing after it can strand the attempt scoreless.
@@ -561,65 +342,53 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise
 
     mastery_before = node["mastery_score"]
-    # Learning-loop spec §13 A146/A147: each flag resolved ONCE for this
-    # submit, for the student. Off (the default), nothing below changes. What
-    # they need from before the evidence write is read here: the skill meters
-    # the results compare against, and what the journal said about the
-    # attempt's questions and the concept (A127's first attempt, A76).
-    misconceptions_on = flag_on(quiz_learning.MISCONCEPTIONS_FLAG, user_id)
-    routing_on = flag_on(quiz_learning.RESULTS_ROUTING_FLAG, user_id)
-    skills_before = (
-        quiz_learning.skill_snapshot(user_id, concept_node_id) if routing_on else None
-    )
-    exposure = (
-        quiz_learning.exposure_before(
-            user_id,
-            concept_node_id,
-            [q.get("question_hash") for q in questions if isinstance(q, dict) and quiz_gates.verified(q)],
-            datetime.now(timezone.utc),
-        )
-        if misconceptions_on and any(isinstance(q, dict) and quiz_gates.verified(q) for q in questions)
-        else None
-    )
-    evidence: list[dict] = []
-    # PKG-11 / PKG-14b (spec §11.2): graded evidence is the ONLY write — no
-    # gate, no flat per-item delta, for every student and under the kill
-    # switch alike. The graph runs BKT per question and writes
-    # event_type='evidence' rows; this route only reports what it wrote.
-    # owner decision 2 (spec §13 A94, A100): at most ONE evidence per (student,
-    # question_hash) per rolling 24 h, by claim; hashless questions count once per attempt
-    # spec §13 A99: then the help ledger's floor (a question asked about in a
-    # quiz-ask session earns no unassisted credit)
-    # spec §13 A132: before both, an answer to an item the linter flagged with
-    # an excluding code is no evidence (`_lint_gate`), and each evidence
-    # carries the confidence the student stated on its response
+    # #543 E1: the model is a named seam now (services/quiz_config.py).
+    # The numbers are unchanged — see docs/quiz-mastery-model.md for the
+    # options the revamp gets to choose from.
+    mastery_score_after = mastery_after(mastery_before, score=score, total=total)
+    mastery_delta = mastery_score_after - mastery_before
+
+    # E7: the categorical reading of the attempt, namespaced by producer.
+    # `node_mastery_events.event_type` has two independent writers and no
+    # CHECK constraint — this route and the tutor's `update_mastery_tool`
+    # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
+    # "quiz" or "correct" would leave the column carrying two disjoint
+    # vocabularies with no way to tell which producer wrote a given row.
+    score_ratio = score / total if total > 0 else 0.0
+    if score_ratio >= 0.7:
+        event_type = "quiz_correct"
+    elif score_ratio >= 0.4:
+        event_type = "quiz_partial"
+    else:
+        event_type = "quiz_confusion"
+
+    # Route the mastery write through the sanctioned graph path. The graph
+    # keys on the ABSTRACT course id; apply_graph_update looks the node up by
+    # (normalized) concept_name within (user_id, course_id), clamps mastery,
+    # bumps times_studied/last_studied_at, records the event (now in
+    # node_mastery_events), and updates the streak. We don't touch graph_nodes
+    # or node_mastery_events directly — that's the graph slice's territory.
     #
     # #760: best-effort. The score is already persisted; a graph failure here
     # must not turn a scored submit into a 500 (whose retry would 409 and pay
     # no XP). It is logged and emitted, and the attempt keeps NULL mastery
     # columns — history then shows no delta rather than one the graph never
-    # took. A claim the farm guard took stays taken (fail closed).
+    # took.
     try:
-        evidence = _help_floor(
-            user_id,
-            _farm_guard(
-                user_id,
-                body.quiz_id,
-                _lint_gate(
-                    user_id,
-                    body.quiz_id,
-                    concept_node_id,
-                    questions,
-                    results,
-                    _quiz_evidence(concept_node_id, questions, results, stated),
-                ),
-            ),
-        )
-        # #849: the class-aggregate refresh this write triggers can make an LLM
-        # call; it runs after the response, never inside the submit.
         applied = apply_graph_update(
-            user_id, {"evidence": evidence}, course_id=node.get("course_id"), defer=background_tasks.add_task,
-        ) if evidence else []
+            user_id,
+            {
+                "updated_nodes": [
+                    {
+                        "concept_name": node["concept_name"],
+                        "mastery_delta": mastery_delta,
+                        "reason": f"Quiz: {score}/{total} correct",
+                        "event_type": event_type,
+                    }
+                ]
+            },
+            course_id=node.get("course_id"), defer=background_tasks.add_task,
+        )
     except Exception:
         logger.exception(
             "quiz: mastery update failed after scoring quiz_id=%s concept=%s",
@@ -633,12 +402,25 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             payload={"quiz_id": body.quiz_id, "concept_node_id": concept_node_id},
         )
         mastery_written = False
-        # Mastery did not move: report it as unchanged.
+        # Mastery did not move: report it as unchanged, not as predicted.
         mastery_score_after = mastery_before
+        mastery_delta = 0.0
     else:
         mastery_written = True
-        mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
-    p_delta = mastery_score_after - mastery_before
+        # #542 D1 (review): persist what the GRAPH actually wrote, not what
+        # we predicted. apply_graph_update owns the write — it resolves the
+        # node by normalized concept name and clamps the result — so its
+        # reported before/after is the only value that can't disagree with
+        # graph_nodes. Falls back to the local computation if the call
+        # returned nothing recognisable (it degrades rather than raising).
+        for change in applied or []:
+            if isinstance(change, dict) and change.get("after") is not None:
+                mastery_before = change.get("before", mastery_before)
+                # NB: mastery_after is the imported model function (#543 E1);
+                # the value lives in mastery_score_after.
+                mastery_score_after = change["after"]
+                mastery_delta = mastery_score_after - mastery_before
+                break
 
     if mastery_written:
         try:
@@ -659,19 +441,6 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             logger.exception(
                 "quiz: mastery snapshot write failed quiz_id=%s", body.quiz_id,
             )
-    if mastery_written and misconceptions_on and evidence:
-        # Spec §13 A146: after the one evidence write (A75 (a)'s order: a
-        # failed write records and closes nothing). Never raises.
-        quiz_learning.misconceptions_after_submit(
-            user_id,
-            concept_node_id,
-            questions=questions,
-            results=results,
-            stated=stated,
-            written=evidence,
-            exposure=exposure,
-            request_id=current_request_id(),
-        )
 
     node2_rows = table("graph_nodes").select(
         "concept_name",
@@ -781,34 +550,19 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "concept_node_id": concept_node_id,
             "score": score,
             "total": total,
-            "p_delta": p_delta,
+            "mastery_delta": mastery_delta,
         },
     )
 
-    # Spec §13 A147, additive: how each skill meter moved, what is due, the
-    # next step. Present only with quiz_results_routing on and a block that
-    # could be built.
-    learning = (
-        quiz_learning.results_block(
-            user_id,
-            {"id": concept_node_id, "course_id": node.get("course_id"), "concept_name": concept_name},
-            skills_before,
-        )
-        if routing_on
-        else None
-    )
     return {
         "score": score,
         "total": total,
         "mastery_before": mastery_before,
         "mastery_after": mastery_score_after,
-        # PKG-14b: p_after − p_before of the evidence this submit applied.
-        "p_delta": p_delta,
         "results": results,
         # G8, additive: what the award paid (`xp_awarded`, `leveled_up`,
         # `duplicate`) plus the /api/gamification/me snapshot as of right now.
         # Always present. If the snapshot read failed it carries the award
         # half ALONE — see `_gamification_block` for why that half survives.
         "gamification": gamification,
-        **({"learning": learning} if learning is not None else {}),
     }

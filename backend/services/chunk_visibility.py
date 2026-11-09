@@ -64,9 +64,8 @@ from services.events_service import log_event
 logger = logging.getLogger(__name__)
 
 #: `course_chunks.visibility`. Mirrors the CHECK constraint in the migration.
-#: Defined beside the table's row-id scheme (db/chunk_ids.py), so the rich
-#: seed can write chunk rows without importing services.
-from db.chunk_ids import PRIVATE, SHARED  # noqa: E402,F401
+SHARED = "shared"
+PRIVATE = "private"
 
 #: `documents.shareability` / the classifier's `shareability` field (#630).
 #: Whose document this is, which is a different question from whether its owner

@@ -51,7 +51,6 @@ from db.async_connection import arpc
 from db.connection import rpc, table
 from db.scope import runs_as_service
 from services.encryption import decrypt_if_present, encrypt_if_present
-from services.session_modes import NOT_REVIEW, REVIEW_MODE
 
 # Maps session_id -> pending payload (cleared on first chat, end-session
 # discard, delete, or eviction by ``stash_pending``). Write it through
@@ -483,29 +482,11 @@ async def arequire_owned_open(session_id: str, user_id: str) -> None:
     """One ``sessions`` read: 404 unless the row is ``user_id``'s, 409
     SESSION_ENDED if it has ended. For a session known not to be pending."""
     rows = await table("sessions").aselect(
-        # a daily review session is never a tutor session (learning loop A73)
-        "user_id,ended_at", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+        "user_id,ended_at", filters={"id": f"eq.{session_id}"}, limit=1
     )
     if not _row_owned_by(rows, user_id):
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     _raise_unless_open(rows)
-
-
-async def aowned_live_row(session_id: str, user_id: str) -> bool:
-    """With the flag on, the learning loop's split turn entry
-    (services/tutor/pending.py::_require_turn_session, spec §13 A149): True
-    when the session has a `sessions` row, after a 404 unless it is
-    `user_id`'s; False when it has none (the caller then checks the store).
-    Never materialises and never answers the ended 409 (the turn's open does,
-    after the loop hand-off)."""
-    rows = await table("sessions").aselect(
-        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
-    )
-    if not rows:
-        return False
-    if not _row_owned_by(rows, user_id):
-        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-    return True
 
 
 async def aopen_stored(session_id: str, user_id: str) -> None:
@@ -519,7 +500,7 @@ async def aopen_stored(session_id: str, user_id: str) -> None:
     wrote. A discard landing after this check is caught by the turn's write
     (``routes/learn.py::save_message``)."""
     rows = await table("sessions").aselect(
-        "user_id,ended_at", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+        "user_id,ended_at", filters={"id": f"eq.{session_id}"}, limit=1
     )
     if rows:
         if not _row_owned_by(rows, user_id):
@@ -579,10 +560,9 @@ def session_owned_by(
         return False
     pending = get_pending(session_id)
     if pending is not None:
-        # a daily review session is never a tutor session (learning loop A73)
-        return allow_pending and pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
+        return allow_pending and pending.get("user_id") == user_id
     return _row_owned_by(table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
     ), user_id)
 
 
@@ -599,10 +579,9 @@ async def asession_owned_by(
         return False
     pending = await aget_pending(session_id)
     if pending is not None:
-        # a daily review session is never a tutor session (learning loop A73)
-        return allow_pending and pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
+        return allow_pending and pending.get("user_id") == user_id
     return _row_owned_by(await table("sessions").aselect(
-        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
     ), user_id)
 
 

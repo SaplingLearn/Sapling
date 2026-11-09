@@ -10,10 +10,8 @@ from main import app
 from tests.db_fakes import fake_table
 from tests.split_patches import patch_tutor
 
-#: #117 wave 3: a sync PostgREST call on the event loop raises here. Spec
-#: §11.5 (PKG-14b): this module drives the legacy /api/learn/* path, so it
-#: runs as an explicit kill-switch test too.
-pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 client = TestClient(app)

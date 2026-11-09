@@ -1,4 +1,4 @@
 {
-  "text": "You've got the right idea! Derivatives are fundamentally about slope.\n\nFor a straight line, the slope is constant. But what about a function with a curve? Does a curve have a single slope?",
+  "text": "Slope is a good way in. Before I say more, I'd like to see how you're thinking about it.\n\nA line has the same slope everywhere. A curve like $f(x)=x^2$ doesn't. So what does \"the slope of the curve at a point\" mean? How would you use the idea of a limit to define it?",
   "tool_calls": []
 }

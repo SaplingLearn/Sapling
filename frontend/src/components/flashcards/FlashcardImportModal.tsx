@@ -122,7 +122,6 @@ export function FlashcardImportModal({
           <div style={{ minWidth: 220 }}>
             <div className="label-micro">Course</div>
             <CustomSelect
-              ariaLabel="Course"
               value={courseId}
               onChange={setCourseId}
               placeholder="Pick a course…"

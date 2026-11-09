@@ -4,9 +4,7 @@ import { CustomSelect } from "../../CustomSelect";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
-import { humanizeError } from "@/lib/errorMessage";
 import type { ParsedCard } from "@/lib/flashcardParsers";
-import { withheldNotice } from "@/lib/integrityNotice";
 
 interface LibraryDoc { id: string; file_name: string; category?: string }
 
@@ -49,10 +47,8 @@ export function AiTab({ documents, onCards }: Props) {
         : await importGenerate(userId, { source: "library_doc", documentId: docId, count: numericCount, difficulty });
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
-      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
-      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
-      toast.error(humanizeError(err, "Couldn't generate cards right now."));
+      toast.error(`Generate failed: ${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -76,7 +72,6 @@ export function AiTab({ documents, onCards }: Props) {
         />
       ) : (
         <CustomSelect
-          ariaLabel="Library document"
           value={docId}
           onChange={setDocId}
           placeholder={documents.length ? "Pick a document…" : "No library documents yet"}
@@ -87,12 +82,11 @@ export function AiTab({ documents, onCards }: Props) {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 140 }}>
           <div className="label-micro">Count</div>
-          <CustomSelect ariaLabel="Count" value={count} onChange={setCount} options={COUNT_OPTIONS} />
+          <CustomSelect value={count} onChange={setCount} options={COUNT_OPTIONS} />
         </div>
         <div style={{ minWidth: 180 }}>
           <div className="label-micro">Difficulty</div>
           <CustomSelect
-            ariaLabel="Difficulty"
             value={difficulty}
             onChange={v => setDifficulty(v as "recall" | "application" | "conceptual")}
             options={DIFFICULTY_OPTIONS}

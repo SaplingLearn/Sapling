@@ -24,16 +24,6 @@ from services.graph_service import (
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
-@pytest.fixture(autouse=True)
-def atomic_evidence_transport(monkeypatch):
-    from learning import evidence_transaction
-    from test_learning_evidence_apply import _AtomicEvidenceRPC
-
-    transport = _AtomicEvidenceRPC(lambda name: gs.table(name))
-    monkeypatch.setattr(evidence_transaction, "rpc", transport)
-    return transport
-
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _mock_table(data: dict):
@@ -535,6 +525,39 @@ class TestDeleteCourse:
 
 # ── apply_graph_update ────────────────────────────────────────────────────────
 
+#: Stand-in for graph_nodes as the ``apply_mastery_delta`` SQL function sees it
+#: (#766): id → stored row copy. ``_bulk_factory`` seeds it with the existing
+#: nodes and every upserted node; ``_fake_mastery_rpc`` applies deltas to it
+#: exactly as the migration's function does (clamp, tier, times_studied + 1).
+_FAKE_NODE_STORE: dict = {}
+
+
+def _fake_mastery_rpc(name, params):
+    assert name == "apply_mastery_delta"
+    node = _FAKE_NODE_STORE.get(params["p_node_id"])
+    if node is None:
+        return []
+    before = float(node.get("mastery_score") or 0.0)
+    after = max(0.0, min(1.0, before + params["p_delta"]))
+    tier = (
+        "mastered" if after >= params["p_mastered_min"]
+        else "learning" if after >= params["p_learning_min"]
+        else "struggling" if after >= params["p_struggling_min"]
+        else "unexplored"
+    )
+    node.update(mastery_score=after, mastery_tier=tier,
+                times_studied=(node.get("times_studied") or 0) + 1)
+    return [{"before_score": before, "after_score": after, "new_tier": tier}]
+
+
+@pytest.fixture(autouse=True)
+def _mastery_rpc():
+    _FAKE_NODE_STORE.clear()
+    with patch("services.graph_service.rpc", side_effect=_fake_mastery_rpc) as m:
+        yield m
+    _FAKE_NODE_STORE.clear()
+
+
 def _bulk_factory(existing_nodes=None, existing_edges=None):
     """Factory that returns a fresh mock per table; bulk-fetch returns the given rows.
 
@@ -545,13 +568,20 @@ def _bulk_factory(existing_nodes=None, existing_edges=None):
     nodes = list(existing_nodes or [])
     edges = list(existing_edges or [])
     mocks = {}
+    for n in nodes:
+        _FAKE_NODE_STORE[n["id"]] = dict(n)
+
+    def _upsert(data, **kw):
+        for d in [data] if isinstance(data, dict) else list(data):
+            _FAKE_NODE_STORE.setdefault(d["id"], dict(d))
+        return [data] if isinstance(data, dict) else list(data)
 
     def factory(name):
         if name not in mocks:
             m = MagicMock()
             if name == "graph_nodes":
                 m.select.return_value = nodes
-                m.upsert.side_effect = lambda data, **kw: [data] if isinstance(data, dict) else list(data)
+                m.upsert.side_effect = _upsert
             elif name == "graph_edges":
                 m.select.return_value = edges
                 m.upsert.return_value = []
@@ -575,6 +605,7 @@ class TestApplyGraphUpdate:
         factory, mocks = _bulk_factory(existing_nodes=[])
         graph_update = {
             "new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -595,10 +626,8 @@ class TestApplyGraphUpdate:
 
     def test_course_context_refresh_runs_inline_by_default(self):
         factory, _ = _bulk_factory(existing_nodes=[])
-        # No `updated_nodes` key: PKG-14b refuses it outright (graded evidence is
-        # the only mastery writer), and a new node is enough to touch the course.
         update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
-                  "new_edges": []}
+                  "updated_nodes": [], "new_edges": []}
         with patch("services.graph_service.table", side_effect=factory), \
              patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
              patch("services.course_context_service.refresh_course_context") as refresh:
@@ -609,10 +638,8 @@ class TestApplyGraphUpdate:
         # The refresh can make an LLM call; a route that passes `defer` (the quiz
         # submit passes background_tasks.add_task) must not wait on it.
         factory, _ = _bulk_factory(existing_nodes=[])
-        # No `updated_nodes` key: PKG-14b refuses it outright (graded evidence is
-        # the only mastery writer), and a new node is enough to touch the course.
         update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
-                  "new_edges": []}
+                  "updated_nodes": [], "new_edges": []}
         deferred = []
         with patch("services.graph_service.table", side_effect=factory), \
              patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
@@ -632,6 +659,7 @@ class TestApplyGraphUpdate:
         # The LLM emits the same concept with different casing/whitespace
         graph_update = {
             "new_nodes": [{"concept_name": "  linear   regression ", "initial_mastery": 0.0}],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -648,6 +676,7 @@ class TestApplyGraphUpdate:
                 {"concept_name": "gradient descent", "initial_mastery": 0.0},
                 {"concept_name": "Gradient  Descent", "initial_mastery": 0.0},
             ],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -663,6 +692,7 @@ class TestApplyGraphUpdate:
                 {"concept_name": "   ", "initial_mastery": 0.0},
                 {"concept_name": None, "initial_mastery": 0.0},
             ],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -674,6 +704,7 @@ class TestApplyGraphUpdate:
         factory, mocks = _bulk_factory(existing_nodes=[])
         graph_update = {
             "new_nodes": [{"concept_name": "X", "initial_mastery": None}],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -686,6 +717,7 @@ class TestApplyGraphUpdate:
         factory, mocks = _bulk_factory(existing_nodes=[])
         graph_update = {
             "new_nodes": [{"concept_name": "X", "initial_mastery": 5.0}],
+            "updated_nodes": [],
             "new_edges": [],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -694,54 +726,411 @@ class TestApplyGraphUpdate:
         payload = mocks["graph_nodes"].upsert.call_args[0][0]
         assert payload["mastery_score"] == 1.0
 
+    def test_updates_mastery_score(self):
+        existing = [
+            {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "solved a problem"}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert len(result) == 1
+        assert result[0]["before"] == pytest.approx(0.4)
+        assert result[0]["after"] == pytest.approx(0.6)
+        # Mastery change should reference the canonical stored name, not the LLM's
+        assert result[0]["concept"] == "Algebra"
+        # #766: the score is no longer written back by a Python
+        # read-modify-write; the atomic SQL function applies the DELTA.
+        mocks["graph_nodes"].update.assert_not_called()
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.6)
+        assert _FAKE_NODE_STORE["n1"]["mastery_tier"] == "learning"
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 3
+
+    # ── #766: the mastery update is atomic ────────────────────────────────
+
+    def _update(self, existing, delta=0.2, user="u1"):
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": delta}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
+            return apply_graph_update(user, graph_update, course_id="c1"), mocks
+
+    def test_rpc_gets_the_delta_and_configs_thresholds(self, _mastery_rpc):
+        from config import (
+            MASTERY_LEARNING_MIN, MASTERY_MASTERED_MIN, MASTERY_STRUGGLING_MIN,
+        )
+        self._update([{"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                       "times_studied": 2, "course_id": "c1"}])
+        _mastery_rpc.assert_called_once_with("apply_mastery_delta", {
+            "p_node_id": "n1",
+            "p_user_id": "u1",
+            "p_delta": pytest.approx(0.2),
+            "p_mastered_min": MASTERY_MASTERED_MIN,
+            "p_learning_min": MASTERY_LEARNING_MIN,
+            "p_struggling_min": MASTERY_STRUGGLING_MIN,
+        })
+
+    def test_concurrent_writers_compose_instead_of_losing_an_update(self):
+        # Two writers (a quiz submit and a tutor turn) both bulk-read the node
+        # at 0.4. The old Python read-modify-write had each write back
+        # 0.4 + 0.2, so the store ended at 0.6 with times_studied 3; deltas
+        # applied in SQL compose to 0.8 / 4.
+        stale = {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                 "times_studied": 2, "course_id": "c1"}
+        first, _ = self._update([dict(stale)])
+        # The second writer's bulk read predates the first commit: it still
+        # sees 0.4. (_bulk_factory would re-seed the store from that stale
+        # row, so restore the committed state the database actually holds.)
+        committed = dict(_FAKE_NODE_STORE["n1"])
+        factory2, _ = _bulk_factory(existing_nodes=[dict(stale)])
+        _FAKE_NODE_STORE["n1"] = committed
+        graph_update = {"new_nodes": [], "new_edges": [],
+                        "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2}]}
+        with patch("services.graph_service.table", side_effect=factory2), \
+             patch("services.course_context_service.update_course_context"):
+            second = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert first[0]["after"] == pytest.approx(0.6)
+        # The second writer's before/after are what was actually applied.
+        assert second[0]["before"] == pytest.approx(0.6)
+        assert second[0]["after"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 4
+
+    def test_a_node_deleted_under_us_is_skipped(self, _mastery_rpc):
+        _mastery_rpc.side_effect = lambda *_a, **_k: []
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "course_id": "c1"}])
+        assert result == []
+        assert "node_mastery_events" not in mocks
+
+    def test_missing_function_falls_back_to_the_legacy_write(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "404", request=req, response=httpx.Response(404, request=req))
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "times_studied": 2,
+                                       "course_id": "c1"}])
+        assert result[0]["after"] == pytest.approx(0.6)
+        payload = mocks["graph_nodes"].update.call_args[0][0]
+        assert payload["mastery_score"] == pytest.approx(0.6)
+        assert payload["mastery_tier"] == "learning"
+        assert payload["times_studied"] == 3
+        assert mocks["graph_nodes"].update.call_args.kwargs["filters"] == {
+            "id": "eq.n1", "user_id": "eq.u1",
+        }
+
+    def test_other_rpc_errors_propagate(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "500", request=req, response=httpx.Response(500, request=req))
+        with pytest.raises(httpx.HTTPStatusError):
+            self._update([{"id": "n1", "concept_name": "Algebra",
+                           "mastery_score": 0.4, "course_id": "c1"}])
+
+    def test_mastery_change_appends_event_row(self):
+        """A mastery change appends exactly one append-only node_mastery_events row
+        (fixes the non-atomic JSON read-modify-write, #247)."""
+        existing = [
+            {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "aced the quiz"}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                apply_graph_update("u1", graph_update, course_id="c1")
+
+        mocks["node_mastery_events"].insert.assert_called_once()
+        event = mocks["node_mastery_events"].insert.call_args[0][0]
+        assert event["node_id"] == "n1"
+        assert event["delta"] == pytest.approx(0.2)
+        assert event["reason"] == "aced the quiz"
+        # This caller classified nothing, so the (E7-added) event_type column
+        # stays absent rather than carrying an explicit null.
+        assert "event_type" not in event
+
+    def test_updates_existing_node_via_case_insensitive_name(self):
+        existing = [
+            {"id": "n1", "concept_name": "Linear Regression", "mastery_score": 0.3,
+             "times_studied": 1, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "linear regression", "mastery_delta": 0.1}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert len(result) == 1
+        assert result[0]["concept"] == "Linear Regression"
+
+    def test_can_update_node_just_inserted_in_same_call(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [{"concept_name": "Eigenvectors", "initial_mastery": 0.0}],
+            "updated_nodes": [{"concept_name": "Eigenvectors", "mastery_delta": 0.1}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert len(result) == 1
+        assert result[0]["before"] == 0.0
+        assert result[0]["after"] == pytest.approx(0.1)
+
+    def test_mastery_clamped_at_1(self):
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.95,
+             "times_studied": 5, "course_id": "c1"}
+        ]
+        factory, _ = _bulk_factory(existing_nodes=existing)
+        graph_update = {"new_nodes": [], "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.5}], "new_edges": []}
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+        assert result[0]["after"] == 1.0
+
+    def test_mastery_clamped_at_0(self):
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.05,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, _ = _bulk_factory(existing_nodes=existing)
+        graph_update = {"new_nodes": [], "updated_nodes": [{"concept_name": "X", "mastery_delta": -0.5}], "new_edges": []}
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+        assert result[0]["after"] == 0.0
+
     def test_empty_update_returns_empty_list(self):
         factory, _ = _bulk_factory(existing_nodes=[])
         with patch("services.graph_service.table", side_effect=factory):
-            result = apply_graph_update("u1", {"new_nodes": [], "new_edges": []})
+            result = apply_graph_update("u1", {"new_nodes": [], "updated_nodes": [], "new_edges": []})
         assert result == []
 
+    # ── E7: event_type reaches the event row ──────────────────────────────
+
+    def _apply_with_event_type(self, upd_extra):
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.1,
+                               "reason": "Quiz: 1/3 correct", **upd_extra}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                apply_graph_update("u1", graph_update, course_id="c1")
+        mocks["node_mastery_events"].insert.assert_called_once()
+        return mocks["node_mastery_events"].insert.call_args[0][0]
+
+    def test_event_type_is_persisted_on_the_mastery_event(self):
+        """E7: submit computes a categorical reading from the score ratio and
+        used to DROP it at the write. It reaches the row now, namespaced."""
+        row = self._apply_with_event_type({"event_type": "quiz_confusion"})
+        assert row["event_type"] == "quiz_confusion"
+        # The rest of the append-only shape is untouched.
+        assert row["delta"] == pytest.approx(0.1)
+        assert row["reason"] == "Quiz: 1/3 correct"
+
+    def test_event_type_omitted_when_caller_supplies_none(self):
+        """The callers that classify NOTHING (the document pipeline, notes
+        extraction, manual adds via add_node) pass no event_type, and the key
+        must be ABSENT rather than an explicit null.
+
+        Note this is NOT "every non-quiz caller": the chat tutor's
+        `update_mastery_tool` has always supplied a category of its own, and
+        is in fact the highest-volume writer here. Its field is nullable, so
+        it lands in this branch only for a turn the model did not classify.
+
+        Absent, not null, on purpose: it keeps the non-classifying callers
+        working against a database where E7's migration hasn't been applied
+        yet — PostgREST rejects an insert naming a column the schema cache
+        doesn't have, so writing the key unconditionally would break those
+        paths on any environment that took the code before the DDL.
+        """
+        row = self._apply_with_event_type({})
+        assert "event_type" not in row
+
+    def test_explicit_none_event_type_is_treated_as_absent(self):
+        """A caller that passes the key with None is a DIFFERENT branch from
+        one that omits it — the implementation guards with `isinstance(...,
+        str)`, and a dict built unconditionally (which is what the tutor tool
+        used to do) hits exactly this. It must not write the key, or the
+        pre-migration 400 comes back for the unclassified turns too."""
+        row = self._apply_with_event_type({"event_type": None})
+        assert "event_type" not in row
+
+    def test_blank_event_type_is_treated_as_absent(self):
+        """An empty string is not a category — don't persist one."""
+        row = self._apply_with_event_type({"event_type": "  "})
+        assert "event_type" not in row
+
     def _apply_with_failing_events(self, fail_times):
-        """A journal rejection represents whole-transaction rollback."""
-        from learning.evidence import PlanningPersistenceUnavailable
-        existing = [{"id": "n1", "concept_name": "X", "mastery_score": 0.5,
-                     "times_studied": 0, "course_id": "c1"}]
+        """Run one mastery update whose node_mastery_events insert fails
+        `fail_times` times. Returns the payloads it attempted."""
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
         factory, mocks = _bulk_factory(existing_nodes=existing)
         attempts = []
-        def insert(payload):
+
+        def _insert(payload):
             attempts.append(payload)
             if len(attempts) <= fail_times:
                 raise RuntimeError("PGRST204 column event_type does not exist")
             return []
-        factory("node_mastery_events").insert.side_effect = insert
-        graph_update = {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
-        error, result = None, None
-        with patch("services.graph_service.table", side_effect=factory), \
-             patch("learning.learner_state.table", side_effect=factory), \
-             patch("services.graph_service.touch_streak_safe"), \
-             patch("services.course_context_service.update_course_context"):
-            try:
+
+        mocks_holder = {}
+
+        def wrapped(name):
+            m = factory(name)
+            if name == "node_mastery_events" and name not in mocks_holder:
+                m.insert.side_effect = _insert
+                mocks_holder[name] = m
+            return m
+
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.1,
+                               "reason": "Quiz: 1/3",
+                               "event_type": "quiz_partial"}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=wrapped):
+            with patch("services.course_context_service.update_course_context"):
                 result = apply_graph_update("u1", graph_update, course_id="c1")
-            except PlanningPersistenceUnavailable as exc:
-                error = exc
-        return attempts, result, mocks, error
+        return attempts, result
 
-    def test_transient_commit_failure_retries_identical_full_event(self):
-        attempts, result, mocks, error = self._apply_with_failing_events(fail_times=1)
-        assert error is None and result and result[0]["after"] > result[0]["before"]
-        assert len(attempts) == 2 and attempts[0] == attempts[1]
-        assert attempts[0]["event_type"] == "evidence"
-        assert "grader_backend" in attempts[0] and "evidence_seq" in attempts[0]
-        mocks["learner_state"].upsert.assert_called_once()
-        mocks["graph_nodes"].update.assert_called_once()
+    def test_event_type_rejection_retries_without_it(self):
+        """The E7 ordering hazard: a deploy that takes this code before the
+        migration lands gets a 400 for the unknown column. Degrade to the
+        pre-E7 row rather than costing the student their graded quiz."""
+        attempts, result = self._apply_with_failing_events(fail_times=1)
+        assert len(attempts) == 2
+        assert attempts[0]["event_type"] == "quiz_partial"
+        assert "event_type" not in attempts[1]
+        # The mastery change is still reported, so submit writes its score.
+        assert result and result[0]["after"] == pytest.approx(0.6)
 
-    def test_unavailable_journal_rejects_whole_evidence_batch(self):
-        from learning.evidence import PlanningPersistenceUnavailable
-        attempts, result, mocks, error = self._apply_with_failing_events(fail_times=99)
-        assert isinstance(error, PlanningPersistenceUnavailable) and result is None
-        assert len(attempts) == 2 and attempts[0] == attempts[1]
-        assert all(row["event_type"] == "evidence" for row in attempts)
-        mocks["learner_state"].upsert.assert_not_called()
-        mocks["graph_nodes"].update.assert_not_called()
+    def test_a_dead_event_table_never_takes_the_caller_down(self):
+        """quiz submit calls this AFTER its atomic completed_at claim and
+        BEFORE writing score/answers_json, and does not wrap it — so raising
+        here permanently loses a graded attempt, and the retry 409s. The
+        journal is not worth the quiz."""
+        attempts, result = self._apply_with_failing_events(fail_times=2)
+        assert len(attempts) == 2
+        assert result and result[0]["after"] == pytest.approx(0.6)
+
+    # ── The tutor path: the OTHER producer of this column ─────────────────
+
+    def test_tutor_mastery_tool_persists_a_namespaced_event_type(self):
+        """The chat tutor's `update_mastery_tool` has ALWAYS supplied an
+        event_type (it used to default to "interaction"), so this column has
+        two producers from the day it exists — not "quiz only".
+
+        Both vocabularies therefore land in one unconstrained TEXT column, and
+        the tutor's bare `quiz` ("I quizzed the student mid-conversation")
+        would be unreadable beside submit_quiz's own labels. This drives the
+        real tool -> apply_graph_update path and pins the namespaced value
+        that reaches the row.
+        """
+        import asyncio
+        from types import SimpleNamespace
+
+        from agents.tools.graph import (
+            ConceptMasteryUpdate,
+            MasteryUpdateInput,
+            update_mastery_tool,
+        )
+
+        existing = [
+            {"id": "n1", "concept_name": "Recursion", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        ctx = SimpleNamespace(deps=SimpleNamespace(
+            user_id="u1", course_id="c1", graph_updates=[], mastery_changes=[],
+        ))
+        update = MasteryUpdateInput(updates=[
+            ConceptMasteryUpdate(
+                concept_name="Recursion", mastery_delta=0.1,
+                reason="answered correctly", event_type="quiz",
+            )
+        ])
+
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                asyncio.run(update_mastery_tool(ctx, update))
+
+        mocks["node_mastery_events"].insert.assert_called_once()
+        row = mocks["node_mastery_events"].insert.call_args[0][0]
+        # `tutor_quiz`, not `quiz`: the value names its producer, so it can
+        # never be read as one of submit_quiz's quiz_* labels.
+        assert row["event_type"] == "tutor_quiz"
+        assert row["node_id"] == "n1"
+
+    def test_tutor_mastery_tool_omits_an_unclassified_event_type(self):
+        """The tool's field is nullable and defaults to None now, so a turn
+        the model didn't classify writes NO key — an un-categorised event must
+        stay distinguishable from a confident one, which a default of
+        "interaction" made impossible."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from agents.tools.graph import (
+            ConceptMasteryUpdate,
+            MasteryUpdateInput,
+            update_mastery_tool,
+        )
+
+        existing = [
+            {"id": "n1", "concept_name": "Recursion", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        ctx = SimpleNamespace(deps=SimpleNamespace(
+            user_id="u1", course_id="c1", graph_updates=[], mastery_changes=[],
+        ))
+        update = MasteryUpdateInput(updates=[
+            ConceptMasteryUpdate(concept_name="Recursion", mastery_delta=0.1)
+        ])
+
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                asyncio.run(update_mastery_tool(ctx, update))
+
+        row = mocks["node_mastery_events"].insert.call_args[0][0]
+        assert "event_type" not in row
 
     def test_edge_upsert_uses_unique_conflict(self):
         """A new edge is written via UNIQUE-backed upsert (no select-then-insert);
@@ -755,6 +1144,7 @@ class TestApplyGraphUpdate:
         factory, mocks = _bulk_factory(existing_nodes=existing_nodes)
         graph_update = {
             "new_nodes": [],
+            "updated_nodes": [],
             "new_edges": [{"source": "A", "target": "B", "strength": 0.7,
                            "relationship_type": "prerequisite"}],
         }
@@ -787,6 +1177,7 @@ class TestApplyGraphUpdate:
         )
         graph_update = {
             "new_nodes": [],
+            "updated_nodes": [],
             "new_edges": [{"source": "A", "target": "B", "strength": 0.7}],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -804,6 +1195,7 @@ class TestApplyGraphUpdate:
         factory, mocks = _bulk_factory(existing_nodes=existing_nodes)
         graph_update = {
             "new_nodes": [],
+            "updated_nodes": [],
             "new_edges": [{"source": "A", "target": "a", "strength": 0.7}],
         }
         with patch("services.graph_service.table", side_effect=factory):
@@ -832,10 +1224,13 @@ class TestApplyGraphUpdate:
         mocks["users"].select.return_value = [
             {"last_active_date": yesterday_utc, "streak_count": 4, "longest_streak": 4}
         ]
-        # PKG-14b: graded evidence is the only mastery-moving payload left.
-        graph_update = {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "practice"}],
+            "new_edges": [],
+        }
         with patch("services.graph_service.table", side_effect=factory), \
-             patch("learning.learner_state.table", side_effect=factory), \
              patch("services.streak_service.table", side_effect=factory), \
              patch("services.course_context_service.update_course_context"):
             apply_graph_update("u1", graph_update, course_id="c1")
@@ -890,11 +1285,14 @@ class TestStreakReconciliation:
         def factory(name):
             return users_table if name == "users" else node_factory(name)
 
-        # PKG-14b: graded evidence is the only mastery-moving payload left.
-        graph_update = {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "practice"}],
+            "new_edges": [],
+        }
 
         with patch("services.graph_service.table", side_effect=factory), \
-             patch("learning.learner_state.table", side_effect=factory), \
              patch("services.streak_service.table", side_effect=factory), \
              patch("services.course_context_service.update_course_context"):
             apply_graph_update("u1", graph_update, course_id="c1")   # mastery-driven touch

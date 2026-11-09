@@ -103,13 +103,6 @@ BUCKETS = {
         "llm_budgets",
         "rate_limit_hits", "feature_flags_version",
         "tutor_pending_sessions",
-        # The learning loop (spec §13 A148, 20261109032302_learning_loop_rls.sql):
-        "learner_state", "check_items", "check_item_draft_failures", "ai_tutor_daily_calls",
-        "misconceptions", "posttest_poses", "learning_reveals", "quiz_evidence_claims",
-        "checklist_budget_accounts", "checklist_budget_reservations",
-        "learning_evidence_operations", "check_item_reports", "check_item_reviews",
-        "learning_evidence_voids", "misconception_attempts", "check_item_audits",
-        "posttest_skips", "learning_prequestions", "learning_self_explanations",
     ],
 }
 # room_messages is bucket C but gets its policy and grants in step 2e (the

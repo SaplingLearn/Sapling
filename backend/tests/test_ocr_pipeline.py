@@ -14,19 +14,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# The integration tests below hit a live model (the syllabus extraction slot)
-# and live Supabase, so they are billable and opt-in by name, like every other
-# live lane: RUN_LIVE_OCR_PIPELINE=1 plus the slot provider's key. A key alone
-# is not consent — config.py loads backend/.env, so a key-only gate made real
-# calls from any checkout with a filled .env. The agent-path unit tests in
-# TestExtractAssignmentsViaAgent are fully mocked and always run.
+# The integration tests below hit live Gemini + Supabase. The agent-path
+# unit tests in TestExtractAssignmentsViaAgent are fully mocked, so they
+# run without GEMINI_API_KEY — gate per-test rather than at the module.
 #
 # `live_llm` (#379) is what exempts them from the autouse hermetic LLM guard in
-# conftest.py (which also skips every live_llm test unless some RUN_LIVE_*=1 is
-# set); the skipif keeps a run that opted into another lane from calling this one.
-_requires_opt_in = pytest.mark.skipif(
-    os.getenv("RUN_LIVE_OCR_PIPELINE") != "1",
-    reason="opt-in live test: set RUN_LIVE_OCR_PIPELINE=1 (and the syllabus slot's provider key)",
+# conftest.py; the skipif alone is not enough, because a *skipif* is invisible
+# to `request.node.get_closest_marker`. Both are needed: the marker lets the
+# real call through, the skipif keeps it from being attempted without a key.
+_requires_gemini = pytest.mark.skipif(
+    not os.getenv("GEMINI_API_KEY"),
+    reason="OCR/Gemini integration tests require GEMINI_API_KEY",
 )
 _live_llm = pytest.mark.live_llm
 
@@ -53,7 +51,7 @@ TEST_USER = "user_andres"
 
 
 @_live_llm
-@_requires_opt_in
+@_requires_gemini
 def test_agent_parse():
     print("\n[1] Testing agent parsing from raw text...")
     from services.calendar_service import _extract_via_agent
@@ -73,7 +71,7 @@ def parsed_assignments():
 
 
 @_live_llm
-@_requires_opt_in
+@_requires_gemini
 def test_save_to_db(parsed_assignments):
     print("\n[2] Testing save_assignments_to_db()...")
     before_rows = table("assignments").select(
@@ -100,7 +98,7 @@ def test_save_to_db(parsed_assignments):
 
 
 @_live_llm
-@_requires_opt_in
+@_requires_gemini
 def test_full_pipeline():
     print("\n[3] Testing process_and_save_syllabus() full pipeline with a text/plain file...")
     fake_bytes = SAMPLE_SYLLABUS.encode("utf-8")

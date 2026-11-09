@@ -57,28 +57,11 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         actually called the tool that records them,
                                         digest_present, digest_chars, recent_attempts,
                                         misconceptions (see docs/quiz-prompt-budget.md)
-quiz.completed                usage     quiz_id, concept_node_id, score, total, p_delta
+quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 quiz.answer_key_served        usage     quiz_id
 quiz.answer_key_flag_omitted  usage     quiz_id
-quiz.evidence_excluded        system    quiz_id, concept_node_id, question_hash, flags (the
-                                        item's lint codes), excluded_by (the codes that kept it
-                                        out), correct — a submitted quiz answer kept out of
-                                        mastery evidence for an item-flaw code (spec §13 A132)
-                                        or, with quiz_item_gates, for a question its gate did
-                                        not verify (excluded_by then holds the gate's codes,
-                                        A145); codes and ids only, never the item's text
-quiz.items_gated              system    questions, grounded, and a count per gate code
-                                        (verified / practice / dropped, aligned / misaligned /
-                                        alignment_unverified, key_agreed / key_disputed /
-                                        key_unsolved / key_unverified / key_not_independent)
-                                        — one generation's questions through the quiz item
-                                        gates (spec §13 A145); counts only
-quiz.misconception_recorded   usage     node_id, wrong_key, question_hash, count — a "Sure"
-                                        wrong answer on a verified quiz question recorded a
-                                        misconception (spec §13 A146); ids, the plaintext key
-                                        and a count only, never the answer
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 flashcard.generated           usage     card_count, documents_used, weak_concepts_used, via
@@ -100,136 +83,7 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
-rag.embedding_breaker_open    error     reason (auth | failures), trial (a failed half-open trial
-                                        re-opened it), error_type (a class, never a message),
-                                        status_code, failures, cooldown_s — ONE per open of the
-                                        embeddings circuit breaker (spec §13 A128); while open,
-                                        retrieval and indexing report failed without calling
-system.unevaluated_slot       system    slot, model, reason (pending_claude_eval |
-                                        not_evaluated) — an evidence-producing model slot runs a
-                                        model outside its evaluated set; once per process per
-                                        (slot, model), never blocking (spec §13 A128)
-system.slot_not_independent   system    slot, model, independent_of — a slot whose verdict must
-                                        come from a different model than another's (A22: the
-                                        grader's second opinion; A124: the key solve vs the
-                                        drafter) resolves to the same model; once per process
-learn.answer_refused          audit     reason (grader_directive / role_marker /
-                                        addresses_grader / too_long / disowned_answer), format,
-                                        check_item_id, request_id, rubric_items, directives,
-                                        role_markers, verdict_tokens, exempted, answer_chars
-                                        — a check answer that addressed the grader, or was
-                                        longer than GRADER_ANSWER_MAX_CHARS, was not graded
-                                        (PKG-05 reopen, spec §6, §13 A33; addresses_grader
-                                        only beside an exempted screen flag since the A33
-                                        finish); counts only, never the answer
-zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
-                                        ceiling_reason, first_attempt_correct, n_attempts,
-                                        max_rung_used, rungs[{rung, dwell_ms}],
-                                        time_to_first_attempt_ms, time_to_correct_ms,
-                                        independent_time_ms, assisted, confidence, fsrs_rating,
-                                        p_known_before, p_known_after, r_before, item_difficulty,
-                                        earnest_blocked (bool, spec §13 A109);
-                                        optional tier, grader_backend (omitted when unknown;
-                                        deterministic / gemini / gemini_second / claude /
-                                        claude_second / jev — a model grade names the provider
-                                        of its slot, spec §13 A116), retrieval ("failed" only:
-                                        a teach turn on the step's concept ran with its course
-                                        material retrieval failed since the concept's last
-                                        check; omitted otherwise, spec §13 A128)
-                                        (learning loop PKG-06, spec §6)
-zpd.attempt                   usage     session_id, question_hash, band, gate (standard / strict),
-                                        rung, since_pose_ms, alone_ms, gate_ms, novel, standard,
-                                        strict, counted; optional concept_id — one
-                                        hint-unlocking attempt (POST /step/attempt) as judged:
-                                        its structured signals, never its text (learning loop
-                                        spec §13 A133, A134)
-zpd.offer                     usage     accepted, band
-zpd.band_adjust               usage     direction, trigger, window_stats
-zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k, prerequisite_ids
-zpd.leak                      error     rung_emitted, ceiling, detector, request_id
-zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
-                                        checks_since_last
-learn.outside_leak            audit     surface (note_chat / note_summary / note_concepts /
-                                        flashcards), stage (request: the student's text quoted
-                                        posed checks, no model ran / reply: the model's text
-                                        stated their keys, withheld / unscanned: the posed items
-                                        could not be read), question_hashes, count,
-                                        help_recorded, request_id — an AI surface outside the
-                                        loop met the student's posed checks (spec §13 A125);
-                                        hashes and enums only, never text
-decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
-                                        fallback, prior — one answered decision of the learning
-                                        loop's typed decision seam (PKG-05b, spec §6, §13 A24);
-                                        prior=true: answered from a result the caller held (no
-                                        model run; PKG-10 match_wrong_reason), backend = its source.
-                                        backend = who answered (deterministic / gemini / claude /
-                                        jev / function): a model answer names the provider its
-                                        slot serves on (spec §13 A116); decision.fallback's
-                                        from/to name selections, where the model backend is gemini
-decision.shadow               usage     decision, request_id, primary_value, shadow_value,
-                                        primary_confidence, shadow_confidence, agreement,
-                                        shadow_latency_ms, shadow_input_tokens, error_code —
-                                        PKG-15 plumbing, never fired in the series; enums only
-decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
-                                        / both_failed / budget = the AI budget cap refused the
-                                        call; PKG-15 adds the Jev error enums), request_id
-ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
-learn.probe_done              usage     items, misses (not-correct incl. idk), novice_floor,
-                                        skills (node ids) — the probe phase finished (learning
-                                        loop PKG-08, spec §6)
-learn.plan_approved           usage     concept_ids, n_reviews_first — the student approved a
-                                        plan (PKG-08, spec §6)
-learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
-                                        model_written — a loop session's close was stored
-                                        (PKG-09, spec §6, §13 A8); counts and bools only
-learn.misconception_resolved  usage     node_id, wrong_key, check_item_id, recorded_on, count,
-                                        surface (check / probe / review / quiz — a quiz
-                                        question's item id is "quiz:<question_hash>", A146),
-                                        session_id — a
-                                        correct, unassisted answer on an isomorph closed one
-                                        open misconception (spec §13 A127); ids, the
-                                        plaintext key, a count and enums only
-learn.prequestion             usage     session_id, node_id, status (posed / skipped /
-                                        answered / superseded / resolved), question_hash,
-                                        reason (skipped: no_item / pool_for_checks /
-                                        review / proficient / exam_mode), no_idea, format,
-                                        difficulty — a segment's ungraded prequestion
-                                        (spec §13 A138); never the question or the guess
-learn.self_explanation        usage     session_id, node_id, juncture (worked_example /
-                                        released_solution / first_correct), status (shown
-                                        / replied / skipped), reply_chars — a
-                                        self-explanation prompt (spec §13 A139); never the
-                                        reply
-learn.check_item_reported     usage     course_id, question_hash, reason (wrong_answer /
-                                        unclear / not_from_my_course), surface (loop /
-                                        review), first, reporters — a student reported a
-                                        check item (spec §13 A113, #695); enums only
-learn.check_item_quarantined  audit     course_id, question_hash, reporters — reports from
-                                        ITEM_REPORT_QUARANTINE_MIN_REPORTERS students held a
-                                        check item from its course until staff decide (A123;
-                                        A124's hold, code reports_threshold)
-learn.check_item_retired      audit     course_id, question_hash, decided_by (admin), items,
-                                        students, voided — staff retired a check item
-                                        course-wide: its evidence voided, its rows deleted
-                                        (A113, A123)
-learn.check_item_approved     audit     course_id, question_hash, restored — an admin cleared
-                                        a flagged, reported or held check item (A113; restored:
-                                        a held one is served again, A123/A124)
-learn.multi_concept_served    usage     course_id, question_hash, components (2 or 3), format,
-                                        session_id — a loop check posed a multi-concept item
-                                        (spec §13 A141, flag multi_concept_items); ids, a
-                                        count and an enum only
-review.session_started        usage     session_id, offering_id (a daily review session row; never
-                                        session.started — it is not a tutor session)
-review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
-review.graded                 usage     kind, correct, rating
 flag.changed                  audit     key, field, before, after
-safety.crisis_support_shown   system    surface (services/crisis_support.SURFACES), category
-                                        (acute_danger / suicidal_ideation / self_harm), tier
-                                        (explicit / mention) — a student message matched the
-                                        crisis screen and got the resources card instead of a
-                                        model turn. Never the text, not even content_fp; NOT
-                                        mirrored to PostHog (docs/safety/crisis-support.md)
 account.seed                  audit     major, counts (admin account tools)
 account.wipe                  audit     counts
 account.copy_push             audit     direction, peer_env, outcome, counts
@@ -267,7 +121,6 @@ import asyncio
 import logging
 import os
 import queue
-import re
 import threading
 from typing import Any, Optional
 
@@ -337,24 +190,6 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # routes/quiz.py::_record_answer_key_flag.
     "quiz.answer_key_served",
     "quiz.answer_key_flag_omitted",
-    # Learning-loop spec §13 A132: a quiz answer kept out of mastery evidence
-    # because its item carries an excluding item-flaw code
-    # (learning/quiz_evidence.py::EVIDENCE_EXCLUDING_FLAGS) — one per such item
-    # per submit. category="system": the server's decision about an item, not
-    # the student's activity, so the usage rollups leave it out. It is what
-    # counts the evidence the linter withheld, and its `correct` split is the
-    # measure of the cue (correct rate on cued items against clean ones).
-    "quiz.evidence_excluded",
-    # Learning-loop spec §13 A145: one generation's questions through the quiz
-    # item gates — a count per gate code (verified / practice / dropped and the
-    # two halves'). category="system": the server's decision about items. It
-    # is what measures the gates' yield and their cost per kept question
-    # before the flag is turned on for everyone.
-    "quiz.items_gated",
-    # Learning-loop spec §13 A146: a "Sure" wrong answer on a verified quiz
-    # question whose chosen option is tagged with a misconception key recorded
-    # that misconception (one per record). Ids, the plaintext key and a count.
-    "quiz.misconception_recorded",
     "chat.message_sent",
     "note.created",
     # ADR 0028: flashcard generation (an LLM feature) and review had no event
@@ -379,128 +214,6 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
-    # Learning-loop spec §13 A128: the embeddings circuit breaker opened (an
-    # invalid key opens it at once; EMBED_BREAKER_FAILURES service failures in
-    # a row otherwise). ONE per open — a refused call emits nothing, so a dead
-    # key costs one row per cooldown, not one per tutor turn. category="error".
-    "rag.embedding_breaker_open",
-    # Spec §13 A128: an evidence-producing model slot (agents/_providers.py::
-    # EVIDENCE_SLOTS) resolves to a model outside its evaluated set — an env
-    # flip, or a pending-eval slot on claude-* — and one that must differ from
-    # another slot's model (A22's second opinion, A124's key solve) does not.
-    # Once per process per (slot, model); warn only, never block.
-    # category="system": a fact about the process, never a student's activity.
-    "system.unevaluated_slot",
-    "system.slot_not_independent",
-    # Learning loop PKG-04 (spec §6, §13 A8): one check_items agent call (a
-    # batch of concepts) or one concept's item write failed — an honest
-    # degrade (ADR 0024), category="error"; payload document_id, course_id,
-    # reason (exception class name or StorageError). Also an opt-out
-    # withdrawal that failed after the response (reason WithdrawalError,
-    # document_id and course_id null). Never any item text.
-    "learn.check_items_failed",
-    # Learning loop PKG-05 reopen (spec §6, §13 A33; CodeRabbit PR #673): the
-    # pre-grader guard refused a check answer that addressed the grader (grading
-    # directives, role/format markers: no grader run), or the grader reported one
-    # (addresses_grader) after its run, or it was over GRADER_ANSWER_MAX_CHARS
-    # (too_long) — no evidence for either outcome. category="audit"; payload
-    # reason enum, format, check_item_id, request_id and counts (verdict_tokens is
-    # a count of a suspicion signal, never a reason). Never the answer text.
-    "learn.answer_refused",
-    # Learning loop spec §13 A37 (series coordinator's ruling, 2026-09-28): one
-    # mc_reason top-up call — a concept a generation pass left below
-    # CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items. category="usage":
-    # it counts a designed call, not a failure (a failed call also emits
-    # learn.check_items_failed). Payload ids and counts only: document_id,
-    # course_id, requested, returned, stored, mc_reason_items. Never item text.
-    "learn.check_items_topup",
-    # Learning loop spec §13 A113 (#695), A123: a student reported a check item
-    # ("usage": a counted student action); ITEM_REPORT_QUARANTINE_MIN_REPORTERS
-    # reporters quarantined one (held from its course, nothing deleted);
-    # staff retired one (its evidence voided, its rows deleted) or approved one
-    # (a hold lifted) — "audit": decisions on content, for staff review
-    # (the admin review queue at /admin/check-items lists what is still open).
-    # Payloads: course_id, question_hash (a sha256, never the prompt), and enums
-    # and counts only — reason / surface / first / reporters; reporters;
-    # decided_by / items / students / voided; restored.
-    "learn.check_item_reported",
-    "learn.check_item_quarantined",
-    "learn.check_item_retired",
-    "learn.check_item_approved",
-    # Learning loop spec §13 A141 (flag multi_concept_items): a loop check posed
-    # a multi-concept item — the admin report's "served". category="usage".
-    # Payload: course_id, question_hash (a sha256), components (a count),
-    # format and session_id. Never item text.
-    "learn.multi_concept_served",
-    # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
-    # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
-    # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
-    # sha256, never the prompt. wheelspin and leak are category="error": a
-    # stuck student and a revealed answer are both things an admin must count.
-    "zpd.step",
-    "zpd.offer",
-    "zpd.band_adjust",
-    "zpd.wheelspin",
-    "zpd.leak",
-    "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
-    "zpd.rating",
-    # Learning-loop spec §13 A133, A134: one hint-unlocking attempt as judged —
-    # the time alone with the latest help, novelty, what the standard and the
-    # strict rule say, and whether it counted. Never the attempt's text.
-    "zpd.attempt",
-    # Learning-loop spec §13 A125: the leak family's event for the AI surfaces
-    # OUTSIDE the loop (services/integrity_guard.py — the notes chat, summary and
-    # concepts, the flashcard generators). stage `request`: the student's text
-    # quoted their posed checks, so no model ran; `reply`: the model's text
-    # stated their keys, so it was withheld; `unscanned`: the posed items could
-    # not be read. Never zpd.leak / zpd.reveal: nothing here was served, so it
-    # moves neither the zero-leak gate nor the launch watch (spec §11.7).
-    # category="audit" (as learn.answer_refused); hashes and enums only.
-    "learn.outside_leak",
-    # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
-    # (services/decisions.py). `made` = one answered decision, with the backend
-    # that answered; `fallback` = served by another backend (reason jev_absent)
-    # or by none (both_failed: nothing is recorded for either outcome; budget: the AI
-    # budget cap refused the call before any run, spec §13 A39);
-    # `shadow` = PKG-15 plumbing, never fired in the series. Payloads carry
-    # ids, enums and numbers only — never state text.
-    "decision.made",
-    "decision.shadow",
-    "decision.fallback",
-    # PKG-06b (spec §6, §13 A20): a per-student AI cap was hit. category="usage": it fires at
-    # most once per user/scope/level/day, but for many students at once near a price change;
-    # the /errors feed must not drown in it.
-    "ai.budget_capped",
-    # PKG-08: probe finished (items/misses/novice_floor/skills) and the
-    # student approved a plan (concept_ids/n_reviews_first). Emit coverage
-    # lives in test_learning_probe_planner.py.
-    "learn.probe_done",
-    "learn.plan_approved",
-    # PKG-09: a loop session's close was stored. Counts and bools only (never the
-    # summary text); model_written is the ADR 0024 degrade signal (spec §13 A8).
-    "learn.session_closed",
-    # Learning-loop spec §13 A127: a correct, unassisted answer on an isomorph
-    # closed one of the student's open misconceptions (one event per closed row,
-    # after the grade's flush and claimed save; learning/misconceptions.py
-    # resolve_after_grade). Payload ids, the plaintext key, a count and enums only:
-    # node_id, wrong_key, check_item_id (the answered item), recorded_on (the item
-    # it was recorded on), count, surface (check / probe / review), session_id.
-    "learn.misconception_resolved",
-    # Learning-loop spec §13 A138: the segment prequestion's lifecycle — posed,
-    # skipped (with its reason), answered (no_idea), superseded, resolved.
-    # Payload ids, the item's hash, enums and counts only (never the question
-    # or the guess, which is stored encrypted in learning_prequestions).
-    "learn.prequestion",
-    # Learning-loop spec §13 A139: a self-explanation prompt shown, replied (with
-    # reply_chars) or skipped. Payload ids, enums and a count only (never the
-    # reply, which is stored encrypted in learning_self_explanations).
-    "learn.self_explanation",
-    # Learning loop PKG-12: the daily review queue. `served` once per kind in
-    # a built queue (n = how many), `graded` per answer. Reviews are evidence,
-    # so `graded` is the countable twin of the node_mastery_events row.
-    "review.session_started",
-    "review.served",
-    "review.graded",
     # #620: admin feature-flag change (audit).
     "flag.changed",
     # Admin account tools: seed by major / wipe / copy between environments
@@ -517,14 +230,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # emits it about a chat turn (the turn itself is chat.message_sent), so it
     # must not count as the student's activity in the usage rollups. It is
     # the dataset the routing-accuracy and Jev-agreement reviews are run over.
-    # docs/safety/crisis-support.md: a student message matched the crisis
-    # screen and got the resources card instead of a model turn
-    # (services/crisis_support.py). category="system", like decision.made:
-    # the server emits it about a turn, so it is not counted as activity.
-    # Payload surface / category / tier: enums only; never the message,
-    # never even a content fingerprint. NOT mirrored to PostHog
-    # (posthog_client._NOT_MIRRORED says why).
-    "safety.crisis_support_shown",
+    "decision.made",
     # #115 (RLS step 2, db/scope.py): the user-scoped PostgREST client under
     # the `db_user_scope` flag. category="system", ids/counts/table + route
     # template only, never row content. They are the staging rollout's
@@ -676,55 +382,6 @@ def _warn_zero_token_usage(
         )
 
 
-def build_llm_usage_row(
-    *,
-    feature: str,
-    task: str | None,
-    model: str,
-    usage: Any,
-    provider: str | None = None,
-    user_id: str | None = None,
-    request_id: str | None = None,
-    cached_tokens: int | None = None,
-    thinking_tokens: int | None = None,
-    session_id: str | None = None,
-    requests: int | None = None,
-) -> dict:
-    """Prepare the canonical usage/pricing row without writing or enqueueing.
-
-    ``request_id`` is explicit here: callers choose their context fallback.
-    This helper preserves the permissive analytics normalization contract;
-    protected financial receipts must additionally validate completeness.
-    ``provider`` defaults to the label the served ``model`` implies
-    (``llm_pricing.usage_provider``, ADR 0030). The prompt-cache reads/writes a
-    pydantic-ai ``RunUsage`` reports are priced with the explicit
-    ``cached_tokens`` (A21); with no explicit count, the measured cache reads
-    are what the row records as ``cached_tokens``.
-    """
-    tokens = llm_pricing.normalize_usage(usage)
-    cache_read, cache_write = llm_pricing.cache_usage(usage)
-    return {
-        "user_id": user_id,
-        "request_id": request_id,
-        "feature": feature,
-        "task": task,
-        "model": model,
-        "provider": provider or llm_pricing.usage_provider(model),
-        "prompt_tokens": tokens["prompt_tokens"],
-        "completion_tokens": tokens["completion_tokens"],
-        "total_tokens": tokens["total_tokens"],
-        "cached_tokens": cached_tokens if cached_tokens is not None else (cache_read or None),
-        "thinking_tokens": thinking_tokens,
-        "session_id": (session_id or "").strip() or None,
-        "cost_usd": llm_pricing.cost_usd(
-            model, tokens["prompt_tokens"], tokens["completion_tokens"],
-            cached_tokens=cached_tokens,
-            cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            requests=requests or llm_pricing.request_count(usage),
-        ),
-    }
-
-
 def log_llm_usage(
     *,
     feature: str,
@@ -734,11 +391,7 @@ def log_llm_usage(
     provider: str | None = None,
     user_id: str | None = None,
     request_id: str | None = None,
-    cached_tokens: int | None = None,
-    thinking_tokens: int | None = None,
-    session_id: str | None = None,
     requests: int | None = None,
-    course_id: str | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
@@ -749,12 +402,6 @@ def log_llm_usage(
     ``requests`` is how many model calls the row bills; omitted, it is read
     off ``usage.requests`` (Pydantic AI's RunUsage carries it). Writers whose
     usage shape has no such field (the Jev decision row) pass it.
-
-    ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
-    ``None`` when unmeasured, and cached input is billed at the cached rate.
-    ``session_id`` (PKG-14b, spec §13 A92) is the loop session the run belonged
-    to, ``None`` (never blank) when the run site knew none; ``course_id``
-    (spec §13 A137) the course it served, the same way.
 
     ``user_id`` omitted (None) attributes the row to the ACTING user (#119):
     the request's session user, or the student a job handler runs for
@@ -775,16 +422,24 @@ def log_llm_usage(
     if user_id is None:
         user_id = current_acting_user()
     try:
-        row = build_llm_usage_row(
-            feature=feature, task=task, model=model, usage=usage, provider=provider,
-            user_id=user_id, request_id=request_id,
-            cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
-            session_id=session_id, requests=requests,
-        )
-        # spec §13 A137: on every enqueued row (a bulk insert needs one key set,
-        # PGRST102), never in build_llm_usage_row: a checklist receipt is that
-        # row, and checklist_budget_reconcile admits only its fixed keys.
-        row["course_id"] = (course_id or "").strip() or None
+        tokens = llm_pricing.normalize_usage(usage)
+        cache_read, cache_write = llm_pricing.cache_usage(usage)
+        row = {
+            "user_id": user_id,
+            "request_id": request_id,
+            "feature": feature,
+            "task": task,
+            "model": model,
+            "provider": provider or llm_pricing.usage_provider(model),
+            "prompt_tokens": tokens["prompt_tokens"],
+            "completion_tokens": tokens["completion_tokens"],
+            "total_tokens": tokens["total_tokens"],
+            "cost_usd": llm_pricing.cost_usd(
+                model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                requests=requests or llm_pricing.request_count(usage),
+            ),
+        }
         _enqueue("llm_usage", row)
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
@@ -870,76 +525,12 @@ def dropped_count() -> int:
 # ── Flush ───────────────────────────────────────────────────────────────────
 
 
-#: Columns a deploy may reach before their migration (PKG-14b; the
-#: graph_service._JOURNAL_OPTIONAL_COLUMNS idiom). An insert error that NAMES one
-#: as unknown — PGRST204 "Could not find the '<col>' column of '<table>'" or
-#: 42703 'column "<col>" of relation … does not exist' — drops exactly that
-#: column from the batch and retries once, so a code-before-migration deploy
-#: loses no llm_usage row (every $/token budget cap reads them). Any other error
-#: keeps every column and takes the per-row salvage below. PostgREST names one
-#: unknown column per error, so a retry that names another drops it too, once
-#: per optional column at most. `course_id` is spec §13 A137's.
-_OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id", "course_id")}
-
-
-def _error_text(exc: BaseException) -> str:
-    """The exception's message plus, for db.connection's httpx.HTTPStatusError
-    (whose message omits the body), the PostgREST error body that names the
-    column — graph_service._error_text's rule, kept local (no import cycle)."""
-    text = str(exc)
-    try:
-        body = exc.response.text  # type: ignore[attr-defined]
-    except Exception:
-        return text
-    return f"{text} {body}" if isinstance(body, str) else text
-
-
-def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
-    text = _error_text(exc)
-    return [
-        column
-        for column in _OPTIONAL_COLUMNS.get(table_name, ())
-        if re.search(
-            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
-        )
-    ]
-
-
-def _insert_without_unknown_columns(
-    table_name: str, rows: list[dict], exc: BaseException
-) -> tuple[bool, list[dict]]:
-    """Retry a failed bulk insert without each optional column an error names as
-    unknown, until it succeeds or an error names none not yet dropped (bounded:
-    every retry drops at least one more optional column). Returns (inserted,
-    the rows as last tried)."""
-    dropped: set[str] = set()
-    error = exc
-    while True:
-        unknown = [c for c in _unknown_optional_columns(table_name, error) if c not in dropped]
-        if not unknown:
-            return False, rows
-        dropped.update(unknown)
-        logger.warning(
-            "events insert for table %r named unknown column(s) %s (migration "
-            "not applied yet?); retrying %d row(s) without them",
-            table_name, unknown, len(rows),
-        )
-        rows = [{k: v for k, v in row.items() if k not in dropped} for row in rows]
-        try:
-            table(table_name).insert(rows)
-            return True, rows
-        except Exception as retry:
-            error = retry
-
-
 @runs_as_service  # #115: events/llm_usage are service-only; usually the worker thread, but flush_now/late inserts can run in a request
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
-    A failed bulk insert first drops an optional column the error names as
-    unknown (``_OPTIONAL_COLUMNS``) and retries; otherwise it falls back to
-    inserting that table's rows one at a time, so a single poison row can't
-    take its whole batch down with it.
+    A failed bulk insert falls back to inserting that table's rows one at a
+    time, so a single poison row can't take its whole batch down with it.
     """
     if not items:
         return
@@ -949,10 +540,7 @@ def _flush_batch(items: list[dict]) -> None:
     for table_name, rows in grouped.items():
         try:
             table(table_name).insert(rows)
-        except Exception as exc:
-            inserted, rows = _insert_without_unknown_columns(table_name, rows, exc)
-            if inserted:
-                continue
+        except Exception:
             logger.info(
                 "events bulk insert failed for table %r (%d row(s)); "
                 "retrying rows individually",

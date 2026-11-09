@@ -43,7 +43,7 @@ SM131 = Course(
     nickname="SM 131 Biz & Society",
     color="#0EA5E9",
     concepts=[
-        Concept(name="Stakeholder Theory", mastery=0.96,
+        Concept(name="Stakeholder Theory", mastery=0.88,
                 description="Freeman's view that firms create value for customers, employees, suppliers, communities and financiers, not only shareholders."),
         Concept(name="Supply and Demand", mastery=0.83,
                 description="How market price and quantity are set where supply meets demand, and how shifts in either curve move the equilibrium."),
@@ -335,7 +335,7 @@ AC221 = Course(
     nickname="AC 221 Fin Acct",
     color="#EF4444",
     concepts=[
-        Concept(name="The Accounting Equation", mastery=0.96,
+        Concept(name="The Accounting Equation", mastery=0.9,
                 description="Assets = Liabilities + Stockholders' Equity; every transaction keeps both sides in balance."),
         Concept(name="Income Statement", mastery=0.79,
                 description="Revenues minus expenses for a period, from gross profit to operating income to net income."),
@@ -658,7 +658,7 @@ MK323 = Course(
     nickname="MK 323 Marketing",
     color="#EC4899",
     concepts=[
-        Concept(name="The Marketing Mix", mastery=0.96,
+        Concept(name="The Marketing Mix", mastery=0.91,
                 description="The 4Ps — product, price, place and promotion — as the levers a manager sets to deliver a positioning."),
         Concept(name="Segmentation, Targeting and Positioning", mastery=0.8,
                 description="Dividing a market by demographic, psychographic or behavioral variables, choosing target segments, and owning a position in their minds."),
@@ -955,7 +955,7 @@ MO221 = Course(
     nickname="MO 221 Teams",
     color="#14B8A6",
     concepts=[
-        Concept(name="Stages of Group Development", mastery=0.96,
+        Concept(name="Stages of Group Development", mastery=0.93,
                 description="Tuckman's forming, storming, norming, performing and adjourning, and what a leader should do in each stage."),
         Concept(name="Psychological Safety", mastery=0.87,
                 description="Edmondson's shared belief that a team is safe for interpersonal risk-taking, such as admitting mistakes or asking questions."),

@@ -12,19 +12,10 @@ unaffected.
 Two autouse hermetic guards keep the default lane offline: no test may reach
 real Supabase (`_hermetic_supabase_client`, #210) or a real model
 (`_hermetic_llm_transport`, #379). The `e2e_staging`, `integration` and
-`live_llm` markers are the documented opt-outs. Under both guards, the
-session-scoped `_hermetic_egress_floor` refuses the same egress (plus Jev and
-Resend) for the whole run, so a test that calls `monkeypatch.undo()` still
-cannot reach the network.
-
-A `live_llm` test is billable, so `pytest_collection_modifyitems` skips every
-one of them unless a RUN_LIVE_<LANE>=1 opt-in is set (tests/live_opt_in.py):
-a plain `pytest tests/` never calls a model, whatever keys backend/.env holds.
+`live_llm` markers are the documented opt-outs.
 """
 import sys
 import os
-from contextlib import contextmanager
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -36,28 +27,6 @@ os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for de
 os.environ.setdefault("APP_ENV", "test")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _slot_override_names() -> tuple[str, ...]:
-    """`SAPLING_MODEL_<TASK>` for every `agents._providers.AgentTask` slot. The
-    function-mode seam (`SAPLING_MODEL_MODE`, `SAPLING_FUNCTION_HANDLERS`) is not
-    among them."""
-    from typing import get_args
-
-    from agents._providers import AgentTask
-
-    return tuple(f"SAPLING_MODEL_{task.upper()}" for task in get_args(AgentTask))
-
-
-# A shell's slot overrides (the owner's live-walkthrough shell exports one per
-# learning-loop slot) must not reach the agents that test modules build at
-# import — an agent's model and settings are fixed then — so they are cleared
-# here, before any test module is collected (after config's load_dotenv, which
-# the import above ran). `_no_shell_slot_overrides` keeps every test on the
-# slot defaults after that.
-SLOT_OVERRIDES = _slot_override_names()
-for _name in SLOT_OVERRIDES:
-    os.environ.pop(_name, None)
 
 
 def pytest_configure(config):
@@ -74,67 +43,13 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
-        "hermetic LLM fixture. Skipped unless a RUN_LIVE_<LANE>=1 opt-in is set (conftest "
-        "enforces it); pair it with a skipif on its own lane's variable. "
-        "live_llm(offline=True): lifts the guard but calls no model, so it always runs.",
-    )
-    config.addinivalue_line(
-        "markers",
-        "kill_switch: legacy /api/learn path under LEARNING_LOOP_ENABLED=false (spec §11.5)",
+        "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
     config.addinivalue_line(
         "markers",
         "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
         "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
     )
-
-
-def pytest_collection_modifyitems(config, items):
-    """No billable model call from a plain `pytest tests/` (tests/live_opt_in.py).
-
-    Without a RUN_LIVE_<LANE>=1 opt-in, every `live_llm` test that may call a
-    model is skipped, whatever keys config.py's load_dotenv put in the
-    environment. A key alone used to be enough for tests/test_ocr_pipeline.py's
-    live tests to run, which made real calls from any checkout with a filled
-    backend/.env."""
-    from tests.live_opt_in import billable, live_opt_in
-
-    if live_opt_in(os.environ):
-        return
-    skip = pytest.mark.skip(
-        reason="billable live-model test: opt in with its RUN_LIVE_<LANE>=1 variable"
-    )
-    for item in items:
-        if billable(item.get_closest_marker("live_llm")):
-            item.add_marker(skip)
-
-
-@pytest.fixture(autouse=True)
-def _kill_switch(request, monkeypatch):
-    """Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
-    path — the loop is the default for everyone after launch, so a module that
-    exercises the legacy handlers pins the kill switch explicitly."""
-    if request.node.get_closest_marker("kill_switch"):
-        import config
-
-        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
-
-
-@pytest.fixture(autouse=True)
-def _no_shell_slot_overrides(monkeypatch):
-    """Every test starts on the slot defaults: a `SAPLING_MODEL_<TASK>` override
-    exported by the developer's shell (a live real-model walkthrough exports
-    one per learning-loop slot) would flip a slot's provider under the suite —
-    grader provenance labels, Claude- vs Gemini-shaped settings, the A111
-    pins. One delete per `agents._providers.AgentTask` name (SLOT_OVERRIDES,
-    so a new slot is covered when it is added), on top of the clear at import
-    above: an override a test set straight into os.environ never leaks into
-    the next one. A test that wants an override sets it itself
-    (monkeypatch.setenv runs after this). `SAPLING_MODEL_MODE` and
-    `SAPLING_FUNCTION_HANDLERS` are the function-mode seam, not slot
-    overrides: untouched."""
-    for name in SLOT_OVERRIDES:
-        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -176,10 +91,6 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
-    # spec §13 A126: the per-process "retention check due" cache. Only if imported.
-    loop_routes = sys.modules.get("routes.learn_loop")
-    if loop_routes is not None:
-        loop_routes.clear_posttest_due_cache()
     yield
     _unfreeze_model_mode_for_tests()
     clear_override_model_cache()
@@ -194,26 +105,6 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
-    loop_routes = sys.modules.get("routes.learn_loop")
-    if loop_routes is not None:
-        loop_routes.clear_posttest_due_cache()
-
-
-@pytest.fixture(autouse=True)
-def _reset_degraded_mode_state():
-    """Spec §13 A128: two pieces of per-process state. The embeddings breaker
-    opens after a few failed embed calls — and many tests fail embed calls on
-    purpose — so one test's failures would refuse the next test's calls; the
-    evidence-slot guard warns once per (slot, model) per process, so a test
-    that flips a slot would silence the next test's warning."""
-    from agents._providers import reset_slot_guard_for_tests
-    from services.rag_service import reset_embedding_breaker_for_tests
-
-    reset_embedding_breaker_for_tests()
-    reset_slot_guard_for_tests()
-    yield
-    reset_embedding_breaker_for_tests()
-    reset_slot_guard_for_tests()
 
 
 @pytest.fixture(autouse=True)
@@ -284,17 +175,6 @@ def _reset_ocr_fallback_warning():
 
 
 @pytest.fixture(autouse=True)
-def _reset_ocr_fallback_warning():
-    """Forget extraction_service's once-per-process "Docling not installed"
-    warning around every test, so which test runs first can't decide whether
-    a later test sees it."""
-    from services import extraction_service
-    extraction_service.reset_docling_fallback_state()
-    yield
-    extraction_service.reset_docling_fallback_state()
-
-
-@pytest.fixture(autouse=True)
 def _reset_events_service():
     """#118/#116: reset the observability queue, drop-counter, and one-time
     pricing-warning state around every test, so a queued row, a tripped
@@ -303,16 +183,6 @@ def _reset_events_service():
     events_service.reset_for_tests()
     yield
     events_service.reset_for_tests()
-
-
-@pytest.fixture(autouse=True)
-def _reset_ai_budget():
-    """PKG-06b: reset ai_budget's per-process state (request cache, once-per-day event set,
-    platform timestamp) so one test's caps never leak into another."""
-    from services import ai_budget
-    ai_budget.reset_for_tests()
-    yield
-    ai_budget.reset_for_tests()
 
 
 @pytest.fixture
@@ -482,8 +352,48 @@ def assert_keyless_projection():
     return _assert
 
 
-class UnstubbedSupabaseEgress(RuntimeError):
-    """Raised by `_hermetic_egress_floor` when a test reaches Supabase."""
+@pytest.fixture(autouse=True)
+def _hermetic_supabase_client(request, monkeypatch):
+    """Hermetic safety net (#210): no test may make a real Supabase call.
+
+    Every db access ultimately flows through `db.connection._client` (the single
+    persistent httpx.Client behind SupabaseTable). Routes/services that call
+    `db.connection.table()` directly — e.g. `apply_graph_update` inside the
+    document-upload legacy pipeline — would otherwise escape a test's per-route
+    `table` mock and hit the network (the whole `test_documents_routes` module
+    was failing/quarantined for exactly this reason). Replace that client with a
+    stub returning benign empty responses. Tests that need specific db data still
+    patch their own `table`/service reference; this only catches what escapes.
+
+    The opt-in `e2e_staging` test is the one exception: it intentionally talks to
+    the real staging DB, so we leave the live client in place for it.
+    """
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
+        return
+    import db.connection as dbconn
+
+    def _empty_response(*_args, **_kwargs):
+        resp = MagicMock(name="supabase_response")
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = []
+        resp.headers = {}
+        return resp
+
+    fake_client = MagicMock(name="hermetic_supabase_client")
+    for verb in ("get", "post", "patch", "delete"):
+        getattr(fake_client, verb).side_effect = _empty_response
+    monkeypatch.setattr(dbconn, "_client", fake_client)
+
+    # #117: the async twin's per-loop client gets the same net, so an `a*`
+    # call that escapes a test's `table` patch is caught exactly as a sync one.
+    from unittest.mock import AsyncMock
+
+    import db.async_connection as adb
+
+    fake_async = MagicMock(name="hermetic_supabase_async_client")
+    for verb in ("get", "post", "patch", "delete"):
+        setattr(fake_async, verb, AsyncMock(side_effect=_empty_response))
+    monkeypatch.setattr(adb, "_async_client", lambda: fake_async)
 
 
 @pytest.fixture
@@ -502,52 +412,29 @@ class UnstubbedEmailEgress(RuntimeError):
     """Raised by `_hermetic_email_transport` when a test reaches Resend."""
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_email_transport(monkeypatch):
+    """No test may send real email. A developer's .env can carry a real
+    RESEND_API_KEY (config.py load_dotenv()s it), so force the kill switch on
+    and cut the Resend client: a test that wants the send path patches both
+    back explicitly (see tests/test_email_service.py)."""
+    import config
+    from services import email_service
+
+    def _blocked(*_args, **_kwargs):
+        raise UnstubbedEmailEgress(
+            "unstubbed email egress: patch services.email_service._client"
+        )
+
+    fake = MagicMock(name="hermetic_resend_client")
+    fake.post.side_effect = _blocked
+    monkeypatch.setattr(config, "RESEND_API_KEY", "")
+    monkeypatch.setattr(email_service, "_client", fake)
+    monkeypatch.setattr(email_service, "_sleep", lambda _s: None)
+
+
 class UnstubbedLLMEgress(RuntimeError):
     """Raised by `_hermetic_llm_transport` when a test reaches the LLM network."""
-
-
-def _refuse_supabase(request):
-    """The egress floor's Supabase transport: every request raises."""
-    raise UnstubbedSupabaseEgress(
-        f"unstubbed Supabase egress: {request.method} {request.url.path} reached the "
-        "session egress floor (tests/conftest.py::_hermetic_egress_floor). The "
-        "per-test hermetic client was gone: the test called monkeypatch.undo() or "
-        "replaced db.connection._client. Patch the module's `table` instead, and "
-        "undo only a pytest.MonkeyPatch.context() of your own. An opt-in lane's "
-        "fixture that runs outside its test's own lift (session or module scope) "
-        "wraps its database calls in `with _hermetic_egress_floor.supabase():`."
-    )
-
-
-def _refuse_jev(_request):
-    import httpx2
-
-    raise httpx2.ConnectError("unstubbed Jev egress (tests/conftest.py guard)")
-
-
-def _refuse_email(*_args, **_kwargs):
-    raise UnstubbedEmailEgress("unstubbed email egress: patch services.email_service._client")
-
-
-def _refusing_resend_client() -> MagicMock:
-    fake = MagicMock(name="hermetic_resend_client")
-    fake.post.side_effect = _refuse_email
-    return fake
-
-
-def _llm_egress_blocked(*_args, **_kwargs):
-    raise UnstubbedLLMEgress(
-        "unstubbed LLM egress: this test reached an LLM provider transport "
-        "(google.genai._api_client.BaseApiClient or "
-        "anthropic._base_client.*APIClient.request) and would have made a "
-        "real, billable model call. Patch the service/agent seam the code "
-        "path uses (e.g. <agent>.run, services.rag_service._client), or "
-        "mark the test @pytest.mark.live_llm if the live call is intentional."
-    )
-
-
-# Lets tests assert the guard is installed without invoking it.
-_llm_egress_blocked._sapling_llm_guard = True
 
 
 # Every google-genai call — unary, streaming, sync, async, plus the File API's
@@ -580,195 +467,8 @@ _GENAI_REQUIRED_METHODS = ("request", "async_request")
 _ANTHROPIC_EGRESS_CLASSES = ("SyncAPIClient", "AsyncAPIClient")
 
 
-def _llm_egress_targets() -> list[tuple[type, str]]:
-    """Every (class, method) the LLM guard blocks. Raises when an installed SDK
-    moved its transport seam: a guard that silently became a no-op is worse
-    than no guard at all."""
-    from anthropic import _base_client as anthropic_base_client
-    from google.genai import _api_client as genai_api_client
-
-    base = genai_api_client.BaseApiClient
-    names = [name for name in _GENAI_EGRESS_METHODS if hasattr(base, name)]
-    missing = [n for n in _GENAI_REQUIRED_METHODS if n not in names]
-    if missing:  # pragma: no cover - only trips on a google-genai API change
-        raise RuntimeError(
-            f"hermetic LLM guard could not patch {missing} on "
-            "google.genai._api_client.BaseApiClient — the installed google-genai "
-            "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
-            "tests/conftest.py; do not leave the suite unguarded."
-        )
-    targets = [(base, name) for name in names]
-    for cls_name in _ANTHROPIC_EGRESS_CLASSES:
-        cls = getattr(anthropic_base_client, cls_name, None)
-        if cls is None or not hasattr(cls, "request"):  # pragma: no cover
-            raise RuntimeError(
-                f"hermetic LLM guard could not patch anthropic._base_client."
-                f"{cls_name}.request — the installed anthropic SDK moved its "
-                "transport seam. Update _ANTHROPIC_EGRESS_CLASSES in "
-                "tests/conftest.py; do not leave the suite unguarded."
-            )
-        targets.append((cls, "request"))
-    return targets
-
-
-def _db_opt_in(request) -> bool:
-    """The lanes that deliberately talk to a real database."""
-    node = request.node
-    return bool(node.get_closest_marker("e2e_staging") or node.get_closest_marker("integration"))
-
-
-def _llm_opt_in(request) -> bool:
-    """The lanes that deliberately talk to real infrastructure or a live model."""
-    return _db_opt_in(request) or bool(request.node.get_closest_marker("live_llm"))
-
-
-class LiveEgress(SimpleNamespace):
-    """What `_hermetic_egress_floor` replaced: the live values the opt-in lanes
-    lift it to (`supabase_client`, `async_client`, `llm`, `jev_transport`)."""
-
-    @contextmanager
-    def supabase(self):
-        """Lift the database floor for the length of the block only.
-
-        This is for an opt-in lane's fixture that runs outside its test's own
-        lift: a session or module fixture runs before any per-test guard, and a
-        per-test fixture's order beside `_hermetic_supabase_client` is not
-        guaranteed. Examples are the integration lane's reseed and its
-        PostgREST schema-cache wait. The lift is on a MonkeyPatch of its own,
-        so on exit the block's starting value is back: the floor, or a test's
-        own lift. A unit test that runs after the block still meets the floor."""
-        import db.async_connection as adb
-        import db.connection as dbconn
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(dbconn, "_client", self.supabase_client)
-            mp.setattr(adb, "_async_client", self.async_client)
-            yield self.supabase_client
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _hermetic_egress_floor():
-    """The egress floor under every per-test hermetic guard (spec §13 A123 review).
-
-    The per-test guards below are installed with the test's own `monkeypatch`,
-    so a test that calls `monkeypatch.undo()` removes them mid-test. The A123
-    branch found such a test (tests/test_learning_review.py) that then sent a
-    real GET to the local stack at 127.0.0.1:54321.
-
-    This floor sits under those guards for the whole session. It is owned by a
-    MonkeyPatch that no test can reach:
-      • `db.connection._client` is a client whose transport refuses every request;
-      • the google-genai and anthropic transport methods refuse (the LLM guard's
-        blocker);
-      • Jev's transport refuses;
-      • Resend's client refuses, and RESEND_API_KEY is blank.
-    When a test undoes a per-test guard, monkeypatch restores the value that
-    guard replaced, which is this floor and never the network.
-
-    The opt-in lanes (`e2e_staging`, `integration`, `live_llm`) lift the floor
-    with the test's own monkeypatch, so it is back when that test ends. Yields
-    the live values they lift it to (a `LiveEgress`). A lane fixture that runs
-    outside its test's own lift uses `LiveEgress.supabase()`, which lifts the
-    database floor for its own block only."""
-    import config
-    import db.async_connection as adb
-    import db.connection as dbconn
-    import httpx
-    import httpx2
-    from agents import _jev
-    from services import email_service
-
-    llm = _llm_egress_targets()
-    live = LiveEgress(
-        supabase_client=dbconn._client,
-        async_client=adb._async_client,
-        llm=[(owner, name, getattr(owner, name)) for owner, name in llm],
-        jev_transport=_jev._transport_override,
-    )
-    floor_client = httpx.Client(transport=httpx.MockTransport(_refuse_supabase))
-    # #117: the async twin's client refuses the same way (never built per loop).
-    floor_async = httpx.AsyncClient(transport=httpx.MockTransport(_refuse_supabase))
-    mp = pytest.MonkeyPatch()
-    mp.setattr(dbconn, "_client", floor_client)
-    mp.setattr(adb, "_async_client", lambda: floor_async)
-    for owner, name in llm:
-        mp.setattr(owner, name, _llm_egress_blocked)
-    mp.setattr(_jev, "_transport_override", httpx2.MockTransport(_refuse_jev))
-    _jev.reset_for_tests()
-    mp.setattr(config, "RESEND_API_KEY", "")
-    mp.setattr(email_service, "_client", _refusing_resend_client())
-    try:
-        yield live
-    finally:
-        mp.undo()
-        _jev.reset_for_tests()
-        floor_client.close()
-
-
 @pytest.fixture(autouse=True)
-def _hermetic_supabase_client(request, monkeypatch, _hermetic_egress_floor):
-    """Hermetic safety net (#210): no test may make a real Supabase call.
-
-    Every db access ultimately flows through `db.connection._client` (the single
-    persistent httpx.Client behind SupabaseTable). Routes/services that call
-    `db.connection.table()` directly — e.g. `apply_graph_update` inside the
-    document-upload legacy pipeline — would otherwise escape a test's per-route
-    `table` mock and hit the network (the whole `test_documents_routes` module
-    was failing/quarantined for exactly this reason). Replace that client with a
-    stub returning benign empty responses. Tests that need specific db data still
-    patch their own `table`/service reference; this only catches what escapes.
-
-    The opt-in `e2e_staging` and `integration` tests intentionally talk to a real
-    database: they get the live client back, for that one test. Under this stub
-    the session's `_hermetic_egress_floor` refuses every request, so a test that
-    undoes its monkeypatch still reaches no database.
-    """
-    import db.async_connection as adb
-    import db.connection as dbconn
-
-    if _db_opt_in(request):
-        monkeypatch.setattr(dbconn, "_client", _hermetic_egress_floor.supabase_client)
-        monkeypatch.setattr(adb, "_async_client", _hermetic_egress_floor.async_client)
-        return
-
-    def _empty_response(*_args, **_kwargs):
-        resp = MagicMock(name="supabase_response")
-        resp.raise_for_status.return_value = None
-        resp.json.return_value = []
-        resp.headers = {}
-        return resp
-
-    fake_client = MagicMock(name="hermetic_supabase_client")
-    for verb in ("get", "post", "patch", "delete"):
-        getattr(fake_client, verb).side_effect = _empty_response
-    monkeypatch.setattr(dbconn, "_client", fake_client)
-
-    # #117: the async twin's per-loop client gets the same net, so an `a*`
-    # call that escapes a test's `table` patch is caught exactly as a sync one.
-    from unittest.mock import AsyncMock
-
-    fake_async = MagicMock(name="hermetic_supabase_async_client")
-    for verb in ("get", "post", "patch", "delete"):
-        setattr(fake_async, verb, AsyncMock(side_effect=_empty_response))
-    monkeypatch.setattr(adb, "_async_client", lambda: fake_async)
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_email_transport(monkeypatch):
-    """No test may send real email. A developer's .env can carry a real
-    RESEND_API_KEY (config.py load_dotenv()s it), so force the kill switch on
-    and cut the Resend client: a test that wants the send path patches both
-    back explicitly (see tests/test_email_service.py)."""
-    import config
-    from services import email_service
-
-    monkeypatch.setattr(config, "RESEND_API_KEY", "")
-    monkeypatch.setattr(email_service, "_client", _refusing_resend_client())
-    monkeypatch.setattr(email_service, "_sleep", lambda _s: None)
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_llm_transport(request, monkeypatch, _hermetic_egress_floor):
+def _hermetic_llm_transport(request, monkeypatch):
     """Hermetic safety net (#379): no test may make a real LLM call.
 
     The sibling `_hermetic_supabase_client` guarantees the default lane never
@@ -783,17 +483,55 @@ def _hermetic_llm_transport(request, monkeypatch, _hermetic_egress_floor):
 
     The opt-in lanes are the exceptions: `e2e_staging` and `integration` talk to
     real infrastructure, and `live_llm` marks the handful of tests (see
-    test_ocr_pipeline.py) that deliberately exercise a live model. They get the
-    live transport back, for that one test. The same block is installed once
-    per session by `_hermetic_egress_floor`, under every test's monkeypatch, so
-    a test that undoes its monkeypatch is still blocked.
+    test_ocr_pipeline.py) that deliberately exercise a live model.
     """
-    if _llm_opt_in(request):
-        for owner, name, live in _hermetic_egress_floor.llm:
-            monkeypatch.setattr(owner, name, live)
+    if (
+        request.node.get_closest_marker("e2e_staging")
+        or request.node.get_closest_marker("integration")
+        or request.node.get_closest_marker("live_llm")
+    ):
         return
-    for owner, name in _llm_egress_targets():
-        monkeypatch.setattr(owner, name, _llm_egress_blocked)
+    from anthropic import _base_client as anthropic_base_client
+    from google.genai import _api_client as genai_api_client
+
+    def _blocked(*_args, **_kwargs):
+        raise UnstubbedLLMEgress(
+            "unstubbed LLM egress: this test reached an LLM provider transport "
+            "(google.genai._api_client.BaseApiClient or "
+            "anthropic._base_client.*APIClient.request) and would have made a "
+            "real, billable model call. Patch the service/agent seam the code "
+            "path uses (e.g. <agent>.run, services.rag_service._client), or "
+            "mark the test @pytest.mark.live_llm if the live call is intentional."
+        )
+
+    # Lets tests assert the guard is installed without invoking it.
+    _blocked._sapling_llm_guard = True
+
+    patched = []
+    for name in _GENAI_EGRESS_METHODS:
+        if hasattr(genai_api_client.BaseApiClient, name):
+            monkeypatch.setattr(genai_api_client.BaseApiClient, name, _blocked)
+            patched.append(name)
+
+    missing = [n for n in _GENAI_REQUIRED_METHODS if n not in patched]
+    if missing:  # pragma: no cover - only trips on a google-genai API change
+        raise RuntimeError(
+            f"hermetic LLM guard could not patch {missing} on "
+            "google.genai._api_client.BaseApiClient — the installed google-genai "
+            "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
+            "tests/conftest.py; do not leave the suite unguarded."
+        )
+
+    for cls_name in _ANTHROPIC_EGRESS_CLASSES:
+        cls = getattr(anthropic_base_client, cls_name, None)
+        if cls is None or not hasattr(cls, "request"):  # pragma: no cover
+            raise RuntimeError(
+                f"hermetic LLM guard could not patch anthropic._base_client."
+                f"{cls_name}.request — the installed anthropic SDK moved its "
+                "transport seam. Update _ANTHROPIC_EGRESS_CLASSES in "
+                "tests/conftest.py; do not leave the suite unguarded."
+            )
+        monkeypatch.setattr(cls, "request", _blocked)
 
 
 @pytest.fixture
@@ -842,30 +580,6 @@ def _bypass_course_enrollment(request, monkeypatch):
             academics.resolve_offering(course_id, create=True) or BYPASS_OFFERING_ID
         ),
     )
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_jev_transport(request, monkeypatch, _hermetic_egress_floor):
-    """The `_hermetic_llm_transport` guarantee for Jev (PKG-15): no test reaches
-    api.typesafe.ai. Every agents/_jev.py client is built on its
-    `_transport_override`, so a refusing transport installed here makes an
-    unstubbed Jev call fail (as a `transport` JevUnavailable — the seam then
-    falls back, so the test sees Gemini's answer, never a live Jev one). Tests
-    that script Jev install their own httpx2.MockTransport over this one. The
-    opt-in lanes get the live transport back, for that one test; under both,
-    the session's `_hermetic_egress_floor` refuses."""
-    import httpx2
-
-    from agents import _jev
-
-    if _llm_opt_in(request):
-        transport = _hermetic_egress_floor.jev_transport
-    else:
-        transport = httpx2.MockTransport(_refuse_jev)
-    monkeypatch.setattr(_jev, "_transport_override", transport)
-    _jev.reset_for_tests()
-    yield
-    _jev.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from learning.bkt import tier_for
+from config import get_mastery_tier
 from db.connection import table
 from services.academics import clear_academics_caches, current_term, resolve_offering
 from services.account_bundle import account_exists
@@ -286,7 +286,7 @@ def _course_rows(
             "concept_name": concept.name,
             "subject": rc.name,
             "mastery_score": concept.mastery,
-            "mastery_tier": tier_for(concept.mastery),
+            "mastery_tier": get_mastery_tier(concept.mastery),
             # times_studied = 0 is how the app tells "never studied" apart
             # from "studied, still below the struggling floor".
             "times_studied": (1 + round(concept.mastery * 6)) if studied else 0,

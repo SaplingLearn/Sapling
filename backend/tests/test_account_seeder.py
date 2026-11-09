@@ -27,8 +27,7 @@ _EXTRACTED = ("This lecture covers the core ideas of the unit in some depth. " *
 
 def _course(n: int) -> dict:
     names = [f"Idea {chr(65 + i)}{n}" for i in range(8)]
-    # every tier of learning.bkt.tier_for (0.10 / 0.30 / 0.95) at least once
-    masteries = [0.96, 0.8, 0.6, 0.5, 0.3, 0.2, 0.05, 0.0]
+    masteries = [0.9, 0.8, 0.6, 0.5, 0.3, 0.2, 0.05, 0.0]
     return {
         "code": f"CAS XX 10{n}",
         "name": f"Course Number {n}",
@@ -445,11 +444,11 @@ def test_study_guide_targets_the_midterm(db):
 
 
 def test_graph_nodes_carry_tier_and_study_history(db):
-    from learning.bkt import tier_for
+    from config import get_mastery_tier
 
     _seed(db)
     for n in db.rows["graph_nodes"]:
-        assert n["mastery_tier"] == tier_for(n["mastery_score"])
+        assert n["mastery_tier"] == get_mastery_tier(n["mastery_score"])
         if n["mastery_score"] > 0:
             assert n["times_studied"] >= 1 and n["last_studied_at"]
         else:

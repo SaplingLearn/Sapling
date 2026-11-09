@@ -74,8 +74,8 @@ no-access · loading (range bar 7d/30d/90d + dates, "—", "Loading…") · popu
 | global/error-segment / -root | "Something interrupted us" + 4 headlines, Try again, Report this | render error | app/error.tsx; global-error.tsx; ErrorBoundary.tsx:41 | error-fallback |
 | fab/report | bottom-right "🔔 Report" | always | FloatingActions.tsx | – |
 | modal/report-issue / -toasts | type pills, textarea, ≤5 screenshots, Submit | Report | ReportIssueFlow.tsx:67-124 | – |
-| modal/feedback-global | "What's clicking?" 1–5, chips, textarea | 45s, held mid-learning (lib/feedbackPacing.ts) / `?testFeedback=global` | FeedbackFlow.tsx:104 | – |
-| modal/session-feedback-step-0..3 | "How was that session?" 4 steps | leave /learn after a wrap-up / `?testFeedback=session` on /learn | SessionFeedbackFlow.tsx:99-243 | – |
+| modal/feedback-global | "What's clicking?" 1–5, chips, textarea | 45s / `?testFeedback=global` | FeedbackFlow.tsx:104 | – |
+| modal/session-feedback-step-0..3 | "How was that session?" 4 steps | leave /learn / `?testFeedback=session` | SessionFeedbackFlow.tsx:99-243 | – |
 | modal/disclaimer | "Heads up / Sapling uses AI" | first /learn or /quiz | DisclaimerModal.tsx | – |
 | toast/{default,success,error,warn,info} | top-right stack, 5s | toast.* | ToastProvider.tsx:84-155 | – |
 | toast/achievement-unlock | rarity icon + name | unlock (sidebar layout only) | AchievementUnlockToast.tsx; ShellFrame.tsx:89 | – |

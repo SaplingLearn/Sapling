@@ -4,9 +4,7 @@ import { Icon } from "../Icon";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCleanup, type ImportCard } from "@/lib/api";
-import { humanizeError } from "@/lib/errorMessage";
 import type { ParsedCard } from "@/lib/flashcardParsers";
-import { CLEANUP_WITHHELD_NOTICE } from "@/lib/integrityNotice";
 
 interface Props {
   cards: ParsedCard[];
@@ -40,12 +38,9 @@ export function ParsedCardsTable({ cards, onChange, reverseEnabled, onReverseTog
     try {
       const res = await importCleanup(userId, valid);
       onChange(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
-      // spec §13 A125: a held-back cleanup returns the student's cards unchanged
-      if (res.withheld) toast.warn(CLEANUP_WITHHELD_NOTICE);
-      else toast.success("Cleaned up.");
+      toast.success("Cleaned up.");
     } catch (err) {
-      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
-      toast.error(humanizeError(err, "Couldn't clean up these cards right now."));
+      toast.error(`Cleanup failed: ${String(err)}`);
     } finally {
       setCleaning(false);
     }

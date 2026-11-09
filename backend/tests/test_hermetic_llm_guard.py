@@ -178,7 +178,7 @@ class TestOptInLanesAreExempt:
     """The live lanes deliberately talk to a real model; the guard must step
     aside for them exactly the way the Supabase/auth guards already do."""
 
-    @pytest.mark.live_llm(offline=True)
+    @pytest.mark.live_llm
     def test_live_llm_marker_leaves_the_transport_alone(self):
         from anthropic._base_client import AsyncAPIClient
         from google.genai._api_client import BaseApiClient

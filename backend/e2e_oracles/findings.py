@@ -8,9 +8,7 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class Finding:
-    # graph | counts | ciphertext | logscan | orphans | ragstore | flags |
-    # learn_loop (PKG-13) | oracle-error
-    oracle: str
+    oracle: str  # "graph" | "counts" | "ciphertext" | "logscan" | "orphans" | "ragstore" | "flags" | "oracle-error"
     summary: str
     evidence: dict = field(default_factory=dict)
 

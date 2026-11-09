@@ -322,7 +322,7 @@ export function rationaleFor(node: GraphNode, lastAttempt?: AttemptSummary, now?
 Events:
 ```
 CONFIGURE(open) · START(proposal, config) · GENERATED(result) · GENERATE_FAILED(err)
-SELECT(index) · CONFIDENCE(level) · SUBMIT_ANSWER · ANSWER_RECORDED(result) · ANSWER_FAILED(err) · NEXT
+SELECT(index) · SUBMIT_ANSWER · ANSWER_RECORDED(result) · ANSWER_FAILED(err) · NEXT
 REQUEST_LEAVE · CANCEL_LEAVE · CONFIRM_LEAVE · RESUME(detail, session) · FINISH · SUBMITTED(result, xp) · SUBMIT_FAILED(err)
 PRACTISE_MISSED · NEXT_IN_QUEUE · EXIT · FLAG · DISMISS_ERROR
 ```
@@ -330,7 +330,6 @@ Transitions:
 ```
 home        --CONFIGURE--> configuring --CONFIGURE(false)--> home
 home|configuring|results --START--> generating --GENERATED--> active(cursor 0) | --GENERATE_FAILED--> error(from: home)
-active      --CONFIDENCE(level|null)--> active(items[cursor].confidence; only while that item has no verdict — learning-loop spec §13 A132)
 active      --SELECT--> active(selectedIndex) ; --SUBMIT_ANSWER (selected≠null)--> active(pending) --ANSWER_RECORDED-->
               feedback=as-you-go ? answered : (last ? submitting : active(cursor+1))
 answered    --NEXT--> last ? submitting : active(cursor+1)
@@ -374,19 +373,6 @@ QuizHome({ userId, home: ReturnType<typeof useQuizHome>, config, entry, session,
 QuizQuestion({ session, actions, config, concept: { id; name; courseCode; color; tier; mastery }, userId, courseId })
 QuizResults({ session, actions, concept, neighbourhood: { siblings }, prefersReducedMotion })
 ```
-
-### §4 amendment: stated confidence (learning-loop spec §13 A132, binding)
-- Machine event `CONFIDENCE(level)` — A127's optional "Guessing" / "Fairly sure" / "Sure" (`StudentConfidence`) on the
-  current question, `null` to take it back. Answer state like `SELECT` / `WRITE`: it lives on `QuizItem.confidence`, makes
-  no request, and the question's `/answer` carries it (`answerQuestion`'s `confidence`, sent only when chosen). Accepted
-  only in `active` on an item with no verdict; anywhere else, and for an unchanged level, the same session comes back. It
-  never moves the phase and never gates `canSubmitAnswer`.
-- Persisted with the session like every accepted event. `RESUME` restores an answered question's level from its recorded
-  response (`responses[].confidence`, the label; `null` = none stated) and an unanswered one's from the stored session.
-- The hook's `setConfidence(level)` is refused while that question's `/answer` is in flight (as `write` is).
-- `QuizQuestion` renders `learn/ConfidenceControl` (testid prefix `quiz-confidence`) under the answer on both formats; the
-  group owns its keys (Enter / Space choose a level, the arrows move and choose; the root's Enter-submits and answer
-  shortcuts do not apply inside it; Escape still leaves).
 
 ### §4 amendments accepted from A2 (binding)
 - Machine events also include `FAILED(err)` (a resume/answer failure with nowhere else to land) and `SET_CONFIG(config)` (Adjust "Done" changes settings without starting). `error(from)` is derived by `errorReturnPhase(session)`, not stored.

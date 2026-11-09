@@ -86,23 +86,6 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "user_name": "Rich Active", "text": encrypt_if_present(m.PRIVATE_ROOM_MESSAGE_TEXT),
     })
     table("friend_requests").insert({"from_user_id": m.USER_A, "to_user_id": user_c})
-    # Learning loop (A139): one open self-explanation prompt of A's, on A's
-    # first node and session (the table is service-only: table() is service role)
-    from datetime import datetime, timezone
-
-    a_node = db_conn.execute(
-        "SELECT id, course_id FROM graph_nodes WHERE user_id = %(a)s ORDER BY id LIMIT 1",
-        {"a": m.USER_A},
-    ).fetchone()
-    a_session = db_conn.execute(
-        "SELECT id FROM sessions WHERE user_id = %(a)s ORDER BY id LIMIT 1", {"a": m.USER_A},
-    ).fetchone()
-    table("learning_self_explanations").insert({
-        "id": m.SELF_EXPLANATION_PROMPT_ID, "user_id": m.USER_A,
-        "session_id": a_session["id"], "course_id": a_node["course_id"],
-        "node_id": a_node["id"], "juncture": "worked_example",
-        "prompted_at": datetime.now(timezone.utc).isoformat(), "status": "open",
-    })
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({

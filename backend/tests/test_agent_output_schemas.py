@@ -28,14 +28,11 @@ Two layers:
 from __future__ import annotations
 
 import importlib
-import inspect
 import pkgutil
 
 import pytest
-from typing import get_origin, get_type_hints, is_typeddict
-
-from pydantic import BaseModel, TypeAdapter
-from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel
+from pydantic_ai import Agent
 
 import agents as agents_pkg
 from agents.document import DocumentProcessingResult
@@ -45,35 +42,6 @@ from agents.document import DocumentProcessingResult
 MAX_PROPERTIES_PER_OBJECT = 8
 MAX_OBJECT_DEPTH = 2
 MAX_TOTAL_PROPERTIES = 20
-
-# Per-object ceilings above MAX_PROPERTIES_PER_OBJECT, keyed by the object's
-# schema title. Each is a deliberate, evidenced exception that the exact count
-# pins (test_per_object_exceptions_are_exact), so it cannot grow silently.
-# CheckItemDraft (learning loop PKG-04, spec §13 A22): flat scalars and
-# string lists, no optional models, because the A22 answer structure
-# (answer_kind, canonical_answer, tolerance, stepwise) has to come out of one
-# call, and so does A34's final_answer — plus ONE list of small option objects
-# (A37, below) that replaced the four parallel option arrays (18 -> 15).
-# Recorded live against gemini-2.5-flash-lite with no schema rejection
-# (tests/evals/cassettes/check_items). Every other budget rule still applies.
-# VariedCheckItemDraft (spec §13 A140): the same draft with answer_kind and
-# stepwise left to code and the two surface fields in their place — so the
-# varied output is exactly as wide (15 fields, 20 properties) as the recorded one.
-PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 15, "VariedCheckItemDraft": 15}
-
-# Per-object nesting ceilings above MAX_OBJECT_DEPTH, keyed by schema title,
-# each pinned exactly (test_depth_exceptions_are_exact). OptionDraft (spec §13
-# A37): one mc_reason option — {text, is_correct, misconception_key,
-# misconception_text}, four scalars — one level below CheckItemDraft. Parallel
-# option arrays let the model drift a key off its option (live sequence test
-# 2026-09-27: 0 of 12 mc_reason drafts stored), and a key that had to name an
-# entry of the item's wrong_keys was the one cross-reference left (round 4); an
-# object per option carrying its own misconception makes both unrepresentable
-# and brings the whole check_items output to exactly 20 properties. Recorded live
-# against gemini-2.5-flash-lite with no schema rejection
-# (tests/evals/cassettes/check_items) and exercised end to end on the local
-# stack (A37's live numbers).
-DEPTH_EXCEPTIONS = {"OptionDraft": 3}
 
 # Modules that never define agents. The `function_handlers_*` modules
 # self-register per-task handlers on the #391 seam as an IMPORT SIDE EFFECT,
@@ -92,22 +60,6 @@ _SKIP_PREFIX = "function_handlers"
 # output validation to retry; the streaming tutor's failure handling belongs
 # to chat_stream's rung ladder, never a hidden re-roll.
 EXPECTED_STRUCTURED_AGENTS = {
-    "check_items_agent",  # learning loop PKG-04 (15-field draft + A37 option objects; see the exceptions)
-    "check_items_topup_agent",  # A37 top-up: the same CheckItemsOutput, one concept's mc_reason items
-    # A140 varied drafter and top-up: VariedCheckItemsOutput (the draft's two derived
-    # fields traded for the surface descriptor; see the exceptions)
-    "check_items_varied_agent",
-    "check_items_varied_topup_agent",
-    # A141 multi-concept drafter (the plain CheckItemsOutput, the schema recorded live)
-    # and its alignment check (two flat lists of small rows, 4 + 4 fields, 10 properties)
-    "check_items_combo_agent",
-    "check_items_combo_verify_agent",
-    # A119 alignment check: two flat lists of small rows (4 + 3 fields), 9 properties
-    "check_items_verify_agent",
-    # A124 key check: the blind solve (one flat list of 4-field rows, 5 properties) and the
-    # free-text key match (one flat list of 3-field rows, 4 properties), on one slot
-    "check_items_solve_agent",
-    "check_items_key_match_agent",
     "topic_checklist_agent",
     "classifier_agent",
     "concept_describe_agent",
@@ -116,24 +68,12 @@ EXPECTED_STRUCTURED_AGENTS = {
     "concept_prune_agent",
     "concept_scan_agent",
     "course_summary_agent",
-    "decision_agent",  # main observe-only generic seam
-    "learning_decision_agent",  # learning loop: flat yes/no default; pick per run
+    "decision_agent",
     "flashcard_agent",
-    "grader_agent",  # learning loop PKG-05 (flat 7-field GraderOutput; grader + grader_second
-    # slots; the span check's one-field SpanVerdicts is chosen per run, below)
-    # learning loop PKG-07 unblock S1: the structured turn (flat 3-field LoopTurnOut
-    # TypedDict via PromptedOutput, over an output function since A121); its
-    # retries ARE the turn-shape validator's
-    "loop_tutor_agent",
     "note_concepts_agent",
     "note_summary_agent",
     "quiz_agent",
     "quiz_context_agent",
-    # learning-loop spec §13 A144: the planned quiz writer — PlannedQuiz, the
-    # quiz's flat question list plus a per-option tag list; retries=2 (no tools)
-    "quiz_planned_agent",
-    # learning loop PKG-09: flat 4-field SessionClose; retries=2 is the shape validator's
-    "session_close_agent",
     "social_summary_agent",
     "study_guide_agent",
     "summary_agent",
@@ -175,38 +115,14 @@ def _discover_agents() -> dict[str, Agent]:
 AGENTS = _discover_agents()
 
 
-def _function_output_model(fn) -> type:
-    """An output function's model: its one argument besides the RunContext,
-    which is the object pydantic-ai sends as the output schema. The loop tutor
-    validates its turn inside output functions (spec §13 A121), so a run can
-    pick the v2 variant's output type."""
-    hints = get_type_hints(fn)
-    args = [
-        hints[name]
-        for name in inspect.signature(fn).parameters
-        if get_origin(hints.get(name)) is not RunContext
-    ]
-    assert len(args) == 1, f"{fn.__name__} must take one output argument, got {args!r}"
-    assert hints.get("return") is args[0], (
-        f"{fn.__name__} must return the model it takes"
-    )
-    return args[0]
-
-
-def _output_model(agent: Agent) -> type | None:
-    """The agent's declared output model (a BaseModel, or a TypedDict — the loop
-    tutor's LoopTurnOut, so pydantic's partial validation can stream it),
-    unwrapping PromptedOutput and an output function; None for free-text (str)
-    agents."""
+def _output_model(agent: Agent) -> type[BaseModel] | None:
+    """The agent's declared output model, unwrapping PromptedOutput; None for
+    free-text (str) agents."""
     output_type = agent.output_type
     # PromptedOutput wraps the model in `.outputs` (same attribute on 1.89
     # and 1.107).
     output_type = getattr(output_type, "outputs", output_type)
-    if inspect.isfunction(output_type):
-        output_type = _function_output_model(output_type)
     if isinstance(output_type, type) and issubclass(output_type, BaseModel):
-        return output_type
-    if is_typeddict(output_type):
         return output_type
     assert output_type is str, (
         f"unexpected output_type {output_type!r} — extend this test's "
@@ -246,15 +162,9 @@ def _resolve(node: dict, defs: dict) -> dict:
     return node
 
 
-def _json_schema(model: type) -> dict:
-    if isinstance(model, type) and issubclass(model, BaseModel):
-        return model.model_json_schema()
-    return TypeAdapter(model).json_schema()  # a TypedDict output
-
-
-def schema_violations(model: type) -> list[str]:
+def schema_violations(model: type[BaseModel]) -> list[str]:
     """All budget violations for a model's JSON schema (empty = conforms)."""
-    schema = _json_schema(model)
+    schema = model.model_json_schema()
     defs = schema.get("$defs", {})
     violations: list[str] = []
     total_properties = 0
@@ -293,18 +203,16 @@ def schema_violations(model: type) -> list[str]:
                 "agent or compose in route code instead"
             )
         object_depth = depth + 1
-        depth_ceiling = DEPTH_EXCEPTIONS.get(node.get("title"), MAX_OBJECT_DEPTH)
-        if object_depth > depth_ceiling:
+        if object_depth > MAX_OBJECT_DEPTH:
             violations.append(
                 f"{path}: object nesting depth {object_depth} exceeds "
-                f"{depth_ceiling} (root -> list[Item] is the ceiling)"
+                f"{MAX_OBJECT_DEPTH} (root -> list[Item] is the ceiling)"
             )
         properties = node.get("properties", {})
-        ceiling = PER_OBJECT_EXCEPTIONS.get(node.get("title"), MAX_PROPERTIES_PER_OBJECT)
-        if len(properties) > ceiling:
+        if len(properties) > MAX_PROPERTIES_PER_OBJECT:
             violations.append(
                 f"{path}: {len(properties)} properties exceeds "
-                f"{ceiling} per object"
+                f"{MAX_PROPERTIES_PER_OBJECT} per object"
             )
         total_properties += len(properties)
         for name, sub in properties.items():
@@ -347,105 +255,6 @@ def test_output_schema_within_budget(name):
         f"{name} output schema exceeds the structured-output budget "
         f"(agents/__init__.py):\n- " + "\n- ".join(violations)
     )
-
-
-def test_the_grader_span_checks_per_run_output_is_within_budget():
-    """grader-guard round a33: grade()'s span check runs grader_agent with its
-    own output type (agents.grader.SpanVerdicts), which the roster walk above
-    never sees, so it is held to the same budget here."""
-    from agents.grader import SpanVerdicts
-
-    assert schema_violations(SpanVerdicts) == []
-
-
-def test_the_concept_extractions_flag_on_output_is_within_budget():
-    """Spec §13 A118: with upload_prereq_edges on, concept_extraction_agent
-    runs with its own output type (ConceptList, `prerequisites` added), which
-    the roster walk above never sees — the agent declares the pre-A118
-    BaseConceptList. Held to the same budget here."""
-    from agents.concept_extraction import ConceptList, extraction_run_args
-
-    assert extraction_run_args("t", prerequisites=True)["output_type"] is ConceptList
-    assert schema_violations(ConceptList) == []
-
-
-def test_the_loop_tutors_answer_verdict_output_is_within_budget():
-    """spec §13 A121: with the `loop_tutor_v2` flag on, the loop tutor runs
-    with its own output type (agents.loop_tutor.LOOP_V2_OUTPUT, picked per
-    run by variant_run_args), which the roster walk above never sees, so it is
-    held to the same budget here."""
-    from agents.loop_tutor import LOOP_V2_OUTPUT, variant_run_args
-    from learning.turn_shape import LoopTurnOutV2
-
-    assert variant_run_args(True)["output_type"] is LOOP_V2_OUTPUT
-    model = _function_output_model(LOOP_V2_OUTPUT.outputs)
-    assert model is LoopTurnOutV2
-    assert schema_violations(model) == []
-
-
-def test_per_object_exceptions_are_exact():
-    """Each exception names a real structured output object with EXACTLY the
-    allowed property count: a model that grows past it fails here, and one
-    that shrinks back under the default ceiling must drop its exception."""
-    counts: dict[str, int] = {}
-    for name in EXPECTED_STRUCTURED_AGENTS:
-        schema = _json_schema(_output_model(AGENTS[name]))
-        for node in [schema, *schema.get("$defs", {}).values()]:
-            if node.get("title") in PER_OBJECT_EXCEPTIONS:
-                counts[node["title"]] = len(node.get("properties", {}))
-    assert counts == PER_OBJECT_EXCEPTIONS
-    assert all(n > MAX_PROPERTIES_PER_OBJECT for n in counts.values())
-
-
-def _object_depths(schema: dict) -> dict[str, int]:
-    """Every object title in `schema` -> the deepest level it sits at (root = 1)."""
-    defs = schema.get("$defs", {})
-    depths: dict[str, int] = {}
-
-    def walk(node: dict, depth: int) -> None:
-        node = _resolve(node, defs)
-        for key in ("anyOf", "oneOf", "allOf"):
-            for branch in node.get(key, []):
-                walk(branch, depth)
-        if node.get("type") == "array":
-            walk(node.get("items", {}), depth)
-            return
-        if node.get("type") != "object" and "properties" not in node:
-            return
-        title = node.get("title", "?")
-        depths[title] = max(depths.get(title, 0), depth + 1)
-        for sub in node.get("properties", {}).values():
-            walk(sub, depth + 1)
-
-    walk(schema, 0)
-    return depths
-
-
-def test_depth_exceptions_are_exact():
-    """Each depth exception names a real structured output object at EXACTLY
-    the allowed depth, and no other object sits below MAX_OBJECT_DEPTH: a new
-    deeper object fails here until it is added consciously."""
-    deeper: dict[str, int] = {}
-    for name in EXPECTED_STRUCTURED_AGENTS:
-        for title, depth in _object_depths(_json_schema(_output_model(AGENTS[name]))).items():
-            if depth > MAX_OBJECT_DEPTH:
-                deeper[title] = depth
-    assert deeper == DEPTH_EXCEPTIONS
-
-
-def test_the_depth_exception_is_one_small_flat_object():
-    """OptionDraft may sit one level deeper only while it stays four scalar
-    fields: no list, no object, no optional model inside it. A distractor's
-    misconception is two flat scalars, not a nested {key, text} model: that
-    would be an optional nested model on the correct option and would take
-    the schema to 21 properties (spec §13 A37, round 4)."""
-    from learning.checks import OptionDraft
-
-    props = OptionDraft.model_json_schema()["properties"]
-    assert set(props) == {"text", "is_correct", "misconception_key", "misconception_text"}
-    for spec in props.values():
-        kinds = [spec.get("type")] + [b.get("type") for b in spec.get("anyOf", [])]
-        assert not {"array", "object"} & set(kinds), spec
 
 
 def test_negative_control_rich_schema_is_rejected():
