@@ -135,33 +135,36 @@ def _count_own(table_name: str, **extra: str):
     return lambda user_id: _count_rows(table_name, {"user_id": f"eq.{user_id}", **extra})
 
 
-# trigger_type -> reader(user_id). The lambdas resolve the helpers defined
-# further down the module (and anything a test patches) at call time.
+# trigger_type -> reader(user_id). Every reader looks its helper up by name
+# when it runs, never at import: the `_stat_*` / `_session_stat` / ... helpers
+# below (some defined further down the module) through a lambda, and the
+# `_count_own` readers through `_count_rows`. So a
+# `patch.object(achievement_service, "<helper>", ...)` reaches the dispatch.
 _STAT_READERS = {
-    "login_streak": _stat_login_streak,
+    "login_streak": lambda user_id: _stat_login_streak(user_id),
     "session_count": _count_own("sessions"),
     "documents_uploaded": _count_own("documents"),
-    "quizzes_completed": _stat_quizzes_completed,
+    "quizzes_completed": lambda user_id: _stat_quizzes_completed(user_id),
     "rooms_joined": _count_own("room_members"),
     "flashcards_created": _count_own("flashcards"),
     "post_count": _count_own("room_messages"),
-    "account_age_days": _stat_account_age_days,
+    "account_age_days": lambda user_id: _stat_account_age_days(user_id),
     "manual_admin_grant": lambda user_id: 0,  # Handled directly by admin endpoint
-    "flashcards_reviewed": _stat_flashcards_reviewed,
+    "flashcards_reviewed": lambda user_id: _stat_flashcards_reviewed(user_id),
     "concepts_mastered": _count_own("graph_nodes", mastery_tier="eq.mastered"),
-    "courses_with_mastery": _stat_courses_with_mastery,
+    "courses_with_mastery": lambda user_id: _stat_courses_with_mastery(user_id),
     "graph_nodes_count": _count_own("graph_nodes"),
     "friends_count": _count_own("friendships"),
-    "level": _stat_level,
+    "level": lambda user_id: _stat_level(user_id),
     "session_minutes": lambda user_id: _session_stat(user_id, "session_minutes"),
     "session_before_hour": lambda user_id: _session_stat(user_id, "session_before_hour"),
     "session_after_midnight": lambda user_id: _session_stat(user_id, "session_after_midnight"),
     "xp_in_day": lambda user_id: _best_day_xp(user_id),
     "goal_streak": lambda user_id: _goal_streak(user_id),
-    "owned_room_members": _stat_owned_room_members,
-    "rooms_active": _stat_rooms_active,
+    "owned_room_members": lambda user_id: _stat_owned_room_members(user_id),
+    "rooms_active": lambda user_id: _stat_rooms_active(user_id),
     "course_grade_a": lambda user_id: _course_grade_a_count(user_id),
-    "room_replies": _stat_room_replies,
+    "room_replies": lambda user_id: _stat_room_replies(user_id),
 }
 
 

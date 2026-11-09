@@ -143,3 +143,36 @@ def test_every_dispatched_trigger_type_is_characterized():
     """A trigger type added to the dispatch table must be pinned here too."""
     known = (set(DIRECT) | set(DELEGATED)) - {"unknown_type", ""}
     assert set(achievement_service._STAT_READERS) == known
+
+
+#: DIRECT trigger types -> the module helper their reader resolves at call
+#: time (`_count_rows` for the `_count_own` readers). `manual_admin_grant` is
+#: a constant 0 and reads nothing.
+NAMED_READERS = {
+    "login_streak": "_stat_login_streak",
+    "quizzes_completed": "_stat_quizzes_completed",
+    "account_age_days": "_stat_account_age_days",
+    "flashcards_reviewed": "_stat_flashcards_reviewed",
+    "courses_with_mastery": "_stat_courses_with_mastery",
+    "level": "_stat_level",
+    "owned_room_members": "_stat_owned_room_members",
+    "rooms_active": "_stat_rooms_active",
+    "room_replies": "_stat_room_replies",
+    **{t: "_count_rows" for t in (
+        "session_count", "documents_uploaded", "rooms_joined", "flashcards_created",
+        "post_count", "concepts_mastered", "graph_nodes_count", "friends_count",
+    )},
+}
+
+
+@pytest.mark.parametrize("trigger_type", sorted(NAMED_READERS))
+def test_a_patched_reader_is_honoured(trigger_type):
+    """The dispatch looks every helper up at call time (PR #851 review): a
+    `patch.object` on the module reaches `_get_user_stat`."""
+    with patch.object(achievement_service, NAMED_READERS[trigger_type], return_value=42) as h:
+        assert achievement_service._get_user_stat("u1", trigger_type) == 42
+    h.assert_called_once()
+
+
+def test_named_readers_cover_every_direct_trigger():
+    assert set(NAMED_READERS) == set(DIRECT) - {"manual_admin_grant", "unknown_type", ""}
