@@ -400,6 +400,41 @@ describe("Dashboard legacy (topnav) wiring", () => {
     expect(screen.getByText("My courses")).toBeInTheDocument();
   });
 
+  it("mobile: a tab switch reuses the side panel's root node (patched, not remounted)", async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true);
+    render(<Dashboard />);
+    const coursesCard = (await screen.findByText("My courses")).closest(".card") as HTMLElement;
+    const grid = screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!.parentElement as HTMLElement;
+    const slot1 = grid.children[1];
+    expect(slot1.contains(coursesCard)).toBe(true);
+    fireEvent.click(screen.getByText("Stats & More"));
+    expect(grid.children[1]).toBe(slot1);
+    expect(slot1.contains(screen.getByText("This week"))).toBe(true);
+  });
+
+  it("mobile: a layout flip (topnav ↔ sidebar) keeps the main column mounted", async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true);
+    const { rerender } = render(<Dashboard />);
+    await screen.findByText("My courses");
+    const h1 = screen.getByRole("heading", { level: 1 });
+    const main = h1.parentElement!.parentElement as HTMLElement;
+    const grid = main.parentElement as HTMLElement;
+
+    // Another tab writes the layout pref (storage event → useLayoutPref).
+    layoutState.pref = "sidebar";
+    rerender(<Dashboard />);
+    expect(await screen.findByTestId("dashboard-today-column")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toBe(h1);
+    expect(h1.parentElement!.parentElement).toBe(main);
+    expect(main.parentElement).toBe(grid);
+
+    layoutState.pref = "topnav";
+    rerender(<Dashboard />);
+    expect(await screen.findByText("My courses")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toBe(h1);
+    expect(main.parentElement).toBe(grid);
+  });
+
   it("desktop renders the three columns in order: courses, main, right", async () => {
     render(<Dashboard />);
     const courses = await screen.findByText("My courses");

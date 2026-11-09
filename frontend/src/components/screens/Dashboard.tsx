@@ -518,20 +518,30 @@ export function Dashboard() {
 
   const graphPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
-      <GraphCard
-        stats={stats}
-        nodes={nodes}
-        edges={edges}
-        scopedCourses={scopedCourses}
-        courseProgress={courseProgress}
-        useLegacyPanels={useLegacyPanels}
-        focus={focus}
-        size={size}
-        graphRef={gRefCb}
-        highlightId={highlightId}
-        onFullscreen={() => setFullscreen(true)}
-        onNodeClick={(n) => router.push(learnHrefForNode(n))}
-      />
+      {renderGraphCard({
+        stats,
+        nodes,
+        scopedCourses,
+        useLegacyPanels,
+        focus,
+        onFullscreen: () => setFullscreen(true),
+        // The callback ref stays in this JSX (React may not see it handed to
+        // a render-time call); the layers inside are a plain render call.
+        graphArea: (
+          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
+            {renderGraphLayers({
+              nodes,
+              edges,
+              courseProgress,
+              useLegacyPanels,
+              focus,
+              size,
+              highlightId,
+              onNodeClick: (n) => router.push(learnHrefForNode(n)),
+            })}
+          </div>
+        ),
+      })}
     </div>
   );
 
@@ -579,18 +589,20 @@ export function Dashboard() {
     />
   );
 
-  const heroBlock = (
-    <HeroBlock
-      centered={useLegacyPanels && !isMobile}
-      isMobile={isMobile}
-      greetingText={greetingText}
-      greetingDone={greetingDone}
-      onGreetingDone={() => setGreetingDoneFor(greetingText)}
-      quote={quote}
-    />
-  );
+  // The panels below are plain render calls, not components: React must see
+  // the same element tree (the same <div>s in the same slots) the inline JSX
+  // always produced, so a layout flip or a mobile tab switch patches nodes in
+  // place instead of remounting them (the graph, the typing greeting).
+  const heroBlock = renderHeroBlock({
+    centered: useLegacyPanels && !isMobile,
+    isMobile,
+    greetingText,
+    greetingDone,
+    onGreetingDone: () => setGreetingDoneFor(greetingText),
+    quote,
+  });
 
-  const suggestBlock = !suggestDismissed && <SuggestCard node={suggestNode} navigate={navigate} onDismiss={dismissSuggest} />;
+  const suggestBlock = suggestDismissed ? null : renderSuggestCard({ node: suggestNode, navigate, onDismiss: dismissSuggest });
 
   const mainColumn = (
     <div
@@ -604,7 +616,7 @@ export function Dashboard() {
       }}
     >
       {heroBlock}
-      <MobileMetaRow isMobile={isMobile} navigate={navigate} />
+      {renderMobileMetaRow({ isMobile, navigate })}
       {suggestBlock}
       {graphPanel}
     </div>
@@ -612,34 +624,30 @@ export function Dashboard() {
 
   return (
     <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
-      {isMobile && useLegacyPanels && <MobileTabs mobileTab={mobileTab} setMobileTab={setMobileTab} />}
+      {isMobile && useLegacyPanels && renderMobileTabs({ mobileTab, setMobileTab })}
 
       {useLegacyPanels ? (
-        <LegacyGrid
-          isMobile={isMobile}
-          mobileTab={mobileTab}
-          mainColumn={mainColumn}
-          coursesPanel={
-            <LegacyCoursesPanel
-              hasCourses={courses.length > 0}
-              courseProgress={courseProgress}
-              assignments={assignments}
-              onOpenCourses={() => setCoursesOpen(true)}
-              navigate={navigate}
-            />
-          }
-          rightPanel={
-            <LegacyRightPanel
-              isMobile={isMobile}
-              stats={stats}
-              weekDays={weekDays}
-              today={today}
-              activeDays={activeDays}
-              recommendations={recommendations}
-              navigate={navigate}
-            />
-          }
-        />
+        renderLegacyGrid({
+          isMobile,
+          mobileTab,
+          mainColumn,
+          coursesPanel: renderLegacyCoursesPanel({
+            hasCourses: courses.length > 0,
+            courseProgress,
+            assignments,
+            onOpenCourses: () => setCoursesOpen(true),
+            navigate,
+          }),
+          rightPanel: renderLegacyRightPanel({
+            isMobile,
+            stats,
+            weekDays,
+            today,
+            activeDays,
+            recommendations,
+            navigate,
+          }),
+        })
       ) : isMobile ? (
         <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
           {mainColumn}
@@ -678,18 +686,16 @@ export function Dashboard() {
       )}
 
 
-      {fullscreen && (
-        <FullscreenOverlay
-          nodes={nodes}
-          edges={edges}
-          highlightId={highlightId}
-          onClose={() => setFullscreen(false)}
-          onNodeClick={(n) => {
-            setFullscreen(false);
-            router.push(learnHrefForNode(n));
-          }}
-        />
-      )}
+      {fullscreen && renderFullscreenOverlay({
+        nodes,
+        edges,
+        highlightId,
+        onClose: () => setFullscreen(false),
+        onNodeClick: (n) => {
+          setFullscreen(false);
+          router.push(learnHrefForNode(n));
+        },
+      })}
 
       <ManageCoursesModal
         open={coursesOpen}
@@ -702,27 +708,19 @@ export function Dashboard() {
   );
 }
 
-function GraphCard({
-  stats, nodes, edges, scopedCourses, courseProgress, useLegacyPanels, focus,
-  size, graphRef, highlightId, onFullscreen, onNodeClick,
+function renderGraphCard({
+  stats, nodes, scopedCourses, useLegacyPanels, focus, onFullscreen, graphArea,
 }: {
   stats: DashboardStats;
   nodes: GraphNode[];
-  edges: GraphEdge[];
   scopedCourses: EnrolledCourse[];
-  courseProgress: CourseProgressEntry[];
   useLegacyPanels: boolean;
   focus: CourseFocus;
-  size: { w: number; h: number };
-  graphRef: (el: HTMLDivElement | null) => void;
-  highlightId: string | undefined;
   onFullscreen: () => void;
-  onNodeClick: (n: GraphNode) => void;
+  /** The measured graph container (carries the ResizeObserver ref). */
+  graphArea: React.ReactNode;
 }) {
-  const {
-    keyHoverCourse, setKeyHoverCourse, graphHoverCourse, setGraphHoverCourse,
-    zoomRequest, zoomedCourse, zoomToCourse,
-  } = focus;
+  const { keyHoverCourse, setKeyHoverCourse, graphHoverCourse, zoomedCourse, zoomToCourse } = focus;
   return (
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
@@ -779,37 +777,58 @@ function GraphCard({
           </button>
         </div>
       </div>
-      <div ref={graphRef} style={{ position: "relative", flex: 1, minHeight: 260 }}>
-        <KnowledgeGraph
-          legible
-          nodes={nodes}
-          edges={edges}
-          width={size.w}
-          height={size.h}
-          highlightId={highlightId}
-          onNodeClick={onNodeClick}
-          focusCourseId={keyHoverCourse ?? zoomedCourse}
-          onHoverCourse={setGraphHoverCourse}
-          zoomRequest={zoomRequest}
-        />
-        {/* Courses key — sidebar layout only. Top-nav layout uses the
-            full My Courses panel in the left column instead. */}
-        {!useLegacyPanels && (
-          <CoursesKey
-            courseProgress={courseProgress}
-            activeCourseId={keyHoverCourse ?? graphHoverCourse}
-            onHoverCourse={setKeyHoverCourse}
-            selectedCourseId={zoomedCourse}
-            onSelectCourse={zoomToCourse}
-            selectHint="Click to zoom to this course, again to zoom out"
-          />
-        )}
-      </div>
+      {graphArea}
     </div>
   );
 }
 
-function HeroBlock({
+function renderGraphLayers({
+  nodes, edges, courseProgress, useLegacyPanels, focus, size, highlightId, onNodeClick,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  courseProgress: CourseProgressEntry[];
+  useLegacyPanels: boolean;
+  focus: CourseFocus;
+  size: { w: number; h: number };
+  highlightId: string | undefined;
+  onNodeClick: (n: GraphNode) => void;
+}) {
+  const {
+    keyHoverCourse, setKeyHoverCourse, graphHoverCourse, setGraphHoverCourse,
+    zoomRequest, zoomedCourse, zoomToCourse,
+  } = focus;
+  return (
+    <>
+      <KnowledgeGraph
+        legible
+        nodes={nodes}
+        edges={edges}
+        width={size.w}
+        height={size.h}
+        highlightId={highlightId}
+        onNodeClick={onNodeClick}
+        focusCourseId={keyHoverCourse ?? zoomedCourse}
+        onHoverCourse={setGraphHoverCourse}
+        zoomRequest={zoomRequest}
+      />
+      {/* Courses key — sidebar layout only. Top-nav layout uses the
+          full My Courses panel in the left column instead. */}
+      {!useLegacyPanels && (
+        <CoursesKey
+          courseProgress={courseProgress}
+          activeCourseId={keyHoverCourse ?? graphHoverCourse}
+          onHoverCourse={setKeyHoverCourse}
+          selectedCourseId={zoomedCourse}
+          onSelectCourse={zoomToCourse}
+          selectHint="Click to zoom to this course, again to zoom out"
+        />
+      )}
+    </>
+  );
+}
+
+function renderHeroBlock({
   centered, isMobile, greetingText, greetingDone, onGreetingDone, quote,
 }: {
   /** Legacy (top-nav) desktop centres the hero. */
@@ -864,7 +883,7 @@ function HeroBlock({
   );
 }
 
-function MobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
+function renderMobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
   if (!isMobile) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -889,7 +908,7 @@ function MobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Na
   );
 }
 
-function SuggestCard({
+function renderSuggestCard({
   node, navigate, onDismiss,
 }: {
   node: GraphNode | null;
@@ -920,7 +939,7 @@ function SuggestCard({
   );
 }
 
-function MobileTabs({
+function renderMobileTabs({
   mobileTab, setMobileTab,
 }: {
   mobileTab: "courses" | "stats";
@@ -951,7 +970,7 @@ function MobileTabs({
 // Pre-revamp 3-column dashboard: My Courses + Upcoming on the left,
 // hero + graph in the middle, streak widget + MiniStat + Learn next
 // on the right. Only rendered when layoutPref === "topnav".
-function LegacyGrid({
+function renderLegacyGrid({
   isMobile, mobileTab, mainColumn, coursesPanel, rightPanel,
 }: {
   isMobile: boolean;
@@ -994,7 +1013,7 @@ function LegacyGrid({
   );
 }
 
-function LegacyCoursesPanel({
+function renderLegacyCoursesPanel({
   hasCourses, courseProgress, assignments, onOpenCourses, navigate,
 }: {
   hasCourses: boolean;
@@ -1051,7 +1070,7 @@ function LegacyCoursesPanel({
   );
 }
 
-function LegacyRightPanel({
+function renderLegacyRightPanel({
   isMobile, stats, weekDays, today, activeDays, recommendations, navigate,
 }: {
   isMobile: boolean;
@@ -1150,7 +1169,7 @@ function LegacyRightPanel({
   );
 }
 
-function FullscreenOverlay({
+function renderFullscreenOverlay({
   nodes, edges, highlightId, onClose, onNodeClick,
 }: {
   nodes: GraphNode[];
