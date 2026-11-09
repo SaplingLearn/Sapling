@@ -290,3 +290,58 @@ class TestImportCloze:
             r = client.post("/api/flashcards/import/cloze", json=body)
         assert r.status_code == 200
         assert r.json()["cards"][0]["back"] == "Mitochondria"
+
+
+# ── #838: an LLM budget refusal is the budget's 429, not the generic 502 ─────
+
+from services.llm_budget import ERROR_CODE, LLMBudgetExceeded, next_reset  # noqa: E402
+
+
+def _refused(*_a, **_k):
+    raise LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset())
+
+
+@pytest.mark.parametrize("path,target,body", [
+    ("/api/flashcards/import/generate", "gemini_generate_cards",
+     {"user_id": "u1", "source": "paste", "text": "x", "count": 5, "difficulty": "recall"}),
+    ("/api/flashcards/import/cleanup", "gemini_cleanup_cards",
+     {"user_id": "u1", "cards": [{"front": "f", "back": "b"}]}),
+    ("/api/flashcards/import/cloze", "gemini_cloze",
+     {"user_id": "u1", "paragraph": "The mitochondria is the powerhouse of the cell."}),
+])
+def test_import_llm_routes_answer_a_budget_refusal_with_its_429(path, target, body):
+    with _mock_self(), patch(f"routes.flashcards.{target}", side_effect=_refused), \
+         patch("routes.flashcards.check_rate_limit", return_value=None):
+        r = client.post(path, json=body)
+    assert r.status_code == 429, r.text
+    assert r.json()["error"]["code"] == ERROR_CODE
+    assert "Retry-After" in r.headers
+
+
+def test_generate_answers_a_budget_refusal_with_its_429():
+    body = {"user_id": "u1", "topic": "Biology", "count": 3}
+    with _mock_self(), patch("routes.flashcards._generate", side_effect=_refused), \
+         patch("routes.flashcards.table") as t, \
+         patch("routes.flashcards.check_achievements"):
+        t.return_value.select.return_value = []
+        r = client.post("/api/flashcards/generate", json=body)
+    assert r.status_code == 429, r.text
+    t.return_value.insert.assert_not_called()
+
+
+def test_other_failures_keep_the_502():
+    body = {"user_id": "u1", "paragraph": "p"}
+    with _mock_self(), patch("routes.flashcards.gemini_cloze", side_effect=RuntimeError("x")), \
+         patch("routes.flashcards.check_rate_limit", return_value=None):
+        r = client.post("/api/flashcards/import/cloze", json=body)
+    assert r.status_code == 502
+
+
+def test_the_agent_runner_lets_a_budget_refusal_through_unlogged(caplog):
+    from services import flashcard_import_service as svc
+
+    with patch.object(svc, "run_agent_sync", side_effect=_refused), \
+         patch.object(svc.flashcard_agent, "run", new=lambda *_a, **_k: None), \
+         caplog.at_level("ERROR"), pytest.raises(LLMBudgetExceeded):
+        svc._run_flashcard_agent("prompt")
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]

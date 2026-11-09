@@ -578,3 +578,31 @@ def test_reraise_budget_refusal_finds_the_refusal(wrap):
     with pytest.raises(LLMBudgetExceeded) as raised:
         llm_budget.reraise_budget_refusal(exc)
     assert raised.value is refusal
+
+
+def test_admin_view_shows_the_builtin_default_when_the_row_is_missing(admin):
+    """#826/#838: with no default row the gate still enforces the built-in 2M
+    (llm_budget_status's 'default:builtin'); the admin view says so instead of
+    showing no default at all."""
+    import routes.admin_llm as admin_llm
+
+    body = admin.client.get("/api/admin/llm/budgets").json()
+    assert body["default"]["daily_token_limit"] == 2_000_000
+    assert body["default"]["builtin"] is False  # the stored row
+    admin.store["llm_budgets"].clear()
+    body = admin.client.get("/api/admin/llm/budgets").json()
+    assert body["default"]["builtin"] is True
+    assert body["default"]["daily_token_limit"] == admin_llm.BUILTIN_DEFAULT_TOKENS == 2_000_000
+    r = admin.client.put("/api/admin/llm/budgets", json={"scope": "default", "daily_token_limit": 7})
+    assert r.json()["default"] == {**r.json()["default"], "builtin": False, "daily_token_limit": 7}
+
+
+def test_the_builtin_default_matches_the_sql_fallback():
+    """BUILTIN_DEFAULT_TOKENS mirrors the migration's 'default:builtin' row."""
+    from pathlib import Path
+
+    import routes.admin_llm as admin_llm
+
+    sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+           / "20261108213311_llm_budgets_and_cost_signal.sql").read_text()
+    assert f"SELECT {admin_llm.BUILTIN_DEFAULT_TOKENS}::bigint, 'default:builtin'" in sql

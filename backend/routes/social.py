@@ -18,6 +18,7 @@ from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import LIVE_USER_FILTER, get_display_name, get_display_names, live_user_ids
 from services.graph_service import get_graph
+from services.llm_budget import budget_error_in
 from services import academics
 from services.matching_service import find_study_matches
 from services.request_context import current_request_id
@@ -307,11 +308,7 @@ def get_user_rooms(user_id: str, request: Request):
 @router.get("/rooms/{room_id}/overview")
 def room_overview(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
+    _require_member(room_id, viewer_id)
 
     room_rows = table("rooms").select(
         "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
@@ -364,8 +361,11 @@ def room_overview(room_id: str, request: Request):
             ai_summary = result.output.summary
             save_summary(room_id, member_summaries, ai_summary)
         except Exception as e:
-            print(f"Gemini summary failed: {e}")
-            ai_summary = "This study group has complementary strengths across multiple subjects."
+            budget = budget_error_in(e)  # #838: say the daily budget refused it (not cached)
+            if budget is None:
+                logger.warning("room summary generation failed: %s", type(e).__name__)
+            ai_summary = budget.detail if budget is not None else (
+                "This study group has complementary strengths across multiple subjects.")
 
     return {"room": room, "members": members, "ai_summary": ai_summary}
 
@@ -373,11 +373,7 @@ def room_overview(room_id: str, request: Request):
 @router.get("/rooms/{room_id}/activity")
 def room_activity(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
+    _require_member(room_id, viewer_id)
 
     activity_rows = table("room_activity").select(
         "id,room_id,user_id,activity_type,concept_name,detail,created_at",
@@ -386,8 +382,9 @@ def room_activity(room_id: str, request: Request):
         limit=20,
     )
 
-    user_ids = list(set(a["user_id"] for a in activity_rows))
-    user_name_map = get_display_names(user_ids) if user_ids else {}
+    live = live_user_ids([a["user_id"] for a in activity_rows])  # #832: drop deleted students
+    activity_rows = [a for a in activity_rows if a["user_id"] in live]
+    user_name_map = get_display_names(sorted(live)) if live else {}
 
     activities = [
         {
@@ -565,13 +562,8 @@ def kick_member(room_id: str, member_id: str, request: Request, requester_id: st
 @router.get("/rooms/{room_id}/messages")
 def get_room_messages(room_id: str, request: Request, before: str | None = None, limit: int = 50):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
+    _require_member(room_id, viewer_id)
 
-    from datetime import datetime
     limit = max(1, min(200, limit))
     filters = {"room_id": f"eq.{room_id}"}
     if before:
@@ -699,7 +691,8 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
 @router.delete("/rooms/{room_id}/messages/{message_id}")
 def delete_room_message(room_id: str, message_id: str, request: Request, user_id: str = Query(...)):
     require_self(user_id, request)
-    rows = table("room_messages").select("user_id", filters={"id": f"eq.{message_id}"})
+    # Room-scoped (wave-1 §10): a message id alone is not the pair the path names.
+    rows = table("room_messages").select("user_id", filters={"id": f"eq.{message_id}", "room_id": f"eq.{room_id}"})
     if not rows:
         raise HTTPException(status_code=404, detail="Message not found")
     if rows[0]["user_id"] != user_id:
@@ -709,7 +702,7 @@ def delete_room_message(room_id: str, message_id: str, request: Request, user_id
     # "deleted" message was still recoverable by anyone holding the key.
     table("room_messages").update(
         {"is_deleted": True, "text": None, "image_url": None},
-        filters={"id": f"eq.{message_id}", "user_id": f"eq.{user_id}"},
+        filters={"id": f"eq.{message_id}", "room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}"},
     )
     return {"deleted": True}
 
@@ -717,7 +710,8 @@ def delete_room_message(room_id: str, message_id: str, request: Request, user_id
 @router.patch("/rooms/{room_id}/messages/{message_id}")
 def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, request: Request):
     require_self(body.user_id, request)
-    rows = table("room_messages").select("user_id,is_deleted", filters={"id": f"eq.{message_id}"})
+    rows = table("room_messages").select(
+        "user_id,is_deleted", filters={"id": f"eq.{message_id}", "room_id": f"eq.{room_id}"})
     if not rows:
         raise HTTPException(status_code=404, detail="Message not found")
     if rows[0]["user_id"] != body.user_id:
@@ -728,7 +722,8 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, requ
     # write fresh text onto the just-deleted (and just-cleared) message.
     edited = table("room_messages").update(
         {"text": encrypt_if_present(body.text), "edited_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "is_deleted": "eq.false"},
+        filters={"id": f"eq.{message_id}", "room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}",
+                 "is_deleted": "eq.false"},
     )
     if not edited:
         raise HTTPException(status_code=409, detail="Cannot edit a deleted message")

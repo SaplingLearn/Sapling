@@ -705,3 +705,59 @@ class TestSchoolMatchScope:
     def test_no_school_means_no_candidates(self, db):
         db.data.update(users=self._users("u1", "u-anyone"))
         assert self._run(set()) == ["u1"]
+
+
+# ── Wave-1 §10 / wave-2 §11 leftovers (wave 3) ─────────────────────────────
+
+
+class TestMessageRoomScope:
+    """edit/delete check the (room, message) PAIR the path names: a message id
+    from another room is a 404 and is never touched (author-gated before, so
+    not a leak, but the path lied about where the message lives)."""
+
+    def test_delete_through_another_room_is_404_and_untouched(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        r = client.delete("/api/social/rooms/r1/messages/m1?user_id=u1")
+        assert r.status_code == 404
+        row = db.rows("room_messages")[0]
+        assert row["is_deleted"] is False and row["text"] == "ciphertext"
+
+    def test_edit_through_another_room_is_404_and_untouched(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        r = client.patch("/api/social/rooms/r1/messages/m1",
+                         json={"user_id": "u1", "text": "moved"})
+        assert r.status_code == 404
+        row = db.rows("room_messages")[0]
+        assert row["text"] == "ciphertext" and row["edited_at"] is None
+
+    def test_the_right_room_still_works(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        assert client.patch("/api/social/rooms/r2/messages/m1",
+                            json={"user_id": "u1", "text": "ok"}).status_code == 200
+        assert client.delete("/api/social/rooms/r2/messages/m1?user_id=u1").status_code == 200
+        assert db.rows("room_messages")[0]["is_deleted"] is True
+
+
+class TestActivityHidesDeletedStudents:
+    """#832: room activity history named soft-deleted students (and fell back
+    to the raw user id); it now drops them like every other social list."""
+
+    def test_a_deleted_students_activity_is_dropped(self, db):
+        db.data.update(
+            room_members=[_member("u1", "2026-07-01T00:00:00Z")],
+            room_activity=[
+                {"id": "a1", "room_id": "r1", "user_id": "u1", "activity_type": "mastered",
+                 "concept_name": "Limits", "detail": "", "created_at": "2026-07-02T00:00:00Z"},
+                {"id": "a2", "room_id": "r1", "user_id": "gone", "activity_type": "mastered",
+                 "concept_name": "Series", "detail": "", "created_at": "2026-07-03T00:00:00Z"},
+            ],
+        )
+        with patch("routes.social.live_user_ids", return_value={"u1"}) as live, \
+             patch("routes.social.get_display_names", return_value={"u1": "Alice"}) as names:
+            r = client.get("/api/social/rooms/r1/activity?user_id=u1")
+        assert r.status_code == 200, r.text
+        acts = r.json()["activities"]
+        assert [a["id"] for a in acts] == ["a1"]
+        assert acts[0]["user_name"] == "Alice"
+        assert sorted(live.call_args.args[0]) == ["gone", "u1"]
+        names.assert_called_once_with(["u1"])  # the deleted id is never resolved

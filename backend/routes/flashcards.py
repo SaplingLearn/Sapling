@@ -35,7 +35,7 @@ from services.flashcard_import_service import (
     QuizletURLRejected,
     gemini_generate_cards,
     gemini_cleanup_cards,
-    gemini_cloze,
+    gemini_cloze, llm_http_error,  # #838: a budget refusal answers 429, the rest 502
     generate_flashcards as _generate,
 )
 
@@ -315,7 +315,7 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             weak_concepts=weak_concepts,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
 
     now = datetime.now(timezone.utc).isoformat()
     rows_to_insert = [
@@ -639,7 +639,7 @@ def import_generate(body: ImportGenerateBody, request: Request):
     try:
         cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
     # generation (the cards come back for review; /import/commit only
@@ -678,7 +678,7 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
     try:
         out = gemini_cleanup_cards(cards)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     return {"cards": out}
 
 
@@ -697,5 +697,5 @@ def import_cloze(body: ImportClozeBody, request: Request):
     try:
         cards = gemini_cloze(body.paragraph)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     return {"cards": cards}

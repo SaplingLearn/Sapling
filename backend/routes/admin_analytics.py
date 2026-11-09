@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from db.connection import rpc, table
+from services import admin_db_scope
 from services.auth_guard import require_admin
 from services.events_service import SYSTEM_CATEGORY
 from services.llm_pricing import COST_SCALE
@@ -571,10 +572,12 @@ def errors(
 
 _DB_SCOPE_EVENTS = ("db.rls_shadow_divergence", "db.unscoped_query", "db.rls_denied")
 
-#: The db-scope report groups in Python (PostgREST has no GROUP BY), so it
-#: bounds its own scan: at most this many events (newest first) and a window
-#: of at most _DB_SCOPE_MAX_HOURS. A truncated answer says so (`truncated`,
-#: `scan_cap`). A SQL GROUP BY function would lift both limits (follow-up).
+#: One GROUP BY in Postgres (migration 20261109023455); grouping/merging in
+#: services/admin_db_scope.py. Until the migration is applied (or if the call
+#: fails) the report falls back to a capped scan grouped in Python: at most
+#: _DB_SCOPE_SCAN_CAP events (newest first), flagged `truncated`. The window
+#: is at most _DB_SCOPE_MAX_HOURS either way.
+DB_SCOPE_FN = "db_scope_divergences"
 _DB_SCOPE_SCAN_CAP = 20_000
 _DB_SCOPE_MAX_HOURS = 168
 
@@ -614,37 +617,6 @@ class DbScopeReport(BaseModel):
     process: dict
 
 
-def _db_scope_key(event_type: str, payload: dict) -> tuple:
-    """The grouping key for one db.* event row — `scope_report.key_of`, the
-    same key the in-process tally uses. Rows written before the report
-    existed carry no kind/method/op (and `error` where newer rows carry
-    `status`); derive what they imply."""
-    from db import scope_report
-
-    status = payload.get("status", payload.get("error"))
-    kind = payload.get("kind")
-    if not kind:
-        if event_type == "db.unscoped_query":
-            kind = "no_subject"
-        elif event_type == "db.rls_denied":
-            kind = "denied"
-        elif status is not None:
-            kind = "error"
-        else:
-            svc, scp = _as_int(payload.get("service_count")), _as_int(payload.get("scoped_count"))
-            kind = "fewer_rows" if scp < svc else "more_rows" if scp > svc else "different_ids"
-    mode = payload.get("mode") or {"db.rls_shadow_divergence": "shadow",
-                                   "db.rls_denied": "enforce"}.get(event_type, "?")
-    # Same defaults as scope_report.record: "?" for an unknown method/route/
-    # target/op, None for an absent status/code.
-    return scope_report.key_of({
-        "event": event_type, "kind": kind, "mode": mode,
-        "method": payload.get("method") or "?", "route": payload.get("route") or "?",
-        "target": payload.get("table") or "?", "op": payload.get("op") or "?",
-        "status": status, "code": payload.get("code"),
-    })
-
-
 @router.get("/db-scope", response_model=DbScopeReport)
 def db_scope_report(
     request: Request,
@@ -654,7 +626,8 @@ def db_scope_report(
 ) -> DbScopeReport:
     """Top `db_user_scope` divergences by route + table over the last `hours`
     (at most a week), plus this worker's in-process tally. Ids, counts and
-    codes only. Scans at most `_DB_SCOPE_SCAN_CAP` events, newest first."""
+    codes only. One SQL GROUP BY; before its migration, a scan of at most
+    `_DB_SCOPE_SCAN_CAP` events, newest first."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from db import scope_report
@@ -662,35 +635,21 @@ def db_scope_report(
 
     now = datetime.now(timezone.utc)
     from_iso, to_iso = (now - timedelta(hours=hours)).isoformat(), now.isoformat()
-    rows, truncated = _scan_range(
-        "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
-        extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
-        cap=_DB_SCOPE_SCAN_CAP, newest_first=True,
-    )
-    groups: dict[tuple, dict] = {}
-    for r in rows:
-        payload = r.get("payload") if isinstance(r.get("payload"), dict) else {}
-        key = _db_scope_key(r.get("event_type") or "?", payload)
-        g = groups.setdefault(key, {"count": 0, "users": set(), "first": None, "last": None,
-                                    "rids": []})
-        g["count"] += 1
-        if r.get("user_id"):
-            g["users"].add(r["user_id"])
-        at = r.get("created_at")
-        if at:
-            g["first"] = at if g["first"] is None or at < g["first"] else g["first"]
-            g["last"] = at if g["last"] is None or at > g["last"] else g["last"]
-        rid = r.get("request_id")
-        if rid and len(g["rids"]) < 3 and rid not in g["rids"]:
-            g["rids"].append(rid)
-    ranked = sorted(groups.items(), key=lambda kv: (-kv[1]["count"], kv[0][4], kv[0][5]))
-    top = [
-        DbScopeGroup(**dict(zip(scope_report.KEY_FIELDS, key)), count=g["count"], users=len(g["users"]),
-                     first_seen=g["first"], last_seen=g["last"], sample_request_ids=g["rids"])
-        for key, g in ranked[:limit]
-    ]
+    try:
+        groups, total = admin_db_scope.group_rpc_rows(rpc(DB_SCOPE_FN, {
+            "p_from": from_iso, "p_to": to_iso, "p_events": list(_DB_SCOPE_EVENTS)}))
+        truncated = False
+    except Exception as exc:  # not migrated yet / PostgREST down: the capped scan
+        logger.info("%s() unavailable (%s); scanning", DB_SCOPE_FN, type(exc).__name__)
+        rows, truncated = _scan_range(
+            "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
+            extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
+            cap=_DB_SCOPE_SCAN_CAP, newest_first=True,
+        )
+        groups, total = admin_db_scope.group_rows(rows), len(rows)
     return DbScopeReport(
         window=DbScopeWindow(from_=from_iso, to=to_iso, hours=hours),
-        total=len(rows), groups=len(groups), top=top, truncated=truncated,
+        total=total, groups=len(groups), truncated=truncated,
+        top=[DbScopeGroup(**g) for g in admin_db_scope.ranked(groups, limit)],
         scan_cap=_DB_SCOPE_SCAN_CAP, process=scope_report.snapshot(limit),
     )

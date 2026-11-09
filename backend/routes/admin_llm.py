@@ -3,7 +3,9 @@
 Mounted at `/api/admin/llm` (admin_service_route: `llm_budgets` and
 `llm_usage` are service-only). Every endpoint also calls `require_admin`.
 
-* ``GET    /budgets``                      the default, role and user rows
+* ``GET    /budgets``                      the default (the built-in one, marked
+                                          ``builtin``, when no row is stored),
+                                          role and user rows
 * ``PUT    /budgets``                      set one row (default / role / user)
 * ``DELETE /budgets/{scope}/{subject}``    drop a role or user override
 * ``GET    /budgets/status/{user_id}``     what the gate would see for a user
@@ -50,8 +52,22 @@ def _rows() -> list[dict]:
     return table("llm_budgets").select(_COLUMNS, order="scope.asc,subject.asc") or []
 
 
+#: What `llm_budget_status()` applies when there is NO default row (source
+#: 'default:builtin', migration 20261108213311). Keep in step with that SQL.
+BUILTIN_DEFAULT_TOKENS = 2_000_000
+
+
+def _builtin_default() -> dict:
+    """The default the gate enforces while the default row is missing (#826):
+    shown as such so the page never reads as "no default = unlimited"."""
+    return {"scope": "default", "subject": "", "daily_token_limit": BUILTIN_DEFAULT_TOKENS,
+            "note": "Built-in default: no default row is stored; PUT one to change it.",
+            "updated_by": None, "updated_at": None, "builtin": True}
+
+
 def _view(rows: list[dict]) -> dict:
     default = next((r for r in rows if r.get("scope") == "default"), None)
+    default = {**default, "builtin": False} if default is not None else _builtin_default()
     return {
         "flag": feature_flags.flag_variant(llm_budget.FLAG_KEY, None),
         "default": default,
