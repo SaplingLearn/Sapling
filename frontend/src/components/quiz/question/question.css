@@ -27,7 +27,7 @@
      will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
      the same number today by coincidence, not by construction. */
   --quiz-q-skeleton-inset: 14px;
-  --quiz-q-numeric-w: 300px;   /* a number needs a field, not the column (room for the result) */
+  --quiz-q-numeric-w: 300px;   /* the narrowest a number's field gets (room for its reading) */
   --quiz-q-key-h: 30px;
   --quiz-q-key-min-w: 40px;
   --quiz-q-key-gap: 6px;
@@ -257,15 +257,19 @@
   min-height: var(--pad-xl);
 }
 
-/* Leave on the left; the question pager and the primary button together on
-   the right, so "where am I" sits next to "go on". */
+/* Leave | pager | Submit. Three columns with equal outer tracks, so the
+   pager sits in the true centre whatever the two buttons' labels are
+   (Submit → Next → See results → Scoring…). */
 .quiz-question__footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: var(--pad-md);
 }
 
-.quiz-question__footer > :first-child { margin-right: auto; }
+.quiz-question__footer > :first-child { justify-self: start; }
+.quiz-question__footer > .quiz-question__progress { grid-column: 2; }
+.quiz-question__footer > :last-child:not(.quiz-question__progress) { justify-self: end; }
 
 /* ── Keyboard hint ──────────────────────────────────────────────────── */
 
@@ -557,8 +561,31 @@
   width: 100%;
 }
 
+/* A number's field is short, so its keys sit on the same line beside it and
+   the row reads as one unit rather than a stub with empty space after it.
+   On a narrow screen the keys wrap underneath, as on the other formats. */
+.quiz-written[data-format="numeric"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--pad-md);
+}
+
+/* The field takes whatever the keys leave, so the row ends on the column's
+   right edge like every other answer; it never gets narrower than a number
+   plus its reading needs, and below that the keys wrap underneath. */
 .quiz-written[data-format="numeric"] .quiz-written__field {
-  max-width: var(--quiz-q-numeric-w);
+  flex: 1 1 var(--quiz-q-numeric-w);
+}
+
+/* Beside the field the keys match its height, so the row reads as one bar. */
+.quiz-written[data-format="numeric"] .quiz-written__key {
+  height: 44px;
+  min-width: 44px;
+}
+
+.quiz-written[data-format="numeric"] .quiz-written__problem {
+  flex-basis: 100%;
 }
 
 /* Room for the result (and, on a number, the reading), so neither ever
@@ -705,8 +732,10 @@
     --quiz-q-stem-my: 24px;
   }
   .quiz-question__header { flex-wrap: wrap; row-gap: var(--pad-sm); }
-  /* The pager takes its own row above the buttons. */
-  .quiz-question__footer { flex-wrap: wrap; row-gap: var(--pad-md); }
-  .quiz-question__progress { order: -1; flex-basis: 100%; justify-content: center; }
+  /* The pager takes its own row above the two buttons. */
+  .quiz-question__footer { grid-template-columns: 1fr 1fr; row-gap: var(--pad-md); }
+  .quiz-question__footer > .quiz-question__progress { grid-column: 1 / -1; grid-row: 1; justify-self: center; }
+  .quiz-question__footer > :first-child { grid-row: 2; }
+  .quiz-question__footer > :last-child:not(.quiz-question__progress) { grid-row: 2; grid-column: 2; }
   .quiz-question__aside { flex-wrap: wrap; gap: var(--pad-sm); }
 }
