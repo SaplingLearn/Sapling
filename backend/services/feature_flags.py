@@ -153,18 +153,6 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Run each request's database calls as the student (RLS) instead of "
             "the service role. shadow compares a sample of reads; enforce "
             "applies RLS and fails closed.", False),
-    # #115 RLS step 2e (docs/security/realtime-jwt-bridge-design.md): the
-    # study-room live chat authenticates Supabase Realtime with a
-    # backend-minted token (GET /api/auth/realtime-token, iss
-    # sapling-realtime) instead of the public anon key, so it keeps working
-    # once RLS is on for room_messages. Client-visible: Social.tsx reads it.
-    # Off = today's anon subscription. Turn on only where
-    # SUPABASE_JWT_SIGNING_KEY is set and trusted by that project's Realtime
-    # (else the endpoint 503s and the room falls back to REST-only).
-    FlagDef("realtime_rls", ("off", "on"),
-            "Study-room live chat authenticates Supabase Realtime with a "
-            "backend-minted, member-scoped token instead of the anon key "
-            "(RLS step 2e). Needs SUPABASE_JWT_SIGNING_KEY.", True),
     # #117 (docs/design/async-db-client.md §3): whether the `a*` twins of
     # table()'s verbs use the native httpx.AsyncClient ("on") or run the sync
     # verb on a worker thread ("off": today's client and limiter, reached from

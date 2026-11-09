@@ -1,16 +1,17 @@
 """RLS step 2e: GET /api/auth/realtime-token and db/user_jwt.py::mint_realtime.
 
 docs/security/realtime-jwt-bridge-design.md. Hermetic: the session guard is
-patched, the flag resolves through its env override, and the signing key is a
-test JWK. What is pinned:
+patched and the signing key is a test JWK. What is pinned:
 
 * the token: iss ``sapling-realtime`` (never ``sapling-api``, which
   app_auth.uid() trusts), sub = the session user, role/aud authenticated,
   exp = iat + REALTIME_TOKEN_TTL_S, signed with SUPABASE_JWT_SIGNING_KEY
   (HS256 verified here; ES256 shares the signer with mint());
-* the gate: no session -> 401, flag off -> 404, key unset/unusable -> 503
-  (fail closed), ``Cache-Control: private, no-store``;
-* the flag: registered off-first and client-visible (Social.tsx reads it);
+* the gate: no session -> 401, key unset/unusable -> 503 (fail closed),
+  ``Cache-Control: private, no-store``;
+* no flag: ``realtime_rls`` graduated (the anon Realtime path is gone and
+  room_messages has RLS on everywhere), so an env override left behind on a
+  deploy cannot switch the endpoint off;
 * mint() for the backend's own token is unchanged by the refactor.
 """
 from __future__ import annotations
@@ -33,7 +34,7 @@ client = TestClient(app)
 
 SECRET = b"super-secret-jwt-token-with-at-least-32-characters-long"
 OCT_JWK = json.dumps({"kty": "oct", "k": base64.urlsafe_b64encode(SECRET).rstrip(b"=").decode()})
-FLAG_ENV = "SAPLING_FLAG_REALTIME_RLS"
+RETIRED_FLAG_ENV = "SAPLING_FLAG_REALTIME_RLS"
 URL = "/api/auth/realtime-token"
 
 
@@ -50,7 +51,7 @@ def _decode(token: str) -> tuple[dict, dict, bytes, bytes]:
 def _fresh(monkeypatch):
     user_jwt.clear_token_cache()
     monkeypatch.delenv(user_jwt.SIGNING_KEY_ENV, raising=False)
-    monkeypatch.delenv(FLAG_ENV, raising=False)
+    monkeypatch.delenv(RETIRED_FLAG_ENV, raising=False)
     yield
     user_jwt.clear_token_cache()
 
@@ -136,8 +137,7 @@ def test_backend_token_is_unchanged_by_the_refactor(monkeypatch):
 # ── GET /api/auth/realtime-token ────────────────────────────────────────────
 
 
-def test_flag_on_returns_a_token_for_the_session_user(monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
+def test_returns_a_token_for_the_session_user(monkeypatch):
     monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
     with _signed_in("user_rt"):
         r = client.get(URL)
@@ -151,37 +151,31 @@ def test_flag_on_returns_a_token_for_the_session_user(monkeypatch):
     assert r.headers["cache-control"] == "private, no-store"
 
 
-def test_flag_off_is_404_and_mints_nothing(monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "off")
-    monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
-    with _signed_in(), patch.object(user_jwt, "mint_realtime") as mint:
-        r = client.get(URL)
-    assert r.status_code == 404
-    mint.assert_not_called()
-
-
-def test_flag_is_resolved_for_the_session_user(monkeypatch):
+def test_no_flag_is_consulted(monkeypatch):
+    # Graduated: neither the flag store nor a stale SAPLING_FLAG_REALTIME_RLS=off
+    # left on a deploy can turn the only live-chat path off.
+    monkeypatch.setenv(RETIRED_FLAG_ENV, "off")
     monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
     with _signed_in("user_rt"), \
-         patch("services.feature_flags.flag_on", return_value=True) as flag_on:
+         patch("services.feature_flags.flag_on") as flag_on, \
+         patch("services.feature_flags.flag_variant") as flag_variant:
         r = client.get(URL)
     assert r.status_code == 200
-    flag_on.assert_called_once_with("realtime_rls", "user_rt")
+    flag_on.assert_not_called()
+    flag_variant.assert_not_called()
 
 
-def test_no_session_is_401_before_any_flag_read(monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
+def test_no_session_is_401_and_mints_nothing(monkeypatch):
     monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
     with patch("routes.auth.get_session_user_id",
                side_effect=HTTPException(status_code=401, detail="Not authenticated")), \
-         patch("services.feature_flags.flag_on") as flag_on:
+         patch.object(user_jwt, "mint_realtime") as mint:
         r = client.get(URL)
     assert r.status_code == 401
-    flag_on.assert_not_called()
+    mint.assert_not_called()
 
 
 def test_unset_signing_key_fails_closed_503(monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
     with _signed_in():
         r = client.get(URL)
     assert r.status_code == 503
@@ -190,22 +184,18 @@ def test_unset_signing_key_fails_closed_503(monkeypatch):
 
 @pytest.mark.parametrize("bad", ["not json", '{"kty": "oct", "k": "c2hvcnQ"}', '{"kty": "RSA"}'])
 def test_unusable_signing_key_fails_closed_503(monkeypatch, bad):
-    monkeypatch.setenv(FLAG_ENV, "on")
     monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, bad)
     with _signed_in():
         r = client.get(URL)
     assert r.status_code == 503
 
 
-# ── The flag ────────────────────────────────────────────────────────────────
+# ── The retired flag ────────────────────────────────────────────────────────
 
 
-def test_realtime_rls_flag_is_off_first_and_client_visible():
-    fd = ff.REGISTRY["realtime_rls"]
-    assert fd.variants == ("off", "on")
-    assert fd.client_visible  # frontend Social.tsx: useFlag("realtime_rls")
-
-
-def test_realtime_rls_defaults_off_with_no_stored_config(monkeypatch):
-    with patch("services.feature_flags._get_snapshot", return_value=ff.Snapshot(flags={}, targets={})):
-        assert ff.flag_variant("realtime_rls", "user_rt") == "off"
+def test_realtime_rls_flag_is_retired():
+    # Retired with the anon path (frontend Social.tsx no longer reads it). Its
+    # stored feature_flags rows, if any, are ignored: resolution and the admin
+    # listing only ever walk REGISTRY.
+    assert "realtime_rls" not in ff.REGISTRY
+    assert ff.flag_variant("realtime_rls", "user_rt") == "off"

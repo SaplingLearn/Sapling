@@ -4,12 +4,14 @@ import { fetchJSON } from "@/lib/api";
 import { statusOf } from "@/lib/errorMessage";
 
 /**
- * RLS step 2e (#115, docs/security/realtime-jwt-bridge-design.md): behind the
- * `realtime_rls` flag, the study-room Realtime subscription authenticates with
- * a backend-minted token instead of the public anon key. The token's issuer
+ * RLS step 2e (#115, docs/security/realtime-jwt-bridge-design.md): the
+ * study-room Realtime subscription authenticates with a backend-minted token,
+ * never the public anon key (room_messages has RLS on and no anon SELECT, so
+ * an anon subscription receives nothing). The token's issuer
  * (`sapling-realtime`) is trusted by exactly one policy, SELECT on
  * room_messages for members of the message's room, so Supabase Realtime only
- * delivers changes for rooms this student is in.
+ * delivers changes for rooms this student is in. Without a token the room
+ * works over REST only (history on open, own sends), never on the anon key.
  *
  * Three layers, bottom up:
  *   - `startRealtimeAuth`: one token lifecycle (fetch, apply with `setAuth`,
@@ -17,16 +19,16 @@ import { statusOf } from "@/lib/errorMessage";
  *     give up on permanent ones).
  *   - `acquireRealtimeAuth` / `useRealtimeAuth`: ONE shared, ref-counted
  *     lifecycle per page, because `setAuth` is global to the Realtime client:
- *     a room or tab switch must not revert to anon and re-mint, and only the
- *     last release reverts.
+ *     a room or tab switch must not drop the token and re-mint, and only the
+ *     last release reverts the client to its own key.
  *   - `superviseChannel`: a channel that re-joins (bounded backoff, after a
  *     token refresh) when Realtime errors, times out or closes it, which it
  *     does once the token it joined with expires.
  */
 export type RealtimeToken = { token: string; expires_at: number };
 
-/** GET /api/auth/realtime-token: 404 while the flag is off for this student,
- * 503 when the backend has no signing key. */
+/** GET /api/auth/realtime-token: 503 when the backend has no signing key
+ * (404 only from a backend older than the graduated `realtime_rls` flag). */
 export function fetchRealtimeToken(): Promise<RealtimeToken> {
   return fetchJSON<RealtimeToken>("/api/auth/realtime-token");
 }
@@ -43,8 +45,8 @@ export const MAX_RETRY_MS = 5 * 60_000;
 export const RECOVER_MIN_INTERVAL_MS = 30_000;
 /** Never schedule a refresh sooner than this (a clock-skewed `expires_at`). */
 const MIN_REFRESH_MS = 5_000;
-/** Statuses retrying cannot fix in this page session: 404 = the flag resolved
- * off server-side, 503 = the backend has no signing key. */
+/** Statuses retrying cannot fix in this page session: 503 = the backend has
+ * no signing key; 404 = a backend from before the endpoint lost its flag. */
 const PERMANENT_STATUSES = new Set([404, 503]);
 
 /** Milliseconds from `nowMs` until the token minted to expire at
@@ -59,7 +61,9 @@ export function retryDelayMs(failures: number): number {
 }
 
 /** The slice of supabase-js's RealtimeClient this needs. `setAuth()` with no
- * argument reverts to the client's own token (the anon key here). */
+ * argument reverts to the client's own token (the anon key here, which reads
+ * nothing from room_messages: the revert only stops a minted token outliving
+ * its lifecycle). */
 export type RealtimeAuthTarget = { setAuth(token?: string | null): Promise<void> };
 
 /**
@@ -96,8 +100,8 @@ export type RealtimeAuthOptions = {
    * closes channels on an expired token; refreshes keep going and the next
    * success calls `onReady` again. */
   onFail: () => void;
-  /** Permanent failure (404/503): retries stopped and the client is back on
-   * its own (anon) token for the rest of this lifecycle. */
+  /** Permanent failure (404/503): retries stopped, the minted token is
+   * dropped, and nothing should join for the rest of this lifecycle. */
   onUnavailable?: (status: number) => void;
   fetchToken?: () => Promise<RealtimeToken>;
 };
@@ -252,10 +256,10 @@ export function startRealtimeAuth(
  * - `token`: a minted token is applied. `epoch` increments every time the
  *   state ENTERS `token`, so effects keyed on it re-join after an expiry even
  *   when React only ever renders the final state.
- * - `anon`: permanent 404/503, today's anon subscription for the rest of this
- *   page session (latched until reload).
+ * - `unavailable`: permanent 404/503. No live channel for the rest of this
+ *   page session (latched until reload); the room works over REST only.
  */
-export type RealtimeAuthMode = "off" | "pending" | "token" | "anon";
+export type RealtimeAuthMode = "off" | "pending" | "token" | "unavailable";
 export type RealtimeAuthSnapshot = { mode: RealtimeAuthMode; epoch: number };
 
 /** Wait this long after the last release before stopping, so a StrictMode
@@ -270,7 +274,7 @@ type Shared = {
 
 let shared: Shared | null = null;
 let snapshot: RealtimeAuthSnapshot = { mode: "off", epoch: 0 };
-let anonForSession = false;
+let unavailableForSession = false;
 let warned = false;
 const listeners = new Set<() => void>();
 
@@ -298,7 +302,8 @@ export function recoverRealtimeAuth(): Promise<void> {
 
 /**
  * Hold the page's Realtime token lifecycle; returns the release function.
- * The first holder starts it; the last release stops it (reverting to anon).
+ * The first holder starts it; the last release stops it (reverting the client
+ * to its own key).
  */
 export function acquireRealtimeAuth(
   realtime: RealtimeAuthTarget,
@@ -307,8 +312,8 @@ export function acquireRealtimeAuth(
   if (!shared) {
     const s: Shared = { refs: 0, lifecycle: null };
     shared = s;
-    if (anonForSession) {
-      setMode("anon");
+    if (unavailableForSession) {
+      setMode("unavailable");
     } else {
       setMode("pending");
       s.lifecycle = startRealtimeAuth(realtime, {
@@ -316,14 +321,14 @@ export function acquireRealtimeAuth(
         onReady: () => { if (shared === s) setMode("token"); },
         onFail: () => { if (shared === s) setMode("pending"); },
         onUnavailable: (status) => {
-          anonForSession = true;
+          unavailableForSession = true;
           if (!warned) {
             warned = true;
             console.warn(
-              `[realtime] minted token unavailable (HTTP ${status}); using the anon key for this session`,
+              `[realtime] minted token unavailable (HTTP ${status}); live chat is off for this session, messages load over REST`,
             );
           }
-          if (shared === s) setMode("anon");
+          if (shared === s) setMode("unavailable");
         },
       });
     }
@@ -352,35 +357,32 @@ export function acquireRealtimeAuth(
   };
 }
 
-/** Test-only: forget the shared lifecycle, the anon latch and the log-once. */
+/** Test-only: forget the shared lifecycle, the unavailable latch and the log-once. */
 export function resetRealtimeAuthForTests(): void {
   if (shared?.stopTimer !== undefined) clearTimeout(shared.stopTimer);
   shared?.lifecycle?.stop();
   shared = null;
-  anonForSession = false;
+  unavailableForSession = false;
   warned = false;
   snapshot = { mode: "off", epoch: 0 };
   listeners.clear();
 }
 
-const OFF: RealtimeAuthSnapshot = { mode: "off", epoch: 0 };
-
 /**
- * Hold the shared lifecycle while `enabled`. Disabled, it never fetches a
- * token or touches `setAuth`, and reports `off`. `getRealtime` must be stable.
+ * Hold the shared lifecycle while mounted. `getRealtime` must be stable; with
+ * no Realtime client (no Supabase env) nothing is fetched and the mode stays
+ * `off`.
  */
 export function useRealtimeAuth(
-  enabled: boolean,
   getRealtime: () => RealtimeAuthTarget | null | undefined,
 ): RealtimeAuthSnapshot {
   const snap = useSyncExternalStore(subscribeRealtimeAuth, getRealtimeAuthSnapshot, getRealtimeAuthSnapshot);
   useEffect(() => {
-    if (!enabled) return;
     const realtime = getRealtime();
     if (!realtime) return;
     return acquireRealtimeAuth(realtime);
-  }, [enabled, getRealtime]);
-  return enabled ? snap : OFF;
+  }, [getRealtime]);
+  return snap;
 }
 
 // ---------------------------------------------------------------------------

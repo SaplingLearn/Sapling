@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 /**
  * RLS step 2e (#115): the Social screen, not the per-room RoomChat, owns the
- * Realtime token lifecycle.
- *   - flags still loading: the lifecycle is not held (no token request, and
- *     the channels wait instead of joining with the anon key);
- *   - flag off: never held;
- *   - flag on: held ONCE for the screen; switching rooms or tabs neither
- *     releases it (a revert to anon) nor re-acquires it (a re-mint).
+ * Realtime token lifecycle: held ONCE for the screen, with no feature flag in
+ * the way (realtime_rls graduated); switching rooms or tabs neither releases
+ * it (dropping the token) nor re-acquires it (a re-mint). Which modes let
+ * the channels join is planRoomRealtime's (Social.realtime.test.ts); the
+ * channel wiring itself is covered by frontend/e2e/study-room.spec.ts.
  */
 import React from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
@@ -27,26 +26,18 @@ vi.mock("../ToastProvider", () => ({
 vi.mock("../Icon", () => ({ Icon: () => <span /> }));
 vi.mock("../Avatar", () => ({ Avatar: () => <span /> }));
 
-const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
-vi.mock("@/context/FlagsContext", () => ({
-  useFlagMap: () => flagState,
-  useFlag: (key: string) => flagState.flags[key] ?? "off",
-}));
-
-const lifecycle = vi.hoisted(() => ({ acquires: 0, releases: 0, enabledCalls: [] as boolean[] }));
+const lifecycle = vi.hoisted(() => ({ acquires: 0, releases: 0, mode: "token" as string }));
 vi.mock("@/lib/realtimeAuth", async () => {
   const { useEffect } = await import("react");
   return {
     recoverRealtimeAuth: vi.fn(async () => {}),
     superviseChannel: vi.fn(() => () => {}),
-    useRealtimeAuth: (enabled: boolean) => {
-      lifecycle.enabledCalls.push(enabled);
+    useRealtimeAuth: () => {
       useEffect(() => {
-        if (!enabled) return;
         lifecycle.acquires += 1;
         return () => { lifecycle.releases += 1; };
-      }, [enabled]);
-      return { mode: enabled ? "token" : "off", epoch: enabled ? 1 : 0 };
+      }, []);
+      return { mode: lifecycle.mode, epoch: lifecycle.mode === "token" ? 1 : 0 };
     },
   };
 });
@@ -88,11 +79,9 @@ const room = (id: string, name: string) => ({
 
 beforeEach(() => {
   Element.prototype.scrollTo = () => {};
-  flagState.flags = {};
-  flagState.ready = true;
   lifecycle.acquires = 0;
   lifecycle.releases = 0;
-  lifecycle.enabledCalls = [];
+  lifecycle.mode = "token";
   m.listPublicRooms.mockResolvedValue({ rooms: [] } as never);
   m.fetchFriends.mockResolvedValue({ friends: [] });
   m.fetchFriendRequests.mockResolvedValue({ incoming: [], outgoing: [] });
@@ -108,8 +97,7 @@ afterEach(() => {
 });
 
 describe("Social realtime token lifecycle (RLS step 2e)", () => {
-  it("flag on: held once for the screen across room and tab switches", async () => {
-    flagState.flags = { realtime_rls: "on" };
+  it("held once for the screen across room and tab switches", async () => {
     render(<Social />);
     await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
     expect(lifecycle.acquires).toBe(1);
@@ -124,19 +112,14 @@ describe("Social realtime token lifecycle (RLS step 2e)", () => {
     expect(lifecycle.releases).toBe(0);
   });
 
-  it("flags loading: the lifecycle is not held until they are ready", async () => {
-    flagState.flags = { realtime_rls: "on" };
-    flagState.ready = false;
-    render(<Social />);
-    await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
-    expect(lifecycle.acquires).toBe(0);
-    expect(lifecycle.enabledCalls.every((e) => e === false)).toBe(true);
-  });
-
-  it("flag off: never held", async () => {
-    render(<Social />);
-    await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
-    expect(lifecycle.acquires).toBe(0);
-    expect(lifecycle.enabledCalls.every((e) => e === false)).toBe(true);
-  });
+  it.each(["pending", "unavailable"])(
+    "%s: still held once, and the room still loads over REST",
+    async (mode) => {
+      lifecycle.mode = mode;
+      render(<Social />);
+      await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
+      await waitFor(() => expect(m.getRoomMessages).toHaveBeenCalled());
+      expect(lifecycle.acquires).toBe(1);
+    },
+  );
 });

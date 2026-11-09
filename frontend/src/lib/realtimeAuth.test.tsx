@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 /**
- * RLS step 2e (#115): the Realtime token lifecycle behind `realtime_rls`.
+ * RLS step 2e (#115): the study-room Realtime token lifecycle (no flag since
+ * `realtime_rls` graduated; the fake client's own key is labelled "anon").
  *   - startRealtimeAuth: applied before anything subscribes, refreshed before
  *     it expires, not-authed reported AT expiry whatever the fetches do,
- *     transient failures retried with capped backoff, 404/503 permanent (back
- *     to anon, no more fetches), refreshed on tab wake, reverted on stop, and
+ *     transient failures retried with capped backoff, 404/503 permanent (the
+ *     minted token dropped, no more fetches), refreshed on tab wake, reverted on stop, and
  *     an old lifecycle's revert never lands after a newer one's token.
  *   - acquireRealtimeAuth / useRealtimeAuth: one shared, ref-counted lifecycle
  *     (room/tab switches and StrictMode reuse it); `epoch` bumps on every
- *     (re)entry into `token`; flag off never requests a token.
+ *     (re)entry into `token`; 404/503 latches `unavailable` (REST only) and
+ *     logs once; no Realtime client never requests a token.
  *   - superviseChannel: a channel that Realtime errors/closes re-joins after
  *     a token refresh, with bounded backoff.
  */
@@ -225,7 +227,7 @@ describe("startRealtimeAuth", () => {
     h.life.stop();
   });
 
-  it.each([404, 503])("HTTP %i is permanent: back to anon, no more fetches", async (status) => {
+  it.each([404, 503])("HTTP %i is permanent: minted token dropped, no more fetches", async (status) => {
     const h = harness(async () => { throw httpError(status); });
     await flush();
     expect(h.onUnavailable).toHaveBeenCalledWith(status);
@@ -241,7 +243,7 @@ describe("startRealtimeAuth", () => {
     h.life.stop();
   });
 
-  it("a 404 at refresh drops an applied token for the anon key", async () => {
+  it("a 404 at refresh drops an applied token", async () => {
     let calls = 0;
     const h = harness(async () => {
       calls += 1;
@@ -441,20 +443,22 @@ describe("acquireRealtimeAuth (shared, ref-counted)", () => {
     release();
   });
 
-  it("404/503 latches anon for the session and logs once", async () => {
+  it("404/503 latches unavailable for the session and logs once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const realtime = fakeRealtime();
     const fetchToken = vi.fn(async () => { throw httpError(503); });
     const release = acquireRealtimeAuth(realtime, { fetchToken });
     await flush();
-    expect(getRealtimeAuthSnapshot().mode).toBe("anon");
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
     release();
     await vi.advanceTimersByTimeAsync(10);
     const again = acquireRealtimeAuth(realtime, { fetchToken });
-    expect(getRealtimeAuthSnapshot().mode).toBe("anon");
+    expect(getRealtimeAuthSnapshot().mode).toBe("unavailable");
     await vi.advanceTimersByTimeAsync(HOUR_MS);
     expect(fetchToken).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("HTTP 503");
+    expect(String(warn.mock.calls[0][0])).toContain("REST");
     again();
   });
 
@@ -475,23 +479,24 @@ describe("acquireRealtimeAuth (shared, ref-counted)", () => {
 describe("useRealtimeAuth", () => {
   const realtime = fakeRealtime();
   const getRealtime = () => realtime;
+  const noRealtime = () => null;
 
   beforeEach(() => {
     realtime.setAuth.mockClear();
     realtime.current = "anon";
   });
 
-  it("flag off: never requests a token or touches setAuth", async () => {
-    const { result } = renderHook(() => useRealtimeAuth(false, getRealtime));
+  it("no Realtime client: never requests a token or touches setAuth", async () => {
+    const { result } = renderHook(() => useRealtimeAuth(noRealtime));
     await act(async () => { await vi.advanceTimersByTimeAsync(HOUR_MS); });
     expect(fetchJSON).not.toHaveBeenCalled();
     expect(realtime.setAuth).not.toHaveBeenCalled();
     expect(result.current.mode).toBe("off");
   });
 
-  it("flag on: fetches /api/auth/realtime-token once (StrictMode too) and reports token", async () => {
+  it("fetches /api/auth/realtime-token once (StrictMode too) and reports token", async () => {
     vi.mocked(fetchJSON).mockImplementation(async () => token(1) as never);
-    const { result, unmount } = renderHook(() => useRealtimeAuth(true, getRealtime), {
+    const { result, unmount } = renderHook(() => useRealtimeAuth(getRealtime), {
       wrapper: ({ children }) => <React.StrictMode>{children}</React.StrictMode>,
     });
     await act(async () => { await flush(); });

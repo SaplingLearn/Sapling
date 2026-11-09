@@ -121,7 +121,6 @@ const FLAG_KILL_SWITCHES = [
   "llm_fallback",
   "jobs_queue",
   "db_user_scope",
-  "realtime_rls",
   "llm_budget",
   "llm_outage_drill",
   "async_db_client",
