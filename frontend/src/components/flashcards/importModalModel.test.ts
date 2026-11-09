@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
 import {
-  buildFinalCards, commitBlocker, commitLabel, courseOptions, importedMessage,
+  buildFinalCards, commitBlocker, commitLabel, importedMessage,
   initialCourseId, isCommitDisabled, tabButtonStyle, validCardsOf,
 } from "./importModalModel";
 
@@ -76,15 +76,6 @@ describe("labels", () => {
   it("importedMessage adds the skip note only when something was skipped", () => {
     expect(importedMessage({ inserted: 1, skipped_duplicates: 0 })).toBe("Imported 1 card.");
     expect(importedMessage({ inserted: 0, skipped_duplicates: 2 })).toBe("Imported 0 cards. 2 skipped (duplicates).");
-  });
-});
-
-describe("courseOptions", () => {
-  it("labels by code with the name as description, falling back to the name", () => {
-    expect(courseOptions([course("c1", "CS101", "Intro"), course("c2", "", "Bio")])).toEqual([
-      { value: "c1", label: "CS101", description: "Intro" },
-      { value: "c2", label: "Bio", description: undefined },
-    ]);
   });
 });
 

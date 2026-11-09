@@ -43,6 +43,7 @@ import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessag
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
+import { courseSelectOptions } from "@/lib/courseSelectOptions";
 import {
   getCourses,
   getStudyGuideExams,
@@ -480,11 +481,7 @@ function GuidePickers({
           value={courseId}
           onChange={onSelectCourse}
           placeholder="Pick a course…"
-          options={courses.map(c => ({
-            value: c.course_id,
-            label: c.course_code || c.course_name,
-            description: c.course_code ? c.course_name : undefined,
-          }))}
+          options={courseSelectOptions(courses)}
         />
       </div>
       <div style={{ flex: "1 1 240px", minWidth: 220 }}>

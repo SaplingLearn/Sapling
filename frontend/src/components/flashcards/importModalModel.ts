@@ -47,14 +47,6 @@ export function importedMessage(res: { inserted: number; skipped_duplicates: num
   return `Imported ${res.inserted} ${cardsNoun(res.inserted)}.${skipNote}`;
 }
 
-export function courseOptions(courses: EnrolledCourse[]) {
-  return courses.map(c => ({
-    value: c.course_id,
-    label: c.course_code || c.course_name,
-    description: c.course_code ? c.course_name : undefined,
-  }));
-}
-
 export function tabButtonStyle(active: boolean): React.CSSProperties {
   return {
     padding: "8px 14px", fontSize: 13, fontWeight: active ? 600 : 500,

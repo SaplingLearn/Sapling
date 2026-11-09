@@ -5,6 +5,7 @@ import { CustomSelect } from "../CustomSelect";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCommit, type EnrolledCourse, type ImportCard } from "@/lib/api";
+import { courseSelectOptions } from "@/lib/courseSelectOptions";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import { ParsedCardsTable } from "./ParsedCardsTable";
 import { PasteTab } from "./tabs/PasteTab";
@@ -13,7 +14,7 @@ import { UrlTab } from "./tabs/UrlTab";
 import { AiTab } from "./tabs/AiTab";
 import { PhotoTab } from "./tabs/PhotoTab";
 import {
-  buildFinalCards, commitBlocker, commitLabel, courseOptions, importedMessage,
+  buildFinalCards, commitBlocker, commitLabel, importedMessage,
   initialCourseId, isCommitDisabled, tabButtonStyle, validCardsOf,
 } from "./importModalModel";
 
@@ -154,7 +155,7 @@ export function FlashcardImportModal({
               value={courseId}
               onChange={setCourseId}
               placeholder="Pick a course…"
-              options={courseOptions(courses)}
+              options={courseSelectOptions(courses)}
             />
           </div>
           <div style={{ minWidth: 220, flex: 1 }}>
