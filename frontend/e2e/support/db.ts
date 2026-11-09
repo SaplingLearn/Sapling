@@ -24,11 +24,7 @@ import { Client } from "pg";
 
 const execFileAsync = promisify(execFile);
 
-/** `make e2e-up`'s local Postgres (docs/local-supabase.md). */
-const DEFAULT_DB_URL =
-  "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
-
-const DB_URL = process.env.E2E_DB_URL?.trim() || DEFAULT_DB_URL;
+import { DB_URL, SUPABASE_URL } from "./stack";
 
 // Exact-match loopback hosts — deliberately stricter than a substring check,
 // so `postgresql://…@127.0.0.1.evil.com/…` is rejected (same rationale as
@@ -47,7 +43,7 @@ function requireLocalDbUrl(url: string): void {
       "REFUSING to open the E2E Postgres connection: DB URL host is not local " +
         `(got ${JSON.stringify(url)}). The truncate isolation bypasses PostgREST ` +
         "and would wipe whatever this points at. Point E2E_DB_URL at the local " +
-        `stack (${DEFAULT_DB_URL}) or unset it.`,
+        "E2E stack (an E2E slot's Postgres, 127.0.0.1) or unset it.",
     );
   }
 }
@@ -127,6 +123,9 @@ export async function reseedBaseline(): Promise<void> {
     await execFileAsync(python, ["-m", "db.seed_local_rich"], {
       cwd: backendDir,
       timeout: 120_000,
+      // The stack's DB, explicitly: left to backend/.env, the seeder would
+      // write to the dev database whenever the harness targets an E2E slot.
+      env: { ...process.env, SUPABASE_DB_URL: DB_URL, SUPABASE_URL },
     });
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string };

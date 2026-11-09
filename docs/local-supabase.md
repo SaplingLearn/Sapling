@@ -328,11 +328,48 @@ Notes:
 Everything above in one command. From the repo root:
 
 ```bash
-make e2e-up      # supabase start → migrate → buckets → NOTIFY pgrst →
-                 # seed (demo + rich) → uvicorn on :5000 →
-                 # `npm run build:test && npm run start:test` on :3000
-make e2e-down    # stop uvicorn + next (tracked PIDs), then `supabase stop`
+make e2e         # a whole cycle in a FREE slot: up → Playwright + oracles → down
+scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/quiz*.spec.ts'
+make e2e-up      # just boot slot E2E_SLOT (default 1): supabase start → migrate →
+                 # buckets → NOTIFY pgrst → seed (demo + rich) → uvicorn →
+                 # `npm run build:test && npm run start:test`
+make e2e-down    # stop uvicorn + next (tracked PIDs), then the slot's Supabase
 ```
+
+### E2E slots — never the dev app's ports
+
+The ports above (:3000 / :5000 / :54321) are the **human dev stack**, and the
+only place Google sign-in can land (`GOOGLE_AUTH_REDIRECT_URI` is
+`http://localhost:5000/...`). E2E never uses them locally. Each run boots in a
+numbered **slot** (`scripts/lib/e2e-slot.sh`):
+
+| slot | frontend | backend | Supabase project | API / Postgres |
+|---|---|---|---|---|
+| 1 | :3101 | :5101 | `sapling-e2e-1` | :54421 / :54422 |
+| 2 | :3102 | :5102 | `sapling-e2e-2` | :54521 / :54522 |
+| 3 | :3103 | :5103 | `sapling-e2e-3` | :54621 / :54622 |
+| 0 (CI only) | :3000 | :5000 | `sapling` | :54321 / :54322 |
+
+- A slot is its own Supabase project (a generated copy of `supabase/config.toml`
+  under `.e2e/supabase-slot-N/`, every port shifted by +100·N) with its own
+  containers and a **throwaway database**: `e2e-down` drops it, so every run
+  migrates and seeds from empty (`E2E_KEEP_DB=1` keeps it for a quick re-run).
+  It skips the containers tests never use (Studio, mail, logging, edge
+  functions, pooler; override with `E2E_SUPABASE_EXCLUDE`).
+- `scripts/e2e-cycle.sh` claims the first free slot's lock
+  (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`) for the whole cycle, so up to
+  three runs go side by side; when all are busy it waits. `--slot N` asks for one.
+- After a bare `make e2e-up`, `.e2e/stack.json` tells the Playwright harness
+  which slot to hit, and `source .e2e/env.sh` sets up a shell for the oracles.
+  A bare `e2e-up` is refused on a slot a cycle holds.
+- Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on main and on every PR.
+- **One cycle per checkout.** `.e2e/` (PIDs, logs, manifest) and
+  `frontend/.next` belong to the checkout, so a second cycle in the same one is
+  refused (`.e2e/cycle.lock`). Parallel runs come from separate worktrees.
+- **Looking at a branch by hand:** `E2E_FRONTEND=dev scripts/e2e-cycle.sh --slot 3 -- sleep infinity`
+  boots it with `next dev` (animations on — the test-profile build turns them
+  off) on :3103; sign in through `POST /api/auth/test-login` (see above) with a
+  seeded `rich-*` user. Stop the command to tear it down.
 
 `e2e-up` health-checks all four services (Postgres, PostgREST, backend
 `/api/health`, frontend `/`) and fails loudly if one doesn't come up — with a

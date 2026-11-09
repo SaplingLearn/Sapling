@@ -28,6 +28,7 @@ protects.
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -64,7 +65,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--user", default="rich-user-active", help="user id to check")
     parser.add_argument(
-        "--base-url", default="http://localhost:5000", help="local backend base URL"
+        "--base-url",
+        # The E2E slot's backend (scripts/lib/e2e-slot.sh exports it); 5000
+        # is the classic CI stack.
+        default=os.environ.get("E2E_BACKEND_URL", "").strip() or "http://localhost:5000",
+        help="local backend base URL (default: $E2E_BACKEND_URL)",
     )
     parser.add_argument("--log", default=str(_DEFAULT_LOG), help="backend log path for logscan")
     return parser.parse_args(argv)

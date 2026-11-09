@@ -7,9 +7,17 @@
 #
 # Sequence: supabase start → db.migrate → ensure Storage buckets →
 # NOTIFY pgrst 'reload schema' → PostgREST poll → seed (demo + rich) →
-# uvicorn backend on :5000 → test-profile Next production build
-# (`npm run build:test && npm run start:test`, #380) on :3000 →
+# uvicorn backend → test-profile Next production build
+# (`npm run build:test && npm run start:test`, #380) →
 # health-check all four services (Postgres, PostgREST, backend, frontend).
+#
+# The stack boots in an E2E SLOT (scripts/lib/e2e-slot.sh): E2E_SLOT=N (1..3,
+# default: the slot this checkout last used, else 1) gets frontend :310N,
+# backend :510N and its own Supabase project on ports shifted by +100·N, with a
+# throwaway database. Slots never touch :3000/:5000/:54321 — those are the dev
+# app's (Google sign-in can only land on :5000). Slot 0 is that classic stack,
+# for CI only. scripts/e2e-cycle.sh claims a free slot and runs a whole
+# up → test → down cycle under its lock; prefer it to a bare e2e-up.
 #
 # Idempotent — re-running restarts the app servers and re-applies the
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.
@@ -30,18 +38,15 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# Overridable to match supabase/config.toml when a machine cannot use the
-# default ports. Windows reserves whole bands of the ephemeral range for
-# WinNAT/Hyper-V — on this project's dev box TCP 54288-54788 is excluded, which
-# swallows the API (54321), DB (54322) and Studio (54323) ports, and binding
-# them fails with "An attempt was made to access a socket in a way forbidden by
-# its access permissions" even though every container is healthy. Shifting
-# config.toml's ports and exporting these two is the no-admin way out.
-# Defaults are the documented contract, so Linux and CI are unaffected.
-SUPABASE_DB_PORT="${SUPABASE_DB_PORT:-54322}"
-SUPABASE_API_PORT="${SUPABASE_API_PORT:-54321}"
-LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:$SUPABASE_DB_PORT/postgres"
-DB_CONTAINER="supabase_db_sapling"
+# The slot decides every port, the Supabase project, DB_CONTAINER and
+# LOCAL_DB_URL (scripts/lib/e2e-slot.sh). On slot 0 (CI) SUPABASE_DB_PORT /
+# SUPABASE_API_PORT stay overridable to match a shifted config.toml: Windows
+# reserves whole bands of the ephemeral range for WinNAT/Hyper-V — on this
+# project's dev box TCP 54288-54788 is excluded, which swallows the classic
+# API (54321), DB (54322) and Studio (54323) ports.
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
+resolve_e2e_slot "$REPO_ROOT" || exit 1
+mapfile -t SUPABASE_ARGS < <(e2e_supabase_args)
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10),
 # plus $CONTAINER_CMD (podman/docker) detection, $VENV_PY resolution and
@@ -68,14 +73,6 @@ else
 fi
 
 E2E_DIR="$REPO_ROOT/.e2e"
-BACKEND_PORT="$(grep -E '^PORT=' backend/.env 2>/dev/null | head -n1 | cut -d= -f2-)"
-BACKEND_PORT="${BACKEND_PORT:-5000}"
-# Overridable so a machine whose :3000 is already taken (another worktree's
-# `next dev`, say) can still boot the lane without stopping that server. The
-# Playwright harness follows via E2E_FRONTEND_URL (frontend/e2e/support/stack.ts);
-# nothing else hardcodes the frontend's own port — build:test only bakes
-# BACKEND_URL, and the browser reaches the API same-origin through Next.
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 # Poll a URL until it returns HTTP 200 (same curl style as local-common.sh),
 # failing the boot if it never comes up — with a log tail when the caller has
@@ -179,10 +176,22 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"; exit 1; }
 [ -d frontend/node_modules ] \
   || { echo "✗ frontend/node_modules not found. Install first: cd frontend && npm ci"; exit 1; }
-# build:test/start:test hardcode BACKEND_URL=http://localhost:5000 (#380), so a
-# nonstandard backend port would silently break the Next → FastAPI proxy.
-[ "$BACKEND_PORT" = "5000" ] \
-  || { echo "✗ backend/.env sets PORT=$BACKEND_PORT, but the test-profile frontend proxies to :5000. Unset PORT (or set it to 5000) for E2E."; exit 1; }
+# A bare e2e-up in a checkout whose cycle is running would stop that cycle's
+# servers (.e2e/*.pid) and rebuild its frontend under it. The cycle's own
+# e2e-up passes E2E_SLOT_LOCKED=1.
+if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ -f "$REPO_ROOT/.e2e/cycle.lock" ] \
+  && ! ( flock -n 8 ) 8>"$REPO_ROOT/.e2e/cycle.lock"; then
+  echo "✗ an E2E cycle is running in this checkout — wait for it, or boot from another worktree."
+  exit 1
+fi
+# A slot's lock means a cycle (scripts/e2e-cycle.sh) is using it. That cycle
+# exports E2E_SLOT_LOCKED=1 for its own e2e-up; anyone else is refused rather
+# than booting over a running suite.
+if [ "$E2E_SLOT" != "0" ] && [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && ! e2e_slot_is_free "$E2E_SLOT"; then
+  echo "✗ E2E slot $E2E_SLOT is in use by a running cycle ($(e2e_slot_lock_file "$E2E_SLOT"))."
+  echo "  Pick another (E2E_SLOT=1..$E2E_SLOTS_MAX) or run scripts/e2e-cycle.sh, which takes a free one."
+  exit 1
+fi
 # Same class of baked-in constant: the frontend's SESSION_SECRET lives in
 # package.json's start:test, the backend's in backend/.env — verify they agree
 # up front, because no health check would ever notice the drift (#425).
@@ -211,6 +220,8 @@ if [ "$MODEL_MODE" = "function" ]; then
 fi
 
 mkdir -p "$E2E_DIR"
+write_e2e_slot_manifest "$E2E_DIR"
+echo "▶ E2E slot $E2E_SLOT: frontend :$FRONTEND_PORT, backend :$BACKEND_PORT, Supabase :$SUPABASE_API_PORT (db :$SUPABASE_DB_PORT, project $SUPABASE_PROJECT_ID)"
 
 # Stop any servers a previous e2e-up left running (keeps re-runs clean).
 "$REPO_ROOT/scripts/e2e-down.sh" --apps-only
@@ -228,13 +239,16 @@ fi
 
 # ── Database stack ───────────────────────────────────────────────────────────
 echo "▶ Starting local Supabase (no-op if already running)…"
-if ! supabase start; then
+write_e2e_slot_supabase_config "$REPO_ROOT"
+EXCLUDE_ARGS=()
+[ -n "$E2E_SUPABASE_EXCLUDE" ] && EXCLUDE_ARGS=(-x "$E2E_SUPABASE_EXCLUDE")
+if ! supabase start "${SUPABASE_ARGS[@]}" "${EXCLUDE_ARGS[@]}"; then
   # A stale project (containers left 'exited', e.g. after a reboot) makes the
   # CLI claim it's "already running" and then fail — stop and retry once.
   # `supabase stop` keeps the DB volume, so no data is lost.
   echo "  ⚠ supabase start failed — retrying once after supabase stop"
-  supabase stop >/dev/null 2>&1 || true
-  supabase start || { echo "✗ supabase start failed"; exit 1; }
+  supabase stop "${SUPABASE_ARGS[@]}" >/dev/null 2>&1 || true
+  supabase start "${SUPABASE_ARGS[@]}" "${EXCLUDE_ARGS[@]}" || { echo "✗ supabase start failed"; exit 1; }
 fi
 
 # Seed the rich dataset by default (#363): E2E harnesses sign in via
@@ -314,6 +328,17 @@ fi
 # ── Frontend (test-profile production build, #380) ───────────────────────────
 # `start:test` prints a "next start does not work with output: standalone"
 # warning — expected and harmless, see docs/local-supabase.md.
+if [ "${E2E_FRONTEND:-test}" = "dev" ]; then
+  # For a HUMAN looking at a branch in a slot: `next dev` (hot reload, real
+  # motion — the test-profile build sets NEXT_PUBLIC_TEST_MODE, which turns
+  # animations off), proxying to this slot's backend. Not for test runs.
+  echo "▶ Starting frontend (next dev on :$FRONTEND_PORT, E2E_FRONTEND=dev, log: .e2e/frontend.log)…"
+  (
+    cd frontend || exit 1
+    BACKEND_URL="$E2E_BACKEND_URL" $DETACH npx next dev -p "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
+    echo $! >"$E2E_DIR/frontend.pid"
+  ) || { echo "✗ could not start frontend"; exit 1; }
+else
 echo "▶ Building test-profile frontend (npm run build:test, log: .e2e/frontend-build.log)…"
 ( cd frontend && npm run build:test ) >"$E2E_DIR/frontend-build.log" 2>&1 \
   || { echo "✗ frontend build failed"; tail -n 20 "$E2E_DIR/frontend-build.log" | sed 's/^/    /'; exit 1; }
@@ -325,6 +350,7 @@ echo "▶ Starting frontend (next start on :$FRONTEND_PORT, log: .e2e/frontend.l
   $DETACH npm run start:test -- --port "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
   echo $! >"$E2E_DIR/frontend.pid"
 ) || { echo "✗ could not start frontend"; exit 1; }
+fi
 
 # ── Health-check all four services ───────────────────────────────────────────
 echo "▶ Health-checking all services…"
@@ -340,8 +366,8 @@ wait_for_http "Supabase REST / PostgREST (:$SUPABASE_API_PORT)" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
 wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
   "http://127.0.0.1:$BACKEND_PORT/api/health" 15 "$E2E_DIR/backend.log"
-wait_for_http "frontend (next start :$FRONTEND_PORT)" \
-  "http://127.0.0.1:$FRONTEND_PORT/" 60 "$E2E_DIR/frontend.log" -L
+wait_for_http "frontend (:$FRONTEND_PORT)" \
+  "http://127.0.0.1:$FRONTEND_PORT/" 120 "$E2E_DIR/frontend.log" -L
 
 # Without setsid, $! is the `npm` wrapper, and npm EXITS once next-server is
 # spawned. e2e-down then finds a dead PID, skips (kill -0 fails, so even the
@@ -362,10 +388,11 @@ fi
 
 cat <<DONE
 
-✅ E2E stack is up.
+✅ E2E stack is up (slot $E2E_SLOT).
      frontend  http://localhost:$FRONTEND_PORT   (test-profile production build)
      backend   http://localhost:$BACKEND_PORT   (health: /api/health)
-     Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (Studio: see supabase/config.toml [studio])
+     Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (project $SUPABASE_PROJECT_ID)
    PIDs + logs: .e2e/          Tear down: make e2e-down
+   Harnesses read .e2e/stack.json; a shell can \`source .e2e/env.sh\`.
    Harness sign-in: POST /api/auth/test-login with a seeded rich-* user (#381).
 DONE

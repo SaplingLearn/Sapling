@@ -5,8 +5,11 @@ name: e2e (browser lane)
 # test-profile Next build) — then runs the Playwright suite and surfaces
 # per-run retry counts (#390) so a retried-pass is never silently green.
 #
-# Trigger is main-only per epic #402 open decision 3 (promote to a PR gate
-# once the #388 stability bar has held for a while). Postgres version comes
+# Runs on every pull request as well as on main: each PR gets its own runner,
+# so the browser lane no longer has to queue for the one local stack (local
+# runs now take numbered E2E slots — scripts/lib/e2e-slot.sh — and CI is the
+# classic slot 0). A newer push to the same PR cancels the older run; main
+# runs are never cancelled. Docs-only changes skip it. Postgres version comes
 # from supabase/config.toml (PG15, #441) — matching staging/prod, so this
 # deterministic lane tests what production actually runs; local dev and CI
 # still stay consistent with each other (and with integration.yml) since both
@@ -16,10 +19,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # ubuntu-latest ships Podman ALONGSIDE Docker, so e2e-up's podman-first
@@ -29,6 +36,9 @@ env:
   # Docker daemon socket.
   CONTAINER_CMD: docker
   DOCKER_HOST: unix:///var/run/docker.sock
+  # The classic :3000/:5000/:54321 stack (scripts/lib/e2e-slot.sh). Allowed
+  # only where CI=true — locally those ports are the dev app's.
+  E2E_SLOT: "0"
 
 jobs:
   e2e:

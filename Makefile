@@ -2,7 +2,10 @@
 #
 # E2E stack (#384): one command to boot / tear down the whole local test stack —
 # Supabase (rootless Podman or Docker) → migrations → seed → uvicorn backend →
-# test-profile Next production build — health-checked end to end.
+# test-profile Next production build — health-checked end to end. Every run
+# boots in a numbered E2E SLOT with its own ports and Supabase project
+# (scripts/lib/e2e-slot.sh), never on the dev app's :3000/:5000, so runs can go
+# side by side. `make e2e` claims a free slot and does up → suite → down.
 # See docs/local-supabase.md ("One-command E2E stack").
 #
 # E2E exploration (#399): boot that stack, hand a Playwright-MCP-armed Claude
@@ -16,7 +19,12 @@
 # environment into the gitignored backups/. `make promote` takes the same dump
 # of production automatically before migrating. See backend/promotion/README.md.
 
-.PHONY: e2e-up e2e-down explore explore-down gallery-shots promote backup-db
+.PHONY: e2e e2e-up e2e-down explore explore-down gallery-shots promote backup-db
+
+# A whole cycle in a free slot: up → Playwright suite + oracles → down.
+# A subset: scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/quiz*.spec.ts'
+e2e:
+	scripts/e2e-cycle.sh
 
 e2e-up:
 	scripts/e2e-up.sh
@@ -24,7 +32,7 @@ e2e-up:
 e2e-down:
 	scripts/e2e-down.sh
 
-# Capture the /gallery product screenshots (local only; takes the stack lock).
+# Capture the /gallery product screenshots (local only; runs in a free E2E slot).
 gallery-shots:
 	scripts/gallery-shots.sh
 

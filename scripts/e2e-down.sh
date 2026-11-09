@@ -2,7 +2,7 @@
 #
 # Tear down the LOCAL E2E stack booted by scripts/e2e-up.sh (#384).
 #
-#   make e2e-down                     # stop uvicorn + next, then `supabase stop`
+#   make e2e-down                     # stop uvicorn + next, then the slot's Supabase
 #   scripts/e2e-down.sh --apps-only   # stop only the tracked app servers, keep
 #                                     # Supabase up (e2e-up.sh uses this so
 #                                     # re-runs start from clean processes)
@@ -22,6 +22,12 @@ cd "$REPO_ROOT" || exit 1
 # why exporting the Linux socket path unconditionally broke Windows.
 source "$REPO_ROOT/scripts/lib/local-common.sh"
 set_docker_host_for_podman
+
+# Which stack: E2E_SLOT if set, else the slot this checkout's e2e-up recorded
+# in .e2e/slot (scripts/lib/e2e-slot.sh).
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
+resolve_e2e_slot "$REPO_ROOT" || exit 1
+mapfile -t SUPABASE_ARGS < <(e2e_supabase_args)
 
 E2E_DIR="$REPO_ROOT/.e2e"
 APPS_ONLY=0
@@ -64,7 +70,18 @@ stop_tracked "job worker (opt-in)" "$E2E_DIR/worker.pid"
 
 [ "$APPS_ONLY" = "1" ] && exit 0
 
-echo "▶ Stopping local Supabase…"
-supabase stop || { echo "✗ supabase stop failed"; exit 1; }
+# A slot's database is throwaway: dropping its volume means the next run on
+# the slot migrates and seeds from empty, so no run inherits another branch's
+# tables or another checkout's ENCRYPTION_KEY canary. E2E_KEEP_DB=1 keeps it
+# (a faster re-run of the same branch). Slot 0 (CI) keeps the old behaviour.
+STOP_ARGS=()
+if [ "$E2E_SLOT" != "0" ] && [ "${E2E_KEEP_DB:-0}" != "1" ]; then
+  STOP_ARGS=(--no-backup)
+fi
+echo "▶ Stopping Supabase (slot $E2E_SLOT, project $SUPABASE_PROJECT_ID)…"
+supabase stop "${SUPABASE_ARGS[@]}" "${STOP_ARGS[@]}" || { echo "✗ supabase stop failed"; exit 1; }
 
-echo "✅ E2E stack is down. Logs from the last run are kept in .e2e/."
+# The manifest pointed the harnesses at this stack; it is gone now.
+rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh" "$E2E_DIR/slot"
+
+echo "✅ E2E stack (slot $E2E_SLOT) is down. Logs from the last run are kept in .e2e/."
