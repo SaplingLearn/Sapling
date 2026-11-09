@@ -43,6 +43,7 @@ import { getTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi"
 import { studyGuideHref, flashcardsHref } from "@/lib/toolHrefs";
 import { StudyHubSkeleton } from "../Skeleton";
 import s from "./StudyHub.module.css";
+import { StudyModal } from "./StudyModal";
 import {
   conceptsForCourse,
   categoriesFromChecklist,
@@ -1059,9 +1060,7 @@ export function StudyHub({
 
       {/* ── exams and deadlines modal ── */}
       {drafts && (
-        <>
-          <div onClick={() => setDrafts(null)} style={{ position: "absolute", inset: 0, background: "rgba(25,37,11,0.32)", zIndex: 50 }} />
-          <div role="dialog" aria-label="Exams and deadlines" style={{ position: "absolute", left: "50%", top: isMobile ? 40 : 120, transform: "translateX(-50%)", width: 720, maxWidth: "calc(100% - 32px)", maxHeight: 760, overflowY: "auto", zIndex: 51, background: "#FDFCF9", borderRadius: 18, boxShadow: "0 24px 60px rgba(25,37,11,0.28)", padding: "26px 28px", display: "flex", flexDirection: "column", gap: 16, boxSizing: "border-box" }}>
+          <StudyModal open onClose={() => setDrafts(null)} label="Exams and deadlines" width={720} maxHeight={760} top={isMobile ? 40 : 120} gap={16}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
               <span style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600 }}>Exams and Deadlines</span>
               <span style={{ fontSize: 14, color: "#6F6857" }}>{course?.course_code ? `${course.course_code} · ${course.course_name}` : course?.course_name}</span>
@@ -1093,8 +1092,7 @@ export function StudyHub({
               <button onClick={() => setDrafts(null)} style={{ height: 44, padding: "0 18px", border: 0, borderRadius: 11, background: "transparent", color: "#3F3B31", ...INHERIT_FONT, fontSize: 15, cursor: "pointer" }}>Cancel</button>
               <button onClick={saveManage} disabled={saving} style={{ height: 44, padding: "0 22px", border: 0, borderRadius: 11, background: "#445D22", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, cursor: saving ? "wait" : "pointer", opacity: saving ? 0.7 : 1 }}>{saving ? "Saving" : "Save Dates"}</button>
             </div>
-          </div>
-        </>
+          </StudyModal>
       )}
 
       {/* ── concept picker (Quiz / Flashcards) ── */}
@@ -1107,9 +1105,7 @@ export function StudyHub({
         const setPicks = (picks: Record<string, boolean>) => setPicker({ ...picker, picks });
         const chip: React.CSSProperties = { height: 32, padding: "0 12px", border: 0, borderRadius: 16, ...INHERIT_FONT, fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" };
         return (
-          <>
-            <div onClick={() => setPicker(null)} style={{ position: "absolute", inset: 0, background: "rgba(25,37,11,0.32)", zIndex: 50 }} />
-            <div role="dialog" aria-label={name} style={{ position: "absolute", left: "50%", top: isMobile ? 40 : 110, transform: "translateX(-50%)", width: 760, maxWidth: "calc(100% - 32px)", maxHeight: 820, overflowY: "auto", zIndex: 51, background: "#FDFCF9", borderRadius: 18, boxShadow: "0 24px 60px rgba(25,37,11,0.28)", padding: "26px 28px", display: "flex", flexDirection: "column", gap: 18, boxSizing: "border-box" }}>
+            <StudyModal open onClose={() => setPicker(null)} label={name} width={760} maxHeight={820} top={isMobile ? 40 : 110} gap={18}>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 600 }}>{name}</span>
                 <span style={{ fontSize: 15, color: "#3F3B31" }}>Choose the {exam ? exam.title : course?.course_code || course?.course_name} concepts to cover</span>
@@ -1143,8 +1139,7 @@ export function StudyHub({
                     : `Start ${name} · ${n} ${n === 1 ? "Concept" : "Concepts"}`}
                 </button>
               </div>
-            </div>
-          </>
+            </StudyModal>
         );
       })()}
     </div>
