@@ -116,6 +116,7 @@ const FLAG_KILL_SWITCHES = [
   "llm_outage_drill",
   "async_db_client",
   "stateless_rate_limit",
+  "stateless_tutor_sessions",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
