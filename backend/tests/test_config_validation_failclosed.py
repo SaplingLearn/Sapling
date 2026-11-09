@@ -11,6 +11,7 @@ import pytest
 
 import config
 from routes import auth as auth_mod
+from tests.route_patches import set_auth_session_secret
 
 
 def _set_required(monkeypatch, **overrides):
@@ -79,20 +80,20 @@ class TestUnsignedOAuthFallbackFailsClosed:
     def test_fails_closed_in_production(self, monkeypatch):
         # No SESSION_SECRET + not local → must refuse (pre-fix: silently used
         # the unsigned in-memory store).
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", False)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", False)
         with pytest.raises(RuntimeError):
             auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
 
     def test_allowed_in_local(self, monkeypatch):
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", True)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", True)
         out = auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
         # Unsigned payload (no "." separator) is permitted only in local dev.
         assert isinstance(out, str) and "." not in out
 
     def test_signed_when_secret_present(self, monkeypatch):
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "supersecret-value")
+        set_auth_session_secret(monkeypatch, "supersecret-value")
         out = auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
         assert "." in out  # payload_b64.sig_b64
 
@@ -106,6 +107,6 @@ class TestUnsignedOAuthFallbackFailsClosed:
             json.dumps({"n": "x", "v": "y"}).encode()
         ).decode().rstrip("=")
         # Force the unsigned path (empty secret) in production mode.
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", False)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", False)
         assert auth_mod._decode_oauth_cookie(unsigned) is None

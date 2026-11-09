@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
+from tests.route_patches import set_auth_session_secret, set_auth_table
 
 _app = FastAPI()
 _app.include_router(auth_module.router, prefix="/api/auth")
@@ -33,7 +34,7 @@ STAGING_FRONTEND = "https://staging.saplinglearn.com"
 def staging(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "staging")
     monkeypatch.setattr(auth_module, "FRONTEND_URL", STAGING_FRONTEND)
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
 
 
@@ -149,7 +150,7 @@ def drive_callback(staging, monkeypatch):
         factory("users").select.return_value = [
             {"id": "user_112233", "is_approved": approved, "streak_count": 1}
         ]
-        monkeypatch.setattr(auth_module, "table", factory)
+        set_auth_table(monkeypatch, factory)
 
         cookie = auth_module._encode_oauth_cookie(
             {"n": "n1", "cv": "verifier", "popup_id": None, **cookie_extra}

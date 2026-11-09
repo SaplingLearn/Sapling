@@ -6,16 +6,9 @@ Restricts sign-in to @bu.edu email accounts only.
 """
 
 import asyncio
-import json
-import base64
-import hashlib
 import hmac as _hmac
 import logging
-import os
-import re
 import secrets
-import threading
-import time as _time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
@@ -24,25 +17,48 @@ from pydantic import BaseModel, Field, ValidationError
 
 # The module (not just its constants) so request-time gates can read the LIVE
 # value of APP_ENV / SECURE_COOKIES / SESSION_SECRET instead of an import-time
-# snapshot. See _test_auth_enabled below.
+# snapshot. See services/auth/dev_login.py::_test_auth_enabled.
 import config
 from config import (
     GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
     GOOGLE_AUTH_REDIRECT_URI,
     AUTH_SCOPES,
     FRONTEND_URL,
     SESSION_SECRET,
     SECURE_COOKIES,
-    IS_LOCAL,
     APP_ENV,
-    ALLOWED_EMAIL_DOMAINS,
 )
-from db.connection import like_literal, pg_quote_value, table
-from services import email_service, events_service, pg_lease
-from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
+from services import events_service
+from services.auth import (
+    AccountDeleted,
+    AccountNotFound,
+    account_overview,
+    fetch_google_userinfo,
+    join_waitlist,
+    record_google_sign_in,
+    welcome_and_achievements_after_sign_in,
+)
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
 from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
+# Re-exports (#118): moved names routes/calendar.py, routes/admin.py, scripts
+# and tests still import from here.
+from services.auth.accounts import _mark_welcomed, _stamp_last_sign_in_for_test, _welcome_due  # noqa: F401
+from services.auth.dev_login import (  # noqa: F401
+    TEST_AUTH_ENVS, TEST_LOGIN_DEFAULT_TTL_SECONDS, TEST_LOGIN_MAX_TTL_SECONDS, _test_auth_enabled,
+)
+from services.auth.oauth_state import (  # noqa: F401
+    OAUTH_STATE_COOKIE, _OAUTH_COOKIE_MAX_AGE, _OAUTH_FALLBACK_STORE, _REDIRECT_TOKEN_TTL_SECONDS,
+    _clamp_redirect_ttl, _clean_popup_id, _clean_return_to, _consume_oauth_nonce,
+    _decode_oauth_cookie, _decode_state, _encode_oauth_cookie, _encode_state,
+    _generate_pkce_pair, _google_client_config, _parse_redirect_ttl, clear_consumed_oauth_nonces,
+)
+from services.auth.pending import (  # noqa: F401
+    _PENDING_TOKEN_TTL_SECONDS, _mint_pending_token, _pending_token_claims, _pending_token_email,
+)
+from services.auth.signin import _email_domain_allowed  # noqa: F401
+from services.auth.waitlist import (  # noqa: F401
+    _mark_waitlist_joined, _pending_standing, _waitlist_entries, _waitlist_entry,
+)
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -60,425 +76,6 @@ router = APIRouter()
 # keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
 _LOCAL_AUTO_APPROVE = APP_ENV == "local"
 
-# ── Test-only session minting (#381) ──────────────────────────────────────────
-# The APP_ENVs in which POST /api/auth/test-login exists at all.
-#
-# DELIBERATELY NARROWER than config.IS_LOCAL ({local, development, dev, test}).
-# This endpoint mints a valid session for an ARBITRARY user id with no credential
-# whatsoever, so its blast radius is "full account takeover of every account" if
-# it is ever reachable. `development`/`dev` are plausible values for a real
-# shared deploy's APP_ENV, and IS_LOCAL is used for unrelated, far less dangerous
-# relaxations (unsigned OAuth-state fallback, SESSION_SECRET strength check), so
-# widening later by reusing IS_LOCAL would silently arm this too. `local` is the
-# developer's own machine and `test` is the pytest/CI harness; nothing else.
-TEST_AUTH_ENVS = frozenset({"local", "test"})
-
-TEST_LOGIN_DEFAULT_TTL_SECONDS = 3600
-TEST_LOGIN_MAX_TTL_SECONDS = 86400
-
-
-def _test_auth_enabled() -> bool:
-    """Whether POST /api/auth/test-login is available in this environment.
-
-    Evaluated per REQUEST off the live `config` module attribute — never captured
-    at import time. That makes the gate monkeypatchable (so the 404-under-
-    production behaviour is actually testable) and means no import-ordering
-    accident can freeze it in the open position.
-    """
-    return (getattr(config, "APP_ENV", "") or "").strip().lower() in TEST_AUTH_ENVS
-
-
-def _email_domain_allowed(email: str) -> bool:
-    """Whether `email`'s domain is permitted to sign in.
-
-    Controlled by config.ALLOWED_EMAIL_DOMAINS (default ["bu.edu"]). An empty
-    allowlist permits any domain — used on staging, which is already gated by
-    Cloudflare Access.
-    """
-    if not ALLOWED_EMAIL_DOMAINS:
-        return True
-    domain = email.strip().lower().rsplit("@", 1)[-1]
-    return domain in ALLOWED_EMAIL_DOMAINS
-
-
-def _waitlist_entries(email: str, columns: str = "id,email,approved_at,joined_at") -> list[dict]:
-    """Every waitlist row (`newsletter_emails`) for `email`, approved first.
-
-    Case-insensitive, because the waitlist keeps the email as typed — so one
-    address can have case twins, and every admin write (approve, revoke,
-    unapprove) must reach all of them or it can miss the row sign-in reads.
-    Re-checked in Python because PostgREST rewrites `*` to a wildcard that
-    `like_literal` cannot escape. Raises on a lookup error: the caller decides
-    whether that fails closed (sign-in) or loud (an admin write).
-    """
-    wanted = email.strip().lower()
-    if not wanted:
-        return []
-    needle = pg_quote_value(like_literal(wanted))
-    rows = table("newsletter_emails").select(
-        columns, filters={"or": f"(email.ilike.{needle})"},
-    )
-    matches = [r for r in rows or [] if (r.get("email") or "").strip().lower() == wanted]
-    # Two rows can differ only by case; prefer an approved one.
-    matches.sort(key=lambda r: not r.get("approved_at"))
-    return matches
-
-
-def _waitlist_entry(email: str) -> dict | None:
-    """The landing-page waitlist row (`newsletter_emails`) for `email`, if any.
-
-    Admin → Allowlist sets its `approved_at` (`POST /api/admin/allowlist/approve`),
-    which lets the student in on their first sign-in instead of an admin
-    approving the `users` row after they hit /pending; `joined_at` records that
-    they actually got in. Of case twins, the approved one wins. Fails closed: a
-    lookup error reads as "not on the waitlist", leaving the user pending
-    rather than breaking sign-in.
-    """
-    try:
-        matches = _waitlist_entries(email)
-    except Exception:
-        logger.warning("waitlist lookup failed", exc_info=True)
-        return None
-    return matches[0] if matches else None
-
-
-def _mark_waitlist_joined(entry_id: str, user_id: str) -> None:
-    """Stamp the waitlist row as joined. Best-effort: never breaks sign-in."""
-    from datetime import datetime, timezone
-    try:
-        table("newsletter_emails").update(
-            {"joined_user_id": user_id, "joined_at": datetime.now(timezone.utc).isoformat()},
-            filters={"id": f"eq.{entry_id}", "joined_at": "is.null"},
-        )
-    except Exception:
-        logger.warning("waitlist joined stamp failed", exc_info=True)
-
-
-# ── Unapproved sign-in → /pending ─────────────────────────────────────────────
-# An unapproved sign-in gets no account and no session. The hand-off to /pending
-# carries a short-lived "pending token" instead, so that page can say whether the
-# email is on the waitlist and add it without the student retyping it. The token
-# holds the sign-in email encrypted with ENCRYPTION_KEY (so the URL never shows
-# it) and is signed with a key derived from SESSION_SECRET, so it can never
-# verify as a `sapling_session` (auth_guard checks against the raw secret). It
-# travels in the redirect URL, not a cookie, because the OAuth callback runs on
-# the API origin rather than the frontend's.
-_PENDING_TOKEN_TTL_SECONDS = 3600
-
-
-def _pending_token_key() -> str:
-    if not SESSION_SECRET:
-        return ""
-    return _hmac.new(SESSION_SECRET.encode(), b"sapling-pending-v1", hashlib.sha256).hexdigest()
-
-
-def _b64(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _mint_pending_token(email: str, first_name: str = "") -> str:
-    key = _pending_token_key()
-    if not key:
-        return ""
-    claims = {"e": encrypt(email), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS}
-    if first_name:
-        claims["n"] = encrypt(first_name)
-    payload = json.dumps(claims)
-    payload_b64 = _b64(payload.encode())
-    return f"{payload_b64}.{_b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())}"
-
-
-def _pending_token_claims(token: str) -> dict | None:
-    """{"email", "first_name"} from a pending token, or None if forged or expired."""
-    key = _pending_token_key()
-    payload_b64, _, sig_b64 = (token or "").partition(".")
-    if not key or not payload_b64 or not sig_b64:
-        return None
-    expected = _b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())
-    if not _hmac.compare_digest(sig_b64, expected):
-        return None
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)))
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    exp = payload.get("exp")
-    if not isinstance(exp, int) or exp < int(_time.time()):
-        return None
-    email = (decrypt_if_present(payload.get("e")) or "").strip() if isinstance(payload.get("e"), str) else ""
-    if "@" not in email:
-        return None
-    name = payload.get("n")
-    first_name = (decrypt_if_present(name) or "").strip() if isinstance(name, str) else ""
-    return {"email": email, "first_name": first_name}
-
-
-def _pending_token_email(token: str) -> str | None:
-    """The sign-in email a pending token carries, or None if forged or expired."""
-    claims = _pending_token_claims(token)
-    return claims["email"] if claims else None
-
-
-def _welcome_due(user_id: str) -> bool:
-    """Whether this account still needs its welcome email (`welcomed_at` NULL).
-
-    Read-only: `welcomed_at` is stamped by `_mark_welcomed` only AFTER a `sent`
-    outcome, so a welcome that was `skipped` (no RESEND_API_KEY yet) or
-    `failed` is retried on a later sign-in (#763). Two concurrent first
-    sign-ins can both get here; the `welcome:<user_id>` dedupe key in
-    `email_sends` keeps it to one delivery. Backfilled for every account
-    approved before the email system existed (migration *_email.sql), so
-    existing students are never welcomed late. Best-effort: a failure
-    (including the column not existing yet during a deploy) just means no
-    welcome this time, never a broken sign-in.
-    """
-    try:
-        rows = table("users").select("welcomed_at", filters={"id": f"eq.{user_id}"}, limit=1)
-    except Exception:
-        logger.warning("welcome check failed for %r", user_id, exc_info=True)
-        return False
-    return bool(rows) and not rows[0].get("welcomed_at")
-
-
-def _mark_welcomed(user_id: str) -> None:
-    """Stamp `welcomed_at` once the welcome has gone out. Conditional on NULL
-    so the first delivery's time sticks; raises are swallowed by the caller."""
-    from datetime import datetime, timezone
-    table("users").update(
-        {"welcomed_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{user_id}", "welcomed_at": "is.null"},
-    )
-
-
-def _stamp_last_sign_in_for_test(user_id: str) -> None:
-    """Test seam: write last_sign_in_at to keep the callback path testable in
-    isolation without round-tripping through the OAuth flow."""
-    from datetime import datetime, timezone
-    table("users").update(
-        {"last_sign_in_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{user_id}"},
-    )
-
-
-OAUTH_STATE_COOKIE = "sapling_oauth_state"
-_OAUTH_COOKIE_MAX_AGE = 600
-_POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-
-# Cloudflare preview URLs of the frontend-staging worker, one per PR/version:
-# https://<alias>-frontend-staging.saplinglearn.workers.dev. Google only accepts
-# exact redirect URIs, so a preview can't be registered. Instead it starts sign-in
-# here with ?return_to=<its origin>: Google still calls back to the one registered
-# api.staging URI, and only the final hand-off redirect goes back to the preview.
-# The <alias> label is capped so the whole DNS label stays within 63 chars.
-_PREVIEW_ORIGIN_RE = re.compile(
-    r"^https://[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?"
-    r"-frontend-staging\.saplinglearn\.workers\.dev$"
-)
-
-# TTL of the one-shot HMAC token handed to the frontend on the OAuth-callback
-# redirect. This is NOT the session lifetime (#168): the frontend session BFF
-# (frontend/src/app/api/auth/session) verifies this token once and re-mints a
-# long-lived `sapling_session` cookie (SESSION_MAX_AGE = 30 days) in the same
-# backend-compatible HMAC format, which `auth_guard._decode_session` accepts.
-# So this token only needs to outlive the redirect round-trip. Configurable for
-# environments with slow OAuth hops. See docs/decisions/0018-session-token-lifecycle.md.
-_DEFAULT_REDIRECT_TOKEN_TTL_SECONDS = 300
-
-
-def _clamp_redirect_ttl(seconds: int) -> int:
-    """Clamp the redirect-handoff token TTL to [30, 600]s.
-
-    This one-shot token travels in the OAuth-callback URL, so a misconfigured
-    override must not be able to turn it into a long-lived credential — it is
-    NOT the session (see docs/decisions/0018-session-token-lifecycle.md). The
-    floor keeps slow OAuth hops working; the ceiling keeps the handoff short.
-    """
-    return max(30, min(seconds, 600))
-
-
-def _parse_redirect_ttl(raw: str | None) -> int:
-    """Parse the SAPLING_AUTH_REDIRECT_TOKEN_TTL override into a clamped TTL.
-
-    A non-numeric or empty override (e.g. the var declared in Railway/Wrangler
-    with no value) must not take the whole app down: this module is imported at
-    router-mount time, so an unguarded int() would raise ValueError and stop the
-    app from booting. Fall back to the default and warn instead.
-    """
-    if raw is None:
-        return _DEFAULT_REDIRECT_TOKEN_TTL_SECONDS
-    try:
-        return _clamp_redirect_ttl(int(raw))
-    except ValueError:
-        logger.warning(
-            "Ignoring malformed SAPLING_AUTH_REDIRECT_TOKEN_TTL=%r (expected an "
-            "integer number of seconds); falling back to %ss.",
-            raw,
-            _DEFAULT_REDIRECT_TOKEN_TTL_SECONDS,
-        )
-        return _DEFAULT_REDIRECT_TOKEN_TTL_SECONDS
-
-
-_REDIRECT_TOKEN_TTL_SECONDS = _parse_redirect_ttl(
-    os.getenv("SAPLING_AUTH_REDIRECT_TOKEN_TTL")
-)
-
-# Fallback in-memory store for environments without SESSION_SECRET; entries
-# are keyed by nonce and expire after _OAUTH_COOKIE_MAX_AGE seconds.
-_OAUTH_FALLBACK_STORE: dict[str, tuple[float, dict]] = {}
-
-# #756: OAuth state nonces the callback has already accepted, nonce → monotonic
-# expiry. The state cookie is cleared on every callback response, but a client
-# that ignores (or an attacker that captured) the cookie could otherwise replay
-# the same state for the cookie's whole max-age. Each nonce is honoured once:
-# here, and (`stateless_locks`, services/pg_lease.py) on every replica via a
-# never-released lease on the nonce's HASH. Google's code is itself single-use.
-_CONSUMED_OAUTH_NONCES: dict[str, float] = {}
-_CONSUMED_OAUTH_NONCES_LOCK = threading.Lock()
-
-
-def _consume_oauth_nonce(nonce: str) -> bool:
-    """Mark `nonce` used. True the first time, False on any replay."""
-    now = _time.monotonic()
-    with _CONSUMED_OAUTH_NONCES_LOCK:
-        for k in [k for k, exp in _CONSUMED_OAUTH_NONCES.items() if exp < now]:
-            del _CONSUMED_OAUTH_NONCES[k]
-        if nonce in _CONSUMED_OAUTH_NONCES:
-            return False
-        _CONSUMED_OAUTH_NONCES[nonce] = now + _OAUTH_COOKIE_MAX_AGE
-    if pg_lease.consume_once(pg_lease.hashed_key("oauth_nonce", nonce), _OAUTH_COOKIE_MAX_AGE) is False:
-        return False  # consumed on another replica
-    _OAUTH_FALLBACK_STORE.pop(nonce, None)
-    return True
-
-
-def clear_consumed_oauth_nonces() -> None:
-    """Test hook: forget every consumed nonce (tests reuse fixed nonces)."""
-    with _CONSUMED_OAUTH_NONCES_LOCK:
-        _CONSUMED_OAUTH_NONCES.clear()
-
-
-def _google_client_config() -> dict:
-    return {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uris": [GOOGLE_AUTH_REDIRECT_URI],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }
-    }
-
-
-def _encode_state(data: dict) -> str:
-    payload = json.dumps(data)
-    return base64.urlsafe_b64encode(payload.encode()).decode()
-
-
-def _decode_state(state: str) -> dict:
-    try:
-        payload = base64.urlsafe_b64decode(state.encode()).decode()
-        return json.loads(payload)
-    except Exception:
-        return {}
-
-
-def _generate_pkce_pair():
-    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode()
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).rstrip(b'=').decode()
-    return code_verifier, code_challenge
-
-
-def _clean_popup_id(s: str | None) -> str | None:
-    if not s:
-        return None
-    return s if _POPUP_ID_RE.match(s) else None
-
-
-def _clean_return_to(s: str | None) -> str | None:
-    """Accept `return_to` only on the staging backend and only for a preview origin.
-
-    The callback hands the one-shot auth_token to this origin, so anything looser
-    is a token-exfiltration redirect. Production never honours it (its previews,
-    if any, hold staging's SESSION_SECRET and couldn't use a prod token anyway).
-    Read APP_ENV live, like _test_auth_enabled, so tests can flip it.
-    """
-    if not s or config.APP_ENV != "staging":
-        return None
-    return s if _PREVIEW_ORIGIN_RE.fullmatch(s) else None
-
-
-def _encode_oauth_cookie(payload: dict) -> str:
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    payload_b64 = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    if SESSION_SECRET:
-        sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
-        sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
-        return f"{payload_b64}.{sig_b64}"
-    # #174: the unsigned in-memory fallback is local-dev only. Outside local it
-    # is a silent, insecure degradation (unsigned OAuth state) — fail closed.
-    # (validate_config already blocks startup without SESSION_SECRET in prod;
-    # this is defense in depth at the use site.)
-    if not IS_LOCAL:
-        raise RuntimeError(
-            "SESSION_SECRET is required outside local dev; refusing to issue "
-            "unsigned OAuth state."
-        )
-    nonce = payload.get("n", "")
-    if nonce:
-        _OAUTH_FALLBACK_STORE[nonce] = (_time.monotonic() + _OAUTH_COOKIE_MAX_AGE, payload)
-        _prune_fallback_store()
-    return payload_b64
-
-
-def _decode_oauth_cookie(cookie_value: str | None) -> dict | None:
-    if not cookie_value:
-        return None
-    if SESSION_SECRET:
-        if "." not in cookie_value:
-            return None
-        try:
-            payload_b64, sig_b64 = cookie_value.rsplit(".", 1)
-        except ValueError:
-            return None
-        expected = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
-        expected_b64 = base64.urlsafe_b64encode(expected).decode().rstrip("=")
-        if not _hmac.compare_digest(expected_b64, sig_b64):
-            return None
-        try:
-            padded = payload_b64 + "=" * (-len(payload_b64) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
-        except Exception:
-            return None
-        return payload if isinstance(payload, dict) else None
-    # #174: the unsigned in-memory path is local-dev only. Outside local,
-    # refuse to accept unsigned OAuth state (symmetric with the encode-side
-    # guard) so no unsigned cookie is ever honored in production.
-    if not IS_LOCAL:
-        return None
-    try:
-        padded = cookie_value + "=" * (-len(cookie_value) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    nonce = payload.get("n")
-    _prune_fallback_store()
-    entry = _OAUTH_FALLBACK_STORE.get(nonce or "")
-    if not entry:
-        return None
-    return entry[1]
-
-
-def _prune_fallback_store() -> None:
-    now = _time.monotonic()
-    expired = [k for k, (exp, _) in _OAUTH_FALLBACK_STORE.items() if exp < now]
-    for k in expired:
-        _OAUTH_FALLBACK_STORE.pop(k, None)
-
 
 @router.get("/me")
 def get_me(request: Request):
@@ -486,74 +83,12 @@ def get_me(request: Request):
     # #756: reachable while unapproved — the frontend middleware reads
     # is_approved here to route that account to /pending.
     user_id = get_session_user_id(request, allow_unapproved=True)
-    user = table("users").select(
-        "id,is_approved,onboarding_completed,deleted_at", filters={"id": f"eq.{user_id}"}
-    )
-    if not user:
+    try:
+        return account_overview(user_id)
+    except AccountNotFound:
         raise HTTPException(status_code=404, detail="User not found")
-    # The guard's account-state cache may be up to its TTL old; this fresh row
-    # makes a deletion end the session on the very next /me.
-    if user[0].get("deleted_at"):
+    except AccountDeleted:
         raise HTTPException(status_code=401, detail="Not authenticated")
-
-    # Profile fields (username/name/avatar_url) moved to user_profiles in migration 0024.
-    profile_rows = table("user_profiles").select(
-        "username,name,avatar_url", filters={"user_id": f"eq.{user_id}"}
-    )
-    profile = profile_rows[0] if profile_rows else {}
-
-    # Fetch user roles
-    role_rows = table("user_roles").select(
-        "granted_at,roles(id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority)",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    roles = []
-    is_admin = False
-    if role_rows:
-        for r in role_rows:
-            role_data = r.get("roles", {})
-            if role_data:
-                roles.append({"role": role_data, "granted_at": r.get("granted_at")})
-                if role_data.get("slug") == "admin":
-                    is_admin = True
-
-    # Fetch equipped cosmetics from settings
-    equipped_cosmetics = {}
-    settings_rows = table("user_settings").select(
-        "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,featured_role_id",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    if settings_rows:
-        s = settings_rows[0]
-        slot_map = {
-            "avatar_frame": "equipped_avatar_frame_id",
-            "banner": "equipped_banner_id",
-            "name_color": "equipped_name_color_id",
-            "title": "equipped_title_id",
-        }
-        for slot, col in slot_map.items():
-            cid = s.get(col)
-            if cid:
-                cosmetic_rows = table("cosmetics").select("*", filters={"id": f"eq.{cid}"})
-                if cosmetic_rows:
-                    equipped_cosmetics[slot] = cosmetic_rows[0]
-        frid = s.get("featured_role_id")
-        if frid:
-            fr_rows = table("roles").select("*", filters={"id": f"eq.{frid}"})
-            if fr_rows:
-                equipped_cosmetics["featured_role"] = fr_rows[0]
-
-    return {
-        "user_id": user_id,
-        "is_approved": bool(user[0]["is_approved"]),
-        "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
-        "username": profile.get("username"),
-        "name": decrypt_if_present(profile.get("name")) or "",
-        "avatar_url": profile.get("avatar_url") or "",
-        "roles": roles,
-        "equipped_cosmetics": equipped_cosmetics,
-        "is_admin": is_admin,
-    }
 
 
 @router.get("/google")
@@ -679,21 +214,8 @@ def google_callback(
         return _fail_redirect("oauth_exchange_failed")
     creds = flow.credentials
 
-    # Fetch user info from Google. Uses httpx (the codebase's sanctioned HTTP
-    # client) instead of googleapiclient/httplib2 — httplib2 ignores
-    # HTTPS_PROXY, which 500s on dev machines and proxy-bound deployments.
-    import httpx
-    try:
-        resp = httpx.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {creds.token}"},
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        user_info = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return _fail_redirect("userinfo_fetch_failed")
-    if not isinstance(user_info, dict):
+    user_info = fetch_google_userinfo(creds.token)
+    if user_info is None:
         return _fail_redirect("userinfo_fetch_failed")
 
     email = user_info.get("email", "")
@@ -710,158 +232,26 @@ def google_callback(
     if not _email_domain_allowed(email):
         return _fail_redirect("invalid_domain")
 
-    # Profile fields (name/first_name/last_name/avatar_url) live on user_profiles
-    # after migration 0024; `users` keeps identity + auth + activity only.
-    profile_fields = {
-        "name": encrypt_if_present(name),
-        "first_name": encrypt_if_present(first_name),
-        "last_name": encrypt_if_present(last_name),
-        "avatar_url": avatar_url,
-    }
-
-    # Determine user_id: check if this Google ID already exists
-    existing = table("users").select(
-        "id,is_approved,deleted_at", filters={"google_id": f"eq.{google_id}"}
+    signin = record_google_sign_in(
+        email=email, google_id=google_id, name=name, first_name=first_name,
+        last_name=last_name, avatar_url=avatar_url, creds=creds,
+        local_auto_approve=_LOCAL_AUTO_APPROVE,
     )
-    # #756: a deleted account stays deleted. Refused before anything is written
-    # (sign-in time, profile, OAuth tokens, waitlist) — there is no silent
-    # un-delete, and the guard would 401 a session minted for it anyway.
-    if existing and existing[0].get("deleted_at"):
-        logger.info("sign-in refused for deleted account %s", existing[0]["id"])
+    if signin.outcome == "account_deleted":
         return _fail_redirect("account_deleted")
-    # The waitlist decides whether someone new gets an account at all: an admin
-    # approving their email under Admin → Allowlist is the yes. Without it
-    # nothing is stored for them (no users row, profile or OAuth tokens), and
-    # /pending offers to put them on the waitlist instead.
-    waitlist = _waitlist_entry(email)
-    waitlist_approved = bool(waitlist and waitlist.get("approved_at"))
-    if not existing and not (_LOCAL_AUTO_APPROVE or waitlist_approved):
+    if signin.outcome == "not_approved":
         return _not_approved(email, first_name)
-    if existing:
-        user_id = existing[0]["id"]
-        is_approved = existing[0]["is_approved"]
-        # Update auth fields on users; refresh profile fields on user_profiles.
-        from datetime import datetime as _dt, timezone as _tz
-        table("users").update(
-            {
-                "email": encrypt_if_present(email),
-                "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
-            },
-            filters={"id": f"eq.{user_id}"},
-        )
-        table("user_profiles").upsert(
-            {"user_id": user_id, **profile_fields},
-            on_conflict="user_id",
-        )
-    else:
-        # Email-based account merge is disabled because emails are now encrypted
-        # with random nonces; equality lookups by plaintext email cannot match.
-        # New sign-ins for users without a google_id always create a fresh row.
-        user_id = f"user_{google_id}"
-        is_approved = True  # local dev, or approved on the waitlist (checked above)
-        from datetime import datetime as _dt, timezone as _tz
-        # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
-        # can already occupy this id: `graph_service.ensure_user_exists` inserts
-        # {id, streak_count} with a NULL google_id for any authenticated request,
-        # and the HMAC-signed `sapling_session` cookie outlives a row delete — so
-        # a stale tab can create one for an account that no longer exists. The
-        # lookup above is by google_id, which NULL never matches, so we land here
-        # and a blind INSERT collided on users_pkey -> 409 -> unhandled -> a
-        # permanent sign-in 500 loop.
-        #
-        # on_conflict MUST be the primary key: `google_id` is UNIQUE and would be
-        # valid PostgREST, but the stub's google_id is NULL and NULLs never
-        # conflict, so it would not resolve this. merge-duplicates fills the
-        # stub's NULL auth columns in, promoting it to a real user.
-        table("users").upsert({
-            "id": user_id,
-            "email": encrypt_if_present(email),
-            "google_id": google_id,
-            "auth_provider": "google",
-            "is_approved": is_approved,
-            "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
-        }, on_conflict="id")
-        # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
-        # reached onboarding already has a row here (onboarding.py upserts it).
-        table("user_profiles").upsert(
-            {"user_id": user_id, **profile_fields},
-            on_conflict="user_id",
-        )
-
-    # Store OAuth tokens (calendar access included)
-    # expires_at is TIMESTAMPTZ after migration 0024 — pass None (not "") when
-    # there is no expiry, since "" is not a valid timestamptz.
-    table("oauth_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": encrypt(creds.token),
-            "refresh_token": encrypt_if_present(creds.refresh_token),
-            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
-        },
-        on_conflict="user_id",
-    )
-
-    # Local dev bypass (#364): auto-approve so a real Google sign-in doesn't hit the
-    # /pending wall. Strictly gated on APP_ENV=="local" — staging/prod AND the test
-    # suite (APP_ENV=test) keep the real #285 approval gate and this can never approve
-    # a user there. Persisted to the DB row so /api/auth/me and the frontend see the
-    # approved state, not just this request.
-    if _LOCAL_AUTO_APPROVE and not is_approved:
-        is_approved = True
-        table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
-
-    # An existing account that isn't approved (its access was removed under
-    # Admin → Users, or it predates unapproved sign-ins no longer creating one)
-    # is let back in once its email is approved on the waitlist. Revoking the
-    # waitlist entry later (Admin → Allowlist → revoke, #757) removes it again:
-    # that sets `users.is_approved = false` on the account its
-    # `joined_user_id` links to, and the auth guard then refuses the session.
-    if not is_approved and waitlist_approved:
-        is_approved = True
-        table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
-        logger.info("user %s approved via waitlist at sign-in", user_id)
-    # Waitlist → joined, shown in Admin → Allowlist. Users' emails are encrypted
-    # with per-call nonces, so this sign-in (plaintext email from Google in
-    # hand) is the only place the two can be matched.
-    if is_approved and waitlist and not waitlist.get("joined_at"):
-        _mark_waitlist_joined(waitlist["id"], user_id)
-
-    if not is_approved:
-        return _not_approved(email, first_name)
+    user_id = signin.user_id
     # #756: this sign-in may just have created the account or flipped it to
     # approved (local auto-approve, waitlist re-approval above). Drop any
     # cached "missing"/"unapproved" answer so the new session is honoured on
     # its first request, not up to the guard's TTL later.
     clear_account_state_cache(user_id)
 
-    # Welcome email, once per account, on the first sign-in that gets in (or a
-    # later one, if that send was skipped or failed). The send runs after the
-    # redirect is returned and stamps welcomed_at only once it is `sent`.
-    if _welcome_due(user_id):
-        email_service.queue_welcome(
-            background_tasks,
-            email=email,
-            user_id=user_id,
-            first_name=(user_info.get("given_name") or first_name or None),
-            on_sent=lambda: _mark_welcomed(user_id),
-        )
-
-    # First-login achievement (F7). The login-streak achievements ("First Steps"
-    # and friends) were only ever evaluated at study-session end (learn.py), so a
-    # user who signs in but hasn't just finished a session sat at 100% progress
-    # yet stayed LOCKED forever — unlike Document Collector, whose upload path
-    # fires its own check. Fire the same grant check here on every approved
-    # sign-in. `check_achievements` dedups against user_achievements (and the
-    # (user_id, achievement_id) PK backstops it), so it awards at most once and is
-    # safe to call on every login. Best-effort: a grant failure must never break
-    # sign-in.
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(user_id, "login_streak", {})
-    except Exception:
-        logger.warning(
-            "sign-in achievement check failed for %r", user_id, exc_info=True
-        )
+    welcome_and_achievements_after_sign_in(
+        user_id, email=email, background_tasks=background_tasks,
+        welcome_first_name=(user_info.get("given_name") or first_name or None),
+    )
 
     # One-shot HMAC token so the frontend can verify this redirect without a
     # second round-trip. The frontend exchanges it for the real, long-lived
@@ -928,20 +318,6 @@ def _pending_claims(token: str) -> dict:
     return claims
 
 
-def _pending_standing(email: str, entry: dict | None) -> dict:
-    """The /pending view of `email`: on the waitlist at all, and approved yet.
-
-    `approved` lets /pending say "you're in — sign in again" once an admin
-    approves the address while the student sits on the page: the pending token
-    is not a session, so only a fresh sign-in can let them in.
-    """
-    return {
-        "email": email,
-        "on_waitlist": entry is not None,
-        "approved": bool(entry and entry.get("approved_at")),
-    }
-
-
 @router.post("/pending/status")
 def pending_status(body: PendingTokenBody):
     """Where an unapproved sign-in's email stands on the waitlist (/pending)."""
@@ -956,17 +332,7 @@ def pending_join(body: PendingTokenBody):
     email, first_name = claims["email"], claims["first_name"]
     entry = _waitlist_entry(email)
     try:
-        if entry is None:
-            # The first name (from Google) lets the "you're in" email greet them.
-            table("newsletter_emails").upsert(
-                {"email": email, "first_name": encrypt(first_name) if first_name else None},
-                on_conflict="email",
-            )
-        elif first_name:
-            table("newsletter_emails").update(
-                {"first_name": encrypt(first_name)},
-                filters={"id": f"eq.{entry['id']}", "first_name": "is.null"},
-            )
+        join_waitlist(email, first_name, entry)
     except Exception:
         logger.exception("waitlist join from /pending failed")
         raise HTTPException(

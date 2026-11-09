@@ -29,7 +29,7 @@ import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
 from services import auth_guard, session_tokens
-from tests.route_patches import PROFILE_TABLE_MODULES
+from tests.route_patches import PROFILE_TABLE_MODULES, set_auth_session_secret, set_auth_table
 
 SECRET = "issue-756-session-secret-at-least-32-bytes-long"
 
@@ -207,7 +207,7 @@ def me_client(monkeypatch):
             tables[name] = m
         return tables[name]
 
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
     seen = {}
 
     def _guard(request, **kwargs):
@@ -252,9 +252,9 @@ def callback(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(auth_module, "_LOCAL_AUTO_APPROVE", False)
     monkeypatch.setattr(auth_module, "FRONTEND_URL", FRONTEND)
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", SECRET)
+    set_auth_session_secret(monkeypatch, SECRET)
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
-    monkeypatch.setattr(auth_module, "_welcome_due", lambda *_a, **_k: False)
+    monkeypatch.setattr("services.auth.signin._welcome_due", lambda *_a, **_k: False)
     monkeypatch.setattr(ach_module, "check_achievements", lambda *a, **k: None)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -281,7 +281,7 @@ def callback(monkeypatch):
             tables[name] = m
         return tables[name]
 
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
 
     def _drive(nonce="n1"):
         cookie = auth_module._encode_oauth_cookie({"n": nonce, "cv": "verifier", "popup_id": None})

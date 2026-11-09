@@ -38,3 +38,32 @@ def patch_table(modules, new=None, **kwargs):
 def patch_profile_table(new=None, **kwargs):
     """:func:`patch_table` over the profile route + ``services/profile/``."""
     return patch_table(PROFILE_TABLE_MODULES, new, **kwargs)
+
+
+# ── auth (#118) ───────────────────────────────────────────────────────────────
+
+#: Every services/auth module that reads ``table``.
+AUTH_TABLE_MODULES = (
+    "services.auth.accounts",
+    "services.auth.signin",
+    "services.auth.waitlist",
+)
+#: Every module that reads its own imported ``SESSION_SECRET`` copy.
+AUTH_SECRET_MODULES = (
+    "routes.auth",
+    "services.auth.oauth_state",
+    "services.auth.pending",
+)
+
+
+def set_auth_table(monkeypatch, value) -> None:
+    """``monkeypatch`` ``table`` across services/auth (was ``routes.auth.table``)."""
+    for module in AUTH_TABLE_MODULES:
+        monkeypatch.setattr(f"{module}.table", value)
+
+
+def set_auth_session_secret(monkeypatch, value) -> None:
+    """``monkeypatch`` the SESSION_SECRET the sign-in flow reads, wherever it
+    reads it (was ``routes.auth.SESSION_SECRET`` alone)."""
+    for module in AUTH_SECRET_MODULES:
+        monkeypatch.setattr(f"{module}.SESSION_SECRET", value)
