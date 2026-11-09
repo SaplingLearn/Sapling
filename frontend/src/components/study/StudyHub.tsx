@@ -601,8 +601,11 @@ export function StudyHub({
       </div>
 
       {/* ── readiness band ── */}
-      <section aria-label="Readiness" style={{ gridColumn: 1, gridRow: 3, display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 540px", alignItems: "center", gap: isMobile ? 24 : 48, padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
-        <div style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "center", gap: 22, minWidth: 0 }}>
+      <section aria-label="Readiness" style={{ gridColumn: 1, gridRow: 3, display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 540px", alignItems: "start", gap: isMobile ? 24 : 48, padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
+        {/* Top-anchored, not centred: the prerequisite warning below the legend
+            appears and disappears with the selected concept, and centring made
+            the readiness % jump ~35px whenever it did. */}
+        <div style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: 22, minWidth: 0, paddingTop: 10 }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 22 }}>
             <span data-testid="readiness-pct" style={{ fontFamily: SERIF, fontSize: 88, fontWeight: 600, lineHeight: 0.9, letterSpacing: "-0.03em" }}>{graph ? `${pct}%` : "–"}</span>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 4 }}>
