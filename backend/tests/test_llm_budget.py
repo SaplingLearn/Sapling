@@ -550,3 +550,31 @@ def test_admin_llm_routes_are_admin_only(monkeypatch):
     assert c.get("/api/admin/llm/drill").status_code == 403
     assert c.put("/api/admin/llm/budgets", json={"scope": "default",
                                                  "daily_token_limit": 1}).status_code == 403
+
+
+# ── reraise_budget_refusal: the routes' broad `except` (release doc §11) ─────
+
+
+def _a_refusal() -> LLMBudgetExceeded:
+    return LLMBudgetExceeded(limit=1, used=1,
+                             reset_at=datetime.now(timezone.utc) + timedelta(hours=1))
+
+
+def test_reraise_budget_refusal_is_a_no_op_for_other_errors():
+    llm_budget.reraise_budget_refusal(None)
+    llm_budget.reraise_budget_refusal(RuntimeError("model exploded"))
+
+
+@pytest.mark.parametrize("wrap", ["itself", "cause", "context", "group"])
+def test_reraise_budget_refusal_finds_the_refusal(wrap):
+    refusal = _a_refusal()
+    if wrap == "itself":
+        exc = refusal
+    elif wrap == "group":
+        exc = ExceptionGroup("tg", [ValueError("x"), refusal])
+    else:
+        exc = RuntimeError("wrapper")
+        setattr(exc, f"__{wrap}__", refusal)
+    with pytest.raises(LLMBudgetExceeded) as raised:
+        llm_budget.reraise_budget_refusal(exc)
+    assert raised.value is refusal

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
-from services import cache
+from services import cache, llm_budget
 from services.auth_guard import guard_off_loop, require_self
 from services.graph_service import (
     aget_graph, aget_recommendations, aget_courses,
@@ -218,6 +218,11 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
         # silently downgrade an unrelated KeyError/IndexError bug elsewhere in
         # the agent-run path to this 502 instead of the generic 500. Anything
         # else propagates to the generic handler.
+        #
+        # A budget refusal (#119) is its own 429 (LLMBudgetExceeded is an
+        # HTTPException, so it is not caught here); one wrapped inside a caught
+        # error is re-raised so it is never mislabelled as an agent failure.
+        llm_budget.reraise_budget_refusal(e)
         raise HTTPException(
             status_code=502, detail=f"concept-description agent failed: {e}"
         ) from e
