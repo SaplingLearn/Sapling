@@ -11,6 +11,7 @@ import weakref
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from agents._run import run_agent_sync
@@ -296,7 +297,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "generated_at": now,
         "content": encrypt_json(content),
     }
-    table("study_guides").insert(row)
+    row["id"] = _insert_or_replace(row)
     # #771: if the material changed while this guide was generating, its
     # invalidation may already have run — take the stale row back out so the
     # next request regenerates from the current documents. The student still
@@ -311,6 +312,42 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         cached = False
 
     return {"id": row["id"], "content": content, "generated_at": now, "cached": cached}
+
+
+def _is_unique_violation(exc: httpx.HTTPStatusError) -> bool:
+    """PostgREST's 409 for a UNIQUE collision (23505), not an FK one (23503)."""
+    if exc.response is None or exc.response.status_code != 409:
+        return False
+    try:
+        return (exc.response.json() or {}).get("code") == "23505"
+    except ValueError:
+        return False
+
+
+def _insert_or_replace(row: dict) -> str:
+    """Insert the guide row and return its id. Where the
+    `study_guides_user_offering_exam_key` unique index exists (migration
+    20261109023732; created only on a table with no duplicates) a second row
+    for the key is refused, so a regenerate — or a cross-replica race the
+    lease did not serialise — replaces the key's row IN PLACE instead (new
+    content and generated_at, same id). Without the index this is the plain
+    insert it always was."""
+    key = {"user_id": f"eq.{row['user_id']}", "offering_id": f"eq.{row['offering_id']}",
+           "exam_id": f"eq.{row['exam_id']}"}
+    for _attempt in range(2):
+        try:
+            table("study_guides").insert(row)
+            return row["id"]
+        except httpx.HTTPStatusError as exc:
+            if not _is_unique_violation(exc):
+                raise
+        replaced = table("study_guides").update(
+            {"content": row["content"], "generated_at": row["generated_at"]}, filters=key,
+        ) or []
+        if replaced:
+            return replaced[0].get("id") or row["id"]
+        # The row went between the two calls (an invalidation): insert again.
+    raise HTTPException(status_code=409, detail="Study guide is being updated; try again.")
 
 
 def _drop_older_guides(user_id: str, offering_id: str, exam_id: str, newer_than: str) -> None:
