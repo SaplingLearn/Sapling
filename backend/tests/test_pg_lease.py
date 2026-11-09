@@ -1,6 +1,6 @@
 """Cross-replica leases behind `stateless_locks` (#117 wave 3).
 
-Hermetic: `claim_lease()` / `release_lease()` are faked at the rpc seam by a
+Hermetic: `claim_lease()` / `renew_lease()` / `release_lease()` are faked at the rpc seam by a
 small stateful model of the SQL (the SQL itself is pinned against real
 Postgres in tests/integration/test_app_leases_db.py). Pinned here:
 
@@ -8,7 +8,8 @@ Postgres in tests/integration/test_app_leases_db.py). Pinned here:
   lock is the whole guard, as before);
 * on: one bounded rpc per claim, as service role; a held lease is released by
   the same holder on exit, renewed while the body runs; another holder's live
-  lease yields False (after polling up to wait_s);
+  lease yields False (after polling up to wait_s); a renewal never recreates
+  a released lease, and exit waits for an in-flight renewal before releasing;
 * a DB failure (or a pre-migration 404) grants the lease (fail open to the
   in-process layer), marks the store down for DB_DOWN_S, warns once per
   outage; the next answer re-arms the warning;
@@ -32,13 +33,14 @@ FLAG_ENV = "SAPLING_FLAG_STATELESS_LOCKS"
 
 
 class FakeLeases:
-    """claim_lease / release_lease over a dict, recording each call."""
+    """claim_lease / renew_lease / release_lease over a dict, recording each call."""
 
     def __init__(self):
         self.rows: dict[str, tuple[str, float]] = {}
         self.calls: list[tuple[str, dict, bool, float | None]] = []
         self.error: Exception | None = None
         self.answer_override = None
+        self.on_renew = None  # called inside renew_lease (tests hold it open)
 
     def rpc(self, name, params, *, timeout=None):
         self.calls.append((name, dict(params), db_scope.in_service_scope(), timeout))
@@ -53,6 +55,16 @@ class FakeLeases:
             if cur is None or cur[0] == params["p_holder"] or cur[1] <= now:
                 self.rows[key] = (params["p_holder"], now + params["p_ttl_sec"])
                 return True
+            return False
+        if name == "renew_lease":
+            if self.on_renew:
+                self.on_renew()
+            cur = self.rows.get(key)
+            if cur and cur[0] == params["p_holder"]:  # UPDATE only: never inserts
+                self.rows[key] = (cur[0], time.monotonic() + params["p_ttl_sec"])
+                self.calls.append(("renew_done", {}, True, None))
+                return True
+            self.calls.append(("renew_done", {}, True, None))
             return False
         if name == "release_lease":
             cur = self.rows.get(key)
@@ -168,12 +180,50 @@ def test_the_lease_is_renewed_while_the_body_runs(fake, on, monkeypatch):
     with pg_lease.lease("k", 0.03) as held:  # renews every ~0.01 s
         assert held is True
         deadline = time.monotonic() + 2
-        while fake.names().count("claim_lease") < 3 and time.monotonic() < deadline:
+        while fake.names().count("renew_lease") < 2 and time.monotonic() < deadline:
             time.sleep(0.01)
-    claims = [c for c in fake.calls if c[0] == "claim_lease"]
-    assert len(claims) >= 3
+    claims = [c for c in fake.calls if c[0] in ("claim_lease", "renew_lease")]
+    assert [c[0] for c in claims][:1] == ["claim_lease"] and len(claims) >= 3
     assert len({c[1]["p_holder"] for c in claims}) == 1  # the same acquisition
     assert fake.names()[-1] == "release_lease"
+
+
+def test_a_renewal_never_recreates_a_released_lease(fake, on):
+    """The renewal is UPDATE-only: one that lands after the release (or after
+    another holder took an expired lease over) brings nothing back."""
+    with pg_lease.lease("k", 30, renew=False):
+        holder = fake.rows["k"][0]
+    assert "k" not in fake.rows
+    assert pg_lease._renew_db("k", holder, 30) is False
+    assert "k" not in fake.rows
+    fake.rows["k"] = ("other", time.monotonic() + 60)
+    assert pg_lease._renew_db("k", holder, 30) is False
+    assert fake.rows["k"][0] == "other"
+
+
+def test_exit_waits_for_an_in_flight_renewal_before_releasing(fake, on, monkeypatch):
+    """A renewal still running when the body ends used to race the release
+    and could recreate the lease after it was deleted (an AccountBusy for up
+    to the TTL). The exit now joins the renewer first: the release is last."""
+    import threading
+
+    monkeypatch.setattr(pg_lease, "RENEW_MIN_S", 0.01)
+    in_renew, slow = threading.Event(), {"on": True}
+
+    def _hold_renewal_open():
+        if slow["on"]:
+            slow["on"] = False
+            in_renew.set()
+            time.sleep(0.2)  # the body exits while this renewal is in flight
+
+    fake.on_renew = _hold_renewal_open
+    with pg_lease.lease("k", 0.03) as held:
+        assert held is True
+        assert in_renew.wait(2)
+    names = fake.names()
+    assert names.index("renew_done") < names.index("release_lease")
+    assert names[-1] == "release_lease"
+    assert "k" not in fake.rows
 
 
 def test_ttl_is_clamped_to_what_the_sql_accepts(fake, on):

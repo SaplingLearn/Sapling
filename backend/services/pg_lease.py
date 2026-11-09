@@ -5,8 +5,9 @@ Some guards in this app are per-process: the study-guide single-flight
 (``services/account_ops_lock.py``) and the consumed-OAuth-nonce set
 (``routes/auth.py``). With two API replicas each process only sees its own
 half. This module is the one primitive that closes the gap: a lease row in
-``app_leases``, claimed and released through the atomic ``claim_lease`` /
-``release_lease`` SQL functions (migration ``*_app_leases.sql``).
+``app_leases``, claimed, renewed and released through the atomic
+``claim_lease`` / ``renew_lease`` / ``release_lease`` SQL functions (migration
+``*_app_leases.sql``).
 
 The callers keep their in-process lock as the FIRST layer and take a lease
 here as the second, so with the flag off nothing changes at all:
@@ -16,8 +17,11 @@ here as the second, so with the flag off nothing changes at all:
 * ``on`` -- one bounded ``claim_lease`` round trip (``CLAIM_TIMEOUT_S``, not
   the client's 30 s). A lease is held for ``ttl_s`` and, while a ``with``
   body runs, renewed every ``ttl_s / 3`` so a slow body never loses it; a
-  crashed process's lease simply expires. Release deletes the row only while
-  this acquisition still holds it.
+  crashed process's lease simply expires. A renewal only extends a row this
+  acquisition still holds (it never inserts one), and the body's exit stops
+  and joins the renewer before releasing, so a release can never be undone
+  by a renewal still in flight. Release deletes the row only while this
+  acquisition still holds it.
 * DB failure (or a pre-migration 404) -- the lease is GRANTED (fail open to
   the in-process layer: these guard double-submits, they are not
   authorization) and the store is marked down for ``DB_DOWN_S``: inside that
@@ -52,6 +56,7 @@ logger = logging.getLogger("sapling.pg_lease")
 FLAG_KEY = "stateless_locks"
 #: The SQL functions the migration adds.
 CLAIM_FN = "claim_lease"
+RENEW_FN = "renew_lease"
 RELEASE_FN = "release_lease"
 
 #: Bound on one lease round trip.
@@ -62,6 +67,9 @@ DB_DOWN_S = 30.0
 MAX_TTL_S = 86_400
 #: Floor on the renewal interval (ttl/3); tests shrink it.
 RENEW_MIN_S = 1.0
+#: How long the body's exit waits for an in-flight renewal before releasing:
+#: one bounded round trip, plus slack.
+RENEW_JOIN_S = CLAIM_TIMEOUT_S + 0.5
 
 _HOST = f"{socket.gethostname()[:60]}:{os.getpid()}"
 
@@ -176,6 +184,21 @@ def _claim_db(key: str, holder: str, ttl_s: float) -> Optional[bool]:
     return _settle(answer)
 
 
+def _renew_db(key: str, holder: str, ttl_s: float) -> Optional[bool]:
+    """True = extended, False = this holder no longer holds it (released,
+    expired and taken over), None = no answer. Never creates a row."""
+    from db.connection import rpc
+    from db.scope import service_scope
+
+    try:
+        with service_scope():
+            answer = rpc(RENEW_FN, _claim_params(key, holder, ttl_s), timeout=CLAIM_TIMEOUT_S)
+    except Exception as exc:
+        _db_failed(exc)
+        return None
+    return _settle(answer)
+
+
 def _release_db(key: str, holder: str) -> None:
     """Best effort: a release that fails leaves the lease to expire."""
     from db.connection import rpc
@@ -210,7 +233,7 @@ def _wait_for(claim, deadline: float, poll_s: float, sleep) -> Optional[bool]:
 
 
 class _Renewer:
-    """Re-claims a held lease every ttl/3 on a daemon thread until stopped."""
+    """Extends a held lease every ttl/3 on a daemon thread until stopped."""
 
     def __init__(self, key: str, ttl_s: float, holder: str):
         self._key, self._ttl, self._holder = key, ttl_s, holder
@@ -221,13 +244,18 @@ class _Renewer:
 
     def _run(self) -> None:
         while not self._stop.wait(max(RENEW_MIN_S, self._ttl / 3)):
-            if _claim_db(self._key, self._holder, self._ttl) is False:
+            if _renew_db(self._key, self._holder, self._ttl) is False:
+                if self._stop.is_set():
+                    return  # the body finished while this renewal ran
                 logger.warning("stateless_locks: lost the lease on %s mid-run",
                                self._key.split(":", 1)[0])
                 return
 
     def stop(self) -> None:
+        """Stop renewing and wait (bounded) for a renewal already in flight,
+        so the release that follows is the last word on the row."""
         self._stop.set()
+        self._thread.join(RENEW_JOIN_S)
 
 
 @contextlib.contextmanager

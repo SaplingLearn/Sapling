@@ -150,6 +150,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
     ("services/pg_lease.py", "_claim_db", "service_scope"):
         "#117 stateless_locks: app_leases + claim_lease() are service-only",
+    ("services/pg_lease.py", "_renew_db", "service_scope"):
+        "#117 stateless_locks: renew_lease() extends the caller's own lease",
     ("services/pg_lease.py", "_release_db", "service_scope"):
         "#117 stateless_locks: release_lease() drops the caller's own lease",
     ("services/tutor_sessions.py", "_store_row", "runs_as_service"):
