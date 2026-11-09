@@ -330,6 +330,21 @@ echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this st
 wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
   "http://127.0.0.1:$BACKEND_PORT/api/health" 30 "$E2E_DIR/backend.log"
 
+# ── Job worker (opt-in, #116) ────────────────────────────────────────────────
+# The lane runs the `jobs_queue` flag OFF, so nothing is enqueued and no worker
+# is needed. E2E_WORKER=1 starts `python -m worker` beside the backend, with
+# the same exported env (function mode included: the worker freezes the model
+# mode at boot like the API lifespan), for exploring the flag-on paths. Same
+# setsid-simple-command shape as the backend; e2e-down stops it.
+if [ "${E2E_WORKER:-0}" = "1" ]; then
+  echo "▶ Starting job worker (python -m worker, log: .e2e/worker.log)…"
+  (
+    cd backend || exit 1
+    $DETACH "$VENV_PY" -m worker --poll-interval 1 >"$E2E_DIR/worker.log" 2>&1 &
+    echo $! >"$E2E_DIR/worker.pid"
+  ) || { echo "✗ could not start worker"; exit 1; }
+fi
+
 # ── Frontend (test-profile production build, #380) ───────────────────────────
 # `start:test` prints a "next start does not work with output: standalone"
 # warning — expected and harmless, see docs/local-supabase.md.

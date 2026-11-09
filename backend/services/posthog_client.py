@@ -551,7 +551,9 @@ def _submit(
 #: expired cookie, every 404 probe and every 422: high volume, no product
 #: signal, and a raw path per row. flag.changed (#620) is an admin audit
 #: event whose `field` names the rule's target — `user:<another student's
-#: id>` — in a value no key-based id filter can see.
+#: id>` — in a value no key-based id filter can see. The account.* events are
+#: admin account-tools audit rows: no product signal, and the internal
+#: export/import rows are attributed to the TARGET student, who did nothing.
 #: safety.crisis_support_shown (docs/safety/crisis-support.md) says that a
 #: named student wrote something that read as suicidal ideation, self-harm or
 #: acute danger: mental-health information about an identifiable person
@@ -561,6 +563,8 @@ def _submit(
 #: everyone with PostHog access would otherwise hold it, consent or not.
 _NOT_MIRRORED: frozenset[str] = frozenset({
     "error.4xx", "flag.changed", "safety.crisis_support_shown",
+    "account.seed", "account.wipe", "account.copy_push", "account.copy_pull",
+    "account.export", "account.import",
 })
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a

@@ -3,9 +3,10 @@
 `documents.index_status` is the work queue; this is what empties it. A queue
 nothing drains is the failure #482 is about in a new form —
 `scripts/backfill_document_chunks.py` existed for months and was invoked by
-nothing — so the sweeper is ON by default in real model mode. Defaulting it
-off would repeat what happened to DBOS, which ADR 0011 leaves off in every
-deployed environment.
+nothing — so the sweeper is ON by default in production in real model mode.
+Defaulting it off there would repeat what happened to DBOS, which ADR 0011
+leaves off in every deployed environment. Non-production environments default
+it off so they can sleep (see `sweeper_enabled`).
 
 Each pass claims documents through `claim_documents_for_indexing` — an atomic
 `UPDATE ... RETURNING` over `SKIP LOCKED`, so two instances never drive the
@@ -59,13 +60,24 @@ _stop: threading.Event | None = None
 
 
 def sweeper_enabled() -> bool:
-    """On unless switched off, and only in real model mode.
+    """On in production by default, and only ever in real model mode.
 
     Outside real mode (#439, every E2E run) there is nothing to embed with, so
     a sweep could only mark rows `skipped`; the upload's own inline attempt
     already does that. INDEX_SWEEPER_ENABLED is the kill switch.
+
+    Unset, it follows APP_ENV: on in production (APP_ENV's own default), off
+    everywhere else. Staging and the per-PR preview environments run on
+    Railway Serverless, which only sleeps a service after ~5 minutes with no
+    outbound traffic; a pass every 300 s reset that clock forever, so those
+    environments billed as always-on. Set INDEX_SWEEPER_ENABLED=true to run
+    it outside production.
     """
-    if os.getenv("INDEX_SWEEPER_ENABLED", "true").strip().lower() in _OFF:
+    raw = os.getenv("INDEX_SWEEPER_ENABLED")
+    if raw is not None and raw.strip():
+        if raw.strip().lower() in _OFF:
+            return False
+    elif os.getenv("APP_ENV", "production").strip().lower() != "production":
         return False
     return model_mode() == "real"
 

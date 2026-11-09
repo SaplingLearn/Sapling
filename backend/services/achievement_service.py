@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
 from services.session_modes import NOT_REVIEW
+from db.scope import runs_as_service
 from services import gradebook_service
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
@@ -40,6 +41,7 @@ def _count_rows(table_name: str, filters: dict) -> int:
     return len(rows) if rows else 0
 
 
+@runs_as_service  # #115: achievement counters read rows beyond the student's own grants
 def get_user_stat(user_id: str, trigger_type: str) -> int:
     """Public wrapper around the internal stat lookup."""
     return _get_user_stat(user_id, trigger_type)
@@ -332,6 +334,7 @@ def _course_grade_a_count(user_id: str) -> int:
     return count
 
 
+@runs_as_service  # #115: awards are server decisions (user_achievements/user_cosmetics writes are service-only)
 def check_achievements(user_id: str, event_type: str, event_data: dict = None) -> list:
     """
     Check and grant achievements for a user after an event.
@@ -465,18 +468,25 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 HEAL_WINDOW = timedelta(hours=24)
 
 
+def parse_utc(raw: str | None) -> datetime | None:
+    """A stored timestamp as an aware UTC datetime; None when missing or
+    unparseable. A naive value is taken as UTC. Shared with
+    scripts/backfill_achievement_xp.py so it reads grant times exactly as the
+    heal window does."""
+    try:
+        ts = _parse_ts(raw)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
 def _earned_since(raw: str | None, cutoff: datetime) -> bool:
     """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
     an unknown grant time is treated as old, so it is never healed."""
-    try:
-        ts = _parse_ts(raw)
-        if ts is None:
-            return False
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts > cutoff
-    except (TypeError, ValueError):
-        return False
+    ts = parse_utc(raw)
+    return ts is not None and ts > cutoff
 
 
 def _heal_grants(user_id: str, achievement_ids: set) -> None:
@@ -579,6 +589,7 @@ def _unlock_cosmetic(user_id: str, cosmetic_id: str) -> None:
     )
 
 
+@runs_as_service  # #115: cosmetic awards are service-only writes
 def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     """Unlock every cosmetic linked to `achievement_id` for `user_id`.
 

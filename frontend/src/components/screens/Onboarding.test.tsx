@@ -6,7 +6,7 @@
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor, fireEvent, screen } from "@testing-library/react";
+import { render, cleanup, waitFor, fireEvent, screen, act } from "@testing-library/react";
 
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
@@ -22,10 +22,13 @@ vi.mock("@/components/ToastProvider", () => ({ useToast: () => toast }));
 vi.mock("@/lib/localSeed", () => ({ onboardingRedirect: async () => null }));
 
 const submitOnboardingProfile = vi.fn();
+type SearchReply = { courses: { id: string; course_code: string; course_name: string }[] };
+const noCourses = async (): Promise<SearchReply> => ({ courses: [] });
+const onboardingCoursesSearch = vi.fn<(q: string) => Promise<SearchReply>>(noCourses);
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   submitOnboardingProfile: (...a: unknown[]) => submitOnboardingProfile(...a),
-  onboardingCoursesSearch: async () => ({ courses: [] }),
+  onboardingCoursesSearch: (q: string) => onboardingCoursesSearch(q),
 }));
 
 import { Onboarding, onboardingDraftKey } from "./Onboarding";
@@ -84,5 +87,41 @@ describe("#757 onboarding draft is per account", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(replace).not.toHaveBeenCalledWith("/dashboard");
     expect(localStorage.getItem(onboardingDraftKey("user_a"))).not.toBeNull();
+  });
+});
+
+describe("onboarding course search: latest query wins (#769)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    user = { userId: "user_a", userName: "Ada Lovelace" };
+  });
+  afterEach(() => {
+    cleanup();
+    onboardingCoursesSearch.mockImplementation(noCourses);
+  });
+
+  it("a slow reply for 'fe' can't replace the results for 'fe 223'", async () => {
+    const pending: Record<string, (v: SearchReply) => void> = {};
+    onboardingCoursesSearch.mockImplementation((q: string) =>
+      q === "fe 223"
+        ? Promise.resolve({ courses: [{ id: "c-fe223", course_code: "QST FE 223", course_name: "Introduction to Corporate Finance" }] })
+        : q === "fe"
+          ? new Promise<SearchReply>(res => { pending.fe = res; })
+          : Promise.resolve({ courses: [] }),
+    );
+    localStorage.setItem(onboardingDraftKey("user_a"), JSON.stringify({ ...FINAL_DRAFT, course_ids: [], step: 4 }));
+    render(<Onboarding />);
+    const input = await screen.findByTestId("onboarding-course-search");
+
+    fireEvent.change(input, { target: { value: "fe" } });
+    await waitFor(() => expect(pending.fe).toBeDefined(), { timeout: 2000 });
+    fireEvent.change(input, { target: { value: "fe 223" } });
+    expect(await screen.findByText("QST FE 223", undefined, { timeout: 2000 })).toBeTruthy();
+
+    await act(async () => {
+      pending.fe({ courses: [{ id: "c-fe101", course_code: "QST FE 101", course_name: "Free Enterprise" }] });
+    });
+    expect(screen.queryByText("QST FE 101")).toBeNull();
+    expect(screen.getByText("QST FE 223")).toBeTruthy();
   });
 });

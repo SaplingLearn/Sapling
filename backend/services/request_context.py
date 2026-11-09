@@ -17,6 +17,7 @@ the same `request.state.request_id`.)
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import logging
 import re
@@ -102,12 +103,15 @@ class RequestView:
       drops the scope. A context copied into a task or thread during the
       request therefore never keeps the scope — its headers and session
       cookie — alive after the response.
+    * ``method`` — the HTTP method (a plain string, safe to keep after the
+      request ends); db/scope.py's shadow report (#115) names it.
     """
 
-    __slots__ = ("state", "_scope", "_template")
+    __slots__ = ("state", "method", "_scope", "_template")
 
     def __init__(self, scope: dict) -> None:
         self.state: dict = scope.setdefault("state", {})
+        self.method: str | None = scope.get("method")
         self._scope: dict | None = scope
         self._template: str | None = None
 
@@ -199,6 +203,12 @@ def current_route_template() -> str | None:
     return view.route_template() if view is not None else None
 
 
+def current_method() -> str | None:
+    """The current request's HTTP method, or None outside a request."""
+    view = _REQUEST_CTX.get()
+    return view.method if view is not None else None
+
+
 def current_session_user() -> str | None:
     """The current request's authenticated user, as auth_guard stamped it on
     ``request.state.user_id``.
@@ -213,6 +223,55 @@ def current_session_user() -> str | None:
     state = view.state if view is not None else None
     user = state.get("user_id") if isinstance(state, dict) else None
     return user if isinstance(user, str) and user else None
+
+
+#: #119: the student a unit of work OUTSIDE a request runs for — a job-queue
+#: handler (the upload pipeline, the Gradescope sync) sets it for the job's
+#: user with :func:`acting_for`. A dict, so like a request's ``scope["state"]``
+#: it is one shared object every task/thread copied from the scope sees
+#: (services/llm_budget.py records its one decision per unit of work on it).
+_ACTING_CTX: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "sapling_acting_for", default=None,
+)
+
+
+@contextlib.contextmanager
+def acting_for(user_id: str | None):
+    """Run the block as work done FOR `user_id` (a job handler, for the
+    student who queued the job). Reset on exit, so the worker thread that
+    runs the next job never inherits this one's user. A falsy `user_id` is a
+    no-op."""
+    if not (isinstance(user_id, str) and user_id):
+        yield
+        return
+    token = _ACTING_CTX.set({"user_id": user_id})
+    try:
+        yield
+    finally:
+        _ACTING_CTX.reset(token)
+
+
+def current_acting_user() -> str | None:
+    """Whom the current work is for: the request's authenticated user
+    (:func:`current_session_user`), else the :func:`acting_for` user of a
+    job, else None. LLM-usage attribution and the per-user LLM budget read
+    this. PostHog's actor fallback deliberately does NOT: it stays
+    request-only (``current_session_user``)."""
+    user = current_session_user()
+    if user is not None:
+        return user
+    acting = _ACTING_CTX.get()
+    return acting.get("user_id") if acting is not None else None
+
+
+def current_work_state() -> dict | None:
+    """The dict every part of the current unit of work shares: the request's
+    ``scope["state"]``, else the :func:`acting_for` scope's, else None (no
+    request, no job)."""
+    view = _REQUEST_CTX.get()
+    if view is not None and isinstance(view.state, dict):
+        return view.state
+    return _ACTING_CTX.get()
 
 
 def new_request_id() -> str:
@@ -234,6 +293,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # so the handler, threadpool Depends and BackgroundTasks see them.
         privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
         view = RequestView(request.scope)
+        # #115 (RLS step 2, db/scope.py): stamp the session's subject onto the
+        # shared state BEFORE any handler runs — HMAC + expiry only, no DB
+        # read — so a handler that reads a row before its own require_self
+        # is already user-scoped when the db_user_scope flag is on. Separate
+        # key from request.state.user_id, which keeps meaning "the guard
+        # fully authenticated this request". Inert while the flag is off.
+        from db.scope import stamp_subject
+        stamp_subject(request)
         view_token = _REQUEST_CTX.set(view)
         try:
             return await self._dispatch(request, call_next)

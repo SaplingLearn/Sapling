@@ -1130,3 +1130,44 @@ async def local_seed_status(request: Request):
     if status["state"] == "pending":
         local_seed_watcher.nudge()
     return status
+
+
+# ── GET /api/auth/realtime-token (RLS step 2e) ────────────────────────────────
+
+#: Feature flag that turns the Realtime JWT bridge on for a student (#115).
+REALTIME_RLS_FLAG = "realtime_rls"
+
+
+@router.get("/realtime-token")
+def realtime_token(request: Request):
+    """A short-lived JWT the browser's Supabase Realtime client authenticates
+    with (``supabase.realtime.setAuth``), so live study-room chat survives RLS
+    on ``room_messages`` (docs/security/realtime-jwt-bridge-design.md).
+
+    One general token per student, not per room: the room_messages SELECT
+    policy (``app_auth.is_room_member_realtime``) does the scoping, and
+    Realtime re-checks it for every change. ``iss`` is ``sapling-realtime``,
+    which no other policy trusts. Answers ``{token, expires_at}`` (unix
+    seconds); the client re-fetches before ``expires_at``.
+
+    401/403 without a live, approved session; 404 while the ``realtime_rls``
+    flag is off for the student (the client then keeps the anon Realtime
+    path); 503 when SUPABASE_JWT_SIGNING_KEY is unset or unusable (fail
+    closed: never a service-role or anon fallback). ``no-store``: it is a
+    credential.
+    """
+    from db import user_jwt
+    from services import feature_flags
+
+    user_id = get_session_user_id(request)
+    if not feature_flags.flag_on(REALTIME_RLS_FLAG, user_id):
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        token, expires_at = user_jwt.mint_realtime(user_id)
+    except user_jwt.SigningKeyError as exc:
+        logger.warning("realtime-token: cannot mint (%s)", exc)
+        raise HTTPException(status_code=503, detail="Realtime authorization is not configured")
+    return JSONResponse(
+        {"token": token, "expires_at": expires_at},
+        headers={"Cache-Control": "private, no-store"},
+    )

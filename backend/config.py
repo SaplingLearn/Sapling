@@ -177,6 +177,32 @@ def validate_config() -> None:
             + ", ".join(missing)
             + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET for local dev.)"
         )
+    _warn_db_user_scope_config()
+
+
+def _warn_db_user_scope_config() -> None:
+    """#115 (RLS step 2): warn at boot when the `db_user_scope` flag could be
+    moved past `off` without the keys the user-scoped client needs
+    (SUPABASE_JWT_SIGNING_KEY + SUPABASE_ANON_KEY, db/user_jwt.py). Never
+    raises: the flag lives in the DB and is off by default, so a deployment
+    without the keys is fine until someone flips it — at which point enforce
+    answers 503 (fail closed) and shadow skips its comparisons. An env
+    override already asking for shadow/enforce makes it an ERROR."""
+    import logging
+
+    from db import user_jwt
+
+    problems = user_jwt.config_problems()
+    if not problems:
+        return
+    log = logging.getLogger("sapling.config")
+    override = (os.getenv("SAPLING_FLAG_DB_USER_SCOPE") or "").strip().lower()
+    msg = ("db_user_scope cannot leave 'off' on this deployment (%s): enforce would "
+           "answer 503 and shadow would skip its comparisons. See .env.example.")
+    if override in ("shadow", "enforce"):
+        log.error("SAPLING_FLAG_DB_USER_SCOPE=%s but " + msg, override, "; ".join(problems))
+    elif not IS_LOCAL:
+        log.warning(msg, "; ".join(problems))
 
 
 # ── Mastery tiers ───────────────────────────────────────────────────────────
@@ -203,6 +229,30 @@ def canopy_metrics_token() -> str:
     rotation needs no code change and a test can set the env var.
     """
     return (os.getenv("CANOPY_METRICS_TOKEN") or "").strip()
+
+
+# ── Cross-environment account copy (admin account tools) ────────────────────
+#
+# OPTIONAL and deliberately absent from `validate_config`: with any of these
+# unset the copy feature is inert (the admin route answers 503, the internal
+# `/api/internal/account-sync/*` routes answer 404). Read at call time and
+# stripped, like `canopy_metrics_token`, so a rotation needs no code change and
+# a pasted trailing newline cannot fail as a silent 401.
+
+
+def account_sync_peer_url() -> str:
+    """The OTHER environment's backend base URL (no trailing slash), or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_URL") or "").strip().rstrip("/")
+
+
+def account_sync_peer_token() -> str:
+    """Bearer token we SEND to the peer's internal account-sync routes, or ""."""
+    return (os.getenv("ACCOUNT_SYNC_PEER_TOKEN") or "").strip()
+
+
+def account_sync_inbound_token() -> str:
+    """Bearer token our internal account-sync routes ACCEPT, or "" (= routes 404)."""
+    return (os.getenv("ACCOUNT_SYNC_INBOUND_TOKEN") or "").strip()
 
 
 def build_commit() -> str:

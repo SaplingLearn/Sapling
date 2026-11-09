@@ -21,7 +21,6 @@
  */
 
 import React from "react";
-import { flushSync } from "react-dom";
 import type { QuestionType } from "@/lib/quiz/types";
 import {
   expressionParts,
@@ -88,29 +87,36 @@ export function WrittenAnswer({
 }: WrittenAnswerProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
+  /** Where a key just asked the cursor to go, once its text is in the input. */
+  const pendingCaret = React.useRef<{ value: string; caret: number } | null>(null);
 
-  /** Put `key` in at the cursor (replacing any selection) and keep typing.
-   *
-   *  The new value is committed and the cursor placed in the click's own
-   *  task, so the next keystroke can only land where the key left it. Writing
-   *  the value moves the cursor to the END of the input; placing it in a later
-   *  animation frame let keys typed before that frame go in at the end, and
-   *  then moved the cursor back behind them ("2", "( )", "x + 1" read
-   *  "2( 1)x +"). A cursor worked out for an older value is never applied
-   *  after newer typing. */
+  // Writing the new value into a controlled input puts the cursor at its end.
+  // Move it in the same commit, before the browser runs another event: a
+  // requestAnimationFrame here let the next keystroke land first (typing
+  // "x" right after "( )" gave "2()x", then the cursor jumped back inside).
+  React.useLayoutEffect(() => {
+    const pending = pendingCaret.current;
+    const input = inputRef.current;
+    if (!pending || !input || input.value !== pending.value) return;
+    pendingCaret.current = null;
+    input.focus();
+    input.setSelectionRange(pending.caret, pending.caret);
+  });
+
+  /** Put `key` in at the cursor (replacing any selection) and keep typing. */
   const insert = (key: Key) => {
     const input = inputRef.current;
     const start = input?.selectionStart ?? value.length;
     const end = input?.selectionEnd ?? value.length;
     const next = value.slice(0, start) + key.insert + value.slice(end);
     const caret = start + (key.caret ?? key.insert.length);
-    flushSync(() => onChange(next));
-    const written = inputRef.current;
-    if (!written) return;
-    written.focus();
-    // A write the owner refused (an answer already being submitted) keeps
-    // the old value, and the cursor the student left in it.
-    if (written.value === next) written.setSelectionRange(caret, caret);
+    if (next === value) {
+      // A selection replaced by the same text: no re-render will follow.
+      input?.setSelectionRange(caret, caret);
+      return;
+    }
+    pendingCaret.current = { value: next, caret };
+    onChange(next);
   };
 
   const readBack = (() => {
@@ -157,7 +163,11 @@ export function WrittenAnswer({
         maxLength={2000}
         value={value}
         disabled={disabled}
-        onChange={event => onChange(event.target.value)}
+        onChange={event => {
+          // Typing wins over a key's cursor move that never got applied.
+          pendingCaret.current = null;
+          onChange(event.target.value);
+        }}
         onKeyDown={event => {
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();

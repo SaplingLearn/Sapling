@@ -57,7 +57,12 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
-  return { source: e.source as string, target: e.target as string, strength: e.strength };
+  return {
+    source: e.source as string,
+    target: e.target as string,
+    strength: e.strength,
+    relationship_type: e.relationship_type,
+  };
 }
 
 type Mode = "socratic" | "expository" | "teachback";

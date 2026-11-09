@@ -197,12 +197,25 @@ def test_event_taxonomy_is_pinned():
         # #620: admin feature-flag change (audit). Emit coverage lives in
         # test_admin_flags_routes.py.
         "flag.changed",
+        # Admin account tools. Emit coverage lives in test_admin_accounts.py /
+        # test_account_sync_routes.py.
+        "account.seed",
+        "account.wipe",
+        "account.copy_push",
+        "account.copy_pull",
+        "account.export",
+        "account.import",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
         # docs/safety/crisis-support.md: the crisis screen fired. Emit
         # coverage (and the no-content / no-PostHog pins) lives in
         # test_crisis_support_routes.py.
         "safety.crisis_support_shown",
+        # #115: the db_user_scope rollout signals. Emit coverage lives in
+        # test_db_user_scope.py.
+        "db.unscoped_query",
+        "db.rls_shadow_divergence",
+        "db.rls_denied",
     })
 
 
@@ -685,7 +698,7 @@ def _upload_sync():
 def test_upload_sync_emits_upload_and_processed(sink):
     with (
         patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.resolve_offering", return_value="off-1"),
+        patch("routes.documents.require_course_enrollment", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch("routes.documents.process_document", return_value=_doc_result()),
         patch("routes.documents.table") as t,
@@ -729,7 +742,7 @@ def test_upload_sync_agent_failure_emits_upload_but_no_processed(sink):
     stays: upload/processed deltas are how the failure rate is measured."""
     with (
         patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.resolve_offering", return_value="off-1"),
+        patch("routes.documents.require_course_enrollment", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch(
             "routes.documents.process_document",
@@ -754,7 +767,7 @@ def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
 
     with (
         patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.resolve_offering", return_value="off-1"),
+        patch("routes.documents.require_course_enrollment", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch(
             "routes.documents.classifier_agent.run",
@@ -1434,7 +1447,7 @@ def test_create_note_emits_note_created(sink):
         }
 
     with (
-        patch("routes.notes.resolve_offering", return_value="off1"),
+        patch("routes.notes.require_course_enrollment", return_value="off1"),
         patch("routes.notes.create_note", side_effect=fake_create),
     ):
         r = client.post("/api/notes", json={
@@ -1480,7 +1493,7 @@ def test_route_survives_events_pipeline_internal_failure(monkeypatch):
                 "created_at": "", "updated_at": ""}
 
     with (
-        patch("routes.notes.resolve_offering", return_value="off1"),
+        patch("routes.notes.require_course_enrollment", return_value="off1"),
         patch("routes.notes.create_note", side_effect=fake_create),
     ):
         r = client.post("/api/notes", json={
@@ -1576,7 +1589,7 @@ def test_idempotent_upload_replay_emits_no_second_document_upload(sink):
             return_value={"id": "doc-1", "file_name": "a.pdf"},
         ),
         patch.object(documents_routes, "extract_text_from_file", return_value="text " * 40),
-        patch.object(documents_routes, "resolve_offering", return_value="off-1"),
+        patch.object(documents_routes, "require_course_enrollment", return_value="off-1"),
     ):
         r = client.post(
             "/api/documents/upload/sync",

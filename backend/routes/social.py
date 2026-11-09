@@ -16,7 +16,7 @@ from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, Send
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
-from services.profiles import get_display_name, get_display_names
+from services.profiles import LIVE_USER_FILTER, get_display_name, get_display_names, live_user_ids
 from services.graph_service import get_graph
 from services import academics
 from services.matching_service import find_study_matches
@@ -53,6 +53,49 @@ def _require_member(room_id: str, user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Not a member of this room")
 
 
+def _message_in_room(room_id: str, message_id: str | None) -> str | None:
+    """The canonical id of `message_id` when it names a message IN `room_id`,
+    else None (#115).
+
+    A message id alone is not an authorization: room_messages ids are global,
+    so any route that takes one alongside a room must check the pair, or a
+    member of room X can act on (or quote) a message that lives in room Y.
+    "No such message", "not a uuid" and "a message in another room" are all
+    the same None, so callers answer one 404 and leak no existence oracle.
+    """
+    if not message_id:
+        return None
+    try:
+        canonical = str(uuid.UUID(str(message_id)))
+    except ValueError:
+        return None
+    rows = table("room_messages").select(
+        "id", filters={"id": f"eq.{canonical}", "room_id": f"eq.{room_id}"},
+    )
+    return canonical if rows else None
+
+
+def _visible_profile_ids(user_ids) -> list[str]:
+    """`user_ids` minus those whose profile_visibility is 'private', sorted.
+
+    The one opt-out rule for every cross-user listing (#342 directory, #115
+    school match). Users with no settings row default to 'public' (the column
+    default), so they stay. 'public' and 'school' are equivalent here: both
+    callers are already school-scoped.
+    """
+    ids = sorted(set(user_ids))
+    if not ids:
+        return []
+    settings_rows = table("user_settings").select(
+        "user_id,profile_visibility",
+        filters={"user_id": f"in.({','.join(ids)})"},
+    ) or []
+    hidden = {
+        s["user_id"] for s in settings_rows if s.get("profile_visibility") == "private"
+    }
+    return [uid for uid in ids if uid not in hidden]
+
+
 #: Who counts as a real, listable student (#764). A stub is the bare
 #: {id, streak_count} row graph_service.ensure_user_exists inserts, and it has
 #: no email. (google_id is NOT the test: every seeded local/E2E/showcase user
@@ -64,6 +107,14 @@ _LISTABLE_USER_FILTERS = {
     "is_approved": "eq.true",
     "deleted_at": "is.null",
 }
+
+
+def _live_members(member_rows) -> list[str]:
+    """Room member ids minus soft-deleted accounts (#115), in row order: a
+    deleted student's name and graph must not stay on the room's pages."""
+    ids = [r["user_id"] for r in member_rows or []]
+    live = live_user_ids(ids) if ids else set()
+    return [i for i in ids if i in live]
 
 
 @router.post("/rooms/create")
@@ -271,7 +322,7 @@ def room_overview(room_id: str, request: Request):
     room = room_rows[0]
 
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
+    member_ids = _live_members(member_id_rows)
 
     members = []
     if member_ids:
@@ -358,7 +409,7 @@ def match_partners(room_id: str, body: MatchBody, request: Request):
     # Members' graphs are room-private (#764): the same gate as the overview.
     _require_member(room_id, body.user_id)
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
+    member_ids = _live_members(member_id_rows)
 
     members_with_graphs = []
     if member_ids:
@@ -378,10 +429,19 @@ def match_partners(room_id: str, body: MatchBody, request: Request):
 
 @router.post("/school-match")
 def school_match(body: MatchBody, request: Request):
-    """
-    Match the requesting user against all users NOT in any of their study rooms.
+    """Match the requesting user against students at their school who share
+    none of their study rooms (room-mates are what /rooms/{id}/match is for).
+
+    Candidates follow the same visibility rules as the /students directory
+    (#115): same school only (``academics.school_peer_user_ids``; no school →
+    no matches, fail closed), ``profile_visibility='private'`` opts out, and
+    only listable accounts (no stubs, pending or soft-deleted users). The
+    payload carries per-concept mastery comparisons, so a looser scope here
+    would expose more than the directory itself does.
     """
     require_self(body.user_id, request)
+    peer_ids = academics.school_peer_user_ids(body.user_id)
+
     user_room_rows = table("room_members").select(
         "room_id", filters={"user_id": f"eq.{body.user_id}"}
     )
@@ -393,18 +453,17 @@ def school_match(body: MatchBody, request: Request):
             "user_id", filters={"room_id": f"in.({','.join(user_room_ids)})"}
         )
         excluded_ids = {r["user_id"] for r in room_member_rows}
-
     excluded_ids.add(body.user_id)
-    excl_list = list(excluded_ids)
 
+    candidate_ids = _visible_profile_ids(set(peer_ids) - excluded_ids)
     school_users = table("users").select(
         "id",
-        filters={"id": f"not.in.({','.join(excl_list)})", **_LISTABLE_USER_FILTERS},
-    )
+        filters={"id": f"in.({','.join(candidate_ids)})", **_LISTABLE_USER_FILTERS},
+    ) if candidate_ids else []
 
     # Names live on user_profiles (0024); resolve in bulk and decrypt.
-    school_ids = [u["id"] for u in school_users]
-    name_map = get_display_names(school_ids)
+    school_ids = [u["id"] for u in school_users or []]
+    name_map = get_display_names(school_ids) if school_ids else {}
     members_with_graphs = [
         {"user_id": uid, "name": name_map.get(uid, ""), "graph": get_graph(uid)}
         for uid in school_ids
@@ -428,7 +487,17 @@ def school_match(body: MatchBody, request: Request):
 @router.post("/rooms/{room_id}/leave")
 def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     require_self(body.user_id, request)
-    table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
+    # #115: only a member can leave. The delete's own result is the
+    # membership test (atomic, no read-then-act window): a non-member used to
+    # fall through and bump the room's updated_at, invalidate its summary,
+    # read back its owner_id and, for a room whose owner had gone, hand
+    # ownership on, all for a room they were never in. Same 403 as every
+    # other non-member room action.
+    removed = table("room_members").delete(
+        {"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"}
+    )
+    if not removed:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
     invalidate_summary(room_id)
 
     # #764: a room is owned by a MEMBER, or it does not exist.
@@ -549,9 +618,13 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
     reply_ids = list({r["reply_to_id"] for r in rows if r.get("reply_to_id")})
     reply_map: dict = {}
     if reply_ids:
+        # Room-scoped (#115): a reply can only quote a message in THIS room.
+        # The post path now refuses a foreign reply_to_id, but rows stored
+        # before that check may still point across rooms; they render with no
+        # snippet rather than another room's decrypted text.
         reply_rows = table("room_messages").select(
             "id,user_name,text,is_deleted",
-            filters={"id": f"in.({','.join(reply_ids)})"},
+            filters={"id": f"in.({','.join(reply_ids)})", "room_id": f"eq.{room_id}"},
         )
         for rr in reply_rows:
             reply_map[rr["id"]] = {
@@ -581,6 +654,16 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
     if not membership:
         raise HTTPException(status_code=403, detail="Not a member of this room")
 
+    # #115: a reply must quote a message in this same room. Unchecked, a
+    # member of a shared room could set reply_to_id to a message from a room
+    # they are not in, and every member's transcript would render that
+    # message's decrypted text as the reply snippet.
+    reply_to_id = None
+    if body.reply_to_id:
+        reply_to_id = _message_in_room(room_id, body.reply_to_id)
+        if reply_to_id is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+
     row = table("room_messages").insert({
         "room_id": room_id,
         "user_id": body.user_id,
@@ -589,7 +672,7 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
         "image_url": body.image_url or None,
         "image_width": body.image_width or None,
         "image_height": body.image_height or None,
-        "reply_to_id": body.reply_to_id or None,
+        "reply_to_id": reply_to_id,
     })
 
     if row:
@@ -655,6 +738,13 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, requ
 @router.post("/rooms/{room_id}/messages/{message_id}/reactions")
 def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, request: Request):
     require_self(body.user_id, request)
+    # #115: only a member reacts, and only to a message in this room. Neither
+    # was checked, so anyone holding a message id could add (or remove their
+    # own) reaction rows on a message in a room they were never in.
+    _require_member(room_id, body.user_id)
+    message_id = _message_in_room(room_id, message_id)
+    if message_id is None:
+        raise HTTPException(status_code=404, detail="Message not found")
     existing = table("room_reactions").select(
         "id", filters={"message_id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "emoji": f"eq.{body.emoji}"}
     )
@@ -698,16 +788,8 @@ def get_students(request: Request):
         return {"students": []}
     peer_list = sorted(peer_ids)
 
-    # Honor profile_visibility: drop 'private' users from the listing. Users with
-    # no settings row default to 'public' (the column default), so they stay.
-    settings_rows = table("user_settings").select(
-        "user_id,profile_visibility",
-        filters={"user_id": f"in.({','.join(peer_list)})"},
-    ) or []
-    hidden = {
-        s["user_id"] for s in settings_rows if s.get("profile_visibility") == "private"
-    }
-    visible_ids = [uid for uid in peer_list if uid not in hidden]
+    # Honor profile_visibility: drop 'private' users from the listing.
+    visible_ids = _visible_profile_ids(peer_list)
     if not visible_ids:
         return {"students": []}
 
@@ -1012,6 +1094,12 @@ def list_friend_requests(user_id: str, request: Request):
         filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
     ) or []
     ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
+    # A pending request to or from a since-deleted account is not actionable
+    # and must not keep naming them (#115).
+    live = live_user_ids(ids) if ids else set()
+    incoming = [r for r in incoming if r["from_user_id"] in live]
+    outgoing = [r for r in outgoing if r["to_user_id"] in live]
+    ids = [i for i in ids if i in live]
     names = get_display_names(ids) if ids else {}
     return {
         "incoming": [
@@ -1034,9 +1122,9 @@ def list_friends(user_id: str, request: Request):
     if not ids:
         return {"friends": []}
     users = table("users").select(
-        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
+        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})", **LIVE_USER_FILTER}
     ) or []
-    names = get_display_names(ids)
+    names = get_display_names([u["id"] for u in users])
     return {"friends": [
         {
             "user_id": u["id"],

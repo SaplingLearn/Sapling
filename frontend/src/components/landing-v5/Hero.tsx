@@ -380,7 +380,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-        }} className="font-aleo text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
+        }} className="font-gummi text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
           {heroText2 || ' '}
         </p>
 

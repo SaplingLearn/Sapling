@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
+from db.scope import runs_as_service
 from learning import bkt, evidence_replay
 from learning.evidence import (
     EVIDENCE_EVENT_TYPE,
@@ -85,6 +86,7 @@ def _get_course_nodes(user_id: str, course_id: str) -> list:
     ) or []
 
 
+@runs_as_service  # #115: inserts a users row (service-only)
 def ensure_user_exists(user_id: str) -> None:
     """Create a user row if one doesn't exist yet (prevents FK violations).
 
@@ -412,9 +414,10 @@ def _refresh_course_context(offering_id: str, user_id: str) -> None:
     reaches the caller, but it is logged with its traceback, never swallowed.
     """
     try:
-        from services.course_context_service import update_course_context
+        from services.course_context_service import refresh_course_context
 
-        update_course_context(offering_id)
+        # inline, or a queued job when `jobs_queue` is on for the student (#116)
+        refresh_course_context(offering_id, user_id=user_id)
     except Exception:
         logger.warning(
             "graph: course-context refresh failed offering=%s user=%s "

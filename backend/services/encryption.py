@@ -94,6 +94,20 @@ def decrypt(value: str) -> str:
     return _AESGCM.decrypt(nonce, ct, None).decode("utf-8")
 
 
+def encrypt_bytes(value: bytes) -> str:
+    """Raw bytes -> base64(nonce || ciphertext_with_tag). For binary payloads
+    (a staged upload's file, #116) that `encrypt` would have to base64 twice."""
+    nonce = os.urandom(_NONCE_BYTES)
+    return base64.b64encode(nonce + _AESGCM.encrypt(nonce, bytes(value), None)).decode("ascii")
+
+
+def decrypt_bytes(value: str) -> bytes:
+    """Inverse of `encrypt_bytes`. Strict: raises on a wrong key or tampering
+    (there is no legacy plaintext to fall back to)."""
+    raw = base64.b64decode(value)
+    return _AESGCM.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], None)
+
+
 def encrypt_if_present(value: Any) -> str | None:
     if value is None:
         return None

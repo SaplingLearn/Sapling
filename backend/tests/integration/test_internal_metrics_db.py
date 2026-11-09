@@ -79,6 +79,17 @@ TOTAL_KEYS = (
     "users", "users_pending", "documents", "notes", "flashcards", "rooms",
     "rag_chunks", "rag_document_chunks",
 )
+# #116 (20261108213623_jobs_upkeep.sql): read off `jobs`, always present. Kept
+# apart from ROW_KEYS/TOTAL_KEYS, whose tests move every key they list; the
+# jobs keys' own behaviour is tests/integration/test_jobs_upkeep_db.py.
+JOBS_COUNT_KEYS = ("jobs_dead_lettered",)
+JOBS_TOTAL_KEYS = ("jobs_queue_depth",)
+# Omitted when the database has no answer (no active users in a window), so
+# tests assert a subset, never presence.
+LLM_COST_TOTAL_KEYS = (
+    "llm_microusd_per_user_7d", "llm_microusd_per_user_4w_base",
+    "llm_cost_jump_ratio_pct", "llm_cost_jump",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -213,8 +224,9 @@ def test_the_document_is_three_sections_of_json_integers(client, db_conn):
     assert r.status_code == 200
     doc = r.json()
     assert list(doc) == ["active_users", "counts", "totals"]
-    assert set(doc["counts"]) == {*EVENT_KEYS, *LLM_KEYS, *ROW_KEYS}
-    assert set(doc["totals"]) == set(TOTAL_KEYS)
+    assert set(doc["counts"]) == {*EVENT_KEYS, *LLM_KEYS, *ROW_KEYS, *JOBS_COUNT_KEYS}
+    assert {*TOTAL_KEYS, *JOBS_TOTAL_KEYS} <= set(doc["totals"]) <= {
+        *TOTAL_KEYS, *JOBS_TOTAL_KEYS, *LLM_COST_TOTAL_KEYS}
     assert all(set(entry) == set(WINDOWS) for entry in doc["counts"].values())
     # PostgREST passes the JSONB through: numbers, never "12" or 12.0 — the
     # SUMs and the rounded cents included (BIGINT, not NUMERIC).
@@ -237,7 +249,7 @@ def test_a_source_that_is_not_being_written_is_absent_not_zero(client, db_conn):
     counts = _doc(client)["counts"]
 
     assert not set(counts) & {*EVENT_KEYS, *LLM_KEYS}
-    assert set(counts) == set(ROW_KEYS)
+    assert set(counts) == {*ROW_KEYS, *JOBS_COUNT_KEYS}
 
     # One row older than the window changes nothing: it is not evidence that
     # anything was recorded THIS month.

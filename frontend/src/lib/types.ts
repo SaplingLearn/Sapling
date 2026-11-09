@@ -20,6 +20,8 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: number;
+  /** Absent on synthesized course spokes and on older payloads. */
+  relationship_type?: "related" | "prerequisite" | "builds_on" | "part_of";
 }
 
 export interface KnowledgeGraph {
@@ -515,6 +517,88 @@ export interface PaginatedUsers {
   total: number;
   page: number;
   page_size: number;
+}
+
+// Admin account tools (`/api/admin/accounts`): seed by major, wipe, copy
+// between environments.
+export interface AdminAccountMajorCourse {
+  /** BU catalog code, e.g. "CAS CS 111". */
+  code: string;
+  name: string;
+}
+
+export interface AdminAccountMajor {
+  key: string;
+  label: string;
+  courses: AdminAccountMajorCourse[];
+}
+
+export interface AdminAccountsMeta {
+  /** This backend's APP_ENV ("local" | "staging" | "production" | …). */
+  env: string;
+  majors: AdminAccountMajor[];
+  sync: {
+    configured: boolean;
+    /** The peer's APP_ENV; null when not configured or the peer is unreachable. */
+    peer_env: string | null;
+  };
+}
+
+/** Rows touched per table, e.g. `{ notes: 8, flashcards: 24 }`. */
+export type AccountTableCounts = Record<string, number>;
+
+export type AccountCopyDirection = "push" | "pull";
+
+export interface AdminSeedAccountResult {
+  major: string;
+  wiped: AccountTableCounts;
+  created: AccountTableCounts;
+}
+
+export interface AdminWipeAccountResult {
+  wiped: AccountTableCounts;
+}
+
+export interface AdminCopyAccountResult {
+  direction: AccountCopyDirection;
+  peer_env: string;
+  counts: AccountTableCounts;
+}
+
+/** One enrolled course in an account summary. */
+export interface AdminAccountSummaryCourse {
+  code: string;
+  name: string;
+  term_id: string | null;
+}
+
+/**
+ * What an account holds on one environment (backend
+ * `services/account_summary.py`) — the review step's "will be deleted".
+ * `counts` keys are table names (`enrollments`, `assignments`, `graph_nodes`,
+ * `notes`, `documents`, `flashcards`, `quiz_attempts`, `sessions`,
+ * `study_guides`, `xp_events`, `user_achievements`).
+ */
+export interface AdminAccountSummary {
+  /** False: the account has never signed in on that environment. */
+  exists: boolean;
+  courses: AdminAccountSummaryCourse[];
+  counts: AccountTableCounts;
+  total_xp: number;
+  /** No counted rows and no XP. */
+  empty: boolean;
+}
+
+export interface AdminCopyPreviewSide {
+  env: string;
+  summary: AdminAccountSummary;
+}
+
+/** push: source = this env, destination = the peer; pull: the reverse. */
+export interface AdminCopyPreview {
+  direction: AccountCopyDirection;
+  source: AdminCopyPreviewSide;
+  destination: AdminCopyPreviewSide;
 }
 
 export interface LinkedConcept {

@@ -26,6 +26,7 @@ students on and off the loop, so a per-user gate cannot pick):
 import copy
 import json
 import hashlib
+import logging
 import random
 import threading
 import time
@@ -34,10 +35,18 @@ from datetime import datetime, timezone
 
 import config
 from db.connection import table
+from db.scope import runs_as_service
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
+from services import jobs
 from services.encryption import decrypt_json_column
+from services.feature_flags import flag_on
+
+logger = logging.getLogger(__name__)
+
+#: The job that runs update_course_context on the queue (#116).
+COURSE_CONTEXT_JOB = "course_context.refresh"
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -131,6 +140,7 @@ _cache_lock = threading.Lock()
 _cache_generation = 0
 
 
+@runs_as_service  # #115: a class aggregate shared through a per-process cache: the fill must not depend on which student asked first
 def _read_course_context(offering_id: str) -> dict:
     """Uncached read. Raises on a store error (the caller answers {} and
     caches nothing, so a transient failure never pins an empty context)."""
@@ -216,6 +226,7 @@ def clear_course_context_cache() -> None:
         _cache_generation += 1
 
 
+@runs_as_service  # #115: reads every classmate's graph + quiz context; under a user scope it would silently compute class stats from one student
 def update_course_context(offering_id: str) -> None:
     """
     Aggregate mastery + quiz data for the students enrolled in an **offering**
@@ -493,3 +504,52 @@ def update_course_context(offering_id: str) -> None:
 
     # #98: the aggregates this offering's context reads from just changed.
     clear_course_context_cache()
+
+
+def refresh_course_context(offering_id: str, *, user_id: str | None = None) -> None:
+    """Refresh an offering's class aggregates: the one trigger every caller uses.
+
+    `jobs_queue` flag off (the default) for `user_id`, the student whose action
+    triggered the refresh: runs ``update_course_context`` right here, exactly
+    as every caller did before (#116). Callers keep their own placement (a
+    BackgroundTask, the upload post-roll, or inline) and their own error
+    handling, because this raises whatever ``update_course_context`` raises.
+
+    Flag on: enqueues a ``course_context.refresh`` job and returns at once.
+    The dedupe key is per offering, so a burst of triggers while one refresh
+    waits collapses into that one (the aggregation recomputes from scratch and
+    is safe to re-run). The worker (`python -m worker`) runs the same
+    ``update_course_context``; with no worker running the job waits in
+    ``jobs`` and the aggregates go stale until one starts. If the enqueue
+    itself fails (the jobs migration not applied yet, PostgREST down) the
+    refresh runs inline instead, so turning the flag on never loses one.
+
+    The cache: ``update_course_context`` clears THIS process's course-context
+    cache. On the queue it runs in the worker, so API processes pick the new
+    aggregates up within COURSE_CONTEXT_TTL_S (#771) instead of at once.
+    """
+    if not offering_id:
+        return
+    if flag_on(jobs.JOBS_QUEUE_FLAG, user_id):
+        try:
+            jobs.enqueue(
+                COURSE_CONTEXT_JOB,
+                {"offering_id": offering_id},
+                dedupe_key=f"{COURSE_CONTEXT_JOB}:{offering_id}",
+            )
+            return
+        except Exception:
+            logger.warning(
+                "course context: enqueue failed for offering %s; refreshing inline",
+                offering_id, exc_info=True,
+            )
+    update_course_context(offering_id)
+
+
+@jobs.job_handler(COURSE_CONTEXT_JOB)
+def _run_course_context_job(payload: dict) -> None:
+    """Worker side of ``refresh_course_context``."""
+    offering_id = (payload or {}).get("offering_id")
+    if not isinstance(offering_id, str) or not offering_id:
+        raise jobs.PermanentJobError("course_context.refresh: payload has no offering_id")
+    update_course_context(offering_id)

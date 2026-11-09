@@ -144,6 +144,9 @@ const eslintConfig = [
       // New files, no baselined backlog.
       "src/components/screens/admin/AllowlistTab.tsx",
       "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Admin "Account tools" dialog (seed / wipe / copy an account). New file,
+      // no baselined backlog.
+      "src/components/screens/admin/AccountToolsDialog.tsx",
       // Settings (#675 Data tab): NOT a no-backlog file — its pre-existing
       // controls are baselined in eslint-suppressions.json, so the rule
       // covers new elements only. Shrink that baseline as testids are added.

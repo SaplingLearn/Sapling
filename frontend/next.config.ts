@@ -78,6 +78,14 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  // `next dev` blocks cross-origin requests for its /_next dev resources (HMR,
+  // chunks, fonts) from any host but localhost, so opening the dev server by
+  // LAN IP — e.g. from a phone — renders unhydrated with fallback fonts.
+  // Comma-separated hosts in DEV_ALLOWED_ORIGINS opt in; dev-only, ignored by builds.
+  allowedDevOrigins: (process.env.DEV_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean),
   // `standalone` is ignored by @opennextjs/cloudflare (it does its own
   // packaging), but keeping it lets `next build` alone still produce a
   // runnable Docker-style server if anyone ever deploys that way.

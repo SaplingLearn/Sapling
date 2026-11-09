@@ -295,7 +295,7 @@ class TestCourseContextOffering:
         a, b, c, d = _agent_patches()
         with (
             patch("routes.documents._validate_user"),
-            patch("routes.documents.resolve_offering", return_value="off-7"),
+            patch("routes.documents.require_course_enrollment", return_value="off-7"),
             patch("routes.documents.extract_text_from_file", return_value=_TEXT),
             patch("routes.documents._existing_doc_by_request_id", return_value=None),
             a, b, c, d,
@@ -305,7 +305,8 @@ class TestCourseContextOffering:
             _stream_upload()
 
         tasks = {task[0]: task[1:] for task in spawn.call_args.args}
-        assert tasks["update_course_context"] == (documents.update_course_context, "off-7")
+        assert tasks["update_course_context"] == (
+            documents._refresh_course_context, "off-7", "u1")
 
     def test_sync_upload_refreshes_the_offering_context(self):
         from agents.document import DocumentProcessingResult
@@ -324,15 +325,15 @@ class TestCourseContextOffering:
         refresh = MagicMock()
         with (
             patch("routes.documents._validate_user"),
-            patch("routes.documents.resolve_offering", return_value="off-7"),
+            patch("routes.documents.require_course_enrollment", return_value="off-7"),
             patch("routes.documents.extract_text_from_file", return_value=_TEXT),
             patch("routes.documents._existing_doc_by_request_id", return_value=None),
             patch("routes.documents.process_document", AsyncMock(return_value=result)),
             patch("routes.documents._persist_document", return_value=("doc-1", {"id": "doc-1"})),
-            patch("routes.documents.update_course_context", refresh),
+            patch("routes.documents.refresh_course_context", refresh),
             patch("routes.documents._invalidate_study_guide_cache"),
             patch("routes.documents._check_upload_achievements"),
-            patch("routes.documents.index_document"),
+            patch("routes.documents.schedule_document_index"),
         ):
             r = client.post(
                 "/api/documents/upload/sync",
@@ -340,4 +341,6 @@ class TestCourseContextOffering:
                 data={"course_id": "c-1", "user_id": "u1"},
             )
         assert r.status_code == 200
-        refresh.assert_called_once_with("off-7")
+        # #116: the uploader rides along, so the jobs_queue flag resolves
+        # for the student who triggered the refresh.
+        refresh.assert_called_once_with("off-7", user_id="u1")

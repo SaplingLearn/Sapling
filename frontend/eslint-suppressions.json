@@ -42,9 +42,6 @@
   "src/components/graph/KnowledgeGraph2D.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
-    },
-    "react-hooks/refs": {
-      "count": 12
     }
   },
   "src/components/marketing/SignInModal.tsx": {

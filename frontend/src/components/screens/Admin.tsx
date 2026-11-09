@@ -26,6 +26,7 @@ import { AchievementWiki } from "./admin/AchievementWiki";
 import { FeatureFlagsTab } from "./admin/FeatureFlags";
 import { AllowlistTab } from "./admin/AllowlistTab";
 import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
+import { AccountToolsDialog } from "./admin/AccountToolsDialog";
 import { fieldStyle } from "./admin/adminStyles";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
@@ -127,6 +128,7 @@ function UsersTab() {
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
   const [removeFor, setRemoveFor] = React.useState<AdminUser | null>(null);
+  const [toolsFor, setToolsFor] = React.useState<AdminUser | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -309,6 +311,13 @@ function UsersTab() {
                   <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     <button
                       className="btn btn--sm btn--ghost"
+                      data-testid={`admin-user-account-tools-${u.id}`}
+                      onClick={() => setToolsFor(u)}
+                    >
+                      Account tools
+                    </button>
+                    <button
+                      className="btn btn--sm btn--ghost"
                       data-testid={`admin-user-remove-access-${u.id}`}
                       onClick={() => setRemoveFor(u)}
                     >
@@ -336,6 +345,7 @@ function UsersTab() {
         onCancel={() => setRemoveFor(null)}
         onConfirm={removeAccess}
       />
+      <AccountToolsDialog user={toolsFor} onClose={() => setToolsFor(null)} />
     </>
   );
 }

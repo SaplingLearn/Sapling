@@ -2191,7 +2191,8 @@ class TestRequestContextIsNarrow:
             "/api/work/42", headers={"Cookie": "sapling_session=SECRETCOOKIE"},
         )
         assert seen["type"] is RequestView
-        assert set(seen["slots"]) == {"state", "_scope", "_template"}
+        # `method` (#115's shadow report) is a plain string like the template.
+        assert set(seen["slots"]) == {"state", "method", "_scope", "_template"}
         assert seen["user"] == USER_ID  # request.state is the same dict
         assert seen["route"] == "/api/work/{item_id}"
         assert seen["has_headers"] is False

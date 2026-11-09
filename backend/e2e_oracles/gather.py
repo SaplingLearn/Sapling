@@ -242,6 +242,10 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # NULL for "no idea") and a self-explanation reply.
     ("learning_prequestions", "id", "guess_json"),
     ("learning_self_explanations", "id", "reply_text"),
+    # #116 queued uploads. `file_data` (raw file bytes, encrypt_bytes) is not
+    # listed: it is binary, so the text decrypt-and-compare judge cannot read
+    # it, and it is NULL once an upload finishes.
+    ("document_uploads", "id", "result"),
 )
 
 
