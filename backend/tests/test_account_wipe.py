@@ -387,6 +387,28 @@ def test_every_bundle_table_is_wiped():
             assert spec.name in aw.WIPED_DIRECTLY or parent in aw.WIPED_DIRECTLY, spec.name
 
 
+#: Wiped but never bundled, each for a stated reason. CLAUDE.md (the admin
+#: account tools entry) names the in-flight staging tables; a new per-user
+#: table that is wiped but not copied must be added here, with its reason.
+WIPED_NOT_BUNDLED = {
+    "document_uploads": "in-flight upload staging (#116)",
+    "gradescope_syncs": "in-flight Gradescope sync staging (#116)",
+    "tutor_pending_sessions": "a tutor session not yet chatted in, or its tombstone (#117)",
+    "gradescope_course_links": "Gradescope credentials do not move, so neither do their links",
+}
+
+
+def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
+    from services.account_bundle import SPECS
+
+    assert set(aw.wiped_tables()) - {s.name for s in SPECS} == set(WIPED_NOT_BUNDLED)
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
+    exception = exception[:exception.index("\n")]
+    for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
+        assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
+
+
 def test_cascade_chains_end_in_a_direct_delete():
     for child, parent in aw.WIPED_BY_CASCADE.items():
         seen = {child}
