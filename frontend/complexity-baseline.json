@@ -14,7 +14,6 @@
     "src/components/screens/Settings.tsx::Settings": 26,
     "src/components/screens/Tree.tsx::Tree": 31,
     "src/components/screens/admin/AccountToolsDialog.tsx::AccountToolsDialog": 31,
-    "src/components/screens/admin/EmailBroadcasts.tsx::EmailBroadcastsTab": 44,
     "src/context/UserContext.tsx::UserProvider>fetchProfileData": 31
   }
 }
