@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -250,21 +251,27 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     )
 
 
+async def _none() -> None:
+    """An awaitable None, for a gather slot with nothing to read."""
+    return None
+
+
 async def aget_graph(user_id: str, semester: str | None = None) -> dict:
     """Async twin of :func:`get_graph` (#117): the same reads through the
-    ``a*`` seam, the academics term lookup hopped off the loop."""
+    ``a*`` seam, the academics term lookup hopped off the loop. The user row
+    is ensured first (the streak read depends on it); the five independent
+    reads then run concurrently, and the node-events read follows the nodes."""
     await aensure_user_exists(user_id)
-    enrolled_courses = await _auser_enrolled_courses(user_id)
-    allowed_course_ids = (
-        await run_in_threadpool(_semester_course_ids, user_id, semester) if semester else None
+    user_filter = {"user_id": f"eq.{user_id}"}
+    enrolled_courses, allowed_course_ids, nodes_raw, edges_raw, user_rows = await asyncio.gather(
+        _auser_enrolled_courses(user_id),
+        run_in_threadpool(_semester_course_ids, user_id, semester) if semester else _none(),
+        table("graph_nodes").aselect("*", filters=user_filter),
+        table("graph_edges").aselect("*", filters=user_filter),
+        table("users").aselect(_STREAK_SELECT, filters={"id": f"eq.{user_id}"}),
     )
-    nodes = _scope_nodes(
-        await table("graph_nodes").aselect("*", filters={"user_id": f"eq.{user_id}"}),
-        allowed_course_ids,
-    )
-    edges_raw = await table("graph_edges").aselect("*", filters={"user_id": f"eq.{user_id}"})
+    nodes = _scope_nodes(nodes_raw, allowed_course_ids)
     event_rows = await _anode_events(nodes)
-    user_rows = await table("users").aselect(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
     return _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
     )
@@ -440,15 +447,25 @@ def get_courses(user_id: str) -> list:
     ]
 
 
+#: Per-course node-count reads in flight at once in :func:`aget_courses`.
+_COURSE_COUNT_CONCURRENCY = 8
+
+
 async def aget_courses(user_id: str) -> list:
-    """Async twin of :func:`get_courses` (#117)."""
-    result = []
-    for group in _collapse_enrollments(await _auser_enrolled_courses(user_id)):
-        node_rows = await table("graph_nodes").aselect(
-            "id", filters=_course_nodes_filters(user_id, group[0]),
-        ) or []
-        result.append(_course_entry(group, len(node_rows)))
-    return result
+    """Async twin of :func:`get_courses` (#117): the per-course node counts
+    run concurrently (at most ``_COURSE_COUNT_CONCURRENCY`` at a time), in
+    the same order."""
+    gate = asyncio.Semaphore(_COURSE_COUNT_CONCURRENCY)
+
+    async def entry(group) -> dict:
+        async with gate:
+            node_rows = await table("graph_nodes").aselect(
+                "id", filters=_course_nodes_filters(user_id, group[0]),
+            ) or []
+        return _course_entry(group, len(node_rows))
+
+    groups = _collapse_enrollments(await _auser_enrolled_courses(user_id))
+    return list(await asyncio.gather(*(entry(g) for g in groups)))
 
 
 def _collapse_enrollments(
