@@ -117,8 +117,6 @@ type DragState =
 const MIN_ZOOM = 0.4;
 /** Smallest on-screen node radius (px) in legible mode. */
 const MIN_SCREEN_R = 7;
-/** With a `rootRadius` set, course hubs never draw smaller than this on screen. */
-const ROOT_MIN_SCREEN_R = 18;
 
 /** Where a line from (x1, y1) to (x2, y2) should stop to end `inset` short. */
 function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
@@ -846,9 +844,7 @@ function KnowledgeGraph2DImpl({
   const zoomLabels = labelOpacityAt(view.scale);
   // Legible nodes never shrink below MIN_SCREEN_R on screen, however far out.
   const drawRadius = (n: GraphNode) =>
-    n.is_subject_root && rootRadius
-      ? Math.max(nodeRadius(n), ROOT_MIN_SCREEN_R / view.scale)
-      : legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
+    legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
   // Labels of focused concepts stay readable however far out the view is.
   const focusFont = (size: number) => size / Math.min(1, view.scale);
   // O(1) endpoint resolution for edges whose source/target is still an id
@@ -1017,7 +1013,14 @@ function KnowledgeGraph2DImpl({
                     <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
                   )}
                   {variant === "organism" && (
-                    <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
+                    <circle
+                      cx={0}
+                      cy={0}
+                      r={r + (n.is_subject_root && rootRadius ? GLOW.pad * (rootRadius / radiusFor(0, true)) : GLOW.pad)}
+                      fill={color}
+                      opacity={GLOW.opacity}
+                      filter="url(#soft)"
+                    />
                   )}
                   {isHl && (
                     <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
