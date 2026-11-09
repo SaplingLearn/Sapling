@@ -58,9 +58,9 @@ The agents run through the ONE upload pipeline the streaming route runs
 (agents.document.run_document_agents; its steps become this row's stages, and
 the events a watcher replays come from services/document_pipeline.py, #835).
 The persistence helpers (`_persist_document`, the syllabus/graph post-steps,
-the post-roll side effects, the error strings) still live in
-routes/documents.py and are imported from there lazily: teammate PRs edit
-that file.
+the post-roll side effects, the error strings) live in services/documents/
+(#118) and are reached through routes/documents.py's re-exports, imported
+lazily, so a patch on the route module still reaches this path.
 """
 from __future__ import annotations
 

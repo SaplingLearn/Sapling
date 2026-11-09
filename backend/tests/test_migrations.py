@@ -201,8 +201,10 @@ def test_assignments_source_check_covers_every_value_routes_write():
     assert allowed, "no assignments.source CHECK found in migrations"
 
     written: dict[str, set[str]] = {}
-    # services/gradebook/: the syllabus apply moved there in the #118 split.
-    for path in sorted(Path("routes").glob("*.py")) + sorted(Path("services/gradebook").glob("*.py")):
+    # services/gradebook/ and services/gradescope/: the syllabus apply and the
+    # sync's source='gradescope' write moved there in the #118 splits.
+    for path in (sorted(Path("routes").glob("*.py")) + sorted(Path("services/gradebook").glob("*.py"))
+                 + sorted(Path("services/gradescope").glob("*.py"))):
         text = path.read_text(encoding="utf-8")
         for value in _SOURCE_WRITE_RE.findall(text):
             written.setdefault(value, set()).add(path.name)
@@ -215,6 +217,6 @@ def test_assignments_source_check_covers_every_value_routes_write():
 
 
 def test_gradescope_is_an_allowed_source_value():
-    """routes/gradescope.py::sync_course depends on this for both its insert and
-    its update path."""
+    """services/gradescope/sync.py::_run_linked_sync depends on this for both
+    its insert and its update path."""
     assert "gradescope" in _allowed_source_values()

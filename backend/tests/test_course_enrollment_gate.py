@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from db import seed_local_rich as seed
 from main import app
 from services import academics
+from tests.doc_patches import patch_documents
 
 pytestmark = pytest.mark.real_course_enrollment
 
@@ -273,10 +274,10 @@ def _upload(path: str, *, filename="notes.txt", content_type="text/plain", heade
 class TestUploadGate:
     def test_not_enrolled_is_404_before_any_work(self, path):
         with _enrolled(None), \
-             patch("routes.documents._validate_user", return_value=None), \
-             patch("routes.documents._existing_doc_by_request_id", return_value=None), \
+             patch_documents("_validate_user", return_value=None), \
+             patch_documents("_existing_doc_by_request_id", return_value=None), \
              patch("services.academics.resolve_offering") as ro, \
-             patch("routes.documents.extract_text_from_file") as ocr:
+             patch_documents("extract_text_from_file") as ocr:
             r = _upload(path, filename="notes.pdf", content_type="application/pdf")
         _assert_not_enrolled_404(r)
         ro.assert_not_called()  # no offering minted for a course that is not theirs
@@ -284,8 +285,8 @@ class TestUploadGate:
 
     def test_enrolled_reaches_the_next_check(self, path):
         with _enrolled("off-1"), \
-             patch("routes.documents._existing_doc_by_request_id", return_value=None), \
-             patch("routes.documents._validate_user", return_value=None):
+             patch_documents("_existing_doc_by_request_id", return_value=None), \
+             patch_documents("_validate_user", return_value=None):
             r = _upload(path)
         assert r.status_code == 400
         assert "Unsupported file type" in r.json()["detail"]
@@ -298,9 +299,9 @@ class TestUploadGate:
                   "file_name": "notes.pdf", "category": "other", "summary": None,
                   "concept_notes": [], "created_at": "", "processed_at": ""}
         with _enrolled(None) as gate, \
-             patch("routes.documents._validate_user", return_value=None), \
-             patch("routes.documents._existing_doc_by_request_id", return_value=stored), \
-             patch("routes.documents.extract_text_from_file") as ocr:
+             patch_documents("_validate_user", return_value=None), \
+             patch_documents("_existing_doc_by_request_id", return_value=stored), \
+             patch_documents("extract_text_from_file") as ocr:
             r = _upload(path, filename="notes.pdf", content_type="application/pdf",
                         headers={"X-Request-ID": "retry-1"})
         assert r.status_code == 200, r.text
@@ -312,8 +313,8 @@ class TestUploadGate:
 class TestCourseScanGate:
     def test_not_enrolled_is_404_and_no_scan(self):
         with _enrolled(None), \
-             patch("routes.documents._validate_user_sync", return_value=None), \
-             patch("routes.documents._scan_concepts_for_course") as scan:
+             patch_documents("_validate_user_sync", return_value=None), \
+             patch_documents("_scan_concepts_for_course") as scan:
             r = client.post("/api/documents/course/c-foreign/scan-concepts",
                             json={"user_id": "u1"})
         _assert_not_enrolled_404(r)
@@ -322,8 +323,8 @@ class TestCourseScanGate:
     def test_enrolled_scans(self):
         shape = {"concepts": ["X"], "added": 1, "existing": 0}
         with _enrolled("off-1"), \
-             patch("routes.documents._validate_user_sync", return_value=None), \
-             patch("routes.documents._scan_concepts_for_course", return_value=shape) as scan:
+             patch_documents("_validate_user_sync", return_value=None), \
+             patch_documents("_scan_concepts_for_course", return_value=shape) as scan:
             r = client.post("/api/documents/course/c1/scan-concepts",
                             json={"user_id": "u1"})
         assert r.status_code == 200
@@ -343,10 +344,10 @@ class TestDocumentScanGate:
 
     def test_dropped_course_is_404_and_no_scan(self):
         with _enrolled(None) as gate, \
-             patch("routes.documents._validate_user_sync", return_value=None), \
-             patch("routes.documents.table", return_value=self._doc_table()), \
-             patch("routes.documents.offering_course_id", return_value="c-dropped"), \
-             patch("routes.documents._scan_concepts_for_course") as scan:
+             patch_documents("_validate_user_sync", return_value=None), \
+             patch_documents("table", return_value=self._doc_table()), \
+             patch_documents("offering_course_id", return_value="c-dropped"), \
+             patch_documents("_scan_concepts_for_course") as scan:
             r = client.post("/api/documents/doc/d1/scan-concepts", json={"user_id": "u1"})
         _assert_not_enrolled_404(r)
         gate.assert_called_once_with("u1", "c-dropped")
@@ -355,10 +356,10 @@ class TestDocumentScanGate:
     def test_enrolled_scans(self):
         shape = {"concepts": [], "added": 0, "existing": 0}
         with _enrolled("off-old"), \
-             patch("routes.documents._validate_user_sync", return_value=None), \
-             patch("routes.documents.table", return_value=self._doc_table()), \
-             patch("routes.documents.offering_course_id", return_value="c1"), \
-             patch("routes.documents._scan_concepts_for_course", return_value=shape) as scan:
+             patch_documents("_validate_user_sync", return_value=None), \
+             patch_documents("table", return_value=self._doc_table()), \
+             patch_documents("offering_course_id", return_value="c1"), \
+             patch_documents("_scan_concepts_for_course", return_value=shape) as scan:
             r = client.post("/api/documents/doc/d1/scan-concepts", json={"user_id": "u1"})
         assert r.status_code == 200
         assert scan.call_args.args[:2] == ("u1", "c1")
