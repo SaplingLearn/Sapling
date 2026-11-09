@@ -20,9 +20,12 @@
 # boots there evicts the dev servers and points a signed-in browser at a
 # backend with placeholder OAuth credentials. So slot 0 is refused outside CI.
 #
-# Each slot has its own lock (/tmp/claude-<uid>/sapling-e2e-slot-N.lock).
-# scripts/e2e-cycle.sh claims the first free one for a whole up → test → down
-# cycle, so concurrent runs no longer queue behind a machine-wide lock.
+# Each slot has its own lock (/tmp/claude-<uid>/sapling-e2e-slot-N.lock), and
+# only scripts/e2e-cycle.sh takes it: a cycle claims the first free slot (and
+# its checkout's .e2e/cycle.lock) for the stack's whole life — a foreground
+# up → test → down, or a held stack (`make e2e-up` / `make e2e-down`). So
+# concurrent runs no longer queue behind a machine-wide lock, and exactly one
+# process owns each stack.
 
 E2E_SLOTS_MAX="${E2E_SLOTS_MAX:-3}"
 E2E_LOCK_DIR="/tmp/claude-$(id -u)"
@@ -37,62 +40,11 @@ e2e_slot_lock_file() { # slot → lock path
   echo "$E2E_LOCK_DIR/sapling-e2e-slot-$1.lock"
 }
 
-# Is slot N's lock free right now? (Takes it and lets go at once; a held lock
-# means a cycle is using the slot.)
-e2e_slot_is_free() { # slot → 0 free, 1 busy
-  local file
-  file="$(e2e_slot_lock_file "$1")"
-  mkdir -p "$E2E_LOCK_DIR"
-  ( flock -n 9 ) 9>"$file"
-}
-
-# Take slot N's lock in a DETACHED holder (sleep infinity under setsid) that
-# outlives the caller, recording its pid in <e2e_dir>/lock.pid. For a bare
-# `make e2e-up`, whose stack stays up after the script exits; e2e-down stops
-# the holder. Returns 1 when the slot is busy.
-e2e_take_slot_lock_detached() { # slot e2e_dir → 0 held
-  local slot="$1" dir="$2" file holder _
-  file="$(e2e_slot_lock_file "$slot")"
-  mkdir -p "$E2E_LOCK_DIR" "$dir"
-  # Already ours (a re-run of e2e-up in this checkout)?
-  if [ -f "$dir/lock.pid" ] && kill -0 "$(cat "$dir/lock.pid" 2>/dev/null)" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$dir/lock.pid"
-  setsid bash -c "
-    exec 9>\"$file\"
-    flock -n 9 || exit 42
-    echo \$\$ > \"$dir/lock.pid.\$\$\"
-    mv -f \"$dir/lock.pid.\$\$\" \"$dir/lock.pid\"
-    exec sleep infinity
-  " 8>&- 9>&- >/dev/null 2>&1 &
-  holder=$!
-  for _ in $(seq 1 30); do
-    [ "$(cat "$dir/lock.pid" 2>/dev/null)" = "$holder" ] && return 0
-    kill -0 "$holder" 2>/dev/null || return 1
-    sleep 0.1
-  done
-  kill "$holder" 2>/dev/null
-  return 1
-}
-
-# Stop the detached holder e2e_take_slot_lock_detached left in <e2e_dir>.
-e2e_release_detached_slot_lock() { # e2e_dir
-  local pid
-  pid="$(cat "$1/lock.pid" 2>/dev/null)" || true
-  [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$1/lock.pid"
-}
-
-# Resolve E2E_SLOT (explicit env, else the slot this checkout last booted —
-# .e2e/slot, so `make e2e-down` finds the stack `make e2e-up` started — else 1)
-# and export everything that slot owns. Prints the reason and returns 1 when
-# the slot is not allowed here.
+# Resolve E2E_SLOT (set by scripts/e2e-cycle.sh for the slot it claimed; CI
+# sets 0) and export everything that slot owns. Prints the reason and returns
+# 1 when the slot is not allowed here.
 resolve_e2e_slot() { # repo_root
   local repo="$1" offset
-  if [ -z "${E2E_SLOT:-}" ] && [ -f "$repo/.e2e/slot" ]; then
-    E2E_SLOT="$(tr -d '[:space:]' <"$repo/.e2e/slot")"
-  fi
   E2E_SLOT="${E2E_SLOT:-1}"
   case "$E2E_SLOT" in
     ''|*[!0-9]*) echo "✗ E2E_SLOT must be a slot number (0 in CI, 1..$E2E_SLOTS_MAX locally), got '$E2E_SLOT'"; return 1 ;;
@@ -181,7 +133,6 @@ write_e2e_slot_supabase_config() { # repo_root
 write_e2e_slot_manifest() { # e2e_dir
   local dir="$1"
   mkdir -p "$dir"
-  echo "$E2E_SLOT" >"$dir/slot"
   cat >"$dir/stack.json" <<JSON
 {
   "slot": $E2E_SLOT,

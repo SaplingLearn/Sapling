@@ -330,10 +330,11 @@ Everything above in one command. From the repo root:
 ```bash
 make e2e         # a whole cycle in a FREE slot: up → Playwright + oracles → down
 scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/quiz*.spec.ts'
-make e2e-up      # just boot slot E2E_SLOT (default 1): supabase start → migrate →
-                 # buckets → NOTIFY pgrst → seed (demo + rich) → uvicorn →
-                 # `npm run build:test && npm run start:test`
-make e2e-down    # stop uvicorn + next (tracked PIDs), then the slot's Supabase
+make e2e-up      # hold a stack: a background cycle in a free slot (E2E_SLOT picks
+                 # one) runs supabase start → migrate → buckets → NOTIFY pgrst →
+                 # seed (demo + rich) → uvicorn → `npm run build:test && npm run start:test`
+make e2e-down    # stop this checkout's held cycle; it stops uvicorn + next, then
+                 # the slot's Supabase, and drops the slot's database
 ```
 
 ### E2E slots — never the dev app's ports
@@ -353,24 +354,37 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
 - A slot is its own Supabase project (a generated copy of `supabase/config.toml`
   under `.e2e/supabase-slot-N/`, every port shifted by +100·N) with its own
   containers and a **throwaway database**: `e2e-down` drops it, so every run
-  migrates and seeds from empty (`E2E_KEEP_DB=1` keeps it for a quick re-run).
+  migrates and seeds from empty.
   It skips the containers tests never use (Studio, mail, logging, edge
   functions, pooler; override with `E2E_SUPABASE_EXCLUDE`).
 - `scripts/e2e-cycle.sh` claims the first free slot's lock
   (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`) for the whole cycle, so up to
-  three runs go side by side; when all are busy it waits. `--slot N` asks for one.
-- After a bare `make e2e-up`, `.e2e/stack.json` tells the Playwright harness
-  which slot to hit, and `source .e2e/env.sh` sets up a shell for the oracles.
-  A bare `e2e-up` is refused on a slot a cycle holds.
+  three runs go side by side; when all are busy it waits. `--slot N` (or
+  `E2E_SLOT=N`) asks for one.
+- **A cycle owns every stack.** `make e2e-up` is a cycle held in the
+  background (`scripts/e2e-cycle.sh --background`; log `.e2e/cycle.log`), and
+  `make e2e-down` stops it (`--stop`), so the stack is torn down by the process
+  that holds its slot — never by a command that guessed which slot was its.
+  While it is up, `.e2e/stack.json` tells the Playwright harness which slot to
+  hit, and `source .e2e/env.sh` sets up a shell for the oracles.
+  `scripts/e2e-up.sh` / `e2e-down.sh` refuse to run outside a cycle (or CI).
+  If a held cycle is killed without its teardown (SIGKILL, OOM), `make e2e-down`
+  still stops the stack it left behind (`.e2e/booted` names the slot).
+- A foreground cycle's command keeps your terminal: `scripts/e2e-cycle.sh -- bash`
+  gives you a shell inside a slot, torn down when you exit it.
 - Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on pushes to main only
   (CI cost) — a PR's browser lane runs locally in a slot before merge.
 - **One cycle per checkout.** `.e2e/` (PIDs, logs, manifest) and
   `frontend/.next` belong to the checkout, so a second cycle in the same one is
   refused (`.e2e/cycle.lock`). Parallel runs come from separate worktrees.
-- **Looking at a branch by hand:** `E2E_FRONTEND=dev scripts/e2e-cycle.sh --slot 3 -- sleep infinity`
+- **Looking at a branch by hand:** `E2E_FRONTEND=dev E2E_SLOT=3 make e2e-up`
   boots it with `next dev` (animations on — the test-profile build turns them
   off) on :3103; sign in through `POST /api/auth/test-login` (see above) with a
-  seeded `rich-*` user. Stop the command to tear it down.
+  seeded `rich-*` user, and `make e2e-down` when done. **Open it at
+  `http://127.0.0.1:3103`, not `localhost`:** cookies ignore the port, so a
+  slot's `sapling_session` on `localhost` overwrites your dev app's sign-in on
+  `localhost:3000` (and the other way round). `127.0.0.1` is a separate host,
+  so the two sessions never touch.
 
 `e2e-up` health-checks all four services (Postgres, PostgREST, backend
 `/api/health`, frontend `/`) and fails loudly if one doesn't come up — with a

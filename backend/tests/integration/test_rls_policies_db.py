@@ -18,7 +18,7 @@ import json
 import psycopg
 import pytest
 
-from tests.integration.test_rls_lockdown_db import AUTHENTICATED_TABLE_GRANTS, EXEMPT
+from tests.integration.test_rls_lockdown_db import AUTHENTICATED_TABLE_GRANTS
 
 pytestmark = pytest.mark.integration
 
@@ -198,9 +198,10 @@ def test_every_public_table_is_in_exactly_one_bucket(db_conn):
         "test_rls_lockdown_db.AUTHENTICATED_TABLE_GRANTS (or bucket E if service-only)."
     )
     assert not sorted(set(names) - live), f"bucketed tables missing: {sorted(set(names) - live)}"
-    # The grant map covers exactly buckets A–D (minus room_messages, step 2e).
+    # The grant map covers exactly buckets A–D (room_messages included since
+    # step 2e: 20261109073255_room_messages_rls_enable.sql).
     granted = set(AUTHENTICATED_TABLE_GRANTS)
-    assert granted == set().union(*(BUCKETS[b] for b in BUCKETS if b != "E_service_only")) - EXEMPT
+    assert granted == set().union(*(BUCKETS[b] for b in BUCKETS if b != "E_service_only"))
 
 
 # ── Buckets A and B: own rows only ─────────────────────────────────────────
@@ -426,6 +427,9 @@ def test_foreign_tokens_read_nothing_anywhere(world, token):
     # the catalog included, must read as empty: the whole table, not just
     # the rlsp rows.
     _as(world, FOREIGN_TOKENS[token])
+    # room_messages is granted too since step 2e. The realtime token reads it
+    # for A's rooms by design (chat_world below), but world seeds no messages,
+    # so here every token, that one included, must still read zero rows.
     leaks = {}
     for table in sorted(AUTHENTICATED_TABLE_GRANTS):
         n = _count(world, table)
@@ -441,13 +445,13 @@ def test_foreign_tokens_read_nothing_anywhere(world, token):
 
 # ── Step 2e: room_messages under RLS, read through the Realtime bridge ──────
 #
-# 20261108210944_rls_room_messages_realtime.sql adds the member SELECT policy
-# but leaves RLS OFF on room_messages (the anon Realtime lane still needs it).
-# These tests apply the documented MANUAL enable step inside the rolled-back
-# transaction (GRANT SELECT to authenticated, ENABLE RLS, REVOKE anon SELECT),
-# so they pin what the policy does once it is live, the way Realtime's
-# realtime.apply_rls evaluates it: SET LOCAL ROLE to the subscriber's role
-# claim, then request.jwt.claims = the subscriber's JWT claims.
+# 20261108210944_rls_room_messages_realtime.sql adds the member SELECT policy;
+# 20261109073255_room_messages_rls_enable.sql turns RLS on, grants
+# authenticated SELECT and revokes anon (enable sequence steps 4-5). These
+# tests run against that migrated state, nothing is enabled here, the way
+# Realtime's realtime.apply_rls evaluates the policy: SET LOCAL ROLE to the
+# subscriber's role claim, then request.jwt.claims = the subscriber's JWT
+# claims.
 
 def _rt(sub: str) -> dict:
     """Claims of the browser Realtime token (db/user_jwt.py::mint_realtime)."""
@@ -457,17 +461,17 @@ def _rt(sub: str) -> dict:
 @pytest.fixture
 def chat_world(world):
     """world + messages in both rlsp rooms (A in both, B in the public one,
-    C in neither) + the manual 2e enable step. All rolled back with world."""
+    C in neither). All rolled back with world. RLS on room_messages comes from
+    the migrations, not from this fixture."""
+    assert world.execute(
+        "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.room_messages'::regclass"
+    ).fetchone()["relrowsecurity"], "RLS is off on room_messages: 20261109073255 not applied?"
     world.execute(f"INSERT INTO room_members (room_id, user_id) VALUES ('rlsp-room-pub', '{B}')")
     world.execute(
         f"INSERT INTO room_messages (room_id, user_id, user_name, text) VALUES "
         f"('rlsp-room-priv', '{A}', 'A', 'priv-1'), ('rlsp-room-priv', '{A}', 'A', 'priv-2'), "
         f"('rlsp-room-pub', '{B}', 'B', 'pub-1')"
     )
-    world.execute("GRANT SELECT ON public.room_messages TO authenticated")
-    world.execute("ALTER TABLE public.room_messages ENABLE ROW LEVEL SECURITY")
-    if world.execute("SELECT 1 FROM pg_roles WHERE rolname = 'anon'").fetchone():
-        world.execute("REVOKE SELECT ON public.room_messages FROM anon")
     return world
 
 
@@ -513,7 +517,7 @@ def test_room_messages_foreign_tokens_read_nothing(chat_world, token):
     assert _count(chat_world, "room_messages") == 0
 
 
-def test_room_messages_anon_reads_nothing_once_enabled(chat_world):
+def test_room_messages_anon_reads_nothing(chat_world):
     if not chat_world.execute("SELECT 1 FROM pg_roles WHERE rolname = 'anon'").fetchone():
         pytest.skip("no anon role")
     chat_world.execute("SET LOCAL ROLE anon")

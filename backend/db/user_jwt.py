@@ -10,8 +10,9 @@ policies, whose identity anchor is ``app_auth.uid()`` (``sub``, but only when
 
 Claims (plan §2.1): ``iss=sapling-api, sub=<users.id>, role=authenticated,
 aud=authenticated, iat, exp=iat+300``. The token never leaves the backend.
-The one browser-bound token, :func:`mint_realtime` (RLS step 2e, flag
-``realtime_rls``), has its own issuer that only room_messages SELECT trusts.
+The one browser-bound token, :func:`mint_realtime` (RLS step 2e, GET
+/api/auth/realtime-token), has its own issuer that only room_messages SELECT
+trusts.
 
 Key: ``SUPABASE_JWT_SIGNING_KEY`` holds ONE JWK (JSON). ``kty: oct`` signs
 HS256 with its ``k`` (local + CI: the Supabase CLI's default secret);
