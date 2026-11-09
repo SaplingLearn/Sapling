@@ -60,3 +60,20 @@ ADMIN_ANALYTICS_MODULES = (
     "services.admin.analytics.scan",
     "services.admin.analytics.series",
 )
+
+
+SOCIAL_MODULES = (
+    "routes.social",
+    "services.social.rooms",
+    "services.social.overview",
+    "services.social.messages",
+    "services.social.matching",
+    "services.social.directory",
+    "services.social.friends",
+)
+
+
+def patch_social(name, new=DEFAULT, **kwargs):
+    """``patch("routes.social.<name>", ...)`` across routes/social.py and
+    services/social/."""
+    return patch_in(SOCIAL_MODULES, name, new, **kwargs)
