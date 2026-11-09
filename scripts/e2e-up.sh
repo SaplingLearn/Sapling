@@ -2,8 +2,8 @@
 #
 # One-command LOCAL E2E stack boot (#384).
 #
-#   make e2e-up          # or: scripts/e2e-up.sh
-#   make e2e-down        # tear down — scripts/e2e-down.sh
+#   make e2e-up          # a held cycle runs this (scripts/e2e-cycle.sh --background)
+#   make e2e-down        # tear down — the cycle runs scripts/e2e-down.sh
 #
 # Sequence: supabase start → db.migrate → ensure Storage buckets →
 # NOTIFY pgrst 'reload schema' → PostgREST poll → seed (demo + rich) →
@@ -12,12 +12,12 @@
 # health-check all four services (Postgres, PostgREST, backend, frontend).
 #
 # The stack boots in an E2E SLOT (scripts/lib/e2e-slot.sh): E2E_SLOT=N (1..3,
-# default: the slot this checkout last used, else 1) gets frontend :310N,
+# chosen by the cycle that runs this) gets frontend :310N,
 # backend :510N and its own Supabase project on ports shifted by +100·N, with a
 # throwaway database. Slots never touch :3000/:5000/:54321 — those are the dev
 # app's (Google sign-in can only land on :5000). Slot 0 is that classic stack,
-# for CI only. scripts/e2e-cycle.sh claims a free slot and runs a whole
-# up → test → down cycle under its lock; prefer it to a bare e2e-up.
+# for CI only. Locally this runs only inside scripts/e2e-cycle.sh, which
+# claims the slot and this checkout for the stack's whole life.
 #
 # Idempotent — re-running restarts the app servers and re-applies the
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.

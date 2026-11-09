@@ -32,6 +32,8 @@ source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 E2E_DIR="$REPO_ROOT/.e2e"
 mkdir -p "$E2E_LOCK_DIR" "$E2E_DIR"
 CHECKOUT_LOCK="$E2E_DIR/cycle.lock"
+# This script by absolute path: the cd above would break a relative $0.
+SELF="$REPO_ROOT/scripts/e2e-cycle.sh"
 
 MODE=run
 NEW=0
@@ -45,7 +47,7 @@ while [ $# -gt 0 ]; do
     --stop) MODE=stop; shift ;;
     --hold) MODE=hold; shift ;;   # internal: what --background runs detached
     --) shift; break ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$SELF"; exit 0 ;;
     *) break ;;
   esac
 done
@@ -62,19 +64,7 @@ command -v setsid >/dev/null 2>&1 && DETACH=(setsid)
 
 checkout_busy() { ! flock -n "$CHECKOUT_LOCK" true 2>/dev/null; }
 
-# The hold this checkout runs, if any. Ownership is the checkout lock; the pid
-# file only says which process holds it — so a stale pid (a hold that died,
-# its pid since reused) never counts: the lock must be held AND the pid must
-# still be an e2e-cycle.sh.
-held_pid() {
-  local pid
-  pid="$(cat "$E2E_DIR/cycle.pid" 2>/dev/null)" || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && checkout_busy || return 1
-  if [ -r "/proc/$pid/cmdline" ]; then
-    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'e2e-cycle\.sh' || return 1
-  fi
-  echo "$pid"
-}
+held_pid() { e2e_held_cycle_pid "$REPO_ROOT"; }
 
 # A cycle that died without its teardown (SIGKILL, OOM) leaves .e2e/booted
 # behind, naming its slot — and its servers and containers keep running.
@@ -131,44 +121,56 @@ fi
 
 # ── --background: start a hold detached, return once it is up ───────────────
 if [ "$MODE" = "background" ]; then
+  OURS=1
   if pid="$(held_pid)"; then
     if [ "$NEW" = "1" ]; then
       echo "✗ this checkout already holds an E2E stack (cycle pid $pid) — stop it first (make e2e-down)."
       exit 4
     fi
-    echo "✓ this checkout already holds an E2E stack (cycle pid $pid):"
-    sed -n 's/^export \(E2E_SLOT\|E2E_FRONTEND_URL\|E2E_BACKEND_URL\)=/  \1=/p' "$E2E_DIR/env.sh" 2>/dev/null
-    exit 0
+    # Someone else's hold: report it once it is up, never before (a caller
+    # that runs Playwright next needs the stack, not just the process).
+    OURS=0
+    echo "✓ this checkout already holds an E2E stack (cycle pid $pid)…"
+  else
+    if checkout_busy; then
+      echo "✗ an E2E cycle is running in this checkout — wait for it, or hold a stack from another worktree."
+      exit 3
+    fi
+    printf '\n── hold started %s ──\n' "$(date -Iseconds)" >>"$E2E_DIR/cycle.log"
+    "${DETACH[@]}" "$SELF" ${WANT_SLOT:+--slot "$WANT_SLOT"} --hold >>"$E2E_DIR/cycle.log" 2>&1 </dev/null &
+    pid=$!
+    # Leaving early (Ctrl-C) or giving up must not strand a hold that is
+    # still booting: it would come up later with nobody waiting for it.
+    trap 'kill -TERM "$pid" 2>/dev/null; echo; echo "✗ interrupted — the hold is tearing down (log: .e2e/cycle.log)"; exit 130' INT TERM
+    echo "▶ Holding an E2E stack in the background (cycle pid $pid, log: .e2e/cycle.log)…"
   fi
-  if checkout_busy; then
-    echo "✗ an E2E cycle is running in this checkout — wait for it, or hold a stack from another worktree."
-    exit 3
-  fi
-  "${DETACH[@]}" "$0" ${WANT_SLOT:+--slot "$WANT_SLOT"} --hold >"$E2E_DIR/cycle.log" 2>&1 </dev/null &
-  pid=$!
-  # Leaving early (Ctrl-C) or giving up must not strand a hold that is still
-  # booting: it would come up later with nobody waiting for it.
-  trap 'kill -TERM "$pid" 2>/dev/null; echo; echo "✗ interrupted — the hold is tearing down (log: .e2e/cycle.log)"; exit 130' INT TERM
-  echo "▶ Holding an E2E stack in the background (cycle pid $pid, log: .e2e/cycle.log)…"
-  for _ in $(seq 1 1200); do
-    # The hold writes its own pid into .e2e/ready once its stack is up, so a
-    # ready file left by an earlier hold never passes for this one.
-    [ "$(cat "$E2E_DIR/ready" 2>/dev/null)" = "$pid" ] && break
+  # The hold writes its own pid into .e2e/ready once its stack is up, so a
+  # ready file left by an earlier hold never passes for this one. Waiting for
+  # a slot is bounded by the hold itself (E2E_SLOT_WAIT_S); the boot after it
+  # gets 20 more minutes.
+  deadline=$(( $(date +%s) + WAIT_S + 1200 ))
+  told=0
+  while [ "$(cat "$E2E_DIR/ready" 2>/dev/null)" != "$pid" ]; do
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "✗ the cycle exited before its stack came up:"
       tail -n 25 "$E2E_DIR/cycle.log" | sed 's/^/    /'
       exit 3
     fi
+    if [ "$told" = "0" ] && tail -n 5 "$E2E_DIR/cycle.log" 2>/dev/null | grep -q 'every E2E slot is busy'; then
+      echo "  … every E2E slot is busy — waiting for one to free up (up to ${WAIT_S}s)"
+      told=1
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      [ "$OURS" = "1" ] && kill -TERM "$pid" 2>/dev/null
+      echo "✗ the stack did not come up in time — see .e2e/cycle.log"
+      exit 3
+    fi
     sleep 1
   done
-  if [ "$(cat "$E2E_DIR/ready" 2>/dev/null)" != "$pid" ]; then
-    kill -TERM "$pid" 2>/dev/null
-    echo "✗ the stack did not come up within 20 minutes — the hold is tearing down (see .e2e/cycle.log)"
-    exit 3
-  fi
+  slot="$(e2e_manifest_slot "$REPO_ROOT")"
   # shellcheck disable=SC1091
   source "$E2E_DIR/env.sh"
-  echo "✅ E2E slot $E2E_SLOT is up: $E2E_FRONTEND_URL (backend $E2E_BACKEND_URL)"
+  echo "✅ E2E slot $slot is up: $E2E_FRONTEND_URL (backend $E2E_BACKEND_URL)"
   echo "   In a browser use http://127.0.0.1:${E2E_FRONTEND_URL##*:} — a localhost cookie would sign the dev app out."
   echo "   Harnesses read .e2e/stack.json; a shell can \`source .e2e/env.sh\`. Stop it: make e2e-down"
   exit 0
@@ -224,6 +226,9 @@ claim() { # slot → 0 claimed
 
 CHILD=""
 teardown() {
+  # Once teardown starts it finishes: a second TERM (another --stop, a
+  # second Ctrl-C) must not cut it short before e2e-down has run.
+  trap '' INT TERM
   if [ -n "$CHILD" ]; then
     if [ ${#DETACH[@]} -gt 0 ]; then kill -TERM -- "-$CHILD" 2>/dev/null; else kill -TERM "$CHILD" 2>/dev/null; fi
     wait "$CHILD" 2>/dev/null
@@ -247,7 +252,17 @@ while [ -z "$CLAIMED" ]; do
     claim "$WANT_SLOT" && break
   else
     for n in $(seq 1 "$E2E_SLOTS_MAX"); do
-      claim "$n" && break
+      claim "$n" || continue
+      # A free lock over busy ports: a stack whose cycle died without its
+      # teardown. Leave it (its checkout's next cycle or make e2e-down
+      # recovers it) and try the next slot.
+      if e2e_slot_ports_busy "$n"; then
+        echo "  ! slot $n is unlocked but its ports are in use (a stack left by a cycle that died?) — skipping it"
+        CLAIMED=""
+        exec 9>&-
+        continue
+      fi
+      break
     done
     [ -n "$CLAIMED" ] && break
   fi

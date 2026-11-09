@@ -90,8 +90,10 @@ rc=0
 supabase stop "${SUPABASE_ARGS[@]}" "${STOP_ARGS[@]}" || { echo "✗ supabase stop failed"; rc=1; }
 
 # The manifest pointed the harnesses at this stack; it is gone now — even when
-# the stop failed (the cycle exits after this either way, releasing the slot).
-rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh" "$E2E_DIR/booted"
+# the stop failed. .e2e/booted stays when it failed: it is what lets
+# `make e2e-down` (or this checkout's next cycle) find the stack and retry.
+rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh"
+[ "$rc" = "0" ] && rm -f "$E2E_DIR/booted"
 
 [ "$rc" = "0" ] && echo "✅ E2E stack (slot $E2E_SLOT) is down. Logs from the last run are kept in .e2e/."
 exit "$rc"
