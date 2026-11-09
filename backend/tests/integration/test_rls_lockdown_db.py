@@ -15,17 +15,17 @@ halves, because they fail differently:
   local stack's public anon key, the same kind of key the frontend ships, and
   must be refused. This is what an attacker with the bundle's key would try.
 
-`room_messages` is the single documented exemption (see the migration header:
-the local Realtime lane depends on anon postgres_changes, production already
-has RLS on for it). The step-2e bridge (20261108210944_rls_room_messages
-_realtime.sql) adds its policy but keeps RLS off; it leaves this list with
-the migration that pins the manual enable step (that migration's header).
+There is no exemption. `room_messages` was one until RLS step 2e: live chat
+rode Realtime postgres_changes as anon. The Realtime JWT bridge
+(20261108210944_rls_room_messages_realtime.sql: the member SELECT policy) and
+20261109073255_room_messages_rls_enable.sql (RLS on, anon revoked,
+authenticated SELECT) moved it under the same rules as every other table.
 
 Step 2a (20261108092633_rls_app_auth_helpers.sql) is pinned at the bottom:
 function EXECUTE hygiene (no public function callable by anon/authenticated,
 every backend RPC callable by service_role, the default privileges that keep
 it that way for future functions), the `app_auth.uid()` claim contract, and
-the narrowed room_messages privileges.
+the room_messages privileges.
 """
 import os
 import re
@@ -36,8 +36,6 @@ import psycopg
 import pytest
 
 pytestmark = pytest.mark.integration
-
-EXEMPT = frozenset({"room_messages"})
 
 # `supabase start`'s fixed demo anon key (HS256, CLI default secret), the same
 # value as frontend/.env.local.example. Public by design: it only works on a
@@ -73,7 +71,7 @@ def test_every_public_table_has_rls_enabled(db_conn):
            AND NOT c.relrowsecurity
         """
     ).fetchall()
-    off = sorted({r["relname"] for r in rows} - EXEMPT)
+    off = sorted(r["relname"] for r in rows)
     assert not off, (
         f"RLS is OFF on {off}. A new table needs `ALTER TABLE ... ENABLE ROW LEVEL "
         "SECURITY` and a REVOKE from anon/authenticated in its migration "
@@ -88,8 +86,7 @@ _S = frozenset({"SELECT"})
 
 # Step 2c: the table-level privileges `authenticated` holds, and nothing else.
 # Mirrors docs/security/rls-step2/gen_policies.py; a table not listed here
-# (bucket E service-only, plus room_messages until step 2e) must give
-# authenticated nothing at all.
+# (bucket E service-only) must give authenticated nothing at all.
 AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
     # bucket A: owned directly
     "users": _S,
@@ -122,6 +119,9 @@ AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
     "room_bans": _SIUD,
     "room_activity": frozenset({"SELECT", "INSERT"}),
     "room_reactions": frozenset({"SELECT", "INSERT", "DELETE"}),
+    # Step 2e: read-only, member-scoped (room_messages_select_member). Every
+    # write goes through the backend as service_role.
+    "room_messages": _S,
     **{t: _S for t in (
         "room_summaries", "offering_concept_stats", "offering_summary", "course_chunks",
         "course_chunk_contributors", "course_chunk_sources",
@@ -160,11 +160,10 @@ def test_anon_holds_no_table_privileges(db_conn):
           FROM pg_tables t
          CROSS JOIN unnest(%s::text[]) AS p(priv)
          WHERE t.schemaname = 'public'
-           AND NOT (t.tablename = ANY(%s::text[]))
            AND has_table_privilege('anon', format('public.%%I', t.tablename), p.priv)
          ORDER BY 1
         """,
-        (list(_ALL_TABLE_PRIVS), list(EXEMPT)),
+        (list(_ALL_TABLE_PRIVS),),
     ).fetchall()
     leaks = [r["leak"] for r in rows]
     assert not leaks, f"anon can still touch tables: {leaks}"
@@ -174,10 +173,8 @@ def test_anon_holds_no_table_privileges(db_conn):
           FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
          WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
            AND a.attnum > 0 AND NOT a.attisdropped
-           AND NOT (c.relname = ANY(%s::text[]))
            AND has_column_privilege('anon', c.oid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES')
-        """,
-        (list(EXEMPT),),
+        """
     ).fetchall()
     assert not cols, f"anon holds column privileges: {[r['col'] for r in cols]}"
 
@@ -191,10 +188,9 @@ def test_authenticated_holds_exactly_the_planned_table_grants(db_conn):
           FROM pg_tables t
          CROSS JOIN unnest(%s::text[]) AS p(priv)
          WHERE t.schemaname = 'public'
-           AND NOT (t.tablename = ANY(%s::text[]))
            AND has_table_privilege('authenticated', format('public.%%I', t.tablename), p.priv)
         """,
-        (list(_ALL_TABLE_PRIVS), list(EXEMPT)),
+        (list(_ALL_TABLE_PRIVS),),
     ).fetchall()
     held: dict[str, set[str]] = {}
     for r in rows:
@@ -222,10 +218,8 @@ def test_authenticated_column_grants_are_exact(db_conn):
           JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
          CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) AS p(priv)
          WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
-           AND NOT (c.relname = ANY(%s::text[]))
            AND has_column_privilege('authenticated', c.oid, a.attnum, p.priv)
-        """,
-        (list(EXEMPT),),
+        """
     ).fetchall()
     held = {(r["relname"], r["priv"], r["attname"]) for r in rows}
     columns: dict[str, set[str]] = {}
@@ -261,7 +255,6 @@ def test_every_command_granted_to_authenticated_has_a_policy(db_conn):
           FROM pg_class t
          CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p(priv)
          WHERE t.relnamespace = 'public'::regnamespace AND t.relkind = 'r'
-           AND NOT (t.relname = ANY(%s::text[]))
            AND (has_table_privilege('authenticated', t.oid, p.priv)
                 OR (p.priv = 'UPDATE'
                     AND has_any_column_privilege('authenticated', t.oid, 'UPDATE')))
@@ -272,8 +265,7 @@ def test_every_command_granted_to_authenticated_has_a_policy(db_conn):
                         WHEN 'SELECT' THEN 'r' WHEN 'INSERT' THEN 'a'
                         WHEN 'UPDATE' THEN 'w' ELSE 'd' END))
          ORDER BY 1
-        """,
-        (list(EXEMPT),),
+        """
     ).fetchall()
     uncovered = [r["uncovered"] for r in rows]
     assert not uncovered, f"commands granted to authenticated with no policy: {uncovered}"
@@ -379,8 +371,6 @@ def test_postgrest_refuses_every_table_to_the_anon_key(db_conn):
     exposed = []
     with httpx.Client(timeout=10.0) as http:
         for t in _public_tables(db_conn):
-            if t in EXEMPT:
-                continue
             r = http.get(f"{base}/rest/v1/{t}", params={"select": "*", "limit": "1"},
                          headers=headers)
             # 401/403 = permission denied. 404 = not exposed at all. A 200 is a
@@ -661,35 +651,34 @@ def test_app_auth_uid_only_trusts_backend_minted_claims(db_conn, claims, expecte
     assert got == expected
 
 
-def test_room_messages_keeps_only_anon_select(db_conn):
-    # anon SELECT stays until the step-2e JWT bridge: local/CI live chat rides
-    # Realtime postgres_changes as anon, and Realtime needs SELECT. Nothing
-    # else is needed by anyone but the backend (service_role).
+def test_room_messages_privileges_are_member_read_only(db_conn):
+    # Step 2e end state (20261109073255_room_messages_rls_enable.sql): RLS on,
+    # anon holds nothing, authenticated holds SELECT only (gated by the member
+    # policy below), and nobody but the backend (service_role) writes.
+    # That anon reads no ROW is test_rls_policies_db.py::
+    # test_room_messages_anon_reads_nothing (SQL) and
+    # test_postgrest_refuses_every_table_to_the_anon_key above (the wire).
     roles = _existing_roles(db_conn, UNPRIVILEGED)
-    if not roles:
-        pytest.skip("needs the Supabase roles")
-    forbidden = {
-        "anon": ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"],
-        "authenticated": ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"],
-    }
-    leaks = sorted(
-        f"{role}:{priv}"
-        for role in roles
-        for priv in forbidden[role]
+    if set(roles) != set(UNPRIVILEGED):
+        pytest.skip("needs the anon and authenticated roles")
+    assert db_conn.execute(
+        "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.room_messages'::regclass"
+    ).fetchone()["relrowsecurity"], "RLS is off on room_messages"
+    allowed = {"anon": set(), "authenticated": {"SELECT"}}
+    held = {
+        (role, priv)
+        for role in UNPRIVILEGED
+        for priv in _ALL_TABLE_PRIVS
         if db_conn.execute(
             "SELECT has_table_privilege(%s, 'public.room_messages', %s) AS ok",
             (role, priv),
         ).fetchone()["ok"]
-    )
-    assert not leaks, f"room_messages privileges still held: {leaks}"
-    if "anon" in roles:
-        assert db_conn.execute(
-            "SELECT has_table_privilege('anon', 'public.room_messages', 'SELECT') AS ok"
-        ).fetchone()["ok"], (
-            "anon lost SELECT on room_messages: study-room live chat (Realtime "
-            "postgres_changes as anon, frontend/e2e/study-room.spec.ts) needs it "
-            "until the step-2e JWT bridge replaces it"
-        )
+    }
+    wrong = sorted(f"{role}:{priv}" for role, priv in held if priv not in allowed[role])
+    missing = sorted(f"{role}:{priv}" for role, ps in allowed.items() for priv in ps
+                     if (role, priv) not in held)
+    assert not wrong, f"room_messages privileges outside the 2e plan: {wrong}"
+    assert not missing, f"room_messages privileges missing: {missing}"
 
 
 def test_updated_at_triggers_still_fire_after_the_execute_revoke(db_conn):
@@ -714,9 +703,9 @@ def test_updated_at_triggers_still_fire_after_the_execute_revoke(db_conn):
 
 
 # ── Step 2e: room_messages read policy for the Realtime JWT bridge ─────────
-# 20261108210944_rls_room_messages_realtime.sql. RLS on room_messages stays
-# OFF here until the manual enable step (its header); the behaviour with it
-# on is pinned in test_rls_policies_db.py (chat_world).
+# 20261108210944_rls_room_messages_realtime.sql (the policy) and
+# 20261109073255_room_messages_rls_enable.sql (RLS on, anon revoked). Who the
+# policy admits is pinned in test_rls_policies_db.py (chat_world).
 
 @pytest.mark.parametrize(
     ("claims", "expected"),

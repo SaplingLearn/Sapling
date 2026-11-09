@@ -183,26 +183,14 @@ fi
   || { echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"; exit 1; }
 [ -d frontend/node_modules ] \
   || { echo "✗ frontend/node_modules not found. Install first: cd frontend && npm ci"; exit 1; }
-# A bare e2e-up in a checkout whose cycle is running would stop that cycle's
-# servers (.e2e/*.pid) and rebuild its frontend under it. The cycle's own
-# e2e-up passes E2E_SLOT_LOCKED=1.
-if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ -f "$REPO_ROOT/.e2e/cycle.lock" ] \
-  && ! ( flock -n 8 ) 8>"$REPO_ROOT/.e2e/cycle.lock"; then
-  echo "✗ an E2E cycle is running in this checkout — wait for it, or boot from another worktree."
+# A step of scripts/e2e-cycle.sh, which claims the slot and this checkout
+# for the stack's whole life and passes E2E_SLOT_LOCKED=1. Booting outside a
+# cycle would leave a stack nothing owns. `make e2e-up` starts a held cycle;
+# CI (slot 0) calls this directly.
+if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ "${CI:-}" != "true" ]; then
+  echo "✗ e2e-up.sh is a step of an E2E cycle. Hold a stack with \`make e2e-up\`"
+  echo "  (scripts/e2e-cycle.sh --background), or run one with \`make e2e\` / scripts/e2e-cycle.sh -- <command>."
   exit 1
-fi
-# A slot's lock means a run is using it. A cycle (or explore) holds the lock
-# itself and passes E2E_SLOT_LOCKED=1. A BARE `make e2e-up` takes it here,
-# through a detached holder that outlives this script (the stack stays up for
-# manual use) and that e2e-down stops — so a cycle never claims a slot a human
-# booted, and a stray e2e-down elsewhere can't take this one down.
-if [ "$E2E_SLOT" != "0" ] && [ "${E2E_SLOT_LOCKED:-0}" != "1" ]; then
-  if ! e2e_take_slot_lock_detached "$E2E_SLOT" "$REPO_ROOT/.e2e"; then
-    echo "✗ E2E slot $E2E_SLOT is in use by another run ($(e2e_slot_lock_file "$E2E_SLOT"))."
-    echo "  Pick another (E2E_SLOT=1..$E2E_SLOTS_MAX) or run scripts/e2e-cycle.sh, which takes a free one."
-    exit 1
-  fi
-  echo "  ✓ holding E2E slot $E2E_SLOT for this boot (released by make e2e-down)"
 fi
 # Same class of baked-in constant: the frontend's SESSION_SECRET lives in
 # package.json's start:test, the backend's in backend/.env — verify they agree
@@ -212,6 +200,25 @@ check_session_secrets backend/.env frontend/package.json || exit 1
 # APP_ENV is exactly local or test — warn, the stack still boots without it.
 grep -qE '^APP_ENV=(local|test)$' backend/.env \
   || echo "  ⚠ backend/.env APP_ENV is not local/test — /api/auth/test-login will 404 for E2E harnesses"
+# RLS step 2e: study-room live chat subscribes ONLY with the backend-minted
+# Realtime token (room_messages has RLS on and no anon SELECT), signed with
+# SUPABASE_JWT_SIGNING_KEY. Without it GET /api/auth/realtime-token answers
+# 503, rooms are REST-only, and study-room.spec.ts cannot see live messages.
+# Every stack this script boots runs the Supabase CLI's default JWT secret,
+# whose oct JWK backend/.env.local.example carries, so when neither the shell
+# nor backend/.env sets the key, export that demo key — the same way the slot
+# setup exports its URLs (an exported variable beats backend/.env, since
+# python-dotenv never overrides one). It is the public CLI demo secret, never
+# a real project's.
+if [ -z "${SUPABASE_JWT_SIGNING_KEY:-}" ] && ! grep -qE '^SUPABASE_JWT_SIGNING_KEY=.+' backend/.env; then
+  DEMO_JWT_SIGNING_KEY="$(grep -E '^SUPABASE_JWT_SIGNING_KEY=.+' backend/.env.local.example | tail -n1 | cut -d= -f2- | tr -d '\r')"
+  if [ -z "$DEMO_JWT_SIGNING_KEY" ]; then
+    echo "✗ SUPABASE_JWT_SIGNING_KEY is unset in backend/.env and missing from backend/.env.local.example — study rooms would get no live chat. Set it in backend/.env."
+    exit 1
+  fi
+  export SUPABASE_JWT_SIGNING_KEY="$DEMO_JWT_SIGNING_KEY"
+  echo "  ℹ SUPABASE_JWT_SIGNING_KEY unset in backend/.env — using the local demo key from backend/.env.local.example (RLS step 2e live chat)"
+fi
 # e2e-up deliberately does NOT set the LLM-seam envs — a live-model stack is
 # legitimate. But the deterministic lanes need them, so leave a pointer when
 # they're absent instead of letting journeys silently hit live Gemini.
@@ -383,7 +390,12 @@ if [ "${E2E_FRONTEND:-test}" = "dev" ]; then
   echo "▶ Starting frontend (next dev on :$FRONTEND_PORT, E2E_FRONTEND=dev, log: .e2e/frontend.log)…"
   (
     cd frontend || exit 1
-    BACKEND_URL="$E2E_BACKEND_URL" $DETACH npx next dev -p "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 8>&- 9>&- &
+    # Same environment as start:test where it matters: same-origin API, no
+    # PostHog (ADR 0028 — E2E stacks never send), and the SESSION_SECRET the
+    # preflight verified (start:test's), not whatever .env.local holds.
+    BACKEND_URL="$E2E_BACKEND_URL" NEXT_PUBLIC_API_URL= NEXT_PUBLIC_POSTHOG_KEY= \
+      SESSION_SECRET="$FRONTEND_SECRET" \
+      $DETACH npx next dev -p "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 8>&- 9>&- &
     echo $! >"$E2E_DIR/frontend.pid"
   ) || { echo "✗ could not start frontend"; exit 1; }
 else
@@ -440,7 +452,7 @@ cat <<DONE
      frontend  http://localhost:$FRONTEND_PORT   (test-profile production build)
      backend   http://localhost:$BACKEND_PORT   (health: /api/health)
      Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (project $SUPABASE_PROJECT_ID)
-   PIDs + logs: .e2e/          Tear down: make e2e-down
+   PIDs + logs: .e2e/          Torn down by its cycle (a held stack: make e2e-down)
    Harnesses read .e2e/stack.json; a shell can \`source .e2e/env.sh\`.
    Harness sign-in: POST /api/auth/test-login with a seeded rich-* user (#381).
 DONE

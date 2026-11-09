@@ -500,15 +500,20 @@ async def local_seed_status(request: Request):
 
 # ── GET /api/auth/realtime-token (RLS step 2e) ────────────────────────────────
 
-#: Feature flag that turns the Realtime JWT bridge on for a student (#115).
-REALTIME_RLS_FLAG = "realtime_rls"
-
+#: ``detail.code`` of the ONE 503 the browser treats as "no live chat for this
+#: page session" (frontend/src/lib/realtimeAuth.ts): the signing key is unset
+#: or unusable, which no retry can fix. Every other 5xx on this route (the
+#: session guard's account-state read, a restart, a cold start) carries no
+#: such code, and the client retries it with backoff.
+REALTIME_UNCONFIGURED = "realtime_unconfigured"
 
 @router.get("/realtime-token")
 def realtime_token(request: Request):
     """A short-lived JWT the browser's Supabase Realtime client authenticates
-    with (``supabase.realtime.setAuth``), so live study-room chat survives RLS
-    on ``room_messages`` (docs/security/realtime-jwt-bridge-design.md).
+    with (``supabase.realtime.setAuth``), the only way to receive live
+    study-room chat: ``room_messages`` has RLS on and no anon SELECT
+    (20261109073255_room_messages_rls_enable.sql;
+    docs/security/realtime-jwt-bridge-design.md).
 
     One general token per student, not per room: the room_messages SELECT
     policy (``app_auth.is_room_member_realtime``) does the scoping, and
@@ -516,23 +521,29 @@ def realtime_token(request: Request):
     which no other policy trusts. Answers ``{token, expires_at}`` (unix
     seconds); the client re-fetches before ``expires_at``.
 
-    401/403 without a live, approved session; 404 while the ``realtime_rls``
-    flag is off for the student (the client then keeps the anon Realtime
-    path); 503 when SUPABASE_JWT_SIGNING_KEY is unset or unusable (fail
-    closed: never a service-role or anon fallback). ``no-store``: it is a
-    credential.
+    401/403 without a live, approved session; 503 with
+    ``detail.code == "realtime_unconfigured"`` when SUPABASE_JWT_SIGNING_KEY
+    is unset or unusable (fail closed: never a service-role or anon fallback;
+    the room then works over REST only). Any other 503 (e.g. the guard could
+    not read the account) is transient and has no such code. ``no-store``: it
+    is a credential. No feature flag: the endpoint stopped reading
+    ``realtime_rls`` with the anon path's removal (the flag stays registered
+    one release for old bundles only; see services/feature_flags.py).
     """
     from db import user_jwt
-    from services import feature_flags
 
     user_id = get_session_user_id(request)
-    if not feature_flags.flag_on(REALTIME_RLS_FLAG, user_id):
-        raise HTTPException(status_code=404, detail="Not Found")
     try:
         token, expires_at = user_jwt.mint_realtime(user_id)
     except user_jwt.SigningKeyError as exc:
         logger.warning("realtime-token: cannot mint (%s)", exc)
-        raise HTTPException(status_code=503, detail="Realtime authorization is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": REALTIME_UNCONFIGURED,
+                "message": "Realtime authorization is not configured",
+            },
+        )
     return JSONResponse(
         {"token": token, "expires_at": expires_at},
         headers={"Cache-Control": "private, no-store"},

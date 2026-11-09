@@ -254,7 +254,7 @@ role rule, rollout, default (§8.1 for what that means for turning one off).
 
 | Flag | From | Variants | Scope | Client-visible | Kill switch |
 |---|---|---|---|---|---|
-| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off` |
+| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off`. **Retired in code since** (after it reached default `on` on staging and prod): the anon path is gone and nothing new reads it. It stays registered, client-visible and default `on` for one release, only so bundles older than that change keep live chat; **never set it `off`** (it would push those bundles onto the dead anon path). Deleted with its stored rows in a follow-up; see step 1 below. |
 | `llm_budget` | #838 | off / on | Per user (role rules and rollouts apply) | no | `SAPLING_FLAG_LLM_BUDGET=off` |
 | `llm_outage_drill` | #838 | off / anthropic / google / both | **Global** (`user_id=None`) | no | Unset `SAPLING_FLAG_LLM_OUTAGE_DRILL`, default `off`. Refused in `APP_ENV=production` (also what an unset `APP_ENV` means) unless `SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes`. A flag-store outage resolves to `off`, so the store can never arm it. |
 | `async_db_client` | #839 | off / on | Per user, resolved once per request | no | `SAPLING_FLAG_ASYNC_DB_CLIENT=off` |
@@ -288,6 +288,14 @@ on staging before prod:
    grant. Pin the end state in a new migration afterwards
    (`docs/security/realtime-jwt-bridge-design.md` "Enable sequence", steps
    4–5). Before this step, staging's anon key still reads room messages.
+   **Update, done:** the flag reached default `on` on staging and prod, and
+   steps 4–5 landed as one change instead of a manual step:
+   `20261109073255_room_messages_rls_enable.sql` (the SQL above, idempotent;
+   a no-op on prod, changes staging when it migrates), the client's anon
+   subscription path removed, and nothing reads `realtime_rls` any more. It
+   stays registered (and in `.railway/railway.ts`) one release for old
+   bundles; a follow-up deletes it and its stored rows. Nothing manual is
+   left.
 2. **`llm_budget`.** Check the seeded default first:
    `GET /api/admin/llm/budgets` (2,000,000 tokens per UTC day, a runaway guard,
    not a study limit). Ladder: admins, then 10/50/100%. Watch 429s with
@@ -534,9 +542,12 @@ The stages: preflight, **backup**, snapshot, migrate (the irreversible step:
      targets, set the rollout to 0, **and** set the default to `off`. With
      #839 each process notices within about 5 s under traffic (the version
      check), never later than its 30 s snapshot.
-   - `realtime_rls` off sends clients back to the anon subscription on their
-     next flags refresh. On staging after the manual close-the-anon-path step,
-     that path delivers nothing until you roll that step back too
+   - `realtime_rls` is retired in code (§4, step 1): the token endpoint and
+     the new client ignore it, and `SAPLING_FLAG_REALTIME_RLS=off` would
+     only break old bundles, so there is no flag to turn off. Rolling live chat
+     back to the anon key means reverting the change that retired it (it
+     restores the anon subscription path) and then, on staging only, the
+     reverse SQL in `20261109073255_room_messages_rls_enable.sql`
      (`GRANT SELECT ... TO anon; ALTER TABLE ... DISABLE ROW LEVEL SECURITY;`,
      never on prod).
    - `jobs_queue` off: in-flight queued uploads and syncs still finish on the
@@ -752,4 +763,4 @@ additive.
 | `GET /api/notes/user/{id}?course_id=` still filters on the current-term offering. | #831 | low | The frontend never sends it. |
 | Room activity history still names soft-deleted users. | #832 | low | |
 | `.railway/railway.ts` is unverified against the live project (reference syntax). | #836 | — | Runbook step 3's plan is the check. |
-| **Wave-1 §10 items still open:** the `school_match` same-school decision (#813); stored cross-room `reply_to_id` rows stay in the table (hidden on read), and `edit_room_message`/`delete_room_message` do not check `room_id` (author-gated, not a leak); `room_messages` stays outside RLS on staging until the manual step after `realtime_rls` is at 100% (§4). | wave 1 | low/decision | The other wave-1 §10 findings (Quizlet SSRF, `link_concept`, course-write enrollment, profile roles/deleted, study-guide regenerate, flashcards `courses.user_id`, the 5 blocking async handlers) are fixed by #827–#832 and #839. |
+| **Wave-1 §10 items still open:** the `school_match` same-school decision (#813); stored cross-room `reply_to_id` rows stay in the table (hidden on read), and `edit_room_message`/`delete_room_message` do not check `room_id` (author-gated, not a leak); `room_messages` stays outside RLS on staging until the manual step after `realtime_rls` is at 100% (§4; since done by `20261109073255_room_messages_rls_enable.sql`). | wave 1 | low/decision | The other wave-1 §10 findings (Quizlet SSRF, `link_concept`, course-write enrollment, profile roles/deleted, study-guide regenerate, flashcards `courses.user_id`, the 5 blocking async handlers) are fixed by #827–#832 and #839. |
