@@ -17,6 +17,17 @@ from config import (
 from db.connection import rpc, table
 from db.scope import runs_as_service
 from services.streak_service import effective_streak, touch_streak_safe
+# Module imports, not names: tests patch these on their home modules, and a
+# call-time attribute lookup keeps those patches effective (#118 removed the
+# function-local imports that hid an ImportError under a broad except).
+from services import academics, achievement_service, course_context_service
+from services.graph_update_model import (  # noqa: F401  (_coerce_unit: re-export, #118)
+    GraphUpdate,
+    NewEdge,
+    NewNode,
+    UpdatedNode,
+    _coerce_unit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -738,15 +749,6 @@ def _normalize_concept(name: str) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def _coerce_unit(value, default: float = 0.0) -> float:
-    """Coerce an LLM-emitted scalar into a [0,1] float, tolerant of None/strings."""
-    try:
-        f = float(value if value is not None else default)
-    except (TypeError, ValueError):
-        f = default
-    return max(0.0, min(1.0, f))
-
-
 def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, float] | None:
     """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
 
@@ -917,17 +919,13 @@ def _insert_mastery_event(event_row: dict) -> None:
         )
 
 
-def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
-    """
-    Apply a graph_update dict to the DB. Returns mastery_changes list.
-    If course_id is provided, all new/updated nodes will be associated with that course.
+def _existing_nodes_by_name(user_id: str, course_id: str | None) -> dict[str, dict]:
+    """Normalized name → the user's existing node row (scoped to the course when given).
 
-    Concept dedup is case- and whitespace-insensitive: "Linear Regression",
-    "linear regression", and " Linear  Regression " all resolve to the same node.
+    The UNIQUE (user_id, course_id, concept_name) constraint from 0023 prevents
+    duplicates; this map resolves updated_nodes / new_edges against
+    pre-existing rows.
     """
-    mastery_changes: list = []
-    touched_courses: set = set()
-
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         fetch_filters["course_id"] = f"eq.{course_id}"
@@ -935,28 +933,37 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         "id,concept_name,mastery_score,times_studied,course_id",
         filters=fetch_filters,
     ) or []
-
-    # Normalized name → row, scoped to (user_id [, course_id]). The UNIQUE
-    # (user_id, course_id, concept_name) constraint from 0023 prevents duplicates;
-    # this map resolves updated_nodes / new_edges against pre-existing rows.
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
         if norm:
             by_name[norm] = row
+    return by_name
 
+
+def _upsert_new_nodes(
+    user_id: str,
+    new_nodes: list[NewNode],
+    course_id: str | None,
+    by_name: dict[str, dict],
+    touched_courses: set,
+) -> dict[str, dict]:
+    """Create the batch's new concepts; return them keyed by normalized name.
+
+    A concept that already exists (or appeared earlier in the batch) is skipped,
+    as is a blank name.
+    """
     inserted_in_batch: dict[str, dict] = {}
-
-    for new_node in graph_update.get("new_nodes", []):
-        name = " ".join((new_node.get("concept_name") or "").split())
+    for new_node in new_nodes:
+        name = new_node.concept_name
         if not name:
             continue
         norm = _normalize_concept(name)
         if norm in by_name or norm in inserted_in_batch:
             continue
 
-        node_course_id = course_id or new_node.get("course_id")
-        init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
+        node_course_id = course_id or new_node.course_id
+        init_m = new_node.initial_mastery
 
         new_id = str(uuid.uuid4())
         # UNIQUE-backed upsert (0023) replaces the old select-then-insert. On a
@@ -988,24 +995,79 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         }
         if node_course_id:
             touched_courses.add(node_course_id)
+    return inserted_in_batch
 
-    def _lookup(name: str) -> dict | None:
-        norm = _normalize_concept(name)
-        return by_name.get(norm) or inserted_in_batch.get(norm)
 
-    for upd in graph_update.get("updated_nodes", []):
-        name = (upd.get("concept_name") or "").strip()
-        if not name:
+def _mastery_event_row(row: dict, upd: UpdatedNode) -> dict:
+    """The node_mastery_events row for one applied mastery move."""
+    # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
+    event_row = {
+        "id": str(uuid.uuid4()),
+        "node_id": row["id"],
+        "delta": upd.mastery_delta,
+        "reason": upd.reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # E7: the caller's categorical read of WHY mastery moved. It was
+    # computed and then dropped here for months, so the event log
+    # recorded how much mastery moved but never what kind of evidence
+    # moved it.
+    #
+    # TWO producers supply one, and both namespace their values by
+    # producer because the column has no CHECK and their vocabularies
+    # are otherwise disjoint-but-confusable:
+    #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
+    #     quiz_confusion, from the score ratio;
+    #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
+    #     tutor_interaction / tutor_correction / tutor_quiz, and only
+    #     when the model actually classified the turn (the tool's field
+    #     is nullable and the key is omitted when it is None).
+    # Callers that classify nothing at all (the document pipeline, notes
+    # extraction, manual adds via add_node) supply no key, and NULL is
+    # the honest value for "this writer doesn't classify".
+    #
+    # Omitted rather than written as an explicit null when absent because
+    # naming a column PostgREST's schema cache doesn't have is a hard
+    # 400 — so omitting keeps the non-classifying paths working on an
+    # environment that took this code before the migration.
+    #
+    # It does NOT make the two classifying paths safe there, and the
+    # blast radius is not cosmetic:
+    #   * the TUTOR is the highest-volume writer here (a mastery update
+    #     can land on every conversational turn), and it takes the
+    #     `_insert_mastery_event` retry — one wasted 400 plus a warning
+    #     per classified turn until the migration lands;
+    #   * submit_quiz always supplies one, and a code-before-migration
+    #     deploy 400s that insert. The retry is what keeps it from
+    #     propagating out of apply_graph_update (submit does not wrap the
+    #     call), which would land a 500 AFTER the atomic completed_at
+    #     claim but BEFORE score/answers are written — losing the graded
+    #     attempt, not just its mastery event.
+    # The migration
+    # (20260814051517_node_mastery_events_event_type.sql) must be
+    # applied strictly before this code ships to any environment.
+    # (GraphUpdate has already stripped it; blank/non-string is None.)
+    if upd.event_type is not None:
+        event_row["event_type"] = upd.event_type
+    return event_row
+
+
+def _apply_mastery_updates(
+    user_id: str,
+    updated_nodes: list[UpdatedNode],
+    lookup,
+    touched_courses: set,
+) -> list:
+    """Move mastery on each named concept, journal it, and return the changes."""
+    mastery_changes: list = []
+    for upd in updated_nodes:
+        if not upd.concept_name:
             continue
-        try:
-            delta = float(upd.get("mastery_delta", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            delta = 0.0
-        row = _lookup(name)
+        row = lookup(upd.concept_name)
         if not row:
             continue
 
-        applied = _apply_mastery_delta(user_id, row, delta)
+        applied = _apply_mastery_delta(user_id, row, upd.mastery_delta)
         if applied is None:
             continue  # node deleted under us: nothing to log against
         before, after = applied
@@ -1013,84 +1075,22 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         row["mastery_score"] = after
         row["times_studied"] = (row.get("times_studied") or 0) + 1
 
-        now = datetime.now(timezone.utc).isoformat()
-        # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
-        event_row = {
-            "id": str(uuid.uuid4()),
-            "node_id": row["id"],
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "created_at": now,
-        }
-        # E7: the caller's categorical read of WHY mastery moved. It was
-        # computed and then dropped here for months, so the event log
-        # recorded how much mastery moved but never what kind of evidence
-        # moved it.
-        #
-        # TWO producers supply one, and both namespace their values by
-        # producer because the column has no CHECK and their vocabularies
-        # are otherwise disjoint-but-confusable:
-        #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
-        #     quiz_confusion, from the score ratio;
-        #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
-        #     tutor_interaction / tutor_correction / tutor_quiz, and only
-        #     when the model actually classified the turn (the tool's field
-        #     is nullable and the key is omitted when it is None).
-        # Callers that classify nothing at all (the document pipeline, notes
-        # extraction, manual adds via add_node) supply no key, and NULL is
-        # the honest value for "this writer doesn't classify".
-        #
-        # Omitted rather than written as an explicit null when absent because
-        # naming a column PostgREST's schema cache doesn't have is a hard
-        # 400 — so omitting keeps the non-classifying paths working on an
-        # environment that took this code before the migration.
-        #
-        # It does NOT make the two classifying paths safe there, and the
-        # blast radius is not cosmetic:
-        #   * the TUTOR is the highest-volume writer here (a mastery update
-        #     can land on every conversational turn), and it takes the
-        #     `_insert_mastery_event` retry — one wasted 400 plus a warning
-        #     per classified turn until the migration lands;
-        #   * submit_quiz always supplies one, and a code-before-migration
-        #     deploy 400s that insert. The retry is what keeps it from
-        #     propagating out of apply_graph_update (submit does not wrap the
-        #     call), which would land a 500 AFTER the atomic completed_at
-        #     claim but BEFORE score/answers are written — losing the graded
-        #     attempt, not just its mastery event.
-        # The migration
-        # (20260814051517_node_mastery_events_event_type.sql) must be
-        # applied strictly before this code ships to any environment.
-        event_type = upd.get("event_type")
-        if isinstance(event_type, str) and event_type.strip():
-            event_row["event_type"] = event_type.strip()
-        _insert_mastery_event(event_row)
+        _insert_mastery_event(_mastery_event_row(row, upd))
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")
         if cid:
             touched_courses.add(cid)
+    return mastery_changes
 
-    if mastery_changes:
-        # services/streak_service.py::touch_streak is the sole writer of
-        # streak_count/longest_streak (UTC calendar days); mastery activity
-        # legitimately counts as a study day, so this stays a call site, but
-        # the maths lives in exactly one place — not duplicated here.
-        touch_streak_safe(user_id)
 
-    for new_edge in graph_update.get("new_edges", []):
-        src_name = " ".join((new_edge.get("source") or "").split())
-        tgt_name = " ".join((new_edge.get("target") or "").split())
-        if not src_name or not tgt_name:
+def _upsert_new_edges(user_id: str, new_edges: list[NewEdge], lookup) -> None:
+    """Wire each edge whose two endpoints resolve to distinct known concepts."""
+    for new_edge in new_edges:
+        if not new_edge.source or not new_edge.target:
             continue
-        try:
-            strength = float(new_edge.get("strength", 0.5) or 0.5)
-        except (TypeError, ValueError):
-            strength = 0.5
-        strength = max(0.0, min(1.0, strength))
-        relationship_type = new_edge.get("relationship_type", "related")
-
-        src = _lookup(src_name)
-        tgt = _lookup(tgt_name)
+        src = lookup(new_edge.source)
+        tgt = lookup(new_edge.target)
         if not src or not tgt:
             continue
         if src["id"] == tgt["id"]:
@@ -1105,41 +1105,94 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
                 "user_id": user_id,
                 "source_node_id": src["id"],
                 "target_node_id": tgt["id"],
-                "strength": strength,
-                "relationship_type": relationship_type,
+                "strength": new_edge.strength,
+                "relationship_type": new_edge.relationship_type,
             },
             on_conflict="user_id,source_node_id,target_node_id,relationship_type",
         )
 
-    if touched_courses:
-        # touched_courses holds abstract course ids (the graph key). Analytics is
-        # offering-scoped, so refresh each of this user's offerings of those courses.
-        from services.course_context_service import refresh_course_context
-        from services.academics import user_offering_ids_for_course
-        for cid in touched_courses:
-            for offering_id in user_offering_ids_for_course(user_id, cid):
-                try:
-                    refresh_course_context(offering_id, user_id=user_id)
-                except Exception:
-                    pass
 
-    # The knowledge graph is the ONLY thing that advances these three stats, so
-    # this is the only place they can be dispatched from. Without it `rooted`,
-    # `branching`, `canopy` (concepts_mastered), `web` (graph_nodes_count) and
-    # `polymath` (courses_with_mastery) are live badges nothing can ever award.
-    # Placed at the end rather than beside the touch_streak_safe call inside
-    # `if mastery_changes:` on purpose: graph_nodes_count grows when nodes are
-    # created, which happens on updates that change no mastery at all.
-    # Post-commit side effect — the graph is already written, so a failure here
-    # must not propagate into the caller's turn.
+def _refresh_touched_course_contexts(user_id: str, touched_courses: set) -> None:
+    """Refresh the offering-scoped course context of every course the batch touched.
+
+    touched_courses holds abstract course ids (the graph key). Analytics is
+    offering-scoped, so refresh each of this user's offerings of those courses.
+    Best-effort — the graph is already written — but a failure is logged, not
+    swallowed.
+    """
+    for cid in touched_courses:
+        for offering_id in academics.user_offering_ids_for_course(user_id, cid):
+            try:
+                course_context_service.refresh_course_context(offering_id, user_id=user_id)
+            except Exception:
+                logger.warning(
+                    "graph: course-context refresh failed after graph update "
+                    "user=%s offering=%s", user_id, offering_id, exc_info=True,
+                )
+
+
+def _dispatch_graph_achievements(user_id: str) -> None:
+    """Fire the three graph-driven achievement stats.
+
+    The knowledge graph is the ONLY thing that advances these three stats, so
+    this is the only place they can be dispatched from. Without it `rooted`,
+    `branching`, `canopy` (concepts_mastered), `web` (graph_nodes_count) and
+    `polymath` (courses_with_mastery) are live badges nothing can ever award.
+    Dispatched at the end rather than beside the touch_streak_safe call on
+    purpose: graph_nodes_count grows when nodes are created, which happens on
+    updates that change no mastery at all. Post-commit side effect — the graph
+    is already written, so a failure here must not propagate into the caller's
+    turn.
+    """
     try:
-        from services.achievement_service import check_achievements
-        check_achievements(user_id, "graph_nodes_count", {})
-        check_achievements(user_id, "concepts_mastered", {})
-        check_achievements(user_id, "courses_with_mastery", {})
+        achievement_service.check_achievements(user_id, "graph_nodes_count", {})
+        achievement_service.check_achievements(user_id, "concepts_mastered", {})
+        achievement_service.check_achievements(user_id, "courses_with_mastery", {})
     except Exception:
         logger.exception("achievement dispatch failed after graph update user=%s", user_id)
 
+
+def apply_graph_update(
+    user_id: str, graph_update: GraphUpdate | dict, course_id: str | None = None,
+) -> list:
+    """
+    Apply a graph update to the DB. Returns mastery_changes list.
+    If course_id is provided, all new/updated nodes will be associated with that course.
+
+    ``graph_update`` is a :class:`services.graph_update_model.GraphUpdate` or the
+    legacy dict of that shape (``new_nodes`` / ``updated_nodes`` / ``new_edges``);
+    a dict is validated into the model first, as leniently as this function
+    always read it (see that module).
+
+    Concept dedup is case- and whitespace-insensitive: "Linear Regression",
+    "linear regression", and " Linear  Regression " all resolve to the same node.
+    """
+    update = GraphUpdate.coerce(graph_update)
+    touched_courses: set = set()
+
+    by_name = _existing_nodes_by_name(user_id, course_id)
+    inserted_in_batch = _upsert_new_nodes(
+        user_id, update.new_nodes, course_id, by_name, touched_courses,
+    )
+
+    def _lookup(name: str) -> dict | None:
+        norm = _normalize_concept(name)
+        return by_name.get(norm) or inserted_in_batch.get(norm)
+
+    mastery_changes = _apply_mastery_updates(
+        user_id, update.updated_nodes, _lookup, touched_courses,
+    )
+    if mastery_changes:
+        # services/streak_service.py::touch_streak is the sole writer of
+        # streak_count/longest_streak (UTC calendar days); mastery activity
+        # legitimately counts as a study day, so this stays a call site, but
+        # the maths lives in exactly one place — not duplicated here.
+        touch_streak_safe(user_id)
+
+    _upsert_new_edges(user_id, update.new_edges, _lookup)
+    if touched_courses:
+        _refresh_touched_course_contexts(user_id, touched_courses)
+    _dispatch_graph_achievements(user_id)
     return mastery_changes
 
 
