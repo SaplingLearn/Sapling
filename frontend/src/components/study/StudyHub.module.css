@@ -98,6 +98,17 @@
 
 .hub {
   position: relative;
+  /* One step up from the app's body scale: the hub is a reading page, and at
+     the base sizes it read small next to its own figures. Re-declared here so
+     every var(--fs-*) inside the hub moves together. */
+  --fs-2xs: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-base: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 19px;
+  --fs-2xl: 24px;
   display: grid;
   /* Sized to the rest of the app (Dashboard, Calendar, Gradebook): the 1920
      design's 360px rail, 56px gap and 56px sides read oversized beside them,
@@ -142,7 +153,11 @@
    "Ready for <exam>". It tops out at 460px, matching the app's card scale. */
 .readyGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 26.7cqi, 460px);
+  /* The figure takes only the width it needs and the card sits right beside
+     it, growing into the rest; a 1fr figure column left a gap between the
+     two once the figure was scaled down to the app's sizes. */
+  grid-template-columns: fit-content(440px) minmax(300px, 560px);
+  justify-content: start;
   align-items: start;
   gap: 32px;
 }
@@ -176,3 +191,7 @@
   .hub { padding: 20px 16px 24px; }
   .readyGrid { gap: 20px; }
 }
+
+/* Leaving for a tool: the hub fades back while the route changes. */
+.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms ease; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .leaving { transition: none; } }

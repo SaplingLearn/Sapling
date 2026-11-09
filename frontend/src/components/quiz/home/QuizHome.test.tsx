@@ -20,7 +20,7 @@
  */
 
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
@@ -1016,6 +1016,15 @@ describe("QuizHome — the states with no proposal", () => {
 
 describe("QuizHome — arriving to start (`?start=1`)", () => {
   const startCalls = (actions: QuizActions) => (actions.start as ReturnType<typeof vi.fn>).mock.calls;
+  // The page reads the live URL too (a remounted home must not restart), so
+  // each case arrives on a URL that still carries the marker.
+  beforeEach(() => { window.history.replaceState(null, "", "/quiz?from=link&start=1"); });
+
+  it("does not start again once the marker has left the URL (closing a quiz remounts the home)", () => {
+    window.history.replaceState(null, "", "/quiz?concept=base-cases&from=link");
+    const { actions } = mount({ entry: entry({ concept: "base-cases", start: true, source: { kind: "link" } }) });
+    expect(startCalls(actions)).toHaveLength(0);
+  });
 
   it("starts a linked concept without a click, once", () => {
     const { actions, view } = mount({

@@ -45,7 +45,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
-import { START_PARAM, consumeStartParam } from "@/lib/toolHrefs";
+import { START_PARAM, consumeStartParam, startStillRequested } from "@/lib/toolHrefs";
 
 type RawCard = {
   id: string;
@@ -92,7 +92,7 @@ export function Flashcards() {
           </>
         }
       />
-      <div className="study-mode-enter" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div className="tool-enter" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <FlashcardsMode
           courses={scopedCourses}
           isMobile={isMobile}
@@ -135,7 +135,7 @@ function FlashcardsMode({
   /** The first card load has answered: an empty `filtered` means "none yet". */
   const [loaded, setLoaded] = React.useState(false);
   /** Arrived with `start=1`, not yet acted on (see the file header). */
-  const startRequested = React.useRef(searchParams.get(START_PARAM) === "1");
+  const startRequested = React.useRef(searchParams.get(START_PARAM) === "1" && startStillRequested());
   const [generating, setGenerating] = React.useState(false);
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);

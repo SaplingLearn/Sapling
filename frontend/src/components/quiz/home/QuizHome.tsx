@@ -46,7 +46,7 @@ import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
 import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
-import { consumeStartParam } from "@/lib/toolHrefs";
+import { consumeStartParam, startStillRequested } from "@/lib/toolHrefs";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
 import { LiveNeighbourhood } from "./LiveNeighbourhood";
@@ -323,7 +323,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   const [armed, setArmed] = React.useState(false);
   const autoStarted = React.useRef(false);
   React.useEffect(() => {
-    if (!entry.start || autoStarted.current) return;
+    if (!entry.start || autoStarted.current || !startStillRequested()) return;
     if (session.phase !== "home") {
       // Arrived into a session already under way (a stored one resumed): the
       // link has nothing left to start, and must not fire when it ends.

@@ -322,10 +322,19 @@ export function StudyHub({
   // The top tool buttons cover what the picker used to preselect: the
   // struggling and learning concepts. One of them is a concept quiz; none or
   // several is the course's quiz (a quiz is one concept or the whole course).
+  // Leaving for a tool fades the hub out first, so the tool's arrival
+  // (`tool-enter`) reads as one hand-off rather than a cut.
+  const [leaving, setLeaving] = React.useState(false);
+  const leaveTo = React.useCallback((href: string) => {
+    const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { router.push(href); return; }
+    setLeaving(true);
+    window.setTimeout(() => router.push(href), 180);
+  }, [router]);
   const goTool = (k: "quiz" | "cards" | "guide") => {
     if (k === "guide") { router.push(guideHref()); return; }
     const weak = topics.filter(t => t.st === "review" || t.st === "progress");
-    router.push(k === "quiz" ? quizHref(weak.map(t => t.id)) : cardsHref(weak.map(t => t.name)));
+    leaveTo(k === "quiz" ? quizHref(weak.map(t => t.id)) : cardsHref(weak.map(t => t.name)));
   };
 
   /* ── exams and deadlines modal ────────────────────────────────────────── */
@@ -536,7 +545,7 @@ export function StudyHub({
   return (
     <div className={s.shell} style={{ background: "#FAF8F3" }}>
     <div
-      className={s.hub}
+      className={leaving ? `${s.hub} ${s.leaving}` : s.hub}
       style={{
         color: "#1A1814", fontFamily: SANS, fontSize: "var(--fs-md)", lineHeight: 1.45,
         WebkitFontSmoothing: "antialiased",
@@ -689,7 +698,7 @@ export function StudyHub({
             the readiness % jump ~35px whenever it did. */}
         <div style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: 14, minWidth: 0, paddingTop: 2 }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
-            <span data-testid="readiness-pct" style={{ fontFamily: SERIF, fontSize: 36, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{graph ? `${pct}%` : "–"}</span>
+            <span data-testid="readiness-pct" style={{ fontFamily: SERIF, fontSize: 42, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{graph ? `${pct}%` : "–"}</span>
             <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingBottom: 2 }}>
               <span style={{ fontSize: "var(--fs-lg)", lineHeight: 1.25, fontWeight: 700 }}>{exam ? `Ready for ${exam.title}` : `${course?.course_code || course?.course_name} Mastery`}</span>
               {trend !== 0 && (
@@ -891,7 +900,7 @@ export function StudyHub({
                           onKeyDown={e => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
                           style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 200, ...popover, borderRadius: "var(--r-md)", boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 4, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
                           {actions.map(ac => (
-                            <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }}
+                            <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); if (ac.icon !== "file" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); leaveTo(ac.href); } }}
                               style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 6px", border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "#1A1814", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
                               <span style={{ width: 24, height: 24, borderRadius: 6, background: ac.bg, color: ac.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ac.icon} size={12} /></span>
                               {ac.label}
@@ -927,7 +936,7 @@ export function StudyHub({
 
           {qr.length > 0 && (
             <div onMouseEnter={() => set({ qrOpen: true })} onMouseLeave={() => set({ qrOpen: false })} style={{ position: "relative" }}>
-              <button className={s.hoverQr} onClick={() => router.push(cardsHref(qr.map(x => x.t.name)))} onFocus={() => set({ qrOpen: true })} onBlur={() => set({ qrOpen: false })} aria-expanded={st.qrOpen}
+              <button className={s.hoverQr} onClick={() => leaveTo(cardsHref(qr.map(x => x.t.name)))} onFocus={() => set({ qrOpen: true })} onBlur={() => set({ qrOpen: false })} aria-expanded={st.qrOpen}
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 56, padding: "0 8px", border: "1px solid #C9DAEC", borderRadius: 14, background: "#E3ECF5", color: "#1E3F6B", ...INHERIT_FONT, textAlign: "left", cursor: "pointer", whiteSpace: "nowrap" }}>
                 <span style={{ width: 40, height: 40, borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><CardsIcon size={18} /></span>
                 {/* minWidth 0 lets the label give way (ellipsis) instead of
@@ -955,7 +964,7 @@ export function StudyHub({
                         </span>
                       ))}
                     </span>
-                    <button className={s.hoverQrStart} onClick={() => { set({ qrOpen: false }); router.push(cardsHref(qr.map(x => x.t.name))); }}
+                    <button className={s.hoverQrStart} onClick={() => { set({ qrOpen: false }); leaveTo(cardsHref(qr.map(x => x.t.name))); }}
                       style={{ height: 40, border: 0, borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Start Review</button>
                   </div>
                 </div>

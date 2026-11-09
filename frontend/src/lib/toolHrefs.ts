@@ -54,6 +54,14 @@ export function flashcardsHref(
   return p.size ? `/flashcards?${p.toString()}` : "/flashcards";
 }
 
+/** The live URL still asks to start. A tool reads this rather than only the
+ *  params it parsed on arrival: closing a quiz (or a deck) remounts its home,
+ *  and a stale `start` there would start it again, so it could never be left. */
+export function startStillRequested(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URL(window.location.href).searchParams.get(START_PARAM) === "1";
+}
+
 /** Drop `START_PARAM` from the current URL without a navigation. */
 export function consumeStartParam(): void {
   if (typeof window === "undefined") return;

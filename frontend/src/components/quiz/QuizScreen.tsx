@@ -211,7 +211,7 @@ export function QuizScreen() {
       <TopBar title="Study" subtitle="Test what you know." actions={<><AIDisclaimerChip /><StudyTabs mode="quiz" /></>} />
       {/* `study-mode-enter`: the Study tools' arrival fade (globals.css), so
           leaving the hub for a quiz reads as a move, not a cut. */}
-      <div className={`quiz-body quiz-body--${layout} study-mode-enter`}>
+      <div className={`quiz-body quiz-body--${layout} tool-enter`}>
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`
             + `.quiz-inset--home`, see quiz.css). Question and results keep the
