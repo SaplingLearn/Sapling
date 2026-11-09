@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -40,12 +41,12 @@ class TestRoomOverviewSummary:
             return_value=SimpleNamespace(output=SimpleNamespace(summary="Strong together."))
         )
         save = MagicMock()
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value=None), \
-             patch("routes.social.social_summary_agent.run", new=agent_run), \
-             patch("routes.social.save_summary", new=save):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value=None), \
+             patch("services.social.overview.social_summary_agent.run", new=agent_run), \
+             patch_social("save_summary", new=save):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == "Strong together."
@@ -54,11 +55,11 @@ class TestRoomOverviewSummary:
 
     def test_cache_hit_does_not_run_agent(self):
         agent_run = AsyncMock()
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value="cached summary"), \
-             patch("routes.social.social_summary_agent.run", new=agent_run):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value="cached summary"), \
+             patch("services.social.overview.social_summary_agent.run", new=agent_run):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == "cached summary"
@@ -66,11 +67,11 @@ class TestRoomOverviewSummary:
 
     def test_agent_failure_falls_back_and_returns_200(self):
         boom = AsyncMock(side_effect=RuntimeError("gemini down"))
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value=None), \
-             patch("routes.social.social_summary_agent.run", new=boom):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value=None), \
+             patch("services.social.overview.social_summary_agent.run", new=boom):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == (
@@ -104,13 +105,13 @@ def test_a_budget_refusal_says_so_instead_of_the_generic_summary():
 
     refused = AsyncMock(side_effect=LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset()))
     save = MagicMock()
-    with patch("routes.social.table", side_effect=_social_table_side_effect), \
-         patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-         patch("routes.social.get_graph", return_value=_GRAPH), \
-         patch("routes.social.get_cached_summary", return_value=None), \
-         patch("routes.social.social_summary_agent.run", new=refused), \
-         patch("routes.social.live_user_ids", return_value={"u1"}), \
-         patch("routes.social.save_summary", new=save):
+    with patch_social("table", side_effect=_social_table_side_effect), \
+         patch_social("get_display_names", return_value={"u1": "Alice"}), \
+         patch_social("get_graph", return_value=_GRAPH), \
+         patch_social("get_cached_summary", return_value=None), \
+         patch("services.social.overview.social_summary_agent.run", new=refused), \
+         patch_social("live_user_ids", return_value={"u1"}), \
+         patch_social("save_summary", new=save):
         r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
     assert r.status_code == 200
     assert "today's limit for AI features" in r.json()["ai_summary"]

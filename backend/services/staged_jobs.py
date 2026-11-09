@@ -2,7 +2,7 @@
 
 Two request paths move slow work onto the job queue the same way:
 services/document_jobs.py (a queued upload, `document_uploads`) and
-services/gradescope_jobs.py (a queued Gradescope sync, `gradescope_syncs`).
+services/gradescope/jobs.py (a queued Gradescope sync, `gradescope_syncs`).
 Each one stages a row, enqueues a job carrying only the row id, and watches
 the row; the worker claims the row and records its outcome on it. This module
 is the machinery both share, parameterised by a :class:`Spec` (table, job

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from main import app
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_tutor
 
 #: #117 wave 3: a sync PostgREST call on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
@@ -150,14 +151,14 @@ def harness():
     agent = _agent()
     stream = MagicMock(name="stream_agent_turn")
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn.stream_agent_turn", stream),
-        patch("routes.learn.get_display_name", return_value="Owner Person"),
-        patch("routes.learn.events_service.log_event") as log_event,
-        patch("routes.learn.award_xp_safe") as award,
-        patch("routes.learn.touch_streak_safe") as streak,
-        patch("routes.learn.offering_course_id", return_value="c1"),
+        patch_tutor("table", side_effect=with_async_twins(tables)),
+        patch_tutor("agent_for_mode", return_value=agent),
+        patch_tutor("stream_agent_turn", stream),
+        patch_tutor("get_display_name", return_value="Owner Person"),
+        patch("services.events_service.log_event") as log_event,
+        patch_tutor("award_xp_safe") as award,
+        patch_tutor("touch_streak_safe") as streak,
+        patch_tutor("offering_course_id", return_value="c1"),
     ):
         yield {
             "tables": tables, "agent": agent, "stream": stream,
@@ -207,7 +208,7 @@ def test_delete_of_another_students_session_is_a_noop_200(harness):
 def test_delete_of_a_missing_session_is_a_noop_200():
     """A second delete of the same session (another tab, a double click) succeeds."""
     tables = _Tables(session_owner=None)
-    with patch("routes.learn.table", side_effect=with_async_twins(tables)):
+    with patch_tutor("table", side_effect=with_async_twins(tables)):
         r = _delete(OWNER, "no-such-session")
     assert r.status_code == 200 and r.json() == {"deleted": True}, r.text
     assert not tables.touched("messages", "delete")
@@ -217,8 +218,8 @@ def test_delete_of_a_missing_session_is_a_noop_200():
 @pytest.mark.parametrize("label,call", ROUTES, ids=[r[0] for r in ROUTES])
 def test_missing_session_is_404(label, call):
     tables = _Tables(session_owner=None)
-    with patch("routes.learn.table", side_effect=with_async_twins(tables)), \
-         patch("routes.learn.agent_for_mode", return_value=_agent()) as afm:
+    with patch_tutor("table", side_effect=with_async_twins(tables)), \
+         patch_tutor("agent_for_mode", return_value=_agent()) as afm:
         r = call(OWNER, "no-such-session")
     assert r.status_code == 404, f"{label}: {r.status_code} {r.text}"
     assert not tables.touched("messages", "select")
@@ -230,7 +231,7 @@ def test_missing_and_foreign_are_indistinguishable(harness):
     """Same status AND same body, so a 404 can't tell an attacker whether
     the id exists."""
     foreign = _chat(INTRUDER)
-    with patch("routes.learn.table", side_effect=with_async_twins(_Tables(session_owner=None))):
+    with patch_tutor("table", side_effect=with_async_twins(_Tables(session_owner=None))):
         missing = _chat(OWNER, "no-such-session")
     assert foreign.status_code == missing.status_code == 404
     assert foreign.json()["detail"] == missing.json()["detail"]
@@ -254,7 +255,7 @@ def test_owner_chat_stream_works(harness):
         yield SaplingEvent(type="done", step="reply", message="Complete.",
                            data={"reply": "Hi", "graph_update": {}, "mastery_changes": []})
 
-    with patch("routes.learn.stream_agent_turn", fake_stream):
+    with patch_tutor("stream_agent_turn", fake_stream):
         r = _chat_stream(OWNER)
     assert r.status_code == 200, r.text
     assert "text/event-stream" in r.headers["content-type"]
@@ -454,9 +455,9 @@ def _observed_lock(on_loser_arrival):
     """Wrap `materialization_lock` so the test learns when the loser thread
     has reached it. ``create=True`` on the patch keeps this test runnable
     against code that has no lock at all (the regression it pins)."""
-    from routes import learn
+    from services.tutor import pending
 
-    real_lock = getattr(learn, "materialization_lock", None)
+    real_lock = getattr(pending, "materialization_lock", None)
 
     @contextmanager
     def lock(session_id):
@@ -528,11 +529,11 @@ def test_losing_request_waits_for_the_winner_to_materialise_the_session(race_pen
             loser_progress.set()
 
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
+        patch_tutor("table", side_effect=with_async_twins(tables)),
         patch("services.tutor_sessions.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.events_service.log_event") as log_event,
-        patch(
-            "routes.learn.materialization_lock",
+        patch("services.events_service.log_event") as log_event,
+        patch_tutor(
+            "materialization_lock",
             _observed_lock(loser_progress.set),
             create=True,
         ),
@@ -600,9 +601,9 @@ def test_failed_materialisation_stays_pending_and_does_not_hang_waiters(race_pen
             loser_progress.set()
 
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.events_service.log_event"),
-        patch("routes.learn.materialization_lock", _observed_lock(loser_progress.set)),
+        patch_tutor("table", side_effect=with_async_twins(tables)),
+        patch("services.events_service.log_event"),
+        patch_tutor("materialization_lock", _observed_lock(loser_progress.set)),
     ):
         winner = threading.Thread(
             target=_mode_switch_like(RACE, winner_errors), name="winner"
@@ -634,8 +635,8 @@ def test_failure_after_the_row_insert_retries_without_a_duplicate_row(race_pendi
     tables = _Tables(session_owner=None)
     tables("messages").insert.side_effect = [RuntimeError("write failed"), []]
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.events_service.log_event") as log_event,
+        patch_tutor("table", side_effect=with_async_twins(tables)),
+        patch("services.events_service.log_event") as log_event,
     ):
         with pytest.raises(RuntimeError):
             learn._consume_pending(RACE, OWNER)
@@ -657,8 +658,8 @@ def test_ready_session_takes_no_lock():
     tables = _Tables()
     lock = MagicMock(side_effect=AssertionError("lock taken for a ready session"))
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.materialization_lock", lock),
+        patch_tutor("table", side_effect=with_async_twins(tables)),
+        patch_tutor("materialization_lock", lock),
     ):
         learn._consume_pending(SESSION, OWNER)
     assert not lock.called
@@ -704,8 +705,8 @@ def test_row_committed_but_response_lost_retries_cleanly(race_pending):
     tables("sessions").insert.side_effect = insert
     tables("sessions").upsert.side_effect = upsert
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(tables)),
-        patch("routes.learn.events_service.log_event") as log_event,
+        patch_tutor("table", side_effect=with_async_twins(tables)),
+        patch("services.events_service.log_event") as log_event,
     ):
         with pytest.raises(_CommittedButRaised):
             learn._consume_pending(RACE, OWNER)
@@ -810,7 +811,7 @@ def test_async_routes_materialise_in_the_threadpool(harness, race_pending, label
     harness["tables"].session_owner = None
     harness["tables"]("sessions").upsert.side_effect = upsert
     harness["tables"]("sessions").insert.side_effect = upsert  # pre-upsert code
-    with patch("routes.learn.arequire_session_owner", side_effect=check):
+    with patch_tutor("arequire_session_owner", side_effect=check):
         call(OWNER, RACE)
     assert RACE not in race_pending, f"{label}: session not materialised"
     assert threads["write"] is not threads["loop"], (
@@ -823,7 +824,7 @@ def test_async_routes_skip_materialisation_for_a_ready_session(harness, label, c
     """A ready session never reaches the lock-taking materialisation path
     (its reads go over the async seam, #117 wave 3)."""
     consume = MagicMock(side_effect=AssertionError("materialisation for a ready session"))
-    with patch("routes.learn._consume_pending", consume):
+    with patch_tutor("_consume_pending", consume):
         call(OWNER)
     assert not consume.called
 
@@ -838,7 +839,7 @@ def test_resume_survives_the_pending_entry_vanishing_mid_request(harness):
         def __contains__(self, key):
             return True  # the membership test ran before the pop
 
-    with patch("routes.learn.PENDING_SESSIONS", _PoppedBetween()):
+    with patch_tutor("PENDING_SESSIONS", _PoppedBetween()):
         r = _resume(OWNER)
     assert r.status_code == 200, r.text
     assert r.json()["session"]["id"] == SESSION

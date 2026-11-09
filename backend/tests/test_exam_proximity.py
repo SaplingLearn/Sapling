@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from services.exam_proximity import days_until_next_exam, is_exam
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
 
 
 def _due(days_from_today: int) -> str:
@@ -179,10 +180,10 @@ class TestExamProximityReachesGeneration:
             return m
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.days_until_next_exam", return_value=days),
-            patch("routes.quiz.recent_question_identities", return_value=[]),
-            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch_quiz("days_until_next_exam", return_value=days),
+            patch_quiz("recent_question_identities", return_value=[]),
+            patch("services.quiz.generation.quiz_agent.run", new=agent_run),
         ):
             r = TestClient(app).post("/api/quiz/generate", json={
                 "user_id": "user_andres", "concept_node_id": "node1",
@@ -284,7 +285,7 @@ def test_the_attempt_insert_survives_a_schema_without_the_column():
     HAVE an upcoming exam, so it looks like a random partial outage. It would
     land after the agent already ran and was billed: quiz lost, no attempt
     row, no failure event, no rate-limit refund. Retry without the key."""
-    from unittest.mock import MagicMock, patch as _patch
+    from unittest.mock import MagicMock
 
     from routes.quiz import _insert_attempt
 
@@ -298,7 +299,7 @@ def test_the_attempt_insert_survives_a_schema_without_the_column():
         return []
 
     tbl.insert.side_effect = _insert
-    with _patch("routes.quiz.table", return_value=tbl):
+    with patch_quiz("table", return_value=tbl):
         _insert_attempt({"id": "q1", "user_id": "u1", "exam_days_away": 3})
 
     assert len(calls) == 2
@@ -309,7 +310,7 @@ def test_the_attempt_insert_survives_a_schema_without_the_column():
 def test_an_insert_failure_unrelated_to_the_column_still_raises():
     """The retry must not become a blanket swallow — a genuine write failure
     has to keep surfacing."""
-    from unittest.mock import MagicMock, patch as _patch
+    from unittest.mock import MagicMock
 
     import pytest as _pytest
 
@@ -317,7 +318,7 @@ def test_an_insert_failure_unrelated_to_the_column_still_raises():
 
     tbl = MagicMock()
     tbl.insert.side_effect = RuntimeError("connection refused")
-    with _patch("routes.quiz.table", return_value=tbl):
+    with patch_quiz("table", return_value=tbl):
         with _pytest.raises(RuntimeError):
             _insert_attempt({"id": "q1", "user_id": "u1"})
 

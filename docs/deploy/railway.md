@@ -175,7 +175,7 @@ today is not the case:
 
 1. **OCR.** With `jobs_queue` off, the upload pipeline extracts text inline
    (`routes/documents.py`), and so do `routes/extract.py`,
-   `services/flashcard_import_service.py` and `services/calendar_service.py`
+   `services/flashcards/importing.py` and `services/calendar_service.py`
    (syllabus import). Without Docling those fall back to pypdf text (fine for
    born-digital PDFs) and then to tesseract, which the `api` image does not
    have either: a scanned PDF or an image would extract nothing. So: the

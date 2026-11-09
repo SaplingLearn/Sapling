@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from main import app
 from agents.quiz import Quiz, QuizQuestion
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
 import pytest
 
 # #117: a sync PostgREST call reached on the event loop raises here.
@@ -73,7 +74,7 @@ def _generate(user_id="user_andres"):
 
 class TestGenerateRateLimit:
     def test_burst_past_the_limit_is_rejected(self):
-        from services.quiz_config import (
+        from services.quiz.config import (
             QUIZ_GENERATE_RATE_LIMIT,
             QUIZ_GENERATE_RATE_WINDOW_SEC,
         )
@@ -81,8 +82,8 @@ class TestGenerateRateLimit:
         assert QUIZ_GENERATE_RATE_WINDOW_SEC > 0
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             allowed = [_generate() for _ in range(QUIZ_GENERATE_RATE_LIMIT)]
             blocked = _generate()
@@ -100,12 +101,12 @@ class TestGenerateRateLimit:
         would otherwise spend the student's quota — eight 502s in two
         minutes locking them out for five, with a message telling them
         they generated too many quizzes. They received none."""
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         failing = AsyncMock(side_effect=RuntimeError("boom"))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=failing),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=failing),
         ):
             for _ in range(QUIZ_GENERATE_RATE_LIMIT + 2):
                 r = _generate()
@@ -115,8 +116,8 @@ class TestGenerateRateLimit:
 
         # …and the budget is still intact for a request that can succeed.
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
         ):
             assert _generate().status_code == 200
@@ -134,10 +135,10 @@ class TestGenerateRateLimit:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
-            patch("routes.quiz.events_service.log_event") as log_event,
+            patch("services.events_service.log_event") as log_event,
         ):
             r = _generate()
 
@@ -165,8 +166,8 @@ class TestGenerateRateLimit:
             raise RuntimeError("boom")
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=AsyncMock(side_effect=_fail)),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=AsyncMock(side_effect=_fail)),
         ):
             r = _generate()
 
@@ -175,11 +176,11 @@ class TestGenerateRateLimit:
 
     def test_limit_is_per_user(self):
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             for _ in range(QUIZ_GENERATE_RATE_LIMIT):
                 _generate("user_andres")
@@ -201,14 +202,14 @@ class TestGenerateRateLimitIsEnvOverridable:
 
     @staticmethod
     def _reloaded():
-        """Re-import services.quiz_config against the current environment.
+        """Re-import services.quiz.config against the current environment.
 
         `importlib.reload` mutates the module in place, so every caller must
         restore it (see `_restore`) or later tests inherit the override.
         """
         import importlib
 
-        from services import quiz_config
+        from services.quiz import config as quiz_config
 
         return importlib.reload(quiz_config)
 
@@ -256,14 +257,14 @@ class TestGenerateRateLimitIsEnvOverridable:
     def test_the_route_still_enforces_whatever_was_resolved(self):
         """The env seam moves the NUMBER, never the behaviour: the route binds
         the value at its own import and still 429s one call past it."""
-        from routes import quiz as quiz_route
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz import generation as quiz_route
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         assert quiz_route.QUIZ_GENERATE_RATE_LIMIT == QUIZ_GENERATE_RATE_LIMIT
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             for _ in range(quiz_route.QUIZ_GENERATE_RATE_LIMIT):
                 assert _generate().status_code == 200
@@ -272,13 +273,13 @@ class TestGenerateRateLimitIsEnvOverridable:
 
 class TestDailySpendGuard:
     def test_over_budget_user_is_refused_before_the_model_runs(self):
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD + 1.0}]
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory(spend_rows=spent))),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(_factory(spend_rows=spent))),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate()
         assert r.status_code == 429
@@ -289,14 +290,14 @@ class TestDailySpendGuard:
         """#760: the cap 429 generated nothing, so it must hand back the slot
         it claimed — and only that one, not a concurrent request's."""
         from services import request_limits
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         key = "quiz_generate:user_andres"
         other = request_limits.claim_rate_limit(key, limit=100, window_sec=300).slot
         spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD + 1.0}]
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory(spend_rows=spent))),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(_factory(spend_rows=spent))),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
         ):
             r = _generate()
@@ -305,13 +306,13 @@ class TestDailySpendGuard:
         assert request_limits._rate_state[key] == [other]
 
     def test_under_budget_passes(self):
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD / 2}]
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory(spend_rows=spent))),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(_factory(spend_rows=spent))),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate()
         assert r.status_code == 200
@@ -321,7 +322,7 @@ class TestDailySpendGuard:
         206 — a 2xx — so an unpaged select silently truncates. Summing that
         page plateaus below the ceiling, and the guard can never trip for
         the runaway user it exists to stop."""
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         # Sized so ONE page is not enough: 1000 rows × $0.0015 = $1.50,
         # under the $2.00 cap, while all 1500 rows = $2.25, over it. A
@@ -352,8 +353,8 @@ class TestDailySpendGuard:
 
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate()
 
@@ -382,8 +383,8 @@ class TestDailySpendGuard:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
         ):
             r = _generate()
@@ -395,7 +396,7 @@ class TestDailySpendGuard:
 
 class TestGenerationTimeout:
     def test_agent_timeout_maps_to_its_own_code(self):
-        from services.quiz_config import QUIZ_GENERATION_TIMEOUT_SEC
+        from services.quiz.config import QUIZ_GENERATION_TIMEOUT_SEC
 
         assert QUIZ_GENERATION_TIMEOUT_SEC > 0
 
@@ -403,9 +404,9 @@ class TestGenerationTimeout:
             await asyncio.sleep(3600)
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=_never),
-            patch("routes.quiz.QUIZ_GENERATION_TIMEOUT_SEC", 0.05),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=_never),
+            patch_quiz("QUIZ_GENERATION_TIMEOUT_SEC", 0.05),
         ):
             r = _generate()
         assert r.status_code == 502
@@ -440,9 +441,9 @@ class TestGenerationTimeout:
             await _asyncio.sleep(3600)   # the top-up hangs
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run", new=_run),
-            patch("routes.quiz.QUIZ_GENERATION_TIMEOUT_SEC", 0.2),
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run", new=_run),
+            patch_quiz("QUIZ_GENERATION_TIMEOUT_SEC", 0.2),
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
@@ -460,8 +461,8 @@ class TestGenerationTimeout:
 
     def test_ordinary_failure_keeps_the_generic_code(self):
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             r = _generate()
@@ -476,10 +477,10 @@ class TestGenerationFailureEvent:
     def test_generation_failure_emits_an_event(self):
         events = []
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(side_effect=RuntimeError("boom"))),
-            patch("routes.quiz.events_service.log_event",
+            patch("services.events_service.log_event",
                   side_effect=lambda *a, **k: events.append((a, k))),
         ):
             r = _generate()
@@ -503,14 +504,14 @@ class TestGenerationFailureEvent:
     def test_rate_limit_rejection_is_not_an_error_event(self):
         """A throttled student isn't a backend failure — it must not
         pollute the error feed."""
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         events = []
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(_factory())),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
-            patch("routes.quiz.events_service.log_event",
+            patch("services.events_service.log_event",
                   side_effect=lambda *a, **k: events.append((a, k))),
         ):
             for _ in range(QUIZ_GENERATE_RATE_LIMIT + 1):
@@ -560,8 +561,8 @@ class TestConceptScoping:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = self._post("user_andres")
         assert r.status_code == 404
@@ -586,8 +587,8 @@ class TestConceptScoping:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.quiz_agent.run", new=run),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = self._post("user_andres")
         assert r.status_code == 200

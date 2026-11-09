@@ -22,6 +22,8 @@ tests/integration/test_quiz_context_repair_db.py.
 import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from tests.split_patches import patch_quiz
 from fastapi.testclient import TestClient
 
 from main import app
@@ -90,7 +92,7 @@ def _submit():
 
 class TestSaveQuizContextUpsertTarget:
     def test_upserts_on_user_id_concept_node_id(self):
-        from services.quiz_context_service import save_quiz_context
+        from services.quiz.context import save_quiz_context
 
         captured = {}
         fake = MagicMock()
@@ -101,7 +103,7 @@ class TestSaveQuizContextUpsertTarget:
             return [payload]
 
         fake.upsert.side_effect = _upsert
-        with patch("services.quiz_context_service.table", return_value=fake):
+        with patch("services.quiz.context.table", return_value=fake):
             save_quiz_context("u1", "n1", {"weak_areas": ["x"]})
 
         # Must match the UNIQUE restored by the #529 repair migration
@@ -126,16 +128,16 @@ class TestContextWriteFailureSurfaces:
         CI instead of passing silently for months (#529)."""
         events = []
         with (
-            patch("routes.quiz.table", side_effect=_submit_factory()),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.quiz_context_agent.run", new=_ok_ctx_agent()),
-            patch(
-                "routes.quiz.save_quiz_context",
+            patch_quiz("table", side_effect=_submit_factory()),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch("services.quiz.submission.quiz_context_agent.run", new=_ok_ctx_agent()),
+            patch_quiz(
+                "save_quiz_context",
                 side_effect=RuntimeError("42P10: no unique constraint"),
             ),
             patch(
-                "routes.quiz.events_service.log_event",
+                "services.events_service.log_event",
                 side_effect=lambda *a, **k: events.append((a, k)),
             ),
         ):
@@ -163,16 +165,16 @@ class TestContextWriteFailureSurfaces:
 
         events = []
         with (
-            patch("routes.quiz.table", side_effect=_submit_factory()),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.quiz_context_agent.run", new=_ok_ctx_agent()),
-            patch(
-                "routes.quiz.save_quiz_context",
+            patch_quiz("table", side_effect=_submit_factory()),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch("services.quiz.submission.quiz_context_agent.run", new=_ok_ctx_agent()),
+            patch_quiz(
+                "save_quiz_context",
                 side_effect=RuntimeError("boom"),
             ),
             patch(
-                "routes.quiz.events_service.log_event",
+                "services.events_service.log_event",
                 side_effect=lambda *a, **k: events.append((a, k)),
             ),
             patch.object(config, "IS_LOCAL", False),
@@ -195,20 +197,20 @@ class TestContextWriteFailureSurfaces:
         turn the logscan oracle red on every quiz journey)."""
         events = []
         with (
-            patch("routes.quiz.table", side_effect=_submit_factory()),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=_submit_factory()),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(
                     side_effect=UnregisteredHandlerError(
                         "no function-mode handler registered for task 'quiz_context'"
                     )
                 ),
             ),
-            patch("routes.quiz.save_quiz_context") as save_mock,
+            patch_quiz("save_quiz_context") as save_mock,
             patch(
-                "routes.quiz.events_service.log_event",
+                "services.events_service.log_event",
                 side_effect=lambda *a, **k: events.append((a, k)),
             ),
         ):

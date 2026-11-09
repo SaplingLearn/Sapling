@@ -14,7 +14,7 @@ line over a new #117 event — the frozen taxonomy stays untouched).
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,6 +34,7 @@ from agents.usage import record_agent_usage
 from main import app
 from routes.quiz import CourseMaterial
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
 
 client = TestClient(app)
 
@@ -150,8 +151,8 @@ def test_quiz_route_degrades_to_typed_502_after_bounded_retries(monkeypatch):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("routes.quiz._course_material", return_value=CourseMaterial()),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("_course_material", return_value=CourseMaterial()),
         quiz_agent.override(model=model_for("quiz")),
     ):
         r = client.post("/api/quiz/generate", json={

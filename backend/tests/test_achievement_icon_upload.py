@@ -151,15 +151,16 @@ class TestUploadRoute:
         from unittest.mock import patch
         from fastapi.testclient import TestClient
         from main import app
+        from tests.split_patches import patch_admin
 
         client = TestClient(app)
         payload = base64.b64encode(_png(512, 512)).decode()
         with patch("routes.admin.require_admin"), \
              patch("routes.admin.get_session_user_id", return_value="admin1"), \
-             patch("routes.admin.upload_achievement_icon",
+             patch_admin("upload_achievement_icon",
                    return_value="https://cdn/icons/a1.png") as up, \
-             patch("routes.admin.table") as t, \
-             patch("routes.admin.log_admin_action"):
+             patch_admin("table") as t, \
+             patch_admin("log_admin_action"):
             t.return_value.update.return_value = []
             r = client.post("/api/admin/achievements/a1/icon",
                             json={"file_base64": payload, "content_type": "image/png"})

@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 
 import config
 from main import app
+from tests.split_patches import ADMIN_MODULES, patch_admin, setattr_in
 from routes import admin_email
 from services import email_service
 from services.encryption import encrypt
+from tests.split_patches import set_auth_table
 
 client = TestClient(app)
 
@@ -159,9 +161,9 @@ def test_single_approve_enqueues_youre_in(monkeypatch, sent):
     stored = {"id": "w1", "email": "A@B.co", "approved_at": None}
     made_rows = factory("newsletter_emails")
     made_rows.select.return_value = [stored]
-    monkeypatch.setattr("routes.admin.table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    set_auth_table(monkeypatch, factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.co"})
     assert r.status_code == 200
     assert r.json() == {"email": stored}
@@ -177,9 +179,9 @@ def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(monkeypatc
     factory("newsletter_emails").select.return_value = [
         {"id": "w1", "email": "a@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    set_auth_table(monkeypatch, factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
     assert r.status_code == 200
     # no first_name, encrypted or not
@@ -196,8 +198,8 @@ def test_bulk_approve_greets_named_entries(monkeypatch, sent):
         {"id": "w1", "email": "ada@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
         {"id": "w2", "email": "anon@bu.edu", "approved_at": None, "first_name": None},
     ])
-    monkeypatch.setattr("routes.admin.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve-bulk", json={"emails": ["ada@bu.edu", "anon@bu.edu"]})
     assert r.status_code == 200, r.text
     by_to = {c.kwargs["to"]: c.kwargs["html"] for c in sent.call_args_list}
@@ -216,7 +218,7 @@ def test_bulk_approve_greets_named_entries(monkeypatch, sent):
     {},
 ])
 def test_bulk_approve_validation(payload, sent):
-    with patch("routes.admin.table") as t:
+    with patch_admin("table") as t:
         r = client.post("/api/admin/allowlist/approve-bulk", json=payload)
     assert r.status_code == 422
     t.assert_not_called()
@@ -234,8 +236,8 @@ def test_bulk_approve_only_stamps_null_and_inserts_missing(monkeypatch, sent):
         {"id": "w1", "email": "Pending@BU.edu", "created_at": "2026-02-01T00:00:00Z",
          "approved_at": "2026-10-22T00:00:00Z", "joined_at": None, "joined_user_id": None},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
-    with patch("routes.admin.log_admin_action") as audit:
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    with patch_admin("log_admin_action") as audit:
         r = client.post("/api/admin/allowlist/approve-bulk", json={
             "emails": [" pending@bu.edu", "ALREADY@bu.edu", "new@bu.edu", "new@bu.edu"],
         })
@@ -285,7 +287,7 @@ def test_allowlist_joins_invite_status(monkeypatch):
     factory("email_sends").select.return_value = [
         {"dedupe_key": f"waitlist_approved:{_h('sent@bu.edu')}", "status": "sent"},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     by_id = {e["id"]: e["invite_status"] for e in r.json()["emails"]}
@@ -298,7 +300,7 @@ def test_allowlist_status_lookup_is_chunked(monkeypatch):
     factory, made = _factory()
     rows = [{"id": f"w{i}", "email": f"u{i}@bu.edu"} for i in range(120)]
     factory("newsletter_emails").select_with_count.return_value = _paged(rows)
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     assert made["email_sends"].select.call_count == 3  # 50 + 50 + 20
@@ -310,7 +312,7 @@ def test_allowlist_survives_a_status_read_error(monkeypatch):
         [{"id": "w1", "email": "a@bu.edu"}]
     )
     factory("email_sends").select.side_effect = RuntimeError("no such table")
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     assert r.json()["emails"][0]["invite_status"] is None

@@ -27,6 +27,9 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_documents
+from tests.split_patches import patch_quiz
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -627,11 +630,11 @@ def _upload_sync():
 
 def test_upload_sync_emits_upload_and_processed(sink):
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
-        patch("routes.documents.process_document", return_value=_doc_result()),
-        patch("routes.documents.table") as t,
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents("process_document", return_value=_doc_result()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []  # no idempotent replay hit
         t.return_value.insert.return_value = [{"id": "doc-1"}]
@@ -671,14 +674,14 @@ def test_upload_sync_agent_failure_emits_upload_but_no_processed(sink):
     NOT fire. document.upload already counted the accepted attempt and
     stays: upload/processed deltas are how the failure rate is measured."""
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
-        patch(
-            "routes.documents.process_document",
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents(
+            "process_document",
             side_effect=RuntimeError("agent pipeline failure"),
         ),
-        patch("routes.documents.table") as t,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _upload_sync()
@@ -696,14 +699,14 @@ def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
     import io
 
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
         patch(
             "agents.classifier.classifier_agent.run",
             AsyncMock(side_effect=RuntimeError("agent pipeline failure")),
         ),
-        patch("routes.documents.table") as t,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = client.post(
@@ -753,15 +756,15 @@ def test_quiz_generate_emits_quiz_started(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
         # Patched through the signals module too, so the offering resolution
         # answers from the fixture rather than from whatever a real
         # (unreachable) Supabase does — this test asserts on the SCOPE the
         # signals ran with, and letting a live connection error supply it
         # makes the assertion depend on the machine.
-        patch("services.quiz_signals.table", side_effect=factory),
+        patch("services.quiz.signals.table", side_effect=factory),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -824,7 +827,7 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     """F6: the dimensions have to actually vary with the prompt, or they
     measure nothing. Same route, a grounded run with history."""
     from agents.quiz import Quiz, QuizQuestion
-    from services.quiz_repetition import RecentQuestion
+    from services.quiz.repetition import RecentQuestion
 
     fake_quiz = Quiz(questions=[
         QuizQuestion(
@@ -845,20 +848,20 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     from routes.quiz import CourseMaterial
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(
                 block="COURSE STUFF", chunk_ids=("c1", "c2"), k_chunks=2,
                 has_catalog=True, bu_code="CAS CS 330",
             ),
         ),
-        patch(
-            "routes.quiz.recent_question_identities",
+        patch_quiz(
+            "recent_question_identities",
             return_value=[RecentQuestion("h1", "Asked before?")],
         ),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -907,14 +910,14 @@ def test_ungrounded_generation_emits_rag_uncovered(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(course_chunks=0, bu_code="CAS CS 330"),
         ),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -966,14 +969,14 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(course_chunks=42, bu_code="CAS CS 330"),
         ),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1021,17 +1024,17 @@ def test_rag_uncovered_calls_a_failed_retrieval_unknown_not_no_match(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
         # Fail inside rag_service, the way a real outage does: retrieve_chunks
         # catches, emits rag.retrieval_failed, and hands back [].
         patch(
             "services.rag_service._embed_query",
             side_effect=RuntimeError("embedding backend down"),
         ),
-        patch("routes.quiz._get_catalog_chunk", return_value=""),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("_get_catalog_chunk", return_value=""),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1075,10 +1078,10 @@ def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1137,12 +1140,12 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
         return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
     )
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("routes.quiz.apply_graph_update"),
-        patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.get_display_name", return_value="Andres"),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("apply_graph_update"),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=noop_ctx),
+        patch_quiz("save_quiz_context"),
+        patch_quiz("get_display_name", return_value="Andres"),
     ):
         r = client.post("/api/quiz/submit", json={
             "quiz_id": "quiz1",
@@ -1192,8 +1195,8 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(_learn_table_factory())),
-        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch_tutor("table", side_effect=with_async_twins(_learn_table_factory())),
+        patch_tutor("agent_for_mode", return_value=agent),
     ):
         r = client.post("/api/learn/chat", json={
             "session_id": "s1",
@@ -1229,17 +1232,17 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
         )
 
     with (
-        patch("routes.learn.stream_agent_turn", fake_stream),
-        patch(
-            "routes.learn._prepare_chat_run",
+        patch_tutor("stream_agent_turn", fake_stream),
+        patch_tutor(
+            "_prepare_chat_run",
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
-        patch("routes.learn._consume_pending"),
-        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
-        patch("routes.learn._get_session_offering_id", return_value="off-1"),
-        patch("routes.learn.offering_course_id", return_value="c1"),
-        patch("routes.learn._load_message_history", return_value=[]),
-        patch("routes.learn.save_message"),
+        patch_tutor("_consume_pending"),
+        patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"),
+        patch_tutor("_get_session_offering_id", return_value="off-1"),
+        patch_tutor("offering_course_id", return_value="c1"),
+        patch_tutor("_load_message_history", return_value=[]),
+        patch_tutor("save_message"),
     ):
         r = client.post("/api/learn/chat/stream", json={
             "session_id": "s1",
@@ -1275,7 +1278,7 @@ def test_consume_pending_emits_session_started(sink):
         "assistant_reply": "hello",
         "graph_update": {},
     }
-    with patch("routes.learn.table"):
+    with patch_tutor("table"):
         learn._consume_pending("sess-p1", "u1")
 
     events = _of_type(sink, "session.started")
@@ -1339,7 +1342,7 @@ def test_end_session_emits_session_ended(sink):
         mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
-    with patch("routes.learn.table", side_effect=with_async_twins(factory)):
+    with patch_tutor("table", side_effect=with_async_twins(factory)):
         r = client.post("/api/learn/end-session", json={
             "session_id": "s-ended", "user_id": "user_andres",
         })
@@ -1459,7 +1462,6 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     (the single JSON-turn emission site), and stream_agent_turn's
     mutual-exclusion contract guarantees the on_complete hook (the streamed
     route's own emission site) never also runs on that branch."""
-    import routes.learn as learn_routes
 
     async def fake_stream(**kwargs):
         from services.agent_events import SaplingEvent
@@ -1473,12 +1475,12 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     fallback_agent.run = AsyncMock(return_value=run_result("a fallback reply"))
 
     with (
-        patch.object(learn_routes, "stream_agent_turn", fake_stream),
-        patch.object(learn_routes, "_consume_pending"),
-        patch.object(learn_routes, "require_session_owner"),
-        patch.object(learn_routes, "table", side_effect=with_async_twins(_learn_table_factory())),
-        patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
-        patch.object(learn_routes, "save_message"),
+        patch_tutor("stream_agent_turn", fake_stream),
+        patch_tutor("_consume_pending"),
+        patch_tutor("require_session_owner"),
+        patch_tutor("table", side_effect=with_async_twins(_learn_table_factory())),
+        patch_tutor("agent_for_mode", return_value=fallback_agent),
+        patch_tutor("save_message"),
     ):
         client = TestClient(app)
         r = client.post("/api/learn/chat/stream", json={
@@ -1503,16 +1505,14 @@ def test_idempotent_upload_replay_emits_no_second_document_upload(sink):
     """PR #465 review (F3): an X-Request-ID replay short-circuits to the
     persisted document and must NOT count as a second upload attempt — the
     emission sits below the idempotency check on both routes."""
-    import routes.documents as documents_routes
-
     with (
-        patch.object(documents_routes, "_validate_user", return_value=None),
-        patch.object(
-            documents_routes, "_existing_doc_by_request_id",
+        patch_documents("_validate_user", return_value=None),
+        patch_documents(
+            "_existing_doc_by_request_id",
             return_value={"id": "doc-1", "file_name": "a.pdf"},
         ),
-        patch.object(documents_routes, "extract_text_from_file", return_value="text " * 40),
-        patch.object(documents_routes, "require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value="text " * 40),
+        patch_documents("require_course_enrollment", return_value="off-1"),
     ):
         r = client.post(
             "/api/documents/upload/sync",

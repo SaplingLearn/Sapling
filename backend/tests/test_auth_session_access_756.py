@@ -29,6 +29,7 @@ import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
 from services import auth_guard, session_tokens
+from tests.split_patches import PROFILE_TABLE_MODULES, set_auth_session_secret, set_auth_table
 
 SECRET = "issue-756-session-secret-at-least-32-bytes-long"
 
@@ -180,7 +181,8 @@ def test_delete_account_drops_the_cached_state(monkeypatch):
 
     auth_guard._account_state_cache["user_alice"] = (float("inf"), auth_guard.ACCOUNT_ACTIVE)
     users = MagicMock()
-    monkeypatch.setattr(profile_module, "table", lambda name: users)
+    for module in PROFILE_TABLE_MODULES:
+        monkeypatch.setattr(f"{module}.table", lambda name: users)
     monkeypatch.setattr(profile_module, "delete_posthog_person", lambda *_a, **_k: None)
     app = FastAPI()
     app.include_router(profile_module.router, prefix="/api/profile")
@@ -205,7 +207,7 @@ def me_client(monkeypatch):
             tables[name] = m
         return tables[name]
 
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
     seen = {}
 
     def _guard(request, **kwargs):
@@ -250,9 +252,9 @@ def callback(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(auth_module, "_LOCAL_AUTO_APPROVE", False)
     monkeypatch.setattr(auth_module, "FRONTEND_URL", FRONTEND)
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", SECRET)
+    set_auth_session_secret(monkeypatch, SECRET)
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
-    monkeypatch.setattr(auth_module, "_welcome_due", lambda *_a, **_k: False)
+    monkeypatch.setattr("services.auth.signin._welcome_due", lambda *_a, **_k: False)
     monkeypatch.setattr(ach_module, "check_achievements", lambda *a, **k: None)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -279,7 +281,7 @@ def callback(monkeypatch):
             tables[name] = m
         return tables[name]
 
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
 
     def _drive(nonce="n1"):
         cookie = auth_module._encode_oauth_cookie({"n": nonce, "cv": "verifier", "popup_id": None})
@@ -363,20 +365,22 @@ def _cached(*uids):
 
 def test_admin_unapprove_drops_the_cached_state(monkeypatch):
     import routes.admin as admin_module
+    from tests.split_patches import ADMIN_MODULES, setattr_in
 
     _cached("user_bob")
     users = MagicMock()
     users.update.return_value = [{"id": "user_bob", "email": None}]
-    monkeypatch.setattr(admin_module, "table", lambda name: users)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", lambda name: users)
     monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
-    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
+    setattr_in(monkeypatch, ADMIN_MODULES, "log_admin_action", lambda **_k: None)
     admin_module.unapprove_user("user_bob", MagicMock())
     assert "user_bob" not in auth_guard._account_state_cache
 
 
 def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
     import routes.admin as admin_module
-    import routes.auth as auth_routes
+    from tests.split_patches import ADMIN_MODULES, setattr_in
+    import services.auth as auth_service
     from models import AllowlistEmailBody
 
     _cached("user_bob", "user_carol")
@@ -388,10 +392,10 @@ def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
             tables[name].update.return_value = []
         return tables[name]
 
-    monkeypatch.setattr(admin_module, "table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
-    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
-    monkeypatch.setattr(auth_routes, "_waitlist_entries", lambda *_a, **_k: [
+    setattr_in(monkeypatch, ADMIN_MODULES, "log_admin_action", lambda **_k: None)
+    monkeypatch.setattr(auth_service, "waitlist_entries", lambda *_a, **_k: [
         {"id": "w1", "email": "bob@bu.edu", "joined_user_id": "user_bob"},
     ])
     admin_module.revoke_allowlist(AllowlistEmailBody(email="bob@bu.edu"), MagicMock())
@@ -433,7 +437,8 @@ def test_removed_student_can_still_erase_and_export(real_guard, monkeypatch, met
     data.select.return_value = [{"id": "user_alice"}]
     data.update.return_value = []
     data.upsert.return_value = [{}]
-    monkeypatch.setattr(profile_module, "table", lambda name: data)
+    for module in PROFILE_TABLE_MODULES:
+        monkeypatch.setattr(f"{module}.table", lambda name: data)
     real_guard.select.return_value = _row(is_approved=False)
     app = FastAPI()
     app.include_router(profile_module.router, prefix="/api/profile")
@@ -512,8 +517,11 @@ def test_no_async_route_calls_the_guard_on_the_loop():
 
     guards = {"get_session_user_id", "require_self", "require_admin", "account_state"}
     offenders = []
-    routes_dir = pathlib.Path(__file__).resolve().parent.parent / "routes"
-    for path in sorted(routes_dir.glob("*.py")):
+    backend = pathlib.Path(__file__).resolve().parent.parent
+    routes_dir = backend / "routes"
+    # services/quiz: the handler bodies the #118 split moved out of routes/quiz.py.
+    paths = [*routes_dir.glob("*.py"), *(backend / "services" / "quiz").glob("*.py")]
+    for path in sorted(paths):
         tree = ast.parse(path.read_text())
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.AsyncFunctionDef):

@@ -66,7 +66,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
     ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
-    ("routes/quiz.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
+    ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
@@ -123,18 +123,18 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
     ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
         "inserts a users row (#117 async twin)",
-    ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
+    ("services/gradescope/jobs.py", "stage_sync", "runs_as_service"):
         "#116 gradescope_syncs is service-only (bucket E): staged sync",
-    ("services/gradescope_jobs.py", "enqueue_sync", "runs_as_service"):
+    ("services/gradescope/jobs.py", "enqueue_sync", "runs_as_service"):
         "#116 jobs + gradescope_syncs are service-only",
-    ("services/gradescope_jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
-    ("services/gradescope_jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
-    ("services/gradescope_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
-    ("services/gradescope_jobs.py", "fail_if_running", "runs_as_service"):
+    ("services/gradescope/jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
+    ("services/gradescope/jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
+    ("services/gradescope/jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
+    ("services/gradescope/jobs.py", "fail_if_running", "runs_as_service"):
         "#116 gradescope_syncs: record a dead-lettered job",
-    ("services/gradescope_jobs.py", "finish_inline", "runs_as_service"):
+    ("services/gradescope/jobs.py", "finish_inline", "runs_as_service"):
         "#116 gradescope_syncs: an inline run records its outcome",
-    ("services/gradescope_jobs.py", "latest_sync", "runs_as_service"):
+    ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",

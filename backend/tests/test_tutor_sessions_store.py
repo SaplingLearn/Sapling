@@ -23,6 +23,7 @@ from services import tutor_sessions as ts
 from services.encryption import decrypt_if_present
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import add_async_twins
+from tests.split_patches import patch_tutor
 
 #: #117 wave 3: a sync PostgREST call on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
@@ -196,15 +197,15 @@ def db(monkeypatch):
     agent.run = AsyncMock(side_effect=[run_result(GREETING)] + [run_result("A reply.")] * 5)
     _replica_hop()
     with (
-        patch("routes.learn.table", side_effect=fake.table),
+        patch_tutor("table", side_effect=fake.table),
         patch("services.tutor_sessions.table", side_effect=fake.table),
         patch("services.tutor_sessions.rpc", side_effect=fake.rpc),
         patch("services.tutor_sessions.arpc", side_effect=arpc),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
-        patch("routes.learn.get_display_name", return_value="Store Student"),
-        patch("routes.learn.offering_course_id", return_value=""),
-        patch("routes.learn.events_service.log_event") as log_event,
+        patch_tutor("agent_for_mode", return_value=agent),
+        patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
+        patch_tutor("get_display_name", return_value="Store Student"),
+        patch_tutor("offering_course_id", return_value=""),
+        patch("services.events_service.log_event") as log_event,
     ):
         fake.log_event = log_event
         yield fake

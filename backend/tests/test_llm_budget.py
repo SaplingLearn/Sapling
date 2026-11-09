@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -26,6 +25,7 @@ from agents import _resilience
 from agents._providers import _ResilientModelMixin
 from services import llm_budget, request_context
 from services.llm_budget import BudgetStatus, LLMBudgetExceeded
+from tests.split_patches import patch_documents
 
 USER = "user_budget"
 RESET = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -399,14 +399,15 @@ def test_a_streamed_tutor_turn_ends_in_a_terminal_budget_error(status):
 
 def test_quiz_generation_answers_its_daily_limit_code_and_refunds_the_slot(monkeypatch):
     import routes.quiz as quiz
-    from services.quiz_errors import QuizAPIError, QuizErrorCode
+    from services.quiz.errors import QuizAPIError, QuizErrorCode
+    from tests.split_patches import setattr_quiz
 
     async def refused(**_kw):
         raise _exc()
 
     refunds = []
-    monkeypatch.setattr(quiz, "_quiz_via_agent", refused)
-    monkeypatch.setattr(quiz, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
+    setattr_quiz(monkeypatch, "_quiz_via_agent", refused)
+    setattr_quiz(monkeypatch, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
     body = SimpleNamespace(user_id=USER, concept_node_id="n1", difficulty="medium",
                            use_shared_context=True, model_pref=None,
                            question_format="multiple_choice", num_questions=5)
@@ -426,9 +427,9 @@ def test_document_upload_sync_answers_429_not_502():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-        patch("routes.documents.process_document", side_effect=_exc()),
-        patch("routes.documents.table") as t,
+        patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+        patch_documents("process_document", side_effect=_exc()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _make_upload()

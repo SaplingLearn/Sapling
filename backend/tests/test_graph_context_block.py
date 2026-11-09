@@ -30,6 +30,7 @@ from services.prompt_safety import (
     UNTRUSTED_END,
     untrusted_envelope_overhead,
 )
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -181,15 +182,15 @@ def _prepare(user_message="What is the chain rule?", course_id="c1", **overrides
 
 def test_prepare_chat_run_orders_catalog_rag_graph_then_question():
     with (
-        patch("routes.learn._get_course_info", return_value={"course_code": "CS101"}),
-        patch("routes.learn._get_catalog_chunk", return_value="CATALOG-TEXT"),
+        patch_tutor("_get_course_info", return_value={"course_code": "CS101"}),
+        patch_tutor("_get_catalog_chunk", return_value="CATALOG-TEXT"),
         patch("services.rag_service.retrieve_chunks", return_value=[{"c": 1}]),
         patch("services.rag_service.format_rag_context", return_value="RAG-BLOCK"),
         patch(
             "services.graph_context.build_graph_context_block",
             return_value="GRAPH CONTEXT (x):\n- Chain Rule (0.15, struggling)",
         ) as gb,
-        patch("routes.learn._resolve_model_pref", return_value=None),
+        patch_tutor("_resolve_model_pref", return_value=None),
     ):
         agent, assembled, run_kwargs, deps = _prepare()
 
@@ -204,9 +205,9 @@ def test_prepare_chat_run_orders_catalog_rag_graph_then_question():
 
 def test_prepare_chat_run_omits_graph_block_when_empty():
     with (
-        patch("routes.learn._get_course_info", return_value={"course_code": None}),
+        patch_tutor("_get_course_info", return_value={"course_code": None}),
         patch("services.graph_context.build_graph_context_block", return_value=""),
-        patch("routes.learn._resolve_model_pref", return_value=None),
+        patch_tutor("_resolve_model_pref", return_value=None),
     ):
         agent, assembled, run_kwargs, deps = _prepare()
     assert "GRAPH CONTEXT" not in assembled
@@ -216,7 +217,7 @@ def test_prepare_chat_run_omits_graph_block_when_empty():
 def test_prepare_chat_run_no_course_never_builds_graph_block():
     with (
         patch("services.graph_context.build_graph_context_block") as gb,
-        patch("routes.learn._resolve_model_pref", return_value=None),
+        patch_tutor("_resolve_model_pref", return_value=None),
     ):
         _prepare(course_id="")
     gb.assert_not_called()
@@ -227,7 +228,7 @@ def test_prepare_chat_run_uses_tutor_limits():
 
     with (
         patch("services.graph_context.build_graph_context_block", return_value=""),
-        patch("routes.learn._resolve_model_pref", return_value=None),
+        patch_tutor("_resolve_model_pref", return_value=None),
     ):
         _agent, _assembled, run_kwargs, _deps = _prepare(course_id="")
     assert run_kwargs["usage_limits"] is TUTOR_LIMITS
@@ -243,12 +244,12 @@ def test_chat_route_saves_raw_body_message():
         return {"reply": "ok!", "graph_update": {}, "mastery_changes": []}, ("default", None)
 
     with (
-        patch("routes.learn._chat_via_agent", side_effect=fake_chat_via_agent),
-        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
-        patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
-        patch("routes.learn._get_session_offering_id", return_value=""),
-        patch("routes.learn._load_message_history", return_value=[]),
-        patch("routes.learn.events_service"),
+        patch_tutor("_chat_via_agent", side_effect=fake_chat_via_agent),
+        patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"),
+        patch_tutor("save_message", side_effect=lambda *a, **k: saved.append(a)),
+        patch_tutor("_get_session_offering_id", return_value=""),
+        patch_tutor("_load_message_history", return_value=[]),
+        patch_tutor("events_service"),
     ):
         resp = client.post(
             "/api/learn/chat",
@@ -283,13 +284,13 @@ def test_stream_route_saves_raw_body_message():
                            data={"reply": "a reply", "graph_update": {}, "mastery_changes": []})
 
     with (
-        patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
-        patch("routes.learn._consume_pending"),
-        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
-        patch("routes.learn._get_session_offering_id", return_value=""),
-        patch("routes.learn._load_message_history", return_value=[]),
-        patch("routes.learn.events_service"),
+        patch_tutor("stream_agent_turn", fake_stream),
+        patch_tutor("save_message", side_effect=lambda *a, **k: saved.append(a)),
+        patch_tutor("_consume_pending"),
+        patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"),
+        patch_tutor("_get_session_offering_id", return_value=""),
+        patch_tutor("_load_message_history", return_value=[]),
+        patch_tutor("events_service"),
     ):
         resp = client.post(
             "/api/learn/chat/stream",
@@ -315,11 +316,11 @@ def test_prepare_chat_run_passes_the_student_as_the_retrieval_reader():
     """`retrieve_chunks` without a `user_id` asks for shared rows only, so an
     opted-out student would stop seeing their OWN uploads in their own tutor."""
     with (
-        patch("routes.learn._get_course_info", return_value={"course_code": "CS101"}),
-        patch("routes.learn._get_catalog_chunk", return_value=""),
+        patch_tutor("_get_course_info", return_value={"course_code": "CS101"}),
+        patch_tutor("_get_catalog_chunk", return_value=""),
         patch("services.rag_service.retrieve_chunks", return_value=[]) as mock_retrieve,
         patch("services.graph_context.build_graph_context_block", return_value=""),
-        patch("routes.learn._resolve_model_pref", return_value=None),
+        patch_tutor("_resolve_model_pref", return_value=None),
     ):
         _prepare()
 

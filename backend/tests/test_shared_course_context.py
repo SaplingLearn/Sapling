@@ -511,7 +511,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 class TestLearnHelpers(unittest.TestCase):
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_matches_course_code(self, mock_table):
         # enrollments → course_offerings → courses; returns the ABSTRACT course_id.
         enrolled_tbl = MagicMock()
@@ -533,7 +533,7 @@ class TestLearnHelpers(unittest.TestCase):
         result = asyncio.run(_get_course_id_for_topic("CS101", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_is_concept(self, mock_table):
         enrolled_tbl = MagicMock()
         enrolled_tbl.select.return_value = []
@@ -551,7 +551,7 @@ class TestLearnHelpers(unittest.TestCase):
         result = asyncio.run(_get_course_id_for_topic("Loops", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_unknown_topic_returns_empty(self, mock_table):
         mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []
@@ -565,7 +565,7 @@ class TestLearnHelpers(unittest.TestCase):
         result = asyncio.run(_get_course_id_for_topic("", "user1"))
         self.assertEqual(result, "")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_found(self, mock_table):
         # Sessions key on the offering (0025); the helper returns it.
         mock_table.return_value = fake_table()
@@ -575,7 +575,7 @@ class TestLearnHelpers(unittest.TestCase):
         result = asyncio.run(_get_session_offering_id("session-abc"))
         self.assertEqual(result, "off-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_not_found(self, mock_table):
         mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []

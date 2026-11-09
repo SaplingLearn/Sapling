@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
 import pytest
 
 # #117: a sync PostgREST call reached on the event loop raises here.
@@ -95,16 +96,16 @@ class TestMasterySnapshotPersisted:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -152,16 +153,16 @@ class TestMasterySnapshotPersisted:
             {"concept": "Loops", "before": 0.5, "after": 0.9},
         ])
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-            patch("routes.quiz.apply_graph_update", new=applied),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch_quiz("apply_graph_update", new=applied),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -195,7 +196,7 @@ class TestAttemptResume:
         """The explanation names the correct option in prose ("B is
         right."), so shipping it on resume hands over the answer key in a
         different field — the exact hole C3/D2 exist to close."""
-        with patch("routes.quiz.table",
+        with patch_quiz("table",
                    side_effect=with_async_twins(self._factory(_attempt_row()))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
@@ -212,7 +213,7 @@ class TestAttemptResume:
         legacy = _attempt_row(questions_json=[
             {"q": "What defines an eigenvalue?", "a": "Av = lambda v"},
         ])
-        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(legacy))):
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(legacy))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_RESUMABLE"
@@ -223,7 +224,7 @@ class TestAttemptResume:
         promises exactly this, and serving its questions while /answer and
         /submit still accept them makes the TTL enforce nothing."""
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
-        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))):
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(abandoned))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
         data = r.json()
@@ -238,7 +239,7 @@ class TestAttemptResume:
             "time_ms": 900, "confidence": None,
             "answered_at": "2026-08-12T00:01:00+00:00",
         }]
-        with patch("routes.quiz.table",
+        with patch_quiz("table",
                    side_effect=with_async_twins(self._factory(_attempt_row(), responses))):
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 200
@@ -259,13 +260,13 @@ class TestAttemptResume:
             (_attempt_row(), "in_progress"),
         ]
         for attempt, expected in cases:
-            with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(attempt))):
+            with patch_quiz("table", side_effect=with_async_twins(self._factory(attempt))):
                 r = client.get("/api/quiz/attempts/quiz1")
             assert r.status_code == 200
             assert r.json()["status"] == expected
 
     def test_unknown_attempt_404s(self):
-        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(None))):
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(None))):
             r = client.get("/api/quiz/attempts/nope")
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
@@ -298,7 +299,7 @@ class TestAbandonedIsEnforced:
 
     def test_answer_on_an_abandoned_attempt_409s(self):
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
-        with patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))):
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(abandoned))):
             r = client.post("/api/quiz/attempts/quiz1/answer", json={
                 "question_index": 0, "selected_index": 1,
             })
@@ -309,10 +310,10 @@ class TestAbandonedIsEnforced:
         abandoned = _attempt_row(abandoned_at="2026-08-12T01:00:00+00:00")
         apply_mock = MagicMock()
         with (
-            patch("routes.quiz.table", side_effect=with_async_twins(self._factory(abandoned))),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(self._factory(abandoned))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -331,7 +332,7 @@ class TestAbandonSweep:
         """The per-user sweep stamps abandoned_at on in-progress rows older
         than the TTL — conditional update filters arbitrate, not app code."""
         from routes.quiz import _sweep_abandoned
-        from services.quiz_config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+        from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 
         update_calls = []
 
@@ -350,7 +351,7 @@ class TestAbandonSweep:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             _sweep_abandoned("user_andres")
 
         assert len(update_calls) == 1
@@ -472,7 +473,7 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
         assert r.status_code == 200
         data = r.json()
@@ -518,7 +519,7 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = client.get("/api/quiz/attempts", params={
                 "user_id": "user_andres", "offset": 99999999999999999999,
             })
@@ -543,6 +544,6 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
         assert "id" in captured["order"]

@@ -1,6 +1,5 @@
 """Tests for the concept_scan agent migration (/scan-concepts)."""
 import pytest
-from unittest.mock import patch
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -11,6 +10,7 @@ from agents._providers import model_for
 from agents.concept_scan import NewConcepts, concept_scan_agent
 import routes.documents as documents
 from main import app
+from tests.split_patches import DOCUMENTS_MODULES, patch_documents, setattr_in
 
 
 def test_model_for_concept_scan_defaults_to_haiku():
@@ -72,7 +72,7 @@ def test_scan_user_message_includes_existing_and_doc_context():
 
 def test_extend_concepts_returns_agent_output(monkeypatch):
     fake = _FakeAgent(result=_Result(["Binary Search", "Hashing"]))
-    monkeypatch.setattr(documents, "concept_scan_agent", fake)
+    setattr_in(monkeypatch, DOCUMENTS_MODULES, "concept_scan_agent", fake)
     out = documents._extend_concepts(
         "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
     )
@@ -82,7 +82,7 @@ def test_extend_concepts_returns_agent_output(monkeypatch):
 
 def test_extend_concepts_handles_empty(monkeypatch):
     fake = _FakeAgent(result=_Result([]))
-    monkeypatch.setattr(documents, "concept_scan_agent", fake)
+    setattr_in(monkeypatch, DOCUMENTS_MODULES, "concept_scan_agent", fake)
     out = documents._extend_concepts(
         "u1", "c1", course_label="CS101", existing_concepts=[],
     )
@@ -97,7 +97,7 @@ def test_extend_concepts_degrades_to_empty_on_agent_failure(monkeypatch, caplog,
     """#151b (D4): /scan-concepts is best-effort graph enrichment — any agent
     failure degrades to 'no new concepts' with a warning log. The legacy
     call_gemini_json fallback is gone (ADR 0024)."""
-    monkeypatch.setattr(documents, "concept_scan_agent", _FakeAgent(exc=exc))
+    setattr_in(monkeypatch, DOCUMENTS_MODULES, "concept_scan_agent", _FakeAgent(exc=exc))
     with caplog.at_level("WARNING", logger="routes.documents"):
         out = documents._extend_concepts(
             "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
@@ -111,11 +111,11 @@ client = TestClient(app)
 
 def test_course_scan_endpoint_uses_agent_and_keeps_response_shape():
     fake = _FakeAgent(result=_Result(["Binary Search", "Hashing"]))
-    with patch("routes.documents._validate_user_sync", return_value=None), \
-         patch("routes.documents._course_label", return_value="CS101"), \
-         patch("routes.documents.apply_graph_update", return_value=None), \
-         patch("routes.documents.concept_scan_agent", fake), \
-         patch("routes.documents.table") as t:
+    with patch_documents("_validate_user_sync", return_value=None), \
+         patch_documents("_course_label", return_value="CS101"), \
+         patch_documents("apply_graph_update", return_value=None), \
+         patch_documents("concept_scan_agent", fake), \
+         patch_documents("table") as t:
         t.return_value.select.return_value = [
             {"id": "n1", "concept_name": "Recursion"},
         ]
@@ -135,11 +135,11 @@ def test_course_scan_endpoint_degrades_to_empty_shape_on_agent_failure():
     same shape an actually-empty scan produces — {"concepts": [], "added": 0,
     "existing": N} — and writes nothing to the graph."""
     fake = _FakeAgent(exc=RuntimeError("boom"))
-    with patch("routes.documents._validate_user_sync", return_value=None), \
-         patch("routes.documents._course_label", return_value="CS101"), \
-         patch("routes.documents.apply_graph_update") as apply_update, \
-         patch("routes.documents.concept_scan_agent", fake), \
-         patch("routes.documents.table") as t:
+    with patch_documents("_validate_user_sync", return_value=None), \
+         patch_documents("_course_label", return_value="CS101"), \
+         patch_documents("apply_graph_update") as apply_update, \
+         patch_documents("concept_scan_agent", fake), \
+         patch_documents("table") as t:
         t.return_value.select.return_value = [
             {"id": "n1", "concept_name": "Recursion"},
         ]

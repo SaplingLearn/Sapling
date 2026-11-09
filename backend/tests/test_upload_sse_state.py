@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_documents
 
 client = TestClient(app)
 
@@ -106,9 +107,9 @@ class TestReplayResultShape:
             "processed_at": "2026-01-01T00:00:00Z",
         }
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", return_value=existing),
+            patch_documents("_validate_user"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", return_value=existing),
         ):
             events = _stream_upload({"X-Request-ID": "trace-replay-shape-1"})
 
@@ -144,12 +145,12 @@ class TestReplayLookup:
 
         a, b, c, d = _agent_patches()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", side_effect=lookup),
+            patch_documents("_validate_user"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", side_effect=lookup),
             a, b, c, d,
-            patch("routes.documents._persist_document", return_value=("doc-1", {})),
-            patch("routes.documents._spawn_post_roll"),
+            patch_documents("_persist_document", return_value=("doc-1", {})),
+            patch_documents("_spawn_post_roll"),
         ):
             _stream_upload()
 
@@ -164,14 +165,14 @@ class TestReplayLookup:
         lookups = iter([None, winner])
         a, b, c, d = _agent_patches()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id",
+            patch_documents("_validate_user"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id",
                   side_effect=lambda *_: next(lookups)),
             a, b, c, d,
-            patch("routes.documents._persist_document",
+            patch_documents("_persist_document",
                   side_effect=RuntimeError("409 duplicate key value (23505)")),
-            patch("routes.documents._spawn_post_roll") as spawn,
+            patch_documents("_spawn_post_roll") as spawn,
         ):
             events = _stream_upload({"X-Request-ID": "trace-race-1"})
 
@@ -184,12 +185,12 @@ class TestReplayLookup:
     def test_persist_failure_with_no_winner_is_still_terminal_failure(self):
         a, b, c, d = _agent_patches()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", return_value=None),
+            patch_documents("_validate_user"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", return_value=None),
             a, b, c, d,
-            patch("routes.documents._persist_document", side_effect=RuntimeError("boom")),
-            patch("routes.documents._spawn_post_roll") as spawn,
+            patch_documents("_persist_document", side_effect=RuntimeError("boom")),
+            patch_documents("_spawn_post_roll") as spawn,
         ):
             events = _stream_upload()
 
@@ -207,12 +208,12 @@ class TestPostRollAfterPersist:
         — the client would show "not saved" for a document in the library."""
         a, b, c, d = _agent_patches()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", return_value=None),
+            patch_documents("_validate_user"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", return_value=None),
             a, b, c, d,
-            patch("routes.documents._persist_document", return_value=("doc-saved", {})),
-            patch("routes.documents._spawn_post_roll", side_effect=RuntimeError("no loop")),
+            patch_documents("_persist_document", return_value=("doc-saved", {})),
+            patch_documents("_spawn_post_roll", side_effect=RuntimeError("no loop")),
         ):
             events = _stream_upload()
 
@@ -273,7 +274,7 @@ class TestPostRollTaskLifetime:
     def test_app_lifespan_drains_post_roll_on_shutdown(self):
         drain = AsyncMock()
         with (
-            patch("routes.documents.drain_post_roll", new=drain),
+            patch_documents("drain_post_roll", new=drain),
             patch("main.ensure_bucket_exists", new=AsyncMock()),
             patch("main.start_sweeper"),
             patch("main.stop_sweeper", new=AsyncMock()),
@@ -294,13 +295,13 @@ class TestCourseContextOffering:
 
         a, b, c, d = _agent_patches()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.require_course_enrollment", return_value="off-7"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", return_value=None),
+            patch_documents("_validate_user"),
+            patch_documents("require_course_enrollment", return_value="off-7"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", return_value=None),
             a, b, c, d,
-            patch("routes.documents._persist_document", return_value=("doc-1", {})),
-            patch("routes.documents._spawn_post_roll") as spawn,
+            patch_documents("_persist_document", return_value=("doc-1", {})),
+            patch_documents("_spawn_post_roll") as spawn,
         ):
             _stream_upload()
 
@@ -324,16 +325,16 @@ class TestCourseContextOffering:
         )
         refresh = MagicMock()
         with (
-            patch("routes.documents._validate_user"),
-            patch("routes.documents.require_course_enrollment", return_value="off-7"),
-            patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-            patch("routes.documents._existing_doc_by_request_id", return_value=None),
-            patch("routes.documents.process_document", AsyncMock(return_value=result)),
-            patch("routes.documents._persist_document", return_value=("doc-1", {"id": "doc-1"})),
-            patch("routes.documents.refresh_course_context", refresh),
-            patch("routes.documents._invalidate_study_guide_cache"),
-            patch("routes.documents._check_upload_achievements"),
-            patch("routes.documents.schedule_document_index"),
+            patch_documents("_validate_user"),
+            patch_documents("require_course_enrollment", return_value="off-7"),
+            patch_documents("extract_text_from_file", return_value=_TEXT),
+            patch_documents("_existing_doc_by_request_id", return_value=None),
+            patch_documents("process_document", AsyncMock(return_value=result)),
+            patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})),
+            patch_documents("refresh_course_context", refresh),
+            patch_documents("_invalidate_study_guide_cache"),
+            patch_documents("_check_upload_achievements"),
+            patch_documents("schedule_document_index"),
         ):
             r = client.post(
                 "/api/documents/upload/sync",

@@ -40,6 +40,7 @@ from routes import gradescope as gsr
 from services import gradescope_jobs as gj
 from services import gradescope_service as gs
 from services import jobs, request_limits
+from tests.split_patches import patch_gradescope
 
 client = TestClient(app)
 RID = "rid-00000001"
@@ -178,14 +179,14 @@ def _post(tables, *, connect=None, incoming=_INCOMING, extra=(), load_creds=None
     if load_creds is _REAL:
         creds_patch = contextlib.nullcontext()
     elif load_creds is None:
-        creds_patch = patch("routes.gradescope._load_creds", return_value=_creds())
+        creds_patch = patch_gradescope("_load_creds", return_value=_creds())
     else:
         creds_patch = load_creds
     with (
-        patch("routes.gradescope.table", side_effect=lambda name: tables[name]),
-        patch("routes.gradescope._all_enrollments_for", return_value=["enr-1"]),
+        patch_gradescope("table", side_effect=lambda name: tables[name]),
+        patch_gradescope("_all_enrollments_for", return_value=["enr-1"]),
         creds_patch,
-        patch("routes.gradescope._establish_connection", connect),
+        patch_gradescope("_establish_connection", connect),
         patch.object(gs, "list_assignments", return_value=incoming),
     ):
         for p in extra:
@@ -273,7 +274,7 @@ def test_flag_off_answers_are_unchanged_for_every_outcome(case, expected):
     incoming = _INCOMING
     extra = [patch.object(gj, "flag_on", return_value=False)]
     if case == "not_connected":
-        load_creds = patch("routes.gradescope._load_creds", return_value=None)
+        load_creds = patch_gradescope("_load_creds", return_value=None)
     elif case == "auth":
         connect.side_effect = gs.GradescopeAuthError(
             "Your Gradescope session has expired or was signed out.")
@@ -291,7 +292,7 @@ def test_flag_off_answers_are_unchanged_for_every_outcome(case, expected):
             "password_encrypted": "x", "updated_at": "v1", "needs_reauth": False}]
         load_creds = _REAL
     elif case == "creds_incomplete":
-        load_creds = patch("routes.gradescope._load_creds", return_value=gsr.StoredCreds(
+        load_creds = patch_gradescope("_load_creds", return_value=gsr.StoredCreds(
             auth_mode="password", email=None, password=None))
         # The real _establish_connection (it refused these before the sync
         # body classified them itself); no login is ever attempted.
@@ -329,7 +330,7 @@ def test_the_link_changed_answer_is_the_routes_unlinked_answer():
     assert r.status_code == 400
     assert r.json()["detail"] == gj.NO_LINK_MESSAGE
     with pytest.raises(HTTPException) as exc:
-        gj.response_for_outcome(gj.SyncOutcome.failed(gj.ERR_LINK_CHANGED))
+        gsr.response_for_outcome(gj.SyncOutcome.failed(gj.ERR_LINK_CHANGED))
     assert (exc.value.status_code, exc.value.detail) == (400, gj.NO_LINK_MESSAGE)
 
 
@@ -533,7 +534,7 @@ def test_two_requests_on_one_sync_run_it_once_and_answer_alike():
                   gradescope_course_id="gs-course")
 
     def _request(name):
-        results[name] = gj.sync_via_queue(**kwargs)
+        results[name] = gsr.sync_via_queue(**kwargs)
 
     with (
         patch.object(gj, "table", side_effect=_gj_tables(syncs, job={"status": "queued"})),
@@ -541,9 +542,9 @@ def test_two_requests_on_one_sync_run_it_once_and_answer_alike():
         patch.object(gj, "PICKUP_GRACE_SECONDS", 0.1),
         patch.object(gj, "POLL_INTERVAL_SECONDS", 0.02),
         patch.object(gj, "SYNC_MAX_WAIT_SECONDS", 5.0),
-        patch("routes.gradescope.table", side_effect=lambda name: tables[name]),
-        patch("routes.gradescope._load_creds", return_value=_creds()),
-        patch("routes.gradescope._establish_connection", side_effect=_slow_login),
+        patch_gradescope("table", side_effect=lambda name: tables[name]),
+        patch_gradescope("_load_creds", return_value=_creds()),
+        patch_gradescope("_establish_connection", side_effect=_slow_login),
         patch.object(gs, "list_assignments", return_value=_INCOMING),
     ):
         threads = [threading.Thread(target=_request, args=(n,)) for n in ("a", "b")]
@@ -813,7 +814,7 @@ def test_finish_inline_never_raises():
 def test_the_worker_loads_the_gradescope_sync_handler():
     from worker.__main__ import HANDLER_MODULES, load_handlers
 
-    assert "services.gradescope_jobs" in HANDLER_MODULES
+    assert "services.gradescope.jobs" in HANDLER_MODULES
     assert "gradescope.sync" in load_handlers()
     assert jobs.get_handler("gradescope.sync") is gj._run_gradescope_sync_job
 
@@ -840,7 +841,7 @@ def _handle(stage, *, run=None, row_exists=True, counts=None, links=None, job=No
     current = job or _job()
     with (
         patch.object(gj, "table", side_effect=_gj_tables(syncs, links=links)),
-        patch("routes.gradescope._run_linked_sync", run),
+        patch_gradescope("_run_linked_sync", run),
         patch.object(jobs, "current_job", lambda: current, create=True),
     ):
         gj._run_gradescope_sync_job({"sync_id": "s1"})
@@ -863,7 +864,7 @@ def test_handler_without_a_current_job_still_fences_on_a_unique_token():
     syncs = FakeTable([{**_ROW, "stage": "queued"}])
     with (
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
-        patch("routes.gradescope._run_linked_sync", MagicMock(return_value=_DONE)),
+        patch_gradescope("_run_linked_sync", MagicMock(return_value=_DONE)),
         patch.object(jobs, "current_job", lambda: None, create=True),
     ):
         gj._run_gradescope_sync_job({"sync_id": "s1"})
@@ -884,7 +885,7 @@ def test_handler_does_nothing_when_the_request_took_the_sync_back_first():
     with (
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
         patch.object(syncs, "select", side_effect=_select),
-        patch("routes.gradescope._run_linked_sync", run),
+        patch_gradescope("_run_linked_sync", run),
     ):
         gj._run_gradescope_sync_job({"sync_id": "s1"})
     run.assert_not_called()
@@ -924,7 +925,7 @@ def test_a_stale_attempts_late_outcome_is_refused():
 
     with (
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
-        patch("routes.gradescope._run_linked_sync", side_effect=_superseded_run),
+        patch_gradescope("_run_linked_sync", side_effect=_superseded_run),
     ):
         gj._run_gradescope_sync_job({"sync_id": "s1"})
     assert syncs.rows["s1"]["stage"] == "running"
@@ -973,9 +974,9 @@ def test_a_link_removed_mid_sync_writes_nothing():
 
     with (
         patch.object(gj, "table", side_effect=lambda n: tables[n]),
-        patch("routes.gradescope.table", side_effect=lambda name: route_tables[name]),
-        patch("routes.gradescope._load_creds", return_value=_creds()),
-        patch("routes.gradescope._establish_connection", MagicMock()),
+        patch_gradescope("table", side_effect=lambda name: route_tables[name]),
+        patch_gradescope("_load_creds", return_value=_creds()),
+        patch_gradescope("_establish_connection", MagicMock()),
         patch.object(gs, "list_assignments", side_effect=_scrape),
     ):
         gj._run_gradescope_sync_job({"sync_id": "s1"})
@@ -1010,7 +1011,7 @@ def test_worker_run_uses_stored_credentials_and_records_the_outcome_where_inline
     syncs = FakeTable([{**_ROW, "stage": "queued"}])
     conn = MagicMock()
     with (
-        patch("routes.gradescope.table", side_effect=lambda name: route_tables[name]),
+        patch_gradescope("table", side_effect=lambda name: route_tables[name]),
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
         patch.object(gs, "login_with_cookies", return_value=conn) as login,
         patch.object(gs, "login") as password_login,
@@ -1033,9 +1034,9 @@ def test_worker_run_records_rejected_stored_credentials_like_inline():
     route_tables = _route_tables()
     syncs = FakeTable([{**_ROW, "stage": "queued"}])
     with (
-        patch("routes.gradescope.table", side_effect=lambda name: route_tables[name]),
-        patch("routes.gradescope._load_creds", return_value=_creds()),
-        patch("routes.gradescope._establish_connection",
+        patch_gradescope("table", side_effect=lambda name: route_tables[name]),
+        patch_gradescope("_load_creds", return_value=_creds()),
+        patch_gradescope("_establish_connection",
               side_effect=gs.GradescopeAuthError("Session expired")),
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
     ):
@@ -1054,9 +1055,9 @@ def test_worker_run_records_rejected_stored_credentials_like_inline():
 def _status(rows, *, enrollments=("enr-1",), require_self=None):
     syncs = FakeTable(rows)
     with (
-        patch("routes.gradescope._all_enrollments_for", return_value=list(enrollments)),
+        patch_gradescope("_all_enrollments_for", return_value=list(enrollments)),
         patch.object(gj, "table", side_effect=_gj_tables(syncs)),
-        patch("routes.gradescope.require_self", require_self or MagicMock()),
+        patch_gradescope("require_self", require_self or MagicMock()),
     ):
         return client.get("/api/gradescope/sync/c1/status",
                           params={"user_id": "u1", "semester": "Fall 2025"},

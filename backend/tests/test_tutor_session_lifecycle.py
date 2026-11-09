@@ -30,6 +30,7 @@ from services import tutor_sessions
 from services.encryption import encrypt_if_present, encrypt_json
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_tutor
 
 #: #117 wave 3: a sync PostgREST call on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
@@ -93,13 +94,13 @@ def h():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A tutor reply."))
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(lambda n: tables(n))),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn.get_display_name", return_value="Life Student"),
-        patch("routes.learn.events_service.log_event") as log_event,
-        patch("routes.learn.award_xp_safe") as award,
-        patch("routes.learn.touch_streak_safe") as streak,
-        patch("routes.learn.offering_course_id", return_value=""),
+        patch_tutor("table", side_effect=with_async_twins(lambda n: tables(n))),
+        patch_tutor("agent_for_mode", return_value=agent),
+        patch_tutor("get_display_name", return_value="Life Student"),
+        patch("services.events_service.log_event") as log_event,
+        patch_tutor("award_xp_safe") as award,
+        patch_tutor("touch_streak_safe") as streak,
+        patch_tutor("offering_course_id", return_value=""),
         patch("services.achievement_service.check_achievements", return_value=[]) as ach,
     ):
         yield {
@@ -278,14 +279,14 @@ def test_turn_racing_a_discard_does_not_write_for_a_missing_row(h, reason, statu
         "user_id": USER, "mode": "socratic", "topic": "T", "offering_id": None,
         "assistant_reply": "Hi!", "graph_update": {},
     })
-    real_owner_check = learn.arequire_session_owner
+    real_owner_check = tutor_sessions.arequire_session_owner
 
     async def owner_check_then_discard(session_id, user_id, **kw):
         await real_owner_check(session_id, user_id, **kw)  # passes: still pending
         with tutor_sessions.materialization_lock(session_id):
             tutor_sessions.discard_pending(session_id, user_id=user_id, reason=reason)
 
-    with patch("routes.learn.arequire_session_owner", side_effect=owner_check_then_discard):
+    with patch_tutor("arequire_session_owner", side_effect=owner_check_then_discard):
         r = client.post("/api/learn/chat", json={
             "session_id": SESSION, "user_id": USER, "message": "hi",
         })
@@ -351,7 +352,7 @@ def test_resent_persisted_turn_replays_on_the_stream_route(h):
         "content": encrypt_if_present("The stored reply."),
         "graph_update_json": None,
     }]
-    with patch("routes.learn.stream_agent_turn") as stream:
+    with patch_tutor("stream_agent_turn") as stream:
         r = client.post("/api/learn/chat/stream", json={
             "session_id": SESSION, "user_id": USER, "message": "hi", "turn_id": TURN,
         })
@@ -447,7 +448,7 @@ def test_streamed_persist_off_loop_still_schedules_the_router_on_the_loop(h):
         yield PartStartEvent(index=0, part=TextPart(content="Streamed reply."))
 
     h["agent"].run_stream_events = fake_run_stream_events
-    with patch("routes.learn.observe_tutor_turn", side_effect=spy):
+    with patch_tutor("observe_tutor_turn", side_effect=spy):
         r = client.post("/api/learn/chat/stream", json={
             "session_id": SESSION, "user_id": USER, "message": "hi",
         })
@@ -458,7 +459,7 @@ def test_streamed_persist_off_loop_still_schedules_the_router_on_the_loop(h):
 # ── error envelope ──────────────────────────────────────────────────────────
 
 def test_error_content_adds_the_error_object_only_for_coded_non_quiz_errors():
-    from services.quiz_errors import error_content
+    from services.quiz.errors import error_content
     assert error_content("/api/learn/chat", 404, "Session not found", "rid") == {
         "detail": "Session not found", "request_id": "rid",
     }

@@ -20,7 +20,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-import routes.social as social
+# get_students lives in services/social/directory.py (#118): patch it there.
+import services.social.directory as social
 from main import app
 from services import academics
 

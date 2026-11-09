@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from services.rag_service import Retrieval
 from tests.db_fakes import add_async_twins, fake_table, with_async_twins
+from tests.split_patches import patch_quiz
 import pytest
 
 # #117: a sync PostgREST call reached on the event loop raises here.
@@ -20,13 +21,13 @@ def _material(user_id="user_1", chunks=(), catalog=""):
     from routes.quiz import _course_material
 
     with (
-        patch("routes.quiz._resolve_bu_code") as mock_resolve,
-        patch("routes.quiz._get_catalog_chunk", return_value=catalog),
-        patch(
-            "routes.quiz.retrieve_chunks_detailed",
+        patch_quiz("_resolve_bu_code") as mock_resolve,
+        patch_quiz("_get_catalog_chunk", return_value=catalog),
+        patch_quiz(
+            "retrieve_chunks_detailed",
             return_value=Retrieval(chunks=list(chunks)),
         ) as mock_retrieve,
-        patch("routes.quiz.table", return_value=fake_table()) as mock_table,
+        patch_quiz("table", return_value=fake_table()) as mock_table,
     ):
         from routes.quiz import BuCodeLookup
 
@@ -61,7 +62,7 @@ def test_coverage_count_without_a_reader_counts_shared_rows_only():
 
     tbl = MagicMock()
     tbl.select_with_count.return_value = ([], 7)
-    with patch("routes.quiz.table", return_value=add_async_twins(tbl)):
+    with patch_quiz("table", return_value=add_async_twins(tbl)):
         assert _course_chunk_coverage("CAS CS 330", None) == 7
 
     filters = tbl.select_with_count.call_args.kwargs["filters"]
@@ -79,11 +80,11 @@ def test_generate_threads_the_quiz_taker_through_to_grounding():
     harness = TestQuizGrounding()
     agent_run = AsyncMock(return_value=harness._valid_quiz_result())
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(harness._table_factory())),
-        patch("routes.quiz.quiz_agent.run", new=agent_run),
-        patch("routes.quiz._get_catalog_chunk", return_value=""),
-        patch(
-            "routes.quiz.retrieve_chunks_detailed", return_value=Retrieval(chunks=[])
+        patch_quiz("table", side_effect=with_async_twins(harness._table_factory())),
+        patch("services.quiz.generation.quiz_agent.run", new=agent_run),
+        patch_quiz("_get_catalog_chunk", return_value=""),
+        patch_quiz(
+            "retrieve_chunks_detailed", return_value=Retrieval(chunks=[])
         ) as mock_retrieve,
     ):
         r = client.post("/api/quiz/generate", json={

@@ -32,6 +32,7 @@ from db import scope_report
 from db import user_jwt
 from db.connection import rpc, table
 from services import auth_guard, request_context
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from tests.test_db_user_scope import ANON, FLAG_ENV, OCT_JWK, Wire, _app, _cookie
 
 SECRET_MARKER = "row-content-that-must-never-be-logged"
@@ -511,7 +512,7 @@ def test_admin_db_scope_report_groups_events_and_includes_the_process_tally(monk
                                          "scoped_count": -1, "error": "403"}),
         _ev("db.unscoped_query", {"table": "courses", "route": "/api/x", "mode": "shadow"}, user=None),
     ])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
     _no_rpc(monkeypatch, analytics)
     scope_report.record(event="db.rls_shadow_divergence", kind="fewer_rows", mode="shadow",
                         method="GET", route="/api/notes/{note_id}", target="notes", op="select")
@@ -548,7 +549,7 @@ def test_admin_report_and_process_tally_use_the_same_key(monkeypatch):
     store = _Events([_ev("db.unscoped_query", {"table": "courses", "route": "/api/x",
                                                "mode": "shadow", "kind": "no_subject",
                                                "method": "GET"}, user=None)])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
     _no_rpc(monkeypatch, analytics)
     body = TestClient(main.app).get("/api/admin/analytics/db-scope").json()
     keys = scope_report.KEY_FIELDS
@@ -564,9 +565,9 @@ def test_admin_db_scope_report_caps_scan_and_window(monkeypatch):
 
     store = _Events([_ev("db.unscoped_query", {"table": "t", "route": f"/r{i}"})
                      for i in range(5)])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
     _no_rpc(monkeypatch, analytics)
-    monkeypatch.setattr(analytics, "_PAGE", 2)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 2)
     monkeypatch.setattr(analytics, "_DB_SCOPE_SCAN_CAP", 3)
     client = TestClient(main.app)
     body = client.get("/api/admin/analytics/db-scope").json()
@@ -661,7 +662,7 @@ def _report(monkeypatch, *, via_rpc: bool, events=_MIXED):
                             lambda name: pytest.fail("the aggregate path must not scan"))
     else:
         store = _Events(sorted(events, key=lambda e: e["created_at"], reverse=True))
-        monkeypatch.setattr(analytics, "table", lambda name: store)
+        setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
         _no_rpc(monkeypatch, analytics)
     body = TestClient(main.app).get("/api/admin/analytics/db-scope",
                                     params={"hours": 24, "limit": 50}).json()
@@ -707,7 +708,7 @@ def test_a_malformed_aggregate_falls_back_to_the_scan(monkeypatch, answer):
     import routes.admin_analytics as analytics
 
     store = _Events([_ev("db.unscoped_query", {"table": "t", "route": "/r"})])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
     monkeypatch.setattr(analytics, "rpc", lambda name, params: answer)
     body = TestClient(main.app).get("/api/admin/analytics/db-scope").json()
     assert body["total"] == 1 and body["top"][0]["route"] == "/r"
