@@ -11,7 +11,6 @@
     "routes/documents.py": 1423,
     "routes/flashcards.py": 701,
     "routes/gradebook.py": 649,
-    "routes/gradescope.py": 868,
     "routes/learn.py": 2011,
     "routes/profile.py": 978,
     "routes/quiz.py": 3150,
