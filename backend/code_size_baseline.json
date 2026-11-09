@@ -7,7 +7,6 @@
   "route_file_lines": {
     "routes/documents.py": 1423,
     "routes/gradescope.py": 868,
-    "routes/learn.py": 2011,
-    "routes/quiz.py": 3150
+    "routes/learn.py": 2011
   }
 }

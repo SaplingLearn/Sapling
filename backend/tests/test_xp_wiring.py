@@ -15,6 +15,8 @@ so a typo'd rule_key or a swapped source_id fails loudly.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.quiz_patches import patch_quiz
+
 import io
 
 from fastapi.testclient import TestClient
@@ -133,11 +135,11 @@ class TestQuizCompletedAward:
             return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
         )
         with (
-            patch("routes.quiz.table", side_effect=_quiz_table_factory(quiz_id, submit_user_id)),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=_quiz_table_factory(quiz_id, submit_user_id)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch("services.quiz.submission.quiz_context_agent.run", new=ctx_run),
+            patch_quiz("save_quiz_context"),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post("/api/quiz/submit", json={

@@ -42,6 +42,11 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 ROUTES = BACKEND / "routes"
+#: Domain packages that hold handler bodies moved out of routes/ (#118). The
+#: split keeps each body verbatim, async ones included, so they stay in scope.
+#: The in-module transitive walk is per FILE: a sync DB helper imported from
+#: a sibling module is not followed (the runtime guard still covers it).
+DOMAIN_PACKAGES = (BACKEND / "services" / "quiz",)
 
 SYNC_VERBS = frozenset({"select", "select_with_count", "insert", "update", "upsert", "delete"})
 DB_FUNCS = frozenset({"rpc", "page_all"})
@@ -155,6 +160,9 @@ def _all_offenders() -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
     for path in sorted(ROUTES.glob("*.py")):
         found |= _offenders(path)
+    for package in DOMAIN_PACKAGES:
+        for path in sorted(package.glob("*.py")):
+            found |= _offenders(path)
     return found
 
 

@@ -458,7 +458,7 @@ def test_streamed_persist_off_loop_still_schedules_the_router_on_the_loop(h):
 # ── error envelope ──────────────────────────────────────────────────────────
 
 def test_error_content_adds_the_error_object_only_for_coded_non_quiz_errors():
-    from services.quiz_errors import error_content
+    from services.quiz.errors import error_content
     assert error_content("/api/learn/chat", 404, "Session not found", "rid") == {
         "detail": "Session not found", "request_id": "rid",
     }

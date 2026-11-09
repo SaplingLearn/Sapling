@@ -39,6 +39,7 @@ from tests.test_llm_budget import (  # noqa: F401  (fixtures: _fresh is autouse)
     _ResilientFn,
     session_user,
 )
+from tests.quiz_patches import patch_quiz
 
 
 def _exc():
@@ -494,10 +495,10 @@ def test_quiz_submit_context_update_never_sees_a_refusal(budget):
         return SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
 
     with (
-        patch("routes.quiz.table", side_effect=_submit_factory()),
-        patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
-        patch("routes.quiz.save_quiz_context") as save,
-        patch("routes.quiz.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_quiz("table", side_effect=_submit_factory()),
+        patch("services.quiz.submission.quiz_context_agent.run", new=ctx_run),
+        patch_quiz("save_quiz_context") as save,
+        patch_quiz("record_agent_usage", side_effect=lambda r, **k: r),
         # what auth_guard's stamp on request.state.user_id gives the gate (the
         # hermetic app bypasses the real guard)
         patch("services.request_context.current_session_user", return_value=USER),

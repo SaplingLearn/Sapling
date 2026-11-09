@@ -632,7 +632,8 @@ def _bypass_session_auth(request, monkeypatch):
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        if not mod_name.startswith("routes."):
+        # services.quiz.*: the quiz split (#118) moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):

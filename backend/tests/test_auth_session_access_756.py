@@ -517,8 +517,11 @@ def test_no_async_route_calls_the_guard_on_the_loop():
 
     guards = {"get_session_user_id", "require_self", "require_admin", "account_state"}
     offenders = []
-    routes_dir = pathlib.Path(__file__).resolve().parent.parent / "routes"
-    for path in sorted(routes_dir.glob("*.py")):
+    backend = pathlib.Path(__file__).resolve().parent.parent
+    routes_dir = backend / "routes"
+    # services/quiz: the handler bodies the #118 split moved out of routes/quiz.py.
+    paths = [*routes_dir.glob("*.py"), *(backend / "services" / "quiz").glob("*.py")]
+    for path in sorted(paths):
         tree = ast.parse(path.read_text())
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.AsyncFunctionDef):
