@@ -45,12 +45,17 @@ function readStackManifest(): { dbUrl?: string; supabaseUrl?: string } {
 }
 const STACK = readStackManifest();
 const IN_CI = process.env.CI === "true";
-const DB_URL =
-  process.env.E2E_DB_URL?.trim() ||
-  STACK.dbUrl ||
-  (IN_CI ? "postgresql://postgres:postgres@127.0.0.1:54322/postgres" : "");
-const SUPABASE_URL =
-  STACK.supabaseUrl || process.env.SUPABASE_URL?.trim() || (IN_CI ? "http://127.0.0.1:54321" : "");
+// Both URLs come from ONE source, so the reseed never pairs one slot's
+// Postgres with another's PostgREST: a cycle exports E2E_DB_URL together with
+// its SUPABASE_URL; without it, the manifest names both. An ambient
+// SUPABASE_URL (a dev shell's) is never mixed with the manifest's database.
+const FROM_ENV = Boolean(process.env.E2E_DB_URL?.trim());
+const DB_URL = FROM_ENV
+  ? process.env.E2E_DB_URL!.trim()
+  : STACK.dbUrl || (IN_CI ? "postgresql://postgres:postgres@127.0.0.1:54322/postgres" : "");
+const SUPABASE_URL = FROM_ENV
+  ? process.env.SUPABASE_URL?.trim() || ""
+  : STACK.supabaseUrl || (IN_CI ? "http://127.0.0.1:54321" : "");
 
 // Exact-match loopback hosts — deliberately stricter than a substring check,
 // so `postgresql://…@127.0.0.1.evil.com/…` is rejected (same rationale as

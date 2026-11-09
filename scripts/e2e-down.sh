@@ -23,31 +23,20 @@ cd "$REPO_ROOT" || exit 1
 source "$REPO_ROOT/scripts/lib/local-common.sh"
 set_docker_host_for_podman
 
-# Which stack: E2E_SLOT if set, else the slot this checkout's e2e-up recorded
-# in .e2e/slot (scripts/lib/e2e-slot.sh). With neither, this checkout booted
-# nothing — and guessing slot 1 could stop another checkout's run.
+# A step of scripts/e2e-cycle.sh, which owns the stack (its slot and its
+# checkout locks) and calls this from its teardown with E2E_SLOT_LOCKED=1 —
+# so this never has to guess whose stack it is stopping. To end a stack you
+# hold: `make e2e-down` (= scripts/e2e-cycle.sh --stop). CI (slot 0) calls it
+# directly.
 source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 E2E_DIR="$REPO_ROOT/.e2e"
-if [ -z "${E2E_SLOT:-}" ] && [ ! -f "$E2E_DIR/slot" ] && [ ! -f "$E2E_DIR/booted" ]; then
-  echo "✓ nothing booted in this checkout (no .e2e/slot) — nothing to tear down. Set E2E_SLOT=N to stop a slot explicitly."
-  exit 0
-fi
-[ -z "${E2E_SLOT:-}" ] && [ ! -f "$E2E_DIR/slot" ] && E2E_SLOT="$(tr -d '[:space:]' <"$E2E_DIR/booted")"
-resolve_e2e_slot "$REPO_ROOT" || exit 1
-mapfile -t SUPABASE_ARGS < <(e2e_supabase_args)
-
-# Never another run's slot. A cycle/explore tearing down its own stack passes
-# E2E_SLOT_LOCKED=1; a bare e2e-up's slot is held by this checkout's own
-# detached holder (.e2e/lock.pid). Any other holder is someone else's run.
-OWN_HOLDER=0
-if [ -f "$E2E_DIR/lock.pid" ] && kill -0 "$(cat "$E2E_DIR/lock.pid" 2>/dev/null)" 2>/dev/null; then
-  OWN_HOLDER=1
-fi
-if [ "$E2E_SLOT" != "0" ] && [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ "$OWN_HOLDER" = "0" ] \
-  && ! e2e_slot_is_free "$E2E_SLOT"; then
-  echo "✗ E2E slot $E2E_SLOT is held by another run, not this checkout — not tearing it down."
+if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ "${CI:-}" != "true" ]; then
+  echo "✗ e2e-down.sh is a step of an E2E cycle. Stop this checkout's held stack with"
+  echo "  \`make e2e-down\` (scripts/e2e-cycle.sh --stop); a foreground cycle tears down when it ends."
   exit 1
 fi
+resolve_e2e_slot "$REPO_ROOT" || exit 1
+mapfile -t SUPABASE_ARGS < <(e2e_supabase_args)
 
 APPS_ONLY=0
 [ "${1:-}" = "--apps-only" ] && APPS_ONLY=1
@@ -91,18 +80,17 @@ stop_tracked "job worker (opt-in)" "$E2E_DIR/worker.pid"
 
 # A slot's database is throwaway: dropping its volume means the next run on
 # the slot migrates and seeds from empty, so no run inherits another branch's
-# tables or another checkout's ENCRYPTION_KEY canary. E2E_KEEP_DB=1 keeps it
-# (a faster re-run of the same branch). Slot 0 (CI) keeps the old behaviour.
+# tables or another checkout's ENCRYPTION_KEY canary. Slot 0 (CI) keeps the
+# old behaviour.
 STOP_ARGS=()
-if [ "$E2E_SLOT" != "0" ] && [ "${E2E_KEEP_DB:-0}" != "1" ]; then
-  STOP_ARGS=(--no-backup)
-fi
+[ "$E2E_SLOT" != "0" ] && STOP_ARGS=(--no-backup)
 echo "▶ Stopping Supabase (slot $E2E_SLOT, project $SUPABASE_PROJECT_ID)…"
-supabase stop "${SUPABASE_ARGS[@]}" "${STOP_ARGS[@]}" || { echo "✗ supabase stop failed"; exit 1; }
+rc=0
+supabase stop "${SUPABASE_ARGS[@]}" "${STOP_ARGS[@]}" || { echo "✗ supabase stop failed"; rc=1; }
 
-# The manifest pointed the harnesses at this stack; it is gone now.
-rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh" "$E2E_DIR/slot" "$E2E_DIR/booted"
-# A bare e2e-up's slot lock: released with the stack.
-e2e_release_detached_slot_lock "$E2E_DIR"
+# The manifest pointed the harnesses at this stack; it is gone now — even when
+# the stop failed (the cycle exits after this either way, releasing the slot).
+rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh" "$E2E_DIR/booted"
 
-echo "✅ E2E stack (slot $E2E_SLOT) is down. Logs from the last run are kept in .e2e/."
+[ "$rc" = "0" ] && echo "✅ E2E stack (slot $E2E_SLOT) is down. Logs from the last run are kept in .e2e/."
+exit "$rc"

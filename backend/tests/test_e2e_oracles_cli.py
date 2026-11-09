@@ -25,6 +25,58 @@ def test_require_local_rejects_non_loopback(url):
         require_local(url, "db")
 
 
+@pytest.fixture(autouse=True)
+def _stack_adopted(request, monkeypatch):
+    """The exit-code tests judge fake checks, not a stack: skip the stack
+    lookup, which would otherwise refuse on any laptop (no slot, not CI) and,
+    with a held stack, write its URLs into this process's environment."""
+    if "adopt" not in request.node.name:
+        monkeypatch.setattr(cli, "_adopt_e2e_stack", lambda argv: None)
+
+
+@pytest.fixture
+def _no_stack(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_STACK_MANIFEST", tmp_path / "stack.json")
+    for var in ("E2E_BACKEND_URL", "SUPABASE_DB_URL", "CI"):
+        monkeypatch.delenv(var, raising=False)
+    return tmp_path / "stack.json"
+
+
+def test_adopt_refuses_without_a_stack_outside_ci(_no_stack):
+    assert "no E2E stack" in cli._adopt_e2e_stack([])
+
+
+def test_adopt_refusal_is_exit_two(_no_stack, capsys):
+    assert cli.main(["--check", "logscan"]) == 2
+    assert "no E2E stack" in capsys.readouterr().err
+
+
+def test_adopt_allows_ci_and_an_explicit_base_url(_no_stack, monkeypatch):
+    assert cli._adopt_e2e_stack(["--base-url", "http://127.0.0.1:5101"]) is None
+    monkeypatch.setenv("CI", "true")
+    assert cli._adopt_e2e_stack([]) is None
+
+
+def test_adopt_keeps_an_exported_slot(_no_stack, monkeypatch):
+    monkeypatch.setenv("E2E_BACKEND_URL", "http://localhost:5102")
+    assert cli._adopt_e2e_stack([]) is None
+
+
+def test_adopt_reads_the_manifest(_no_stack, monkeypatch):
+    _no_stack.write_text(
+        '{"backendUrl": "http://localhost:5101", '
+        '"dbUrl": "postgresql://postgres:postgres@127.0.0.1:54422/postgres"}'
+    )
+    # setenv first so monkeypatch restores both vars after the test.
+    monkeypatch.setenv("E2E_BACKEND_URL", "")
+    monkeypatch.setenv("SUPABASE_DB_URL", "")
+    assert cli._adopt_e2e_stack([]) is None
+    import os
+
+    assert os.environ["E2E_BACKEND_URL"] == "http://localhost:5101"
+    assert os.environ["SUPABASE_DB_URL"].endswith(":54422/postgres")
+
+
 def _fake_check(findings, suppressed=0):
     def run(args):
         return findings, suppressed
