@@ -9,7 +9,7 @@
  */
 
 import React from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -80,10 +80,18 @@ const PLAIN: GradedAssignment = {
   curve_sd_delta: null,
 };
 
+// The due-date check parses the date as LOCAL midnight and compares it with the
+// UTC ISO date, so east of UTC every real date reads as invalid. These tests
+// characterize it in UTC (what CI runs), whatever zone the machine is in.
+beforeEach(() => {
+  vi.stubEnv("TZ", "UTC");
+});
+
 afterEach(() => {
   cleanup();
   toastError.mockClear();
   humanizeError.mockClear();
+  vi.unstubAllEnvs();
 });
 
 function renderModal(props: Partial<React.ComponentProps<typeof AssignmentModal>> = {}) {
