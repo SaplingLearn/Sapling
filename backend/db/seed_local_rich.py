@@ -572,69 +572,6 @@ def seed_notes_documents(writer=h) -> None:
         )
 
 
-# Topic checklists (🔒 content). The Study hub reads these for its roadmap
-# column names: a concept's category is the root ancestor of the checklist
-# topic whose name matches it, so the parent topics below ARE the columns the
-# roadmap draws. Without one, Study falls back to prerequisite layers
-# ("Foundations", "Core Methods", …) — which is what every course here without
-# an entry exercises. Child names must match _GRAPH_NODES exactly; the service
-# joins them by normalized name.
-#
-# (checklist_key, enrollment_id, source_doc_id, [(parent, [child, …]), …])
-_CHECKLISTS = [
-    ("cs-f25", ENR_ACTIVE_CS_F25, "rich-doc-cs-syllabus", [
-        ("Language Foundations", ["Variables and Types", "Control Flow"]),
-        ("Program Structure", ["Recursion", "Algorithms"]),
-        ("Memory Model", ["Pointers and Memory"]),
-    ]),
-    ("cs-s26", ENR_ACTIVE_CS_S26, "rich-doc-cs-syllabus", [
-        ("Language Foundations", ["Variables and Types", "Control Flow"]),
-        ("Program Structure", ["Recursion", "Algorithms"]),
-        ("Memory Model", ["Pointers and Memory"]),
-    ]),
-    ("math-s26", ENR_ACTIVE_MATH_S26, "rich-doc-math-notes", [
-        ("Vector Spaces", ["Vectors", "Matrices"]),
-        ("Matrix Analysis", ["Determinants", "Eigenvalues"]),
-    ]),
-    # Bio is deliberately left out so one course still shows the fallback.
-]
-
-
-def _checklist_topics(groups: list, source_id: str) -> list[dict]:
-    """A TopicOutline payload: one parent topic per roadmap column, each child
-    naming a tracked concept. Importance is curricular weight, not mastery."""
-    topics = []
-    for parent, children in groups:
-        topics.append({
-            "name": parent, "description": f"{parent} for this course.", "parent": "",
-            "prerequisites": [], "source_ids": [source_id], "assessment_ids": [],
-            "importance": 0.9,
-        })
-        topics.extend({
-            "name": child, "description": f"{child}, covered under {parent}.",
-            "parent": parent, "prerequisites": [], "source_ids": [source_id],
-            "assessment_ids": [], "importance": 0.7,
-        } for child in children)
-    return topics
-
-
-def seed_topic_checklists(writer=h) -> None:
-    for key, enrollment_id, source_id, groups in _CHECKLISTS:
-        writer.insert_by_keys(
-            "topic_checklists",
-            {
-                "enrollment_id": enrollment_id,
-                # Never the real snapshot hash: the checklist reads as stale, so
-                # a refresh regenerates it from live evidence instead of this
-                # fixture silently standing in for a generated outline.
-                "input_hash": f"rich-seed-{key}",
-                # 🔒 content
-                "content": encrypt_json({"topics": _checklist_topics(groups, source_id)}),
-            },
-            "enrollment_id",
-        )
-
-
 # (fc_id, user_id, offering_id, topic, front, back) — 🔒 front/back, grouped by topic.
 _FLASHCARDS = [
     ("rich-fc-cs-1", USER_ACTIVE, OFF_CS_F25, "CS Basics",
@@ -922,8 +859,7 @@ _SUMMARY_ORDER = [
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
     "room_summaries",
-    "notes", "documents", "course_chunks", "topic_checklists",
-    "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "notes", "documents", "course_chunks", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
     "offering_concept_stats",
 ]
@@ -933,7 +869,6 @@ def _seed_dataset(writer=h) -> None:
     for step in (
         seed_school, seed_courses, seed_offerings, seed_users, seed_enrollments,
         seed_graph, seed_gradebook, seed_rooms, seed_notes_documents,
-        seed_topic_checklists,
         seed_flashcards, seed_study_guides, seed_room_summaries, seed_quiz,
         seed_offering_concept_stats, seed_feedback, seed_sessions,
     ):
