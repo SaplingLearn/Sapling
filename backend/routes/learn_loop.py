@@ -4545,7 +4545,7 @@ def list_open_sessions(
 async def chat(body: ChatBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
-    _teaching_open(body.session_id, body.user_id)
+    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     return await _json_turn(
         lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
         "loop chat agent",
@@ -4556,7 +4556,7 @@ async def chat(body: ChatBody, request: Request):
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
-    _teaching_open(body.session_id, body.user_id)
+    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
 
@@ -4679,7 +4679,7 @@ async def _grade_submission(
     as idk. Every path that writes no evidence releases the claim; after the
     flush it is released only by the write that records the grade, so a lost
     record never admits a second flush."""
-    scope = _session_scope(body.session_id, body.user_id)
+    scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
     course_id = scope[1]
     state = _load_loop_state(body.session_id)
     _require_open(state)
@@ -4702,13 +4702,14 @@ async def _grade_submission(
     rendered = _render_submission(body, idk=idk)
     if not idk and gates.matches_non_attempt(text):
         return _Submission("hint_request", state, rendered, scope)  # never graded
-    node_id = _node_for_item(body.user_id, item)
+    node_id = await asyncio.to_thread(_node_for_item, body.user_id, item)  # #117
     if node_id is None:  # evidence needs the student's node for this concept (A2)
         raise HTTPException(status_code=409, detail="no graph node for this item")
     band, p_before = _band_for(body.user_id, node_id)
     now = _now_s()
     # hint-unlock bookkeeping only: the independent-time gate never blocks grading (A16)
-    variant = arms.variant_for(body.user_id, node_id, _arm_for(body.user_id, request))
+    arm = await asyncio.to_thread(_arm_for, body.user_id, request)  # #117
+    variant = arms.variant_for(body.user_id, node_id, arm)
     genuine = not idk and _genuine(
         text, _seconds_since(entry.get("first_shown_at"), now), band, variant
     )
@@ -6018,7 +6019,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    node = _posttest_node(body.user_id, body.node_id)
+    node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
     course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
     items = items_for_concepts(course_id, [key]).get(key) or []
     item = next((i for i in items if i.question_hash == body.question_hash), None)
@@ -6033,7 +6034,9 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     now = _posttest_now()
     claim = str(uuid.uuid4())
-    pose = _claim_pose(body.user_id, body.node_id, item.question_hash, claim, now)
+    pose = await asyncio.to_thread(  # #117: off the event loop
+        _claim_pose, body.user_id, body.node_id, item.question_hash, claim, now
+    )
     if pose is None:  # not posed, answered, claimed, or expired (A89) → 409
         raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     answered = False
@@ -6087,7 +6090,8 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             body.hidden_s,
             (answered_at - shown_from).total_seconds() if shown_from else None,
         )
-        answered = _answer_pose(
+        answered = await asyncio.to_thread(  # #117: off the event loop
+            _answer_pose,
             body.user_id,
             body.node_id,
             claim,
@@ -6111,11 +6115,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     finally:
         if not answered:
             try:
-                _release_pose(body.user_id, body.node_id, claim)
+                await asyncio.to_thread(_release_pose, body.user_id, body.node_id, claim)
             except Exception:
                 logger.warning("post-test claim on %s not released", body.node_id, exc_info=True)
         clear_posttest_due_cache(body.user_id)
-    _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor)
+    await asyncio.to_thread(  # #117: off the event loop
+        _emit_posttest_step, body, request, item, outcome, band, p_before, changes, floor
+    )
     return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
 
 
@@ -6658,7 +6664,7 @@ async def action(body: ActionBody, request: Request):
     (invariant 26)."""
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
-    _teaching_open(body.session_id, body.user_id)
+    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
         session_id=body.session_id,
@@ -6855,7 +6861,7 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
     """Record the guess (a stored one stands) and return (loop state, scope)
     for the explaining turn. 409 when no prequestion with this hash is open on
     the plan's current concept — or the flag is off for the student."""
-    scope = _session_scope(body.session_id, body.user_id)
+    scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
     course_id = scope[1]
     if not _prequestion_on(body.user_id):
         raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
@@ -7448,7 +7454,8 @@ async def close_session(
             "offering_id": pending.get("offering_id"),
         }
     else:
-        rows = table("sessions").select(
+        rows = await asyncio.to_thread(  # #117: off the event loop
+            table("sessions").select,
             "id,user_id,loop_state,close_json,close_phase",
             # PKG-12: a review session is not a tutor session — never closed (404)
             filters={"id": f"eq.{session_id}", **NOT_REVIEW},
@@ -7465,20 +7472,25 @@ async def close_session(
         try:
             doc = _claim_close(session_id, claim, _now_s())
         except _AlreadyClosed:
-            return _reread_close(session_id)
+            return await asyncio.to_thread(_reread_close, session_id)
         phase = _close_phase(doc) if had_state else "close"
         row_defaults = None
         try:
-            transcript, evidence = _session_record(session_id)
+            transcript, evidence = await asyncio.to_thread(_session_record, session_id)  # #117
+            keys = _close_misconception_keys(user_id, evidence)
+            # A117: honest baselines, and check-in answers counted apart
+            # (the probe history is the claimed document's)
+            measured = await asyncio.to_thread(_measured_before, user_id, session_id, evidence)
+            names = await asyncio.to_thread(
+                _concept_names, user_id, [e.get("node_id") for e in evidence]
+            )
             draft = build_close(
                 transcript,
                 evidence,
-                _close_misconception_keys(user_id, evidence),
-                # A117: honest baselines, and check-in answers counted apart
-                # (the probe history is the claimed document's)
-                measured_before=_measured_before(user_id, session_id, evidence),
+                keys,
+                measured_before=measured,
                 probe_hashes=session_probe_hashes(doc),
-                concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
+                concept_names=names,
             )
             items = _unreleased_items(doc)
             out = None
@@ -7512,7 +7524,7 @@ async def close_session(
         raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
     _finish_close(session_id, claim, closed=True)  # a pending session's phase too
     if not stored:  # another close's write landed first: serve it, emit nothing
-        return _reread_close(session_id)
+        return await asyncio.to_thread(_reread_close, session_id)
     events_service.log_event(
         "learn.session_closed",
         category="usage",
@@ -8234,7 +8246,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     released only by the write that records the observation, so a lost record
     never admits a second write (the item is moved past once the claim is
     stale)."""
-    _, course_id = _session_scope(body.session_id, body.user_id)
+    _, course_id = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
     qh = body.question_hash
@@ -8248,10 +8260,11 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     skills = list(_probe_doc(state).get("skills") or [])
     node_id = posed["node_id"]
+    probe_items = await asyncio.to_thread(_probe_items, body.user_id, course_id, skills)  # #117
     item = next(
         (
             it
-            for it in _probe_items(body.user_id, course_id, skills)
+            for it in probe_items
             if it.id == posed.get("check_item_id")
         ),
         None,
@@ -8870,7 +8883,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     check = card_row = deps = None
     if body.kind == "check":
         check = get_check_item(body.item_id)
-        node_id = _node_for_item(body.user_id, check) if check is not None else None
+        node_id = (  # #117: off the event loop
+            await asyncio.to_thread(_node_for_item, body.user_id, check)
+            if check is not None else None
+        )
         if node_id is None:
             raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
         if check.format == "mc_reason" and not body.selected_option:

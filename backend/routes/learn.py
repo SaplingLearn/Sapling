@@ -381,7 +381,10 @@ async def _continuation_text(
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
-            session_id=_usage_session_id(
+            # #117: the session-owner read hops off the event loop (a thread of its
+        # own: a ready session's turn takes no request-threadpool token, #756)
+            session_id=await asyncio.to_thread(
+                _usage_session_id,
                 getattr(carried.get("deps"), "session_id", None),
                 getattr(carried.get("deps"), "user_id", None),
             ),
@@ -1221,10 +1224,13 @@ async def _chat_via_agent(
     )
 
     try:
+        run = await agent.run(user_message, **run_kwargs)
         result = record_agent_usage(
-            await agent.run(user_message, **run_kwargs),
+            run,
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
-            session_id=_usage_session_id(session_id, deps.user_id),
+            # #117: the session-owner read hops off the event loop (a thread of its
+        # own: a ready session's turn takes no request-threadpool token, #756)
+            session_id=await asyncio.to_thread(_usage_session_id, session_id, deps.user_id),
             request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
@@ -2087,10 +2093,13 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         model_pref=body.model_pref,
     )
 
+    run = await agent.run(assembled, **run_kwargs)
     result = record_agent_usage(
-        await agent.run(assembled, **run_kwargs),
+        run,
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
-        session_id=_usage_session_id(body.session_id, body.user_id),
+        # #117: the session-owner read hops off the event loop (a thread of its
+        # own: a ready session's turn takes no request-threadpool token, #756)
+        session_id=await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id),
         request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone

@@ -67,5 +67,8 @@ def test_every_body_sourced_legacy_usage_site_goes_through_the_owner_check():
     import inspect
 
     src = inspect.getsource(learn)
-    # /chat (JSON via _chat_via_agent), /chat/stream, /action and the continuation run
-    assert src.count("session_id=_usage_session_id(") == 4
+    # /chat (JSON via _chat_via_agent), /chat/stream, /action and the continuation run;
+    # #117: the three on an async run site hop the owner read off the event loop
+    assert src.count("session_id=_usage_session_id(") == 1
+    assert src.count("session_id=await asyncio.to_thread(_usage_session_id,") == 2
+    assert src.count("session_id=await asyncio.to_thread(\n                _usage_session_id,") == 1
