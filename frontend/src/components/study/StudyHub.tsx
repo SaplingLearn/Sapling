@@ -661,13 +661,25 @@ export function StudyHub({
           </div>
           {/* In flow under the legend (the design pins it absolute at the
               column bottom, which covers the legend chips once a real course
-              has more than one row of content). */}
-          {warnLeft && focus && (
-            <div data-testid="focus-gap-warning" style={{ marginTop: -8, display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, color: "#6B4E12" }}>
-              <WarnIcon />
-              <span><strong style={{ fontWeight: 700 }}>{focus.name}</strong> · {focus.gap}</span>
-            </div>
-          )}
+              has more than one row of content). The slot is ALWAYS reserved at
+              a fixed two-line height, filled or empty, so picking a concept
+              with or without a prerequisite gap never changes the band's
+              height and the roadmap below never moves. Longer text clamps to
+              two lines; the full sentence is on hover. */}
+          <div aria-hidden={!(warnLeft && focus) || undefined} style={{ marginTop: -8, height: 61, flexShrink: 0 }}>
+            {warnLeft && focus && (
+              <div
+                data-testid="focus-gap-warning"
+                title={`${focus.name} · ${focus.gap}`}
+                style={{ height: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.45, color: "#6B4E12" }}
+              >
+                <WarnIcon />
+                <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>
+                  <strong style={{ fontWeight: 700 }}>{focus.name}</strong> · {focus.gap}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {focus ? (
