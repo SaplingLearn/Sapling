@@ -11,6 +11,13 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
+import { useFlagMap } from "@/context/FlagsContext";
+import {
+  recoverRealtimeAuth,
+  superviseChannel,
+  useRealtimeAuth,
+  type RealtimeAuthMode,
+} from "@/lib/realtimeAuth";
 import { humanizeError } from "@/lib/errorMessage";
 import {
   getUserRooms,
@@ -83,6 +90,35 @@ type RealtimeMsgAction =
   | { type: "ignore" }
   | { type: "refetch" }
   | { type: "applyOwnFlags"; id: string; is_deleted: boolean; edited_at: string | null };
+
+/** The Realtime client the token lifecycle drives (stable for the hook). */
+function realtimeClient() {
+  return supabaseClient()?.realtime ?? null;
+}
+
+/**
+ * RLS step 2e (#115): how the study-room channels (room_messages + presence)
+ * may join right now.
+ *   - `wait`: join nothing yet. Flags still loading (so a flagged student
+ *     never first joins with the anon key), or flag on with no applied token
+ *     (first fetch, or the last token expired): REST-only until one lands.
+ *   - `anon`: today's subscription with the anon key, unchanged. Flag off,
+ *     or flag on but the token is permanently unavailable (404/503).
+ *   - `token`: the minted token is applied; join, and re-join on loss.
+ */
+export type RoomRealtimePlan = "wait" | "anon" | "token";
+
+export function planRoomRealtime(
+  flagsReady: boolean,
+  realtimeRls: boolean,
+  authMode: RealtimeAuthMode,
+): RoomRealtimePlan {
+  if (!flagsReady) return "wait";
+  if (!realtimeRls) return "anon";
+  if (authMode === "token") return "token";
+  if (authMode === "anon") return "anon";
+  return "wait";
+}
 
 export function planMessageRealtimeAction(
   event: "INSERT" | "UPDATE",
@@ -522,7 +558,14 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
   }
 }
 
-function RoomChat({ roomId, members }: { roomId: string; members: { user_id: string; name: string }[] }) {
+function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
+  roomId: string;
+  members: { user_id: string; name: string }[];
+  /** RLS step 2e: owned by the Social screen, so room/tab switches keep the token. */
+  realtimePlan: RoomRealtimePlan;
+  /** Bumps each time a token is (re)applied after a gap: re-join then. */
+  realtimeEpoch: number;
+}) {
   const { userId, userName } = useUser();
   const toast = useToast();
   const [messages, setMessages] = React.useState<RoomMessageRow[]>([]);
@@ -565,12 +608,16 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
     }
   }, [roomId]);
 
-  // Realtime subscriptions.
+  // Realtime subscriptions. RLS step 2e (#115): `realtimePlan` (Social owns
+  // the token lifecycle) decides how: `anon` is exactly the subscription from
+  // before the flag existed; `token` joins on the minted token and re-joins
+  // whenever Realtime drops the channel (it closes it once the token expires).
   React.useEffect(() => {
+    if (realtimePlan === "wait") return;
     const supa = supabaseClient();
     if (!supa) return;
 
-    const channel = supa
+    const build = () => supa
       .channel(`room:${roomId}`)
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
@@ -596,45 +643,84 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 : m,
             ));
           }
-        })
+        });
       // #231: the room_reactions realtime subscription was dead code — the
       // table is not in the supabase_realtime publication, so these handlers
       // never fired. Removed. Reactions still update on load/refresh via REST;
       // live reactions can be restored post-RLS by publishing room_reactions
       // with a membership-scoped policy (see
       // docs/security/realtime-jwt-bridge-design.md).
-      .subscribe();
 
-    return () => { supa.removeChannel(channel); };
-  }, [roomId, refreshLatest, userId]);
+    if (realtimePlan === "anon") {
+      const channel = build().subscribe();
+      return () => { supa.removeChannel(channel); };
+    }
+    return superviseChannel({
+      topic: `room:${roomId}`,
+      create: build,
+      remove: (channel) => supa.removeChannel(channel),
+      // Every (re)join starts after messages may have been sent: catch up
+      // (the merge dedups).
+      onSubscribed: () => { void refreshLatest(); },
+      onLost: () => recoverRealtimeAuth(),
+    });
+  }, [roomId, refreshLatest, userId, realtimePlan, realtimeEpoch]);
 
-  // Presence / typing channel.
+  // Presence / typing channel. Same plan: `setAuth` is global, so under the
+  // flag this channel carries the minted token too and is dropped with it.
   React.useEffect(() => {
+    if (realtimePlan === "wait") return;
     const supa = supabaseClient();
     if (!supa || !userId) return;
-    const ch = supa.channel(`presence:${roomId}`, { config: { presence: { key: userId } } });
-    ch
-      .on("presence", { event: "sync" }, () => {
-        const state = ch.presenceState();
-        const typers = new Set<string>();
-        Object.entries(state).forEach(([uid, arr]: [string, any]) => {
-          if (uid === userId) return;
-          const p = arr?.[0];
-          if (p?.typing && Date.now() - (p.last || 0) < 3000) typers.add(p.name || uid);
+    const build = () => {
+      const ch = supa.channel(`presence:${roomId}`, { config: { presence: { key: userId } } });
+      return ch
+        .on("presence", { event: "sync" }, () => {
+          const state = ch.presenceState();
+          const typers = new Set<string>();
+          Object.entries(state).forEach(([uid, arr]: [string, any]) => {
+            if (uid === userId) return;
+            const p = arr?.[0];
+            if (p?.typing && Date.now() - (p.last || 0) < 3000) typers.add(p.name || uid);
+          });
+          setTypingUsers(typers);
         });
-        setTypingUsers(typers);
-      })
-      .subscribe(async (status: string) => {
-        if (status === "SUBSCRIBED") {
-          await ch.track({ name: userName || "Anonymous", typing: false, last: Date.now() });
-        }
-      });
-    typingChannelRef.current = ch;
+    };
+    const track = (ch: ReturnType<typeof build>) =>
+      ch.track({ name: userName || "Anonymous", typing: false, last: Date.now() });
+
+    if (realtimePlan === "anon") {
+      const ch = build();
+      ch
+        .subscribe(async (status: string) => {
+          if (status === "SUBSCRIBED") {
+            await track(ch);
+          }
+        });
+      typingChannelRef.current = ch;
+      return () => {
+        ch.unsubscribe();
+        typingChannelRef.current = null;
+      };
+    }
+    const stop = superviseChannel({
+      topic: `presence:${roomId}`,
+      create: build,
+      remove: (ch) => supa.removeChannel(ch),
+      onSubscribed: (ch) => {
+        typingChannelRef.current = ch;
+        void track(ch);
+      },
+      onLost: () => {
+        typingChannelRef.current = null;
+        return recoverRealtimeAuth();
+      },
+    });
     return () => {
-      ch.unsubscribe();
+      stop();
       typingChannelRef.current = null;
     };
-  }, [roomId, userId, userName]);
+  }, [roomId, userId, userName, realtimePlan, realtimeEpoch]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -1456,6 +1542,14 @@ function SchoolDirectory() {
 export function Social() {
   const search = useSearchParams();
   const { userId, userReady } = useUser();
+  // RLS step 2e (#115): the Realtime token lifecycle lives here, not in the
+  // per-room RoomChat, so a room or tab switch neither reverts to the anon
+  // key nor re-mints. Flag off: no token request at all.
+  const { flags, ready: flagsReady } = useFlagMap();
+  const realtimeRls = flags.realtime_rls === "on";
+  const realtimeAuth = useRealtimeAuth(flagsReady && realtimeRls, realtimeClient);
+  const realtimePlan = planRoomRealtime(flagsReady, realtimeRls, realtimeAuth.mode);
+  const realtimeEpoch = realtimePlan === "token" ? realtimeAuth.epoch : 0;
   const [rooms, setRooms] = React.useState<Room[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<Tab>("chat");
@@ -1524,7 +1618,15 @@ export function Social() {
             </div>
             {/* #764: keyed by room so replyTo, edit state, matches and any
                 in-flight load reset on a room switch instead of leaking. */}
-            {tab === "chat" && <RoomChat key={active.id} roomId={active.id} members={members} />}
+            {tab === "chat" && (
+              <RoomChat
+                key={active.id}
+                roomId={active.id}
+                members={members}
+                realtimePlan={realtimePlan}
+                realtimeEpoch={realtimeEpoch}
+              />
+            )}
             {tab === "overview" && <RoomOverview key={active.id} roomId={active.id} onChange={load} />}
             {tab === "match" && <StudyMatch key={active.id} roomId={active.id} />}
             {tab === "activity" && <RoomActivity key={active.id} roomId={active.id} />}

@@ -87,19 +87,36 @@ export function WrittenAnswer({
 }: WrittenAnswerProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
+  /** Where a key just asked the cursor to go, once its text is in the input. */
+  const pendingCaret = React.useRef<{ value: string; caret: number } | null>(null);
+
+  // Writing the new value into a controlled input puts the cursor at its end.
+  // Move it in the same commit, before the browser runs another event: a
+  // requestAnimationFrame here let the next keystroke land first (typing
+  // "x" right after "( )" gave "2()x", then the cursor jumped back inside).
+  React.useLayoutEffect(() => {
+    const pending = pendingCaret.current;
+    const input = inputRef.current;
+    if (!pending || !input || input.value !== pending.value) return;
+    pendingCaret.current = null;
+    input.focus();
+    input.setSelectionRange(pending.caret, pending.caret);
+  });
 
   /** Put `key` in at the cursor (replacing any selection) and keep typing. */
   const insert = (key: Key) => {
     const input = inputRef.current;
     const start = input?.selectionStart ?? value.length;
     const end = input?.selectionEnd ?? value.length;
-    onChange(value.slice(0, start) + key.insert + value.slice(end));
+    const next = value.slice(0, start) + key.insert + value.slice(end);
     const caret = start + (key.caret ?? key.insert.length);
-    // After React has written the new value back into the input.
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(caret, caret);
-    });
+    if (next === value) {
+      // A selection replaced by the same text: no re-render will follow.
+      input?.setSelectionRange(caret, caret);
+      return;
+    }
+    pendingCaret.current = { value: next, caret };
+    onChange(next);
   };
 
   const readBack = (() => {
@@ -146,7 +163,11 @@ export function WrittenAnswer({
         maxLength={2000}
         value={value}
         disabled={disabled}
-        onChange={event => onChange(event.target.value)}
+        onChange={event => {
+          // Typing wins over a key's cursor move that never got applied.
+          pendingCaret.current = null;
+          onChange(event.target.value);
+        }}
         onKeyDown={event => {
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();
