@@ -11,6 +11,7 @@ course_offerings, enrollments) and the route's gradebook queries all resolve
 against the same canned dataset. Mocks live only at the ``table()`` boundary;
 the real Pydantic + service + resolver code runs.
 """
+import contextlib
 import copy
 from unittest.mock import patch
 
@@ -80,13 +81,23 @@ def _factory(rows_by_table, recorder):
     return make
 
 
+@contextlib.contextmanager
+def _patch_gradebook_tables(f):
+    """The gradebook's table() lookups: the route plus the services/gradebook
+    modules its loaders and syllabus apply moved to (#118)."""
+    with patch("routes.gradebook.table", side_effect=f), \
+         patch("services.gradebook.enrollments.table", side_effect=f), \
+         patch("services.gradebook.syllabus.table", side_effect=f):
+        yield
+
+
 def _patched(rows_by_table, recorder=None):
     """Patch the table() boundary in both the route and the resolver."""
     recorder = recorder if recorder is not None else []
     f = _factory(rows_by_table, recorder)
     return (
         patch("routes.gradebook.require_self", return_value=None),
-        patch("routes.gradebook.table", side_effect=f),
+        _patch_gradebook_tables(f),
         patch("services.academics.table", side_effect=f),
         recorder,
     )
