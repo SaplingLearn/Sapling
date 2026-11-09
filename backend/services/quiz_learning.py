@@ -94,16 +94,16 @@ class _EdgesRead:
 
 
 def _nodes(user_id: str, course_id: str | None) -> list[_Node]:
-    """The student's concept nodes (no subject roots), in one course or all."""
+    """The student's concept nodes, in one course or all. Every stored
+    `graph_nodes` row is a concept: a subject root is never stored, only drawn
+    by the graph read (graph_service.get_graph)."""
     filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         filters["course_id"] = f"eq.{course_id}"
     return [
         _Node(row["id"], row.get("concept_name") or "", row.get("course_id"))
-        for row in page_all(
-            _NodesRead(), "id,concept_name,course_id,is_subject_root", filters=filters, order="id"
-        )
-        if row.get("id") and not row.get("is_subject_root")
+        for row in page_all(_NodesRead(), "id,concept_name,course_id", filters=filters, order="id")
+        if row.get("id")
     ]
 
 

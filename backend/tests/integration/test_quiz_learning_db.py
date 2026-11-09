@@ -22,8 +22,7 @@ USER = "rich-user-active"
 
 def _node(db_conn) -> str:
     row = db_conn.execute(
-        "SELECT id FROM graph_nodes WHERE user_id = %s AND NOT coalesce(is_subject_root, false) "
-        "ORDER BY id LIMIT 1",
+        "SELECT id FROM graph_nodes WHERE user_id = %s ORDER BY id LIMIT 1",
         (USER,),
     ).fetchone()
     if row is None:
