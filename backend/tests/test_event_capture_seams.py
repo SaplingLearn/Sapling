@@ -1192,7 +1192,7 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
-        patch("routes.learn.table", side_effect=_learn_table_factory()),
+        patch("routes.learn.table", side_effect=with_async_twins(_learn_table_factory())),
         patch("routes.learn.agent_for_mode", return_value=agent),
     ):
         r = client.post("/api/learn/chat", json={
@@ -1222,7 +1222,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
         from services.agent_events import SaplingEvent
 
         yield SaplingEvent(type="status", step="start", message="Starting.")
-        kwargs["on_complete"]("Hi", {}, [])
+        await kwargs["on_complete"]("Hi", {}, [])
         yield SaplingEvent(
             type="done", step="reply", message="Complete.",
             data={"reply": "Hi", "graph_update": {}, "mastery_changes": []},
@@ -1235,7 +1235,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
+        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1339,7 +1339,7 @@ def test_end_session_emits_session_ended(sink):
         mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
-    with patch("routes.learn.table", side_effect=factory):
+    with patch("routes.learn.table", side_effect=with_async_twins(factory)):
         r = client.post("/api/learn/end-session", json={
             "session_id": "s-ended", "user_id": "user_andres",
         })
@@ -1476,7 +1476,7 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
         patch.object(learn_routes, "stream_agent_turn", fake_stream),
         patch.object(learn_routes, "_consume_pending"),
         patch.object(learn_routes, "require_session_owner"),
-        patch.object(learn_routes, "table", side_effect=_learn_table_factory()),
+        patch.object(learn_routes, "table", side_effect=with_async_twins(_learn_table_factory())),
         patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
         patch.object(learn_routes, "save_message"),
     ):

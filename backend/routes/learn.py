@@ -37,12 +37,22 @@ from services.streak_service import touch_streak_safe
 from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
-    discard_pending,
+    aget_pending,
+    amaterialize_stored,
+    araise_if_discarded,
+    arequire_owned_open,
+    arequire_session_open,
+    arequire_session_owner,
+    astash_pending,
+    astored,
+    discard_if_pending,
     discarded_reason,
+    elapsed_minutes as _elapsed_minutes,
     materialization_lock,
     raise_if_discarded,
-    require_session_open,
+    rename_pending,
     require_session_owner,
+    row_may_exist as _session_row_may_exist,
     session_owned_by,
     stash_pending,
 )
@@ -333,7 +343,7 @@ async def _continuation_text(
     return _new_run_text(result).strip() or None
 
 
-def _get_course_id_for_topic(topic: str, user_id: str) -> str:
+async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     """
     Find the course_id associated with a topic/concept for a user.
     First checks if topic matches a course_code or course_name,
@@ -351,7 +361,7 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     # offering_id → course_offerings.course_id → courses. Match the topic against
     # the abstract course's code/name and return the abstract course_id.
     try:
-        enrolled = table("enrollments").select(
+        enrolled = await table("enrollments").aselect(
             "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
             filters={"user_id": f"eq.{user_id}"},
         )
@@ -379,7 +389,7 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     
     # Fallback: find via graph_nodes - look for nodes matching topic
     # that have a course_id
-    node_rows = table("graph_nodes").select(
+    node_rows = await table("graph_nodes").aselect(
         "course_id",
         filters={
             "user_id": f"eq.{user_id}",
@@ -392,7 +402,7 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             return row["course_id"]
     
     # Try matching on subject field (legacy support)
-    subject_rows = table("graph_nodes").select(
+    subject_rows = await table("graph_nodes").aselect(
         "course_id",
         filters={
             "user_id": f"eq.{user_id}",
@@ -407,16 +417,22 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     return ""
 
 
-def _get_session_offering_id(session_id: str) -> str:
+async def _get_session_offering_id(session_id: str) -> str:
     """Get the offering_id a session is scoped to, if any.
 
     Sessions key on the offering (0025); the abstract course id (the graph
     key) is derived from it via ``offering_course_id`` where needed.
     """
-    rows = table("sessions").select("offering_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    rows = await table("sessions").aselect("offering_id", filters={"id": f"eq.{session_id}"}, limit=1)
     if rows and rows[0].get("offering_id"):
         return rows[0]["offering_id"]
     return ""
+
+
+async def _session_course_id(session_id: str) -> str | None:
+    """The abstract course (the graph key) behind a session's offering."""
+    offering_id = await _get_session_offering_id(session_id)
+    return await run_in_threadpool(offering_course_id, offering_id) if offering_id else ""
 
 
 def _get_course_info(course_id: str) -> dict:
@@ -471,7 +487,7 @@ def _get_catalog_chunk(course_code: str) -> str:
     return ""
 
 
-def _load_message_history(session_id: str, *, exclude_id: str | None = None) -> list:
+async def _load_message_history(session_id: str, *, exclude_id: str | None = None) -> list:
     """Load the prior conversation as Pydantic AI `ModelMessage` objects.
 
     Reads the encrypted `messages` rows, decrypts at the boundary, and
@@ -497,7 +513,7 @@ def _load_message_history(session_id: str, *, exclude_id: str | None = None) -> 
     earlier attempt that persisted it and then failed (#761) — it is this
     turn's message, not prior history, so it must not be sent twice.
     """
-    rows = table("messages").select(
+    rows = await table("messages").aselect(
         "id,role,content",
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
@@ -520,7 +536,18 @@ def _load_message_history(session_id: str, *, exclude_id: str | None = None) -> 
     return history
 
 
-def save_message(
+def _message_row(session_id: str, role: str, content: str, graph_update, message_id) -> dict:
+    return {
+        "id": message_id or str(uuid.uuid4()),
+        "session_id": session_id,
+        "role": role,
+        "content": encrypt_if_present(content),
+        "graph_update_json": graph_update if graph_update else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def save_message(
     session_id: str, role: str, content: str, graph_update: dict = None,
     *, message_id: str | None = None,
 ):
@@ -533,19 +560,18 @@ def save_message(
     write idempotent — a retried turn re-writes the same id and the duplicate
     is ignored, so a retry after a partial persist never duplicates the row.
     """
-    raise_if_discarded(session_id)
-    row = {
-        "id": message_id or str(uuid.uuid4()),
-        "session_id": session_id,
-        "role": role,
-        "content": encrypt_if_present(content),
-        "graph_update_json": graph_update if graph_update else None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
+    await araise_if_discarded(session_id)
+    row = _message_row(session_id, role, content, graph_update, message_id)
     if message_id:
-        table("messages").upsert(row, on_conflict="id", ignore_duplicates=True)
+        await table("messages").aupsert(row, on_conflict="id", ignore_duplicates=True)
     else:
-        table("messages").insert(row)
+        await table("messages").ainsert(row)
+
+
+def save_message_sync(session_id: str, role: str, content: str, graph_update: dict = None) -> None:
+    """`save_message` for `_consume_pending`, which runs in the threadpool."""
+    raise_if_discarded(session_id)
+    table("messages").insert(_message_row(session_id, role, content, graph_update, None))
 
 
 #: Namespace for turn-derived message ids (#761). Any fixed UUID works; it
@@ -562,7 +588,7 @@ def _turn_message_id(session_id: str, turn_id: str, role: str) -> str:
     return str(uuid.uuid5(_TURN_MESSAGE_NS, f"{session_id}:{turn_id}:{role}"))
 
 
-def _persisted_turn(session_id: str, turn_id: str | None) -> dict | None:
+async def _persisted_turn(session_id: str, turn_id: str | None) -> dict | None:
     """The stored result of a turn that already persisted, or None (#761).
 
     A client that lost a turn's `done` (cancel, idle timeout, dropped
@@ -574,7 +600,7 @@ def _persisted_turn(session_id: str, turn_id: str | None) -> dict | None:
     """
     if not turn_id:
         return None
-    rows = table("messages").select(
+    rows = await table("messages").aselect(
         "content,graph_update_json",
         filters={"id": f"eq.{_turn_message_id(session_id, turn_id, 'assistant')}"},
         limit=1,
@@ -613,27 +639,6 @@ def get_user_name(user_id: str) -> str:
     return get_display_name(user_id) or "Student"
 
 
-def _parse_utc(iso: str) -> datetime:
-    parsed = datetime.fromisoformat(iso)
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-
-
-def _elapsed_minutes(started_at_iso: str, *, until: str | None = None) -> int:
-    """Whole minutes since ``started_at_iso``, robust to both timestamp shapes
-    in the wild: tz-aware ISO (TIMESTAMPTZ reads via PostgREST, and every write
-    after the #248 sweep) and legacy naive strings (pre-sweep ``utcnow()``
-    writes), which are UTC by construction. The old inline
-    ``utcnow() - fromisoformat(...)`` raised TypeError on the aware shape and
-    silently reported 0. Returns 0 for anything unparseable. ``until`` (an
-    ISO timestamp, e.g. the stored ended_at) replaces "now" as the end."""
-    try:
-        started = _parse_utc(started_at_iso)
-        end = _parse_utc(until) if until else datetime.now(timezone.utc)
-        return int((end - started).total_seconds() / 60)
-    except Exception:
-        return 0
-
-
 def _consume_pending(session_id: str, user_id: str) -> bool:
     """If session was started lazily, persist session row + first assistant message before user/chat.
 
@@ -641,9 +646,9 @@ def _consume_pending(session_id: str, user_id: str) -> bool:
     second line of defence and runs before anything is written, so a
     mismatched caller can never destroy or claim the owner's pending session.
 
-    Concurrency (CodeRabbit on #709): sync routes such as /mode-switch run in
-    FastAPI's threadpool, so two of the owner's requests can arrive while the
-    session is still pending. Materialisation is serialised per session id by
+    Concurrency (CodeRabbit on #709): every turn route runs this in FastAPI's
+    threadpool (`_consume_pending_off_loop`), so two of the owner's requests
+    can arrive while the session is still pending. Materialisation is serialised per session id by
     ``materialization_lock``; the pending entry is removed only AFTER the
     session row and the initial assistant message are written. So:
 
@@ -725,7 +730,7 @@ def _consume_pending(session_id: str, user_id: str) -> bool:
                 },
                 content=pending["topic"],
             )
-        save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        save_message_sync(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
         PENDING_SESSIONS.pop(session_id, None)
         return True
 
@@ -740,45 +745,36 @@ async def _consume_pending_off_loop(session_id: str, user_id: str) -> bool:
     not pending takes the inline fast path and never leaves the loop.
     """
     if session_id not in PENDING_SESSIONS:
-        raise_if_discarded(session_id, user_id)
+        await araise_if_discarded(session_id, user_id)
         return False
     return await run_in_threadpool(_consume_pending, session_id, user_id)
 
 
-def _session_row_may_exist(pending: dict | None) -> bool:
-    """True when the session has (or may have) a ``sessions`` row: it is not
-    pending at all, or materialisation already attempted the row write."""
-    return pending is None or bool(pending.get("_row_may_exist"))
-
-
-def _ensure_session_ready(session_id: str, user_id: str) -> bool:
-    """For /mode-switch (a sync route, already in the threadpool): materialize
-    the lazy session if still pending. True if THIS call materialised it."""
-    return _consume_pending(session_id, user_id)
-
-
-def _require_turn_session(session_id: str, user_id: str) -> None:
+async def _open_turn_session(session_id: str, user_id: str) -> None:
     """The entry checks every turn route (/chat, /chat/stream, /action,
     /mode-switch) runs before touching a session (#761): not discarded,
-    owned by the caller, and — once materialised — not ended.
+    owned by the caller, materialised if still pending, and — once
+    materialised — not ended (409).
 
     The tombstone check comes first so a session ended while still pending
     answers 409 SESSION_ENDED rather than the bare 404 the ownership check
-    would give a session that has no row and no pending entry.
+    would give a session that has no row and no pending entry. A ready
+    session never reaches `_consume_pending` (pinned in
+    test_learn_session_ownership.py).
+
+    With `stateless_tutor_sessions` on (#117) a session not pending in THIS
+    process goes to the table: one atomic call answers tombstones and
+    materialises a pending session, one `sessions` read the rest.
     """
-    raise_if_discarded(session_id, user_id)
-    require_session_owner(session_id, user_id)
-
-
-async def _open_turn_session(session_id: str, user_id: str) -> None:
-    """Async-route twin of the sync sequence in /mode-switch: entry checks,
-    materialise if pending, then refuse an ended session (409)."""
-    _require_turn_session(session_id, user_id)
+    if session_id not in PENDING_SESSIONS and await astored():
+        if not await amaterialize_stored(session_id, user_id):
+            await arequire_owned_open(session_id, user_id)
+        return
+    await araise_if_discarded(session_id, user_id)
+    await arequire_session_owner(session_id, user_id)
     if await _consume_pending_off_loop(session_id, user_id):
         return  # materialised just now, with ended_at NULL
-    # Inline, like the ownership read above: a ready session takes no
-    # threadpool hop (pinned in test_learn_session_ownership.py).
-    require_session_open(session_id)
+    await arequire_session_open(session_id)
 
 
 # Guardrail → HTTP status mapping (the notes precedent — routes/notes.py::
@@ -875,15 +871,16 @@ async def _start_session_agent(
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; the session row keys on the
     # offering `_session_offering` picks (a client-named course is gated, #115).
-    course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
-    offering_id = _session_offering(body, course_id)
+    course_id = body.course_id or await _get_course_id_for_topic(body.topic, body.user_id)
+    offering_id = await run_in_threadpool(_session_offering, body, course_id)
 
     user_message = (
         f"Student wants to learn about: {body.topic}\n\n"
         "Begin the session with a warm greeting and your first question or explanation."
     )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps = await run_in_threadpool(
+        _prepare_chat_run,
         user_id=body.user_id,
         session_id=session_id,
         course_id=course_id,
@@ -948,7 +945,7 @@ async def _start_session_agent(
 
     # Lazy-session contract preserved: nothing hits `sessions` until the
     # first chat turn calls _consume_pending — exactly once per session_id.
-    stash_pending(session_id, {
+    await astash_pending(session_id, {
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
@@ -964,7 +961,7 @@ async def _start_session_agent(
         "reply": reply,
         "graph_update": graph_update,
         "mastery_changes": list(deps.mastery_changes),
-        "graph_state": get_graph(body.user_id),
+        "graph_state": await run_in_threadpool(get_graph, body.user_id),
     }
 
 
@@ -1110,7 +1107,8 @@ async def _chat_via_agent(
     need this guard rail. Keeping the constraint in-band rather than
     branching the agent surface keeps the agent definition stable.
     """
-    agent, user_message, run_kwargs, deps = _prepare_chat_run(
+    agent, user_message, run_kwargs, deps = await run_in_threadpool(
+        _prepare_chat_run,
         user_id=user_id,
         session_id=session_id,
         course_id=course_id,
@@ -1213,7 +1211,7 @@ def _turn_row_ids(body: ChatBody) -> tuple[str | None, str | None]:
     )
 
 
-def _save_turn_rows(
+async def _save_turn_rows(
     body: ChatBody, reply: str, graph_update: dict | None,
     *, user_row_id: str | None, assistant_row_id: str | None,
 ) -> None:
@@ -1227,10 +1225,10 @@ def _save_turn_rows(
     failure is stamped ``sapling_wrote`` — the same flag the agent helpers
     use for tool writes — and the stream reports ``retryable: False``.
     """
-    save_message(body.session_id, "user", body.message, message_id=user_row_id)
+    await save_message(body.session_id, "user", body.message, message_id=user_row_id)
     try:
-        save_message(body.session_id, "assistant", reply, graph_update,
-                     message_id=assistant_row_id)
+        await save_message(body.session_id, "assistant", reply, graph_update,
+                           message_id=assistant_row_id)
     except Exception as exc:
         if not body.turn_id:
             exc.sapling_wrote = True
@@ -1270,14 +1268,14 @@ async def _chat_turn_json(
     )
 
     # The session keys on the offering; the agent's graph tools key on the
-    # abstract course derived from it.
-    offering_id = _get_session_offering_id(body.session_id)
-    course_id = offering_course_id(offering_id) if offering_id else ""
-    # Load prior turns BEFORE writing the new user row, so the
-    # message_history we hand the agent contains only the conversation
-    # state up to (but not including) the current turn.
+    # abstract course derived from it. Load prior turns BEFORE writing the
+    # new user row, so the message_history we hand the agent contains only
+    # the conversation state up to (but not including) the current turn.
     user_row_id, assistant_row_id = _turn_row_ids(body)
-    message_history = _load_message_history(body.session_id, exclude_id=user_row_id)
+    course_id, message_history = await asyncio.gather(
+        _session_course_id(body.session_id),
+        _load_message_history(body.session_id, exclude_id=user_row_id),
+    )
 
     response, ran_on = await _chat_via_agent(
         user_id=body.user_id,
@@ -1292,8 +1290,8 @@ async def _chat_turn_json(
     )
 
     # Encryption happens inside save_message (`encrypt_if_present`).
-    _save_turn_rows(body, response["reply"], response.get("graph_update") or None,
-                    user_row_id=user_row_id, assistant_row_id=assistant_row_id)
+    await _save_turn_rows(body, response["reply"], response.get("graph_update") or None,
+                          user_row_id=user_row_id, assistant_row_id=assistant_row_id)
 
     # #117: one chat.message_sent per persisted turn. The message text is
     # fingerprinted via content= — it never enters a payload. request_id is
@@ -1320,7 +1318,7 @@ async def chat(body: ChatBody, request: Request):
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
     # that turn already persisted, answer with it instead of running it again.
-    replay = _persisted_turn(body.session_id, body.turn_id)
+    replay = await _persisted_turn(body.session_id, body.turn_id)
     if replay is not None:
         return replay
     return await _agent_turn_or_http_error(
@@ -1352,21 +1350,23 @@ async def chat_stream(body: ChatBody, request: Request):
 
     # #761: a re-sent turn that already persisted replays its stored reply
     # over the same event vocabulary instead of running again.
-    replay = _persisted_turn(body.session_id, body.turn_id)
+    replay = await _persisted_turn(body.session_id, body.turn_id)
     if replay is not None:
         return EventSourceResponse(
             _replay_events(replay),
             headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
         )
 
-    offering_id = _get_session_offering_id(body.session_id)
-    course_id = offering_course_id(offering_id) if offering_id else ""
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
     user_row_id, assistant_row_id = _turn_row_ids(body)
-    message_history = _load_message_history(body.session_id, exclude_id=user_row_id)
+    course_id, message_history = await asyncio.gather(
+        _session_course_id(body.session_id),
+        _load_message_history(body.session_id, exclude_id=user_row_id),
+    )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps = await run_in_threadpool(
+        _prepare_chat_run,
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -1386,22 +1386,22 @@ async def chat_stream(body: ChatBody, request: Request):
     #: What the streamed run actually ran on — set by `_usage` (on_usage runs
     #: before on_complete), read by `_persist` for the #640 router's event.
     ran: dict = {}
-    loop = asyncio.get_running_loop()
 
-    def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
+    async def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Mirrors chat()'s ordering: user row, then assistant row. Runs only
         # after the agent run completes, so a disconnect mid-generation
-        # persists nothing. Encryption happens inside save_message. Runs in
-        # a worker thread (stream_agent_turn), so it never blocks the loop.
-        _save_turn_rows(body, reply, graph_update or None,
-                        user_row_id=user_row_id, assistant_row_id=assistant_row_id)
+        # persists nothing. Encryption happens inside save_message. Async, so
+        # stream_agent_turn shields it: a disconnect from here on still lets
+        # the turn finish persisting (#761).
+        await _save_turn_rows(body, reply, graph_update or None,
+                              user_row_id=user_row_id, assistant_row_id=assistant_row_id)
         # #117: same event as the JSON route, from the on_complete hook so a
         # disconnected mid-generation turn emits nothing. request_id is
         # explicit. The request contextvars (request id, DNT/GPC, request
         # view) DO survive here: Starlette runs the streaming body in a child
         # task whose context was copied before RequestIDMiddleware reset its
-        # own, and `to_thread` copies it again — so the PostHog mirror still
-        # honours DNT/GPC. Pinned by tests/test_sse_request_context.py.
+        # own, and the shielded persist task copies it again — so the PostHog
+        # mirror still honours DNT/GPC. Pinned by tests/test_sse_request_context.py.
         events_service.log_event(
             "chat.message_sent",
             category="usage",
@@ -1412,13 +1412,9 @@ async def chat_stream(body: ChatBody, request: Request):
         )
         # #640: the streamed twin of `_chat_turn_json`'s router call, labelled
         # with the run `_usage` saw (on_usage runs before on_complete).
-        # Handed back to the event loop: the router schedules an asyncio task
-        # (`get_running_loop`), and this hook runs in a worker thread.
         ran_on = ran.get("on") or _ran_on(None, agent, run_kwargs, body.model_pref)
-        loop.call_soon_threadsafe(
-            lambda: _observe_persisted_turn(
-                body, history=message_history, ran_on=ran_on, request_id=request_id,
-            )
+        _observe_persisted_turn(
+            body, history=message_history, ran_on=ran_on, request_id=request_id,
         )
         return {}
 
@@ -1491,15 +1487,16 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     )
     session_id = str(uuid.uuid4())
 
-    course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
-    offering_id = _session_offering(body, course_id)
+    course_id = body.course_id or await _get_course_id_for_topic(body.topic, body.user_id)
+    offering_id = await run_in_threadpool(_session_offering, body, course_id)
 
     user_message = (
         f"Student wants to learn about: {body.topic}\n\n"
         "Begin the session with a warm greeting and your first question or explanation."
     )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps = await run_in_threadpool(
+        _prepare_chat_run,
         user_id=body.user_id,
         session_id=session_id,
         course_id=course_id,
@@ -1653,10 +1650,7 @@ def end_session(body: EndSessionBody, request: Request):
     # row, so it is ended in the DB too, as is one that materialised while
     # we waited. The discard leaves an "ended" tombstone, so a turn racing
     # this end answers 409 instead of writing into a session with no row.
-    popped = None
-    if body.session_id in PENDING_SESSIONS:
-        with materialization_lock(body.session_id):
-            popped = discard_pending(body.session_id, user_id=body.user_id, reason="ended")
+    popped = discard_if_pending(body.session_id, user_id=body.user_id, reason="ended")
     if popped is not None and not _session_row_may_exist(popped):
         return {"summary": empty}
 
@@ -1750,23 +1744,27 @@ def end_session(body: EndSessionBody, request: Request):
 
 
 @router.get("/sessions/{user_id}")
-def list_sessions(user_id: str, request: Request, limit: int = 10):
-    require_self(user_id, request)
-    sessions = table("sessions").select(
+async def list_sessions(user_id: str, request: Request, limit: int = 10):
+    await guard_off_loop(require_self, user_id, request)
+    sessions = await table("sessions").aselect(
         "id,user_id,topic,mode,offering_id,started_at,ended_at",
         filters={"user_id": f"eq.{user_id}"},
         order="started_at.desc",
         limit=limit,
     )
+    # One message-count read per session, concurrently rather than in turn.
+    counts = await asyncio.gather(*(
+        table("messages").aselect("id", filters={"session_id": f"eq.{s['id']}"})
+        for s in sessions
+    ))
     # Sessions key on the offering; the frontend speaks abstract course ids.
     # Map each offering → its abstract course once.
     offering_to_course: dict[str, str | None] = {}
     result = []
-    for s in sessions:
+    for s, msgs in zip(sessions, counts):
         off_id = s.get("offering_id")
         if off_id and off_id not in offering_to_course:
-            offering_to_course[off_id] = offering_course_id(off_id)
-        msgs = table("messages").select("id", filters={"session_id": f"eq.{s['id']}"})
+            offering_to_course[off_id] = await run_in_threadpool(offering_course_id, off_id)
         result.append({
             "id": s["id"],
             "topic": s["topic"],
@@ -1788,17 +1786,10 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
     require_session_owner(session_id, body.user_id)
-    if session_id in PENDING_SESSIONS:
-        with materialization_lock(session_id):
-            pending = PENDING_SESSIONS.get(session_id)
-            if pending is not None:
-                # Rename the copy a later materialisation will write...
-                pending["topic"] = topic
-                if not _session_row_may_exist(pending):
-                    return {"updated": True, "session": {"id": session_id, "topic": topic}}
-                # ...and, since an earlier attempt may already have written
-                # the row (the retry's upsert won't overwrite it), the row too.
-        # Otherwise it materialised while we waited: rename the real row.
+    # A pending session: rename the copy a later materialisation will write
+    # (and the row too if an earlier attempt may already have written it).
+    if rename_pending(session_id, topic):
+        return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
     table("sessions").update(
         {"topic": topic},
@@ -1822,28 +1813,24 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     # its ownership check answers 404 at its next write instead of an FK
     # failure (or, for a pending session, instead of materialising a row the
     # student just deleted).
-    if session_id in PENDING_SESSIONS:
-        with materialization_lock(session_id):
-            popped = discard_pending(session_id, user_id=user_id, reason="deleted")
-        if popped is not None and not _session_row_may_exist(popped):
-            return {"deleted": True}
-        # A row may exist (an attempted materialisation, or one that finished
-        # while we waited): delete it too. Both deletes are no-ops if not.
-    else:
-        discard_pending(session_id, user_id=user_id, reason="deleted")
+    popped = discard_if_pending(session_id, user_id=user_id, reason="deleted", always=True)
+    if popped is not None and not _session_row_may_exist(popped):
+        return {"deleted": True}
+    # A row may exist (an attempted materialisation, one that finished while
+    # we waited, or a live session): delete it. Both deletes are no-ops if not.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
 
 
 @router.get("/sessions/{session_id}/resume")
-def resume_session(session_id: str, request: Request):
-    user_id = get_session_user_id(request)
-    require_session_owner(session_id, user_id)
+async def resume_session(session_id: str, request: Request):
+    user_id = await guard_off_loop(get_session_user_id, request)
+    await arequire_session_owner(session_id, user_id)
     # .get(), not `in` + [...]: a concurrent first turn or delete can drop the
     # entry in between. Gone means it materialised (or was discarded): read
     # the DB below.
-    p = PENDING_SESSIONS.get(session_id)
+    p = await aget_pending(session_id)
     if p is not None:
         now = datetime.now(timezone.utc).isoformat()
         return {
@@ -1866,7 +1853,7 @@ def resume_session(session_id: str, request: Request):
             ],
         }
 
-    session_rows = table("sessions").select(
+    session_rows = await table("sessions").aselect(
         "id,user_id,topic,mode,started_at,ended_at,offering_id",
         filters={"id": f"eq.{session_id}"},
     )
@@ -1876,9 +1863,9 @@ def resume_session(session_id: str, request: Request):
     # Expose the abstract course id (derived from the offering) for the
     # frontend, alongside the stored offering id.
     session = dict(session_rows[0])
-    session["course_id"] = offering_course_id(session.get("offering_id"))
+    session["course_id"] = await run_in_threadpool(offering_course_id, session.get("offering_id"))
 
-    msgs = table("messages").select(
+    msgs = await table("messages").aselect(
         "id,role,content,created_at",
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
@@ -1916,11 +1903,12 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 
     # Session keys on the offering; the graph + shared context key on the
     # abstract course derived from it.
-    offering_id = _get_session_offering_id(body.session_id)
-    course_id = offering_course_id(offering_id) if offering_id else ""
-    message_history = _load_message_history(body.session_id)
+    course_id, message_history = await asyncio.gather(
+        _session_course_id(body.session_id), _load_message_history(body.session_id),
+    )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps = await run_in_threadpool(
+        _prepare_chat_run,
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -1966,7 +1954,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
             )
 
     graph_update = merge_graph_updates(deps.graph_updates)
-    save_message(body.session_id, "assistant", reply, graph_update or None)
+    await save_message(body.session_id, "assistant", reply, graph_update or None)
     return {"reply": reply, "graph_update": graph_update}
 
 
@@ -1980,23 +1968,21 @@ async def action(body: ActionBody, request: Request):
 
 
 @router.post("/mode-switch")
-def mode_switch(body: ModeSwitchBody, request: Request):
-    require_self(body.user_id, request)
+async def mode_switch(body: ModeSwitchBody, request: Request):
+    await guard_off_loop(require_self, body.user_id, request)
     if body.new_mode not in MODE_DISPLAY_NAMES:
         # sessions.mode is CHECK-constrained to these three; refuse before
         # the write rather than surface the constraint as a 500.
         raise HTTPException(status_code=422, detail="Unknown tutor mode")
-    _require_turn_session(body.session_id, body.user_id)
-    if not _ensure_session_ready(body.session_id, body.user_id):
-        require_session_open(body.session_id)
+    await _open_turn_session(body.session_id, body.user_id)
     # #761: the switch is a session state change, not just a message — the
     # stored mode is what the session list and resume report.
-    table("sessions").update(
+    await table("sessions").aupdate(
         {"mode": body.new_mode},
         filters={"id": f"eq.{body.session_id}", "ended_at": "is.null"},
     )
-    student_name = get_user_name(body.user_id).split()[0]
-    session_rows = table("sessions").select(
+    student_name = (await run_in_threadpool(get_user_name, body.user_id)).split()[0]
+    session_rows = await table("sessions").aselect(
         "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
     )
     topic = session_rows[0]["topic"] if session_rows else "this topic"
@@ -2007,5 +1993,5 @@ def mode_switch(body: ModeSwitchBody, request: Request):
         f"Got it, {student_name}! Switching to {mode_label} mode. "
         f"We'll continue with {topic}, let's keep going!"
     )
-    save_message(body.session_id, "assistant", reply)
+    await save_message(body.session_id, "assistant", reply)
     return {"reply": reply}

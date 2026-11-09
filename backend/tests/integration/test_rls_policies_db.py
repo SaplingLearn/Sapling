@@ -59,6 +59,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "llm_budgets",
         "rate_limit_hits", "feature_flags_version",  # #117
         "app_leases",  # #117 wave 3 (stateless_locks)
+        "tutor_pending_sessions",  # #117 stateless_tutor_sessions
     }),
 }
 
