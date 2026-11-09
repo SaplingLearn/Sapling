@@ -23,8 +23,6 @@
     "src/components/screens/Tree.tsx::Tree": 31,
     "src/components/screens/admin/AccountToolsDialog.tsx::AccountToolsDialog": 31,
     "src/components/screens/admin/EmailBroadcasts.tsx::EmailBroadcastsTab": 44,
-    "src/context/UserContext.tsx::UserProvider>fetchProfileData": 31,
-    "src/lib/quiz/machine.ts::reduce": 90,
-    "src/lib/quiz/machine.ts::resumeFrom": 33
+    "src/context/UserContext.tsx::UserProvider>fetchProfileData": 31
   }
 }
