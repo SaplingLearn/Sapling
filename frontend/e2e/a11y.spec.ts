@@ -108,11 +108,11 @@ async function withFields(route: Route, extra: Record<string, unknown>) {
 test("dashboard", async ({ page }) => {
   await page.goto("/dashboard");
   await expect(page.getByTestId("dashboard-plan")).toBeVisible();
-  await expect(page.getByTestId("dashboard-courses-key-toggle")).toBeVisible();
-  await expectAccessible(page, "dashboard");
-  await page.getByTestId("dashboard-courses-key-toggle").click();
+  // #803: the course key is always open (it has no toggle), so the one scan
+  // covers it, once its rows are in.
+  await expect(page.getByTestId("dashboard-courses-key")).toBeVisible();
   await expect(page.getByTestId("dashboard-course-code").first()).toBeVisible();
-  await expectAccessible(page, "dashboard: courses key open");
+  await expectAccessible(page, "dashboard");
 });
 
 test("shell: the top navigation layout, wide and on a phone with its menu open", async ({ page }) => {

@@ -92,8 +92,9 @@ test("written quiz: incorrect answers show their actual response and expected an
     for (const [index, fixture] of cases.entries()) {
       const missed = page.getByTestId(`quiz-missed-${questionIds[index]}`);
       await expect(missed).toBeVisible();
-      await expect(missed).toContainText(`Your answer: ${fixture.answer} · Expected: ${fixture.expected}`);
-      await expect(missed).not.toContainText("You chose Your answer");
+      // #849's wording: a written answer is what was written, never a choice.
+      await expect(missed).toContainText(`You wrote ${fixture.answer} · the answer is ${fixture.expected}`);
+      await expect(missed).not.toContainText("You chose");
     }
     const geometry = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
     expect(geometry.content).toBeLessThanOrEqual(geometry.viewport);
