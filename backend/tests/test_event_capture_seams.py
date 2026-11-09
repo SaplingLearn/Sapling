@@ -27,6 +27,7 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
+from tests.doc_patches import patch_documents
 
 client = TestClient(app)
 
@@ -627,11 +628,11 @@ def _upload_sync():
 
 def test_upload_sync_emits_upload_and_processed(sink):
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
-        patch("routes.documents.process_document", return_value=_doc_result()),
-        patch("routes.documents.table") as t,
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents("process_document", return_value=_doc_result()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []  # no idempotent replay hit
         t.return_value.insert.return_value = [{"id": "doc-1"}]
@@ -671,14 +672,14 @@ def test_upload_sync_agent_failure_emits_upload_but_no_processed(sink):
     NOT fire. document.upload already counted the accepted attempt and
     stays: upload/processed deltas are how the failure rate is measured."""
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
-        patch(
-            "routes.documents.process_document",
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents(
+            "process_document",
             side_effect=RuntimeError("agent pipeline failure"),
         ),
-        patch("routes.documents.table") as t,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _upload_sync()
@@ -696,14 +697,14 @@ def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
     import io
 
     with (
-        patch("routes.documents._validate_user", return_value=None),
-        patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
+        patch_documents("_validate_user", return_value=None),
+        patch_documents("require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value=_DOC_TEXT),
         patch(
             "agents.classifier.classifier_agent.run",
             AsyncMock(side_effect=RuntimeError("agent pipeline failure")),
         ),
-        patch("routes.documents.table") as t,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = client.post(
@@ -1503,16 +1504,14 @@ def test_idempotent_upload_replay_emits_no_second_document_upload(sink):
     """PR #465 review (F3): an X-Request-ID replay short-circuits to the
     persisted document and must NOT count as a second upload attempt — the
     emission sits below the idempotency check on both routes."""
-    import routes.documents as documents_routes
-
     with (
-        patch.object(documents_routes, "_validate_user", return_value=None),
-        patch.object(
-            documents_routes, "_existing_doc_by_request_id",
+        patch_documents("_validate_user", return_value=None),
+        patch_documents(
+            "_existing_doc_by_request_id",
             return_value={"id": "doc-1", "file_name": "a.pdf"},
         ),
-        patch.object(documents_routes, "extract_text_from_file", return_value="text " * 40),
-        patch.object(documents_routes, "require_course_enrollment", return_value="off-1"),
+        patch_documents("extract_text_from_file", return_value="text " * 40),
+        patch_documents("require_course_enrollment", return_value="off-1"),
     ):
         r = client.post(
             "/api/documents/upload/sync",

@@ -50,3 +50,20 @@ def patch_gradescope(name, new=DEFAULT, **kwargs):
     """``patch("routes.gradescope.<name>", ...)`` across routes/gradescope.py
     and services/gradescope/ (credentials, links, sync)."""
     return patch_in(GRADESCOPE_MODULES, name, new, **kwargs)
+
+
+DOCUMENTS_MODULES = (
+    "routes.documents",
+    "services.documents.upload",
+    "services.documents.persistence",
+    "services.documents.post_roll",
+    "services.documents.library",
+    "services.documents.scan",
+    "services.documents.stream",
+)
+
+
+def patch_documents(name, new=DEFAULT, **kwargs):
+    """``patch("routes.documents.<name>", ...)`` across routes/documents.py and
+    services/documents/."""
+    return patch_in(DOCUMENTS_MODULES, name, new, **kwargs)

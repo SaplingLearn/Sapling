@@ -5,7 +5,8 @@ in the threadpool, but an `async def` handler runs ON the event loop: a sync
 `table(...).select(...)` there blocks every request on the replica (and every
 SSE tutor stream) for a whole PostgREST round trip.
 
-This walks the AST of every `routes/*.py` module and flags, inside any
+This walks the AST of every `routes/*.py` module (and of the #118 domain
+packages in ``DOMAIN_PACKAGES``) and flags, inside any
 `async def` (handlers and the module's async helpers alike), an INLINE call to
 
 * a sync verb on a `table(...)` handle (``select``, ``insert``, ...), inline
@@ -151,9 +152,15 @@ def _offenders_in(source: str, rel: str) -> set[tuple[str, str, str]]:
     return out
 
 
+#: Domain packages the #118 splits moved async route helpers into (the
+#: documents library's CRUD over the a* seam, the upload's SSE stream): the
+#: same rule holds there.
+DOMAIN_PACKAGES = (BACKEND / "services" / "documents", BACKEND / "services" / "gradescope")
+
+
 def _all_offenders() -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
-    for path in sorted(ROUTES.glob("*.py")):
+    for path in sorted(ROUTES.glob("*.py")) + [p for d in DOMAIN_PACKAGES for p in sorted(d.glob("*.py"))]:
         found |= _offenders(path)
     return found
 

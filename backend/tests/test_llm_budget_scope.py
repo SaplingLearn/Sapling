@@ -39,6 +39,7 @@ from tests.test_llm_budget import (  # noqa: F401  (fixtures: _fresh is autouse)
     _ResilientFn,
     session_user,
 )
+from tests.doc_patches import patch_documents
 
 
 def _exc():
@@ -359,8 +360,8 @@ def test_an_ocr_budget_refusal_is_the_sync_upload_429():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", side_effect=_exc()),
-        patch("routes.documents.table") as t,
+        patch_documents("extract_text_from_file", side_effect=_exc()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _make_upload()
@@ -376,10 +377,10 @@ def test_an_ocr_budget_refusal_is_the_streamed_upload_terminal_event():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.OCR_ASYNC_ENABLED", True),
-        patch("routes.documents.extract_text_from_file", side_effect=_exc()),
-        patch("routes.documents.process_document") as pipeline,
-        patch("routes.documents.table") as t,
+        patch_documents("OCR_ASYNC_ENABLED", True),
+        patch_documents("extract_text_from_file", side_effect=_exc()),
+        patch_documents("process_document") as pipeline,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         with TestClient(app).stream(

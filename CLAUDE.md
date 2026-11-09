@@ -15,7 +15,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Claude to cla
 ## Repo map
 
 - backend/main.py:87 — FastAPI app + CORS; every router mount lives in the block at :150–169.
-- backend/routes/documents.py — `upload_document` POST `/api/documents/upload` streaming SSE pipeline (+ `/upload/sync` JSON twin) over the classifier/summary/concepts/syllabus agents.
+- backend/routes/documents.py — `upload_document` POST `/api/documents/upload` streaming SSE pipeline (+ `/upload/sync` JSON twin) over the classifier/summary/concepts/syllabus agents. The logic lives in `services/documents/` (#118): `persistence` (`_persist_document`, replay), `stream` (the SSE event stream), `post_roll`, `library` (list/delete/update), `scan` (concept scan); the route re-exports every moved name.
 - backend/routes/learn.py — tutor routes; streamed turns (`POST /api/learn/chat/stream` + `/start-session/stream`) run through `services/chat_stream.py::stream_agent_turn` (#349).
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
 - backend/routes/notes.py:32 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).

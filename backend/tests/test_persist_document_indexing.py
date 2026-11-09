@@ -9,6 +9,7 @@ queue.
 from unittest.mock import MagicMock, patch
 
 from services.encryption import decrypt_if_present
+from tests.doc_patches import patch_documents
 
 
 def _result(confidence=0.91):
@@ -42,8 +43,8 @@ def _persist(*, extracted_text="gradient descent notes", confidence=0.91,
         return m
 
     with (
-        patch("routes.documents.table", side_effect=_table),
-        patch("routes.documents.award_xp_safe"),
+        patch_documents("table", side_effect=_table),
+        patch_documents("award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
     ):
         doc_id, full_row = _persist_document(

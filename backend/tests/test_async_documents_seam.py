@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import routes.documents as documents_routes
+from tests.doc_patches import patch_documents
 from main import app
 from tests.test_async_handlers_off_loop import Wire, wire  # noqa: F401 (fixture)
 
@@ -48,7 +49,7 @@ def test_list_documents(wire, monkeypatch, async_mode):  # noqa: F811
         {"id": "d1", "offering_id": "off-1", "summary": "s", "concept_notes": None},
         {"id": "d2", "offering_id": "off-1", "summary": None, "concept_notes": None},
     ]
-    with patch.object(documents_routes, "offering_course_id", return_value="c1") as resolve:
+    with patch_documents("offering_course_id", return_value="c1") as resolve:
         r = client.get("/api/documents/user/u1")
     assert r.status_code == 200, r.text
     assert [d["course_id"] for d in r.json()["documents"]] == ["c1", "c1"]

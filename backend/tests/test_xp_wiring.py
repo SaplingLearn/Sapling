@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services.xp_service import idempotency_key
+from tests.doc_patches import patch_documents
 
 client = TestClient(app)
 
@@ -204,10 +205,10 @@ class TestDocumentUploadedAward:
         text = ("Sample document body. This gives the upload fixture enough "
                 "extracted text to look like a document that was actually read.")
         with (
-            patch("routes.documents._validate_user", return_value=None),
-            patch("routes.documents.extract_text_from_file", return_value=text),
-            patch("routes.documents.process_document", return_value=_upload_document_result()),
-            patch("routes.documents.table", side_effect=_doc_table_factory({"id": document_id})),
+            patch_documents("_validate_user", return_value=None),
+            patch_documents("extract_text_from_file", return_value=text),
+            patch_documents("process_document", return_value=_upload_document_result()),
+            patch_documents("table", side_effect=_doc_table_factory({"id": document_id})),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post(
