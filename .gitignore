@@ -53,8 +53,10 @@ backend/data/*.json
 Thumbs.db
 
 # ---- LLM code helpers ----
-.claude/
-!.claude/
+# .claude/ holds shared, tracked team tooling (agents/, commands/, skills/).
+# Only the per-machine pieces are ignored.
+.claude/worktrees/
+.claude/settings.local.json
 .cursor/
 .copilot/
 .github/copilot/
@@ -71,6 +73,10 @@ Thumbs.db
 
 # ---- Worktrees ----
 .worktrees/
+
+# ---- Root-level scratch exports ----
+# Reference PDFs belong under docs/; loose PDFs at the root are local scratch.
+/*.pdf
 
 # ---- Local E2E stack run dir (PIDs + logs, scripts/e2e-up.sh, #384) ----
 .e2e/
