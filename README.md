@@ -116,6 +116,7 @@ python3 -m venv venv
 source venv/bin/activate      # fish: source venv/bin/activate.fish
                               # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -r requirements-worker.txt   # optional: Docling/torch OCR for scanned PDFs (worker image only)
 playwright install chromium   # only needed for Gradescope BU SSO sync
 cp .env.local.example .env    # Windows PowerShell: Copy-Item .env.local.example .env
 # fill in GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET

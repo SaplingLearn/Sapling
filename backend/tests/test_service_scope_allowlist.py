@@ -33,6 +33,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "/api/admin/documents admin_documents_router", "admin_service_route"):
         "stuck-index listing + forced re-index (index_* lease, shared chunks)",
     ("main.py", "/api/admin/email admin_email_router", "admin_service_route"): "email_* tables are service-only",
+    ("main.py", "/api/admin/jobs admin_jobs_router", "admin_service_route"):
+        "#116 queue depth + dead letters (jobs is service-only)",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
     ("main.py", "/api/auth auth.router", "service_route"):

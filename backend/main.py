@@ -29,6 +29,7 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_jobs import router as admin_jobs_router
 from routes.admin_email import router as admin_email_router
 from routes.admin_accounts import router as admin_accounts_router
 from routes.admin_account_sync import router as admin_account_sync_router
@@ -436,6 +437,9 @@ app.include_router(flags_router,       prefix="/api/flags")
 # Mounted before the generic admin router so its /accounts paths win.
 app.include_router(admin_accounts_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
 app.include_router(admin_account_sync_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
+# #116: the job queue's depth and dead letters (`jobs` is service-only).
+# Mounted before the generic admin router so /jobs is never shadowed.
+app.include_router(admin_jobs_router,  prefix="/api/admin/jobs", dependencies=_ADMIN_SVC)
 app.include_router(admin_router,       prefix="/api/admin", dependencies=_ADMIN_SVC)
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics", dependencies=_ADMIN_SVC)
 app.include_router(admin_documents_router, prefix="/api/admin/documents", dependencies=_ADMIN_SVC)
