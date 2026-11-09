@@ -23,8 +23,8 @@ from agents.quiz import Quiz, QuizQuestion
 from main import app
 from routes.quiz import CourseMaterial
 from services.encryption import decrypt_json_column, encrypt_json
-from services.quiz_identity import question_hash
-from services.quiz_reserve import missed_question_hashes, recover_questions
+from services.quiz.identity import question_hash
+from services.quiz.reserve import missed_question_hashes, recover_questions
 from tests.db_fakes import with_async_twins
 
 # #117: a sync PostgREST call reached on the event loop raises here.
@@ -146,7 +146,7 @@ def _generate(
     factory = _factory(captured, attempts=attempts, responses=responses)
     with (
         patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("services.quiz_reserve.table", side_effect=factory),
+        patch("services.quiz.reserve.table", side_effect=factory),
         patch("routes.quiz.quiz_agent.run", new=agent_run),
         patch("routes.quiz._course_material", return_value=CourseMaterial()),
         patch("routes.quiz.recent_question_identities", return_value=[]),
@@ -176,7 +176,7 @@ def _lookup(rows, questions):
         m.select.return_value = rows
         return m
 
-    with patch("services.quiz_reserve.table", side_effect=factory):
+    with patch("services.quiz.reserve.table", side_effect=factory):
         return missed_question_hashes(SOURCE_ID, questions)
 
 
@@ -235,7 +235,7 @@ def test_missed_hashes_degrade_to_nothing_when_the_read_fails():
         m.select.side_effect = RuntimeError("PostgREST down")
         return m
 
-    with patch("services.quiz_reserve.table", side_effect=factory):
+    with patch("services.quiz.reserve.table", side_effect=factory):
         found = missed_question_hashes(SOURCE_ID, [_stored("Q1", 1)])
     assert found.hashes == []
     # "Can't tell", not "nothing was recorded" — a failed read must not

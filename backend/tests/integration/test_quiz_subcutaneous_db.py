@@ -66,7 +66,7 @@ def _requires_function_mode():
 def _advertised_difficulties():
     """Read at collection time, straight from the source of truth the route
     and the client both bind to."""
-    from services.quiz_config import quiz_config_payload
+    from services.quiz.config import quiz_config_payload
 
     return quiz_config_payload()["difficulties"]
 

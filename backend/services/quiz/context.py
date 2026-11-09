@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from db.connection import table
 from services.encryption import encrypt_json, decrypt_json_column
-from services.quiz_distractors import DIGEST_SCHEMA_VERSION
+from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 

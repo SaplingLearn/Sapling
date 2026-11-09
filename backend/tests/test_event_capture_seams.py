@@ -759,7 +759,7 @@ def test_quiz_generate_emits_quiz_started(sink):
         # (unreachable) Supabase does — this test asserts on the SCOPE the
         # signals ran with, and letting a live connection error supply it
         # makes the assertion depend on the machine.
-        patch("services.quiz_signals.table", side_effect=factory),
+        patch("services.quiz.signals.table", side_effect=factory),
         patch(
             "routes.quiz.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -824,7 +824,7 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     """F6: the dimensions have to actually vary with the prompt, or they
     measure nothing. Same route, a grounded run with history."""
     from agents.quiz import Quiz, QuizQuestion
-    from services.quiz_repetition import RecentQuestion
+    from services.quiz.repetition import RecentQuestion
 
     fake_quiz = Quiz(questions=[
         QuizQuestion(

@@ -34,7 +34,7 @@ from typing import NamedTuple
 
 from db.connection import table
 from services.encryption import decrypt_json_column
-from services.quiz_identity import normalize_text, wire_question_hash
+from services.quiz.identity import normalize_text, wire_question_hash
 
 logger = logging.getLogger(__name__)
 

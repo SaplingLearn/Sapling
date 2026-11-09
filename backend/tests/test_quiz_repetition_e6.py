@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from services.encryption import encrypt_json
-from services.quiz_identity import question_hash
-from services.quiz_repetition import (
+from services.quiz.identity import question_hash
+from services.quiz.repetition import (
     RECENT_QUESTION_LIMIT,
     recent_question_identities,
 )
@@ -54,7 +54,7 @@ def _table(rows, *, raises=False):
         else:
             m.select.return_value = rows
         return m
-    return patch("services.quiz_repetition.table", side_effect=factory)
+    return patch("services.quiz.repetition.table", side_effect=factory)
 
 
 # ── Happy path ──────────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ def test_query_is_owner_and_concept_scoped_newest_first():
         m.select.side_effect = _select
         return m
 
-    with patch("services.quiz_repetition.table", side_effect=factory):
+    with patch("services.quiz.repetition.table", side_effect=factory):
         recent_question_identities("u1", "n1")
 
     assert captured["table"] == "quiz_attempts"
@@ -159,7 +159,7 @@ def test_incomplete_attempts_count_as_asked():
         m.select.side_effect = _select
         return m
 
-    with patch("services.quiz_repetition.table", side_effect=factory):
+    with patch("services.quiz.repetition.table", side_effect=factory):
         recent_question_identities("u1", "n1")
     assert "completed_at" not in captured["filters"]
 

@@ -41,7 +41,7 @@ import logging
 from typing import NamedTuple
 
 from db.connection import table
-from services.quiz_identity import wire_question_hash
+from services.quiz.identity import wire_question_hash
 
 logger = logging.getLogger(__name__)
 

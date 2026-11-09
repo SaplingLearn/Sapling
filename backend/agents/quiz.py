@@ -28,7 +28,7 @@ from agents.tools.graph_read import (
 )
 from agents.tools.quiz_history import read_recent_quiz_attempts_tool
 from services.prompt_safety import INJECTION_GUARD_PROMPT
-from services.quiz_config import QUIZ_MAX_QUESTIONS
+from services.quiz.config import QUIZ_MAX_QUESTIONS
 
 logger = logging.getLogger(__name__)
 

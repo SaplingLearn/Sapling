@@ -113,7 +113,7 @@ def test_final_result_tool_sent_to_the_model_has_no_length_constraints():
 
 
 def test_caps_match_the_product_contract():
-    from services.quiz_config import QUIZ_MAX_QUESTIONS
+    from services.quiz.config import QUIZ_MAX_QUESTIONS
 
     assert MAX_QUESTIONS == QUIZ_MAX_QUESTIONS == 10
     assert MAX_ACCEPTED_ANSWERS == 8

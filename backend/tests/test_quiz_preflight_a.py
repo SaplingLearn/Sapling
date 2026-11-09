@@ -107,7 +107,7 @@ class TestQuizConfigEndpoint:
         assert data["num_questions"]["max"] == le
 
     def test_config_matches_named_constants(self):
-        from services.quiz_config import (
+        from services.quiz.config import (
             QUIZ_MIN_QUESTIONS,
             QUIZ_MAX_QUESTIONS,
             QUIZ_NUM_QUESTION_OPTIONS,
@@ -393,7 +393,7 @@ class TestQuizErrorEnvelope:
         assert r.json()["error"]["code"] == "QUIZ_HTTP_ERROR"
 
     def test_error_codes_are_a_single_enum(self):
-        from services.quiz_errors import QuizErrorCode
+        from services.quiz.errors import QuizErrorCode
 
         values = {c.value for c in QuizErrorCode}
         for expected in (

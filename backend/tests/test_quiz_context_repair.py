@@ -90,7 +90,7 @@ def _submit():
 
 class TestSaveQuizContextUpsertTarget:
     def test_upserts_on_user_id_concept_node_id(self):
-        from services.quiz_context_service import save_quiz_context
+        from services.quiz.context import save_quiz_context
 
         captured = {}
         fake = MagicMock()
@@ -101,7 +101,7 @@ class TestSaveQuizContextUpsertTarget:
             return [payload]
 
         fake.upsert.side_effect = _upsert
-        with patch("services.quiz_context_service.table", return_value=fake):
+        with patch("services.quiz.context.table", return_value=fake):
             save_quiz_context("u1", "n1", {"weak_areas": ["x"]})
 
         # Must match the UNIQUE restored by the #529 repair migration

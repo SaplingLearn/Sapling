@@ -77,7 +77,7 @@ def _generate(num_questions=3):
 
 class TestMasteryModelSeam:
     def test_constants_are_named_and_unchanged(self):
-        from services.quiz_config import (
+        from services.quiz.config import (
             MASTERY_DELTA_PER_CORRECT,
             MASTERY_DELTA_PER_WRONG,
         )
@@ -89,20 +89,20 @@ class TestMasteryModelSeam:
         assert MASTERY_DELTA_PER_WRONG == 0.02
 
     def test_mastery_delta_matches_the_pinned_journey_value(self):
-        from services.quiz_config import mastery_after
+        from services.quiz.config import mastery_after
 
         # frontend/e2e/quiz.spec.ts: 3 correct of 3 → +0.09 exactly.
         assert mastery_after(0.25, score=3, total=3) == pytest.approx(0.34)
         assert mastery_after(0.25, score=3, total=3) - 0.25 == pytest.approx(0.09)
 
     def test_clamped_to_unit_interval(self):
-        from services.quiz_config import mastery_after
+        from services.quiz.config import mastery_after
 
         assert mastery_after(0.99, score=5, total=5) == 1.0
         assert mastery_after(0.01, score=0, total=5) == 0.0
 
     def test_wrong_answers_subtract(self):
-        from services.quiz_config import mastery_after
+        from services.quiz.config import mastery_after
 
         # 2 correct (+0.06), 3 wrong (-0.06) → net zero.
         assert mastery_after(0.5, score=2, total=5) == pytest.approx(0.5)

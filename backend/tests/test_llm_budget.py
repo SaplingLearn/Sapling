@@ -399,7 +399,7 @@ def test_a_streamed_tutor_turn_ends_in_a_terminal_budget_error(status):
 
 def test_quiz_generation_answers_its_daily_limit_code_and_refunds_the_slot(monkeypatch):
     import routes.quiz as quiz
-    from services.quiz_errors import QuizAPIError, QuizErrorCode
+    from services.quiz.errors import QuizAPIError, QuizErrorCode
 
     async def refused(**_kw):
         raise _exc()

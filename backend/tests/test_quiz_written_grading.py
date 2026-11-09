@@ -1,8 +1,8 @@
 import pytest
 
 from models import AnswerQuestionBody
-from services.quiz_grading import grade_written
-from services.quiz_algebra import equivalent_algebra
+from services.quiz.grading import grade_written
+from services.quiz.algebra import equivalent_algebra
 from tests.db_fakes import with_async_twins
 
 # #117: a sync PostgREST call reached on the event loop raises here.
@@ -176,7 +176,7 @@ def test_numeric_accepts_thousands_separators_and_mixed_numbers(answer, expected
 
 @pytest.mark.parametrize("answer", ["1,00", "1,5", "10,00,000", "1 2", "1 1/2/3", "1 -1/2", ",100"])
 def test_numeric_rejects_ambiguous_separators(answer):
-    from services.quiz_grading import numeric_value
+    from services.quiz.grading import numeric_value
     assert numeric_value(answer) is None
 
 

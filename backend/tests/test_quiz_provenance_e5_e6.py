@@ -16,8 +16,8 @@ from agents.quiz import PROMPT_VERSION, Quiz, QuizQuestion
 from main import app
 from routes.quiz import CourseMaterial
 from services.encryption import decrypt_json_column
-from services.quiz_identity import question_hash
-from services.quiz_repetition import RecentQuestion
+from services.quiz.identity import question_hash
+from services.quiz.repetition import RecentQuestion
 from tests.db_fakes import with_async_twins
 
 # #117: a sync PostgREST call reached on the event loop raises here.

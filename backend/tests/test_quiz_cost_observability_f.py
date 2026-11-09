@@ -73,7 +73,7 @@ def _generate(user_id="user_andres"):
 
 class TestGenerateRateLimit:
     def test_burst_past_the_limit_is_rejected(self):
-        from services.quiz_config import (
+        from services.quiz.config import (
             QUIZ_GENERATE_RATE_LIMIT,
             QUIZ_GENERATE_RATE_WINDOW_SEC,
         )
@@ -100,7 +100,7 @@ class TestGenerateRateLimit:
         would otherwise spend the student's quota — eight 502s in two
         minutes locking them out for five, with a message telling them
         they generated too many quizzes. They received none."""
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         failing = AsyncMock(side_effect=RuntimeError("boom"))
         with (
@@ -175,7 +175,7 @@ class TestGenerateRateLimit:
 
     def test_limit_is_per_user(self):
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         with (
             patch("routes.quiz.table", side_effect=with_async_twins(_factory())),
@@ -201,14 +201,14 @@ class TestGenerateRateLimitIsEnvOverridable:
 
     @staticmethod
     def _reloaded():
-        """Re-import services.quiz_config against the current environment.
+        """Re-import services.quiz.config against the current environment.
 
         `importlib.reload` mutates the module in place, so every caller must
         restore it (see `_restore`) or later tests inherit the override.
         """
         import importlib
 
-        from services import quiz_config
+        from services.quiz import config as quiz_config
 
         return importlib.reload(quiz_config)
 
@@ -257,7 +257,7 @@ class TestGenerateRateLimitIsEnvOverridable:
         """The env seam moves the NUMBER, never the behaviour: the route binds
         the value at its own import and still 429s one call past it."""
         from routes import quiz as quiz_route
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         assert quiz_route.QUIZ_GENERATE_RATE_LIMIT == QUIZ_GENERATE_RATE_LIMIT
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
@@ -272,7 +272,7 @@ class TestGenerateRateLimitIsEnvOverridable:
 
 class TestDailySpendGuard:
     def test_over_budget_user_is_refused_before_the_model_runs(self):
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD + 1.0}]
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
@@ -289,7 +289,7 @@ class TestDailySpendGuard:
         """#760: the cap 429 generated nothing, so it must hand back the slot
         it claimed — and only that one, not a concurrent request's."""
         from services import request_limits
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         key = "quiz_generate:user_andres"
         other = request_limits.claim_rate_limit(key, limit=100, window_sec=300).slot
@@ -305,7 +305,7 @@ class TestDailySpendGuard:
         assert request_limits._rate_state[key] == [other]
 
     def test_under_budget_passes(self):
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD / 2}]
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
@@ -321,7 +321,7 @@ class TestDailySpendGuard:
         206 — a 2xx — so an unpaged select silently truncates. Summing that
         page plateaus below the ceiling, and the guard can never trip for
         the runaway user it exists to stop."""
-        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+        from services.quiz.config import QUIZ_DAILY_SPEND_CAP_USD
 
         # Sized so ONE page is not enough: 1000 rows × $0.0015 = $1.50,
         # under the $2.00 cap, while all 1500 rows = $2.25, over it. A
@@ -395,7 +395,7 @@ class TestDailySpendGuard:
 
 class TestGenerationTimeout:
     def test_agent_timeout_maps_to_its_own_code(self):
-        from services.quiz_config import QUIZ_GENERATION_TIMEOUT_SEC
+        from services.quiz.config import QUIZ_GENERATION_TIMEOUT_SEC
 
         assert QUIZ_GENERATION_TIMEOUT_SEC > 0
 
@@ -503,7 +503,7 @@ class TestGenerationFailureEvent:
     def test_rate_limit_rejection_is_not_an_error_event(self):
         """A throttled student isn't a backend failure — it must not
         pollute the error feed."""
-        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+        from services.quiz.config import QUIZ_GENERATE_RATE_LIMIT
 
         events = []
         with (

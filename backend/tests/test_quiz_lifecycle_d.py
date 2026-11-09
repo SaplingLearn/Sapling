@@ -331,7 +331,7 @@ class TestAbandonSweep:
         """The per-user sweep stamps abandoned_at on in-progress rows older
         than the TTL — conditional update filters arbitrate, not app code."""
         from routes.quiz import _sweep_abandoned
-        from services.quiz_config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+        from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 
         update_calls = []
 

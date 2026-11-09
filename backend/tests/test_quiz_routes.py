@@ -1136,7 +1136,7 @@ class TestQuizGrounding:
             # Counted through BOTH module references, or the second `courses`
             # read (the one the signals module used to make) is invisible here
             # and the assertion below would pass either way.
-            patch("services.quiz_signals.table", side_effect=counting),
+            patch("services.quiz.signals.table", side_effect=counting),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
             patch("routes.quiz.retrieve_chunks_detailed",
@@ -1725,7 +1725,7 @@ class TestSignalCourseKeyspace:
         tables = _RecordingTables(self.SPEC, seen)
         with (
             patch("routes.quiz.table", side_effect=with_async_twins(tables)),
-            patch("services.quiz_signals.table", side_effect=tables),
+            patch("services.quiz.signals.table", side_effect=tables),
             patch("services.academics.table", side_effect=tables),
             patch("services.exam_proximity.table", side_effect=tables),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
@@ -1793,7 +1793,7 @@ class TestDarkScopeAlarmOwnership:
     """
 
     def _signal_kwargs(self, run):
-        from services.quiz_signals import QuizSignals
+        from services.quiz.signals import QuizSignals
 
         gathered = MagicMock(return_value=QuizSignals())
         agent_run = AsyncMock(
@@ -1852,7 +1852,7 @@ class TestDegradedCourseReadIsDescribedHonestly:
     `offering_id`) and so reports a subset as the whole collection."""
 
     def test_a_failed_course_read_leaves_the_flashcards_unknown(self):
-        from services.quiz_signals import QuizSignals
+        from services.quiz.signals import QuizSignals
 
         captured = {}
 

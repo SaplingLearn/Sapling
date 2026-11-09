@@ -28,7 +28,7 @@ from services import events_service
 from services.auth_guard import require_self, guard_off_loop
 from services import llm_budget
 from services.llm_budget import LLMBudgetExceeded
-from services.quiz_config import (
+from services.quiz.config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
     QUIZ_DAILY_SPEND_CAP_USD,
@@ -42,23 +42,23 @@ from services.quiz_config import (
     quiz_config_payload,
 )
 from services.request_limits import aclaim_rate_limit, refund_rate_limit
-from services.quiz_errors import QuizAPIError, QuizErrorCode
+from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
-from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
-from services.quiz_algebra import equivalent_algebra
+from services.quiz.grading import WRITTEN_TYPES, grade_written, numeric_value
+from services.quiz.algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
-from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.quiz.context import get_quiz_context, save_quiz_context
 from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
-from services.quiz_signals import CourseScope, QuizSignals, gather_signals
-from services.quiz_signals import prompt_block as signal_block
+from services.quiz.signals import CourseScope, QuizSignals, gather_signals
+from services.quiz.signals import prompt_block as signal_block
 from services.timestamps import parse_ts
-from services.quiz_distractors import build_distractor_profile
+from services.quiz.distractors import build_distractor_profile
 from services.fingerprint import fingerprint
-from services.quiz_identity import question_hash, normalize_text, wire_question_hash
-from services.quiz_repetition import RecentQuestion, recent_question_identities
-from services.quiz_reserve import (
+from services.quiz.identity import question_hash, normalize_text, wire_question_hash
+from services.quiz.repetition import RecentQuestion, recent_question_identities
+from services.quiz.reserve import (
     MissedQuestions,
     missed_question_hashes,
     recover_questions,

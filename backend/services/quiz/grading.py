@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from fractions import Fraction
-from services.quiz_algebra import equivalent_algebra
+from services.quiz.algebra import equivalent_algebra
 
 WRITTEN_TYPES = {"short_answer", "numeric", "symbolic"}
 
