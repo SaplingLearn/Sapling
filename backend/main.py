@@ -452,7 +452,7 @@ app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
-app.include_router(study_router,       prefix="/api/study")
+app.include_router(study_router,       prefix="/api/study", dependencies=nav_feature_gate("/api/study"))
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers", dependencies=_SVC)  # public; job_applications is service-only
 app.include_router(onboarding.router,  prefix="/api/onboarding")
@@ -483,7 +483,7 @@ app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes", dependencies=nav_feature_gate("/api/notes"))
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
 app.include_router(gamification.router, prefix="/api/gamification", dependencies=nav_feature_gate("/api/gamification"))
-app.include_router(library_folders_router, prefix="/api/library")
+app.include_router(library_folders_router, prefix="/api/library", dependencies=nav_feature_gate("/api/library"))
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
 app.include_router(internal_metrics_router, prefix="/api/internal", dependencies=_SVC)
