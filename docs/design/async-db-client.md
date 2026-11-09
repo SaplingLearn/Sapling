@@ -370,8 +370,9 @@ Consequences that bind both W3a and this work:
 - **Two replicas:** the remaining per-process state is audited in `docs/deploy/railway.md`
   ("Two API replicas"). New: `services/pg_lease.py` (`stateless_locks`) for the study-guide,
   account-operation and OAuth-nonce locks; `tutor_pending_sessions` (`stateless_tutor_sessions`)
-  for lazily started tutor sessions. `.railway/railway.ts` declares 2 API replicas; it takes
-  effect only after the cut-over flags.
+  for lazily started tutor sessions. `.railway/railway.ts` declares the API's replica count as
+  `API_REPLICAS`, committed as 1; raising it to 2 is the runbook's last step, after the cut-over
+  flags.
 - **Nightly load test:** `.github/workflows/loadtest-nightly.yml`, runs only when the repo
   variable `LOADTEST_TARGET_URL` is set, and fails on the plan's targets via
   `loadtest/check_thresholds.py` (p95 non-LLM < 300 ms, chat TTFT p95 < 3 s, ≤ 1 % failures).

@@ -163,3 +163,13 @@ def test_the_worker_agent_slots_are_shared_and_real():
 
 def test_exclusions_are_not_also_shared():
     assert not (set(EXCLUDED) & _shared())
+
+
+def test_the_api_ships_at_one_replica():
+    """#117 review: the first `MANAGE_API = true` apply must not bring up a
+    second replica before the cut-over flags are on. API_REPLICAS goes to 2
+    only as the last step of docs/deploy/railway.md "Two API replicas"; that
+    change updates this pin in the same commit, on purpose."""
+    src = RAILWAY_TS.read_text()
+    assert re.search(r"^const API_REPLICAS = 1;$", src, re.MULTILINE)
+    assert "replicas: API_REPLICAS" in src
