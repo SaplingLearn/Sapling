@@ -71,6 +71,14 @@ class Worker:
         return handled
 
     def _run(self, job: Job) -> None:
+        # jobs.current_job(): lets a handler fence its writes on this claim.
+        token = jobs_module._CURRENT_JOB.set(job)
+        try:
+            self._run_job(job)
+        finally:
+            jobs_module._CURRENT_JOB.reset(token)
+
+    def _run_job(self, job: Job) -> None:
         fields = (job.id, job.type, job.attempt, job.max_attempts)
         logger.info("job.claimed id=%s type=%s attempt=%d/%d", *fields)
         handler = self.queue.get_handler(job.type)

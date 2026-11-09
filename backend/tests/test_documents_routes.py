@@ -482,7 +482,7 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
-            patch("routes.documents.index_document") as idx,
+            patch("routes.documents.schedule_document_index") as idx,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [
@@ -491,7 +491,9 @@ class TestUploadDocumentOrchestrator:
             r = _make_upload(filename="syllabus.pdf")
 
         assert r.status_code == 200
-        idx.assert_called_once_with("doc-sync-1")
+        # #116: through schedule_document_index, which (flag off) calls
+        # index_document(doc_id) inline — pinned in test_document_upload_jobs.
+        idx.assert_called_once_with("doc-sync-1", "u1")
 
     def test_returns_persisted_row_for_lecture_notes(self):
         result = _make_orchestrator_result(
@@ -872,7 +874,7 @@ class TestUploadDocumentStreaming:
                 r.read()
 
         tasks = {task[0]: task[1:] for task in spawn.call_args.args}
-        assert tasks["index_document"] == (documents.index_document, "stream-1")
+        assert tasks["index_document"] == (documents.schedule_document_index, "stream-1", "u1")
         assert "index_document_chunks" not in tasks
 
     def test_includes_syllabus_event_when_is_syllabus(self):

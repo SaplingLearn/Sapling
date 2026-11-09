@@ -333,7 +333,7 @@ class TestCourseContextOffering:
             patch("routes.documents.refresh_course_context", refresh),
             patch("routes.documents._invalidate_study_guide_cache"),
             patch("routes.documents._check_upload_achievements"),
-            patch("routes.documents.index_document"),
+            patch("routes.documents.schedule_document_index"),
         ):
             r = client.post(
                 "/api/documents/upload/sync",

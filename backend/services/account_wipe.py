@@ -66,6 +66,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("graph_nodes", "id"),
     ("xp_events", "id"),
     ("user_achievements", "achievement_id"),
+    # #116 staged uploads (the queued pipeline's transient rows). Wiped, never
+    # copied: a staged upload is in-flight work, not account data — a finished
+    # one is already a `documents` row, which the bundle copies.
+    ("document_uploads", "id"),
 )
 
 #: Every table the wipe deletes from directly.

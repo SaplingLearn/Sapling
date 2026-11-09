@@ -89,15 +89,20 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "circuit breaker open), retry the call on the other provider's "
             "model. Global: per-user rules and rollouts do not apply.", False),
     # #116: move background work onto the Postgres job queue. Server-only.
-    # Resolved for the student whose action triggered the work. Today it
-    # covers course-context aggregation (course_context_service.
-    # refresh_course_context). On WITHOUT a running `python -m worker`, that
-    # work only queues: class aggregates stop refreshing until a worker
-    # starts. Hence default off.
+    # Resolved for the student whose action triggered the work. It covers
+    # course-context aggregation (course_context_service.
+    # refresh_course_context), the upload's first indexing attempt
+    # (document_indexing.schedule_document_index) and the upload pipeline
+    # itself (services/document_jobs.py). On WITHOUT a running `python -m
+    # worker`, aggregation and indexing only queue (class aggregates go stale;
+    # the index sweeper still recovers unindexed documents in production) and
+    # uploads wait PICKUP_GRACE_SECONDS, then run inline. Hence default off.
     FlagDef("jobs_queue", ("off", "on"),
-            "Run course-context aggregation on the job queue instead of in the "
-            "request. Needs a running `python -m worker`; without one the work "
-            "only queues.", False),
+            "Run course-context aggregation, document indexing and the upload "
+            "pipeline (extraction + document agents) on the job queue instead "
+            "of in the request. Needs a running `python -m worker`; without one "
+            "aggregation and indexing only queue, and uploads fall back to "
+            "inline after a short wait.", False),
     # #115 (RLS step 2, docs/security/rls-step2-plan.md §4.4): whether a
     # request's PostgREST calls run as the student (a backend-minted JWT, RLS
     # applies) instead of the service role. shadow = service answers, a
