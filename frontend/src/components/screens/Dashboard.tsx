@@ -579,11 +579,11 @@ export function Dashboard() {
         </div>
       )}
       {/* The original Home knowledge graph (KnowledgeGraph + the CoursesKey
-          overlay and its own controls), sitting transparent on the page like
-          the v3 design: no card, just the heading row over a divider. */}
+          overlay and its own controls) on the original white panel, boxed by
+          the v3 divider hairline with the heading row over a divider. */}
       <div
         data-testid="home-graph-panel"
-        style={{ position: "relative", minHeight: 420, display: "flex", flexDirection: "column", flex: 1, background: "transparent", border: DIVIDER, borderRadius: 14, overflow: "hidden" }}
+        style={{ position: "relative", minHeight: 420, display: "flex", flexDirection: "column", flex: 1, background: "var(--bg-panel)", boxShadow: "var(--shadow-sm)", border: DIVIDER, borderRadius: 14, overflow: "hidden" }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 18px", borderBottom: DIVIDER }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, minWidth: 0 }}>
