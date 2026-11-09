@@ -364,7 +364,7 @@ def room_overview(room_id: str, request: Request):
             ai_summary = result.output.summary
             save_summary(room_id, member_summaries, ai_summary)
         except Exception as e:
-            print(f"Gemini summary failed: {e}")
+            logger.warning("Study-room summary agent failed: %s", e)
             ai_summary = "This study group has complementary strengths across multiple subjects."
 
     return {"room": room, "members": members, "ai_summary": ai_summary}

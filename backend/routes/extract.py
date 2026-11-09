@@ -1,5 +1,5 @@
+import logging
 import os
-import sys
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
@@ -16,6 +16,7 @@ from services.auth_guard import get_session_user_id
 from services.request_limits import check_rate_limit, read_within_limit
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # #182: these endpoints run multi-second Docling/tesseract OCR. They were
 # unauthenticated, unbounded, and unthrottled — an anonymous caller could drive
@@ -43,9 +44,8 @@ def _enforce_ocr_limits(request: Request) -> str:
 
 
 def _ocr_unavailable_error(detail: str) -> HTTPException:
-    """Log OCR error to terminal and return a 503 the frontend can display."""
-    print(f"\n[OCR UNAVAILABLE] {detail}", file=sys.stderr)
-    print("[OCR UNAVAILABLE] Install tesseract-ocr to enable OCR features.\n", file=sys.stderr)
+    """Log the OCR error and return a 503 the frontend can display."""
+    logger.error("[OCR UNAVAILABLE] %s (install tesseract-ocr to enable OCR features)", detail)
     return HTTPException(
         status_code=503,
         detail=f"OCR not available on this machine: {detail}. Install tesseract-ocr to enable PDF/image scanning.",
