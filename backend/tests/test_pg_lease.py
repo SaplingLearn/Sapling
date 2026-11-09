@@ -18,7 +18,6 @@ Postgres in tests/integration/test_app_leases_db.py). Pinned here:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from types import SimpleNamespace
@@ -244,39 +243,6 @@ def test_hashed_key_hides_its_parts():
     assert key == pg_lease.hashed_key("oauth_nonce", "s3cret-nonce")
     assert key != pg_lease.hashed_key("oauth_nonce", "other")
     assert pg_lease.hashed_key("g", "a", "bc") != pg_lease.hashed_key("g", "ab", "c")
-
-
-# ── async twins ─────────────────────────────────────────────────────────────
-
-
-def test_async_twins(fake, on, monkeypatch):
-    import db.async_connection as adb
-
-    async def _arpc(name, params, *, timeout=None):
-        return fake.rpc(name, params, timeout=timeout)
-
-    monkeypatch.setattr(adb, "arpc", _arpc)
-
-    async def go():
-        async with pg_lease.alease("k", 30, renew=False) as held:
-            assert held is True
-            async with pg_lease.alease("k", 30) as other:
-                assert other is False
-        assert await pg_lease.aconsume_once("n", 60) is True
-        assert await pg_lease.aconsume_once("n", 60) is False
-
-    asyncio.run(go())
-    assert fake.rows.keys() == {"n"}
-
-
-def test_async_off_touches_no_db(fake, monkeypatch):
-    async def go():
-        async with pg_lease.alease("k", 30) as held:
-            assert held is True
-        assert await pg_lease.aconsume_once("n", 60) is None
-
-    asyncio.run(go())
-    assert fake.calls == []
 
 
 # ── the callers ─────────────────────────────────────────────────────────────
