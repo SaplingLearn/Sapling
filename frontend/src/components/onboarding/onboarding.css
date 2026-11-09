@@ -34,6 +34,7 @@
   --ob-i4: #12201A;
   --ob-ia: #0E9E5A;
   --ob-sk: #9A6A48;
+  --ob-sk2: #D9A87C;
   --ob-beam: rgba(14, 158, 90, .09);
   --ob-vig: rgba(12, 86, 56, .07);
   --ob-glow: rgba(255, 255, 255, .62);
@@ -80,7 +81,7 @@
   background: radial-gradient(ellipse 46% 62% at 50% 48%, var(--ob-scrim) 0%, var(--ob-scrim) 40%, transparent 100%);
 }
 .ob-logo { position: absolute; top: 26px; left: 32px; zoom: var(--uiz); z-index: 5; }
-.ob-logo img { height: 36px; width: auto; display: block; }
+.ob-logo img { height: 30px; width: auto; display: block; }
 
 .ob-content {
   position: absolute; inset: 0; z-index: 3;
@@ -109,12 +110,12 @@
 .ob-screen--roomy { gap: 26px; }
 .ob-screen--legal { flex: 1 1 0; min-height: 0; }
 .ob-h1 {
-  font: 500 clamp(30px, 3.2vw, 44px)/1.12 'Gummi', sans-serif; letter-spacing: -0.015em;
-  margin: 0; flex-shrink: 0; text-align: center; text-shadow: var(--ob-tsh); text-wrap: balance;
+  font: 500 clamp(26px, 2.4vw, 36px)/1.15 'Gummi', sans-serif; letter-spacing: -0.015em;
+  margin: 0; flex-shrink: 0; width: 100%; text-align: center; text-shadow: var(--ob-tsh); text-wrap: balance;
 }
 .ob-sub {
-  margin: 0; flex-shrink: 0; max-width: 520px; text-wrap: pretty;
-  font: 400 17px/1.55 'Momo Trust Sans', sans-serif; color: var(--ob-fg2);
+  margin: 0 auto; flex-shrink: 0; width: 100%; max-width: 520px; text-wrap: pretty;
+  font: 400 15px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-fg2);
   text-align: center; text-shadow: var(--ob-tsh);
 }
 .ob-body {
@@ -130,18 +131,18 @@
 }
 .ob-input:focus { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
 .ob-root .ob-input:focus-visible { outline: none; }
-.ob-input--name { max-width: 420px; height: 60px; padding: 0 20px; font: 500 21px/1 'Momo Trust Sans', sans-serif; text-align: center; }
+.ob-input--name { max-width: 380px; height: 52px; padding: 0 18px; border-radius: 12px; font: 500 18px/1 'Momo Trust Sans', sans-serif; text-align: center; }
 .ob-input--search { height: 48px; padding: 0 20px; font: 500 16px/1 'Momo Trust Sans', sans-serif; }
 .ob-note { margin: 0; font: 400 14px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-mut); text-align: center; }
-.ob-character { height: 153px; width: auto; transform: translateX(19px); display: block; }
+.ob-character { height: 120px; width: auto; transform: translateX(15px); display: block; }
 
 /* Birthday */
-.ob-cake { width: 170px; height: auto; overflow: visible; }
-.ob-dob { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.ob-cake { width: 140px; height: auto; overflow: visible; }
+.ob-dob { width: 100%; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
 .ob-select {
-  height: 58px; padding: 0 40px 0 18px; border-radius: 14px; border: 1.5px solid var(--ob-line);
+  height: 50px; padding: 0 36px 0 16px; border-radius: 14px; border: 1.5px solid var(--ob-line);
   background: var(--ob-pan2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238aa096' stroke-width='1.6' fill='none'/%3E%3C/svg%3E") no-repeat right 16px center;
-  color: var(--ob-fg); font: 500 17px 'Momo Trust Sans', sans-serif;
+  color: var(--ob-fg); font: 500 15px 'Momo Trust Sans', sans-serif;
   appearance: none; -webkit-appearance: none; outline: none; cursor: pointer;
   backdrop-filter: blur(12px);
 }
@@ -186,10 +187,11 @@ button.ob-school:hover { transform: translateY(-2px); }
   text-transform: uppercase; color: var(--ob-mut); text-shadow: var(--ob-tsh);
 }
 .ob-label--gap { padding-top: 6px; }
-.ob-years { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; width: 100%; }
+.ob-years { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; width: 100%; }
 .ob-choice {
-  height: 40px; border-radius: 10px; border: 1.5px solid var(--ob-line); background: var(--ob-pan2); color: var(--ob-fg2);
-  font: 500 15px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
+  height: 40px; min-width: 0; padding: 0 8px; white-space: nowrap;
+  border-radius: 10px; border: 1.5px solid var(--ob-line); background: var(--ob-pan2); color: var(--ob-fg2);
+  font: 500 12.5px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: all 140ms;
 }
 .ob-choice[aria-pressed='true'] { border-color: var(--ob-acc); background: var(--ob-sel); color: var(--ob-fg); }
@@ -199,7 +201,10 @@ button.ob-school:hover { transform: translateY(-2px); }
   border: none; background: var(--ob-brand); color: #FFFFFF; font: 600 13px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
 }
 .ob-chip span { font-size: 15px; opacity: .7; }
-.ob-results { width: 100%; overflow: hidden; border-radius: 16px; }
+.ob-results {
+  width: 100%; border-radius: 16px; max-height: 218px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--ob-acc) transparent;
+}
 .ob-result {
   display: flex; align-items: center; gap: 14px; width: 100%; padding: 11px 18px; border: none;
   border-bottom: 1px solid var(--ob-line); background: transparent; color: var(--ob-fg); text-align: left; cursor: pointer;
@@ -258,11 +263,11 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-connect-wrap { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; width: 100%; padding-top: clamp(4px, 1.5vh, 16px); }
 .ob-connect { width: 100%; max-width: 760px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
 .ob-conn { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; }
-.ob-conn-mono {
-  width: 36px; height: 36px; flex: none; border-radius: 10px; border: 1px dashed var(--ob-line);
-  background: repeating-linear-gradient(135deg, var(--ob-pan2) 0 6px, transparent 6px 12px);
-  display: flex; align-items: center; justify-content: center; font: 500 10px/1 'Momo Trust Sans', sans-serif; color: var(--ob-mut);
+.ob-conn-icon {
+  width: 36px; height: 36px; flex: none; border-radius: 10px; border: 1px solid var(--ob-line); background: #FFFFFF;
+  padding: 6px; display: flex; align-items: center; justify-content: center;
 }
+.ob-conn-icon img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 4px; }
 .ob-conn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .ob-conn-name { font: 600 15px/1.2 'Momo Trust Sans', sans-serif; }
 .ob-conn-desc { font: 400 12.5px/1.3 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -270,15 +275,15 @@ button.ob-school:hover { transform: translateY(-2px); }
   height: 34px; padding: 0 14px; border-radius: 999px; border: 1.5px solid var(--ob-line); background: transparent;
   color: var(--ob-fg); font: 600 13px/1 'Momo Trust Sans', sans-serif; cursor: pointer; white-space: nowrap; transition: all 140ms;
 }
-.ob-pill--primary { border-color: var(--ob-acc); background: var(--ob-acc); color: var(--ob-accfg); }
+.ob-pill--primary { border-color: var(--ob-brand); background: var(--ob-brand); color: #FFFFFF; }
 .ob-pill--on { border-color: var(--ob-acc); background: var(--ob-sel); color: var(--ob-fg); cursor: default; }
 
 /* ── Actions ──────────────────────────────────────────────────── */
 .ob-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 18px; zoom: var(--uiz); }
 .ob-primary {
-  height: 54px; width: 100%; max-width: 340px; padding: 0 32px; border-radius: 10px;
+  height: 46px; width: 100%; max-width: 300px; padding: 0 28px; border-radius: 10px;
   border: 1.5px solid var(--ob-brand); background: var(--ob-brand); color: #FFFFFF;
-  font: 700 16px/1 'Momo Trust Sans', sans-serif; cursor: pointer; box-shadow: 0 2px 6px rgba(35, 52, 12, .28);
+  font: 700 15px/1 'Momo Trust Sans', sans-serif; cursor: pointer; box-shadow: 0 2px 6px rgba(35, 52, 12, .28);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   transition: background 220ms, color 220ms, box-shadow 220ms, transform 140ms;
 }
@@ -292,27 +297,27 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-secondary:hover { color: var(--ob-fg); }
 
 /* Progress fits itself to the viewport: it owns the strip left of the key
- * hints (which take ~330px at UI scale 1), six segments share that strip up to
- * 132px each, and the label scales with the screen. No zoom here, so widths
+ * hints (which take ~250px at UI scale 1), six segments share that strip up to
+ * 110px each, and the label scales with the screen. No zoom here, so widths
  * are real viewport pixels and the strip can never run under the hints. */
 .ob-progress {
   position: absolute; z-index: 4; transition: opacity 600ms;
-  left: calc(32px * var(--uiz)); right: calc(360px * var(--uiz)); bottom: calc(30px * var(--uiz));
+  left: calc(32px * var(--uiz)); right: calc(280px * var(--uiz)); bottom: calc(30px * var(--uiz));
   display: flex; gap: calc(10px * var(--uiz));
 }
 .ob-chapter {
-  flex: 0 1 calc(132px * var(--uiz)); min-width: 0;
+  flex: 0 1 calc(110px * var(--uiz)); min-width: 0;
   display: flex; flex-direction: column; gap: calc(10px * var(--uiz));
 }
 .ob-chapter-label {
-  font: 600 calc(clamp(14px, 1.7vw, 24px) * var(--uiz))/1.25 'Momo Trust Sans', sans-serif;
+  font: 600 calc(15px * var(--uiz))/1.25 'Momo Trust Sans', sans-serif;
   text-shadow: var(--ob-tsh); white-space: nowrap; overflow: visible;
   min-height: 1.25em; /* an empty (upcoming) label keeps its row, so every bar lines up */
 }
 /* The active segment is at least as wide as its label, and the finished and
  * upcoming ones shrink to share the rest, so a long label ("Connect your
  * accounts") never runs over a neighbour's tick or out of the strip. */
-.ob-chapter[aria-current='step'] { flex: 0 0 auto; min-width: calc(132px * var(--uiz)); }
+.ob-chapter[aria-current='step'] { flex: 0 0 auto; min-width: calc(110px * var(--uiz)); }
 .ob-chapter-bar { height: calc(4px * var(--uiz)); background: var(--ob-line); overflow: hidden; }
 .ob-chapter-bar div { height: 100%; background: var(--ob-acc); transition: width 500ms var(--ob-ease); }
 
@@ -322,11 +327,11 @@ button.ob-school:hover { transform: translateY(-2px); }
 }
 .ob-key {
   display: flex; align-items: center; gap: 12px; background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--ob-fg2); font: 500 17px/1 'Momo Trust Sans', sans-serif; text-shadow: var(--ob-tsh);
+  color: var(--ob-fg2); font: 500 14px/1 'Momo Trust Sans', sans-serif; text-shadow: var(--ob-tsh);
 }
 .ob-key kbd {
-  padding: 8px 12px; border-radius: 9px; border: 1px solid var(--ob-line); background: var(--ob-pan2);
-  font: 500 14px/1 'Momo Trust Sans', sans-serif;
+  padding: 6px 10px; border-radius: 8px; border: 1px solid var(--ob-line); background: var(--ob-pan2);
+  font: 500 12px/1 'Momo Trust Sans', sans-serif;
 }
 
 /* ── Overlays ─────────────────────────────────────────────────── */

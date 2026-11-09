@@ -50,18 +50,19 @@ const YEARS = [
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+// Third field: logo height inside its tile, so logos match by visual area.
 const OTHER_SCHOOLS = [
-  ["Northeastern", "northeastern-t.png"], ["MIT", "mit-t.png"], ["Harvard", "harvard-t.png"],
-  ["Boston College", "bc-t.png"], ["Tufts", "tufts-t.png"],
+  ["Northeastern", "northeastern-t.png", "68%"], ["MIT", "mit-t.png", "56%"], ["Harvard", "harvard-t.png", "76%"],
+  ["Boston College", "bc-t.png", "77%"], ["Tufts", "tufts-t.png", "51%"],
 ] as const;
 
 type ConnKey = "gradescope" | "gcal" | "blackboard" | "canvas" | "classroom";
-const CONNECTIONS: { key: ConnKey; name: string; mono: string; desc: string; reads?: string }[] = [
-  { key: "gradescope", name: "Gradescope", mono: "GS", desc: "Assignments, due dates and grades into your Gradebook.", reads: "Assignments, due dates and grades for your enrolled courses." },
-  { key: "gcal", name: "Google Calendar", mono: "GC", desc: "Deadlines in, study blocks out.", reads: "Your calendar events, so I can place study blocks around them." },
-  { key: "blackboard", name: "Blackboard", mono: "BB", desc: "Materials, announcements and grades." },
-  { key: "canvas", name: "Canvas", mono: "CV", desc: "Materials, announcements and grades." },
-  { key: "classroom", name: "Google Classroom", mono: "GR", desc: "Materials, announcements and grades." },
+const CONNECTIONS: { key: ConnKey; name: string; icon: string; desc: string; reads?: string }[] = [
+  { key: "gradescope", name: "Gradescope", icon: "gradescope.png", desc: "Assignments, due dates and grades into your Gradebook.", reads: "Assignments, due dates and grades for your enrolled courses." },
+  { key: "gcal", name: "Google Calendar", icon: "gcal.webp", desc: "Deadlines in, study blocks out.", reads: "Your calendar events, so I can place study blocks around them." },
+  { key: "blackboard", name: "Blackboard", icon: "blackboard.png", desc: "Materials, announcements and grades." },
+  { key: "canvas", name: "Canvas", icon: "canvas.png", desc: "Materials, announcements and grades." },
+  { key: "classroom", name: "Google Classroom", icon: "classroom.png", desc: "Materials, announcements and grades." },
 ];
 
 // Intro / outro beats from the handoff, in ms.
@@ -236,12 +237,12 @@ export function Onboarding({ takeover = false }: {
     try { localStorage.setItem(onboardingDraftKey(hydratedFor), JSON.stringify(draft)); } catch {}
   }, [draft, hydratedFor, owner]);
 
-  // UI scale: large displays zoom the column so they don't feel empty.
+  // UI scale: shrinks on small screens, grows only slightly on large ones.
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const apply = () => {
-      const z = Math.max(1, Math.min(1.6, Math.min(window.innerWidth / 1180, window.innerHeight / 760)));
+      const z = Math.max(0.7, Math.min(1.15, Math.min(window.innerWidth / 1440, window.innerHeight / 900)));
       el.style.setProperty("--uiz", String(z));
     };
     apply();
@@ -495,12 +496,12 @@ export function Onboarding({ takeover = false }: {
                       aria-pressed={draft.school === "bu"}
                       onClick={() => set("school", "bu")}
                     >
-                      <div className="ob-school-logo"><img src="/onboarding/schools/bu-t.png" alt="" /></div>
+                      <div className="ob-school-logo"><img src="/onboarding/schools/bu-t.png" alt="" style={{ height: "52%", width: "auto", maxWidth: "90%" }} /></div>
                       Boston University
                     </button>
-                    {OTHER_SCHOOLS.map(([name, logo]) => (
+                    {OTHER_SCHOOLS.map(([name, logo, h]) => (
                       <div key={name} className="ob-school ob-school--soon" aria-disabled="true">
-                        <div className="ob-school-logo"><img src={`/onboarding/schools/${logo}`} alt="" /></div>
+                        <div className="ob-school-logo"><img src={`/onboarding/schools/${logo}`} alt="" style={{ height: h, width: "auto", maxWidth: "100%" }} /></div>
                         {name}
                         <span className="ob-soon">Coming soon</span>
                       </div>
@@ -526,7 +527,7 @@ export function Onboarding({ takeover = false }: {
             {id === "tour" && (
               <section key="tour" className="ob-screen">
                 <h1 className="ob-h1">Your notes become a map.</h1>
-                <p className="ob-sub">Drop in a syllabus, slides or notes, and I turn every concept into a node on your graph.</p>
+                <p className="ob-sub">Drop syllabi, slides or notes into the library, and Sapling extracts the concepts intelligently.</p>
                 <div className="ob-body"><TourArt /></div>
               </section>
             )}
@@ -568,7 +569,7 @@ export function Onboarding({ takeover = false }: {
                       const label = built ? (on ? "Connected ✓" : "Connect") : on ? "We'll let you know" : "Notify me";
                       return (
                         <div key={c.key} className="ob-panel ob-conn">
-                          <div className="ob-conn-mono" aria-hidden="true">{c.mono}</div>
+                          <div className="ob-conn-icon" aria-hidden="true"><img src={`/onboarding/icons/${c.icon}`} alt="" /></div>
                           <div className="ob-conn-text">
                             <span className="ob-conn-name">{c.name}</span>
                             <span className="ob-conn-desc">{c.desc}</span>
@@ -730,7 +731,7 @@ function CourseStep({ year, courses, onYear, onCourses }: {
   const picked = new Set(courses.map(c => c.id));
   const toggle = (c: OnboardingCourse) =>
     onCourses(picked.has(c.id) ? courses.filter(x => x.id !== c.id) : [...courses, c]);
-  const shown = results.slice(0, 3);
+  const shown = results;
 
   return (
     <div className="ob-courses">
