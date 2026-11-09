@@ -325,6 +325,22 @@ def test_a_session_pending_in_memory_finishes_there_after_the_flag_turns_on(db, 
     assert [s["id"] for s in db.rows["sessions"]] == [sid]
 
 
+def test_a_memory_tombstone_answers_409_with_the_flag_on(db, monkeypatch):
+    """A session pending in memory when the flag went on is ENDED in memory
+    (discard_if_pending pops it here). Its next turn must still be the 409
+    SESSION_ENDED, not the bare 404 the table path gives an unknown id."""
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
+    sid = _start()
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "on")
+    assert client.post("/api/learn/end-session",
+                       json={"session_id": sid, "user_id": USER}).status_code == 200
+    assert sid in ts._DISCARDED and db.store(sid) is None
+    r = _chat(sid)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == ts.SESSION_ENDED_CODE
+    assert "materialize_tutor_session" not in db.rpcs, "answered from memory, no I/O"
+
+
 def test_flag_off_never_touches_the_store(db, monkeypatch):
     monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
     sid = _start()

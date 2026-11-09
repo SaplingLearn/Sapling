@@ -440,6 +440,14 @@ def raise_if_discarded(session_id: str | None, user_id: str | None = None) -> No
     _raise_for(discarded_reason(session_id, user_id))
 
 
+def raise_if_discarded_here(session_id: str | None, user_id: str | None = None) -> None:
+    """:func:`raise_if_discarded` for THIS process's tombstones only: no I/O,
+    so a caller can run it first whichever store the flag picks (a session
+    pending in memory when the flag went on is ended in memory)."""
+    if session_id:
+        _raise_for(_memory_discarded_reason(session_id, user_id))
+
+
 async def araise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
     """:func:`raise_if_discarded` for event-loop callers (#117 wave 3)."""
     _raise_for(await adiscarded_reason(session_id, user_id))

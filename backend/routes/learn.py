@@ -50,6 +50,7 @@ from services.tutor_sessions import (
     elapsed_minutes as _elapsed_minutes,
     materialization_lock,
     raise_if_discarded,
+    raise_if_discarded_here,
     rename_pending,
     require_session_owner,
     row_may_exist as _session_row_may_exist,
@@ -764,8 +765,10 @@ async def _open_turn_session(session_id: str, user_id: str) -> None:
 
     With `stateless_tutor_sessions` on (#117) a session not pending in THIS
     process goes to the table: one atomic call answers tombstones and
-    materialises a pending session, one `sessions` read the rest.
+    materialises a pending session, one `sessions` read the rest. This
+    process's own tombstones are checked first on both paths (no I/O).
     """
+    raise_if_discarded_here(session_id, user_id)
     if session_id not in PENDING_SESSIONS and await astored():
         if not await amaterialize_stored(session_id, user_id):
             await arequire_owned_open(session_id, user_id)
