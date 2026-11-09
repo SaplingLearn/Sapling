@@ -61,13 +61,13 @@ def _agent_patches():
     summary = Summary(headline="h", abstract="Fresh abstract.", key_points=["a", "b", "c"])
     concepts = ConceptList(concepts=[Concept(name="Backprop", description="d", importance=0.9)])
     return (
-        patch("routes.documents.classifier_agent.run",
+        patch("agents.classifier.classifier_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=cls))),
-        patch("routes.documents.summary_agent.run",
+        patch("agents.summary.summary_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=summary))),
-        patch("routes.documents.concept_extraction_agent.run",
+        patch("agents.concept_extraction.concept_extraction_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=concepts))),
-        patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=0)),
     )
 
 

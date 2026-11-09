@@ -700,7 +700,7 @@ def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
         patch("routes.documents.require_course_enrollment", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch(
-            "routes.documents.classifier_agent.run",
+            "agents.classifier.classifier_agent.run",
             AsyncMock(side_effect=RuntimeError("agent pipeline failure")),
         ),
         patch("routes.documents.table") as t,

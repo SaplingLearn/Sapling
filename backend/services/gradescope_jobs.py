@@ -76,9 +76,11 @@ Delivery is at least once: a re-run repeats the login + scrape, and the
 gradebook upsert is keyed on (enrollment_id, gradescope_assignment_id), so a
 second run updates what the first inserted.
 
-This module mirrors services/document_jobs.py (the queued upload), so the two
-read as one design. The sync body itself stays in routes/gradescope.py and is
-imported lazily: teammate PRs edit that file.
+This module and services/document_jobs.py (the queued upload) share the
+staged-job machinery in services/staged_jobs.py (stage CAS, take-back,
+owner-fenced claim and writes, liveness, the watch loop). The sync body itself
+stays in routes/gradescope.py and is imported lazily: teammate PRs edit that
+file.
 """
 from __future__ import annotations
 
@@ -87,12 +89,11 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Callable
 
 from db.connection import table
 from db.scope import runs_as_service
-from services import jobs
+from services import jobs, staged_jobs
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
@@ -148,13 +149,12 @@ ERR_ABANDONED = "abandoned"
 COUNT_KEYS = ("inserted", "updated", "skipped", "failed")
 
 _STATUS_COLUMNS = "id,stage,error_code,counts,job_id,updated_at"
-#: PostgREST filters on the owner tokens kept in the plaintext `counts` while
-#: a sync is active (opaque ids, never content): the worker attempt running
-#: it, and the request that took it back to run inline.
-_OWNER = "counts->>owner"
-_INLINE_OWNER = "counts->>inline_owner"
-#: Job statuses that will still run the job (`failed` = waiting for a retry).
-_WAITING_JOB = frozenset({"queued", "failed"})
+#: The staged-job machinery (services/staged_jobs.py): the owner tokens live
+#: in the plaintext `counts` while a sync is active (opaque ids, never
+#: content) — the worker attempt running it (`owner`), and the request that
+#: took it back to run inline (`inline_owner`).
+SPEC = staged_jobs.Spec(table="gradescope_syncs", job_type=GRADESCOPE_SYNC_JOB,
+                        owner_column="counts", label="gradescope sync")
 
 
 def _routes():
@@ -163,26 +163,11 @@ def _routes():
     return gradescope
 
 
-def _parse_ts(raw: Any) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-
-
-def _age_seconds(raw: Any) -> float | None:
-    """Seconds since an ISO timestamp, or None when it is unreadable."""
-    ts = _parse_ts(raw)
-    return None if ts is None else (datetime.now(timezone.utc) - ts).total_seconds()
+_age_seconds = staged_jobs.age_seconds
 
 
 def _token_of(row: dict | None, key: str) -> str | None:
-    counts = (row or {}).get("counts")
-    value = counts.get(key) if isinstance(counts, dict) else None
-    return value if isinstance(value, str) and value else None
+    return staged_jobs.token_in(row, SPEC.owner_column, key)
 
 
 # ── outcomes: one type, one mapping to the HTTP answer ──────────────────────
@@ -298,12 +283,9 @@ def should_queue(user_id: str) -> bool:
         return False
 
 
-@dataclass
-class Staged:
-    id: str
-    #: True when this call created the row and must enqueue its job; False
-    #: when it attached to a sync of the same course already in flight.
-    fresh: bool
+#: `fresh`: this call created the row and must enqueue its job; False when it
+#: attached to a sync of the same course already in flight.
+Staged = staged_jobs.Staged
 
 
 def _active_row(user_id: str, enrollment_id: str) -> dict | None:
@@ -319,35 +301,16 @@ def _active_row(user_id: str, enrollment_id: str) -> dict | None:
     return rows[0] if isinstance(rows, list) and rows else None
 
 
-def _dedupe_key(sync_id: str) -> str:
-    return f"{GRADESCOPE_SYNC_JOB}:{sync_id}"
-
-
 def _job_row(sync_id: str, job_id: str | None) -> dict | None:
     """The sync's `gradescope.sync` job: by the id recorded on the row, or —
     when that best-effort write never landed — by its dedupe key (newest)."""
-    if job_id:
-        rows = table("jobs").select("status,locked_at", filters={"id": f"eq.{job_id}"}, limit=1)
-    else:
-        rows = table("jobs").select(
-            "status,locked_at", filters={"dedupe_key": f"eq.{_dedupe_key(sync_id)}"},
-            order="created_at.desc", limit=1,
-        )
-    return rows[0] if isinstance(rows, list) and rows else None
+    return staged_jobs.job_row(SPEC, table, sync_id, job_id, "status,locked_at")
 
 
 def _job_alive(job: dict | None) -> bool:
     """Whether a job will still run (or is running) the sync: waiting to be
     claimed or retried, or running under a lease its worker still renews."""
-    if not job:
-        return False
-    status = job.get("status")
-    if status in _WAITING_JOB:
-        return True
-    if status == "running":
-        age = _age_seconds(job.get("locked_at"))
-        return age is None or age <= _LEASE_SECONDS
-    return False  # succeeded / dead
+    return staged_jobs.job_alive(job, lease_seconds=_LEASE_SECONDS)
 
 
 def _abandoned(row: dict) -> bool:
@@ -431,22 +394,7 @@ def enqueue_sync(sync_id: str) -> str | None:
     one row, and a per-student key would merge two different courses' syncs
     into one job.
     """
-    out = jobs.enqueue(
-        GRADESCOPE_SYNC_JOB, {"sync_id": sync_id}, dedupe_key=_dedupe_key(sync_id),
-    )
-    job_id = out.get("id")
-    if job_id:
-        try:
-            table("gradescope_syncs").update(
-                {"job_id": job_id}, filters={"id": f"eq.{sync_id}"},
-                prefer_return_minimal=True,
-            )
-        except Exception:
-            # Only the liveness checks read it, and they fall back to the
-            # dedupe key (_job_row).
-            logger.warning("could not record job %s on gradescope sync %s", job_id, sync_id,
-                           exc_info=True)
-    return job_id
+    return staged_jobs.enqueue(SPEC, table, sync_id, {"sync_id": sync_id})
 
 
 @runs_as_service
@@ -454,11 +402,7 @@ def take_back(sync_id: str, token: str) -> bool:
     """queued -> inline, for the request holding `token` to run the sync
     itself (recorded as `counts.inline_owner`). False when a worker already
     started it, another request took it, or it ended."""
-    won = table("gradescope_syncs").update(
-        {"stage": INLINE, "counts": {"inline_owner": token}},
-        filters={"id": f"eq.{sync_id}", "stage": f"eq.{QUEUED}"},
-    )
-    return bool(won)
+    return staged_jobs.take_back(SPEC, table, sync_id, token)
 
 
 @runs_as_service
@@ -466,14 +410,7 @@ def finish_inline(sync_id: str, token: str, outcome: SyncOutcome) -> bool:
     """Record an inline run's outcome on the row it took back, only while the
     row is still this request's (`inline` + its token). Never raises: the
     request already has its answer; a watcher that misses it ends pending."""
-    try:
-        return bool(table("gradescope_syncs").update(outcome.row_fields(), filters={
-            "id": f"eq.{sync_id}", "stage": f"eq.{INLINE}", _INLINE_OWNER: f"eq.{token}",
-        }))
-    except Exception:
-        logger.warning("could not record the inline outcome of gradescope sync %s", sync_id,
-                       exc_info=True)
-        return False
+    return staged_jobs.finish_inline(SPEC, table, sync_id, token, outcome.row_fields())
 
 
 @runs_as_service
@@ -510,12 +447,10 @@ def fail_if_running(sync_id: str, owner: str | None, code: str) -> bool:
     """Record a terminal failure the worker could not (its job dead-lettered
     mid-run). Conditional on the row still running under the owner the
     caller saw."""
-    won = table("gradescope_syncs").update(
-        {"stage": FAILED, "error_code": code, "counts": None},
-        filters={"id": f"eq.{sync_id}", "stage": f"eq.{RUNNING}",
-                 _OWNER: f"eq.{owner}" if owner else "is.null"},
+    return staged_jobs.cas_update(
+        SPEC, table, sync_id, {"stage": FAILED, "error_code": code, "counts": None},
+        stage=RUNNING, owner=owner,
     )
-    return bool(won)
 
 
 # ── request side: wait ──────────────────────────────────────────────────────
@@ -544,51 +479,29 @@ def wait_for_sync(
     transient database error on any read or swap is retried on the next poll;
     only `_MAX_DB_ERRORS` in a row end the watch (``timeout``). Blocking: the
     sync route is a plain `def` and runs in FastAPI's threadpool."""
-    max_wait = SYNC_MAX_WAIT_SECONDS if max_wait is None else max_wait
-    grace = PICKUP_GRACE_SECONDS if grace is None else grace
-    poll = POLL_INTERVAL_SECONDS if poll is None else poll
-    sleep = sleep or time.sleep
-    clock = clock or time.monotonic
-    started = clock()
-    last_row: dict | None = None
-    polls = 0
-    errors = 0
-    while True:
-        elapsed = clock() - started
-        try:
-            row = read_status(sync_id)
-            if row is None:  # deleted under us (enrollment or account removed)
-                return Watch(FAILED, {"id": sync_id, "stage": FAILED, "error_code": ERR_WORKER})
-            last_row = row
-            stage = row.get("stage")
-            if stage == QUEUED and elapsed >= grace:
-                if take_back(sync_id, token):
-                    logger.info("gradescope sync %s: no worker took it in %.0fs; syncing inline",
-                                sync_id, grace)
-                    return Watch(INLINE, {**row, "stage": INLINE})
-                errors = 0
-                sleep(poll)
-                continue  # a worker (or another request) took it: re-read
-            if stage == INLINE and _token_of(row, "inline_owner") == token:
-                return Watch(INLINE, row)  # our own take-back, whose answer was lost to a blip
-            if stage in (DONE, FAILED):
-                return Watch(stage, row)
-            if elapsed >= max_wait:
-                return Watch(PENDING, row)
-            polls += 1
-            if stage == RUNNING and polls % _JOB_CHECK_EVERY == 0:
-                if job_status(sync_id, row.get("job_id")) == "dead":
-                    fail_if_running(sync_id, _token_of(row, "owner"), ERR_WORKER)
-                    errors = 0
-                    continue
-            errors = 0
-        except Exception:
-            errors += 1
-            logger.warning("gradescope sync %s: status poll failed (%d in a row)", sync_id,
-                           errors, exc_info=True)
-            if errors >= _MAX_DB_ERRORS or elapsed >= max_wait:
-                return Watch(TIMEOUT, last_row)
-        sleep(poll)
+    plan = staged_jobs.WatchPlan(
+        spec=SPEC, row_id=sync_id, token=token, ends=frozenset({DONE, FAILED}),
+        running=frozenset({RUNNING}),
+        grace=PICKUP_GRACE_SECONDS if grace is None else grace,
+        max_wait=SYNC_MAX_WAIT_SECONDS if max_wait is None else max_wait,
+        poll=POLL_INTERVAL_SECONDS if poll is None else poll,
+        job_check_every=_JOB_CHECK_EVERY, max_errors=_MAX_DB_ERRORS,
+    )
+    io = staged_jobs.WatchIO(
+        read=lambda: read_status(sync_id),
+        take_back=lambda: take_back(sync_id, token),
+        job_dead=lambda row: job_status(sync_id, row.get("job_id")) == "dead",
+        fail_dead=lambda row: fail_if_running(sync_id, _token_of(row, "owner"), ERR_WORKER),
+    )
+    end = staged_jobs.run_watch(plan, io, sleep=sleep or time.sleep,
+                                clock=clock or time.monotonic)
+    if end.kind == staged_jobs.GONE:  # deleted under us (enrollment or account removed)
+        return Watch(FAILED, {"id": sync_id, "stage": FAILED, "error_code": ERR_WORKER})
+    if end.kind == staged_jobs.TOOK_BACK:
+        return Watch(INLINE, end.row)
+    if end.kind == staged_jobs.END:
+        return Watch(end.row["stage"], end.row)
+    return Watch(PENDING if end.kind == staged_jobs.PENDING else TIMEOUT, end.row)
 
 
 def response_for(watch: Watch):
@@ -635,22 +548,10 @@ def sync_via_queue(*, user_id: str, enrollment_id: str, link_id: str | None,
         logger.warning("gradescope sync staging failed; syncing inline", exc_info=True)
         return None
     token = uuid.uuid4().hex
-    if staged.fresh:
-        try:
-            enqueue_sync(staged.id)
-        except Exception:
-            logger.warning("gradescope.sync enqueue failed for sync %s; syncing inline",
-                           staged.id, exc_info=True)
-            # Ours to run now. If the swap loses (or errors), watch the row: a
-            # worker has it after all, or the watch takes it back after the grace.
-            try:
-                won = take_back(staged.id, token)
-            except Exception:
-                logger.warning("take-back of gradescope sync %s failed; watching it",
-                               staged.id, exc_info=True)
-                won = False
-            if won:
-                return _run_inline(staged.id, token, **kwargs)
+    if staged.fresh and staged_jobs.enqueue_or_take_back(
+        SPEC, staged.id, enqueue_fn=enqueue_sync, take_back_fn=take_back, token=token,
+    ):
+        return _run_inline(staged.id, token, **kwargs)  # ours to run now
     watch = wait_for_sync(staged.id, token=token)
     if watch.kind == INLINE:
         return _run_inline(staged.id, token, **kwargs)
@@ -674,19 +575,6 @@ def status_response(row: dict | None):
 
 
 # ── worker side ─────────────────────────────────────────────────────────────
-
-
-def _owner_token() -> str:
-    """This attempt's owner token: worker id + job attempt.
-
-    `jobs.current_job()` (set by worker/runner.py around each handler) lands
-    with the upload fix below this PR in the stack; until then, and outside a
-    worker run, each run gets a unique token, which fences just as well."""
-    current = getattr(jobs, "current_job", None)
-    job = current() if callable(current) else None
-    if job is None:
-        return f"direct#{uuid.uuid4().hex}"
-    return f"{job.locked_by}#{job.attempt}"
 
 
 def link_unchanged(link_id: str | None, gradescope_course_id: str, enrollment_id: str) -> bool:
@@ -727,16 +615,12 @@ def _run_gradescope_sync_job(payload: dict) -> None:
     stage = row.get("stage")
     if stage in TERMINAL:
         return  # the request ran it inline, or an earlier attempt finished it
-    owner = _owner_token()
-    filters = {"id": f"eq.{sync_id}", "stage": f"eq.{stage}"}
-    if stage != QUEUED:
-        # A re-delivery: the attempt that moved it to `running` died or
-        # outlived its lease (the heartbeat keeps a live run's lease). Take
-        # it over from that attempt's token, so its late write is refused.
-        previous = _token_of(row, "owner")
-        filters[_OWNER] = f"eq.{previous}" if previous else "is.null"
-    if not table("gradescope_syncs").update({"stage": RUNNING, "counts": {"owner": owner}},
-                                            filters=filters):
+    owner = staged_jobs.owner_token(jobs.current_job())
+    # queued -> running; or a re-delivery: the attempt that moved it to
+    # `running` died or outlived its lease (the heartbeat keeps a live run's
+    # lease). Take it over from that attempt's token, so its late write is
+    # refused.
+    if not staged_jobs.claim(SPEC, table, row, to_stage=RUNNING, owner=owner):
         return  # the request took it back, or another attempt moved it, first
     if stage != QUEUED:
         logger.warning("gradescope.sync: sync %s taken over from stage %s (owner %s)",
@@ -748,10 +632,8 @@ def _run_gradescope_sync_job(payload: dict) -> None:
 
     with acting_for(row.get("user_id")):
         outcome = _worker_outcome(row)
-    won = table("gradescope_syncs").update(outcome.row_fields(), filters={
-        "id": f"eq.{sync_id}", "stage": f"eq.{RUNNING}", _OWNER: f"eq.{owner}",
-    })
-    if not won:
+    if not staged_jobs.cas_update(SPEC, table, sync_id, outcome.row_fields(),
+                                  stage=RUNNING, owner=owner):
         logger.info("gradescope.sync: sync %s moved on under this attempt; not recording %s",
                     sync_id, outcome.error_code or DONE)
 
