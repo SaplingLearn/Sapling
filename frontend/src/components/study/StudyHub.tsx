@@ -199,6 +199,10 @@ export function StudyHub({
   }>({ exam: null, topic: null, hover: null, lvl: null, menu: null, tileMenu: null, openCols: {}, moreOpen: false, qrOpen: false, aiOpen: false, goalOpen: false });
   const set = (patch: Partial<typeof st>) => setSt(prev => ({ ...prev, ...patch }));
   const [drafts, setDrafts] = React.useState<Draft[] | null>(null);
+  /** What the open modal's drafts were made from. Save diffs against THIS, never
+   *  the live list: a list that loads or reloads while the modal is open would
+   *  otherwise read every row the drafts never saw as "removed" and delete it. */
+  const manageBase = React.useRef<{ cid: string; rows: Map<string, Assessment> } | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [picker, setPicker] = React.useState<Picker>(null);
   const [goalDraft, setGoalDraft] = React.useState("");
@@ -299,19 +303,21 @@ export function StudyHub({
 
   /* ── exams and deadlines modal ────────────────────────────────────────── */
   const openManage = () => {
+    manageBase.current = { cid, rows: new Map(list.map(e => [e.id, e])) };
     setDrafts(list.map(e => ({ id: e.id, type: e.type, rawType: e.rawType, title: e.title, iso: e.iso })));
     set({ menu: null });
   };
   const updDraft = (i: number, patch: Partial<Draft>) =>
     setDrafts(d => (d ? d.map((x, j) => (j === i ? { ...x, ...patch } : x)) : d));
   const saveManage = async () => {
-    if (!drafts || !userId || !cid || saving) return;
+    const base = manageBase.current;
+    if (!drafts || !base || !userId || !base.cid || saving) return;
     const rows = drafts.map((e, i) => ({ ...e, title: e.title.trim() || `${e.type} ${i + 1}` }));
-    const original = new Map(list.map(e => [e.id, e]));
+    const original = base.rows;
     const keep = new Set(rows.filter(r => !r.isNew).map(r => r.id));
     setSaving(true);
     try {
-      for (const e of list) if (!keep.has(e.id)) await deleteAssignment(e.id, userId);
+      for (const id of original.keys()) if (!keep.has(id)) await deleteAssignment(id, userId);
       for (const r of rows) {
         if (r.isNew) continue;
         const o = original.get(r.id);
@@ -327,7 +333,7 @@ export function StudyHub({
       if (addedExam) setJustAdded({ title: addedExam.title, iso: addedExam.iso });
       if (added.length) {
         await saveAssignments(userId, added.map(r => ({
-          title: r.title, course_id: cid, due_date: r.iso, assignment_type: TYPE_RAW[r.type],
+          title: r.title, course_id: base.cid, due_date: r.iso, assignment_type: TYPE_RAW[r.type],
         })));
       }
       setDrafts(null);

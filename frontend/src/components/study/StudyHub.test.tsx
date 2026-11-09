@@ -41,6 +41,7 @@ const COURSE = { course_id: "c1", course_code: "CS101", course_name: "Intro to C
 const node = (id: string, name: string, tier: string, score: number) => ({ id, course_id: "c1", concept_name: name, mastery_tier: tier, mastery_score: score });
 
 beforeEach(() => {
+  vi.clearAllMocks(); // call history only; each test's implementations are set below
   push.mockReset();
   vi.mocked(api.getGraph).mockResolvedValue({
     nodes: [
@@ -176,6 +177,27 @@ describe("StudyHub", () => {
     expect(api.deleteAssignment).toHaveBeenCalledWith("hw", "u1");
     expect(api.updateAssignment).toHaveBeenCalledWith("e2", "u1", { title: "Exam Two" });
     expect(api.saveAssignments).toHaveBeenCalledWith("u1", [{ title: "Final", course_id: "c1", due_date: iso(15), assignment_type: "exam" }]);
+  });
+
+  it("saving dates never deletes rows the modal never showed (opened before they loaded)", async () => {
+    let release!: () => void;
+    const loaded = vi.mocked(api.getAllAssignments).getMockImplementation()!;
+    vi.mocked(api.getAllAssignments).mockImplementationOnce(
+      (...args) => new Promise(res => { release = () => res(loaded(...args)); }),
+    );
+    renderHub();
+    // Open the modal while the course's assignments are still in flight.
+    fireEvent.click(await screen.findByLabelText("Manage exams and deadlines"));
+    const dlg = screen.getByRole("dialog", { name: "Exams and deadlines" });
+    expect(within(dlg).queryAllByLabelText("Name")).toHaveLength(0);
+    release();
+    await screen.findByText("Ready for Exam 2"); // the list arrives under the open modal
+    fireEvent.click(within(dlg).getByText("+ Add Exam or Deadline"));
+    fireEvent.change(within(dlg).getAllByLabelText("Name").at(-1)!, { target: { value: "Final" } });
+    fireEvent.click(within(dlg).getByText("Save Dates"));
+    await waitFor(() => expect(api.saveAssignments).toHaveBeenCalled());
+    expect(api.deleteAssignment).not.toHaveBeenCalled();
+    expect(api.updateAssignment).not.toHaveBeenCalled();
   });
 
   it("the daily goal can be changed", async () => {
