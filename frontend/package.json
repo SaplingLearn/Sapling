@@ -14,6 +14,8 @@
     "start:test": "BACKEND_URL=${E2E_BACKEND_URL:-http://localhost:5000} SESSION_SECRET=sapling-local-dev-session-secret-change-only-if-you-know-why next start",
     "lint": "eslint .",
     "lint:baseline": "eslint --suppress-all",
+    "complexity": "node scripts/complexity_ratchet.mjs",
+    "complexity:shrink": "node scripts/complexity_ratchet.mjs --shrink",
     "typecheck": "tsc --noEmit",
     "check:lockfile": "node scripts/check-lockfile-version.mjs",
     "test": "vitest run",
