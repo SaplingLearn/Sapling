@@ -686,7 +686,11 @@ function FlashcardsMode({
     return out;
   }, [cards, courseId, topicFilter, courses]);
 
-  React.useEffect(() => {
+  // A new card (or a shrunk deck) starts unflipped. A layout effect, so the
+  // reset lands in the same commit that shows the card: as a passive effect it
+  // ran a beat later and could undo a Space pressed as soon as the card
+  // appeared (seen as a CI flake in Study.races.test.tsx).
+  React.useLayoutEffect(() => {
     if (idx >= filtered.length) setIdx(0);
     setFlipped(false);
   }, [filtered.length, idx]);
@@ -746,8 +750,11 @@ function FlashcardsMode({
     }
   }, [card, userId, toast, load]);
 
-  // Keyboard: Space flips; 1/2/3 rate when flipped.
-  React.useEffect(() => {
+  // Keyboard: Space flips; 1/2/3 rate when flipped. Subscribed in a layout
+  // effect, so the handler reads the state on screen from the commit that
+  // drew it: a passive re-subscribe left the previous handler (an unflipped
+  // card) live for a beat, and a rating key pressed then was ignored.
+  React.useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
