@@ -2,7 +2,8 @@
 #
 # Tear down the LOCAL E2E stack booted by scripts/e2e-up.sh (#384).
 #
-#   make e2e-down                     # stop uvicorn + next, then the slot's Supabase
+#   make e2e-down                     # (via scripts/e2e-cycle.sh --stop) stop uvicorn + next,
+#                                     # then the slot's Supabase
 #   scripts/e2e-down.sh --apps-only   # stop only the tracked app servers, keep
 #                                     # Supabase up (e2e-up.sh uses this so
 #                                     # re-runs start from clean processes)
@@ -10,7 +11,7 @@
 # Server PIDs are tracked in .e2e/*.pid. Each server was started under setsid,
 # so the recorded PID is its process-group leader and one group signal takes
 # down the whole tree (npm → next-server, etc.). Stale or missing PID files are
-# cleaned up silently — safe to run any time. LOCAL ONLY.
+# cleaned up silently. Runs only inside a cycle (or CI) — see below. LOCAL ONLY.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

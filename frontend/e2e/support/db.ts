@@ -54,7 +54,9 @@ const DB_URL = FROM_ENV
   ? process.env.E2E_DB_URL!.trim()
   : STACK.dbUrl || (IN_CI ? "postgresql://postgres:postgres@127.0.0.1:54322/postgres" : "");
 const SUPABASE_URL = FROM_ENV
-  ? process.env.SUPABASE_URL?.trim() || ""
+  ? process.env.SUPABASE_URL?.trim() ||
+    (STACK.dbUrl === DB_URL ? STACK.supabaseUrl || "" : "") ||
+    (IN_CI ? "http://127.0.0.1:54321" : "")
   : STACK.supabaseUrl || (IN_CI ? "http://127.0.0.1:54321" : "");
 
 // Exact-match loopback hosts — deliberately stricter than a substring check,

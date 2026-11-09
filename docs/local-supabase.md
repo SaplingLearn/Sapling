@@ -359,7 +359,8 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
   functions, pooler; override with `E2E_SUPABASE_EXCLUDE`).
 - `scripts/e2e-cycle.sh` claims the first free slot's lock
   (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`) for the whole cycle, so up to
-  three runs go side by side; when all are busy it waits. `--slot N` asks for one.
+  three runs go side by side; when all are busy it waits. `--slot N` (or
+  `E2E_SLOT=N`) asks for one.
 - **A cycle owns every stack.** `make e2e-up` is a cycle held in the
   background (`scripts/e2e-cycle.sh --background`; log `.e2e/cycle.log`), and
   `make e2e-down` stops it (`--stop`), so the stack is torn down by the process
@@ -367,6 +368,10 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
   While it is up, `.e2e/stack.json` tells the Playwright harness which slot to
   hit, and `source .e2e/env.sh` sets up a shell for the oracles.
   `scripts/e2e-up.sh` / `e2e-down.sh` refuse to run outside a cycle (or CI).
+  If a held cycle is killed without its teardown (SIGKILL, OOM), `make e2e-down`
+  still stops the stack it left behind (`.e2e/booted` names the slot).
+- A foreground cycle's command keeps your terminal: `scripts/e2e-cycle.sh -- bash`
+  gives you a shell inside a slot, torn down when you exit it.
 - Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on pushes to main only
   (CI cost) — a PR's browser lane runs locally in a slot before merge.
 - **One cycle per checkout.** `.e2e/` (PIDs, logs, manifest) and

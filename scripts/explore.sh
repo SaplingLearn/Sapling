@@ -87,12 +87,19 @@ USAGE
 }
 
 # ── Stack ownership ─────────────────────────────────────────────────────────
-# The held cycle's pid, if this checkout has one running (e2e-cycle.sh writes
-# .e2e/cycle.pid for --background).
+# The held cycle's pid, if this checkout has one running — the same test as
+# e2e-cycle.sh's held_pid: the checkout lock is held AND .e2e/cycle.pid names
+# a live e2e-cycle.sh (a stale pid, since reused, never counts).
+EXPLORE_CYCLE_PID=""
 held_cycle_pid() {
   local pid
   pid="$(cat "$REPO_ROOT/.e2e/cycle.pid" 2>/dev/null)" || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  flock -n "$REPO_ROOT/.e2e/cycle.lock" true 2>/dev/null && return 1
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'e2e-cycle\.sh' || return 1
+  fi
+  echo "$pid"
 }
 
 # ── Storage-state mint ────────────────────────────────────────────────────────
@@ -340,22 +347,23 @@ do_up() {
   export SEED_RICH=1
 
   echo "▶ Booting the E2E stack (scripts/e2e-cycle.sh --background)…"
-  "$CYCLE" ${E2E_SLOT:+--slot "$E2E_SLOT"} --background \
-    || die "the E2E stack did not come up — see .e2e/cycle.log"
-  local mine
-  mine="$(held_cycle_pid)" || die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  # --new: a hold this checkout already runs (someone else's, started since
+  # the check above) is a failure here, never adopted as ours.
+  "$CYCLE" --new --background || die "the E2E stack did not come up — see .e2e/cycle.log"
+  EXPLORE_CYCLE_PID="$(held_cycle_pid)" || die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+
+  # The stack is ours: NOW arm do_down as the boot-failure safety net (it
+  # stops EXPLORE_CYCLE_PID even if .explore/ can't be written), so a failure
+  # below still stops the cycle. Disarmed just before a successful return so a
+  # bare `up` leaves the stack running for the interactive flow.
+  trap do_down EXIT
   # shellcheck disable=SC1091
   source "$REPO_ROOT/.e2e/env.sh"
-
-  # The stack is ours: NOW arm do_down as the boot-failure safety net, so a
-  # failure below still stops the cycle. Disarmed just before a successful
-  # return so a bare `up` leaves the stack running for the interactive flow.
-  trap do_down EXIT
 
   echo "▶ Preparing .explore/ (previous run's artifacts, if any, are wiped — triage them first if you need them)…"
   mkdir -p "$EXPLORE_DIR"
   find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  echo "$mine" > "$EXPLORE_DIR/cycle.pid"
+  echo "$EXPLORE_CYCLE_PID" > "$EXPLORE_DIR/cycle.pid"
   mkdir -p "$EXPLORE_DIR/traces"
   # Pre-create findings.md with a header so the explorer (allowedTools grants
   # Edit(.explore/**), not Write — see run_explorer) always has an existing
@@ -397,7 +405,8 @@ DONE
 do_down() {
   mkdir -p "$EXPLORE_DIR" || true
   local mine held
-  mine="$(cat "$EXPLORE_DIR/cycle.pid" 2>/dev/null)" || true
+  mine="${EXPLORE_CYCLE_PID:-}"
+  [ -n "$mine" ] || mine="$(cat "$EXPLORE_DIR/cycle.pid" 2>/dev/null)" || true
   held="$(held_cycle_pid)" || true
   if [ -z "${mine:-}" ] || [ "${held:-}" != "$mine" ]; then
     if [ -n "${held:-}" ]; then
