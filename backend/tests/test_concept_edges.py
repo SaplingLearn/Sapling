@@ -126,3 +126,17 @@ def test_prune_never_deletes_off_topic_only_logistics():
     remove, held = plan_removals(names, [_j("Exports", "off_topic"), _j("Final Exam")])
     assert [r["name"] for r in remove] == ["Final Exam"]
     assert [h["name"] for h in held] == ["Exports"]
+
+
+def test_reviewed_report_is_applied_as_reviewed():
+    from scripts.prune_junk_concepts import reviewed_removals
+
+    reviewed = {"remove": [_j("Final Exam"), _j("Office Hours"), _j("Gone Since Review")],
+                "held": [_j("RNA Splicing", "off_topic")]}
+    # A reviewer struck "Office Hours" by editing it out; "Gone Since Review"
+    # no longer exists; off_topic smuggled into `remove` is still refused.
+    reviewed["remove"] = [r for r in reviewed["remove"] if r["name"] != "Office Hours"]
+    reviewed["remove"].append(_j("Scarcity", "off_topic"))
+    remove, held = reviewed_removals(["final exam", "Office Hours", "Scarcity"], reviewed)
+    assert [r["name"] for r in remove] == ["final exam"]
+    assert [h["name"] for h in held] == ["RNA Splicing"]
