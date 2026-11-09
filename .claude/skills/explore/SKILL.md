@@ -18,11 +18,12 @@ at any point; follow their steering over the default itinerary.
 
 2. **Open a browser you can drive.** Use this session's browser tools
    (Playwright MCP if configured, else the Claude-in-Chrome tools) on a NEW
-   tab at `http://localhost:3000`.
+   tab at the slot's frontend URL that `scripts/explore.sh up` prints
+   (also `frontendUrl` in `.e2e/stack.json`; e.g. `http://localhost:3101`).
 
 3. **Sign in as the seeded student.** The storage-state file works only for
    Playwright contexts; in a live browser, mint the session from the page
-   itself — run this JavaScript on the localhost:3000 tab, then reload:
+   itself — run this JavaScript on that tab, then reload:
 
    ```js
    await fetch("/api/auth/test-login", {
@@ -57,5 +58,5 @@ at any point; follow their steering over the default itinerary.
 
 - Never skip step 5, even after errors — the stack and lock must not leak.
 - Report, never fix: no app-code edits, no git, no writes outside `.explore/`.
-- If the browser tools can't reach localhost:3000, check `.e2e/*.log`, report,
+- If the browser tools can't reach the slot's frontend URL, check `.e2e/*.log`, report,
   and tear down — don't debug the stack mid-exploration.

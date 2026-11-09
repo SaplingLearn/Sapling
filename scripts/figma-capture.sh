@@ -24,16 +24,25 @@
 # (agents/function_handlers_showcase.py) fixes what it reads from an AGENT.
 # The rich seed with E2E handlers still photographs "[e2e-function-model]".
 #
-# LOCAL ONLY. The whole up→capture→down cycle runs inside ONE flock: the local
-# stack is a machine singleton, and a separately-flocked teardown deadlocks
-# because the detached uvicorn/next children inherit the lock fd (see
-# scripts/explore.sh and CLAUDE.md).
+# LOCAL ONLY. The whole up→capture→down cycle is ONE scripts/e2e-cycle.sh
+# cycle: run from a shell, this script re-launches itself inside a cycle,
+# which claims a free E2E slot (scripts/lib/e2e-slot.sh), boots it, runs the
+# capture below, and tears it down — never on the dev app's :3000/:5000.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-LOCK_FILE="/tmp/claude-$(id -u)/sapling-e2e-stack.lock"
+# Outside a cycle: become one. SEED_RICH stays 1: the rich seed's substance is
+# already photogenic (CS101 / MATH210 / BIO110, real concept names, mastery
+# across all four tiers) and it creates the rich-* users that
+# /api/auth/test-login signs in as. The showcase seed is an OVERLAY on it.
+if [ "${E2E_SLOT_LOCKED:-0}" != "1" ]; then
+  export SAPLING_MODEL_MODE=function
+  export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase
+  exec "$ROOT/scripts/e2e-cycle.sh" -- "$ROOT/scripts/figma-capture.sh" "$@"
+fi
+
 if [ "${1:-}" = "--pool" ]; then
   MODE=pool; POOL="$(realpath "$2")"; STATES="$(realpath "$3")"; PROMPT="${4:?usage: --pool <pool.json> <states.json> <promptId>}"
 elif [ "${1:-}" = "--dryrun" ]; then
@@ -46,28 +55,15 @@ VENV_PY="$ROOT/backend/venv/bin/python"
 
 die() { echo "✗ $*" >&2; exit 1; }
 
-mkdir -p "$(dirname "$LOCK_FILE")"
-exec 9>"$LOCK_FILE"
-flock -n 9 || die "e2e stack lock busy ($LOCK_FILE) — another session is using the stack"
-
 [ -x "$VENV_PY" ] || die "no backend venv at $VENV_PY"
 
-teardown() {
+# Inside the cycle (it boots and tears down). Undo the overlay on the way out,
+# for a slot kept with E2E_KEEP_DB=1; a throwaway slot database is dropped anyway.
+restore_baseline() {
   echo "▶ Restoring the rich-seed baseline (undo the showcase overlay)…"
-  ( cd frontend && node --no-warnings e2e/figma/reset-db.ts ) || echo "⚠ DB reset failed — next e2e-up may 409 on rooms"
-  echo "▶ Tearing down the stack…"
-  make e2e-down || true
+  ( cd frontend && node --no-warnings e2e/figma/reset-db.ts ) || echo "⚠ DB reset failed"
 }
-trap teardown EXIT
-
-echo "▶ Booting the stack in showcase mode…"
-# SEED_RICH stays 1: the rich seed's substance is already photogenic (CS101 /
-# MATH210 / BIO110, real concept names, mastery across all four tiers) and it
-# creates the rich-* users that /api/auth/test-login signs in as. The showcase
-# seed is an OVERLAY on it, not a replacement.
-SAPLING_MODEL_MODE=function \
-SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase \
-  make e2e-up || die "make e2e-up failed"
+trap restore_baseline EXIT
 
 echo "▶ Applying the showcase overlay…"
 ( cd backend && "$VENV_PY" -m db.seed_showcase ) || die "seed_showcase failed"
