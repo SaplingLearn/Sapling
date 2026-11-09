@@ -134,10 +134,11 @@ const PLAIN_OPERATOR: Record<string, string> = { "·": "*", "×": "*", "−": "-
 const EXPONENT = /\^(\([^()]*\)|[+-]?\d+(?:\.\d+)?|[A-Za-z])/g;
 
 /**
- * ASCII → what the field shows. An exponent is raised only when every one of
- * its characters has a superscript form (there is none for `q`, `.`, `*`,
- * `/` or a capital); otherwise it stays as typed, caret and all, so the
- * student is never shown a reading the grader would not make.
+ * ASCII → what the field shows. Only a NUMBER exponent is raised (x^2,
+ * 10^-3). A letter or bracketed one (x^n, 2^(n+1)) stays as typed: the
+ * reading serif has superscript digits and signs but no superscript letters
+ * or brackets, so those would fall back to another font, sit at another
+ * height, and read worse than the caret does.
  */
 export function prettyExpression(ascii: string): string {
   const operators = (s: string) => s.replace(/[*-]/g, ch => PRETTY_OPERATOR[ch]);
@@ -147,7 +148,7 @@ export function prettyExpression(ascii: string): string {
   for (const m of ascii.matchAll(EXPONENT)) {
     const at = m.index ?? 0;
     const body = m[1];
-    if (![...body].every(ch => ch in SUPERSCRIPT)) continue;
+    if (!/^[+-]?\d+$/.test(body)) continue;
     // A power stacked straight onto a raised one (x^2^3) stays as typed: two
     // superscript runs side by side would read back as ONE exponent.
     if (at === raisedEnd) continue;
@@ -175,4 +176,31 @@ export function asciiExpression(display: string): string {
     out += PLAIN_OPERATOR[ch] ?? ch;
   }
   return run ? `${out}^${run}` : out;
+}
+
+// ── The numeric field, typeset in place ─────────────────────────────────
+//
+// Only NOTATION is typeset — e-notation as ×10ⁿ and the minus as − — never
+// the value: 3/4 stays 3/4 (the read-back says 0.75), because rewriting it
+// would overwrite the student's answer and any rounding the question asked
+// for. The grader reads neither ×10⁸ nor a superscript, so `asciiNumber`
+// turns them back into `e8` before anything leaves the field.
+
+/** `3e8` / `1.5E-3`: an exponent only once it has a digit. */
+const E_NOTATION = /(\d|\.)[eE]([+-]?\d+)/g;
+
+/** ASCII → what the numeric field shows. */
+export function prettyNumber(ascii: string): string {
+  return ascii
+    .replace(E_NOTATION, (_, before: string, exp: string) =>
+      `${before}×10${[...exp].map(ch => SUPERSCRIPT[ch]).join("")}`)
+    .replace(/-/g, "−");
+}
+
+/** What the numeric field shows → the ASCII the grader reads. */
+export function asciiNumber(display: string): string {
+  return display
+    .replace(/×10([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+)/g, (_, run: string) => `e${[...run].map(ch => FROM_SUPERSCRIPT[ch]).join("")}`)
+    .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]/g, ch => FROM_SUPERSCRIPT[ch])
+    .replace(/−/g, "-");
 }

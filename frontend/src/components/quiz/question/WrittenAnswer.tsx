@@ -8,7 +8,8 @@
  *   eight words, `routes/quiz.py`), so a paragraph box invited the very
  *   sentences the grader can never match.
  * - numeric: one line, the decimal keypad on a phone, keys for what that pad
- *   lacks (− / % and ×10ⁿ), and a live "Reads as 0.75" at the field's
+ *   lacks (− / % and ×10ⁿ), its notation typeset in the field (3e8 shows as
+ *   3×10⁸, the session keeps 3e8), and a live "Reads as 0.75" at the field's
  *   right end so a student sees their fraction or percentage parsed before
  *   they submit it.
  * - symbolic: one monospace line, keys for powers, brackets and operators,
@@ -30,9 +31,11 @@ import { Check, X } from "lucide-react";
 import type { QuestionType } from "@/lib/quiz/types";
 import {
   asciiExpression,
+  asciiNumber,
   formatNumber,
   numericValue,
   prettyExpression,
+  prettyNumber,
   symbolicProblem,
 } from "@/lib/quiz/answerFormats";
 
@@ -66,7 +69,7 @@ const SYMBOLIC_KEYS: Key[] = [
 
 const PLACEHOLDER: Record<WrittenType, string> = {
   short_answer: "Type your answer",
-  numeric: "e.g. 42, 3/4, 0.75 or 75%",
+  numeric: "e.g. 42, 3/4, 0.75, 75% or 3×10⁸",
   symbolic: "e.g. 2(x + 1) or x^2 − 1",
 };
 
@@ -98,11 +101,13 @@ export function WrittenAnswer({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
 
-  // An algebra answer is typeset IN the field: the session holds the ASCII
-  // the grader reads, the input shows it the way it will be read (x^2 → x²).
-  const typeset = type === "symbolic";
-  const toShown = (plain: string) => (typeset ? prettyExpression(plain) : plain);
-  const toPlain = (shown: string) => (typeset ? asciiExpression(shown) : shown);
+  // Algebra and numbers are typeset IN the field: the session holds the
+  // ASCII the grader reads, the input shows it the way it will be read
+  // (x^2 → x², 3e8 → 3×10⁸). A short answer is shown exactly as typed.
+  const toShown = (plain: string) =>
+    type === "symbolic" ? prettyExpression(plain) : type === "numeric" ? prettyNumber(plain) : plain;
+  const toPlain = (shown: string) =>
+    type === "symbolic" ? asciiExpression(shown) : type === "numeric" ? asciiNumber(shown) : shown;
   const shown = toShown(value);
 
   // Typesetting changes the text's length (^2 is two characters, ² is one),
@@ -121,13 +126,17 @@ export function WrittenAnswer({
    * student has not touched, so its typeset length is stable even when the
    * character just typed joined an exponent (x² + 3 → x²³).
    */
-  const commit = (next: string, caret: number): number => {
+  const commit = (next: string, caret: number) => {
     const plain = toPlain(next);
     const after = toShown(toPlain(next.slice(caret))).length;
     const target = Math.max(0, toShown(plain).length - after);
+    if (plain === value) {
+      // Nothing to re-render (the layout effect won't run): place it now.
+      inputRef.current?.setSelectionRange(target, target);
+      return;
+    }
     pendingCaret.current = target;
     onChange(plain);
-    return target;
   };
 
   /** Put `key` in at the cursor (replacing any selection) and keep typing. */
@@ -135,15 +144,11 @@ export function WrittenAnswer({
     const input = inputRef.current;
     const start = input?.selectionStart ?? shown.length;
     const end = input?.selectionEnd ?? shown.length;
-    const caret = commit(
-      shown.slice(0, start) + key.insert + shown.slice(end),
-      start + (key.caret ?? key.insert.length),
-    );
-    // After React has written the new value back into the input.
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(caret, caret);
-    });
+    // Focus first; the caret is placed by the layout effect, synchronously
+    // after the re-render — never on a later frame, which would land after
+    // the student's next keystroke and drag the caret back.
+    input?.focus();
+    commit(shown.slice(0, start) + key.insert + shown.slice(end), start + (key.caret ?? key.insert.length));
   };
 
   // What the grader will make of it. A good number is read back INSIDE the
@@ -154,8 +159,11 @@ export function WrittenAnswer({
     if (type === "numeric") {
       const n = numericValue(value);
       if (n === null) return { ok: false, node: "Not a number the grader can read yet." };
-      if (formatNumber(n) === value.trim()) return null; // "15" reads as 15: nothing to add
-      return { ok: true, node: <>Reads as <span className="quiz-written__value">{formatNumber(n)}</span></> };
+      // Read back in the field's own notation (6.02×10²³, not 6.02e+23), and
+      // only when it says something the field doesn't: "15" reads as 15.
+      const read = prettyNumber(formatNumber(n).replace("e+", "e"));
+      if (read === shown.trim()) return null;
+      return { ok: true, node: <>Reads as <span className="quiz-written__value">{read}</span></> };
     }
     if (type === "symbolic") {
       const problem = symbolicProblem(value);

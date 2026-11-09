@@ -616,14 +616,15 @@
   color: #fff;
 }
 
-/* A number is short: digits aligned. */
-.quiz-written__input--numeric {
-  font-family: var(--font-mono);
+/* A number and an expression are typeset in the field, so they use the
+   reading serif. Not monospace: it gives every superscript a full-width
+   cell, so x²³ reads as "x² ³". Not the UI sans: its 1 and l, 0 and O are
+   too close for an answer someone is checking digit by digit. */
+.quiz-written__input--numeric,
+.quiz-written__input--symbolic {
+  font-family: var(--font-serif);
   font-variant-numeric: tabular-nums;
 }
-
-/* An expression is code-like: monospace, so x, × and 1 stay distinct. */
-.quiz-written__input--symbolic { font-family: var(--font-mono); }
 
 .quiz-written__keys {
   display: flex;
@@ -631,7 +632,8 @@
   gap: var(--quiz-q-key-gap);
 }
 
-/* `.btn--sm` proportions, in monospace so the symbols line up. */
+/* `.btn--sm` proportions, in the same serif as the field the keys type into
+   (monospace would space the ² in "x²" a full cell away). */
 .quiz-written__key {
   min-width: var(--quiz-q-key-min-w);
   height: var(--quiz-q-key-h);
@@ -640,7 +642,7 @@
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-serif);
   font-size: var(--fs-md);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);

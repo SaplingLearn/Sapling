@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   asciiExpression,
+  asciiNumber,
   expressionParts,
   formatNumber,
   numericValue,
   prettyExpression,
+  prettyNumber,
   superscriptParts,
   symbolicProblem,
 } from "./answerFormats";
@@ -97,8 +99,6 @@ describe("prettyExpression / asciiExpression — the algebra field typeset in pl
     ["x^2 + 1", "x² + 1"],
     ["2(x+1)^2 - 3*x", "2(x+1)² − 3·x"],
     ["x^-1", "x⁻¹"],
-    ["x^(n+1)", "x⁽ⁿ⁺¹⁾"],
-    ["e^x", "eˣ"],
     ["2^10", "2¹⁰"],
   ])("shows %j as %j, and reads it back exactly", (ascii, shown) => {
     expect(prettyExpression(ascii)).toBe(shown);
@@ -110,9 +110,12 @@ describe("prettyExpression / asciiExpression — the algebra field typeset in pl
     ["x^-", "x^−"],
     ["x^q", "x^q"],        // no superscript q
     ["x^(2*y)", "x^(2·y)"], // no superscript ·
+    ["x^(n+1)", "x^(n+1)"], // letters and brackets stay as typed
+    ["e^x", "e^x"],
+    ["x^(2)", "x^(2)"],
     ["x^1.5", "x^1.5"],     // no superscript point
     ["x^2^3", "x²^3"],      // a stacked power: two runs would read back as one
-    ["x^(n+1)^2", "x⁽ⁿ⁺¹⁾^2"],
+    ["x^(n+1)^2", "x^(n+1)²"], // the bracketed power isn't raised, so the ² can be
   ])("leaves %j raised only where it can be (%j)", (ascii, shown) => {
     expect(prettyExpression(ascii)).toBe(shown);
     expect(asciiExpression(shown)).toBe(ascii);
@@ -123,7 +126,41 @@ describe("prettyExpression / asciiExpression — the algebra field typeset in pl
     expect(prettyExpression("x^23")).toBe("x²³");
   });
 
+  it("still reads a pasted letter or bracket superscript back to ASCII", () => {
+    expect(asciiExpression("x⁽ⁿ⁺¹⁾")).toBe("x^(n+1)");
+  });
+
   it("never lets a typeset character through to the grader", () => {
     expect(asciiExpression("x² × 3 ÷ y − 1")).toBe("x^2 * 3 / y - 1");
+  });
+});
+
+describe("prettyNumber / asciiNumber — the numeric field typeset in place", () => {
+  it.each([
+    ["3e8", "3×10⁸"],
+    ["1.5e-3", "1.5×10⁻³"],
+    ["-2.5", "−2.5"],
+    ["6.02e23", "6.02×10²³"],
+    ["3/4", "3/4"],   // the value is never rewritten, only the notation
+    ["75%", "75%"],
+    ["1,000", "1,000"],
+  ])("shows %j as %j, and reads it back exactly", (ascii, shown) => {
+    expect(prettyNumber(ascii)).toBe(shown);
+    expect(asciiNumber(shown)).toBe(ascii);
+  });
+
+  it("reads a capital E the same way (the grader takes either)", () => {
+    expect(prettyNumber("1.5E-3")).toBe("1.5×10⁻³");
+  });
+
+  it("leaves an exponent that is still being typed alone", () => {
+    expect(prettyNumber("3e")).toBe("3e");
+    expect(prettyNumber("3e-")).toBe("3e−");
+    expect(asciiNumber("3e−")).toBe("3e-");
+  });
+
+  it("hands the grader a number it can read", () => {
+    expect(numericValue(asciiNumber("3×10⁸"))).toBe(3e8);
+    expect(numericValue(asciiNumber("−1.5×10⁻³"))).toBeCloseTo(-0.0015);
   });
 });

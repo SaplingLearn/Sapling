@@ -86,7 +86,15 @@ describe("WrittenAnswer", () => {
     render(<Harness type="numeric" initial="12" />);
     input().setSelectionRange(0, 2);
     fireEvent.click(screen.getByTestId("quiz-key-minus"));
-    expect(input().value).toBe("-");
+    expect(input().value).toBe("−"); // shown as a true minus, stored as "-"
+  });
+
+  it("typesets e-notation in the number field, and stores the e", () => {
+    const onChange = vi.fn();
+    render(<WrittenAnswer type="numeric" value="3e8" disabled={false} onChange={onChange} onSubmit={vi.fn()} describedBy="hint" />);
+    expect(input().value).toBe("3×10⁸");
+    fireEvent.change(input(), { target: { value: "3×10⁸5" } });
+    expect(onChange).toHaveBeenLastCalledWith("3e85");
   });
 
   it("submits on Enter, but not mid-composition", () => {
