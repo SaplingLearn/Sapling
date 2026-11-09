@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
 from db.scope import runs_as_service
-from services import gradebook_service
+from services.gradebook import grades
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
 
@@ -302,7 +302,7 @@ def _course_grade_a_count(user_id: str) -> int:
     """Count the user's gradebook courses (enrollments) whose currently
     computed letter grade is an A variant (A, A-, or A+ under a custom scale).
 
-    Reuses `gradebook_service.current_grade` / `letter_for` — the same pure
+    Reuses `services.gradebook.grades.current_grade` / `letter_for` — the same pure
     grade math `routes/gradebook.py` runs — rather than recomputing a percent
     here. `points_possible`/`points_earned` are encrypted at rest (see
     CLAUDE.md gotchas), so they're decrypted the same way `_load_assignments`
@@ -325,13 +325,13 @@ def _course_grade_a_count(user_id: str) -> int:
         for a in assignments:
             a["points_possible"] = decrypt_numeric(a.get("points_possible"))
             a["points_earned"] = decrypt_numeric(a.get("points_earned"))
-        percent = gradebook_service.current_grade(
+        percent = grades.current_grade(
             categories, assignments,
             curve_mode=enr.get("curve_mode") or "raw",
             curve_avg_target=enr.get("curve_avg_target"),
             curve_sd_delta=enr.get("curve_sd_delta"),
         )
-        letter = gradebook_service.letter_for(percent, enr.get("letter_scale"))
+        letter = grades.letter_for(percent, enr.get("letter_scale"))
         if letter and letter.startswith("A"):
             count += 1
     return count

@@ -814,7 +814,7 @@ def test_finish_inline_never_raises():
 def test_the_worker_loads_the_gradescope_sync_handler():
     from worker.__main__ import HANDLER_MODULES, load_handlers
 
-    assert "services.gradescope_jobs" in HANDLER_MODULES
+    assert "services.gradescope.jobs" in HANDLER_MODULES
     assert "gradescope.sync" in load_handlers()
     assert jobs.get_handler("gradescope.sync") is gj._run_gradescope_sync_job
 
