@@ -673,19 +673,17 @@ addendum per fix round). What the reviews found and what changed:
 
 ### CI
 
-- **Hermetic** (backend, CI env and ignore list): full suite at the stack top
-  `86ac5db6` = **5425 passed / 344 skipped / 0 failed**, ruff clean.
-- **First CI pass after the restack (2026-11-08):** #826 to #835 green on the
-  first run (integration lane really ran: #831 333 passed / 0 skipped, #835 334
-  passed including the cross-user matrix). #836 to #840 green after two
-  frontend timing-flake reruns (`Study.races.test.tsx` on #837,
-  `EmailBroadcasts.test.tsx` on #839; neither file is touched in the range).
-  Canopy metrics and CodeRabbit are "skipping" by design.
-- **After the lower review fixes.** #827, #828, #829, #830, #832 and #834
-  gained their review-fix commits after that pass, so the whole stack above
-  them is restacked once more. When this doc was drafted (around
-  2026-11-09 00:00Z) CI on those new heads was still running. Re-check with
-  `for n in $(seq 826 840); do gh pr checks $n; done` after the final restack.
+- **Hermetic** (backend, CI env and ignore list): full suite at the final stack
+  top `9ba0af26` = **5510 passed / 345 skipped / 0 failed**, ruff clean, code-size
+  ratchet clean.
+- **CI:** every PR was green on every check (Backend, Frontend, integration with
+  the cross-user matrix in `off` and `enforce`, Workers build, evals where present)
+  after the last review-fix restack. Two frontend timing flakes needed a rerun
+  earlier (`Study.races.test.tsx`, `EmailBroadcasts.test.tsx`; neither is touched by
+  wave 2). The only real CI failure was a test bug in #832's new probe (a UUID
+  passed to JSON), fixed there. The stack was then rebased onto main `a4af5e26`
+  (which includes #825) as GitHub stack #841. Re-check before merging with
+  `for n in $(seq 826 840) 845; do gh pr checks $n; done`.
 
 ### Final local E2E pass
 
@@ -693,12 +691,44 @@ One flock'd `make e2e-up` cycle on the stack top (integration lane, Playwright,
 oracles, `make e2e-down`):
 
 <!-- FINAL-PASS-RESULTS -->
-_To be filled from the final E2E pass on the restacked stack top: integration
-lane pass/skip/fail counts (with the cross-user matrix in `off` and `enforce`
-and the new #830/#831/#832 probes), Playwright counts (study-room journey with
-`realtime_rls` off and on), oracle findings, and whether `E2E_WORKER=1` was
-used. Note: these runs apply wave 2's migrations to the local Supabase DB; they
-are additive._
+Run on 2026-11-09 against the stack top `e15ce587` (main `a4af5e26` plus all 16
+PRs), function-mode LLM seam, in two flock'd cycles. Each cycle tore down cleanly.
+
+| | Run 1: flags off | Run 2: `jobs_queue` + `realtime_rls` on, `E2E_WORKER=1` |
+|---|---|---|
+| Integration lane | 333 passed, 1 failed | 330 passed, 1 failed, 3 errors |
+| Playwright | 104 passed, 1 failed, 14 skipped | 104 passed, 1 failed, 14 skipped |
+| Oracles | 0 findings | 0 findings |
+
+The cross-user matrix passed in both `off` and `enforce`, and so did the new
+#830, #831 and #832 probes. No leak was found. With the flags on, the queued
+upload journey (`upload.spec.ts`, through the worker) and the study-room live
+chat (`study-room.spec.ts`, using the minted Realtime token) both passed.
+
+What failed, and what was done:
+- **Integration, `test_quiz_subcutaneous_db.py::test_generate_persists_exam_days_away_when_an_exam_is_upcoming`
+  (both runs):** a timezone artifact, not fixed here. The test computes "today
+  + 5" in the machine's local time (EST, still 2026-11-08), but the server counts
+  days from UTC (already 2026-11-09 at 01:00Z), so it got 4. CI runs in UTC and
+  passes it. Follow-up: make the test use the same UTC date as
+  `services/exam_proximity`.
+- **Integration, 3 setup errors (run 2 only):** the integration reseed raced
+  the live worker's `course_context.refresh` upserts on `offering_concept_stats`
+  and got a 409. This is a test-harness race only. Fixed in #835 (commit
+  5a3d8580): the seed helpers treat a unique violation (23505) as "row present".
+- **Playwright `quiz-written.spec.ts` (both runs):** an existing caret race on
+  **main** (main failed 6/6 when run in isolation), not a wave-2 regression. The
+  brackets key moved the caret in a `requestAnimationFrame`, so fast keystrokes
+  could land first. Fixed in #833 (commit 74e96b5a: the caret is applied in a
+  `useLayoutEffect`, with vitest coverage). After the fix the spec passed 10/10
+  on the new top `9ba0af26`, run on its own.
+
+Not re-run after those two fixes: the full Playwright suite, the integration
+lane and the oracles. Each fix touched only its own file (the seed helper, and
+`WrittenAnswer.tsx`).
+
+These runs applied wave 2's migrations to the local Supabase DB. They are
+additive.
 <!-- /FINAL-PASS-RESULTS -->
 
 ---
