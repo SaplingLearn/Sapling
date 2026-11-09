@@ -1331,6 +1331,60 @@ def _topup_format_rule(question_format: str) -> str:
     return f"{_MCQ_TOPUP_RULE} And {_WRITTEN_TOPUP_RULE}"
 
 
+def _quiz_user_message(
+    *, concept_name: str, material, routing_msg: str, plan, question_format: str, recent,
+) -> str:
+    """The generation run's user message: the routing message over the course
+    material — or, under a plan (learning-loop spec §13 A144), the planned
+    agent's message: told what to write and nothing else (the concept, the
+    plan's question lines and the misconception keys) over the same grounding
+    and do-not-repeat list."""
+    if plan is not None:
+        return build_planned_message(
+            concept_name=concept_name,
+            question_format=question_format,
+            specs=plan.specs,
+            keys=plan.keys,
+            material_block=material.block,
+            recently_asked=_do_not_repeat_block(recent),
+        )
+    if material.block:
+        return (
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
+            + "\n\n[GENERATE QUIZ]\n" + routing_msg
+        )
+    return routing_msg
+
+
+def _topup_message(*, user_message: str, plan, missing: int, question_format: str,
+                   concept_name: str, filled_slots: set[int], material, recent,
+                   already: str) -> str:
+    """#543 E2's top-up request: more questions of the requested format — or,
+    under a plan (A144), the plan slots still open — naming the stems already
+    in the quiz so a deterministic model does not re-emit them."""
+    if plan is None:
+        topup_msg = (
+            f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
+            f"format errors. Generate {missing} MORE questions on the same "
+            f"concept. Remember: {_topup_format_rule(question_format)}"
+        )
+    else:
+        topup_msg = build_planned_message(
+            concept_name=concept_name,
+            question_format=question_format,
+            specs=[s for s in plan.specs if s.slot not in filled_slots][:missing],
+            keys=plan.keys,
+            material_block=material.block,
+            recently_asked=_do_not_repeat_block(recent),
+        ) + "\n\n[TOP-UP] Write only the QUESTION lines above."
+    if already:
+        topup_msg += (
+            f"\n\nDo NOT repeat any of these questions, which are "
+            f"already in the quiz:\n{already}"
+        )
+    return topup_msg
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -1582,25 +1636,10 @@ async def _quiz_via_agent(
     routing_msg += _do_not_repeat_block(recent)
     routing_msg += f"\nquestion_format: {question_format}. Only generate the requested format; mixed uses a useful variety.\n"
 
-    if material.block:
-        user_message = (
-            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
-            + "\n\n[GENERATE QUIZ]\n" + routing_msg
-        )
-    else:
-        user_message = routing_msg
-    if plan is not None:
-        # Learning-loop spec §13 A144: the planned agent is told what to write
-        # and nothing else — the concept, the plan's question lines and the
-        # misconception keys — over the same grounding and do-not-repeat list.
-        user_message = build_planned_message(
-            concept_name=concept_name,
-            question_format=question_format,
-            specs=plan.specs,
-            keys=plan.keys,
-            material_block=material.block,
-            recently_asked=_do_not_repeat_block(recent),
-        )
+    user_message = _quiz_user_message(
+        concept_name=concept_name, material=material, routing_msg=routing_msg,
+        plan=plan, question_format=question_format, recent=recent,
+    )
 
     # F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
     # request_id) becomes attributable to sections instead of estimated.
@@ -1622,15 +1661,7 @@ async def _quiz_via_agent(
         routing_chars=len(routing_msg),
         adaptive=difficulty == "adaptive",
     )
-    if plan is not None:
-        prompt_dimensions.record(
-            planned=True,
-            planned_source=plan.source,
-            planned_targets=sum(1 for s in plan.specs if s.target),
-            misconception_keys=len(plan.keys),
-        )
-    if gate is not None:
-        prompt_dimensions.record(gated=True)
+    quiz_learning.record_generation_dimensions(plan, gate)
 
     model_override = _resolve_model_pref(model_pref)
     run_kwargs: dict = {"deps": deps}
@@ -1701,18 +1732,11 @@ async def _quiz_via_agent(
         for q in quiz.questions:
             spec = tags = None
             if plan is not None:
-                spec = plan.spec(q.slot)
-                if spec is None or spec.slot in filled_slots:
+                planned = quiz_learning.planned_question(q, plan, filled_slots, concept_name)
+                if planned is None:
                     dropped += 1
                     continue
-                tags = q.option_misconceptions
-                # The concept and the difficulty are the plan's, never the model's.
-                q = QuizQuestion(
-                    question=q.question, type=q.type, difficulty=spec.difficulty,
-                    options=q.options, accepted_answers=q.accepted_answers,
-                    correct_answer=q.correct_answer, explanation=q.explanation,
-                    concept=concept_name,
-                )
+                q, spec, tags = planned
             if question_format != "mixed" and q.type != question_format:
                 dropped += 1
                 continue
@@ -1746,24 +1770,10 @@ async def _quiz_via_agent(
             seen_hashes.add(qhash)
             wire_questions.append(mapped)
 
-    async def _gate_new(start: int) -> None:
-        """A145: check the questions this run added; a dropped one counts as
-        a drop (the top-up asks again) and frees its plan slot."""
-        nonlocal dropped
-        fresh = wire_questions[start:]
-        if gate is None or not fresh:
-            return
-        run = await gate(fresh, material)
-        kept = {id(q) for q in run.kept}
-        for q in fresh:
-            if id(q) not in kept and isinstance(q.get("planned"), dict):
-                filled_slots.discard(q["planned"].get("slot"))
-        del wire_questions[start:]
-        wire_questions.extend(q for q in fresh if id(q) in kept)
-        dropped += len(fresh) - len(kept)
-
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
-    await _gate_new(0)
+    # A145: check the questions each run adds; a dropped one counts as a drop
+    # (the top-up asks again) and frees its plan slot.
+    dropped += await quiz_learning.keep_gated(gate, wire_questions, 0, material, filled_slots)
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
     # quiz. Gated on questions actually dropped (never on a clean short
@@ -1783,31 +1793,18 @@ async def _quiz_via_agent(
             # re-emits the same questions, which the dedupe above then
             # discards — a full generation for nothing.
             already = "\n".join(f"- {q['question']}" for q in wire_questions)
-            if plan is None:
-                topup_msg = (
-                    f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
-                    f"format errors. Generate {missing} MORE questions on the same "
-                    f"concept. Remember: {_topup_format_rule(question_format)}"
-                )
-            else:
-                # A144: ask again for exactly the plan slots still open.
-                topup_msg = build_planned_message(
-                    concept_name=concept_name,
-                    question_format=question_format,
-                    specs=[s for s in plan.specs if s.slot not in filled_slots][:missing],
-                    keys=plan.keys,
-                    material_block=material.block,
-                    recently_asked=_do_not_repeat_block(recent),
-                ) + "\n\n[TOP-UP] Write only the QUESTION lines above."
-            if already:
-                topup_msg += (
-                    f"\n\nDo NOT repeat any of these questions, which are "
-                    f"already in the quiz:\n{already}"
-                )
+            topup_msg = _topup_message(
+                user_message=user_message, plan=plan, missing=missing,
+                question_format=question_format, concept_name=concept_name,
+                filled_slots=filled_slots, material=material, recent=recent,
+                already=already,
+            )
             try:
                 start = len(wire_questions)
                 _absorb(*await _run(topup_msg, TOPUP_LIMITS))
-                await _gate_new(start)
+                dropped += await quiz_learning.keep_gated(
+                    gate, wire_questions, start, material, filled_slots
+                )
             except (Exception, asyncio.TimeoutError) as e:
                 # The request deliberately SUCCEEDS from here — serve the
                 # short quiz with an honest count. No traceback: the E2E

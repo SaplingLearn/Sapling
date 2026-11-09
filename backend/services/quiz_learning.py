@@ -38,7 +38,7 @@ from learning.params import (
     RECHECK_RELEASE_WINDOW_HOURS,
     RUNG_NO_CREDIT_MIN,
 )
-from services import events_service
+from services import events_service, prompt_dimensions
 
 logger = logging.getLogger("sapling.quiz_learning")
 
@@ -276,6 +276,26 @@ def generation_plan(
     return GenerationPlan(specs=specs, keys=keys, p_known=p_known, source=source)
 
 
+def planned_question(question, plan: GenerationPlan, filled_slots: set[int], concept_name: str):
+    """A144: a planned run's question as the plan has it — (the quiz
+    question, its spec, its option tags) — or None when it answers no open
+    plan slot (routes/quiz.py counts it dropped). The concept and the
+    difficulty are the plan's, never the model's."""
+    from agents.quiz import QuizQuestion
+
+    spec = plan.spec(question.slot)
+    if spec is None or spec.slot in filled_slots:
+        return None
+    tags = question.option_misconceptions
+    quiz_question = QuizQuestion(
+        question=question.question, type=question.type, difficulty=spec.difficulty,
+        options=question.options, accepted_answers=question.accepted_answers,
+        correct_answer=question.correct_answer, explanation=question.explanation,
+        concept=concept_name,
+    )
+    return quiz_question, spec, tags
+
+
 # ── A145: the item gates ───────────────────────────────────────────────────
 
 
@@ -467,6 +487,39 @@ async def gate_questions(
         payload={"questions": len(questions), "grounded": grounded, **run.counts},
     )
     return run
+
+
+async def keep_gated(gate, wire_questions: list[dict], start: int, material,
+                     filled_slots: set[int]) -> int:
+    """A145 in routes/quiz.py's generation: check the questions a run added
+    (`wire_questions` from `start`) with `gate`; a dropped one frees its plan
+    slot. Keeps the survivors in place, in order, and returns how many were
+    dropped (the top-up asks again for them). No gate, or nothing new: 0."""
+    fresh = wire_questions[start:]
+    if gate is None or not fresh:
+        return 0
+    run = await gate(fresh, material)
+    kept = {id(q) for q in run.kept}
+    for q in fresh:
+        if id(q) not in kept and isinstance(q.get("planned"), dict):
+            filled_slots.discard(q["planned"].get("slot"))
+    del wire_questions[start:]
+    wire_questions.extend(q for q in fresh if id(q) in kept)
+    return len(fresh) - len(kept)
+
+
+def record_generation_dimensions(plan: GenerationPlan | None, gate) -> None:
+    """F6 (services/prompt_dimensions.py): the plan's and the gate's share of
+    a generation's prompt (A144, A145), when their flags put them on it."""
+    if plan is not None:
+        prompt_dimensions.record(
+            planned=True,
+            planned_source=plan.source,
+            planned_targets=sum(1 for s in plan.specs if s.target),
+            misconception_keys=len(plan.keys),
+        )
+    if gate is not None:
+        prompt_dimensions.record(gated=True)
 
 
 def ungated_practice(questions: Iterable[dict]) -> None:
