@@ -1743,25 +1743,34 @@ def end_session(body: EndSessionBody, request: Request):
     return {"summary": summary, "achievements_earned": newly_earned}
 
 
+#: list_sessions returns at most this many rows (the client asks for 10; a
+#: limit <= 0 used to mean "all") and counts messages 8 reads at a time.
+SESSION_LIST_MAX, _SESSION_COUNT_CONCURRENCY = 100, 8
+
+
 @router.get("/sessions/{user_id}")
 async def list_sessions(user_id: str, request: Request, limit: int = 10):
     await guard_off_loop(require_self, user_id, request)
+    limit = SESSION_LIST_MAX if limit <= 0 else min(limit, SESSION_LIST_MAX)
     sessions = await table("sessions").aselect(
         "id,user_id,topic,mode,offering_id,started_at,ended_at",
         filters={"user_id": f"eq.{user_id}"},
         order="started_at.desc",
         limit=limit,
     )
-    # One message-count read per session, concurrently rather than in turn.
-    counts = await asyncio.gather(*(
-        table("messages").aselect("id", filters={"session_id": f"eq.{s['id']}"})
-        for s in sessions
-    ))
+    gate = asyncio.Semaphore(_SESSION_COUNT_CONCURRENCY)
+
+    async def message_count(sid: str) -> int:  # count=exact over a one-row body
+        async with gate:
+            return (await table("messages").aselect_with_count(
+                "id", filters={"session_id": f"eq.{sid}"}, limit=1))[1]
+
+    counts = await asyncio.gather(*(message_count(s["id"]) for s in sessions))
     # Sessions key on the offering; the frontend speaks abstract course ids.
     # Map each offering → its abstract course once.
     offering_to_course: dict[str, str | None] = {}
     result = []
-    for s, msgs in zip(sessions, counts):
+    for s, n_messages in zip(sessions, counts):
         off_id = s.get("offering_id")
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = await run_in_threadpool(offering_course_id, off_id)
@@ -1772,7 +1781,7 @@ async def list_sessions(user_id: str, request: Request, limit: int = 10):
             "course_id": offering_to_course.get(off_id),
             "started_at": s["started_at"],
             "ended_at": s.get("ended_at"),
-            "message_count": len(msgs),
+            "message_count": n_messages,
             "is_active": s.get("ended_at") is None,
         })
     return {"sessions": result}
