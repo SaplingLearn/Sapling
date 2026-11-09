@@ -11,7 +11,6 @@
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>React.useEffect()>force('follow')": 26,
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simLinks.map()": 31,
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simNodes.map()": 30,
-    "src/components/quiz/home/QuizHome.tsx::QuizHome": 87,
     "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
     "src/components/screens/Dashboard.tsx::Dashboard": 48,
     "src/components/screens/Dashboard.tsx::Dashboard>load": 29,
