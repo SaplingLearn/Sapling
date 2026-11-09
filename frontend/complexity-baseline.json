@@ -4,10 +4,6 @@
     "src/app/(shell)/notetaker/page.tsx::NotetakerScreen": 30,
     "src/components/Gradebook/AssignmentModal.tsx::AssignmentModal": 29,
     "src/components/flashcards/FlashcardImportModal.tsx::FlashcardImportModal": 27,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl": 30,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>React.useEffect()>force('follow')": 26,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simLinks.map()": 31,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simNodes.map()": 30,
     "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
     "src/components/screens/Settings.tsx::Settings": 26
   }
