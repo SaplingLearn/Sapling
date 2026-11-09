@@ -43,6 +43,7 @@ import { getTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi"
 import { studyGuideHref, flashcardsHref } from "@/lib/toolHrefs";
 import { StudyHubSkeleton } from "../Skeleton";
 import s from "./StudyHub.module.css";
+import { DailyGoalCard, GOAL_MIN, GOAL_MAX } from "./DailyGoalCard";
 import {
   conceptsForCourse,
   categoriesFromChecklist,
@@ -206,8 +207,8 @@ export function StudyHub({
   const [st, setSt] = React.useState<{
     exam: string | null; topic: string | null; hover: string | null; lvl: Status | null;
     menu: "course" | "bell" | null; tileMenu: string | null; openCols: Record<string, boolean>;
-    moreOpen: boolean; qrOpen: boolean; aiOpen: boolean; goalOpen: boolean;
-  }>({ exam: null, topic: null, hover: null, lvl: null, menu: null, tileMenu: null, openCols: {}, moreOpen: false, qrOpen: false, aiOpen: false, goalOpen: false });
+    moreOpen: boolean; qrOpen: boolean; aiOpen: boolean;
+  }>({ exam: null, topic: null, hover: null, lvl: null, menu: null, tileMenu: null, openCols: {}, moreOpen: false, qrOpen: false, aiOpen: false });
   const set = (patch: Partial<typeof st>) => setSt(prev => ({ ...prev, ...patch }));
   const [drafts, setDrafts] = React.useState<Draft[] | null>(null);
   /** What the open modal's drafts were made from. Save diffs against THIS, never
@@ -216,7 +217,6 @@ export function StudyHub({
   const manageBase = React.useRef<{ cid: string; rows: Map<string, Assessment> } | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [picker, setPicker] = React.useState<Picker>(null);
-  const [goalDraft, setGoalDraft] = React.useState("");
 
   const assessFor = React.useCallback((id: string): Assessment[] =>
     assignments
@@ -375,19 +375,19 @@ export function StudyHub({
     }
   };
 
-  const saveGoal = async () => {
-    const n = Math.round(Number(goalDraft));
-    if (!userId || !Number.isFinite(n) || n < 5 || n > 600) {
-      toast.warn("Pick a goal between 5 and 600 minutes.");
-      return;
+  const saveGoal = async (n: number): Promise<boolean> => {
+    if (!userId || !Number.isFinite(n) || n < GOAL_MIN || n > GOAL_MAX) {
+      toast.warn(`Pick a goal between ${GOAL_MIN} and ${GOAL_MAX} minutes.`);
+      return false;
     }
     try {
       const r = await setStudyDailyGoal(userId, n);
       setDaily(d => (d ? { ...d, goal_minutes: r.goal_minutes } : d));
-      set({ goalOpen: false });
+      return true;
     } catch (err) {
       console.error("daily goal save failed", err);
       toast.error(humanizeError(err, "Couldn't save your daily goal."));
+      return false;
     }
   };
 
@@ -532,13 +532,6 @@ export function StudyHub({
   const focusArc = !focus ? "" : focus.st === "mastered" ? "#A1BC83" : focus.st === "progress" ? "#F0C75E" : focus.st === "review" ? "#F08A80" : "rgba(255,255,255,0.4)";
   const warnInCard = !!focus && !!focus.gap && focus.st === "new";
   const warnLeft = !!focus && !!focus.gap && focus.st !== "mastered" && focus.st !== "new";
-
-  const goal = daily?.goal_minutes ?? 30;
-  const week = daily?.days || [];
-  const todayRow = week[week.length - 1];
-  const done = todayRow?.minutes ?? 0;
-  const MAX = Math.max(goal * 1.5, ...week.map(d => d.minutes), 1);
-  const hit = week.slice(0, 6).filter(d => d.minutes >= goal).length;
 
   return (
     <div className={s.shell} style={{ background: "#FAF8F3" }}>
@@ -930,60 +923,7 @@ export function StudyHub({
           shadow room to fade out; it sits in the 56px column gap. */}
       <aside aria-label="Activity" className={s.areaRail} style={{ display: "flex", flexDirection: "column" }}>
         <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 24 }}>
-          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={monoLabel}>Daily Goal</span>
-            <button aria-label="Edit daily goal" title="Edit daily goal" className={s.hoverIcon} onClick={() => { setGoalDraft(String(goal)); set({ goalOpen: !st.goalOpen }); }}
-              style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: 8, background: "transparent", color: "#6F6857", cursor: "pointer" }}>
-              <Icon name="setting" size={16} />
-            </button>
-            {st.goalOpen && (
-              <>
-                <div onClick={() => set({ goalOpen: false })} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-                <div role="dialog" aria-label="Daily goal" style={{ position: "absolute", left: 0, top: 34, zIndex: 31, width: 260, ...popover, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <label style={{ fontSize: 14, fontWeight: 700 }}>Minutes per day
-                    <input type="number" min={5} max={600} value={goalDraft} onChange={e => setGoalDraft(e.target.value)} aria-label="Minutes per day"
-                      style={{ display: "block", marginTop: 6, width: "100%", height: 40, padding: "0 10px", border: "1px solid rgba(42,39,31,0.16)", borderRadius: 9, background: "#FFFFFF", ...INHERIT_FONT, fontSize: 14, boxSizing: "border-box" }} />
-                  </label>
-                  <button onClick={saveGoal} style={{ height: 40, border: 0, borderRadius: 10, background: "#445D22", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Save Goal</button>
-                </div>
-              </>
-            )}
-          </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 600, lineHeight: 1 }}>{done}</span>
-            <span style={{ fontFamily: SERIF, fontSize: 15, fontWeight: 600, color: "#1A1814" }}>of {goal} mins</span>
-          </div>
-          <div role="img" aria-label={`Goal met ${hit} of the last 6 days. Today ${done} of ${goal} minutes.`} style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, height: 96, alignItems: "end" }}>
-            <span aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: `${(goal / MAX) * 100}%`, borderTop: "1.5px dashed rgba(68,93,34,0.45)" }} />
-            <span aria-hidden="true" style={{ position: "absolute", right: 0, bottom: `${(goal / MAX) * 100}%`, transform: "translateY(-4px)", fontFamily: MONO, fontSize: 11, color: "#6F6857", background: "#FAF8F3", paddingLeft: 4 }}>{goal} mins</span>
-            {week.map((d, i) => {
-              const isToday = i === week.length - 1;
-              return (
-                <span key={d.date} title={`${fmtDow(d.date).split(",")[0]}: ${d.minutes} min`} style={{ position: "relative", height: `${(Math.min(d.minutes, MAX) / MAX) * 100}%`, borderRadius: "6px 6px 3px 3px", overflow: "hidden" }}>
-                  <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "100%", background: isToday ? "#445D22" : d.minutes >= goal ? "#A1BC83" : "#E2DDD2" }} />
-                </span>
-              );
-            })}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: -8 }}>
-            {week.map((d, i) => {
-              const isToday = i === week.length - 1;
-              return <span key={d.date} style={{ textAlign: "center", fontFamily: MONO, fontSize: 12, fontWeight: isToday ? 700 : 500, color: isToday ? "#1A1814" : "#6F6857" }}>{fmtDow(d.date).split(",")[0]}</span>;
-            })}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              { label: "Quiz", min: todayRow?.quiz ?? 0, dot: "#7A4A78" },
-              { label: "Flashcards", min: todayRow?.flashcards ?? 0, dot: "#597536" },
-              { label: "Tutor", min: todayRow?.tutor ?? 0, dot: "#B8873F" },
-            ].map(gp => (
-              <div key={gp.label} style={{ display: "grid", gridTemplateColumns: "96px minmax(0, 1fr) 84px", alignItems: "center", gap: 12, fontSize: 14 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: gp.dot }} />{gp.label}</span>
-                <span style={{ height: 6, borderRadius: 3, background: "#E6E2D9", overflow: "hidden" }}><span style={{ display: "block", width: `${Math.min(100, (gp.min / goal) * 100)}%`, height: "100%", borderRadius: 3, background: gp.dot }} /></span>
-                <span style={{ textAlign: "right", color: "#3F3B31", fontVariantNumeric: "tabular-nums" }}>{gp.min} min</span>
-              </div>
-            ))}
-          </div>
+          <DailyGoalCard daily={daily} onSave={saveGoal} />
 
           {qr.length > 0 && (
             <div onMouseEnter={() => set({ qrOpen: true })} onMouseLeave={() => set({ qrOpen: false })} style={{ position: "relative" }}>

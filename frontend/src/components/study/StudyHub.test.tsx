@@ -113,7 +113,10 @@ describe("StudyHub", () => {
     // Legend counts.
     expect(screen.getByRole("button", { name: /1\s*Struggling/ })).toBeTruthy();
     // Daily goal and recent activity.
-    expect(screen.getByText("of 40 mins")).toBeTruthy();
+    const goalCard = screen.getByTestId("daily-goal");
+    expect(within(goalCard).getByRole("button", { name: /Daily goal: 40 minutes/ })).toBeTruthy();
+    expect(within(goalCard).getByText("15 min to go")).toBeTruthy();
+    expect(within(goalCard).queryByLabelText("Edit daily goal")).toBeNull(); // the gear is gone
     expect(screen.getAllByText("Recursion Quiz")).toHaveLength(2); // Last Quiz box + recent activity
     expect(screen.getByTitle("Mastery change from this quiz").textContent).toBe("Recursion+5%");
     expect(screen.getByText("1 card")).toBeTruthy();
@@ -338,11 +341,24 @@ describe("StudyHub", () => {
 
   it("the daily goal can be changed", async () => {
     renderHub();
-    await screen.findByText("of 40 mins");
-    fireEvent.click(screen.getByLabelText("Edit daily goal"));
-    fireEvent.change(screen.getByLabelText("Minutes per day"), { target: { value: "50" } });
-    fireEvent.click(screen.getByText("Save Goal"));
-    await screen.findByText("of 50 mins");
+    // The target itself is the edit button; the stepper snaps to 5s.
+    fireEvent.click(await screen.findByRole("button", { name: /Daily goal: 40 minutes/ }));
+    fireEvent.change(screen.getByLabelText("Daily goal in minutes"), { target: { value: "47" } });
+    fireEvent.click(screen.getByRole("button", { name: "Increase goal" }));
+    expect((screen.getByLabelText("Daily goal in minutes") as HTMLInputElement).value).toBe("50");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("button", { name: /Daily goal: 50 minutes/ });
     expect(setStudyDailyGoal).toHaveBeenCalledWith("u1", 50);
+  });
+
+  it("Escape cancels a goal edit without saving", async () => {
+    renderHub();
+    fireEvent.click(await screen.findByRole("button", { name: /Daily goal: 40 minutes/ }));
+    const input = screen.getByLabelText("Daily goal in minutes");
+    fireEvent.change(input, { target: { value: "90" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByLabelText("Daily goal in minutes")).toBeNull();
+    expect(screen.getByRole("button", { name: /Daily goal: 40 minutes/ })).toBeTruthy();
+    expect(setStudyDailyGoal).not.toHaveBeenCalled();
   });
 });
