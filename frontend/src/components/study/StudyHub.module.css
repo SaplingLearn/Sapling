@@ -8,13 +8,13 @@
 .hoverTool:hover { border-color: rgba(68, 93, 34, 0.45) !important; }
 .hoverSeg { transition: transform 120ms ease; }
 .hoverSeg:hover { transform: scale(1.15); }
-.hoverLegend:hover { background: #EBF0E1 !important; }
+.hoverLegend:hover { background: #F2F6EE !important; }
 .hoverMore:hover { background: #F0ECE3 !important; color: #1A1814 !important; }
 .hoverQr:hover { background: #D6E3F0 !important; border-color: #A9C3E0 !important; }
 .hoverQrStart:hover { background: #23497A !important; }
 .hoverRemove:hover { background: #F6E3E1 !important; }
 .hoverAdd:hover { background: #F2F6EE !important; }
-.hoverChip:hover { background: #EBF0E1 !important; }
+.hoverChip:hover { background: #F2F6EE !important; }
 .hoverGhost:hover { background: #F0ECE3 !important; }
 
 

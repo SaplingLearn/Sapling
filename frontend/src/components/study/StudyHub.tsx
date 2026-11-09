@@ -109,7 +109,7 @@ function Glyph({ name, size }: { name: "bulb" | "cards" | "file"; size: number }
 }
 const TOOLS = [
   { key: "quiz", title: "Quiz", icon: "bulb", bg: "#EBDDEE", fg: "#7A4A78" },
-  { key: "cards", title: "Flashcards", icon: "cards", bg: "#DCE8CE", fg: "#445D22" },
+  { key: "cards", title: "Flashcards", icon: "cards", bg: "#E1ECD7", fg: "#445D22" },
   { key: "guide", title: "Study Guide", icon: "file", bg: "#F1E3C4", fg: "#8A6420" },
 ] as const;
 
@@ -494,8 +494,8 @@ export function StudyHub({
   const restP = focusPres.slice(kS);
   const lq = focus ? lastQuizOn(focus.id) : null;
   const lqp = lq ? Math.round(((lq.score || 0) / (lq.total || 1)) * 100) : 0;
-  const quizColor = !lq ? "rgba(255,255,255,0.6)" : lqp >= 80 ? "#A9D18E" : lqp >= 60 ? "#F0C75E" : "#F08A80";
-  const focusArc = !focus ? "" : focus.st === "mastered" ? "#A9D18E" : focus.st === "progress" ? "#F0C75E" : focus.st === "review" ? "#F08A80" : "rgba(255,255,255,0.4)";
+  const quizColor = !lq ? "rgba(255,255,255,0.6)" : lqp >= 80 ? "#A1BC83" : lqp >= 60 ? "#F0C75E" : "#F08A80";
+  const focusArc = !focus ? "" : focus.st === "mastered" ? "#A1BC83" : focus.st === "progress" ? "#F0C75E" : focus.st === "review" ? "#F08A80" : "rgba(255,255,255,0.4)";
   const warnInCard = !!focus && !!focus.gap && focus.st === "new";
   const warnLeft = !!focus && !!focus.gap && focus.st !== "mastered" && focus.st !== "new";
 
@@ -557,15 +557,15 @@ export function StudyHub({
           {ai && (
             <div onMouseEnter={() => set({ aiOpen: true })} onMouseLeave={() => set({ aiOpen: false })} style={{ position: "relative" }}>
               <div role="button" tabIndex={0} aria-expanded={st.aiOpen} onFocus={() => set({ aiOpen: true })} onBlur={() => set({ aiOpen: false })}
-                style={{ ...pillBase, background: "#EBF0E1", color: "#2F4417" }}>
+                style={{ ...pillBase, background: "#F2F6EE", color: "#293C0E" }}>
                 <span style={{ ...pillDot, color: "#445D22" }}><Icon name="clover" size={16} /></span>{ai.title}
               </div>
               {st.aiOpen && (
                 <div style={{ position: "absolute", right: isMobile ? "auto" : 0, left: isMobile ? 0 : "auto", top: "100%", paddingTop: 8, zIndex: 31 }}>
                   <div role="tooltip" style={{ width: isMobile ? 300 : 400, ...popover, borderRadius: 16, boxShadow: "0 16px 40px rgba(25,37,11,0.16)", padding: "16px 18px", display: "flex", gap: 12 }}>
-                    <span style={{ width: 34, height: 34, borderRadius: "50%", background: "#EBF0E1", color: "#445D22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="clover" size={17} /></span>
+                    <span style={{ width: 34, height: 34, borderRadius: "50%", background: "#F2F6EE", color: "#445D22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="clover" size={17} /></span>
                     <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: "#2F4417" }}>{ai.title}</span>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: "#293C0E" }}>{ai.title}</span>
                       <span style={{ fontSize: 15, color: "#3F3B31", textWrap: "pretty" } as React.CSSProperties}>{ai.body}</span>
                     </span>
                   </div>
@@ -667,7 +667,7 @@ export function StudyHub({
               <span style={{ fontSize: 20, fontWeight: 700 }}>{exam ? `Ready for ${exam.title}` : `${course?.course_code || course?.course_name} Mastery`}</span>
               {trend !== 0 && (
                 <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: "#3F3B31" }}>
-                  <span style={{ height: 24, padding: "0 9px", borderRadius: 12, background: trend > 0 ? "#E4EEDC" : "#F6E3E1", color: trend > 0 ? "#2E6B3E" : "#A8443F", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center" }}>
+                  <span style={{ height: 24, padding: "0 9px", borderRadius: 12, background: trend > 0 ? "#E1ECD7" : "#F6E3E1", color: trend > 0 ? "#49671D" : "#A8443F", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center" }}>
                     {trend > 0 ? "+" : "−"}{Math.abs(trend)}% this week
                   </span>
                 </span>
@@ -686,7 +686,7 @@ export function StudyHub({
                 const on = st.lvl === k;
                 return (
                   <button key={k} aria-pressed={on} className={on ? undefined : s.hoverLegend} onClick={() => set({ lvl: on ? null : k })} title="Highlight these on the roadmap"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 32, padding: "0 12px 0 10px", border: 0, borderRadius: 16, background: on ? "#DCE8CE" : "#F0ECE3", ...INHERIT_FONT, fontSize: 14, color: "#1A1814", cursor: "pointer" }}>
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 32, padding: "0 12px 0 10px", border: 0, borderRadius: 16, background: on ? "#E1ECD7" : "#F0ECE3", ...INHERIT_FONT, fontSize: 14, color: "#1A1814", cursor: "pointer" }}>
                     <span style={{ width: 11, height: 11, borderRadius: 3, background: TC[k] }} />
                     <span style={{ fontWeight: 700 }}>{topics.filter(t => t.st === k).length}</span>
                     <span style={{ color: "#3F3B31" }}>{ST_LABEL[k]}</span>
@@ -721,9 +721,9 @@ export function StudyHub({
         </div>
 
         {focus ? (
-          <div data-testid="focus-card" style={{ position: "relative", borderRadius: 20, background: "#445D22", color: "#FFFFFF", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div data-testid="focus-card" style={{ position: "relative", borderRadius: 20, background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#DCE8CE" }}>{rec && focus.id === rec.id ? "Up Next" : focus.group}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#E1ECD7" }}>{rec && focus.id === rec.id ? "Up Next" : focus.group}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
               <span style={{ position: "relative", width: 68, height: 68, flexShrink: 0 }}>
@@ -768,7 +768,7 @@ export function StudyHub({
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", columnGap: 16, rowGap: 8, height: 78, boxSizing: "border-box", padding: "12px 14px", borderRadius: 12, background: "rgba(0,0,0,0.16)" }}>
                 <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontFamily: MONO, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#DCE8CE" }}>Last Quiz</span>
+                  <span style={{ display: "block", fontFamily: MONO, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#E1ECD7" }}>Last Quiz</span>
                   <span style={{ display: "block", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lq ? `${lq.concept_name || focus.name} Quiz` : "No quiz yet"}</span>
                 </span>
                 <span style={{ textAlign: "right" }}>
@@ -782,7 +782,7 @@ export function StudyHub({
             )}
           </div>
         ) : (
-          <div style={{ borderRadius: 20, background: "#445D22", color: "#FFFFFF", padding: 26, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+          <div style={{ borderRadius: 20, background: "var(--sidenav-bg)", color: "#FFFFFF", padding: 26, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
             {topics.length ? (
               <>
                 <span style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600 }}>Every concept is mastered</span>
@@ -822,7 +822,7 @@ export function StudyHub({
                 const n = cardsFor(t.name);
                 const actions = [
                   { label: "Quiz Me", icon: "bulb" as const, bg: "#EBDDEE", fg: "#7A4A78", href: quizHref([t.id]) },
-                  { label: n ? `${n} Flashcards` : "Make Flashcards", icon: "cards" as const, bg: "#DCE8CE", fg: "#445D22", href: cardsHref([t.name]) },
+                  { label: n ? `${n} Flashcards` : "Make Flashcards", icon: "cards" as const, bg: "#E1ECD7", fg: "#445D22", href: cardsHref([t.name]) },
                   { label: "Study Guide", icon: "file" as const, bg: "#F1E3C4", fg: "#8A6420", href: guideHref(t.name) },
                 ];
                 return (
@@ -830,7 +830,7 @@ export function StudyHub({
                     onClick={() => set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id })}
                     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id }); } }}
                     onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
-                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#EBF0E1" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
+                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#F2F6EE" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
                     <span style={{ position: "relative", width: 34, height: 34, flexShrink: 0 }}>
                       <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
                         <circle cx="17" cy="17" r="14" fill="none" stroke="#E6E2D9" strokeWidth="3.5" />
@@ -915,7 +915,7 @@ export function StudyHub({
               const isToday = i === week.length - 1;
               return (
                 <span key={d.date} title={`${fmtDow(d.date).split(",")[0]}: ${d.minutes} min`} style={{ position: "relative", height: `${(Math.min(d.minutes, MAX) / MAX) * 100}%`, borderRadius: "6px 6px 3px 3px", overflow: "hidden" }}>
-                  <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "100%", background: isToday ? "#445D22" : d.minutes >= goal ? "#A9C98E" : "#E2DDD2" }} />
+                  <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "100%", background: isToday ? "#445D22" : d.minutes >= goal ? "#A1BC83" : "#E2DDD2" }} />
                 </span>
               );
             })}
@@ -980,7 +980,7 @@ export function StudyHub({
           <span style={{ ...monoLabel, marginBottom: 8 }}>Recent Activity</span>
           {recent.length === 0 && <span style={{ fontSize: 14, color: "#6F6857" }}>Quizzes, flashcards, and study guides for this course will show up here.</span>}
           {recent.map(rc => {
-            const ic = rc.kind === "quiz" ? { bg: "#EBDDEE", fg: "#7A4A78", name: "bulb" as const } : rc.kind === "cards" ? { bg: "#DCE8CE", fg: "#445D22", name: "cards" as const } : { bg: "#F1E3C4", fg: "#8A6420", name: "file" as const };
+            const ic = rc.kind === "quiz" ? { bg: "#EBDDEE", fg: "#7A4A78", name: "bulb" as const } : rc.kind === "cards" ? { bg: "#E1ECD7", fg: "#445D22", name: "cards" as const } : { bg: "#F1E3C4", fg: "#8A6420", name: "file" as const };
             return (
               <div key={rc.key} style={{ display: "grid", gridTemplateColumns: "32px minmax(0, 1fr)", columnGap: 12, padding: "10px 0" }}>
                 <span style={{ width: 32, height: 32, borderRadius: 9, background: ic.bg, color: ic.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={ic.name} size={15} /></span>
@@ -996,8 +996,8 @@ export function StudyHub({
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {rc.chips.map(ch => (
                         <button key={ch.id} onClick={() => byId.has(ch.id) && set({ topic: ch.id })} title="Mastery change from this quiz"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px", border: 0, borderRadius: 13, background: ch.delta >= 0 ? "#E4EEDC" : "#F6E3E1", color: "#1A1814", ...INHERIT_FONT, fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>
-                          {ch.name}<span style={{ fontWeight: 700, color: ch.delta >= 0 ? "#2E6B3E" : "#A8443F" }}>{ch.delta >= 0 ? "+" : "−"}{Math.abs(ch.delta)}%</span>
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 9px", border: 0, borderRadius: 13, background: ch.delta >= 0 ? "#E1ECD7" : "#F6E3E1", color: "#1A1814", ...INHERIT_FONT, fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>
+                          {ch.name}<span style={{ fontWeight: 700, color: ch.delta >= 0 ? "#49671D" : "#A8443F" }}>{ch.delta >= 0 ? "+" : "−"}{Math.abs(ch.delta)}%</span>
                         </button>
                       ))}
                     </div>

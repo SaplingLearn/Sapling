@@ -59,14 +59,14 @@ export const ST_LABEL: Record<Status, string> = {
 };
 /** Status fill colors (squares, rings, bars). */
 export const TC: Record<Status, string> = {
-  mastered: "#4E8A3A",
+  mastered: "#60842C",
   progress: "#D9A93A",
   review: "#C4534B",
   new: "#D6D0C3",
 };
 /** Status text colors. */
 export const SC: Record<Status, string> = {
-  mastered: "#3D7A2C",
+  mastered: "#49671D",
   progress: "#8A6414",
   review: "#A8443F",
   new: "#6F6857",
@@ -264,7 +264,7 @@ export function fmtWhen(ts: string, today: Date): string {
 }
 export const countdown = (n: number) => (n === 0 ? "Today" : n === 1 ? "Tomorrow" : `in ${n} days`);
 export const countFg = (n: number) => (n <= 3 ? "#A8443F" : n <= 7 ? "#8A6414" : "#6F6857");
-export const scoreColor = (p: number) => (p >= 80 ? "#3D7A2C" : p >= 60 ? "#8A6414" : "#A8443F");
+export const scoreColor = (p: number) => (p >= 80 ? "#49671D" : p >= 60 ? "#8A6414" : "#A8443F");
 
 export function readiness(topics: Concept[]) {
   if (!topics.length) return { pct: 0, trend: 0 };

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 export interface CustomSelectOption<T extends string = string> {
   value: T;
@@ -89,16 +89,19 @@ export function CustomSelect<T extends string = string>({
     };
   }, [open, selectedIndex]);
 
-  useLayoutEffect(() => {
+  // Measured as the list opens, so it lays out once in the right place.
+  const toggle = () => {
     const el = wrapperRef.current;
-    if (!open || !el) return;
-    const r = el.getBoundingClientRect();
-    const box = clipBox(el);
-    const below = box.bottom - r.bottom - LIST_GAP * 2;
-    const above = r.top - box.top - LIST_GAP * 2;
-    const up = below < Math.min(LIST_MAX, 200) && above > below;
-    setPlace({ up, max: Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below)) });
-  }, [open]);
+    if (!open && el) {
+      const r = el.getBoundingClientRect();
+      const box = clipBox(el);
+      const below = box.bottom - r.bottom - LIST_GAP * 2;
+      const above = r.top - box.top - LIST_GAP * 2;
+      const up = below < Math.min(LIST_MAX, 200) && above > below;
+      setPlace({ up, max: Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below)) });
+    }
+    setOpen(o => !o);
+  };
 
   const commit = useCallback((idx: number) => {
     const opt = options[idx];
@@ -111,7 +114,7 @@ export function CustomSelect<T extends string = string>({
     if (disabled) return;
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      setOpen(o => !o);
+      toggle();
       return;
     }
   };
@@ -160,7 +163,7 @@ export function CustomSelect<T extends string = string>({
         aria-label={ariaLabel}
         data-testid={testId}
         disabled={disabled}
-        onClick={() => !disabled && setOpen(o => !o)}
+        onClick={() => !disabled && toggle()}
         onKeyDown={onButtonKey}
         style={{
           display: "inline-flex",
