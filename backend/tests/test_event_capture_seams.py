@@ -27,6 +27,7 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
+from tests.quiz_patches import patch_quiz
 
 client = TestClient(app)
 
@@ -753,7 +754,7 @@ def test_quiz_generate_emits_quiz_started(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
         # Patched through the signals module too, so the offering resolution
         # answers from the fixture rather than from whatever a real
         # (unreachable) Supabase does — this test asserts on the SCOPE the
@@ -761,7 +762,7 @@ def test_quiz_generate_emits_quiz_started(sink):
         # makes the assertion depend on the machine.
         patch("services.quiz.signals.table", side_effect=factory),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -845,20 +846,20 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     from routes.quiz import CourseMaterial
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(
                 block="COURSE STUFF", chunk_ids=("c1", "c2"), k_chunks=2,
                 has_catalog=True, bu_code="CAS CS 330",
             ),
         ),
-        patch(
-            "routes.quiz.recent_question_identities",
+        patch_quiz(
+            "recent_question_identities",
             return_value=[RecentQuestion("h1", "Asked before?")],
         ),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -907,14 +908,14 @@ def test_ungrounded_generation_emits_rag_uncovered(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(course_chunks=0, bu_code="CAS CS 330"),
         ),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -966,14 +967,14 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch(
-            "routes.quiz._course_material",
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz(
+            "_course_material",
             return_value=CourseMaterial(course_chunks=42, bu_code="CAS CS 330"),
         ),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1021,17 +1022,17 @@ def test_rag_uncovered_calls_a_failed_retrieval_unknown_not_no_match(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
         # Fail inside rag_service, the way a real outage does: retrieve_chunks
         # catches, emits rag.retrieval_failed, and hands back [].
         patch(
             "services.rag_service._embed_query",
             side_effect=RuntimeError("embedding backend down"),
         ),
-        patch("routes.quiz._get_catalog_chunk", return_value=""),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("_get_catalog_chunk", return_value=""),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1075,10 +1076,10 @@ def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("recent_question_identities", return_value=[]),
         patch(
-            "routes.quiz.quiz_agent.run",
+            "services.quiz.generation.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
         ),
     ):
@@ -1137,12 +1138,12 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
         return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
     )
     with (
-        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
-        patch("routes.quiz.apply_graph_update"),
-        patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.get_display_name", return_value="Andres"),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("apply_graph_update"),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=noop_ctx),
+        patch_quiz("save_quiz_context"),
+        patch_quiz("get_display_name", return_value="Andres"),
     ):
         r = client.post("/api/quiz/submit", json={
             "quiz_id": "quiz1",

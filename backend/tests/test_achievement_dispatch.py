@@ -393,7 +393,8 @@ def _dispatched_event_types() -> set[str]:
     root = Path(__file__).resolve().parent.parent
     found: set[str] = set()
     for sub in ("routes", "services"):
-        for path in (root / sub).glob("*.py"):
+        # rglob: the #118 splits move call sites into services/<domain>/.
+        for path in (root / sub).rglob("*.py"):
             src = path.read_text(encoding="utf-8")
             found |= set(re.findall(
                 r"check_achievements\(\s*[^,]+,\s*[\"']([a-z_]+)[\"']", src))

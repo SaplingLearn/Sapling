@@ -66,7 +66,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
     ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
-    ("routes/quiz.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
+    ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",

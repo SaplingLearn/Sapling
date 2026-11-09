@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import routes.quiz as quiz_routes
 from main import app
 from tests.test_async_handlers_off_loop import Wire, wire  # noqa: F401 (fixture)
+from tests.quiz_patches import setattr_quiz
 from tests.test_quiz_lifecycle_d import _attempt_row
 
 client = TestClient(app)
@@ -85,7 +86,7 @@ def test_a_foreign_attempt_is_still_refused(wire, monkeypatch):  # noqa: F811
         if user_id != "user_andres":
             raise HTTPException(status_code=403, detail="Forbidden: not your account")
 
-    monkeypatch.setattr(quiz_routes, "require_self", _require_self)
+    setattr_quiz(monkeypatch, "require_self", _require_self)
     wire.rows[("GET", "quiz_attempts")] = [_attempt_row(user_id="someone_else")]
     for method, path, body in (
         ("get", "/api/quiz/attempts/quiz1", None),

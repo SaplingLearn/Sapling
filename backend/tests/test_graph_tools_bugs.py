@@ -20,6 +20,7 @@ import pytest
 from agents.deps import SaplingDeps
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import fake_table, with_async_twins
+from tests.quiz_patches import patch_quiz
 from agents.tools.graph import (
     ConceptMasteryUpdate,
     GraphUpdateInput,
@@ -387,8 +388,8 @@ class TestOrchestratorLimitsWired:
         import asyncio as _asyncio
 
         with (
-            patch("routes.quiz.quiz_agent", mock_quiz_agent),
-            patch("routes.quiz._resolve_model_pref", return_value=None),
+            patch_quiz("quiz_agent", mock_quiz_agent),
+            patch_quiz("_resolve_model_pref", return_value=None),
         ):
             from routes.quiz import _quiz_via_agent
 

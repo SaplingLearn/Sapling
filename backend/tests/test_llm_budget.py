@@ -400,13 +400,14 @@ def test_a_streamed_tutor_turn_ends_in_a_terminal_budget_error(status):
 def test_quiz_generation_answers_its_daily_limit_code_and_refunds_the_slot(monkeypatch):
     import routes.quiz as quiz
     from services.quiz.errors import QuizAPIError, QuizErrorCode
+    from tests.quiz_patches import setattr_quiz
 
     async def refused(**_kw):
         raise _exc()
 
     refunds = []
-    monkeypatch.setattr(quiz, "_quiz_via_agent", refused)
-    monkeypatch.setattr(quiz, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
+    setattr_quiz(monkeypatch, "_quiz_via_agent", refused)
+    setattr_quiz(monkeypatch, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
     body = SimpleNamespace(user_id=USER, concept_node_id="n1", difficulty="medium",
                            use_shared_context=True, model_pref=None,
                            question_format="multiple_choice", num_questions=5)

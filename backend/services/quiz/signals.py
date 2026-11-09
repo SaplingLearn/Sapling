@@ -318,7 +318,7 @@ def _in_flight(user_id: str, concept_node_id: str) -> int | None:
     if not user_id or not concept_node_id:
         return None
     try:
-        from routes.quiz import _abandon_cutoff
+        from services.quiz.attempts import _abandon_cutoff
 
         cutoff = _abandon_cutoff().isoformat()
         open_on_concept = {
