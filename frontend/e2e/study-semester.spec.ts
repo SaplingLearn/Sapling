@@ -27,7 +27,6 @@
  * is stable Study copy).
  */
 import { expect, test } from "./support/fixtures";
-import { openCoursesHub } from "./support/home";
 
 test("study flashcards follow the semester selection; All semesters shows every term", async ({
   page,
@@ -43,7 +42,7 @@ test("study flashcards follow the semester selection; All semesters shows every 
 
   // 2. Scope to Fall 2025 via the Courses & Semesters hub (dashboard).
   await page.goto("/dashboard");
-  await openCoursesHub(page);
+  await page.getByTestId("dashboard-courses-manage").click();
   await page.getByRole("button", { name: "Fall 2025" }).click();
   await page.getByRole("button", { name: "Close" }).click();
 

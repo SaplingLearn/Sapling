@@ -205,20 +205,20 @@ async function toast(page: Page, t: string | RegExp): Promise<void> {
 
 async function openDashboard(page: Page): Promise<void> {
   await page.goto("/dashboard");
-  // Home v2: the knowledge-graph course dropdown mounts once the load lands.
-  await expect(page.getByTestId("home-course-menu")).toBeVisible({ timeout: 30_000 });
+  // The graph header renders in every layout once the load lands (the
+  // review-due CTA this used to wait on was removed with #753).
+  await expect(page.getByText(/concepts across/)).toBeVisible({ timeout: 30_000 });
 }
 
 async function openCoursesKey(page: Page): Promise<void> {
-  // Home v2: courses live in the graph's course dropdown.
-  await page.getByTestId("home-course-menu").click();
-  await visible(page, "home-manage-courses");
+  // The key is always open; this just waits for it to mount.
+  await visible(page, "dashboard-courses-manage");
 }
 
 async function openManageModal(page: Page): Promise<void> {
   await openDashboard(page);
   await openCoursesKey(page);
-  await page.getByTestId("home-manage-courses").click();
+  await page.getByTestId("dashboard-courses-manage").click();
   await text(page, "Personal learning");
 }
 

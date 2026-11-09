@@ -26,7 +26,6 @@
  * forever and this test would time out on the wait below.
  */
 import { expect, test } from "./support/fixtures";
-import { expectHomeCourse, waitForHome } from "./support/home";
 import { mintStorageState } from "./support/session";
 import { USER_ACTIVE } from "./support/stack";
 
@@ -46,17 +45,19 @@ test("cookie-only session hydrates the dashboard via the /api/auth/me fallback",
     // sign-in or /pending.
     await expect(page).toHaveURL(/\/dashboard$/);
 
-    // The Home course dropdown only mounts once enrollments have loaded
+    // The "My courses" key only mounts once enrollments have loaded
     // (dashboard.spec.ts's same gate) — waiting for it doubles as the
     // "dashboard data arrived, skeleton resolved" assertion. Before the
     // #430 fix this timed out: userId never resolved, so `load()` never ran
     // and the skeleton never left.
-    await waitForHome(page);
+    await expect(page.getByTestId("dashboard-courses-key")).toBeVisible({ timeout: 30_000 });
 
     // Seeded, user-specific data rendering proves identity actually
     // resolved to rich-user-active (not just that the shell mounted):
     // rich-course-math210 ("MATH210") is this user's seeded enrollment.
-    await expectHomeCourse(page, "MATH210");
+    await expect(
+      page.getByTestId("dashboard-course-code").filter({ hasText: "MATH210" }),
+    ).toBeVisible();
   } finally {
     await context.close();
   }
