@@ -592,6 +592,10 @@
 
 /* Numeric: the number as typed on the left, the number as read on the right. */
 .quiz-written__readout {
+  /* Tall enough for the two-line read-back, so the panel doesn't grow the
+     moment a typed number first becomes readable. */
+  min-height: 80px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: var(--pad-md);
@@ -615,6 +619,10 @@
   font-size: var(--quiz-q-numeric-fs);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+}
+
+.quiz-written__input--numeric::placeholder {
+  font-size: var(--fs-xl);
 }
 
 .quiz-written__readout .quiz-written__readback {
