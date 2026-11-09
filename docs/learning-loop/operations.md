@@ -19,7 +19,7 @@ repository root unless they start with `cd`.
 | `false`, `0`, `off`, `no` (any case, whitespace ignored) | **off** for every student |
 
 Off means: the legacy routes in `backend/routes/learn.py` stop delegating to
-the loop, every `/api/learn/loop/*` route answers
+the loop (their bodies, in `backend/services/tutor/`, run the legacy tutor), every `/api/learn/loop/*` route answers
 `404 {"detail": "learning loop not enabled"}` (the status probe
 `/review/active` answers `200 {"active": false}`), and the frontend renders
 the legacy Learn screen. It is read at process start, so a change needs a
@@ -109,7 +109,7 @@ Operationally:
   (`backend/services/quiz_learning.py::checks_independent`). The writer is
   the model that wrote the request: a quiz request's `model_pref` `smart`
   writes on `claude-sonnet-5-5`, so its questions are practice under the
-  default slot (`backend/routes/quiz.py::_writer_model_name`). A `gemini-*`
+  default slot (`backend/services/quiz/generation.py::_writer_model_name`). A `gemini-*`
   override keeps it independent at a fraction of the cost.
 - **Model mode.** `SAPLING_MODEL_MODE` is `real` (default) or `function`;
   it is frozen at boot (`backend/agents/_providers.py::freeze_model_mode`,
@@ -384,7 +384,9 @@ separately. The full E2E guide is [docs/e2e-exploration.md](../e2e-exploration.m
 ## Observability
 
 - **Admin learning-loop report:** `GET /api/admin/analytics/learning-loop`
-  (`backend/routes/admin_analytics.py`), shown on the admin analytics page.
+  (`backend/routes/admin_analytics.py`, a thin handler over
+  `backend/services/admin/analytics/learning_loop.py::learning_loop_report`),
+  shown on the admin analytics page.
   It reports in-band share, hints-to-criterion trends, next-session
   unassisted success, caught leaks and served reveals, unscanned turns,
   ceiling compliance, earnest-revise, the gates, BKT and stated-confidence

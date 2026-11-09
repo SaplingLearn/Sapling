@@ -5,12 +5,12 @@ applicable) syllabus extraction, then merges results into the user's
 course graph via `_step_apply_graph`, a durable step that calls
 `apply_concepts_to_graph`.
 
-Spec §13 A118: `process_document(..., prerequisites=)` carries the upload's
-single resolution of the `upload_prereq_edges` flag (the route resolves it;
-False wherever no student is known). False runs exactly the pre-A118 steps
-and requests. True extracts with the prerequisite variant (and the course's
-existing concepts as context), then `_step_apply_prereqs` writes the
-relations as edges.
+Spec §13 A118: `run_document_agents(..., prerequisites=)` (and
+`process_document`) carry the upload's single resolution of the
+`upload_prereq_edges` flag (the caller resolves it; False wherever no student
+is known). False runs exactly the pre-A118 steps and requests. True extracts
+with the prerequisite variant (and the course's existing concepts as
+context), then `_step_apply_prereqs` writes the relations as edges.
 
 There is no orchestrator agent here: the graph merge is a deterministic
 function call with concept names already produced by the workers, so
@@ -37,26 +37,36 @@ ADR 0001's legacy fallback was retired in #151b):
   guardrail failures, not bugs — routes must keep them distinguishable
   from bare exceptions in logs.
 
+One pipeline (#835): `run_document_agents` is the ONLY sequence of agent
+calls an upload makes. It yields a `PipelineStep` at each phase boundary
+(classify, classified, extracted, merged, done) so each caller reports
+progress its own way: the streaming route turns the steps into SSE events
+(services/document_pipeline.py::step_events), the `document.process` worker
+records them as stages on the upload row (services/document_jobs.py), and
+`process_document` (the `/upload/sync` path) just waits for `done`.
+
 Internal API: the `_step_*` functions defined below are wrapped with
-@durable_step and are meant to be called ONLY from within the
-@durable_workflow-decorated `process_document` — either directly
-(`_step_apply_graph`, `_step_apply_prereqs`) or via `_run_workers` (the
-other four). For the pinned dbos==2.28.0, calling a `_step_*` outside a
-workflow context is NOT undefined: `dbos/_core.py::decorate_step`'s wrapper
-checks `ctx.is_workflow()` and, when there's no ambient workflow context, falls
+@durable_step and are called ONLY by `run_document_agents`. Inside the
+@durable_workflow-decorated `process_document` they are real durable steps;
+from the streaming route and the worker (no workflow) they run as plain
+calls, which is what those paths always did. For the
+pinned dbos==2.28.0, calling a `_step_*` outside a workflow context is
+NOT undefined: `dbos/_core.py::decorate_step`'s wrapper checks
+`ctx.is_workflow()` and, when there's no ambient workflow context, falls
 straight through to `return func(*args, **kwargs)` — the plain function
 runs for real, synchronously, with no DBOS registry lookup and no error
 (verified at `dbos/_core.py:2126-2152`). That's well-defined but still
 wrong to rely on here: the call would execute but get NONE of DBOS's
 checkpoint/resume behavior, silently losing durability for that call.
 Don't import them from routes or other modules; call only from
-`_run_workers`/`process_document`.
+`run_document_agents`.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import AsyncIterator
 
 from pydantic import BaseModel, Field, SerializeAsAny
 
@@ -96,12 +106,24 @@ class DocumentProcessingResult(BaseModel):
     )
 
 
-@dataclass
-class _WorkerResults:
-    classification: DocumentClassification
-    summary: Summary
-    concepts: BaseConceptList
-    syllabus: SyllabusAssignments | None
+#: PipelineStep names, in the order `run_document_agents` yields them.
+CLASSIFY = "classify"        # about to classify
+CLASSIFIED = "classified"    # classification known (category, is_syllabus)
+EXTRACTED = "extracted"      # summary/concepts(/syllabus) done (concept_count)
+MERGED = "merged"            # concepts merged into the graph (merged)
+DONE = "done"                # the composed result (result, merged)
+
+
+@dataclass(frozen=True)
+class PipelineStep:
+    """One phase boundary of the upload pipeline."""
+
+    name: str
+    category: str | None = None
+    is_syllabus: bool = False
+    concept_count: int = 0
+    merged: int = 0
+    result: DocumentProcessingResult | None = None
 
 
 # Each agent run is wrapped as a durable step so DBOS (when enabled) can
@@ -113,7 +135,7 @@ class _WorkerResults:
 async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification:
     result = record_agent_usage(
         await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
-        feature="document", task="classifier", user_id=deps.user_id,
+        feature="document", task="classifier", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
 
@@ -122,7 +144,7 @@ async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification
 async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
     result = record_agent_usage(
         await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
-        feature="document", task="summary", user_id=deps.user_id,
+        feature="document", task="summary", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
 
@@ -148,7 +170,7 @@ async def _step_concepts(
             ),
             deps=deps, usage_limits=WORKER_LIMITS,
         ),
-        feature="document", task="concepts", user_id=deps.user_id,
+        feature="document", task="concepts", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
 
@@ -157,7 +179,7 @@ async def _step_concepts(
 async def _step_syllabus(text: str, deps: SaplingDeps) -> SyllabusAssignments:
     result = record_agent_usage(
         await syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
-        feature="document", task="syllabus", user_id=deps.user_id,
+        feature="document", task="syllabus", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
 
@@ -182,10 +204,10 @@ async def _step_apply_graph(
     module's namespace that this call resolves at call time. (A default
     argument like `apply_fn=apply_concepts_to_graph` would instead freeze
     in the ORIGINAL function object at decoration time and silently not
-    observe the monkeypatch.) routes/documents.py's streaming route
-    imports and calls the same `apply_concepts_to_graph` independently,
-    inline and non-durable per ADR 0011's streaming-route asymmetry —
-    a separate binding this monkeypatch doesn't touch, and doesn't need to.
+    observe the monkeypatch.) The streaming route and the worker reach
+    this same step through `run_document_agents`, outside any workflow, so
+    for them it is a plain (non-durable) call — ADR 0011's streaming-route
+    asymmetry, unchanged.
     """
     return await apply_concepts_to_graph(user_id, course_id, concept_names)
 
@@ -196,78 +218,84 @@ async def _step_apply_prereqs(
 ) -> int:
     """A118: write the extraction's prerequisite relations as edges, AFTER the
     node merge (`_step_apply_graph`) so the concepts are in scope. Reached
-    only with prerequisites on (process_document); best-effort inside
+    only with prerequisites on (`run_document_agents`); best-effort inside
     `write_document_prerequisites` (never raises). Durable for the same reason
     as the merge; called by its module-global name, so a test can stub it."""
     return await asyncio.to_thread(write_document_prerequisites, user_id, course_id, concepts)
 
 
-async def _run_workers(
-    text: str, deps: SaplingDeps, prerequisites: bool = False,
-) -> _WorkerResults:
-    """Run classification first, then fan out the other workers in parallel.
+async def run_document_agents(
+    text: str, deps: SaplingDeps, *, prerequisites: bool = False,
+) -> AsyncIterator[PipelineStep]:
+    """The upload pipeline: classify first (it gates syllabus extraction),
+    then summary + concepts (+ syllabus) in parallel, then merge the concepts
+    into the course graph. Yields a PipelineStep at each boundary, ending
+    with DONE carrying the composed DocumentProcessingResult. Any agent
+    failure propagates to the caller (see the failure contract above).
 
-    Syllabus extraction only runs if classification flagged the document
-    as a syllabus. Saves a Gemini call on the common case.
+    Usage is recorded per agent run with the deps' user and request id (the
+    worker and the SSE generator run outside the request contextvar).
 
-    Each worker is wrapped as a `@durable_step`, so a DBOS-enabled
-    deployment checkpoints completion of each one and resumes mid-pipeline
-    after a crash.
-    """
+    `prerequisites` (A118) is the upload's single resolution of the
+    upload_prereq_edges flag, made by the caller before this runs (for
+    `process_document`, a workflow input, so a DBOS resume replays the same
+    answer). False runs exactly the pre-A118 pipeline. True extracts with the
+    prerequisite variant and then, after the merge and before MERGED, writes
+    the relations as edges via `_step_apply_prereqs`."""
+    yield PipelineStep(CLASSIFY)
     classification = await _step_classify(text, deps)
+    yield PipelineStep(CLASSIFIED, category=classification.category,
+                       is_syllabus=classification.is_syllabus)
 
     summary_task = _step_summary(text, deps)
     concepts_task = _step_concepts(text, deps, prerequisites)
-    syllabus_task = _step_syllabus(text, deps) if classification.is_syllabus else None
-
-    if syllabus_task is not None:
+    syllabus = None
+    if classification.is_syllabus:
         summary, concepts, syllabus = await asyncio.gather(
-            summary_task, concepts_task, syllabus_task,
+            summary_task, concepts_task, _step_syllabus(text, deps),
         )
-        return _WorkerResults(
-            classification=classification,
-            summary=summary, concepts=concepts, syllabus=syllabus,
-        )
-    summary, concepts = await asyncio.gather(summary_task, concepts_task)
-    return _WorkerResults(
-        classification=classification,
-        summary=summary, concepts=concepts, syllabus=None,
+    else:
+        summary, concepts = await asyncio.gather(summary_task, concepts_task)
+    yield PipelineStep(EXTRACTED, concept_count=len(concepts.concepts))
+
+    merged = await _step_apply_graph(
+        deps.user_id, deps.course_id, [c.name for c in concepts.concepts],
     )
+    if prerequisites:
+        await _step_apply_prereqs(deps.user_id, deps.course_id, concepts)
+    yield PipelineStep(MERGED, merged=merged)
+    yield PipelineStep(DONE, merged=merged, result=DocumentProcessingResult(
+        classification=classification,
+        summary=summary,
+        concepts=concepts,
+        syllabus=syllabus,
+        graph_updated=merged > 0,
+    ))
 
 
 @durable_workflow
 async def process_document(
     text: str, deps: SaplingDeps, *, prerequisites: bool = False,
 ) -> DocumentProcessingResult:
-    """Run workers in parallel, then merge concepts into the graph via the
-    durable `_step_apply_graph`.
+    """`run_document_agents` to its end, for `/upload/sync`.
 
-    `prerequisites` (A118) is the upload's single resolution of the
-    upload_prereq_edges flag, made by the route before calling this — a
-    workflow input, so a DBOS resume replays the same answer. False (the
-    default, and wherever no student is known) runs exactly the pre-A118
-    pipeline. True extracts with the prerequisite variant and then writes the
-    relations as edges via `_step_apply_prereqs`.
+    `prerequisites` (A118): the route's one resolution of the
+    upload_prereq_edges flag, a workflow input (see `run_document_agents`).
 
-    DocumentProcessingResult is composed deterministically here from worker
-    outputs. The graph merge has no orchestrator agent — no decisions to
-    make beyond passing the already-extracted concept names through — but
-    IS wrapped as a checkpointed step (`_step_apply_graph`) so a DBOS
-    resume of this workflow doesn't repeat the merge.
+    The graph merge has no orchestrator agent — no decisions to make beyond
+    passing the already-extracted concept names through — but IS a
+    checkpointed step (`_step_apply_graph`) so a DBOS resume of this
+    workflow doesn't repeat the merge.
 
     Wrapped in `@durable_workflow` from services.durable: a no-op when
     DBOS_ENABLED is unset (the default), a real DBOS workflow when the
     operator opts in. See ADR 0011 for the activation procedure.
     """
-    workers = await _run_workers(text, deps, prerequisites)
-    concept_names = [c.name for c in workers.concepts.concepts]
-    merged = await _step_apply_graph(deps.user_id, deps.course_id, concept_names)
-    if prerequisites:
-        await _step_apply_prereqs(deps.user_id, deps.course_id, workers.concepts)
-    return DocumentProcessingResult(
-        classification=workers.classification,
-        summary=workers.summary,
-        concepts=workers.concepts,
-        syllabus=workers.syllabus,
-        graph_updated=merged > 0,
-    )
+    steps = run_document_agents(text, deps, prerequisites=prerequisites)
+    try:
+        async for step in steps:
+            if step.name == DONE:
+                return step.result
+    finally:
+        await steps.aclose()
+    raise RuntimeError("document pipeline ended without a result")  # pragma: no cover

@@ -102,6 +102,7 @@ BUCKETS = {
         "document_uploads",
         "llm_budgets",
         "rate_limit_hits", "feature_flags_version",
+        "tutor_pending_sessions",
         # The learning loop (spec §13 A148, 20261109032302_learning_loop_rls.sql):
         "learner_state", "check_items", "check_item_draft_failures", "ai_tutor_daily_calls",
         "misconceptions", "posttest_poses", "learning_reveals", "quiz_evidence_claims",

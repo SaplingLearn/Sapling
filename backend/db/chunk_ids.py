@@ -1,15 +1,24 @@
-"""Content-addressed `course_chunks` ids and the embedding dimension (PKG-13
-fix round: moved verbatim out of services/rag_service.py, which re-exports
-both). No SDK import: rag_service pulls google-genai (~1.4 s) through
-agents._providers, and the rich seed — a fresh process before every Playwright
-test — needs only these two to write chunk rows.
+"""Content-addressed `course_chunks` ids, the embedding dimension and the
+`course_chunks.visibility` values (PKG-13 fix round: moved verbatim out of
+services/rag_service.py, which re-exports the id and the dimension). No SDK
+import: rag_service pulls google-genai (~1.4 s) through agents._providers, and
+the rich seed — a fresh process before every Playwright test — needs only
+these to write chunk rows.
+
+In db/ (spec §13 A149), not services/: the row-id scheme and the column's
+domain are facts of the `course_chunks` table, and the rich seed
+(db/seed_local_rich.py) writes chunk rows — a db module must not import
+services (backend/.importlinter). services/chunk_visibility.py re-exports
+SHARED / PRIVATE from here.
 """
 
 from __future__ import annotations
 
 import hashlib
 
-from services.chunk_visibility import PRIVATE, SHARED
+#: `course_chunks.visibility`. Mirrors the CHECK constraint in the migration.
+SHARED = "shared"
+PRIVATE = "private"
 
 #: gemini-embedding-001's output_dimensionality in every embed call.
 EMBED_OUTPUT_DIM = 768

@@ -40,7 +40,8 @@ from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
-from services import ai_budget, crisis_support, quiz_config, quiz_errors
+from services import ai_budget, crisis_support
+from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate
 from services.llm_budget import LLMBudgetExceeded
 from db.scope import (

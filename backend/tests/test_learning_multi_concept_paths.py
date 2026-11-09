@@ -531,7 +531,8 @@ def test_the_admin_kpis_carry_the_report_and_a_failed_read_leaves_it_none(monkey
     from fastapi.testclient import TestClient
 
     from main import app
-    from routes import admin_analytics as analytics
+    import routes.admin_analytics as analytics_route  # noqa: F401
+    from services.admin.analytics import learning_loop as analytics
     from tests.test_admin_learning_loop_kpis import RANGE, URL, _serve
 
     _serve(monkeypatch, {"events": [], "node_mastery_events": []})
@@ -543,7 +544,9 @@ def test_the_admin_kpis_carry_the_report_and_a_failed_read_leaves_it_none(monkey
 
 
 def test_the_admin_report_reads_only_combination_evidence_and_leaves_void_rows_out(monkeypatch):
-    from routes import admin_analytics as analytics
+    import routes.admin_analytics as analytics_route  # noqa: F401
+    from services.admin.analytics import learning_loop as analytics
+    from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 
     items = [{"id": "x1", "course_id": "c1", "question_hash": "q1", "lint_flags": [], "canonical_verified": True}]
     void = {**_ev("u1", "n", "q1", True, 1), "check_item_id": "x1"}
@@ -557,7 +560,7 @@ def test_the_admin_report_reads_only_combination_evidence_and_leaves_void_rows_o
         return [{"payload": {"course_id": "c1", "question_hash": "q1"}}], False
 
     monkeypatch.setattr(analytics, "page_all", lambda *a, **k: iter(items))
-    monkeypatch.setattr(analytics, "_scan_range", scan)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_scan_range", scan)
     report, truncated = analytics._multi_concept("f", "t", {("c1", "q1-retired")})
     assert report.overall.answered == 2 and not truncated
     report, _ = analytics._multi_concept("f", "t", {("c1", "q1")})  # the item staff-retired

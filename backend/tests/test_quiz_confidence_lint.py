@@ -38,6 +38,8 @@ from tests.test_quiz_answers_c import (
     _tables,
     client,
 )
+from tests.split_patches import patch_quiz
+from tests.db_fakes import with_async_twins
 
 LEVELS = params.STUDENT_CONFIDENCE_LEVELS
 
@@ -202,8 +204,8 @@ def test_the_e2e_mirror_of_the_confidence_levels():
 
 def _answer(body, questions=None):
     factory, responses = _tables()
-    with patch("tests.test_quiz_answers_c.QUESTIONS", questions or _two_mc()), patch(
-        "routes.quiz.table", side_effect=factory
+    with patch("tests.test_quiz_answers_c.QUESTIONS", questions or _two_mc()), patch_quiz(
+        "table", side_effect=with_async_twins(factory)
     ):
         r = client.post("/api/quiz/attempts/quiz1/answer", json=body)
     return r, responses.rows
@@ -294,8 +296,8 @@ def test_resume_reads_the_stored_value_back_as_its_label():
         })
     questions = [_flagged(None, qid=i + 1) for i in range(5)]
     factory, _ = _tables(responses=responses)
-    with patch("tests.test_quiz_answers_c.QUESTIONS", questions), patch(
-        "routes.quiz.table", side_effect=factory
+    with patch("tests.test_quiz_answers_c.QUESTIONS", questions), patch_quiz(
+        "table", side_effect=with_async_twins(factory)
     ):
         r = client.get("/api/quiz/attempts/quiz1")
     assert r.status_code == 200, r.text
@@ -354,16 +356,16 @@ def _submit(questions, recorded=(), answers=()):
     apply_mock = MagicMock(return_value=[])
     with (
         patch("tests.test_quiz_answers_c.QUESTIONS", questions),
-        patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.apply_graph_update", new=apply_mock),
-        patch("routes.quiz.max_help_many", return_value={}),
-        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("apply_graph_update", new=apply_mock),
+        patch_quiz("max_help_many", return_value={}),
+        patch_quiz("get_quiz_context", return_value={}),
         patch(
-            "routes.quiz.quiz_context_agent.run",
+            "services.quiz.submission.quiz_context_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))),
         ),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.events_service.log_event") as log_event,
+        patch_quiz("save_quiz_context"),
+        patch("services.events_service.log_event") as log_event,
     ):
         r = client.post("/api/quiz/submit", json={"quiz_id": "quiz1", "answers": list(answers)})
     written = apply_mock.call_args.args[1]["evidence"] if apply_mock.called else []
@@ -494,9 +496,9 @@ def test_generate_stores_the_codes_and_never_serves_them(quiz, flags, keyed):
 
     factory, captured = _generate_factory()
     with (
-        patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.quiz_agent.run", new=AsyncMock(return_value=SimpleNamespace(output=quiz()))),
-        patch("routes.quiz.require_admin"),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch("services.quiz.generation.quiz_agent.run", new=AsyncMock(return_value=SimpleNamespace(output=quiz()))),
+        patch_quiz("require_admin"),
     ):
         r = _post_generate({"include_answer_key": keyed})
     assert r.status_code == 200, r.text
@@ -511,7 +513,7 @@ def test_assembly_relints_a_reserved_question():
     """G5 re-serves stored questions verbatim; the assembly lints every
     question of the new attempt, so a re-served item carries the current
     linter's answer, never its source attempt's."""
-    from routes.quiz import _lint_questions
+    from services.quiz.generation import _lint_questions
 
     stale = _flagged(CORRECT_LONGEST, lint_flags=[])
     clean = _flagged(None, qid=2, lint_flags=[NEGATIVE_STEM])

@@ -172,7 +172,7 @@ def test_quiz_generate(wire):
         question="Q?", type="multiple_choice", difficulty="easy",
         options=["a", "b", "c", "d"], correct_answer="a", explanation="x", concept="Loops",
     )])
-    with patch("routes.quiz.quiz_agent.run",
+    with patch("services.quiz.generation.quiz_agent.run",
                new=AsyncMock(return_value=SimpleNamespace(output=quiz))):
         r = client.post("/api/quiz/generate", json={
             "user_id": "user_andres", "concept_node_id": "node1", "num_questions": 1,
@@ -190,7 +190,7 @@ def test_quiz_generate_practise_missed_reads_off_the_loop(wire):
         "completed_at": "2026-11-01T00:00:00+00:00", "questions_json": None,
         "score": 0, "total": 1,
     }]
-    with patch("routes.quiz.quiz_agent.run", new=AsyncMock(side_effect=RuntimeError("no model"))):
+    with patch("services.quiz.generation.quiz_agent.run", new=AsyncMock(side_effect=RuntimeError("no model"))):
         client.post("/api/quiz/generate", json={
             "user_id": "user_andres", "concept_node_id": "node1", "num_questions": 1,
             "difficulty": "easy", "source_attempt_id": "src",

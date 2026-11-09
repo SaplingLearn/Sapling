@@ -1,16 +1,20 @@
 # backend/tests/test_learn_stream_routes.py
 """Route-level tests for the SSE chat streams."""
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-import pytest
+from tests.db_fakes import fake_table
+from tests.split_patches import patch_tutor
 
-# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
-# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
-pytestmark = pytest.mark.kill_switch
+#: #117 wave 3: a sync PostgREST call on the event loop raises here. Spec
+#: §11.5 (PKG-14b): this module drives the legacy /api/learn/* path, so it
+#: runs as an explicit kill-switch test too.
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
+
 
 client = TestClient(app)
 
@@ -40,20 +44,20 @@ class TestChatStream:
             from services.agent_events import SaplingEvent
             yield SaplingEvent(type="status", step="start", message="Starting.")
             yield SaplingEvent(type="token", step="reply", message="", data={"delta": "Hi"})
-            kwargs["on_complete"]("Hi", {}, [])
+            await kwargs["on_complete"]("Hi", {}, [])
             yield SaplingEvent(type="done", step="reply", message="Complete.",
                                data={"reply": "Hi", "graph_update": {}, "mastery_changes": []})
 
         saved = []
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
-             patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
-             patch("routes.learn._get_session_offering_id", return_value="off-1"), \
-             patch("routes.learn.offering_course_id", return_value="c1"), \
-             patch("routes.learn._load_message_history", return_value=history_sentinel), \
-             patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)):
+             patch_tutor("_consume_pending"), \
+             patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"), \
+             patch_tutor("_get_session_offering_id", return_value="off-1"), \
+             patch_tutor("offering_course_id", return_value="c1"), \
+             patch_tutor("_load_message_history", return_value=history_sentinel), \
+             patch_tutor("save_message", side_effect=lambda *a, **k: saved.append(a)):
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "u1", "message": "hello", "mode": "socratic",
                 "model_pref": "smart",
@@ -99,15 +103,15 @@ class TestChatStream:
         turn = AsyncMock(return_value={
             "reply": "fallback reply", "graph_update": {}, "mastery_changes": [],
         })
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
-             patch("routes.learn._chat_turn_json", turn), \
-             patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
-             patch("routes.learn._get_session_offering_id", return_value="off-1"), \
-             patch("routes.learn.offering_course_id", return_value="c1"), \
-             patch("routes.learn._load_message_history", return_value=[]):
+             patch_tutor("_chat_turn_json", turn), \
+             patch_tutor("_consume_pending"), \
+             patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"), \
+             patch_tutor("_get_session_offering_id", return_value="off-1"), \
+             patch_tutor("offering_course_id", return_value="c1"), \
+             patch_tutor("_load_message_history", return_value=[]):
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "u1", "message": "hello",
                 "mode": "socratic", "model_pref": "smart",
@@ -130,11 +134,11 @@ class TestChatStream:
         """
         from fastapi import HTTPException
 
-        with patch("routes.learn.require_self",
+        with patch_tutor("require_self",
                    side_effect=HTTPException(status_code=403, detail="forbidden")) as guard, \
-             patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
-             patch("routes.learn._prepare_chat_run") as prep:
+             patch_tutor("_consume_pending"), \
+             patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"), \
+             patch_tutor("_prepare_chat_run") as prep:
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "someone-else",
                 "message": "hi", "mode": "socratic",
@@ -156,13 +160,13 @@ class TestStartSessionStream:
         from routes.learn import PENDING_SESSIONS
         PENDING_SESSIONS.clear()
 
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
-             patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
-             patch("routes.learn.resolve_offering", return_value="off-1"), \
-             patch("routes.learn.get_graph", return_value={"nodes": []}), \
-             patch("routes.learn.table") as tbl:
+             patch_tutor("_get_course_id_for_topic", return_value="c1"), \
+             patch_tutor("resolve_offering", return_value="off-1"), \
+             patch_tutor("get_graph", return_value={"nodes": []}), \
+             patch_tutor("table", return_value=fake_table()) as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
             })
@@ -216,13 +220,13 @@ class TestStartSessionStream:
         fallback_agent.run = AsyncMock(return_value=run_result("Fallback greeting"))
         fallback_deps = SimpleNamespace(graph_updates=[], mastery_changes=[])
 
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(fallback_agent, "msg", {}, fallback_deps)) as prep, \
-             patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
-             patch("routes.learn.resolve_offering", return_value="off-1"), \
-             patch("routes.learn.get_graph", return_value={"nodes": []}), \
-             patch("routes.learn.table") as tbl:
+             patch_tutor("_get_course_id_for_topic", return_value="c1"), \
+             patch_tutor("resolve_offering", return_value="off-1"), \
+             patch_tutor("get_graph", return_value={"nodes": []}), \
+             patch_tutor("table", return_value=fake_table()) as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
             })
@@ -273,14 +277,14 @@ class TestSseCompressionOptOut:
             yield SaplingEvent(type="done", step="reply", message="Complete.",
                                data={"reply": "Hi", "graph_update": {}, "mastery_changes": []})
 
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
-             patch("routes.learn._consume_pending"), \
-             patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"), \
-             patch("routes.learn._get_session_offering_id", return_value="off-1"), \
-             patch("routes.learn.offering_course_id", return_value="c1"), \
-             patch("routes.learn._load_message_history", return_value=[]):
+             patch_tutor("_consume_pending"), \
+             patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"), \
+             patch_tutor("_get_session_offering_id", return_value="off-1"), \
+             patch_tutor("offering_course_id", return_value="c1"), \
+             patch_tutor("_load_message_history", return_value=[]):
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "u1", "message": "hello", "mode": "socratic",
             })
@@ -293,11 +297,11 @@ class TestSseCompressionOptOut:
             yield SaplingEvent(type="done", step="reply", message="Complete.",
                                data={"reply": "Hello", "session_id": "s-new"})
 
-        with patch("routes.learn.stream_agent_turn", fake_stream), \
-             patch("routes.learn._prepare_chat_run",
+        with patch_tutor("stream_agent_turn", fake_stream), \
+             patch_tutor("_prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
-             patch("routes.learn._get_course_id_for_topic", return_value=""), \
-             patch("routes.learn.resolve_offering", return_value=""):
+             patch_tutor("_get_course_id_for_topic", return_value=""), \
+             patch_tutor("resolve_offering", return_value=""):
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Recursion", "mode": "socratic",
             })

@@ -47,6 +47,13 @@ pytest-cov==7.1.0
 
 # Linting (#193): `ruff check` is gated in CI against the baseline in ruff.toml.
 ruff==0.15.18
+# Import boundaries (#118): `lint-imports` (contracts in .importlinter) is gated
+# in CI next to ruff; the routes -> services -> db layering and the domain
+# packages' independence.
+import-linter==2.15
+# grimp is import-linter's graph engine; pinned to a release that has been out
+# a while (3.19 was two days old when this landed).
+grimp==3.18
 
 # Pydantic AI agents (see docs/decisions/0001-adopt-pydantic-ai.md)
 # <2: pydantic-ai 2.x changed run_stream_events() to return an async context

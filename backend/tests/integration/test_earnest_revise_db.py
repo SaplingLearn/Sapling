@@ -10,10 +10,10 @@ Two things a MagicMock suite cannot see:
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import patch
 
 import pytest
 from psycopg.types.json import Jsonb
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, patch_in
 
 pytestmark = pytest.mark.integration
 
@@ -103,7 +103,7 @@ def test_the_metrics_script_reads_earnest_revise_from_real_events(db_conn):
 
 def test_the_admin_kpi_reads_earnest_revise_from_real_events(db_conn, client):
     _seed_steps(db_conn)
-    with patch("routes.admin_analytics.require_admin", return_value=None):
+    with patch_in(ADMIN_ANALYTICS_MODULES, "require_admin", return_value=None):
         r = client.get("/api/admin/analytics/learning-loop", params={"from": FROM, "to": TO})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -112,7 +112,7 @@ def test_the_admin_kpi_reads_earnest_revise_from_real_events(db_conn, client):
 
 
 def test_an_empty_window_is_inconclusive_against_real_sql(client):
-    with patch("routes.admin_analytics.require_admin", return_value=None):
+    with patch_in(ADMIN_ANALYTICS_MODULES, "require_admin", return_value=None):
         body = client.get(
             "/api/admin/analytics/learning-loop", params={"from": FROM, "to": TO}
         ).json()

@@ -731,7 +731,7 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
 //
-// The other three destinations ride on the runs that already reach them (one
+// The three destinations ride on the runs that already reach them (one
 // journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
 // "Done → /quiz" on the keyboard pass. Quiz home itself has no Cancel since

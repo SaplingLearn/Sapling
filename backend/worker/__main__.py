@@ -52,7 +52,7 @@ HANDLER_MODULES: tuple[str, ...] = (
     "services.course_context_service",  # course_context.refresh
     "services.document_indexing",       # document.index
     "services.document_jobs",           # document.process
-    "services.gradescope_jobs",         # gradescope.sync
+    "services.gradescope.jobs",         # gradescope.sync
 )
 
 EXIT_BOOT_FAILED = 2

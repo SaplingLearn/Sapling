@@ -1,13 +1,13 @@
 """Upload-time check-item drafting on the job queue (#116 x learning-loop PKG-04).
 
 With the learning loop on, an upload's indexing and its check-item drafting
-run as ONE ordered task (`routes/documents.py::_index_then_check_items`):
+run as ONE ordered task (`services/documents/post_roll.py::_index_then_check_items`):
 the items cite the chunks indexing writes, and the A23 source rule reads
 their visibility. With the `jobs_queue` flag on for the uploader that task
 moves to the worker, as `document.index` does for the loop-off upload
 (`services/document_indexing.py::schedule_document_index`): one
 ``check_items.document`` job, whose handler runs the same chain
-(`routes/documents.py::_index_then_draft`) — indexing, then the drafting on
+(`services/documents/post_roll.py::_index_then_draft`) — indexing, then the drafting on
 the job's own thread.
 
 Flag off (the default) nothing here runs: `enqueue_for_document` says no and
@@ -102,7 +102,7 @@ def _run_check_items_document_job(payload: dict) -> None:
     if names is None:
         logger.info("check_items.document: doc %s is gone; nothing to index or draft", doc_id)
         return
-    from routes import documents  # lazy: the route module imports this one
+    from services import documents  # lazy: its post-roll imports this module
     from services import llm_budget
     from services.request_context import acting_for
 

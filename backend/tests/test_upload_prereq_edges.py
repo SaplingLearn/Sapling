@@ -57,6 +57,7 @@ from agents.deps import SaplingDeps
 from learning import planner
 from learning.params import BKT_L0, BKT_PROFICIENT
 from main import app
+from tests.split_patches import patch_documents
 
 client = TestClient(app)
 
@@ -763,15 +764,17 @@ def _sse_result(body: str) -> dict:
 def _stream_upload():
     cls_run, sum_run, cpt_run = _agent_runs()
     with (
-        patch("routes.documents._validate_user"),
-        patch("routes.documents.extract_text_from_file", return_value=_TEXT),
-        patch("routes.documents.classifier_agent.run", cls_run),
-        patch("routes.documents.summary_agent.run", sum_run),
-        patch("routes.documents.concept_extraction_agent.run", cpt_run),
-        patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=9)),
-        patch("routes.documents.table") as t,
-        patch("routes.documents._spawn_post_roll"),
-        patch("routes.documents.write_document_prerequisites",
+        patch_documents("_validate_user"),
+        patch_documents("extract_text_from_file", return_value=_TEXT),
+        patch("agents.classifier.classifier_agent.run", cls_run),
+        patch("agents.summary.summary_agent.run", sum_run),
+        patch("agents.concept_extraction.concept_extraction_agent.run", cpt_run),
+        # #835/#118 (spec §13 A149): the streaming route runs the one pipeline
+        # (agents.document), which merges the nodes and writes the edges
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=9)),
+        patch_documents("table") as t,
+        patch_documents("_spawn_post_roll"),
+        patch("agents.document.write_document_prerequisites",
               wraps=cp.write_document_prerequisites) as write,
         patch.object(cp, "apply_graph_update") as agu,
     ):
@@ -791,15 +794,15 @@ def _stream_upload():
 def _sync_upload():
     cls_run, sum_run, cpt_run = _agent_runs()
     with (
-        patch("routes.documents._validate_user"),
-        patch("routes.documents.extract_text_from_file", return_value=_TEXT),
+        patch_documents("_validate_user"),
+        patch_documents("extract_text_from_file", return_value=_TEXT),
         patch("agents.classifier.classifier_agent.run", cls_run),
         patch("agents.summary.summary_agent.run", sum_run),
         patch("agents.concept_extraction.concept_extraction_agent.run", cpt_run),
         patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=9)),
-        patch("routes.documents.table") as t,
-        patch("routes.documents._index_then_check_items"),
-        patch("routes.documents.index_document"),
+        patch_documents("table") as t,
+        patch_documents("_index_then_check_items"),
+        patch_documents("index_document"),
         patch("agents.document.write_document_prerequisites",
               wraps=cp.write_document_prerequisites) as write,
         patch.object(cp, "apply_graph_update") as agu,

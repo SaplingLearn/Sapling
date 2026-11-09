@@ -13,6 +13,8 @@ from learning.bkt import update
 from tests.test_quiz_answers_c import _ResponsesTable
 from tests.test_quiz_scoring_e import _loop_table, _noop_ctx_agent, client
 from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+from tests.split_patches import patch_quiz
+from tests.db_fakes import with_async_twins
 
 # The retired symbols are named once, in inv_21's list (spec §8 invariant 21
 # greps the literals), and every absence check here reads them from it.
@@ -70,12 +72,12 @@ def test_quiz_and_flashcards_read_no_gate():
 
 def _submit(apply_mock, *, answers):
     with (
-        patch("routes.quiz.table", side_effect=_loop_table()),
-        patch("routes.quiz.apply_graph_update", new=apply_mock),
-        patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.events_service.log_event") as log_event,
+        patch_quiz("table", side_effect=with_async_twins(_loop_table())),
+        patch_quiz("apply_graph_update", new=apply_mock),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch_quiz("save_quiz_context"),
+        patch("services.events_service.log_event") as log_event,
     ):
         r = client.post("/api/quiz/submit", json={"quiz_id": "quiz1", "answers": answers})
     return r, log_event
@@ -168,13 +170,13 @@ def _submit_with(factory, apply_mock, *, help_floors=None, help_fail=False):
         return {h: (help_floors or {}).get(h, 0) for h in hashes}
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.apply_graph_update", new=apply_mock),
-        patch("routes.quiz.max_help_many", side_effect=_max_help_many),
-        patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.events_service.log_event"),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("apply_graph_update", new=apply_mock),
+        patch_quiz("max_help_many", side_effect=_max_help_many),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch_quiz("save_quiz_context"),
+        patch("services.events_service.log_event"),
     ):
         return client.post(
             "/api/quiz/submit",
@@ -244,11 +246,11 @@ def test_concurrent_submits_sharing_a_hash_write_it_once():
     """Two attempts' submits race on the same hashes: the claim table arbitrates,
     so the second guard keeps none of them (A100; real-SQL proof in
     tests/integration/test_quiz_evidence_claims_db.py)."""
-    from routes.quiz import _farm_guard
+    from services.quiz.submission import _farm_guard
 
     claims = _Claims()
     evs = [{"question_hash": h, "node_id": "n", "correct": True} for h in _hashes()]
-    with patch("routes.quiz.table", side_effect=_farm_tables(claims)):
+    with patch_quiz("table", side_effect=with_async_twins(_farm_tables(claims))):
         first = _farm_guard("user_andres", "attempt-a", [dict(e) for e in evs])
         second = _farm_guard("user_andres", "attempt-b", [dict(e) for e in evs])
     assert [e["question_hash"] for e in first] == _hashes()
@@ -259,18 +261,18 @@ def test_a_dropped_evidence_insert_does_not_reopen_the_question():
     """The old guard counted node_mastery_events, so an evidence row the graph
     write dropped left the question farmable; the claim is the guard's own
     journal, taken before the write, and stands whatever the write does."""
-    from routes.quiz import _farm_guard
+    from services.quiz.submission import _farm_guard
 
     claims = _Claims()
     evs = [{"question_hash": h, "node_id": "n", "correct": True} for h in _hashes()]
-    with patch("routes.quiz.table", side_effect=_farm_tables(claims)):
+    with patch_quiz("table", side_effect=with_async_twins(_farm_tables(claims))):
         assert len(_farm_guard("user_andres", "attempt-a", [dict(e) for e in evs])) == 2
         # (the evidence write is apply_graph_update's; whatever it dropped, the claim stands)
         assert _farm_guard("user_andres", "attempt-b", [dict(e) for e in evs]) == []
 
 
 def test_hashless_questions_count_once_per_attempt():
-    from routes.quiz import _farm_guard
+    from services.quiz.submission import _farm_guard
 
     evs = [
         {"question_hash": None, "node_id": "n", "correct": True},
@@ -278,7 +280,7 @@ def test_hashless_questions_count_once_per_attempt():
         {"question_hash": "h1", "node_id": "n", "correct": True},
         {"question_hash": "h1", "node_id": "n", "correct": False},  # the same item twice
     ]
-    with patch("routes.quiz.table", side_effect=_farm_tables(_Claims())):
+    with patch_quiz("table", side_effect=with_async_twins(_farm_tables)(_Claims())):
         kept = _farm_guard("user_andres", "quiz1", evs)
     assert [e["question_hash"] for e in kept] == [None, "h1"]
 
@@ -328,11 +330,11 @@ def test_an_unreadable_help_ledger_fails_closed():
 
 
 def test_the_help_floor_is_one_batched_read_after_the_farm_guard():
-    from routes.quiz import _help_floor
+    from services.quiz.submission import _help_floor
 
     seen = []
     evs = [{"question_hash": "h1"}, {"question_hash": None}, {"question_hash": "h2"}]
-    with patch("routes.quiz.max_help_many", side_effect=lambda u, hs: seen.append(list(hs)) or {"h1": 0, "h2": 2}):
+    with patch_quiz("max_help_many", side_effect=lambda u, hs: seen.append(list(hs)) or {"h1": 0, "h2": 2}):
         out = _help_floor("user_andres", evs)
     assert seen == [["h1", "h2"]]
     assert out[0] == {"question_hash": "h1"} and out[1] == {"question_hash": None}
@@ -410,13 +412,13 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
     apply_mock = MagicMock(return_value=[])
     selected, revision = (right, wrong) if correct else (wrong, right)
     with (
-        patch("routes.quiz.table", side_effect=tables),
-        patch("routes.quiz.apply_graph_update", new=apply_mock),
-        patch("routes.quiz.max_help_many", return_value={qh: floor}),
-        patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
-        patch("routes.quiz.save_quiz_context"),
-        patch("routes.quiz.events_service.log_event"),
+        patch_quiz("table", side_effect=with_async_twins(tables)),
+        patch_quiz("apply_graph_update", new=apply_mock),
+        patch_quiz("max_help_many", return_value={qh: floor}),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch_quiz("save_quiz_context"),
+        patch("services.events_service.log_event"),
     ):
         first = client.post(
             "/api/quiz/attempts/written-first/answer",
@@ -491,12 +493,12 @@ def test_students_cannot_ask_for_the_answer_key(monkeypatch):
     """Owner decision 2: include_answer_key=true is admin-only (403 before any
     generation); the shipped client always sends false."""
     import services.auth_guard as ag
-    import routes.quiz as quiz
+    from services.quiz import generation as quiz  # #118: the body's home (A149)
 
     monkeypatch.setattr(quiz, "require_admin", ag._real_require_admin)
     monkeypatch.setattr(ag, "table", lambda name: MagicMock(select=MagicMock(return_value=[])))
     run = MagicMock(side_effect=AssertionError("generation ran"))
-    with patch("routes.quiz.quiz_agent.run", new=run):
+    with patch("services.quiz.generation.quiz_agent.run", new=run):
         r = client.post(
             "/api/quiz/generate",
             json={"user_id": "user_andres", "concept_node_id": "node1", "include_answer_key": True},

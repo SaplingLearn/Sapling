@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from db import seed_learning_goal_journey as fixture
+from scripts import seed_learning_goal_journey as fixture
 from db.e2e_handler_constants import read_constants
 from learning import misconceptions, planner, probe
 from learning.checks import posttest_reserve_hash, question_hash, select_item

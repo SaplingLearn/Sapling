@@ -16,12 +16,15 @@ test_learn_routes.py::test_use_shared_context_false_appends_constraint.)
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
 """
+import asyncio
 import sys
 import os
 import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
+
+from tests.db_fakes import fake_table, with_async_twins
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -514,7 +517,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 class TestLearnHelpers(unittest.TestCase):
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_matches_course_code(self, mock_table):
         # enrollments → course_offerings → courses; returns the ABSTRACT course_id.
         enrolled_tbl = MagicMock()
@@ -530,13 +533,13 @@ class TestLearnHelpers(unittest.TestCase):
             if name == "enrollments": return enrolled_tbl
             return node_tbl
 
-        mock_table.side_effect = _factory
+        mock_table.side_effect = with_async_twins(_factory)
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("CS101", "user1")
+        result = asyncio.run(_get_course_id_for_topic("CS101", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_is_concept(self, mock_table):
         enrolled_tbl = MagicMock()
         enrolled_tbl.select.return_value = []
@@ -548,40 +551,43 @@ class TestLearnHelpers(unittest.TestCase):
             if name == "enrollments": return enrolled_tbl
             return node_tbl
 
-        mock_table.side_effect = _factory
+        mock_table.side_effect = with_async_twins(_factory)
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("Loops", "user1")
+        result = asyncio.run(_get_course_id_for_topic("Loops", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_unknown_topic_returns_empty(self, mock_table):
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("RandomTopic", "user1")
+        result = asyncio.run(_get_course_id_for_topic("RandomTopic", "user1"))
         self.assertEqual(result, "")
 
     def test_resolve_course_empty_topic_returns_empty(self):
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("", "user1")
+        result = asyncio.run(_get_course_id_for_topic("", "user1"))
         self.assertEqual(result, "")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_found(self, mock_table):
         # Sessions key on the offering (0025); the helper returns it.
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = [{"offering_id": "off-1"}]
 
         from routes.learn import _get_session_offering_id
-        result = _get_session_offering_id("session-abc")
+        result = asyncio.run(_get_session_offering_id("session-abc"))
         self.assertEqual(result, "off-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_not_found(self, mock_table):
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []
 
         from routes.learn import _get_session_offering_id
-        result = _get_session_offering_id("session-missing")
+        result = asyncio.run(_get_session_offering_id("session-missing"))
         self.assertEqual(result, "")
 
 

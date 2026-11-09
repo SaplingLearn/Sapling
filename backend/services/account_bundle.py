@@ -41,7 +41,8 @@ preserved — the target's copies of them were just wiped.
 Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
-differ), `course_chunks`, and every privacy/consent/notification choice in
+differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
+`tutor_pending_sessions`: wiped, never bundled), and every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
 each environment, and is never carried from one to the other. The imported
 documents therefore index under the TARGET's stored `share_class_context`.

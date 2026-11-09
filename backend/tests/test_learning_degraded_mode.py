@@ -814,7 +814,7 @@ def test_a_status_write_that_fails_never_fails_drafting(monkeypatch, caplog):
 def test_the_upload_hook_marks_pending_before_indexing(monkeypatch):
     """pending → (index) → the run's own end; a queue that refuses the run is
     recorded failed."""
-    import routes.documents as docs
+    from services.documents import post_roll as docs  # spec §13 A149: the chain lives here
 
     order: list[str] = []
     monkeypatch.setattr(docs, "model_mode", lambda: "real")
@@ -1045,7 +1045,9 @@ def test_the_lifespan_runs_the_boot_check():
 
 
 def test_the_admin_learning_loop_panel_lists_the_active_warnings(monkeypatch):
-    from routes import admin_analytics
+    from routes import admin_analytics as admin_analytics_route
+    from services.admin.analytics import learning_loop as admin_analytics
+    from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 
     warnings = [
         {"kind": "unevaluated", "slot": "grader", "model": "claude-haiku-5-5",
@@ -1054,10 +1056,10 @@ def test_the_admin_learning_loop_panel_lists_the_active_warnings(monkeypatch):
          "independent_of": "grader", "rule": "A22"},
     ]
     monkeypatch.setattr(admin_analytics, "slot_warnings", lambda: warnings)
-    monkeypatch.setattr(admin_analytics, "require_admin", lambda request: None)
-    monkeypatch.setattr(admin_analytics, "_scan_range", lambda *a, **k: ([], False))
+    monkeypatch.setattr(admin_analytics_route, "require_admin", lambda request: None)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_scan_range", lambda *a, **k: ([], False))
     monkeypatch.setattr(admin_analytics, "quiz_ask_session_ids", lambda *a, **k: set())
-    monkeypatch.setattr(admin_analytics, "table", MagicMock())
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", MagicMock())
     from fastapi.testclient import TestClient
 
     from main import app

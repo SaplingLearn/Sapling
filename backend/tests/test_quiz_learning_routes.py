@@ -338,7 +338,7 @@ def test_independence_is_against_the_model_that_wrote_this_request(monkeypatch):
     """The quiz's fast/smart preference can put the writer on the checks' own
     model: then no key is verified, whatever the slots say."""
     import agents._providers as providers
-    from routes import quiz as quiz_route
+    from services.quiz import generation as quiz_route  # #118: the body's home (A149)
 
     monkeypatch.setattr(providers, "model_mode", lambda: "real")
     monkeypatch.setattr(providers, "_model_mode", lambda: "real")
@@ -354,7 +354,7 @@ def test_independence_is_against_the_model_that_wrote_this_request(monkeypatch):
 
 
 def test_the_route_gate_hands_the_writer_model_to_the_checks():
-    from routes import quiz as quiz_route
+    from services.quiz import generation as quiz_route  # #118: the body's home (A149)
 
     seen = {}
 

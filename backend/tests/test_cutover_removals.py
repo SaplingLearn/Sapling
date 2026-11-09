@@ -2,10 +2,12 @@
 
 import inspect
 import pathlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.split_patches import patch_tutor
+from tests.db_fakes import with_async_twins
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 REPO = BACKEND.parent
@@ -87,13 +89,16 @@ def test_kill_switch_marker_turns_the_loop_off():
 
 
 def test_kill_switch_path_is_cost_bounded_in_source():
-    from routes import learn
+    # #118 (spec §13 A149): the handler bodies live in services/tutor/, the
+    # budget check beside the run assembly in services/tutor/run.py
+    import services.tutor as tutor
+    from services.tutor import run
 
-    src = inspect.getsource(learn)
-    assert "ai_budget.check(" in src and "ai_budget.enforce_rate_limit" in src
-    for handler in (learn.start_session, learn.start_session_stream, learn.chat, learn.chat_stream, learn.action):
-        body = inspect.getsource(handler)
-        assert "_kill_switch_budget(" in body, handler.__name__
+    assert "ai_budget.check(" in inspect.getsource(run._kill_switch_budget)
+    for name in ("start_session", "start_session_stream", "chat", "chat_stream", "action"):
+        body = inspect.getsource(getattr(tutor, name))
+        assert "_kill_switch_budget" in body, name
+        assert "ai_budget.enforce_rate_limit_for" in body, name
 
 
 def _route(path: str):
@@ -126,15 +131,18 @@ def test_every_legacy_model_route_reads_the_rate_limit_once_after_require_self(p
 
     from services import ai_budget
 
+    import services.tutor as tutor
+
     route = _route(path)
     deps = [d.call for d in route.dependant.dependencies]
     assert ai_budget.enforce_rate_limit not in deps, path
-    body = inspect.getsource(route.endpoint)
-    assert body.count("ai_budget.enforce_rate_limit_for(body.user_id)") == 1, path
+    # #118 (spec §13 A149): the route is a thin wrapper; its body is the
+    # same-named function in services/tutor/, where the read hops off the loop
+    body = inspect.getsource(getattr(tutor, route.endpoint.__name__))
+    read = "asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)"
+    assert body.count(read) == 1, path
     # #756: the guard runs off the event loop (`guard_off_loop(require_self, ...)`)
-    assert body.index("guard_off_loop(require_self, body.user_id, request)") < body.index(
-        "ai_budget.enforce_rate_limit_for(body.user_id)"
-    ), path
+    assert body.index("guard_off_loop(require_self, body.user_id, request)") < body.index(read), path
 
 
 # ── legacy client (kill-switch path) ─────────────────────────────────────────
@@ -163,8 +171,8 @@ def legacy_client():
         return m
 
     with (
-        patch("routes.learn.agent_for_mode", side_effect=_agent_for_mode),
-        patch("routes.learn.table", side_effect=_table),
+        patch_tutor("agent_for_mode", side_effect=_agent_for_mode),
+        patch_tutor("table", side_effect=with_async_twins(_table)),
     ):
         yield client
 
@@ -248,7 +256,7 @@ def test_default_path_delegates_before_the_legacy_budget_check(monkeypatch, lega
     async def _loop_chat(body, request):
         return {"delegated": True}
 
-    monkeypatch.setattr(learn, "_loop_delegate", lambda name, request: _loop_chat)
+    monkeypatch.setattr(learn, "_loop_delegate", lambda name: _loop_chat)
     r = legacy_client.post("/api/learn/chat", json=legacy_chat_body)
     assert r.json() == {"delegated": True}
     assert seen == []

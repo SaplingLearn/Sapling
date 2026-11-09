@@ -25,7 +25,7 @@
  * grader marks an answer carrying E2E_GRADER_CORRECT_TOKEN correct. Journeys 2
  * and 3 drive the REAL routes (POST /api/learn/loop/check/next and
  * /check/answer) on synthetic assets written by the app's own writers
- * (db/seed_learning_varied_practice.py) and read the database back.
+ * (scripts/seed_learning_varied_practice.py) and read the database back.
  */
 import type { APIRequestContext, Browser, Page } from "@playwright/test";
 import path from "node:path";

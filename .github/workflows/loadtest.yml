@@ -3,11 +3,12 @@ name: loadtest (manual)
 # #117 (docs/design/async-db-client.md §1, "Measurement"): a locust run of the
 # fixed mix in loadtest/locustfile.py against a target YOU name.
 #
-# Manual only. Never scheduled, never on push/PR, and there is no default
-# target: an empty target_url fails the job before anything is sent. Point it
-# at a stack you own (a preview or a throwaway environment in function mode);
-# pointing it at staging or production needs the owner's say-so, because the
-# chat task writes tutor messages and, in real model mode, spends money.
+# Manual only (the opt-in nightly run is loadtest-nightly.yml). Never on
+# push/PR, and there is no default target: an empty target_url fails the job
+# before anything is sent. Point it at a stack you own (a preview or a
+# throwaway environment in function mode); pointing it at staging or
+# production needs the owner's say-so, because the chat task writes tutor
+# messages and, in real model mode, spends money.
 on:
   workflow_dispatch:
     inputs:

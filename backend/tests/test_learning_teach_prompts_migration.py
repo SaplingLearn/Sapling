@@ -67,7 +67,7 @@ def test_the_student_text_columns_are_in_the_ciphertext_oracle():
 
 
 def test_the_admin_field_reads_the_prompts_never_the_reply_and_survives_a_failed_read():
-    from routes import admin_analytics as aa
+    from services.admin.analytics import learning_loop as aa  # spec §13 A149
 
     prompts = [{"id": "p1", "user_id": "u1", "node_id": "n1", "question_hash": "q1", "juncture": "worked_example",
                 "prompted_at": "2026-11-08T10:00:00+00:00", "status": "replied", "reply_chars": 12}]

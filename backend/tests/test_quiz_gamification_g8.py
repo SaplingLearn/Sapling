@@ -26,12 +26,17 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.split_patches import patch_quiz
+
 import pytest
 from fastapi.testclient import TestClient
 
 from main import app
 from services import events_service
 from services.xp_service import XpAward
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -219,19 +224,19 @@ def _submit(award=DEFAULT_AWARD, world=None):
     world = world or GamificationWorld()
     with ExitStack() as stack:
         enter = stack.enter_context
-        enter(patch("routes.quiz.table", side_effect=_quiz_tables))
-        enter(patch("routes.quiz.apply_graph_update", side_effect=world.bump_streak))
-        enter(patch("routes.quiz.get_quiz_context", return_value={}))
+        enter(patch_quiz("table", side_effect=_quiz_tables))
+        enter(patch_quiz("apply_graph_update", side_effect=world.bump_streak))
+        enter(patch_quiz("get_quiz_context", return_value={}))
         enter(patch(
-            "routes.quiz.quiz_context_agent.run",
+            "services.quiz.submission.quiz_context_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(
                 output=SimpleNamespace(model_dump=lambda: {})
             )),
         ))
-        enter(patch("routes.quiz.save_quiz_context"))
+        enter(patch_quiz("save_quiz_context"))
         enter(patch("services.gamification_service.table", side_effect=world.tables))
         if award is not REAL_AWARD:
-            enter(patch("routes.quiz.award_xp_safe",
+            enter(patch_quiz("award_xp_safe",
                         side_effect=lambda *a, **k: world.award(award)))
         return client.post("/api/quiz/submit", json={
             "quiz_id": "quiz1",

@@ -31,11 +31,11 @@ logger = logging.getLogger(__name__)
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
 _EMBED_MODEL = "gemini-embedding-001"
-# The id and dimension live in services/chunk_ids (no SDK import) so the rich
+# The id and dimension live in db/chunk_ids (no SDK import) so the rich
 # seed can build chunk rows without importing google-genai; re-exported here —
 # `rag_service.chunk_id` stays the name every caller uses.
-from services.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM  # noqa: E402
-from services.chunk_ids import chunk_id  # noqa: E402,F401
+from db.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM  # noqa: E402
+from db.chunk_ids import chunk_id  # noqa: E402,F401
 
 # `genai.Client(api_key="")` raises ValueError at construction, so a missing
 # GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py

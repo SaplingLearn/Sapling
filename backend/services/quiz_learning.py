@@ -355,8 +355,8 @@ def _solve_item(position: int, question: Mapping):
 
 def _grades(question: Mapping, answer: str) -> tuple[bool, bool]:
     """(the quiz grader accepts `answer`, a numeric or symbolic answer parses)."""
-    from services.quiz_algebra import equivalent_algebra
-    from services.quiz_grading import grade_written, numeric_value
+    from services.quiz.algebra import equivalent_algebra
+    from services.quiz.grading import grade_written, numeric_value
 
     accepted = grade_written(dict(question), answer)
     kind = question.get("type")

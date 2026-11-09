@@ -15,12 +15,17 @@ so a typo'd rule_key or a swapped source_id fails loudly.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.split_patches import patch_quiz
+
 import io
 
 from fastapi.testclient import TestClient
 
 from main import app
 from services.xp_service import idempotency_key
+from tests.split_patches import patch_documents
+from tests.split_patches import patch_tutor
+
 import pytest
 
 # Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
@@ -138,11 +143,11 @@ class TestQuizCompletedAward:
             return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
         )
         with (
-            patch("routes.quiz.table", side_effect=_quiz_table_factory(quiz_id, submit_user_id)),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=_quiz_table_factory(quiz_id, submit_user_id)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch("services.quiz.submission.quiz_context_agent.run", new=ctx_run),
+            patch_quiz("save_quiz_context"),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post("/api/quiz/submit", json={
@@ -209,10 +214,10 @@ class TestDocumentUploadedAward:
         text = ("Sample document body. This gives the upload fixture enough "
                 "extracted text to look like a document that was actually read.")
         with (
-            patch("routes.documents._validate_user", return_value=None),
-            patch("routes.documents.extract_text_from_file", return_value=text),
-            patch("routes.documents.process_document", return_value=_upload_document_result()),
-            patch("routes.documents.table", side_effect=_doc_table_factory({"id": document_id})),
+            patch_documents("_validate_user", return_value=None),
+            patch_documents("extract_text_from_file", return_value=text),
+            patch_documents("process_document", return_value=_upload_document_result()),
+            patch_documents("table", side_effect=_doc_table_factory({"id": document_id})),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post(
@@ -295,7 +300,7 @@ class TestSessionCompletedAward:
         session_user_id = "user-xp-session"
         xp_table, xp_handles = _xp_tables("session_completed")
         with (
-            patch("routes.learn.table", side_effect=_session_table_factory(session_user_id)),
+            patch_tutor("table", side_effect=_session_table_factory(session_user_id)),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post("/api/learn/end-session", json={
@@ -328,7 +333,7 @@ class TestSessionCompletedAward:
             "assistant_reply": "hi",
             "graph_update": {},
         }
-        with patch("routes.learn.award_xp_safe") as award_mock:
+        with patch_tutor("award_xp_safe") as award_mock:
             r = client.post("/api/learn/end-session", json={
                 "session_id": "sess-xp-pending", "user_id": "user-xp-pending",
             })

@@ -77,13 +77,13 @@ def _item(qh: str, prompt: str, final: str = "x") -> SimpleNamespace:
 @pytest.fixture
 def posed():
     """Each student's posed-and-ungraded items at the guard's one read seam
-    (`routes.learn_loop.posed_items`): u1 has ITEM, u2 has OTHER."""
+    (`services.loop_posed.posed_items`): u1 has ITEM, u2 has OTHER."""
     world = {"u1": [(ITEM, POSED)], "u2": [(OTHER, POSED)]}
 
     def read(user_id, *, now):
         return list(world.get(user_id, [])), None
 
-    with patch("routes.learn_loop.posed_items", side_effect=read) as reader:
+    with patch("services.loop_posed.posed_items", side_effect=read) as reader:
         reader.world = world
         yield reader
 
@@ -233,7 +233,7 @@ def test_restating_the_students_own_words_is_not_withheld(posed, records):
 
 
 def test_unreadable_posed_items_serve_under_one_unscanned_marker(records):
-    with patch("routes.learn_loop.posed_items", return_value=None):
+    with patch("services.loop_posed.posed_items", return_value=None):
         guard = open_guard("u1", surface="note_chat", texts=[PASTE], active=True)
         assert not guard.refused and guard.unreadable
         assert guard.screen(LEAKING_REPLY) is True
@@ -247,7 +247,7 @@ def test_unreadable_posed_items_serve_under_one_unscanned_marker(records):
 
 def test_items_beyond_the_window_mark_the_edge_only_when_text_is_served(records):
     edge = datetime(2026, 11, 1, tzinfo=timezone.utc)
-    with patch("routes.learn_loop.posed_items", return_value=([(ITEM, POSED)], edge)):
+    with patch("services.loop_posed.posed_items", return_value=([(ITEM, POSED)], edge)):
         guard = open_guard("u1", surface="flashcards", texts=["topic"], active=True)
         assert guard.screen_each([LEAKING_REPLY]) == [False]
         records.unscanned.assert_not_called()  # nothing was served
@@ -654,7 +654,7 @@ def test_a_cloze_of_the_students_own_sentence_is_kept(posed, records):
 def test_library_doc_generation_is_not_guarded(posed, records):
     """A library document is stored course material, not request text."""
     with (
-        patch("routes.flashcards.table") as t,
+        patch("services.flashcards.cards.table") as t,  # #118: the library read moved here
         patch(
             "routes.flashcards.gemini_generate_cards",
             return_value=[{"front": "q", "back": "The base case returns 1"}],
@@ -782,7 +782,9 @@ def test_a_help_record_floors_the_later_grade(gate_on, seams):
     that check in the loop — the grade carries no unassisted credit."""
     ledger = _Ledger()
     seams.open_posed.return_value = ([(ITEM, POSED)], None)  # the guard's one read
-    with patch("learning.help_ledger.table", return_value=ledger):
+    # spec §13 A149: the guard reads the scan set from services/loop_posed.py
+    with patch("learning.help_ledger.table", return_value=ledger), \
+            patch("services.loop_posed.posed_items", seams.open_posed):
         r, run = _note_chat(PASTE)
         assert r.json()["integrity"] == "refused"
         run.assert_not_called()

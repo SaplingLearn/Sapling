@@ -1060,7 +1060,7 @@ E2E_LOOP_ANSWER_REPLY = render_turn(
 #   • A138: the teach turn that explains an answered prequestion — code serves
 #     the answer above it ("The answer: …", learning/prequestion.answer_lead),
 #     then this turn (E2E_LOOP_PREQUESTION_REPLY, labelled as any default teach
-#     turn is). The seeded prequestion items (db/seed_learning_teach_prompts.py)
+#     turn is). The seeded prequestion items (scripts/seed_learning_teach_prompts.py)
 #     are multiple choice with B correct, and B is their OWN sentinel,
 #     E2E_LOOP_PREQUESTION_ANSWER — never E2E_LOOP_FINAL_ANSWER, so the
 #     learn_loop oracle tells a prequestion's release from a check's (review

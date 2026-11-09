@@ -6,11 +6,13 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tests.work_meter import assert_linear, cpu_seconds
+from tests.db_fakes import with_async_twins
+from tests.split_patches import DOCUMENTS_MODULES, patch_documents, patch_profile_table, setattr_in
 
 MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 
@@ -5041,17 +5043,17 @@ def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
     result = tdr._make_orchestrator_result(category="lecture_notes", is_syllabus=False)
     with (
         tdr._mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", return_value=tdr._doc_text("text")),
-        patch("routes.documents.process_document", return_value=result),
-        patch("routes.documents.apply_graph_update"),
-        patch("routes.documents.table") as t,
-        patch("routes.documents.model_mode", return_value=mode),
-        patch("routes.documents.index_document") as idx,
-        patch("routes.documents.generate_for_document") as gen,
-        patch("routes.documents.queue_generation_for_document") as queue,
-        patch("routes.documents.schedule_document_index") as sched,
-        patch("routes.documents._refresh_course_context"),
-        patch("routes.documents._check_upload_achievements"),
+        patch_documents("extract_text_from_file", return_value=tdr._doc_text("text")),
+        patch_documents("process_document", return_value=result),
+        patch_documents("apply_graph_update"),
+        patch_documents("table") as t,
+        patch_documents("model_mode", return_value=mode),
+        patch_documents("index_document") as idx,
+        patch_documents("generate_for_document") as gen,
+        patch_documents("queue_generation_for_document") as queue,
+        patch_documents("schedule_document_index") as sched,
+        patch_documents("_refresh_course_context"),
+        patch_documents("_check_upload_achievements"),
     ):
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "doc-1"}]
@@ -5126,16 +5128,16 @@ class TestUploadHook:
 
         calls = []
         with (
-            patch("routes.documents.model_mode", return_value=mode),
-            patch(
-                "routes.documents.index_document", side_effect=lambda d: calls.append(("index", d))
+            patch_documents("model_mode", return_value=mode),
+            patch_documents(
+                "index_document", side_effect=lambda d: calls.append(("index", d))
             ),
-            patch(
-                "routes.documents.generate_for_document",
+            patch_documents(
+                "generate_for_document",
                 side_effect=lambda d, **k: calls.append(("gen", d)),
             ),
-            patch(
-                "routes.documents.queue_generation_for_document",
+            patch_documents(
+                "queue_generation_for_document",
                 side_effect=lambda d, **k: calls.append(("queue", d)),
             ),
         ):
@@ -5150,13 +5152,13 @@ class TestUploadHook:
         from routes import documents as rd
 
         with (
-            patch("routes.documents.model_mode", return_value=mode),
-            patch("routes.documents.index_document", side_effect=RuntimeError("pg down")),
-            patch(
-                "routes.documents.generate_for_document", side_effect=RuntimeError("boom")
+            patch_documents("model_mode", return_value=mode),
+            patch_documents("index_document", side_effect=RuntimeError("pg down")),
+            patch_documents(
+                "generate_for_document", side_effect=RuntimeError("boom")
             ) as gen,
-            patch(
-                "routes.documents.queue_generation_for_document", side_effect=RuntimeError("boom")
+            patch_documents(
+                "queue_generation_for_document", side_effect=RuntimeError("boom")
             ) as queue,
             caplog.at_level("ERROR"),
         ):
@@ -5227,19 +5229,20 @@ def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
     spawned = []
     with (
         tdr._mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", return_value=tdr._doc_text("text")),
-        patch("routes.documents.classifier_agent.run", side_effect=_run(res.classification)),
-        patch("routes.documents.summary_agent.run", side_effect=_run(res.summary)),
-        patch("routes.documents.concept_extraction_agent.run", side_effect=_run(res.concepts)),
-        patch("routes.documents.apply_concepts_to_graph", return_value=1),
-        patch("routes.documents.record_agent_usage", side_effect=lambda r, **k: r),
-        patch("routes.documents.apply_graph_update"),
-        patch("routes.documents.table") as t,
-        patch("routes.documents.model_mode", return_value=mode),
-        patch("routes.documents.index_document") as idx,
-        patch("routes.documents.generate_for_document") as gen,
-        patch("routes.documents.queue_generation_for_document"),
-        patch("routes.documents._spawn_post_roll", side_effect=lambda *ts: spawned.extend(ts)),
+        patch_documents("extract_text_from_file", return_value=tdr._doc_text("text")),
+        patch("agents.classifier.classifier_agent.run", side_effect=_run(res.classification)),
+        patch("agents.summary.summary_agent.run", side_effect=_run(res.summary)),
+        patch("agents.concept_extraction.concept_extraction_agent.run", side_effect=_run(res.concepts)),
+        # #835/#118 (spec §13 A149): the one pipeline runs the agents and the
+        # merge in agents/document.py
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=1)),
+        patch("agents.document.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_documents("table") as t,
+        patch_documents("model_mode", return_value=mode),
+        patch_documents("index_document") as idx,
+        patch_documents("generate_for_document") as gen,
+        patch_documents("queue_generation_for_document"),
+        patch_documents("_spawn_post_roll", side_effect=lambda *ts: spawned.extend(ts)),
     ):
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "doc-1"}]
@@ -5399,10 +5402,12 @@ class TestWithdrawal:
 
         monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)  # withdrawal is never gated
         factory, _ = _cached_tables({"documents": [{"id": "doc-1"}]})
-        monkeypatch.setattr(documents, "table", factory)
+        # #117/#118: the delete is async and its write moved into
+        # services/documents/library.py — every table handle answers the a* twins
+        setattr_in(monkeypatch, DOCUMENTS_MODULES, "table", with_async_twins(factory))
         monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
-        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
-        with patch("routes.documents.retire_items_for_documents", return_value=1) as retire:
+        monkeypatch.setattr(documents, "_validate_user", AsyncMock(return_value=None))
+        with patch_documents("retire_items_for_documents", return_value=1) as retire:
             r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
         assert r.status_code == 200 and r.json() == {"deleted": True}
         retire.assert_called_once_with(["doc-1"])
@@ -5413,10 +5418,12 @@ class TestWithdrawal:
         from routes import documents
 
         factory, _ = _cached_tables({"documents": []})
-        monkeypatch.setattr(documents, "table", factory)
+        # #117/#118: the delete is async and its write moved into
+        # services/documents/library.py — every table handle answers the a* twins
+        setattr_in(monkeypatch, DOCUMENTS_MODULES, "table", with_async_twins(factory))
         monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
-        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
-        with patch("routes.documents.retire_items_for_documents") as retire:
+        monkeypatch.setattr(documents, "_validate_user", AsyncMock(return_value=None))
+        with patch_documents("retire_items_for_documents") as retire:
             r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
         assert r.status_code == 404
         retire.assert_not_called()
@@ -5427,11 +5434,13 @@ class TestWithdrawal:
         from routes import documents
 
         factory, _ = _cached_tables({"documents": [{"id": "doc-1"}]})
-        monkeypatch.setattr(documents, "table", factory)
+        # #117/#118: the delete is async and its write moved into
+        # services/documents/library.py — every table handle answers the a* twins
+        setattr_in(monkeypatch, DOCUMENTS_MODULES, "table", with_async_twins(factory))
         monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
-        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
-        with patch(
-            "routes.documents.retire_items_for_documents", side_effect=RuntimeError("pg down")
+        monkeypatch.setattr(documents, "_validate_user", AsyncMock(return_value=None))
+        with patch_documents(
+            "retire_items_for_documents", side_effect=RuntimeError("pg down")
         ):
             r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
         assert r.status_code == 200
@@ -5448,10 +5457,8 @@ class TestWithdrawal:
         ):
             with (
                 tpr._mock_self(),
-                patch(
-                    "routes.profile.table",
-                    side_effect=tpr.TestShareClassContextToggleRefresh()._tables(),
-                ),
+                # #118: the settings reads moved into services/profile/
+                patch_profile_table(side_effect=tpr.TestShareClassContextToggleRefresh()._tables()),
                 patch("routes.profile.refresh_course_context"),
                 patch("routes.profile.resync_user_chunk_visibility") as resync,
                 patch("routes.profile.retire_items_for_uploader") as retire,

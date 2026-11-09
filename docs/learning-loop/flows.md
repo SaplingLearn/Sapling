@@ -56,7 +56,7 @@ sequenceDiagram
 
 1. **Trigger.** `backend/routes/documents.py::upload_document` (SSE) and
    `upload_document_sync` schedule
-   `backend/routes/documents.py::_index_then_check_items` after the upload
+   `backend/services/documents/post_roll.py::_index_then_check_items` after the upload
    commits — only when `LEARNING_LOOP_ENABLED` is on (items are course
    assets, so this is a course-level gate, not a per-student one). It marks
    the document `pending` (`check_item_service.mark_drafting`; while it is
@@ -244,7 +244,7 @@ screen (with the `crisis_support` flag on, a crisis message gets a resources
 card and opens no session) and the rate limit. A new session's opener is a
 **template**, not a model turn: the probe opener, or the plan opener when the
 course has no check items yet (A121). The session is **lazy**: it lives in memory (`PENDING_SESSIONS` in
-`backend/routes/learn.py`) until the first loop write materialises the
+`backend/services/tutor_sessions.py`) until the first loop write materialises the
 `sessions` row (`_consume_pending`). A session opened from the quiz's "Ask
 about this" panel (`backend/services/quiz_ask.py::open_quiz_ask`) skips the
 probe and plan, starts teaching the quiz's concept, gets a model opener, and
@@ -672,7 +672,7 @@ sequenceDiagram
    operation.
 
 **The quiz** writes `mc` evidence through the same writer
-(`backend/routes/quiz.py`), at most once per (student, question) per rolling
+(`backend/services/quiz/submission.py::submit_quiz`), at most once per (student, question) per rolling
 24 hours, decided by an atomic claim (A94, A100), never for an item
 flagged with an item-writing flaw (A132), and — behind `quiz_item_gates` —
 only for a question its item gate verified (A145; see
@@ -939,7 +939,7 @@ flowchart LR
 
 ## 8. The quiz in the learning system
 
-The quiz (`backend/routes/quiz.py`, the Study screen's Quiz tab) is quick,
+The quiz (`backend/routes/quiz.py` over `backend/services/quiz/`, the Study screen's Quiz tab) is quick,
 low-stakes retrieval practice on one concept per attempt. Its answers have
 always been `mc` evidence through the single writer (§3). A143–A147 make the
 learner model choose what it asks, check its questions as the loop checks

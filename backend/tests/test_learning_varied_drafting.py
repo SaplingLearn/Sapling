@@ -480,7 +480,7 @@ def test_the_flags_are_server_only_and_off_unconfigured(monkeypatch):
 
 @pytest.mark.parametrize("flags_on", [False, True])
 def test_the_upload_hook_passes_the_flags_only_when_one_is_on(monkeypatch, flags_on):
-    from routes import documents
+    from services.documents import post_roll as documents  # spec §13 A149: the chain lives here
     from services.check_item_service import DraftingFlags
 
     flags = DraftingFlags(varied=flags_on, multi_concept=False)

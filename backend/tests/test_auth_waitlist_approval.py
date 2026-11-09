@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
+from tests.split_patches import set_auth_session_secret, set_auth_table
 
 _app = FastAPI()
 _app.include_router(auth_module.router, prefix="/api/auth")
@@ -48,7 +49,7 @@ def _tables(monkeypatch, *, users_rows, waitlist_rows=None, waitlist_error=None)
         factory("newsletter_emails").select.side_effect = waitlist_error
     else:
         factory("newsletter_emails").select.return_value = waitlist_rows or []
-    monkeypatch.setattr(auth_module, "table", factory)
+    set_auth_table(monkeypatch, factory)
     return tables
 
 
@@ -58,7 +59,7 @@ def callback(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(auth_module, "_LOCAL_AUTO_APPROVE", False)
     monkeypatch.setattr(auth_module, "FRONTEND_URL", FRONTEND)
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -297,7 +298,7 @@ def test_existing_unapproved_account_goes_to_pending(callback, monkeypatch):
 @pytest.fixture
 def pending(monkeypatch):
     """A client plus a pending token for EMAIL."""
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
 
     def _setup(*, waitlist_rows=None):
         tables = _tables(monkeypatch, users_rows=[], waitlist_rows=waitlist_rows)
@@ -329,7 +330,7 @@ def test_pending_token_rejects_tampering_and_expiry(pending, monkeypatch):
     assert auth_module._pending_token_email(
         auth_module.mint_session(EMAIL, secret="test-secret-key")
     ) is None
-    monkeypatch.setattr(auth_module, "_PENDING_TOKEN_TTL_SECONDS", -1)
+    monkeypatch.setattr("services.auth.pending._PENDING_TOKEN_TTL_SECONDS", -1)
     assert auth_module._pending_token_email(auth_module._mint_pending_token(EMAIL)) is None
 
 

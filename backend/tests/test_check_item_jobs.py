@@ -1,7 +1,7 @@
 """Upload-time check-item drafting on the job queue (#116 x learning-loop PKG-04).
 
 services/check_item_jobs.py moves the loop's ordered index-then-draft chain
-(routes/documents.py::_index_then_check_items) to the worker when the
+(services/documents/post_roll.py::_index_then_check_items) to the worker when the
 `jobs_queue` flag is on for the uploader, exactly as main's
 `schedule_document_index` moves the plain first index attempt. Pinned here:
 flag off runs the chain in-process unchanged, flag on enqueues one job and
@@ -54,7 +54,7 @@ def test_a_failed_enqueue_falls_back_to_the_request(caplog):
 
 
 def test_the_chain_moves_to_the_worker_when_the_queue_takes_it():
-    from routes import documents as rd
+    from services.documents import post_roll as rd  # spec §13 A149: the chain's home
 
     with patch.object(rd, "mark_drafting") as mark, \
          patch.object(rd.check_item_jobs, "enqueue_for_document", return_value=True) as enq, \
@@ -71,7 +71,7 @@ def test_the_chain_moves_to_the_worker_when_the_queue_takes_it():
 
 
 def test_the_chain_runs_in_process_when_the_queue_does_not_take_it():
-    from routes import documents as rd
+    from services.documents import post_roll as rd  # spec §13 A149: the chain's home
 
     calls = []
     with patch.object(rd, "mark_drafting"), \
@@ -89,7 +89,7 @@ def test_the_chain_runs_in_process_when_the_queue_does_not_take_it():
 def test_inside_a_job_the_drafting_runs_on_the_jobs_own_thread():
     """The worker has no lifespan to drop a pool's queue at shutdown, and the
     job's lease and heartbeat cover the run: never queued on the pool there."""
-    from routes import documents as rd
+    from services.documents import post_roll as rd  # spec §13 A149: the chain's home
 
     job = jobs.Job(id="j-1", type="check_items.document", payload={}, attempt=1,
                    max_attempts=5, locked_by="w")
@@ -111,7 +111,7 @@ def test_inside_a_job_the_drafting_runs_on_the_jobs_own_thread():
 
 
 def test_a_drafting_failure_inside_a_job_is_logged_never_raised(caplog):
-    from routes import documents as rd
+    from services.documents import post_roll as rd  # spec §13 A149: the chain's home
 
     job = jobs.Job(id="j-1", type="check_items.document", payload={}, attempt=1,
                    max_attempts=5, locked_by="w")
@@ -149,7 +149,7 @@ def _documents_table(rows):
 
 
 def test_the_handler_runs_the_chain_for_the_uploader_with_the_stored_concepts():
-    from routes import documents as rd
+    from services import documents as rd  # the job handler's lookup (spec §13 A149)
     from services import llm_budget
     from services.request_context import current_acting_user
 
@@ -173,7 +173,7 @@ def test_the_handler_runs_the_chain_for_the_uploader_with_the_stored_concepts():
 
 
 def test_the_handler_does_nothing_for_a_document_that_is_gone():
-    from routes import documents as rd
+    from services import documents as rd  # the job handler's lookup (spec §13 A149)
 
     with patch.object(cij, "table", _documents_table([])), \
          patch.object(rd, "_index_then_draft") as chain:
@@ -182,7 +182,7 @@ def test_the_handler_does_nothing_for_a_document_that_is_gone():
 
 
 def test_unreadable_concept_notes_still_index_and_draft_nothing():
-    from routes import documents as rd
+    from services import documents as rd  # the job handler's lookup (spec §13 A149)
 
     with patch.object(cij, "table", _documents_table([{"id": "doc-1", "concept_notes": "junk"}])), \
          patch.object(rd, "_index_then_draft") as chain:

@@ -663,7 +663,6 @@ export const RECIPES_STUDY: RecipeBook = {
       await page.goto("/quiz");
       await visible(page, "quiz-home", LONG);
       await expect(page.getByTestId("quiz-home").locator(".skeleton").first()).toBeVisible();
-      await visible(page, "quiz-cancel");
     },
   },
 
@@ -786,7 +785,6 @@ export const RECIPES_STUDY: RecipeBook = {
       await openQuiz(page, "/quiz");
       await page.getByTestId("quiz-pick-list").locator('[data-testid^="quiz-pick-"]').first().click();
       await visible(page, "quiz-pick-reset");
-      await expect(page.getByTestId("quiz-proposal")).toContainText("Your pick");
       await page.waitForTimeout(800); // card entrance + returned-row tint settle
     },
   },

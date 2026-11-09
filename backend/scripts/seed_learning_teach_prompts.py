@@ -19,7 +19,9 @@ release (a check's answer before a check released it; a prequestion's before
 its guess was answered), and the first answered prequestion no longer counts
 as a release of every check's answer (review fix). No attempt, evidence,
 release, help, goal or session metadata is written here. Usage:
-`python -m db.seed_learning_teach_prompts`
+`python -m scripts.seed_learning_teach_prompts` (from backend/; an ops CLI beside
+the other seeds that write through the app's services, so it lives in scripts/,
+not db/: spec §13 A149)
 (frontend/e2e/support/db.ts::seedTeachPromptItems)."""
 
 from __future__ import annotations

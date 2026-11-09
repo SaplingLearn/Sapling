@@ -95,7 +95,6 @@ from agents.loop_tutor import (
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, pg_quote_value, table
-from db.scope import runs_as_service
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
 from learning import grade_checkpoint, item_reports
 from learning import prequestion as prequestion_rules
@@ -171,16 +170,17 @@ from learning.loop_state_store import (
     update_loop_state,
 )
 from learning.reveal_store import record_reveals, record_unscanned, unscanned_since
+# spec §13 A149: the A93/A101 scan set lives in services/ (the integrity guard
+# outside the loop reads it too, and a service must not import a route).
+from services.loop_posed import _ts, posed_items
 from learning.help_ledger import (
     earliest_open_pose,
     mark_graded,
     max_help,
     record_help,
     record_posed,
-    ungraded_posed_window,
 )
 from learning.params import (
-    LOOP_SCAN_POSED_MAX,
     BAND_CONTROL_CEILING_STEP,
     BKT_L0,
     BKT_PROFICIENT,
@@ -262,20 +262,23 @@ from models import (
     SelfExplainBody,
     StartSessionBody,
 )
-from routes.learn import (  # legacy helpers, reused verbatim — never copied
-    PENDING_SESSIONS,
-    _CONTINUATION_NUDGE,
-    _CONTINUATION_RUN_KEYS,
-    _agent_turn_or_http_error,
-    _consume_pending,
-    _consume_pending_off_loop,
+# The legacy tutor's helpers, reused verbatim — never copied — from their
+# home since the #118 split (services/tutor/). The loop's turn assembly and
+# opener are sync code, so they take the sync twins of the three helpers
+# #117 made async, under the names this module always used (spec §13 A149).
+from services.tutor.course import (
     _get_catalog_chunk,
-    _get_course_id_for_topic,
+    _get_course_id_for_topic_sync as _get_course_id_for_topic,
     _get_course_info,
-    _load_message_history,
-    _observe_persisted_turn,
-    save_message,
 )
+from services.tutor.messages import (
+    _load_message_history_sync as _load_message_history,
+    save_message_sync as save_message,
+)
+from services.tutor.pending import _consume_pending, _consume_pending_off_loop
+from services.tutor.run import _CONTINUATION_NUDGE, _CONTINUATION_RUN_KEYS, _observe_persisted_turn
+from services.tutor.turns import _agent_turn_or_http_error
+from services.tutor_sessions import PENDING_SESSIONS
 from services import ai_budget, crisis_support, events_service
 from services.academics import (
     course_offering_ids,
@@ -293,8 +296,6 @@ from services.check_item_service import (
     course_has_items,
     drafting_pending,
     get_check_item,
-    items_by_hash,
-    items_by_ids,
     items_for_concepts,
     list_items,
 )
@@ -1524,121 +1525,6 @@ def stated_items(text: str, items, *, rung: Rung, given: str) -> list[str]:
     if Rung(rung) >= Rung.H6:
         return []
     return ScanSet.build(items, given=given).stated(text)
-
-
-def _ts(value) -> datetime | None:
-    """A posed-at time from Unix seconds or an ISO string (None if unreadable)."""
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), timezone.utc)
-    try:
-        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-
-
-@runs_as_service  # spec §13 A148: reads service-only loop tables; called by the notes/flashcards integrity guard
-def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime | None] | None:
-    """A93 (owner decision 1, M2): (item, first posed at) for every item POSED to
-    the student and not yet graded — every session's ungraded steps (ended or
-    closed sessions too) and its probe item, each ungraded review item, every
-    unanswered post-test pose (expired too), and the help ledger's 'posed' rows.
-
-    Spec §13 A101 (focused review M1): an item that is CURRENTLY OPEN — an
-    ungraded step, an open review entry, a probe's current item, an unanswered
-    pose — is always in the set, whether or not the student has evidence on it
-    (review serves previously-seen items; dropping them reopened laundering).
-    The seen filter (`seen_hashes`) applies only to the ledger's historical
-    'posed' rows. (M2 (a)/(d)): the candidates are ranked by posed time and cut
-    to the newest LOOP_SCAN_POSED_MAX BEFORE any item is loaded, then loaded in
-    batched reads (`items_by_ids`, `items_by_hash`). The second element is the
-    edge of what was left out — the newest candidate beyond the window, or
-    (minor 3) the oldest ledger row read when that read hit its row limit —
-    at which the caller records an 'unscanned' marker, so every older ungraded
-    item grades as assisted. None when any of it cannot be read."""
-    try:
-        open_ids: dict[str, datetime | None] = {}  # check item id → first posed
-        open_hashes: dict[str, datetime | None] = {}  # question hash → first posed
-
-        def keep(store: dict, key, at) -> None:
-            if not key:
-                return
-            if key not in store or (at is not None and (store[key] is None or at < store[key])):
-                store[key] = at
-
-        for row in page_all(
-            table("sessions"),
-            "id,steps:loop_state->steps,probe:loop_state->probe",
-            filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},
-            order="id",
-        ):
-            for entry in (row.get("steps") or {}).values():
-                if isinstance(entry, dict) and entry.get("graded_at") is None:
-                    keep(open_ids, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
-            cur = (row.get("probe") or {}).get("current") if isinstance(row.get("probe"), dict) else None
-            if isinstance(cur, dict):
-                keep(open_hashes, cur.get("question_hash"), None)
-        for row in page_all(
-            table("sessions"),
-            "id,open:loop_state->open",
-            filters={"user_id": f"eq.{user_id}", "mode": "eq.review", "loop_state->open": "not.is.null"},
-            order="id",
-        ):
-            for key, entry in (row.get("open") or {}).items():
-                if (
-                    isinstance(entry, dict)
-                    and not str(key).startswith("fc:")
-                    and entry.get("graded_at") is None
-                ):
-                    keep(open_ids, entry.get("item_id"), _ts(entry.get("served_at")))
-        pose_course: dict[str, str] = {}  # a pose names its course: matched on load
-        for pose in table(_POSES).select(
-            "course_id,question_hash,posed_at",
-            filters={"user_id": f"eq.{user_id}", "answered_at": "is.null"},
-        ) or []:
-            keep(open_hashes, pose.get("question_hash"), _ts(pose.get("posed_at")))
-            if pose.get("question_hash"):
-                pose_course[pose["question_hash"]] = pose.get("course_id")
-        ledger, edge = ungraded_posed_window(user_id, LOOP_SCAN_POSED_MAX)
-        ledger_hashes = {qh for qh, _ in ledger}
-        historical: dict[str, datetime | None] = {}
-        for qh, at in ledger:
-            if qh in open_hashes:
-                keep(open_hashes, qh, at)  # open: always scanned; the earliest pose counts
-            else:
-                keep(historical, qh, at)
-        if historical:  # M1: the seen filter reads the historical rows only
-            seen = seen_hashes(user_id)
-            historical = {qh: at for qh, at in historical.items() if qh not in seen}
-        oldest = datetime.min.replace(tzinfo=timezone.utc)
-        candidates = sorted(
-            [("id", k, at) for k, at in open_ids.items()]
-            + [("hash", k, at) for k, at in open_hashes.items()]
-            + [("ledger", k, at) for k, at in historical.items()],
-            key=lambda c: c[2] or oldest,
-            reverse=True,
-        )
-        kept, left = candidates[:LOOP_SCAN_POSED_MAX], candidates[LOOP_SCAN_POSED_MAX:]
-        overflow = (left[0][2] or now) if left else None
-        if edge is not None:
-            overflow = edge if overflow is None else max(overflow, edge)
-        found: dict[str, tuple] = {}
-        ids = sorted(k for kind, k, _ in kept if kind == "id")
-        for item in items_by_ids(ids) if ids else []:
-            found.setdefault(item.question_hash, (item, open_ids.get(item.id)))
-        hashes = sorted(k for kind, k, _ in kept if kind != "id" and k not in found)
-        for item in items_by_hash(hashes) if hashes else []:
-            qh = item.question_hash
-            if qh in pose_course and qh not in ledger_hashes and pose_course[qh] != item.course_id:
-                continue  # a pose's hash names an item of ITS course only
-            found.setdefault(qh, (item, open_hashes.get(qh, historical.get(qh))))
-        ranked = sorted(found.values(), key=lambda pair: pair[1] or oldest, reverse=True)
-        return ranked, overflow
-    except Exception as exc:
-        logger.warning("posed items could not be read (%s)", type(exc).__name__)
-        return None
 
 
 def _mark_revealed(state: dict, hashes, mark: dict | None) -> None:
@@ -6981,9 +6867,14 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         }
         doc[prequestion_rules.KEY] = records
 
-    state = _update_loop_state(body.session_id, commit, require_open=True, require_existing=True)
+    # #117: the loop_state write and the transcript row are sync PostgREST
+    # calls, so they hop off the event loop (spec §13 A149)
+    state = await asyncio.to_thread(
+        _update_loop_state, body.session_id, commit, require_open=True, require_existing=True
+    )
     stored_guess = stored["guess"] or {}
-    save_message(
+    await asyncio.to_thread(
+        save_message,
         body.session_id,
         "user",
         prequestion_rules.render_guess(

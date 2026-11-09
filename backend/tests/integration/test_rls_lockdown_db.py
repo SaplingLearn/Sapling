@@ -401,14 +401,19 @@ BACKEND_RPCS = frozenset({
     "canopy_metrics",                # routes/internal_metrics.py (METRICS_RPC)
     "claim_documents_for_indexing",  # services/index_sweeper.py
     "claim_jobs",                    # services/jobs.py (#116)
+    "claim_lease",                   # services/pg_lease.py (#117, stateless_locks)
     "claim_rate_limit",              # services/request_limits.py (#117, stateless_rate_limit)
     "complete_job",                  # services/jobs.py (#116)
+    "db_scope_divergences",          # routes/admin_analytics.py (#115, 20261109023455)
+    "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
+    "jobs_overview",                 # routes/admin_jobs.py (#116, 20261109023347)
     "llm_budget_status",             # services/llm_budget.py (#119, 20261108213311)
     "llm_cost_per_active_user_weekly",  # routes/admin_analytics.py (#119, 20261108213311)
     "match_course_chunks",           # services/rag_service.py
+    "materialize_tutor_session",     # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
     "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
     "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
@@ -430,6 +435,9 @@ BACKEND_RPCS = frozenset({
     "misconception_record",          # learning/misconceptions.py
     "misconception_rollup",
     "posttest_anchors",              # learning/posttest_store.py (_ANCHORS_RPC)
+    "release_lease",                 # services/pg_lease.py (#117, stateless_locks)
+    "renew_lease",                   # services/pg_lease.py (#117, stateless_locks)
+    "stash_tutor_session",           # services/tutor_sessions.py (#117, stateless_tutor_sessions)
 })
 
 APP_AUTH_FUNCTIONS = frozenset({

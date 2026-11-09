@@ -41,7 +41,7 @@ from services.account_wipe import wipe_account_data
 from services.auth_guard import clear_account_state_cache
 from services.encryption import encrypt_if_present, encrypt_json
 from services.growth import level_for_xp
-from services.quiz_identity import question_hash
+from services.quiz.identity import question_hash
 
 if TYPE_CHECKING:
     from services.account_seed.schema import Course, MajorPack

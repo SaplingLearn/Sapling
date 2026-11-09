@@ -18,6 +18,11 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
+import pytest
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -91,14 +96,14 @@ def _submit_factory(*, nodes, update_calls, score_write_error=None):
 
 def _ctx_patches():
     return (
-        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch_quiz("get_quiz_context", return_value={}),
         patch(
-            "routes.quiz.quiz_context_agent.run",
+            "services.quiz.submission.quiz_context_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(
                 output=SimpleNamespace(model_dump=lambda: {})
             )),
         ),
-        patch("routes.quiz.save_quiz_context"),
+        patch_quiz("save_quiz_context"),
     )
 
 
@@ -115,9 +120,9 @@ class TestSubmitValidatesBeforeClaiming:
         apply_mock = MagicMock()
         a, b, c = _ctx_patches()
         with (
-            patch("routes.quiz.table",
+            patch_quiz("table",
                   side_effect=_submit_factory(nodes=[], update_calls=update_calls)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch_quiz("apply_graph_update", new=apply_mock),
             a, b, c,
         ):
             r = _submit()
@@ -136,12 +141,12 @@ class TestTheScoreAlwaysLands:
         update_calls: list = []
         a, b, c = _ctx_patches()
         with (
-            patch("routes.quiz.table",
+            patch_quiz("table",
                   side_effect=_submit_factory(nodes=[NODE], update_calls=update_calls)),
-            patch("routes.quiz.apply_graph_update",
+            patch_quiz("apply_graph_update",
                   new=MagicMock(side_effect=RuntimeError("graph down"))),
-            patch("routes.quiz.events_service.log_event") as log_event,
-            patch("routes.quiz.award_xp_safe") as award,
+            patch("services.events_service.log_event") as log_event,
+            patch_quiz("award_xp_safe") as award,
             a, b, c,
         ):
             r = _submit()
@@ -165,11 +170,11 @@ class TestTheScoreAlwaysLands:
         apply_mock = MagicMock()
         a, b, c = _ctx_patches()
         with (
-            patch("routes.quiz.table", side_effect=_submit_factory(
+            patch_quiz("table", side_effect=_submit_factory(
                 nodes=[NODE], update_calls=update_calls,
                 score_write_error=RuntimeError("PostgREST down"),
             )),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch_quiz("apply_graph_update", new=apply_mock),
             a, b, c,
         ):
             r = _submit()
@@ -219,7 +224,7 @@ class TestSweepExemptsLiveAttempts:
         from routes.quiz import _sweep_abandoned
 
         update_calls: list = []
-        with patch("routes.quiz.table", side_effect=_sweep_factory(
+        with patch_quiz("table", side_effect=_sweep_factory(
             stale_ids=["old-dead", "old-live"],
             recent_responses=[{"attempt_id": "old-live", "answered_at": _ago(minutes=5)}],
             update_calls=update_calls,
@@ -240,7 +245,7 @@ class TestSweepExemptsLiveAttempts:
         from routes.quiz import _sweep_abandoned
 
         update_calls: list = []
-        with patch("routes.quiz.table", side_effect=_sweep_factory(
+        with patch_quiz("table", side_effect=_sweep_factory(
             stale_ids=[], recent_responses=[], update_calls=update_calls,
         )):
             _sweep_abandoned("user_andres")
@@ -250,7 +255,7 @@ class TestSweepExemptsLiveAttempts:
         from routes.quiz import _sweep_abandoned
 
         update_calls: list = []
-        with patch("routes.quiz.table", side_effect=_sweep_factory(
+        with patch_quiz("table", side_effect=_sweep_factory(
             stale_ids=["a"],
             recent_responses=[{"attempt_id": "a", "answered_at": _ago(minutes=1)}],
             update_calls=update_calls,
@@ -273,7 +278,7 @@ class TestSweepExemptsLiveAttempts:
                 mock.select.side_effect = RuntimeError("down")
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=factory):
             _sweep_abandoned("user_andres")
         assert update_calls == []
 
@@ -301,7 +306,7 @@ class TestHistoryStatusMatchesGetAttempt:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             listed = client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
             single = client.get("/api/quiz/attempts/old-live")
 

@@ -78,7 +78,7 @@ def test_no_module_redefines_the_thresholds_locally():
 def test_flashcards_weak_concepts_use_the_shared_floor():
     """Flashcards drilled `< 0.4`, so concepts struggling on the Tree were
     never offered for practice. PKG-14b: the floor is BAND_NOVICE_MAX (0.30)."""
-    from routes import flashcards
+    from services.flashcards import context as flashcards
 
     rows = [
         {"concept_name": "just-below-learning", "mastery_score": 0.29},
@@ -149,7 +149,7 @@ def test_weak_concepts_are_capped_weakest_first():
     least-weak of the weak instead. (PKG-14b: rows sit under the 0.30 floor.)"""
     from unittest.mock import patch as _patch
 
-    from routes import flashcards
+    from services.flashcards import context as flashcards
 
     # Deliberately arrives least-weak first, which is what row order can do.
     rows = [{"concept_name": f"c{i}", "mastery_score": 0.29 - i * 0.01} for i in range(20)]

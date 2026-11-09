@@ -242,7 +242,7 @@ The file is organised in banner-commented sections (`# ── … ──`). In o
 | Learner state, band, ceiling | `_learner_view`, `_band_for`, `_ceiling_for`, `_genuine` |
 | Context and run assembly | `_context_blocks`, `_prepare_loop_run`, failed-retrieval notices (A128), the tool-less continuation |
 | The served text | `served_model_text`, `served_template`, `loop_leak_rung` — what the student actually receives (A48) |
-| Served reveals of open, posed items | `posed_items`, `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93) |
+| Served reveals of open, posed items | `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93); the scan set itself, `posed_items`, lives in `backend/services/loop_posed.py::posed_items` (A149: the integrity guard reads it too) |
 | The served session close | `served_close`, `close_states_answer` |
 | The turn | `_LoopTurn` (one turn, JSON and streamed), the misconception confrontation line |
 | Item activation and the current concept | `_activate_next_item`, `_advance_cursor`, `_isomorph_after_unknown` (A27); the multi-concept pick and the familiarity order (A140, A141) |
@@ -281,9 +281,12 @@ The file is organised in banner-commented sections (`# ── … ──`). In o
 `end_session` has no route of its own: `backend/routes/learn.py` calls it
 when the legacy end-session route delegates. The legacy routes
 (`start-session`, `chat`, `chat/stream`, `start-session/stream`, `action`,
-`end-session`) each check `learning_loop_for_request` and, when it is true,
-hand the request to the loop handler of the same name through
-`backend/routes/learn.py::_loop_delegate`. The spec's §9 route table predates
+`end-session`) each evaluate `learning_loop_for_request` once
+(`backend/routes/learn.py::_loop_for`) and, when it is true, hand the tutor
+body in `backend/services/tutor/` (main's #118 layout, spec §13 A149) the
+loop handler of the same name, built by
+`backend/routes/learn.py::_loop_delegate`; the body calls it after its crisis
+screen, entry checks and rate-limit read. The spec's §9 route table predates
 `/goal`, `/report`, `/posttest/shown` and `/posttest/due`.
 
 ## `backend/agents/` — the loop's model slots

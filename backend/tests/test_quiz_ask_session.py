@@ -24,6 +24,8 @@ from learning import params
 from tests import test_learn_loop_routes as _routes
 from tests.agent_run_fakes import run_result
 from tests.test_learn_loop_routes import client
+from tests.split_patches import patch_tutor
+from tests.db_fakes import with_async_twins
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -322,9 +324,9 @@ def test_the_materialised_quiz_ask_row_carries_its_teach_doc_so_chat_is_open():
     }
     sessions = MagicMock()
     with (
-        patch("routes.learn.table", side_effect=lambda n: sessions if n == "sessions" else MagicMock()),
-        patch("routes.learn.save_message"),
-        patch("routes.learn.events_service"),
+        patch_tutor("table", side_effect=with_async_twins(lambda n: sessions if n == "sessions" else MagicMock())),
+        patch_tutor("save_message"),
+        patch_tutor("events_service"),
     ):
         _consume_pending("s-q", "u1")
     row = sessions.upsert.call_args.args[0]
@@ -353,14 +355,14 @@ def test_the_kill_switch_quiz_ask_records_the_same_help_row(path):
         return tables[name]
 
     with (
-        patch("routes.learn.table", side_effect=factory),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn._get_course_id_for_topic", return_value="c1"),
-        patch("routes.learn.resolve_offering", return_value="off-1"),
-        patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+        patch_tutor("table", side_effect=with_async_twins(factory)),
+        patch_tutor("agent_for_mode", return_value=agent),
+        patch_tutor("_get_course_id_for_topic", return_value="c1"),
+        patch_tutor("resolve_offering", return_value="off-1"),
+        patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help") as record,
-        patch("routes.learn._kill_switch_budget"),
+        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(path, json={"user_id": "user_andres", "topic": "Recursion", **ASK})
     assert r.status_code == 200, r.text
@@ -376,10 +378,10 @@ def test_a_kill_switch_quiz_ask_whose_help_write_fails_runs_no_model():
     agent = MagicMock()
     agent.run = AsyncMock(side_effect=AssertionError("the model ran"))
     with (
-        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch_tutor("agent_for_mode", return_value=agent),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help", side_effect=RuntimeError("down")),
-        patch("routes.learn._kill_switch_budget"),
+        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(
             "/api/learn/start-session", json={"user_id": "user_andres", "topic": "Recursion", **ASK}
@@ -453,16 +455,16 @@ def test_the_kill_switch_quiz_ask_runs_on_the_quiz_nodes_course(path):
         return MagicMock(select=MagicMock(return_value=[]))
 
     with (
-        patch("routes.learn.table", side_effect=factory),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn._get_course_id_for_topic", return_value="c-topic"),
-        patch("routes.learn.resolve_offering", return_value="off-1") as offering,
+        patch_tutor("table", side_effect=with_async_twins(factory)),
+        patch_tutor("agent_for_mode", return_value=agent),
+        patch_tutor("_get_course_id_for_topic", return_value="c-topic"),
+        patch_tutor("resolve_offering", return_value="off-1") as offering,
         # #115: the session's (now the quiz node's) course passes main's gate
-        patch("routes.learn.require_course_enrollment", return_value="off-1") as gate,
-        patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+        patch_tutor("require_course_enrollment", return_value="off-1") as gate,
+        patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help"),
-        patch("routes.learn._kill_switch_budget"),
+        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(
             path,

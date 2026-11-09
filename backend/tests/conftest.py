@@ -243,6 +243,9 @@ def _db_user_scope_off(request, monkeypatch):
     if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", "off")
+    # #117: likewise for `stateless_tutor_sessions`, read on every tutor
+    # session lookup; tests/test_tutor_sessions_store.py turns it on per test.
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -251,13 +254,17 @@ def _tutor_session_reads_follow_learn_table(monkeypatch):
     services/tutor_sessions.py so flashcards/feedback could share it. Dozens
     of learn tests drive the whole route through ONE `patch("routes.learn.
     table", side_effect=factory)`; this keeps the ownership read on that same
-    factory by resolving `routes.learn.table` at call time. A test of a
+    factory by resolving the tutor's `table` at call time. A test of a
     non-learn route that needs a different answer patches
-    `services.tutor_sessions.table` itself, which overrides this."""
-    import routes.learn as learn_routes
-    from services import tutor_sessions
+    `services.tutor_sessions.table` itself, which overrides this.
 
-    monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
+    #118: the learn code moved into services/tutor/, so those tests now use
+    `patch_tutor("table", ...)` (tests/split_patches.py), which puts ONE mock
+    on every tutor module; following any one of them follows that mock."""
+    from services import tutor_sessions
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(tutor_sessions, "table", lambda name: tutor_pending.table(name))
     # #761: discard tombstones are process-global, and test session ids are
     # reused ("s1"), so one test's delete would 404 the next test's turn.
     tutor_sessions._DISCARDED.clear()
@@ -915,7 +922,9 @@ def _bypass_session_auth(request, monkeypatch):
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        if not mod_name.startswith("routes."):
+        # services.quiz.* / services.tutor.*: the quiz and learn splits (#118)
+        # moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):

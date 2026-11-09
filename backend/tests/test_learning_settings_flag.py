@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from test_learning_loop_invariants import reload_gate
 
 import routes.profile
+from tests.split_patches import patch_profile_table
 from main import app
 from models import SettingsResponse, UpdateSettingsBody
 
@@ -68,7 +69,7 @@ def test_settings_route_module_never_names_the_column():
 
 def test_get_settings_has_no_learning_loop_beta_key():
     table_side_effect, captured = _tables()
-    with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+    with _mock_self(), patch_profile_table(side_effect=table_side_effect):
         r = client.get(f"/api/profile/{USER_ID}/settings")
     assert r.status_code == 200
     assert FLAG not in r.json()
@@ -82,7 +83,7 @@ def test_patch_learning_loop_beta_alone_writes_nothing():
     table_side_effect, captured = _tables()
     with (
         _mock_self(),
-        patch("routes.profile.table", side_effect=table_side_effect),
+        patch_profile_table(side_effect=table_side_effect),
         patch("routes.profile.refresh_course_context") as refresh,
         patch("routes.profile.resync_user_chunk_visibility") as resync,
     ):
@@ -96,7 +97,7 @@ def test_patch_learning_loop_beta_alone_writes_nothing():
 
 def test_patch_with_a_real_setting_drops_learning_loop_beta():
     table_side_effect, captured = _tables()
-    with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+    with _mock_self(), patch_profile_table(side_effect=table_side_effect):
         r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark", FLAG: True})
     assert r.status_code == 200
     assert len(captured["updates"]) == 1
@@ -118,7 +119,7 @@ def test_allow_list_drops_learning_loop_beta_even_if_the_model_passes_it():
     table_side_effect, captured = _tables()
     with (
         _mock_self(),
-        patch("routes.profile.table", side_effect=table_side_effect),
+        patch_profile_table(side_effect=table_side_effect),
         patch.object(UpdateSettingsBody, "model_dump", dump_with_unlisted_keys),
     ):
         r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})

@@ -8,12 +8,15 @@ with `review.session_started`, never `session.started` (canopy_metrics'
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
+from tests.db_fakes import with_async_twins
+from tests.split_patches import setattr_tutor
 
 USER = "u1"
 
@@ -56,9 +59,10 @@ def test_list_sessions_excludes_review_sessions(monkeypatch):
     from routes import learn
 
     spy = _Spy()
-    monkeypatch.setattr(learn, "table", spy)
-    monkeypatch.setattr(learn, "require_self", lambda *a, **k: None)
-    learn.list_sessions(USER, MagicMock())
+    # #117/#118 (spec §13 A149): the body is async in services/tutor/
+    setattr_tutor(monkeypatch, "table", with_async_twins(spy))
+    setattr_tutor(monkeypatch, "require_self", lambda *a, **k: None)
+    asyncio.run(learn.list_sessions(USER, MagicMock()))
     assert spy.filters and all(f.get("mode") == "neq.review" for f in spy.filters)
 
 
@@ -68,10 +72,10 @@ def test_resume_never_reopens_a_review_session(monkeypatch):
     from routes import learn
 
     spy = _Spy()
-    monkeypatch.setattr(learn, "table", spy)
-    monkeypatch.setattr(learn, "get_session_user_id", lambda request: USER)
+    setattr_tutor(monkeypatch, "table", with_async_twins(spy))
+    setattr_tutor(monkeypatch, "get_session_user_id", lambda request: USER)
     with pytest.raises(HTTPException) as exc:
-        learn.resume_session("sess-review", MagicMock())
+        asyncio.run(learn.resume_session("sess-review", MagicMock()))
     assert exc.value.status_code == 404
     assert spy.filters[-1].get("mode") == "neq.review"
 
@@ -89,7 +93,10 @@ def test_profile_session_count_excludes_review_sessions(monkeypatch):
     from routes import profile
 
     spy = _Spy()
-    monkeypatch.setattr(profile, "table", spy)
+    # #118: the stats read moved into services/profile/users.py (re-exported)
+    from services.profile import users
+
+    monkeypatch.setattr(users, "table", spy)
     profile._get_user_stats(USER)
     assert spy.filters and all(f.get("mode") == "neq.review" for f in spy.filters)
 
@@ -281,14 +288,18 @@ def legacy(monkeypatch):
     from routes import learn
 
     rec = _Recorder()
-    monkeypatch.setattr(learn, "table", rec)
-    monkeypatch.setattr(learn, "require_self", lambda *a, **k: None)
+
+    async def save_message(*a, **k):
+        rec.writes.append(("messages", "insert"))
+
+    # #117/#118 (spec §13 A149): the bodies live in services/tutor/; the gate
+    # stays on the route
+    setattr_tutor(monkeypatch, "table", with_async_twins(rec))
+    setattr_tutor(monkeypatch, "require_self", lambda *a, **k: None)
     monkeypatch.setattr(learn, "learning_loop_for_request", lambda uid: False)
-    monkeypatch.setattr(
-        learn, "save_message", lambda *a, **k: rec.writes.append(("messages", "insert"))
-    )
-    monkeypatch.setattr(learn, "get_user_name", lambda uid: "Andres")
-    monkeypatch.setattr(learn, "_consume_pending", lambda *a, **k: None)
+    setattr_tutor(monkeypatch, "save_message", save_message)
+    setattr_tutor(monkeypatch, "get_user_name", lambda uid: "Andres")
+    setattr_tutor(monkeypatch, "_consume_pending", lambda *a, **k: None)
     return learn, rec
 
 
@@ -342,10 +353,10 @@ def test_mode_switch_refuses_a_review_session(legacy):
 
     learn, rec = legacy
     _refused(
-        lambda: learn.mode_switch(
+        lambda: asyncio.run(learn.mode_switch(
             ModeSwitchBody(session_id="sess-review", user_id=USER, new_mode="expository"),
             MagicMock(),
-        ),
+        )),
         rec,
         filtered=False,
     )

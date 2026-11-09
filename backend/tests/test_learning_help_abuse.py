@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-import routes.admin_analytics as analytics
+from services.admin.analytics import learning_loop as analytics
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from learning import params
 from learning.help_abuse import BOTTOM_OUT_RUNG, help_abuse
 from main import app
@@ -233,7 +234,7 @@ def served(monkeypatch):
         "node_mastery_events": ev,
         "sessions": [{"id": "s-spam", "offering_id": "off-1", "user_id": "u-spam"}],
     }
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable(store.get(name, [])))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable(store.get(name, [])))
     monkeypatch.setattr(analytics, "offering_course_id", lambda o: {"off-1": "course-1"}.get(o))
     return store
 
@@ -263,7 +264,7 @@ def test_a_failed_ledger_read_leaves_the_rest_of_the_report_standing(served, mon
             raise RuntimeError("ledger down")
         return real(name)
 
-    monkeypatch.setattr(analytics, "table", failing)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", failing)
     r = TestClient(app).get(URL, params=RANGE)
     assert r.status_code == 200 and r.json()["help_abuse"] is None
     assert r.json()["steps_total"] == 1

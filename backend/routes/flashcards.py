@@ -1,39 +1,31 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
-import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from learning.bkt import is_weak
 from db.connection import table
 from learning.flashcard_fsrs import flashcard_fsrs_update
-from learning.fsrs import order_due
 from learning.gate import learning_loop_for_request
 from learning.params import FLASHCARD_RATING_TO_FSRS
 from services import events_service, integrity_guard
-from services.academics import (
-    course_offering_ids,
-    resolve_offering,
-    term_id_for_label,
-    user_enrolled_course_ids,
-)
+from services.academics import resolve_offering
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
-from services.request_context import current_request_id
-from services.timestamps import parse_ts
+from services.encryption import decrypt_if_present, encrypt_if_present
+from services.llm_budget import reraise_budget_refusal
 from services.tutor_sessions import session_owned_by
-from services.flashcard_import_service import (
+from services.flashcards import (
     dedup_against_existing,
     check_rate_limit,
+    library_doc_source_text,
+    list_flashcards,
     parse_xlsx,
     parse_anki_apkg,
     scrape_quizlet_url,
@@ -44,6 +36,27 @@ from services.flashcard_import_service import (
     gemini_cleanup_cards,
     gemini_cloze,
     generate_flashcards as _generate,
+)
+from services.flashcards.cards import (  # noqa: F401  (re-export, #118)
+    _FSRS_LIST_COLS,
+    _LEGACY_LIST_COLS,
+    _loop_order,
+    _order_due_rows,
+)
+from services.flashcards.integrity import (  # noqa: F401  (re-export, #118)
+    _CLOZE_BLANK,
+    _card_text,
+    cleanup_withheld,
+    open_card_guard,
+    screen_cards,
+)
+from services.flashcards.context import (  # noqa: F401  (re-export, #118)
+    _COURSE_DOC_COLS,
+    _COURSE_DOC_LIMIT,
+    _enrolled_course_by_name,
+    _get_course_documents,
+    _get_session_summary,
+    _get_weak_concepts,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,226 +127,35 @@ class ImportClozeBody(BaseModel):
     paragraph: str
 
 
-# ── Context helpers ────────────────────────────────────────────────────────────
-
-def _get_session_summary(session_id: str) -> str:
-    try:
-        rows = table("sessions").select(
-            "summary_json", filters={"id": f"eq.{session_id}"}, limit=1
-        )
-        if not rows or not rows[0].get("summary_json"):
-            return ""
-        raw = rows[0]["summary_json"]
-        if isinstance(raw, str):
-            try:
-                return json.dumps(decrypt_json(raw))
-            except Exception:
-                return raw
-        return json.dumps(raw)
-    except Exception:
-        return ""
+def llm_http_error(exc: BaseException) -> HTTPException:
+    """The HTTP error a flashcard route raises when a generation failed: the
+    routes' long-standing 502 — except that a budget refusal in `exc` is
+    re-raised as itself (`llm_budget.reraise_budget_refusal`), so main.py
+    answers it with the friendly 429 the tutor and uploads use (#838)."""
+    reraise_budget_refusal(exc)
+    return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
 
 
-# Grounding reads at most this many of the course's documents, newest first:
-# the prompt inlines every summary + concept list it is handed.
-_COURSE_DOC_LIMIT = 50
-_COURSE_DOC_COLS = "file_name,category,summary,concept_notes"
-
-
-def _enrolled_course_by_name(user_id: str, course_name: str) -> str | None:
-    """The abstract id of the course named ``course_name`` that the user is
-    enrolled in, or None.
-
-    Catalog names are not unique (0020: `courses` is the abstract catalog,
-    with no user_id column), so the match is restricted to the user's
-    enrolled courses and, if several same-named ones remain, the lowest id
-    wins — deterministic, one bounded read, no per-candidate lookups."""
-    enrolled = user_enrolled_course_ids(user_id)
-    if not enrolled:
-        return None
-    rows = table("courses").select(
-        "id",
-        filters={
-            "course_name": f"eq.{course_name}",
-            "id": f"in.({','.join(sorted(enrolled))})",
-        },
-        order="id.asc",
-        limit=1,
-    ) or []
-    return rows[0]["id"] if rows else None
-
-
-def _get_course_documents(
-    user_id: str,
-    course_name: str,
-    semester: str | None = None,
-    course_id: str | None = None,
-) -> list[dict]:
-    """
-    Return the user's own library documents grounding generation for a course.
-
-    The course: ``course_id`` when the client sent it (the Study screen
-    always does for a selected course); otherwise ``course_name`` matched
-    against the courses the user is ENROLLED in (see
-    :func:`_enrolled_course_by_name`).
-
-    The documents (keyed on the offering, 0025), always filtered to the
-    user's own rows:
-    - with a ``semester`` (#141): STRICTLY that term's offering — a term with
-      no offering contributes nothing;
-    - without one: every offering of the course (``course_offering_ids``),
-      because uploads are stamped with the CURRENT term's offering at upload
-      time, so a single-offering read loses last term's notes at rollover.
-
-    Unenrolled courses: an explicit ``course_id`` still reads the student's
-    own documents in that course's offerings (they uploaded them; unenrolling
-    does not unshare their own notes from them). The name-match path only
-    sees enrolled courses, because a bare name cannot be told apart from a
-    same-named course elsewhere.
-
-    No course (a free-text topic, or a name the user is not enrolled in) →
-    NO documents, with or without a semester. This used to fall back to every
-    document the user owns, which grounded a topic in unrelated courses.
-    Lookup failures are logged and degrade to no documents, so generation
-    still works.
-    """
-    try:
-        if not course_id:
-            course_id = _enrolled_course_by_name(user_id, course_name)
-            if course_id is None:
-                logger.info(
-                    "flashcard generate: topic matches no enrolled course; "
-                    "generating without library documents"
-                )
-                return []
-        if semester:
-            term_id = term_id_for_label(semester)
-            offering_id = (
-                resolve_offering(course_id, term_id, fallback=False) if term_id else None
-            )
-            offering_ids = [offering_id] if offering_id else []
-        else:
-            # None = could not tell (logged by academics); [] = no offerings.
-            offering_ids = course_offering_ids(course_id) or []
-        if not offering_ids:
-            return []
-        docs = table("documents").select(
-            _COURSE_DOC_COLS,
-            filters={
-                "user_id": f"eq.{user_id}",
-                "offering_id": f"in.({','.join(offering_ids)})",
-                "deleted_at": "is.null",
-            },
-            order="created_at.desc",
-            limit=_COURSE_DOC_LIMIT,
-        ) or []
-        for d in docs:
-            d["summary"] = decrypt_if_present(d.get("summary"))
-            notes_raw = d.get("concept_notes")
-            if isinstance(notes_raw, str):
-                d["concept_notes"] = decrypt_json(notes_raw)
-        return docs
-    except Exception:
-        logger.warning(
-            "flashcard generate: could not load course documents; "
-            "generating without them", exc_info=True,
-        )
-        return []
-
-
-def _unit(score) -> float:
-    """A stored mastery score clamped to [0, 1] (tier_for rejects anything
-    outside it; old rows occasionally drift)."""
-    try:
-        return max(0.0, min(1.0, float(score or 0.0)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
-    """
-    Return concept names the student is weak on — below the "learning" floor
-    of `learning.bkt.tier_for` (PKG-14b), i.e. "struggling" or "unexplored".
-
-    Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
-    [0.4, 0.45) read as "struggling" on the Tree but were never offered for
-    practice here — the surface whose entire job is drilling weak concepts
-    silently skipped a slice of them.
-    """
-    try:
-        rows = table("graph_nodes").select(
-            "concept_name,mastery_score",
-            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
-        )
-        if not rows:
-            # Try without subject filter — return all low-mastery concepts
-            rows = table("graph_nodes").select(
-                "concept_name,mastery_score",
-                filters={"user_id": f"eq.{user_id}"},
-            )
-        weak = sorted(
-            (r for r in (rows or []) if is_weak(_unit(r.get("mastery_score")))),
-            key=lambda r: r.get("mastery_score") or 0,
-        )
-        # Weakest first, THEN cap. The cap used to truncate in PostgREST row
-        # order, which was survivable while the floor was 0.4 and is not now
-        # that #557 widened it to 0.45: the newly-admitted [0.4, 0.45)
-        # concepts could displace 0.0-0.1 ones purely on row order, leaving
-        # the surface whose job is drilling the weakest concepts drilling the
-        # least-weak of the weak.
-        return [r["concept_name"] for r in weak[:15]]
-    except Exception:
-        return []
-
-
-# ── Integrity guard (spec §13 A125) ─────────────────────────────────────────────
-# Every generator below hands the flashcard model text the student sent with the
-# request (a topic, pasted notes, a paragraph, card texts, a photographed page),
-# and every card it returns is a question with its answer. The learning loop's
-# integrity guard therefore runs around each: text quoting one of the student's
-# posed checks never reaches the model (409), and a card stating one's key is
-# withheld. A library document is the student's stored course material, not
-# request text (the loop treats course material as open-book), so the
-# library_doc source is not guarded.
-
-_CLOZE_BLANK = re.compile(r"\{\{.*?\}\}")
+# ── Integrity guard (spec §13 A125; services/flashcards/integrity.py) ─────────
 
 
 def _integrity_guard(user_id: str, texts) -> integrity_guard.Guard:
-    """One read of the student's posed items and the pre-call check of the text
-    they sent; 409 (nothing generated) when it quotes one. Off with the loop
-    (the gate is read here, at route entry, once)."""
-    guard = integrity_guard.open_guard(
-        user_id,
-        surface="flashcards",
-        texts=list(texts),
-        active=learning_loop_for_request(user_id),
-        request_id=current_request_id(),
-    )
+    """The guard around one generator: 409 (nothing generated) when the text
+    the student sent quotes one of their posed checks. Off with the loop (the
+    gate is read here, at route entry, once)."""
+    guard = open_card_guard(user_id, texts, active=learning_loop_for_request(user_id))
     if guard.refused:
         raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     return guard
 
 
-def _card_text(card: dict) -> str:
-    """A card as the student reads it: a cloze front gets its blank filled
-    with the back (so a cloze of the student's own sentence reads as that
-    sentence — the served scan's provenance rule then sees the copy)."""
-    front, back = str(card.get("front") or ""), str(card.get("back") or "")
-    if _CLOZE_BLANK.search(front):
-        return _CLOZE_BLANK.sub(lambda _m: back, front, count=1)
-    return f"{front}\n{back}"
-
-
 def _screen_cards(guard: integrity_guard.Guard, cards: list) -> tuple[list, int]:
-    """The cards the guard lets through and how many it withheld (each stating a
-    posed check's key; help is recorded on those checks). 409 when it withheld
-    every card: nothing is left to serve."""
-    keep = guard.screen_each([_card_text(c) for c in cards])
-    kept = [c for c, ok in zip(cards, keep) if ok]
+    """The cards the guard lets through and how many it withheld; 409 when it
+    withheld every card: nothing is left to serve."""
+    kept, withheld = screen_cards(guard, cards)
     if cards and not kept:
         raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
-    return kept, len(cards) - len(kept)
+    return kept, withheld
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -386,7 +208,7 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             weak_concepts=weak_concepts,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     cards, withheld = _screen_cards(guard, cards)  # A125: before anything is stored
 
     now = datetime.now(timezone.utc).isoformat()
@@ -456,43 +278,6 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     return out
 
 
-_LEGACY_LIST_COLS = (
-    "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
-    "last_reviewed_at,created_at"
-)
-_FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
-
-
-def _order_due_rows(rows: list[dict], now: datetime) -> list[dict]:
-    """PKG-11: due cards in learning.fsrs.order_due's order (|R − threshold|
-    ascending, spec §3.2). ADAPTER (HANDOFF-02: `order_due(items, now, *,
-    stability_key="fsrs_s", last_review_key=...)`): a flashcard's stability
-    is `fsrs_s` and its last review is `last_reviewed_at`. If PKG-02's
-    signature changes, change THIS function only."""
-    if not rows:
-        return []
-    return list(order_due(rows, now, last_review_key="last_reviewed_at"))
-
-
-def _loop_order(rows: list[dict], now: datetime) -> tuple[list[dict], list[dict]]:
-    """PKG-11: (ordered rows, due rows). Due first (`due_at` <= now, in
-    _order_due_rows order), then never rated on the loop path (`fsrs_s` null,
-    query order), then not yet due by `due_at` ascending. A null `due_at` is
-    never due."""
-    due, fresh, later = [], [], []
-    for r in rows:
-        due_at = parse_ts(r.get("due_at"))
-        if due_at is not None and due_at <= now:
-            due.append(r)
-        elif r.get("fsrs_s") is None:
-            fresh.append(r)
-        else:
-            later.append(r)
-    later.sort(key=lambda r: parse_ts(r.get("due_at")) or now)
-    ordered_due = _order_due_rows(due, now)
-    return ordered_due + fresh + later, ordered_due
-
-
 @router.get("/user/{user_id}")
 def get_flashcards(
     user_id: str,
@@ -508,41 +293,9 @@ def get_flashcards(
     if not user_id:
         return {"flashcards": []}
 
-    filters = {"user_id": f"eq.{user_id}"}
-    if topic:
-        filters["topic"] = f"eq.{topic}"
-
     try:
-        rows = table("flashcards").select(
-            _LEGACY_LIST_COLS + _FSRS_LIST_COLS,
-            filters=filters, order="created_at.desc"
-        ) or []
-        for r in rows:
-            r["front"] = decrypt_if_present(r.get("front"))
-            r["back"] = decrypt_if_present(r.get("back"))
-        if semester:
-            # Term scoping (#141). This route is user-wide (no course id), so
-            # the filter works on the cards' offering: cards from the selected
-            # term stay, other terms' cards are hidden, and term-LESS cards
-            # (offering_id NULL — e.g. AI-generated) stay visible under any
-            # selection so picking a term never strands them. An unknown label
-            # degrades to term-less cards only — never a 500.
-            term_id = term_id_for_label(semester)
-            allowed: set[str] = set()
-            if term_id:
-                offs = table("course_offerings").select(
-                    "id", filters={"term_id": f"eq.{term_id}"}
-                ) or []
-                allowed = {o["id"] for o in offs if o.get("id")}
-            rows = [
-                r for r in rows
-                if r.get("offering_id") is None or r["offering_id"] in allowed
-            ]
-        now = datetime.now(timezone.utc)
-        rows, due = _loop_order(rows, now)
-        if due_only:
-            rows = due
-        return {"flashcards": rows, "due_count": len(due)}
+        rows, due = _loop_order(list_flashcards(user_id, topic, semester), datetime.now(timezone.utc))
+        return {"flashcards": due if due_only else rows, "due_count": len(due)}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
@@ -753,34 +506,14 @@ def import_generate(body: ImportGenerateBody, request: Request):
     else:  # library_doc: stored course material, not request text (A125: unguarded)
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
-        rows = table("documents").select(
-            "id,user_id,summary,concept_notes,file_name",
-            filters={
-                "id": f"eq.{body.document_id}",
-                "user_id": f"eq.{body.user_id}",
-                "deleted_at": "is.null",
-            },
-            limit=1,
-        )
-        if not rows:
+        source_text = library_doc_source_text(body.user_id, body.document_id)
+        if source_text is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        doc = rows[0]
-        doc_summary = decrypt_if_present(doc.get("summary")) or ""
-        notes_raw = doc.get("concept_notes")
-        if isinstance(notes_raw, str):
-            try:
-                doc_notes = decrypt_json(notes_raw)
-            except Exception:
-                doc_notes = notes_raw
-        else:
-            doc_notes = notes_raw or {}
-        parts = [doc_summary, str(doc_notes)]
-        source_text = "\n\n".join(p for p in parts if p)
 
     try:
         cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     withheld = 0
     if guard is not None:
         cards, withheld = _screen_cards(guard, cards)
@@ -824,13 +557,13 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
     try:
         out = gemini_cleanup_cards(cards)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
-    keep = guard.screen_each([_card_text(c) for c in out])
-    if not all(keep):
+        raise llm_http_error(e) from e
+    withheld = cleanup_withheld(guard, out)
+    if withheld:
         # A cleaned card stating a posed check's key: the cleanup is withheld
         # whole and the student's own cards come back as they sent them — a
         # cleanup must never lose a card the student wrote.
-        return {"cards": cards, "withheld": keep.count(False)}
+        return {"cards": cards, "withheld": withheld}
     return {"cards": out}
 
 
@@ -850,6 +583,6 @@ def import_cloze(body: ImportClozeBody, request: Request):
     try:
         cards = gemini_cloze(body.paragraph)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     cards, withheld = _screen_cards(guard, cards)
     return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}

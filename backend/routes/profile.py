@@ -3,11 +3,11 @@ Profile routes — public profiles, settings, cosmetics, achievements, account m
 """
 
 import base64
+import functools
 import re
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
@@ -17,9 +17,8 @@ from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
-from services.session_modes import NOT_REVIEW
 from db.scope import service_route, service_scope
-from services.encryption import encrypt_if_present, decrypt_if_present
+from services.encryption import encrypt_if_present
 from models import (
     UpdateProfileBody,
     UpdateSettingsBody,
@@ -28,138 +27,53 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
-from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
-from services.achievement_service import LOWER_IS_BETTER, get_user_stat
+from services.profile import (
+    UserNotFound,
+    achievements_view,
+    cosmetics_catalog,
+    export_account_data,
+    owned_cosmetics_by_type,
+    public_profile,
+    replace_featured_achievements,
+)
+from services.profile import users as _users
+from services.profile.achievements import _get_featured_achievements  # noqa: F401  (re-export, #118)
+from services.profile.cosmetics import _get_equipped_cosmetics
+from services.profile.users import (  # noqa: F401  (re-export, #118)
+    _PROFILE_COLS,
+    _SETTINGS_COLS,
+    _SETTINGS_ETAG_VERSION,
+    _get_user_roles,
+    _get_user_stats,
+)
 
 router = APIRouter()
 
 
-# Identity columns that stay on `users` after the 0024 split.
-_USERS_COLS = "id,email,streak_count,created_at"
-
-# Profile columns live on `user_profiles` (1:1 with users). 🔒 = encrypted at rest.
-_PROFILE_COLS = (
-    "user_id,username,name,first_name,last_name,avatar_url,"
-    "year,majors,minors,bio,location,website"
-)
-_PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
-
-
-# Postgres foreign_key_violation. PostgREST answers it with a 409, the same
-# status as the unique/PK conflict ON CONFLICT DO NOTHING absorbs, so only
-# the body's SQLSTATE tells the two apart.
-_FK_VIOLATION = "23503"
+def _user_not_found_as_404(fn):
+    """``fn`` with the profile domain's :class:`UserNotFound` answered as the
+    routes' long-standing ``404 {"detail": "User not found"}`` (#118)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except UserNotFound as exc:
+            raise HTTPException(status_code=404, detail="User not found") from exc
+    return wrapper
 
 
-def _is_fk_violation(exc: httpx.HTTPStatusError) -> bool:
-    if exc.response.status_code != 409:
-        return False
-    try:
-        body = exc.response.json()
-    except ValueError:
-        return False
-    return isinstance(body, dict) and body.get("code") == _FK_VIOLATION
-
-
-def _missing_users_row() -> HTTPException:
-    return HTTPException(status_code=404, detail="User not found")
-
-
-def _get_or_create_row(name: str, columns: str, user_id: str) -> dict:
-    """Read the 1:1 `user_id`-keyed row of `name`, creating it if missing.
-
-    Race-safe (#674): Settings.tsx loads /settings and the public profile in
-    parallel, both land here for a first-time user, and a blind INSERT from
-    the loser 409s into a 500. ON CONFLICT DO NOTHING, not a merge, whose
-    DO UPDATE would fire the updated_at trigger and move the winner's ETag.
-
-    The upsert's own representation is the row when this call inserted it;
-    only a lost race (DO NOTHING returns `[]`) needs a second read.
-
-    Both tables FK to `users` with ON DELETE CASCADE. A session whose `users`
-    row is missing (hard-deleted, e.g. a cookie that outlived a manually
-    removed row, the #285 class) violates that FK, which DO NOTHING does not
-    absorb. That is a 404 like every other missing-user path here
-    (`_get_user_or_404`, `/api/auth/me`), not a 500. The same holds when the
-    re-read after a lost race finds nothing: the row existed a moment ago, so
-    it vanished, which a cascade from a hard-deleted `users` row explains.
-    Serving a made-up `{"user_id": ...}` there would be a 200 with a fixed
-    ETag for a row that does not exist.
-
-    The app's own account deletion is a SOFT delete (`users.deleted_at`); a
-    soft-deleted user still has the row, so none of this fires for them.
-    """
-    filters = {"user_id": f"eq.{user_id}"}
-    rows = table(name).select(columns, filters=filters)
-    if rows:
-        return rows[0]
-    try:
-        rows = table(name).upsert(
-            {"user_id": user_id},
-            on_conflict="user_id",
-            ignore_duplicates=True,
-            columns=columns,
-        )
-    except httpx.HTTPStatusError as exc:
-        if _is_fk_violation(exc):
-            raise _missing_users_row() from exc
-        raise
-    if rows:
-        return rows[0]
-    rows = table(name).select(columns, filters=filters)
-    if not rows:
-        raise _missing_users_row()
-    return rows[0]
-
-
-def _get_or_create_profile(user_id: str) -> dict:
-    """Return the decrypted user_profiles row, creating it if missing."""
-    row = _get_or_create_row("user_profiles", _PROFILE_COLS, user_id)
-    for col in _PROFILE_ENCRYPTED:
-        row[col] = decrypt_if_present(row.get(col))
-    return row
-
-
-def _live_user_or_404(user_id: str, cols: str = "id") -> dict:
-    """The `users` row (`cols`) of a LIVE account, or a 404.
-
-    A soft-deleted account (`users.deleted_at`) is a 404 exactly like a missing
-    one (#115): nothing public about it may outlive the deletion. The one
-    check behind both the public profile and `GET /{user_id}/roles`."""
-    rows = table("users").select(
-        cols, filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="User not found")
-    return rows[0]
-
-
-def _get_user_or_404(user_id: str) -> dict:
-    """Identity + profile merged into the legacy single-dict shape.
-
-    `users` now holds only id/email/auth/activity; the public profile fields live
-    on `user_profiles` (migration 0024). We read both and merge so callers keep the
-    same flat dict they relied on before the split.
-
-    A soft-deleted account is a 404 (`_live_user_or_404`). For the public read
-    that is the whole fix. The other callers are behind `require_self`, whose
-    account-state check refuses a deleted account's session — but that state is
-    cached per worker for `auth_guard.ACCOUNT_STATE_TTL_SECONDS` (30 s), and only
-    the worker that ran the delete clears its entry, so for up to that window a
-    deleted session can still reach them; this filter is what turns those into
-    a 404 too (and keeps the profile/settings rows from being re-created).
-    """
-    user = dict(_live_user_or_404(user_id, _USERS_COLS))
-    user["email"] = decrypt_if_present(user.get("email"))
-    profile = _get_or_create_profile(user_id)
-    # Merge profile fields onto the identity row (id/email/streak/created_at win).
-    merged = {**profile, **user}
-    return merged
+_get_or_create_profile = _user_not_found_as_404(_users._get_or_create_profile)
+_get_or_create_settings = _user_not_found_as_404(_users._get_or_create_settings)
+_live_user_or_404 = _user_not_found_as_404(_users._live_user_or_404)
+_get_user_or_404 = _user_not_found_as_404(_users._get_user_or_404)
+_public_profile = _user_not_found_as_404(public_profile)
+_export_account_data = _user_not_found_as_404(export_account_data)
+_replace_featured_achievements = _user_not_found_as_404(replace_featured_achievements)
 
 
 def _optional_viewer(request: Request) -> Optional[str]:
@@ -177,148 +91,6 @@ def _optional_viewer(request: Request) -> Optional[str]:
         if exc.status_code in (401, 403):
             return None
         raise
-
-
-_SETTINGS_COLS = (
-    "user_id,"
-    "profile_visibility,activity_status_visible,"
-    "notification_email,notification_push,notification_in_app,"
-    "theme,font_size,accent_color,share_class_context,analytics_opt_out,"
-    "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
-    "featured_role_id,featured_achievement_ids,updated_at"
-)
-
-#: Folded into the GET /settings ETag; bump it whenever the body's SHAPE
-#: changes (here: analytics_opt_out joined _SETTINGS_COLS, ADR 0028). An
-#: unchanged tag over a changed shape would 304 a browser's pre-deploy cached
-#: body — without the new field — for as long as the row's updated_at holds.
-_SETTINGS_ETAG_VERSION = "2"
-
-
-def _get_or_create_settings(user_id: str) -> dict:
-    return _get_or_create_row("user_settings", _SETTINGS_COLS, user_id)
-
-
-def _get_user_roles(user_id: str) -> list:
-    rows = table("user_roles").select(
-        "granted_at,roles(id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority)",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    if not rows:
-        return []
-    result = []
-    for r in rows:
-        role_data = r.get("roles", {})
-        if role_data:
-            result.append({"role": role_data, "granted_at": r.get("granted_at")})
-    return result
-
-
-def _get_equipped_cosmetics(settings: dict) -> dict:
-    equipped = {}
-    slot_map = {
-        "avatar_frame": "equipped_avatar_frame_id",
-        "banner": "equipped_banner_id",
-        "name_color": "equipped_name_color_id",
-        "title": "equipped_title_id",
-    }
-    for slot, col in slot_map.items():
-        cosmetic_id = settings.get(col)
-        if cosmetic_id:
-            rows = table("cosmetics").select(
-                "id,type,name,slug,asset_url,css_value,rarity",
-                filters={"id": f"eq.{cosmetic_id}"},
-            )
-            if rows:
-                equipped[slot] = rows[0]
-    # Featured role
-    featured_role_id = settings.get("featured_role_id")
-    if featured_role_id:
-        rows = table("roles").select(
-            "id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority",
-            filters={"id": f"eq.{featured_role_id}"},
-        )
-        if rows:
-            equipped["featured_role"] = rows[0]
-    return equipped
-
-
-def _strip_role_cosmetics(equipped: dict) -> dict:
-    """`equipped` minus anything that reveals a role, for anonymous viewers
-    (#115): the featured role itself, and every equipped cosmetic a role grants
-    (`role_cosmetics`). Conservative: a cosmetic granted by ANY role goes, staff
-    or earnable, since the slot alone cannot say which."""
-    out = {k: v for k, v in equipped.items() if k != "featured_role"}
-    ids = [c["id"] for c in out.values() if isinstance(c, dict) and c.get("id")]
-    if not ids:
-        return out
-    granted = {
-        r["cosmetic_id"]
-        for r in table("role_cosmetics").select(
-            "cosmetic_id", filters={"cosmetic_id": f"in.({','.join(ids)})"}
-        ) or []
-    }
-    return {k: v for k, v in out.items() if v.get("id") not in granted}
-
-
-def _get_featured_achievements(user_id: str) -> list:
-    # `achievements!inner(...)` + the `achievements.status` filter is the
-    # embed-side equivalent of the `status = live` filter every top-level
-    # achievements read carries. Without the !inner the filter can't apply to
-    # the embedded table at all, and a badge the wiki has since unpublished
-    # (or one of the ten legacy seeds 0044 demotes to draft) stays pinned on
-    # the showcase — visible to other users, while absent from the grid and
-    # the "N of M" count. This showcase is served by GET /api/profile/{id},
-    # which other users can read subject to visibility, so a draft leaking
-    # here leaks work-in-progress off-team.
-    rows = table("user_achievements").select(
-        "earned_at,is_featured,"
-        "achievements!inner(id,name,slug,description,icon,category,rarity,"
-        "is_secret,xp_reward,icon_url,sort_order,status)",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "is_featured": "eq.true",
-            "achievements.status": "eq.live",
-        },
-    )
-    if not rows:
-        return []
-    result = []
-    for r in rows:
-        ach = r.get("achievements", {})
-        if ach:
-            result.append({
-                "achievement": ach,
-                "earned_at": r.get("earned_at"),
-                "is_featured": True,
-            })
-    return result
-
-
-def _get_user_stats(user_id: str) -> dict:
-    # effective_streak: a lapsed streak keeps its stored count until the next
-    # activity (#767).
-    from services.streak_service import effective_streak
-    user = table("users").select(
-        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"}
-    )
-    streak = effective_streak(user[0] if user else None)
-
-    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW})
-    session_count = len(sessions) if sessions else 0
-
-    docs = table("documents").select("id", filters={"user_id": f"eq.{user_id}"})
-    documents_count = len(docs) if docs else 0
-
-    achs = table("user_achievements").select("achievement_id", filters={"user_id": f"eq.{user_id}"})
-    achievements_count = len(achs) if achs else 0
-
-    return {
-        "streak_count": streak,
-        "session_count": session_count,
-        "documents_count": documents_count,
-        "achievements_count": achievements_count,
-    }
 
 
 # ── Username Availability ────────────────────────────────────────────────────
@@ -353,89 +125,7 @@ def get_public_profile(user_id: str, request: Request):
     # unreadable) propagates instead of degrading to the anonymous view.
     viewer_id = _optional_viewer(request)
 
-    user = _get_user_or_404(user_id)
-    settings = _get_or_create_settings(user_id)
-    # Roles say who is staff/admin (#115): signed-in viewers only, the same
-    # audience as GET /{user_id}/roles. The app renders profiles only behind
-    # sign-in (frontend middleware), so anonymous gets [] — and skips the read.
-    roles = _get_user_roles(user_id) if viewer_id is not None else []
-    equipped = _get_equipped_cosmetics(settings)
-    if viewer_id is None:
-        # ...nor through the cosmetics: the featured role IS a role, and a
-        # role-granted cosmetic (role_cosmetics, e.g. a staff title) names it.
-        equipped = _strip_role_cosmetics(equipped)
-
-    is_owner = viewer_id is not None and viewer_id == user_id
-
-    # Effective visibility. The owner always sees everything. 'school' (0031)
-    # reveals the extended profile only to viewers sharing a school with the
-    # owner — resolved through services/academics.py, the same boundary the
-    # #342 school directory uses — and otherwise behaves as 'private'.
-    # Fail-closed: anonymous viewer / no shared school → private.
-    visibility = settings.get("profile_visibility") or "public"
-    if not is_owner and visibility == "school":
-        same_school = (
-            viewer_id is not None and viewer_id in school_peer_user_ids(user_id)
-        )
-        visibility = "public" if same_school else "private"
-
-    profile = {
-        "id": user["id"],
-        "username": user.get("username"),
-        "avatar_url": user.get("avatar_url"),
-        "created_at": user.get("created_at"),
-        "roles": roles,
-        "equipped_cosmetics": equipped,
-    }
-
-    if not is_owner and visibility == "private":
-        # Minimal stub: identity-adjacent decoration only. name/year/majors/
-        # minors/school are personal data and stay hidden alongside
-        # bio/location/website/featured/stats (#134). Keys are kept (nulled)
-        # so the frontend's response shape is unchanged.
-        profile.update({
-            "name": "",
-            "year": None,
-            "majors": [],
-            "minors": [],
-            "school": None,
-            "bio": None,
-            "location": None,
-            "website": None,
-            "featured_achievements": [],
-            "stats": {},
-        })
-        return profile
-
-    # Resolve school from user's enrolled courses.
-    # School now lives behind enrollments.offering_id → course_offerings.course_id
-    # → courses.school_id (a FK, currently unpopulated). Read through the join but
-    # tolerate a missing/None school; it surfaces as None until school_id is linked.
-    school = None
-    enrollments = table("enrollments").select(
-        "course_offerings(courses(school_id))",
-        filters={"user_id": f"eq.{user_id}"},
-        limit=1,
-    )
-    if enrollments:
-        offering = enrollments[0].get("course_offerings") or {}
-        course = offering.get("courses") or {} if isinstance(offering, dict) else {}
-        if isinstance(course, dict) and course.get("school_id"):
-            school = course["school_id"]
-
-    profile.update({
-        "name": user.get("name", ""),
-        "year": user.get("year"),
-        "majors": user.get("majors") or [],
-        "minors": user.get("minors") or [],
-        "school": school,
-        "bio": user.get("bio"),
-        "location": user.get("location"),
-        "website": user.get("website"),
-        "featured_achievements": _get_featured_achievements(user_id),
-        "stats": _get_user_stats(user_id),
-    })
-    return profile
+    return _public_profile(user_id, viewer_id)
 
 
 # ── Update Profile ───────────────────────────────────────────────────────────
@@ -712,31 +402,7 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
         if not earned:
             raise HTTPException(status_code=403, detail=f"Achievement {aid} not earned")
 
-    # Clear old featured flags
-    existing = table("user_achievements").select(
-        "achievement_id,is_featured",
-        filters={"user_id": f"eq.{user_id}", "is_featured": "eq.true"},
-    )
-    if existing:
-        for row in existing:
-            table("user_achievements").update(
-                {"is_featured": False},
-                filters={"user_id": f"eq.{user_id}", "achievement_id": f"eq.{row['achievement_id']}"},
-            )
-
-    # Set new featured
-    for aid in body.achievement_ids:
-        table("user_achievements").update(
-            {"is_featured": True},
-            filters={"user_id": f"eq.{user_id}", "achievement_id": f"eq.{aid}"},
-        )
-
-    # Also store in settings
-    _get_or_create_settings(user_id)
-    table("user_settings").update(
-        {"featured_achievement_ids": body.achievement_ids, "updated_at": datetime.now(timezone.utc).isoformat()},
-        filters={"user_id": f"eq.{user_id}"},
-    )
+    _replace_featured_achievements(user_id, body.achievement_ids)
 
     return {"updated": True}
 
@@ -751,109 +417,7 @@ def get_achievements(user_id: str, request: Request):
     # other /api/profile/{user_id}/... endpoint. The frontend only ever calls
     # it for the signed-in user.
     require_self(user_id, request)
-    # The select must carry every field frontend/src/lib/types.ts::Achievement
-    # declares required — the response is cast, never validated, so a missing
-    # column surfaces as `+undefined XP` and, worse, `iconUrl={undefined}`,
-    # which makes every admin-uploaded icon invisible to users (the admin wiki
-    # reads a different endpoint that selects `*`, so admins never see it).
-    all_achs = table("achievements").select(
-        "id,name,slug,description,icon,category,rarity,is_secret,"
-        "xp_reward,icon_url,sort_order,status",
-        filters={"status": "eq.live"},
-    )
-    if not all_achs:
-        return {"earned": [], "available": []}
-
-    earned_rows = table("user_achievements").select(
-        "achievement_id,earned_at,is_featured",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    earned_ids = {}
-    if earned_rows:
-        for r in earned_rows:
-            earned_ids[r["achievement_id"]] = r
-
-    # Fetch triggers once and group by achievement_id so we can surface progress.
-    trigger_rows = table("achievement_triggers").select(
-        "achievement_id,trigger_type,trigger_threshold",
-    )
-    triggers_by_ach: dict = {}
-    for t in trigger_rows or []:
-        triggers_by_ach.setdefault(t["achievement_id"], []).append(t)
-
-    # Cache stat lookups per trigger_type — most achievements share a handful of counters.
-    stat_cache: dict = {}
-
-    def _progress_for(ach_id: str) -> dict | None:
-        ts = triggers_by_ach.get(ach_id)
-        if not ts:
-            return None
-        # Pick the tightest gap (lowest current/target ratio) so the UI tracks the leading edge.
-        best = None
-        for t in ts:
-            tt = t["trigger_type"]
-            if tt == "manual_admin_grant":
-                continue
-            # LOWER_IS_BETTER stats (session_before_hour) count DOWN to their
-            # threshold — it's a wall-clock hour, not a target to accumulate
-            # towards. "5 of 7" would be nonsense, and the `min(stat, target)`
-            # clamp below would render the unearned badge as 100% complete.
-            # These badges are pass/fail, so they carry no progress bar.
-            if tt in LOWER_IS_BETTER:
-                continue
-            target = int(t.get("trigger_threshold") or 0)
-            if target <= 0:
-                continue
-            if tt not in stat_cache:
-                try:
-                    stat_cache[tt] = get_user_stat(user_id, tt)
-                except Exception:
-                    stat_cache[tt] = 0
-            current = min(stat_cache[tt], target)
-            ratio = current / target
-            if best is None or ratio < best["ratio"]:
-                best = {"current": current, "target": target, "ratio": ratio}
-        if best is None:
-            return None
-        return {"current": best["current"], "target": best["target"]}
-
-    earned = []
-    available = []
-
-    for ach in all_achs:
-        if ach["id"] in earned_ids:
-            earned.append({
-                "achievement": ach,
-                "earned_at": earned_ids[ach["id"]]["earned_at"],
-                "is_featured": earned_ids[ach["id"]]["is_featured"],
-            })
-        else:
-            if ach.get("is_secret"):
-                # Hand-built rather than a row spread so the masked entry can
-                # never leak the real name/description/icon. It still has to
-                # carry every field the Achievement type declares required —
-                # xp_reward is the honest reward (the UI shows what it pays,
-                # which is not a spoiler), icon_url is nulled alongside icon.
-                entry = {
-                    "id": ach["id"],
-                    "name": "Secret Achievement",
-                    "slug": ach["slug"],
-                    "description": "Keep exploring to discover this achievement",
-                    "icon": None,
-                    "icon_url": None,
-                    "category": ach["category"],
-                    "rarity": ach["rarity"],
-                    "is_secret": True,
-                    "xp_reward": ach.get("xp_reward") or 0,
-                    "sort_order": ach.get("sort_order") or 0,
-                    "status": ach.get("status") or "live",
-                    "progress": None,
-                }
-            else:
-                entry = {**ach, "progress": _progress_for(ach["id"])}
-            available.append(entry)
-
-    return {"earned": earned, "available": available}
+    return achievements_view(user_id)
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
@@ -863,41 +427,14 @@ def get_cosmetics(user_id: str, request: Request):
     require_self(user_id, request)
     settings = _get_or_create_settings(user_id)
 
-    owned = table("user_cosmetics").select(
-        "unlocked_at,cosmetics(id,type,name,slug,asset_url,css_value,rarity)",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-
-    grouped = {"avatar_frame": [], "banner": [], "name_color": [], "title": []}
-    if owned:
-        for row in owned:
-            cosmetic = row.get("cosmetics", {})
-            if cosmetic and cosmetic.get("type") in grouped:
-                grouped[cosmetic["type"]].append({
-                    "cosmetic": cosmetic,
-                    "unlocked_at": row["unlocked_at"],
-                })
-
-    return {"cosmetics": grouped, "equipped": _get_equipped_cosmetics(settings)}
+    return {"cosmetics": owned_cosmetics_by_type(user_id), "equipped": _get_equipped_cosmetics(settings)}
 
 
 @router.get("/{user_id}/cosmetics/catalog")
 def get_cosmetics_catalog(user_id: str, request: Request):
     """All cosmetics grouped by type with an `owned` flag per item."""
     require_self(user_id, request)
-    all_cosmetics = table("cosmetics").select("id,type,name,slug,asset_url,css_value,rarity,unlock_source")
-    owned_rows = table("user_cosmetics").select(
-        "cosmetic_id",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    owned_ids = {r["cosmetic_id"] for r in (owned_rows or [])}
-
-    grouped: dict = {"avatar_frame": [], "banner": [], "name_color": [], "title": []}
-    for c in all_cosmetics or []:
-        if c.get("type") not in grouped:
-            continue
-        grouped[c["type"]].append({**c, "owned": c["id"] in owned_ids})
-    return {"catalog": grouped}
+    return {"catalog": cosmetics_catalog(user_id)}
 
 
 # ── Roles ────────────────────────────────────────────────────────────────────
@@ -958,28 +495,4 @@ def export_data(user_id: str, request: Request):
     # #756: a removed (unapproved) student may still export their data.
     require_self(user_id, request, allow_unapproved=True)
 
-    user = _get_user_or_404(user_id)
-    settings = _get_or_create_settings(user_id)
-    roles = _get_user_roles(user_id)
-
-    # Deliberately NOT filtered to status = live, unlike the showcase and the
-    # badge grid: this is the user's own data export of what they actually
-    # earned. If a badge they hold was later unpublished, omitting it here
-    # would make the export a lie about their own history.
-    earned = table("user_achievements").select(
-        "achievement_id,earned_at,is_featured,achievements(name,slug)",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-
-    owned_cosmetics = table("user_cosmetics").select(
-        "cosmetic_id,unlocked_at,cosmetics(name,slug,type)",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-
-    return {
-        "user": user,
-        "settings": settings,
-        "roles": roles,
-        "achievements": earned or [],
-        "cosmetics": owned_cosmetics or [],
-    }
+    return _export_account_data(user_id)

@@ -16,6 +16,7 @@ import contextlib
 import pathlib
 import re
 from datetime import datetime, timedelta, timezone
+from tests.split_patches import patch_in
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -107,6 +108,9 @@ class _FrozenDatetime(datetime):
     @classmethod
     def now(cls, tz=None):
         return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+
+_LIST_MODULES = ("routes.flashcards", "services.flashcards.cards")
 
 
 def _frozen_clock():
@@ -378,11 +382,13 @@ def _list(*, gate, query: str = "", order_due=None, rows=None):
     # HANDOFF-02: order_due(items, now, *, stability_key, last_review_key).
     od = order_due or MagicMock(side_effect=lambda rows, now, **kw: list(reversed(rows)))
     gate_cm = _gate_patch(gate)
+    # #118 (spec §13 A149): the list read and its FSRS order live in
+    # services/flashcards/cards.py; the route computes `now` and passes it.
     with (
         _frozen_clock(),
-        patch("routes.flashcards.table", side_effect=side_effect),
+        patch_in(_LIST_MODULES, "table", side_effect=side_effect),
         gate_cm,
-        patch("routes.flashcards.order_due", new=od),
+        patch("services.flashcards.cards.order_due", new=od),
     ):
         r = client.get(f"/api/flashcards/user/{USER_ID}{query}")
     return r, calls, od

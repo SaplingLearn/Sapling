@@ -1563,8 +1563,9 @@ SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
         ("learning/evidence.py", "flush_pending"),
         ("learning/review.py", "grade_review"),
         # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
-        # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry.
-        ("routes/quiz.py", "submit_quiz"),
+        # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry. #118 moved
+        # the submit's body into the quiz package (spec §13 A149).
+        ("services/quiz/submission.py", "submit_quiz"),
     }
 )
 
@@ -1738,8 +1739,10 @@ def test_no_production_caller_passes_evidence_yet():
     assert problems == [], "\n".join(problems)
     # Non-vacuous: the scan reached the known legacy callers.
     assert callers >= {
-        "routes/quiz.py",
-        "routes/documents.py",
+        # #118 (spec §13 A149): the quiz submit's and the documents concept
+        # scan's bodies live in their domain packages now
+        "services/quiz/submission.py",
+        "services/documents/scan.py",
         "agents/tools/graph.py",
         "services/graph_service.py",
     }, callers
@@ -1806,7 +1809,12 @@ def test_fsrs_importers_are_sanctioned():
     import pathlib
 
     backend = pathlib.Path(__file__).resolve().parents[1]
-    sanctioned = {"services/graph_service.py", "routes/flashcards.py", "routes/learn_loop.py"}
+    # #118 (spec §13 A149): the flashcard list's FSRS order moved with
+    # list_flashcards into services/flashcards/cards.py.
+    sanctioned = {
+        "services/graph_service.py", "routes/flashcards.py", "services/flashcards/cards.py",
+        "routes/learn_loop.py",
+    }
     importers = set()
     for path in sorted(backend.rglob("*.py")):
         rel = path.relative_to(backend).as_posix()
@@ -1862,7 +1870,10 @@ def test_fsrs_importers_are_sanctioned():
         ),
         ('def write_metrics(u):\n    table("learner_state").update({}, filters={})', "services/x.py", True),
         # spec §13 A142: the writer file is scanned, function by function
-        ('def apply_graph_update(u, g):\n    table("graph_nodes").upsert({})', "services/graph_service.py", False),
+        # #118 (spec §13 A149): the topology upserts sit in the writer's phase helpers
+        ('def _upsert_new_nodes(u, n):\n    table("graph_nodes").upsert({})', "services/graph_service.py", False),
+        ('def _upsert_new_edges(u, e):\n    table("graph_edges").upsert({})', "services/graph_service.py", False),
+        ('def apply_graph_update(u, g):\n    table("graph_nodes").upsert({})', "services/graph_service.py", True),
         ('def delete_node(u, n):\n    table("graph_edges").delete(filters={})', "services/graph_service.py", False),
         ('def update_node_color(u, n, c):\n    table("graph_nodes").update({})', "services/graph_service.py", False),
         ('def add_node(u):\n    table("graph_nodes").insert({})', "services/graph_service.py", True),

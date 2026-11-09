@@ -920,7 +920,7 @@ def _seed_embedding(text: str) -> list[float]:
     import hashlib
     import math
 
-    from services.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM
+    from db.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM
 
     raw: list[float] = []
     counter = 0
@@ -943,16 +943,18 @@ def seed_learning_loop() -> None:
     Playwright test, and agents.function_handlers_e2e / services.rag_service
     pull pydantic-ai and google-genai (~2.4 s a test) — the handler constants
     are read from the module's source (db.e2e_handler_constants) and the chunk
-    id from services.chunk_ids (rag_service re-exports it)."""
+    id from db.chunk_ids (rag_service re-exports it). No services import at
+    all (spec §13 A149: a db module stays below services): the visibility
+    value comes from db.chunk_ids and the concept key from learning.checks'
+    `normalize` — graph_service._normalize_concept's rule, byte for byte."""
     from datetime import datetime, timedelta, timezone
 
     import config
     from db.e2e_handler_constants import read_constants
     from learning.checks import question_hash
     from learning.params import CHECK_ITEM_DIFFICULTIES, EDGE_PREREQ_SOURCE_IS_PREREQ
-    from services.chunk_ids import chunk_id
-    from services.chunk_visibility import SHARED
-    from services.graph_service import _normalize_concept
+    from db.chunk_ids import SHARED, chunk_id
+    from learning.checks import normalize as _normalize_concept
 
     E2E_LOOP_FINAL_ANSWER, E2E_LOOP_PROBE_PROMPT, E2E_LOOP_REFERENCE = read_constants(
         "E2E_LOOP_FINAL_ANSWER", "E2E_LOOP_PROBE_PROMPT", "E2E_LOOP_REFERENCE"

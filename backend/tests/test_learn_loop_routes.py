@@ -41,6 +41,8 @@ from main import app
 from services import ai_budget
 from services.agent_events import SaplingEvent
 from tests.agent_run_fakes import FakeRunResult
+from tests.split_patches import patch_tutor, setattr_tutor
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -50,10 +52,15 @@ def legacy_owner_guard_for_delegation_fixtures(monkeypatch):
     # These legacy-route probes isolate delegation/phase behavior. Their fake
     # loop state has no legacy sessions row; #709 ownership remains exercised
     # without this mock by the dedicated session-ownership suite.
-    monkeypatch.setattr("routes.learn.require_session_owner", lambda *args, **kwargs: None)
+    # #117 (spec §13 A149): the turn routes run the async twins of both checks.
+    async def _passes(*args, **kwargs):
+        return None
+
+    setattr_tutor(monkeypatch, "require_session_owner", lambda *args, **kwargs: None)
+    setattr_tutor(monkeypatch, "arequire_session_owner", _passes)
     # #761's open-session check reads that same absent row; its 409/404 contract
     # is pinned by tests/test_tutor_session_lifecycle.py.
-    monkeypatch.setattr("routes.learn.require_session_open", lambda *args, **kwargs: None)
+    setattr_tutor(monkeypatch, "arequire_session_open", _passes)
 
 
 T0 = 1_790_000_000.0  # when the active item was first shown (float seconds, PKG-06's store)
@@ -3108,8 +3115,8 @@ def test_legacy_route_delegates_when_gate_true(handler, path, body):
     with (
         patch("routes.learn.learning_loop_for_request", return_value=True) as gate,
         patch(f"routes.learn_loop.{handler}", side_effect=_loop) as loop,
-        patch("routes.learn._consume_pending") as consume,
-        patch("routes.learn._prepare_chat_run") as prep,
+        patch_tutor("_consume_pending") as consume,
+        patch_tutor("_prepare_chat_run") as prep,
     ):
         r = client.post(path, json=body)
     assert r.status_code == 200 and r.json() == {"delegated": handler}
@@ -3126,11 +3133,11 @@ def test_legacy_route_is_untouched_when_gate_false(handler, path, body):
     with (
         patch("routes.learn.learning_loop_for_request", return_value=False) as gate,
         patch(f"routes.learn_loop.{handler}") as loop,
-        patch("routes.learn._prepare_chat_run", side_effect=RuntimeError("legacy body reached")),
-        patch("routes.learn._consume_pending"),
-        patch("routes.learn._get_session_offering_id", return_value=""),
-        patch("routes.learn._load_message_history", return_value=[]),
-        patch("routes.learn._get_course_id_for_topic", return_value=""),
+        patch_tutor("_prepare_chat_run", side_effect=RuntimeError("legacy body reached")),
+        patch_tutor("_consume_pending"),
+        patch_tutor("_get_session_offering_id", return_value=""),
+        patch_tutor("_load_message_history", return_value=[]),
+        patch_tutor("_get_course_id_for_topic", return_value=""),
     ):
         # the legacy body raises at its first step (the sentinel above): proof it ran
         TestClient(app, raise_server_exceptions=False).post(path, json=body)
@@ -3144,7 +3151,7 @@ def test_legacy_end_session_pass_through_and_override():
     with (
         patch("routes.learn.learning_loop_for_request", return_value=True),
         patch("routes.learn_loop.end_session", return_value=None),
-        patch("routes.learn.PENDING_SESSIONS", pending),
+        patch_tutor("PENDING_SESSIONS", pending),
         patch("services.tutor_sessions.PENDING_SESSIONS", pending),
     ):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": "u1"})
@@ -3176,8 +3183,8 @@ def test_legacy_chat_call_sequence_unchanged_when_gate_false():
     turn = {"reply": "legacy", "graph_update": {}, "mastery_changes": []}
     with (
         patch("routes.learn.learning_loop_for_request", return_value=False) as gate,
-        patch("routes.learn.table", side_effect=factory),
-        patch("routes.learn._chat_via_agent", return_value=(turn, ("default", None))),
+        patch_tutor("table", side_effect=with_async_twins(factory)),
+        patch_tutor("_chat_via_agent", return_value=(turn, ("default", None))),
         patch("routes.learn_loop.chat") as loop_chat,
     ):
         r = client.post(
@@ -3210,10 +3217,10 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
         # PKG-14b: the post-launch gate imports no table at all; spy on the
         # one DB entry point instead (the assertion below is unchanged).
         patch("db.connection.table", side_effect=factory),
-        patch(
-            "routes.learn.table", side_effect=lambda n: MagicMock(select=MagicMock(return_value=[]))
+        patch_tutor(
+            "table", side_effect=with_async_twins(lambda n: MagicMock(select=MagicMock(return_value=[])))
         ),
-        patch("routes.learn._chat_via_agent", return_value=(turn, ("default", None))),
+        patch_tutor("_chat_via_agent", return_value=(turn, ("default", None))),
     ):
         r = client.post(
             "/api/learn/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
@@ -3222,27 +3229,37 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
 
 
 def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
+    """Spec §13 A149 (#118's layout): the route evaluates the gate once
+    (`_loop_for`, owner decision 00) and hands the tutor body the loop's
+    handler; the body hands off AFTER its auth check, at one line, and returns
+    whatever the loop answered (nothing of the legacy path runs below it)."""
     import inspect
 
     import routes.learn as learn
+    from services.tutor import sessions, streams, turns
 
-    for fn in (
-        learn.start_session,
-        learn.chat,
-        learn.chat_stream,
-        learn.start_session_stream,
-        learn.action,
+    for name, body in (
+        ("start_session", turns.start_session),
+        ("chat", turns.chat),
+        ("chat_stream", streams.chat_stream),
+        ("start_session_stream", streams.start_session_stream),
+        ("action", turns.action),
     ):
-        src = inspect.getsource(fn)
+        route = inspect.getsource(getattr(learn, name))
+        assert f'_loop_for(body.user_id, "{name}")' in route, name
+        src = inspect.getsource(body)
         # #756: `await guard_off_loop(require_self, ...)` — the guard off the event loop
         auth = src.index("guard_off_loop(require_self,")
-        gate = src.index("learning_loop_for_request(")
-        assert auth < gate < src.index("_loop_delegate("), fn.__name__
-        assert src.count("_loop_delegate(") == 1
-    src = inspect.getsource(learn.end_session)
-    assert src.index("get_session_user_id(request)") < src.index("learning_loop_for_request(")
+        assert auth < src.index("return await loop_handler(body, request)"), name
+        assert src.count("loop_handler(body, request)") == 1, name
+        assert "learning_loop_for_request" not in src, name
+    src = inspect.getsource(sessions.end_session)
+    assert src.index("get_session_user_id(request)") < src.index("loop_handler(body, request)")
+    assert '_loop_for(body.user_id, "end_session")' in inspect.getsource(learn.end_session)
     # spec §13 A148: the delegate marks the request service-scoped (db_user_scope)
-    assert '_loop_delegate("end_session", request)' in src
+    delegate = inspect.getsource(learn._loop_delegate)
+    assert delegate.index("service_route(request)") < delegate.index("getattr(learn_loop, name)")
+    assert "learning_loop_for_request(user_id)" in inspect.getsource(learn._loop_for)
 
 
 @pytest.mark.real_course_enrollment
@@ -4128,7 +4145,7 @@ def test_active_loop_chat_observes_only_after_persistence_and_router_cannot_fail
             raise RuntimeError("observer unavailable")
 
     body = {"session_id": "s1", "user_id": "u1", "message": "Explain recursion"}
-    with patch("routes.learn.observe_tutor_turn", side_effect=observe):
+    with patch_tutor("observe_tutor_turn", side_effect=observe):
         if streaming:
             with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
                 response = client.post("/api/learn/loop/chat/stream", json=body)

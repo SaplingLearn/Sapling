@@ -43,6 +43,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_quiz
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -106,23 +108,23 @@ def _context_patches(stack: ExitStack, *, material: bool, recent: bool, exam_day
         if material
         else rq.CourseMaterial()
     )
-    stack.enter_context(patch("routes.quiz._course_row", return_value=course))
-    stack.enter_context(patch("routes.quiz.course_offering_ids", return_value=["off-1"]))
-    stack.enter_context(patch("routes.quiz._course_material", return_value=mat))
+    stack.enter_context(patch_quiz("_course_row", return_value=course))
+    stack.enter_context(patch_quiz("course_offering_ids", return_value=["off-1"]))
+    stack.enter_context(patch_quiz("_course_material", return_value=mat))
     stack.enter_context(
-        patch(
-            "routes.quiz.recent_question_identities",
+        patch_quiz(
+            "recent_question_identities",
             return_value=[RecentQuestion("h1", "What is a base case?")] if recent else [],
         )
     )
-    stack.enter_context(patch("routes.quiz.days_until_next_exam", return_value=exam_days))
+    stack.enter_context(patch_quiz("days_until_next_exam", return_value=exam_days))
     stack.enter_context(
-        patch(
-            "routes.quiz.gather_signals",
+        patch_quiz(
+            "gather_signals",
             return_value=QuizSignals(times_studied=3, velocity_per_day=0.02),
         )
     )
-    stack.enter_context(patch("routes.quiz._log_rag_uncovered"))
+    stack.enter_context(patch_quiz("_log_rag_uncovered"))
 
 
 def _capture_request(monkeypatch, variant: str) -> dict:
@@ -344,28 +346,28 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
             _context_patches(stack, material=True, recent=False, exam_days=None)
             stack.enter_context(quiz_agent.override(model=model_for("quiz")))
             stack.enter_context(quiz_planned_agent.override(model=model_for("quiz")))
-            stack.enter_context(patch("routes.quiz.table", side_effect=tables))
-            stack.enter_context(patch("routes.quiz.encrypt_json", side_effect=lambda v: {"enc": v}))
+            stack.enter_context(patch_quiz("table", side_effect=with_async_twins(tables)))
+            stack.enter_context(patch_quiz("encrypt_json", side_effect=lambda v: {"enc": v}))
             stack.enter_context(
-                patch("routes.quiz.decrypt_json_column", side_effect=lambda v: v.get("enc") if isinstance(v, dict) and "enc" in v else v)
+                patch_quiz("decrypt_json_column", side_effect=lambda v: v.get("enc") if isinstance(v, dict) and "enc" in v else v)
             )
             # main (#117): the route claims through the async limiter twin
-            stack.enter_context(patch("routes.quiz.aclaim_rate_limit", new=AsyncMock(return_value=(None, 1.0))))
-            stack.enter_context(patch("routes.quiz._daily_spend_exceeded", return_value=False))
-            stack.enter_context(patch("routes.quiz.apply_graph_update", side_effect=apply))
-            stack.enter_context(patch("routes.quiz.max_help_many", return_value={}))
-            stack.enter_context(patch("routes.quiz.get_quiz_context", return_value={}))
-            stack.enter_context(patch("routes.quiz.save_quiz_context"))
+            stack.enter_context(patch_quiz("aclaim_rate_limit", new=AsyncMock(return_value=(None, 1.0))))
+            stack.enter_context(patch_quiz("_daily_spend_exceeded", return_value=False))
+            stack.enter_context(patch_quiz("apply_graph_update", side_effect=apply))
+            stack.enter_context(patch_quiz("max_help_many", return_value={}))
+            stack.enter_context(patch_quiz("get_quiz_context", return_value={}))
+            stack.enter_context(patch_quiz("save_quiz_context"))
             stack.enter_context(
                 patch(
-                    "routes.quiz.quiz_context_agent.run",
+                    "services.quiz.submission.quiz_context_agent.run",
                     new=AsyncMock(return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))),
                 )
             )
-            stack.enter_context(patch("routes.quiz.get_display_name", return_value="Andres"))
-            stack.enter_context(patch("routes.quiz.award_xp_safe", return_value=None))
-            stack.enter_context(patch("routes.quiz.me_snapshot", return_value={"total_xp": 10}))
-            events = stack.enter_context(patch("routes.quiz.events_service.log_event"))
+            stack.enter_context(patch_quiz("get_display_name", return_value="Andres"))
+            stack.enter_context(patch_quiz("award_xp_safe", return_value=None))
+            stack.enter_context(patch_quiz("me_snapshot", return_value={"total_xp": 10}))
+            events = stack.enter_context(patch("services.events_service.log_event"))
 
             generated = client.post(
                 "/api/quiz/generate",

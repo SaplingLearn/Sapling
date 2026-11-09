@@ -3,7 +3,7 @@ import re
 from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 from learning.evidence import StudentConfidence
 from learning.params import GRADER_ANSWER_MAX_CHARS
 

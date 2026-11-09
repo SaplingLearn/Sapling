@@ -27,6 +27,7 @@ from tests.test_learn_loop_routes import client
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 from routes.learn_loop import posed_items as _REAL_POSED_ITEMS  # noqa: E402
+from services import loop_posed  # noqa: E402  (spec §13 A149: the scan set's home)
 POSED = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -144,16 +145,16 @@ def test_posed_items_reads_every_posed_ungraded_source():
     ]
     ledger = [("qh-ledger", POSED + timedelta(hours=1)), ("qh-seen", POSED)]
     with (
-        patch("routes.learn_loop.page_all", side_effect=_pages(loop_rows, review_rows)),
+        patch("services.loop_posed.page_all", side_effect=_pages(loop_rows, review_rows)),
         patch("routes.learn_loop.get_check_item", side_effect=AssertionError("one read per id")),
-        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids(items)) as ibi,
-        patch("routes.learn_loop.table", return_value=poses_tbl),
+        patch("services.loop_posed.items_by_ids", side_effect=_by_ids(items)) as ibi,
+        patch("services.loop_posed.table", return_value=poses_tbl),
         patch(
-            "routes.learn_loop.items_by_hash",
+            "services.loop_posed.items_by_hash",
             side_effect=lambda hs: [i for i in by_hash if i.question_hash in hs],
         ) as ibh,
-        patch("routes.learn_loop.ungraded_posed_window", return_value=(ledger, None)) as ug,
-        patch("routes.learn_loop.seen_hashes", return_value={"qh-seen"}),
+        patch("services.loop_posed.ungraded_posed_window", return_value=(ledger, None)) as ug,
+        patch("services.loop_posed.seen_hashes", return_value={"qh-seen"}),
     ):
         got, overflow = learn_loop.posed_items("u1", now=now)
     assert {i.question_hash for i, _ in got} == {"qh-a", "qh-e", "qh-r", "qh-p", "qh-probe", "qh-ledger"}
@@ -171,10 +172,10 @@ def _open_world(*, loop_rows=(), review_rows=(), poses=(), ledger=((), None), se
     poses_tbl = MagicMock()
     poses_tbl.select.return_value = list(poses)
     with (
-        patch("routes.learn_loop.page_all", side_effect=_pages(list(loop_rows), list(review_rows))),
-        patch("routes.learn_loop.table", return_value=poses_tbl),
-        patch("routes.learn_loop.ungraded_posed_window", return_value=(list(ledger[0]), ledger[1])),
-        patch("routes.learn_loop.seen_hashes", return_value=set(seen)),
+        patch("services.loop_posed.page_all", side_effect=_pages(list(loop_rows), list(review_rows))),
+        patch("services.loop_posed.table", return_value=poses_tbl),
+        patch("services.loop_posed.ungraded_posed_window", return_value=(list(ledger[0]), ledger[1])),
+        patch("services.loop_posed.seen_hashes", return_value=set(seen)),
     ):
         yield
 
@@ -211,8 +212,8 @@ def test_a_seen_item_that_is_currently_open_stays_in_the_scan_set():
     )
     with (
         world,
-        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids({"id-qh-x": x, "id-qh-step": step})),
-        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [i for i in (probe, pose, hist) if i.question_hash in hs]),
+        patch("services.loop_posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x, "id-qh-step": step})),
+        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [i for i in (probe, pose, hist) if i.question_hash in hs]),
     ):
         got, _ = learn_loop.posed_items("u1", now=POSED)
     assert {i.question_hash for i, _ in got} == {"qh-x", "qh-step", "qh-probe", "qh-pose"}
@@ -229,8 +230,8 @@ def test_the_seen_review_item_exploit_is_closed(gate_on, seams):
     )
     with (
         world,
-        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids({"id-qh-x": x})),
-        patch("routes.learn_loop.items_by_hash", return_value=[]),
+        patch("services.loop_posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x})),
+        patch("services.loop_posed.items_by_hash", return_value=[]),
     ):
         got = _REAL_POSED_ITEMS("u1", now=POSED)  # `seams` patches the module's name
     assert got is not None and [i.question_hash for i, _ in got[0]] == ["qh-x"]
@@ -246,7 +247,7 @@ def test_the_fan_out_is_cut_before_any_item_is_loaded(monkeypatch):
     first — only the kept ones are read."""
     from routes import learn_loop
 
-    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 3)
+    monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 3)
     steps = {
         f"qh-{n}": {"check_item_id": f"id-qh-{n}", "first_shown_at": float(n)} for n in range(10)
     }
@@ -255,10 +256,10 @@ def test_the_fan_out_is_cut_before_any_item_is_loaded(monkeypatch):
     with (
         world,
         patch(
-            "routes.learn_loop.items_by_ids",
+            "services.loop_posed.items_by_ids",
             side_effect=lambda ids: loaded.extend(ids) or [_item(i[3:], "x") for i in ids],
         ),
-        patch("routes.learn_loop.items_by_hash", return_value=[]),
+        patch("services.loop_posed.items_by_hash", return_value=[]),
     ):
         got, overflow = learn_loop.posed_items("u1", now=POSED)
     assert loaded == ["id-qh-7", "id-qh-8", "id-qh-9"]  # the newest three, nothing else read
@@ -270,13 +271,13 @@ def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
     from routes import learn_loop
 
     monkeypatch.setattr(params, "LOOP_SCAN_POSED_MAX", 2)
-    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 2)
+    monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 2)
     t = [POSED + timedelta(minutes=m) for m in range(3)]
     world = _open_world(ledger=([("qh-2", t[2]), ("qh-1", t[1])], t[0]))
     with (
         world,
-        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
-        patch("routes.learn_loop.items_by_ids", return_value=[]),
+        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("services.loop_posed.items_by_ids", return_value=[]),
     ):
         got, overflow = learn_loop.posed_items("u1", now=POSED)
     assert [i.question_hash for i, _ in got] == ["qh-2", "qh-1"]  # newest first, bounded
@@ -286,7 +287,7 @@ def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
 def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkeypatch):
     from routes import learn_loop
 
-    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 1)
+    monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 1)
     t = [POSED + timedelta(minutes=m) for m in range(4)]
     world = _open_world(
         poses=[
@@ -297,8 +298,8 @@ def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkey
     )
     with (
         world,
-        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
-        patch("routes.learn_loop.items_by_ids", return_value=[]),
+        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("services.loop_posed.items_by_ids", return_value=[]),
     ):
         got, overflow = learn_loop.posed_items("u1", now=POSED)
     assert [i.question_hash for i, _ in got] == ["qh-new"]
@@ -308,7 +309,7 @@ def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkey
 def test_posed_items_is_none_when_anything_cannot_be_read(caplog):
     from routes import learn_loop
 
-    with patch("routes.learn_loop.page_all", side_effect=RuntimeError("down")):
+    with patch("services.loop_posed.page_all", side_effect=RuntimeError("down")):
         assert learn_loop.posed_items("u1", now=POSED) is None
     assert "could not be read" in caplog.text
 

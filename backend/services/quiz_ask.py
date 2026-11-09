@@ -34,7 +34,7 @@ from db.connection import page_all, table
 from learning.help_ledger import record_help
 from learning.params import RUNG_NO_CREDIT_MIN
 from services.encryption import decrypt_json_column
-from services.quiz_identity import wire_question_hash
+from services.quiz.identity import wire_question_hash
 
 logger = logging.getLogger(__name__)
 

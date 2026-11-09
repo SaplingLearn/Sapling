@@ -22,17 +22,35 @@ live for the life of the worker. A discard (end-session or delete) leaves a
 short-lived tombstone, so a turn that passed its ownership check just before
 the discard answers 409/404 instead of carrying on as if the session row
 existed.
+
+Two replicas (#117): process memory is invisible to the other replica, so a
+session started on one 404s on the other and an end/delete there does not
+stop it. With the ``stateless_tutor_sessions`` flag on (global, default off)
+new pending sessions and tombstones live in the service-only
+``tutor_pending_sessions`` table instead (migration
+20261109024225_tutor_pending_sessions.sql): the first turn materialises in
+ONE transaction (``materialize_tutor_session``), so the per-process lock is
+not needed there, and a discard is one atomic call
+(``discard_tutor_session``). The same TTLs and cap apply, across replicas.
+An entry is looked up where it was stashed: memory first (a session started
+before the flag went on finishes there), then the table when the flag is on.
+Flag off = the in-memory store exactly as before; no table is touched.
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
-from db.connection import table
+from db.async_connection import arpc
+from db.connection import rpc, table
+from db.scope import runs_as_service
+from services.encryption import decrypt_if_present, encrypt_if_present
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 
 # Maps session_id -> pending payload (cleared on first chat, end-session
@@ -73,14 +91,271 @@ def _now() -> float:
     return time.monotonic()
 
 
+# ── Postgres store (flag `stateless_tutor_sessions` on) ─────────────────────
+
+FLAG_KEY = "stateless_tutor_sessions"
+STORE_TABLE = "tutor_pending_sessions"
+_STORE_COLS = (
+    "session_id,user_id,state,mode,topic,course_id,offering_id,"
+    "use_shared_context,assistant_reply,stashed_at,discarded_at"
+)
+
+
+def stored() -> bool:
+    """Whether new pending sessions go to the table. Fails closed (memory)."""
+    try:
+        from services.feature_flags import flag_on
+
+        return flag_on(FLAG_KEY, None)
+    except Exception:
+        return False
+
+
+async def astored() -> bool:
+    """:func:`stored` without a blocking read on the loop: the cached flag
+    snapshot when it can answer, else one hop to a worker thread."""
+    try:
+        from services.feature_flags import cached_explain
+
+        res = cached_explain(FLAG_KEY, None)
+    except Exception:
+        res = None
+    if res is not None:
+        return res.variant == "on"
+    return await asyncio.to_thread(stored)
+
+
+def _within(ts: str | None, seconds: int) -> bool:
+    """Whether the stored timestamp ``ts`` is less than ``seconds`` old."""
+    if not ts:
+        return False
+    at = datetime.fromisoformat(ts)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at >= datetime.now(timezone.utc) - timedelta(seconds=seconds)
+
+
+def _view(row: dict | None, user_id: str | None = None) -> tuple[dict | None, str | None]:
+    """(live pending payload, live tombstone reason for ``user_id``) of a
+    store row; an expired pending row or tombstone reads as absent."""
+    if not row:
+        return None, None
+    if row.get("state") == "pending":
+        if not _within(row.get("stashed_at"), PENDING_TTL_SECONDS):
+            return None, None
+        return {
+            "user_id": row.get("user_id"),
+            "mode": row.get("mode"),
+            "topic": row.get("topic"),
+            "course_id": row.get("course_id"),
+            "offering_id": row.get("offering_id"),
+            "use_shared_context": row.get("use_shared_context"),
+            "assistant_reply": decrypt_if_present(row.get("assistant_reply")),
+        }, None
+    if not _within(row.get("discarded_at"), DISCARD_TOMBSTONE_TTL_SECONDS):
+        return None, None
+    if user_id is not None and row.get("user_id") != user_id:
+        return None, None
+    return None, row.get("state")
+
+
+@runs_as_service  # tutor_pending_sessions is service-only (RLS bucket E)
+def _store_row(session_id: str) -> dict | None:
+    rows = table(STORE_TABLE).select(
+        _STORE_COLS, filters={"session_id": f"eq.{session_id}"}, limit=1
+    )
+    return rows[0] if rows else None
+
+
+@runs_as_service
+async def _astore_row(session_id: str) -> dict | None:
+    rows = await table(STORE_TABLE).aselect(
+        _STORE_COLS, filters={"session_id": f"eq.{session_id}"}, limit=1
+    )
+    return rows[0] if rows else None
+
+
+def _stash_params(session_id: str, payload: dict) -> dict:
+    return {
+        "p_session_id": session_id,
+        "p_user_id": payload["user_id"],
+        "p_mode": payload["mode"],
+        "p_topic": payload["topic"],
+        "p_course_id": payload.get("course_id"),
+        "p_offering_id": payload.get("offering_id"),
+        "p_use_shared_context": bool(payload.get("use_shared_context", True)),
+        # The messages.content format: materialisation copies it as is.
+        "p_assistant_reply": encrypt_if_present(payload["assistant_reply"]),
+        "p_graph_update": payload.get("graph_update") or None,
+        "p_ttl_seconds": PENDING_TTL_SECONDS,
+        "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
+        "p_max_entries": PENDING_MAX_ENTRIES,
+    }
+
+
+@runs_as_service
+def _store_stash(session_id: str, payload: dict) -> None:
+    rpc("stash_tutor_session", _stash_params(session_id, payload))
+
+
+@runs_as_service
+async def _astore_stash(session_id: str, payload: dict) -> None:
+    await arpc("stash_tutor_session", _stash_params(session_id, payload))
+
+
+@runs_as_service
+def _store_discard(session_id: str, user_id: str, reason: str, *, only_if_pending: bool) -> bool:
+    out = rpc("discard_tutor_session", {
+        "p_session_id": session_id,
+        "p_user_id": user_id,
+        "p_reason": reason,
+        "p_only_if_pending": only_if_pending,
+        "p_ttl_seconds": PENDING_TTL_SECONDS,
+    })
+    return bool(out[0] if isinstance(out, list) and out else out)
+
+
+@runs_as_service
+def _store_rename(session_id: str, topic: str) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=PENDING_TTL_SECONDS)
+    return bool(table(STORE_TABLE).update(
+        {"topic": topic},
+        filters={
+            "session_id": f"eq.{session_id}",
+            "state": "eq.pending",
+            "stashed_at": f"gte.{cutoff.isoformat()}",
+        },
+    ))
+
+
+@runs_as_service
+async def amaterialize_stored(session_id: str, user_id: str) -> bool:
+    """The first turn of a table-held pending session, in one call (flag on).
+
+    True when THIS call wrote the ``sessions`` row and the greeting (it logs
+    ``session.started``); False when the session is not pending (never was,
+    expired, or another turn materialised it first). Raises 409
+    SESSION_ENDED / 404 for the caller's ended / deleted tombstone, and 404
+    for another student's pending session.
+    """
+    from services import events_service
+
+    rows = await arpc("materialize_tutor_session", {
+        "p_session_id": session_id,
+        "p_user_id": user_id,
+        "p_ttl_seconds": PENDING_TTL_SECONDS,
+        "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
+        # The greeting's created_at, on the app clock the turn's own rows
+        # use (routes/learn.py::_message_row), so it always sorts first.
+        "p_created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    row = rows[0] if isinstance(rows, list) and rows else {}
+    outcome = row.get("outcome")
+    if outcome == "ended":
+        raise session_ended_error()
+    if outcome in ("deleted", "foreign"):
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    if outcome != "materialized":
+        return False
+    # #117: session.started once the lazy row materialises; the topic is free
+    # text -> content= (fingerprint only), as in routes/learn._consume_pending.
+    events_service.log_event(
+        "session.started",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "session_id": session_id,
+            "mode": row.get("session_mode"),
+            "offering_id": row.get("session_offering_id"),
+        },
+        content=row.get("session_topic"),
+    )
+    return True
+
+
+# ── The store API (memory, or the table with the flag on) ───────────────────
+
+def get_pending(session_id: str | None) -> dict | None:
+    """``session_id``'s live pending payload, or None."""
+    pending = PENDING_SESSIONS.get(session_id) if session_id else None
+    if pending is None and session_id and stored():
+        pending = _view(_store_row(session_id))[0]
+    return pending
+
+
+async def aget_pending(session_id: str | None) -> dict | None:
+    """:func:`get_pending` over the async seam."""
+    pending = PENDING_SESSIONS.get(session_id) if session_id else None
+    if pending is None and session_id and await astored():
+        pending = _view(await _astore_row(session_id))[0]
+    return pending
+
+
+async def astash_pending(session_id: str, payload: dict) -> None:
+    """:func:`stash_pending` for event-loop callers."""
+    if await astored():
+        await _astore_stash(session_id, payload)
+    else:
+        stash_pending(session_id, payload)
+
+
+def row_may_exist(pending: dict | None) -> bool:
+    """True when the session has (or may have) a ``sessions`` row: it is not
+    pending at all, or materialisation already attempted the row write."""
+    return pending is None or bool(pending.get("_row_may_exist"))
+
+
+def discard_if_pending(
+    session_id: str, *, user_id: str, reason: str, always: bool = False
+) -> dict | None:
+    """End or delete a session's pending state; returns the popped pending
+    payload, or None if it was not pending. ``always`` leaves the tombstone
+    even for a session that is not pending (delete: a turn already past its
+    ownership check must not write into the deleted row). A popped payload
+    without ``row_may_exist`` means there is no ``sessions`` row to act on.
+    """
+    if session_id in PENDING_SESSIONS:
+        # Under the lock so a concurrent first turn can't insert the row
+        # after the entry is dropped.
+        with materialization_lock(session_id):
+            return discard_pending(session_id, user_id=user_id, reason=reason)
+    if stored():
+        # Atomic in the table; a pending row there never has a sessions row.
+        was = _store_discard(session_id, user_id, reason, only_if_pending=not always)
+        return {} if was else None
+    if always:
+        discard_pending(session_id, user_id=user_id, reason=reason)
+    return None
+
+
+def rename_pending(session_id: str, topic: str) -> bool:
+    """Rename a pending session's stored topic, for the row a later
+    materialisation writes. True when that is all there is to rename (no
+    ``sessions`` row can exist yet); False to rename the real row."""
+    if session_id in PENDING_SESSIONS:
+        with materialization_lock(session_id):
+            pending = PENDING_SESSIONS.get(session_id)
+            if pending is not None:
+                pending["topic"] = topic
+                # An earlier attempt may already have written the row (the
+                # retry's upsert won't overwrite it): rename that too.
+                return not row_may_exist(pending)
+        return False  # it materialised while we waited: rename the real row
+    return stored() and _store_rename(session_id, topic)
+
+
 def stash_pending(session_id: str, payload: dict) -> None:
-    """Record a freshly started session as pending, enforcing the bounds.
+    """Record a freshly started session as pending, enforcing the bounds
+    (in the table with the flag on; :func:`astash_pending` from the loop).
 
     Expired entries (older than ``PENDING_TTL_SECONDS``) are dropped, then the
     oldest are evicted until there is room under ``PENDING_MAX_ENTRIES``. Dicts
     keep insertion order, so "oldest" is the front of the dict. An evicted
     session answers 404 on its first turn, like any unknown id.
     """
+    if stored():
+        _store_stash(session_id, payload)
+        return
     now = _now()
     with _STATE_GUARD:
         cutoff = now - PENDING_TTL_SECONDS
@@ -120,17 +395,34 @@ def discard_pending(session_id: str, *, user_id: str, reason: str) -> dict | Non
     return popped
 
 
-def discarded_reason(session_id: str | None, user_id: str | None = None) -> str | None:
-    """``"ended"`` / ``"deleted"`` if ``session_id`` was discarded within the
-    tombstone TTL (by ``user_id``, when one is given), else None."""
-    if not session_id:
-        return None
+def _memory_discarded_reason(session_id: str, user_id: str | None) -> str | None:
     t = _DISCARDED.get(session_id)
     if t is None or t[2] < _now() - DISCARD_TOMBSTONE_TTL_SECONDS:
         return None
     if user_id is not None and t[0] != user_id:
         return None
     return t[1]
+
+
+def discarded_reason(session_id: str | None, user_id: str | None = None) -> str | None:
+    """``"ended"`` / ``"deleted"`` if ``session_id`` was discarded within the
+    tombstone TTL (by ``user_id``, when one is given), else None."""
+    if not session_id:
+        return None
+    reason = _memory_discarded_reason(session_id, user_id)
+    if reason is None and session_id not in PENDING_SESSIONS and stored():
+        reason = _view(_store_row(session_id), user_id)[1]
+    return reason
+
+
+async def adiscarded_reason(session_id: str | None, user_id: str | None = None) -> str | None:
+    """:func:`discarded_reason` over the async seam."""
+    if not session_id:
+        return None
+    reason = _memory_discarded_reason(session_id, user_id)
+    if reason is None and session_id not in PENDING_SESSIONS and await astored():
+        reason = _view(await _astore_row(session_id), user_id)[1]
+    return reason
 
 
 def session_ended_error() -> HTTPException:
@@ -140,25 +432,103 @@ def session_ended_error() -> HTTPException:
     return exc
 
 
-def raise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
-    """409 SESSION_ENDED for an ended discard, 404 for a deleted one."""
-    reason = discarded_reason(session_id, user_id)
+def _raise_for(reason: str | None) -> None:
     if reason == "ended":
         raise session_ended_error()
     if reason is not None:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
 
-def require_session_open(session_id: str) -> None:
-    """Before a turn runs on a materialised session: 409 SESSION_ENDED if it
-    has ended, 404 if its row is gone (deleted since the ownership check)."""
-    rows = table("sessions").select(
-        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
-    )
+def raise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
+    """409 SESSION_ENDED for an ended discard, 404 for a deleted one."""
+    _raise_for(discarded_reason(session_id, user_id))
+
+
+def raise_if_discarded_here(session_id: str | None, user_id: str | None = None) -> None:
+    """:func:`raise_if_discarded` for THIS process's tombstones only: no I/O,
+    so a caller can run it first whichever store the flag picks (a session
+    pending in memory when the flag went on is ended in memory)."""
+    if session_id:
+        _raise_for(_memory_discarded_reason(session_id, user_id))
+
+
+async def araise_if_discarded(session_id: str | None, user_id: str | None = None) -> None:
+    """:func:`raise_if_discarded` for event-loop callers (#117 wave 3)."""
+    _raise_for(await adiscarded_reason(session_id, user_id))
+
+
+def _raise_unless_open(rows: list) -> None:
     if not rows:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     if rows[0].get("ended_at"):
         raise session_ended_error()
+
+
+def require_session_open(session_id: str) -> None:
+    """Before a turn runs on a materialised session: 409 SESSION_ENDED if it
+    has ended, 404 if its row is gone (deleted since the ownership check)."""
+    _raise_unless_open(table("sessions").select(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    ))
+
+
+async def arequire_session_open(session_id: str) -> None:
+    """:func:`require_session_open` over the async seam (#117 wave 3)."""
+    _raise_unless_open(await table("sessions").aselect(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    ))
+
+
+async def arequire_owned_open(session_id: str, user_id: str) -> None:
+    """One ``sessions`` read: 404 unless the row is ``user_id``'s, 409
+    SESSION_ENDED if it has ended. For a session known not to be pending."""
+    rows = await table("sessions").aselect(
+        # a daily review session is never a tutor session (learning loop A73)
+        "user_id,ended_at", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+    )
+    if not _row_owned_by(rows, user_id):
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    _raise_unless_open(rows)
+
+
+async def aowned_live_row(session_id: str, user_id: str) -> bool:
+    """With the flag on, the learning loop's split turn entry
+    (services/tutor/pending.py::_require_turn_session, spec §13 A149): True
+    when the session has a `sessions` row, after a 404 unless it is
+    `user_id`'s; False when it has none (the caller then checks the store).
+    Never materialises and never answers the ended 409 (the turn's open does,
+    after the loop hand-off)."""
+    rows = await table("sessions").aselect(
+        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+    )
+    if not rows:
+        return False
+    if not _row_owned_by(rows, user_id):
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    return True
+
+
+async def aopen_stored(session_id: str, user_id: str) -> None:
+    """A turn's entry check with the flag on, for a session not pending in
+    this process. The ``sessions`` row first (the turn needs it anyway): a
+    live session — every turn after the first — answers in that one read,
+    404 unless it is ``user_id``'s, 409 SESSION_ENDED once ended. Only a
+    session with no row yet costs the ``materialize_tutor_session`` call,
+    which answers its tombstones (ended 409 / deleted 404) or writes it; a
+    turn that lost the materialisation race re-reads the row the winner
+    wrote. A discard landing after this check is caught by the turn's write
+    (``routes/learn.py::save_message``)."""
+    rows = await table("sessions").aselect(
+        "user_id,ended_at", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+    )
+    if rows:
+        if not _row_owned_by(rows, user_id):
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+        _raise_unless_open(rows)
+        return
+    if not await amaterialize_stored(session_id, user_id):
+        await arequire_owned_open(session_id, user_id)
+
 
 # Per-session locks serialising every pending -> materialised/discarded
 # transition. PENDING_SESSIONS is a plain module dict, so it is per-process:
@@ -207,14 +577,33 @@ def session_owned_by(
     """
     if not session_id or not user_id:
         return False
-    pending = PENDING_SESSIONS.get(session_id)
+    pending = get_pending(session_id)
     if pending is not None:
+        # a daily review session is never a tutor session (learning loop A73)
         return allow_pending and pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
-    rows = table("sessions").select(
+    return _row_owned_by(table("sessions").select(
         "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
-    )
+    ), user_id)
+
+
+def _row_owned_by(rows: list, user_id: str) -> bool:
     owner = rows[0].get("user_id") if rows else None
     return bool(owner) and owner == user_id
+
+
+async def asession_owned_by(
+    session_id: str | None, user_id: str | None, *, allow_pending: bool = True
+) -> bool:
+    """:func:`session_owned_by` over the async seam (#117 wave 3)."""
+    if not session_id or not user_id:
+        return False
+    pending = await aget_pending(session_id)
+    if pending is not None:
+        # a daily review session is never a tutor session (learning loop A73)
+        return allow_pending and pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
+    return _row_owned_by(await table("sessions").aselect(
+        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+    ), user_id)
 
 
 def require_session_owner(
@@ -227,3 +616,32 @@ def require_session_owner(
     """
     if not session_owned_by(session_id, user_id, allow_pending=allow_pending):
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+async def arequire_session_owner(
+    session_id: str | None, user_id: str | None, *, allow_pending: bool = True
+) -> None:
+    """:func:`require_session_owner` over the async seam (#117 wave 3)."""
+    if not await asession_owned_by(session_id, user_id, allow_pending=allow_pending):
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+def _parse_utc(iso: str) -> datetime:
+    parsed = datetime.fromisoformat(iso)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def elapsed_minutes(started_at_iso: str, *, until: str | None = None) -> int:
+    """Whole minutes since ``started_at_iso``, robust to both timestamp shapes
+    in the wild: tz-aware ISO (TIMESTAMPTZ reads via PostgREST, and every write
+    after the #248 sweep) and legacy naive strings (pre-sweep ``utcnow()``
+    writes), which are UTC by construction. The old inline
+    ``utcnow() - fromisoformat(...)`` raised TypeError on the aware shape and
+    silently reported 0. Returns 0 for anything unparseable. ``until`` (an
+    ISO timestamp, e.g. the stored ended_at) replaces "now" as the end."""
+    try:
+        started = _parse_utc(started_at_iso)
+        end = _parse_utc(until) if until else datetime.now(timezone.utc)
+        return int((end - started).total_seconds() / 60)
+    except Exception:
+        return 0

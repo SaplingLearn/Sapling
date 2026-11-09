@@ -19,10 +19,10 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A148. **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A149. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
-they would be). There are 138 rows, all indexed below. A143–A147 are one
+they would be). There are 139 rows, all indexed below. A143–A147 are one
 package, the quiz in the learning system (five flags, all off by default).
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
@@ -68,7 +68,7 @@ files, which the row lists. A dash means the row has no code of its own.
 |---|---|---|---|
 | A1 | BKT | "I don't know" is a flag on the item's channel, not a channel of its own | `backend/learning/bkt.py::update` |
 | A7 | FSRS | FSRS rating-map additions; exam retention beats large-set retention; never-reviewed recall is 1.0 | `backend/learning/fsrs.py::rating_for` |
-| A10 | quiz | Quiz evidence is the `mc` channel: a quiz answer carries no reason | `backend/routes/quiz.py` |
+| A10 | quiz | Quiz evidence is the `mc` channel: a quiz answer carries no reason | `backend/services/quiz/submission.py::_quiz_evidence` |
 | A22 | grading | Code checks (option letter, numeric answer), run after the grader, can only veto a "correct" (A142); a second-opinion slot | `backend/agents/tools/check.py` |
 | A28 | FSRS | FSRS-6 reference guards (same-day reviews, stability floors) ratified | `backend/learning/fsrs.py::next_state` |
 | A30 | BKT | Belief is capped at 0.999 so contrary evidence can always lower it | `backend/learning/bkt.py::update` |
@@ -94,7 +94,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A82 | metrics | `zpd.step` carries the session id, so cost is reported per session | `backend/learning/zpd_events.py::emit_zpd_step` |
 | A87 | post-test | The tool-removed post-test commits when opened (`posttest_poses`) | `backend/db/migrations/20260930024005_learning_posttest_poses.sql` |
 | A89 | post-test | A post-test pose expires after 24 h; help since the pose removes unassisted credit | `backend/learning/params.py::POSTTEST_POSE_TTL_HOURS` |
-| A90 | metrics | The zero-leak gate counts solution reveals actually served | `backend/routes/admin_analytics.py` |
+| A90 | metrics | The zero-leak gate counts solution reveals actually served | `backend/services/admin/analytics/learning_loop.py::learning_loop_report` |
 | A107 | evals | Jev promotion-gate fixes (a missing Jev cost fails instead of passing) | `backend/tests/evals/decisions.py::shadow_stats` |
 | A108 | evals | Tier re-records and their decisions: the lite tier stays unrouted, only deep confronts | `backend/tests/evals/loop_tutor.py` |
 | A109 | metrics | The earnest-revise gate is measured | `backend/learning/earnest_revise.py::earnest_revise` |
@@ -176,7 +176,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A86 | reveals | Scope superseded by A88: a served teach turn is scanned, never withheld | `backend/learning/reveal_store.py` |
 | A88 | reveals | Each served tutor turn is scanned against the student's open posed items; reveals are durable at serve time | `backend/learning/reveal_store.py::record_reveals` |
 | A93 | help ledger | A per-student help ledger: a grade's help floor is the most help ever had on that item | `backend/learning/help_ledger.py::max_help` |
-| A94 | quiz | Quiz evidence cannot be farmed: answer keys admin-only, one evidence per question per window | `backend/routes/quiz.py` |
+| A94 | quiz | Quiz evidence cannot be farmed: answer keys admin-only, one evidence per question per window | `backend/services/quiz/submission.py::_farm_guard` |
 | A97 | answer guard | A correct answer the student disowns earns no credit | `backend/learning/answer_guard.py::disowned` |
 | A99 | help ledger | The quiz "Ask about this" panel opens a `quiz_ask` session whose help lands on the quiz item's ledger | `backend/services/quiz_ask.py` |
 | A100 | quiz | Quiz farming: a rolling 24-hour window, decided by an atomic claim | `backend/db/migrations/20261001060408_learning_quiz_evidence_claims.sql` |
@@ -219,7 +219,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A12 | module map | Module-map additions: loop-state store, `zpd.*` emitters, close agent, frontend loop state and DueQueue | `backend/learning/loop_state_store.py` |
 | A14 | gate | The loop is every student's default with no opt-in; `LEARNING_LOOP_ENABLED` becomes a kill switch | `backend/learning/gate.py::learning_loop_active` |
 | A26 | frontend | Frontend contract: no model toggle, explicit answers, the budget-pause banner, resume | `frontend/src/components/learn/LoopLearn.tsx::LoopLearn` |
-| A31 | gate | The retired `learning_loop_beta` toggle is in no settings API field | `backend/routes/profile.py::_SETTINGS_COLS` |
+| A31 | gate | The retired `learning_loop_beta` toggle is in no settings API field | `backend/services/profile/users.py::_SETTINGS_COLS` |
 | A38 | decision record | Owner decisions before PKG-07: step-state layout, compare-and-set saves, option-letter leak, one gate read per request | `backend/learning/loop_state_store.py::update_loop_state` |
 | A42 | decision record | Keep as built: the hand-offs' answers to open questions stand | — |
 | A45 | decision record | Recorded, not decided: two competing decision seams and ADR numbering (resolved by ADR 0032) | `docs/decisions/0032-separate-learning-decisions-from-tutor-observation.md` |
@@ -234,6 +234,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A136 | schema | Every float the backend reads through PostgREST is exact | `backend/db/migrations/20261108162223_learning_exact_floats.sql` |
 | A142 | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) | `backend/db/migrations/20261108193927_learning_report_course_key.sql` |
 | A148 | main sync | The loop on main's hardening architecture: its tables' RLS posture, service scope, the upload job queue, the LLM budget and resilience | `backend/db/migrations/20261109032302_learning_loop_rls.sql` |
+| A149 | main port | The learning system on main's Phase 3/4 layout: the quiz, tutor, documents, flashcards and analytics changes in main's domain packages, the async turn entry, the import contracts kept with no new exception | `backend/services/loop_posed.py::posed_items` |
 
 ## In A-number order
 
@@ -377,6 +378,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A146 | Evidence and the learner model | quiz | The quiz records and resolves misconceptions, behind `quiz_misconceptions` |
 | A147 | Teaching policy | quiz results | The quiz results route into the learning system, behind `quiz_results_routing` |
 | A148 | Operations and process | main sync | The loop on main's hardening architecture (RLS posture, service scope, job queue, LLM budget, resilience) |
+| A149 | Operations and process | main port | The learning system on main's Phase 3/4 layout (async + stateless API, domain packages, import contracts) |
 
 ## Where the spec and the code disagree
 

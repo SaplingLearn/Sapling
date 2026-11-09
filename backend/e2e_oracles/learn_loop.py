@@ -143,7 +143,7 @@ def _prequestions_of(session: dict) -> dict:
     return {k: v for k, v in (records or {}).items() if isinstance(v, dict)} if isinstance(records, dict) else {}
 
 
-#: A seeded prequestion item (db/seed_learning_teach_prompts.py) → its sentinel's token.
+#: A seeded prequestion item (scripts/seed_learning_teach_prompts.py) → its sentinel's token.
 _SEEDED_PREQUESTION = re.compile(r"^rich-check-(?P<slug>.+)-mc-pq(?P<n>\d+)$")
 
 

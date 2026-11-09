@@ -3774,12 +3774,18 @@ _PKG06_SANCTIONED_IMPORTS = {
 # inactive guard (the kill switch) imports nothing of it. The app-load probe below
 # proves boot loads none of it; tests/test_learning_outside_integrity.py proves an
 # inactive guard does not either. learning/stem_match.py is reached only from there.
+#
+# Spec §13 A149: services/loop_posed.py is the A93/A101 scan set (`posed_items`,
+# moved out of routes/learn_loop.py so the guard reads it without importing a
+# route). It reads the loop_state store's `seen_hashes`; only the loop route
+# (at import) and an ACTIVE guard (inside `_posed`) import it.
 _PKG06_SANCTIONED_IMPORTERS = frozenset(
     {
         "routes/learn_loop.py",
         "learning/review.py",
         "learning/served_scan.py",
         "services/integrity_guard.py",
+        "services/loop_posed.py",
         "learning/stem_match.py",
     }
 )

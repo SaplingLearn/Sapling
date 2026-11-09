@@ -152,7 +152,19 @@ _FILTER_ON_ENCRYPTED = re.compile(
     % "|".join(ENCRYPTED_LEARNING_COLUMNS)
 )
 # PKG-11: the two routes on the loop path, named explicitly in inv_01.
-ROUTE_GRAPH_CALLERS = ("routes/quiz.py", "routes/flashcards.py")
+#: The quiz's and the flashcards' route files and the domain modules #118 split
+#: their handler bodies into (spec §13 A149): none writes a graph table directly.
+ROUTE_GRAPH_CALLERS = (
+    "routes/quiz.py",
+    "routes/flashcards.py",
+    *sorted(
+        p.relative_to(BACKEND).as_posix()
+        for pkg in ("quiz", "flashcards")
+        for p in (BACKEND / "services" / pkg).glob("*.py")
+    ),
+)
+#: Where the quiz's submit makes its one graph write since #118 (spec §13 A149).
+QUIZ_GRAPH_CALLER = "services/quiz/submission.py"
 _GRAPH_WRITE = re.compile(
     r'table\(\s*"(graph_nodes|graph_edges|node_mastery_events|learner_state)"\s*\)'
     r"\s*\.\s*(insert|update|upsert|delete)\s*\(",
@@ -261,6 +273,9 @@ GRAPH_TABLES = (
 GRAPH_WRITER = "services/graph_service.py"
 GRAPH_WRITER_FUNCS = (
     "apply_graph_update", "_apply_evidence", "_calculate_evidence", "_apply_void", "_calculate_void",
+    # #118 (spec §13 A149): the single writer's topology upserts moved into its
+    # phase helpers; each is still reached only from apply_graph_update
+    "_upsert_new_nodes", "_upsert_new_edges",
 )
 GRAPH_ENTRY = GRAPH_WRITER_FUNCS[0]
 # Writers that name neither table() nor write_state at a call site, so the
@@ -272,6 +287,8 @@ GRAPH_PRIVATE_CALLER = {
     "_calculate_evidence": "_apply_evidence",
     "_apply_void": GRAPH_ENTRY,  # A123: the void + recompute branch
     "_calculate_void": "_apply_void",
+    "_upsert_new_nodes": GRAPH_ENTRY,  # #118's phase helpers (A149)
+    "_upsert_new_edges": GRAPH_ENTRY,
 }
 TRANSACTION_MODULE = "learning/evidence_transaction.py"
 TRANSACTION_ENTRY = "commit_evidence_transaction"
@@ -294,9 +311,10 @@ RPC_SCOPE = {
 # table() at all, so no table() write of node_mastery_events or learner_state
 # is sanctioned here.
 GRAPH_WRITER_SANCTIONED = frozenset({
-    # the single writer's topology upserts
-    ("graph_nodes", "upsert", "apply_graph_update"),
-    ("graph_edges", "upsert", "apply_graph_update"),
+    # the single writer's topology upserts, in its #118 phase helpers (reached
+    # only from apply_graph_update: GRAPH_PRIVATE_CALLER, spec §13 A149)
+    ("graph_nodes", "upsert", "_upsert_new_nodes"),
+    ("graph_edges", "upsert", "_upsert_new_edges"),
     # a student deletes one of their own concept nodes (owner-scoped): its
     # edges, then the node. ON DELETE CASCADE removes that node's
     # learner_state, journal, void and misconception rows in the same
@@ -735,8 +753,8 @@ def test_inv_01_single_graph_writer():
         text = (BACKEND / rel).read_text()
         hits = [m.group(0) for m in _GRAPH_WRITE.finditer(text)]
         assert not hits, f"{rel} writes a graph table directly: {hits}"
-    assert "apply_graph_update(" in (BACKEND / "routes/quiz.py").read_text(), (
-        "routes/quiz.py must reach the graph through apply_graph_update"
+    assert "apply_graph_update(" in (BACKEND / QUIZ_GRAPH_CALLER).read_text(), (
+        f"{QUIZ_GRAPH_CALLER} must reach the graph through apply_graph_update"
     )
 
     # PKG-14: learner_state.write_metrics (the derived-column UPDATE) is the

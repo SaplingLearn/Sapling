@@ -246,6 +246,9 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # listed: it is binary, so the text decrypt-and-compare judge cannot read
     # it, and it is NULL once an upload finishes.
     ("document_uploads", "id", "result"),
+    # #117 a pending tutor session's greeting (the messages.content format);
+    # NULL on a tombstone.
+    ("tutor_pending_sessions", "session_id", "assistant_reply"),
 )
 
 

@@ -59,12 +59,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "/api/admin/check-items admin_check_items_router", "admin_service_route"):
         "learning-loop check-item review queue (A113): check_items/reports are service-only",
     # ── Endpoints ──
-    ("routes/learn.py", "_loop_delegate", "service_route"):
+    ("routes/learn.py", "delegate", "service_route"):  # _loop_delegate's closure
         "spec §13 A148: a /api/learn request the loop gate hands to a loop handler runs as the "
         "loop router does",
-    ("routes/learn_loop.py", "posed_items", "runs_as_service"):
-        "A93/A101 scan set over service-only loop tables; called by the notes/flashcards guard",
-    ("routes/quiz.py", "_claim_quiz_evidence", "runs_as_service"):
+    ("services/loop_posed.py", "posed_items", "runs_as_service"):
+        "A93/A101 scan set over service-only loop tables; called by the loop and the notes/flashcards guard",
+    ("services/quiz/submission.py", "_claim_quiz_evidence", "runs_as_service"):
         "quiz_evidence_claims is a service-only loop table (A148)",
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
     ("routes/calendar.py", "calendar_callback", "service_route"):
@@ -80,7 +80,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
     ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
-    ("routes/quiz.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
+    ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Learning loop stores (spec §13 A148: its tables are service-only) ──
     ("learning/help_ledger.py", "record_help", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
     ("learning/help_ledger.py", "record_posed", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
@@ -183,18 +183,20 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_read_version", "service_scope"):
         "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
-    ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
+    ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
+        "inserts a users row (#117 async twin)",
+    ("services/gradescope/jobs.py", "stage_sync", "runs_as_service"):
         "#116 gradescope_syncs is service-only (bucket E): staged sync",
-    ("services/gradescope_jobs.py", "enqueue_sync", "runs_as_service"):
+    ("services/gradescope/jobs.py", "enqueue_sync", "runs_as_service"):
         "#116 jobs + gradescope_syncs are service-only",
-    ("services/gradescope_jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
-    ("services/gradescope_jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
-    ("services/gradescope_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
-    ("services/gradescope_jobs.py", "fail_if_running", "runs_as_service"):
+    ("services/gradescope/jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
+    ("services/gradescope/jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
+    ("services/gradescope/jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
+    ("services/gradescope/jobs.py", "fail_if_running", "runs_as_service"):
         "#116 gradescope_syncs: record a dead-lettered job",
-    ("services/gradescope_jobs.py", "finish_inline", "runs_as_service"):
+    ("services/gradescope/jobs.py", "finish_inline", "runs_as_service"):
         "#116 gradescope_syncs: an inline run records its outcome",
-    ("services/gradescope_jobs.py", "latest_sync", "runs_as_service"):
+    ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
@@ -208,6 +210,27 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_rate_limit: the async twin of _claim_db",
     ("services/request_limits.py", "_refund_db", "service_scope"):
         "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
+    ("services/pg_lease.py", "_claim_db", "service_scope"):
+        "#117 stateless_locks: app_leases + claim_lease() are service-only",
+    ("services/pg_lease.py", "_renew_db", "service_scope"):
+        "#117 stateless_locks: renew_lease() extends the caller's own lease",
+    ("services/pg_lease.py", "_release_db", "service_scope"):
+        "#117 stateless_locks: release_lease() drops the caller's own lease",
+    ("services/tutor_sessions.py", "_store_row", "runs_as_service"):
+        "#117 stateless_tutor_sessions: tutor_pending_sessions is service-only (bucket E)",
+    ("services/tutor_sessions.py", "_astore_row", "runs_as_service"):
+        "#117 stateless_tutor_sessions: the async twin of _store_row",
+    ("services/tutor_sessions.py", "_store_stash", "runs_as_service"):
+        "#117 stateless_tutor_sessions: stash_tutor_session() is service_role-only",
+    ("services/tutor_sessions.py", "_astore_stash", "runs_as_service"):
+        "#117 stateless_tutor_sessions: the async twin of _store_stash",
+    ("services/tutor_sessions.py", "_store_discard", "runs_as_service"):
+        "#117 stateless_tutor_sessions: discard_tutor_session() is service_role-only",
+    ("services/tutor_sessions.py", "_store_rename", "runs_as_service"):
+        "#117 stateless_tutor_sessions: renames the caller's own pending row",
+    ("services/tutor_sessions.py", "amaterialize_stored", "runs_as_service"):
+        "#117 stateless_tutor_sessions: materialize_tutor_session() writes the caller's "
+        "own sessions row + greeting from the service-only pending row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",

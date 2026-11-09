@@ -93,7 +93,7 @@ const LOOP_PREQUESTION_REPLY =
   "Set your guess beside the answer above and find where they part.\n\n" +
   "What would you check first on a question like this next time?";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PREQUESTION_ANSWER:
- *  the seeded prequestion items' OWN key (backend/db/seed_learning_teach_prompts.py
+ *  the seeded prequestion items' OWN key (backend/scripts/seed_learning_teach_prompts.py
  *  — B is correct), never a check's, and per ITEM: the key is this followed by
  *  "<slug>-pq<n>", so the oracle judges each item's release apart. */
 const PREQUESTION_ANSWER = "the papa sentinel phrase";

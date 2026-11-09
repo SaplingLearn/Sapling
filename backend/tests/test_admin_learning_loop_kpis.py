@@ -7,7 +7,9 @@ import fnmatch
 import pytest
 from fastapi.testclient import TestClient
 
-import routes.admin_analytics as analytics
+import routes.admin_analytics as analytics_route
+from services.admin.analytics import learning_loop as analytics
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from learning import params
 from main import app
 
@@ -119,7 +121,7 @@ def _evidence(i, *, node="n1", session, correct=True, assisted=False, max_rung=0
 
 
 def _serve(monkeypatch, store):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable(store.get(name, [])))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable(store.get(name, [])))
 
 
 @pytest.fixture
@@ -190,7 +192,7 @@ def test_kpis_shape_and_values(seeded):
 
 
 def test_empty_range_is_nones_not_zeros(monkeypatch):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable([]))
     b = client.get(URL, params=RANGE).json()
     assert b["in_band_share"] is None and b["ceiling_compliance"]["rate"] is None
     assert b["unassisted_next_session"]["rate"] is None
@@ -313,7 +315,7 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
             calls.append((self.name, columns, filters))
             return [], 0
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     by_table: dict = {}
     for n, _, f in calls:  # the first scan of each table
@@ -333,8 +335,8 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
 
 
 def test_truncated_is_the_or_of_both_scans(monkeypatch):
-    monkeypatch.setattr(analytics, "_SCAN_CAP", 1)
-    monkeypatch.setattr(analytics, "_PAGE", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_SCAN_CAP", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 1)
     store = {
         "events": [_step(1), _step(2)],
         "node_mastery_events": [],
@@ -346,7 +348,7 @@ def test_truncated_is_the_or_of_both_scans(monkeypatch):
 def test_requires_admin(monkeypatch):
     from services import auth_guard
 
-    monkeypatch.setattr(analytics, "require_admin", auth_guard._real_require_admin)
+    monkeypatch.setattr(analytics_route, "require_admin", auth_guard._real_require_admin)
     assert client.get(URL, params=RANGE).status_code in (401, 403)
 
 
@@ -426,7 +428,7 @@ def test_the_quiz_ask_read_names_the_origin_marker(monkeypatch):
             calls.append((self.name, filters))
             return [], 0
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     (filters,) = [f for n, f in calls if n == "sessions"]
     assert filters["loop_state->>origin"] == "eq.quiz_ask"
@@ -468,7 +470,7 @@ def test_earnest_revise_gate_fails_above_the_max(monkeypatch):
 
 
 def test_earnest_revise_without_graded_steps_is_inconclusive(monkeypatch):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable([]))
     b = client.get(URL, params=RANGE).json()
     assert b["earnest_revise"]["rate"] is None
     assert b["earnest_revise"]["gate"] == "inconclusive"
@@ -494,7 +496,7 @@ def test_calibration_reports_bkt_predictions_against_unassisted_outcomes(monkeyp
 
 
 def test_calibration_is_empty_not_zero_without_independent_evidence(monkeypatch):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable([]))
     cal = client.get(URL, params=RANGE).json()["calibration"]
     assert cal["all"]["n"] == 0 and cal["all"]["brier"] is None
     assert cal["posttest"]["observed_rate"] is None
@@ -512,7 +514,7 @@ def test_the_evidence_scan_reads_the_calibration_columns(monkeypatch):
             calls.append((self.name, columns))
             return [], 0
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     cols = dict(calls)["node_mastery_events"].split(",")
     assert {"channel", "p_before", "weight"} <= set(cols)
@@ -572,7 +574,7 @@ def test_confidence_calibration_leaves_out_void_evidence(monkeypatch):
 
 
 def test_confidence_calibration_is_empty_not_zero(monkeypatch):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable([]))
     cc = client.get(URL, params=RANGE).json()["confidence_calibration"]
     assert cc["channels"] == [] and cc["all"]["n"] == 0
     assert cc["all"]["observed_rate"] is None and cc["all"]["brier"] is None
@@ -611,7 +613,7 @@ def _answered(node, window, *, correct, anchor, rung=0, days=10.0):
 
 
 def test_learning_gain_is_empty_not_zero_without_post_tests(monkeypatch):
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable([]))
     gain = client.get(URL, params=RANGE).json()["learning_gain"]
     assert gain["delayed_min_days"] == params.POSTTEST_DELAYED_MIN_DAYS
     assert [w["window_days"] for w in gain["windows"]] == list(params.POSTTEST_WINDOWS_DAYS)
@@ -677,7 +679,7 @@ def test_the_pretest_reads_are_bounded_to_the_anchors_and_their_sessions(monkeyp
             calls.append((self.name, columns, dict(filters or {})))
             return super().select(columns, filters, order, limit)
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     reads = {name: f for name, _, f in calls if "id" in f}
     assert reads["node_mastery_events"]["id"] == 'in.("ev-a")'
@@ -699,7 +701,7 @@ def test_no_pretest_read_without_an_unassisted_outcome(monkeypatch):
             calls.append((self.name, dict(filters or {})))
             return super().select(columns, filters, order, limit)
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     assert not [c for c in calls if "id" in c[1]]
     assert not [c for c in calls if c[0] == "check_item_reviews"]  # A113: nor a retire read
@@ -717,7 +719,7 @@ def test_the_pose_scan_bounds_answered_at_and_counts_toward_truncation(monkeypat
             calls.append((self.name, columns, filters, kw.get("order")))
             return [], 0
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     (scan,) = [c for c in calls if c[0] == "posttest_poses"]
     assert scan[2]["answered_at"] == [f"gte.{RANGE['from']}", f"lte.{RANGE['to']}"]
@@ -726,8 +728,8 @@ def test_the_pose_scan_bounds_answered_at_and_counts_toward_truncation(monkeypat
     )
     assert {"course_id", "question_hash"} <= set(scan[1].split(","))  # the item an A113 retire keys
     assert scan[3].startswith("answered_at.asc")
-    monkeypatch.setattr(analytics, "_SCAN_CAP", 1)
-    monkeypatch.setattr(analytics, "_PAGE", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_SCAN_CAP", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 1)
     two = [_answered("n1", W1, correct=True, anchor="a"), _answered("n2", W1, correct=True, anchor="b")]
     _serve(monkeypatch, {"posttest_poses": two})
     assert client.get(URL, params=RANGE).json()["truncated"] is True
@@ -765,7 +767,7 @@ def _windows(monkeypatch, store, calls=None) -> dict:
                 calls.append((self.name, columns, dict(filters or {})))
             return super().select(columns, filters, order, limit)
 
-    monkeypatch.setattr(analytics, "table", _Rec)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
     r = client.get(URL, params=RANGE)
     assert r.status_code == 200, r.text
     return {w["window_days"]: w for w in r.json()["learning_gain"]["windows"]}
@@ -957,7 +959,7 @@ def test_the_funnel_counts_the_windows_that_opened_in_the_range(monkeypatch):
     (read,) = calls
     assert read["anchor_from"] == START - timedelta(days=W2)
     assert read["anchor_to"] == END - timedelta(days=W1)
-    assert read.get("user_id") is None and read["limit"] == analytics._SCAN_CAP
+    assert read.get("user_id") is None and read["limit"] == analytics._scan._SCAN_CAP
 
 
 def test_the_funnel_applies_the_void_rule_with_the_reports_one_retired_read(monkeypatch):

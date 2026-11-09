@@ -29,6 +29,7 @@ from services import ai_budget, crisis_support, events_service, posthog_client
 from services import crisis_support_copy as crisis_copy
 from services.feature_flags import REGISTRY
 from services.tutor_sessions import PENDING_SESSIONS
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -82,9 +83,12 @@ START = {"session_id": None, "graph_state": None}
 
 CASES: list[Case] = [
     # /api/learn/* — the tutor (delegates to the loop when the loop is on)
-    Case("tutor_chat", "/api/learn/chat", _chat, "routes.learn._require_turn_session", neutral=TURN),
-    Case("tutor_chat", "/api/learn/chat/stream", _chat, "routes.learn._require_turn_session",
-         stream=True, neutral=TURN),
+    # #118 (spec §13 A149): the bodies live in services/tutor/, and the turn
+    # entry check is async there (#117)
+    Case("tutor_chat", "/api/learn/chat", _chat, "services.tutor.turns._require_turn_session",
+         async_next=True, neutral=TURN),
+    Case("tutor_chat", "/api/learn/chat/stream", _chat, "services.tutor.streams._require_turn_session",
+         stream=True, async_next=True, neutral=TURN),
     Case("tutor_start", "/api/learn/start-session", _start,
          "services.ai_budget.enforce_rate_limit_for", neutral=START),
     Case("tutor_start", "/api/learn/start-session/stream", _start,
@@ -381,7 +385,7 @@ def _post_real(case: Case, text: str):
     legacy tutor's owned-and-open session check."""
     with (
         patch("routes.notes.get_note", AsyncMock(return_value=_note(case, text))),
-        patch("routes.learn._require_turn_session", return_value=None),
+        patch_tutor("_require_turn_session", return_value=None),
     ):
         return client.post(case.path, json=case.body(text))
 
@@ -535,12 +539,14 @@ SCREENED_BY_DEPENDENCY = {
 }
 #: Every covered route whose limiters are all inline: (path, the screen's call,
 #: the limiter calls it must precede in the handler's source).
+# The /api/learn rows read the tutor body (services/tutor/, #118), whose
+# limiters hop off the event loop: `asyncio.to_thread(<limiter>, ...)` (A149).
 SCREENED_INLINE = [
-    ("/api/learn/chat", "crisis_support.screen_async", ("_require_turn_session(", "enforce_rate_limit_for(")),
-    ("/api/learn/chat/stream", "crisis_support.screen_async", ("_require_turn_session(", "enforce_rate_limit_for(")),
-    ("/api/learn/start-session", "crisis_support.screen_async", ("enforce_rate_limit_for(", "_kill_switch_budget(")),
+    ("/api/learn/chat", "crisis_support.screen_async", ("_require_turn_session(", "enforce_rate_limit_for,")),
+    ("/api/learn/chat/stream", "crisis_support.screen_async", ("_require_turn_session(", "enforce_rate_limit_for,")),
+    ("/api/learn/start-session", "crisis_support.screen_async", ("enforce_rate_limit_for,", "_kill_switch_budget,")),
     ("/api/learn/start-session/stream", "crisis_support.screen_async",
-     ("enforce_rate_limit_for(", "_kill_switch_budget(")),
+     ("enforce_rate_limit_for,", "_kill_switch_budget,")),
     ("/api/learn/loop/goal", "crisis_support.screen(", ("_probe_plan_read_limit(",)),
     ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
     ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
@@ -593,7 +599,12 @@ def test_an_inline_screen_precedes_every_inline_limiter(path, screen_call, limit
     route = _api_route(path)
     calls = [d.call for d in route.dependant.dependencies]
     assert ai_budget.enforce_rate_limit not in calls, path
-    source = inspect.getsource(route.endpoint)
+    endpoint = route.endpoint
+    if not path.startswith("/api/learn/loop/"):
+        import services.tutor as tutor  # #118: the thin wrapper's body (spec §13 A149)
+
+        endpoint = getattr(tutor, route.endpoint.__name__)
+    source = inspect.getsource(endpoint)
     for limiter in limiters:
         assert limiter in source, (path, limiter)
         assert source.index(screen_call) < source.index(limiter), (path, limiter)
@@ -851,8 +862,8 @@ def test_function_mode_the_scripted_model_is_never_called_on_a_crisis_message(mo
     try:
         with (
             socratic_agent.override(model=model_for("chat_tutor")),
-            patch("routes.learn._get_course_id_for_topic", return_value=""),
-            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+            patch_tutor("_get_course_id_for_topic", return_value=""),
+            patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
             patch("routes.notes.get_note", AsyncMock(return_value=_note(CASES[-1], CRISIS))),
         ):
             for case in CASES:

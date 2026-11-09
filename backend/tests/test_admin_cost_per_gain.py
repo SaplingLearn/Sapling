@@ -13,7 +13,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-import routes.admin_analytics as analytics
+from services.admin.analytics import learning_loop as analytics
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from learning import params
 from learning.cost_per_gain import LOOP_TASKS
 from main import app
@@ -127,7 +128,7 @@ def courses(monkeypatch):
 
 
 def _serve(monkeypatch, store, table_cls=_FakeTable):
-    monkeypatch.setattr(analytics, "table", lambda name: table_cls(store.get(name, [])))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: table_cls(store.get(name, [])))
 
 
 def _block(report, course):
@@ -195,9 +196,7 @@ def test_a_database_before_the_course_column_still_reports(monkeypatch, courses)
             rows = [{k: v for k, v in r.items() if k != "course_id"} for r in self.rows]
             return _FakeTable(rows).select_with_count(columns, filters, order, limit, offset)
 
-    monkeypatch.setattr(
-        analytics, "table",
-        lambda name: (_NoCourse if name == "llm_usage" else _FakeTable)(store.get(name, [])),
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: (_NoCourse if name == "llm_usage" else _FakeTable)(store.get(name, [])),
     )
     report = client.get(URL, params=RANGE).json()["cost_per_gain"]
     assert report["overall"]["cost_usd"] == pytest.approx(0.066)
@@ -212,9 +211,7 @@ def test_an_unreadable_spend_leaves_the_field_null_and_the_report_standing(monke
         def select_with_count(self, *a, **k):
             raise RuntimeError("503 upstream timeout")
 
-    monkeypatch.setattr(
-        analytics, "table",
-        lambda name: (_Down if name == "llm_usage" else _FakeTable)(store.get(name, [])),
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: (_Down if name == "llm_usage" else _FakeTable)(store.get(name, [])),
     )
     r = client.get(URL, params=RANGE)
     assert r.status_code == 200

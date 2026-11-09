@@ -3,19 +3,9 @@
 CRUD lives here; agent-backed actions (summarize, extract concepts, chat,
 generate quiz, send to tutor) come in Phase 4 below.
 
-The three model-calling actions (chat, summarize, extract-concepts) run the
-learning loop's integrity guard (spec §13 A125, services/integrity_guard.py): a
-note or message quoting one of the student's posed checks never reaches the
-model, and model text stating one's key is never served. send-to-tutor and
-generate-quiz call no model: they hand the client a topic or a concept node, and
-the tutor that topic opens is the loop's, whose served turns it scans itself
-(A88/A93).
-
-Before any of that, the four actions that hand note text to a model or the
-tutor (chat, summarize, extract-concepts, send-to-tutor) screen it for crisis
-language (docs/safety/crisis-support.md). On a match the support card is the
-response: the integrity guard never opens, so a student in crisis is never
-answered with an integrity refusal, and no posed-items read is made.
+The model-calling actions run the crisis screen, then the learning loop's
+integrity guard (spec §13 A125): services/note_guard.py says which actions and
+why.
 """
 from __future__ import annotations
 
@@ -37,8 +27,10 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from learning.gate import learning_loop_for_request
 from services import crisis_support, events_service, integrity_guard
+from services.note_guard import note_chat_texts, note_texts, open_note_guard
 from services.academics import (
-    offering_course_id, require_course_enrollment, resolve_offering, term_id_for_label,
+    course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
+    term_id_for_label, user_offering_ids_for_course,
 )
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
@@ -101,7 +93,7 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
         ) from e
 
 
-def _course_meta(offering_id: str | None, cache: dict) -> dict:
+async def _course_meta(offering_id: str | None, cache: dict) -> dict:
     """Resolve an offering to its abstract course id + human labels.
 
     Notes key on the OFFERING (a course taught in a term), but the notetaker
@@ -113,10 +105,10 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
     if not offering_id:
         return {"course_id": None, "course_code": None, "course_name": None}
     if offering_id not in cache:
-        course_id = offering_course_id(offering_id)
+        course_id = await asyncio.to_thread(offering_course_id, offering_id)
         course = {}
         if course_id:
-            rows = table("courses").select(
+            rows = await table("courses").aselect(
                 "id,course_code,course_name",
                 filters={"id": f"eq.{course_id}"}, limit=1,
             )
@@ -127,6 +119,14 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
             "course_name": course.get("course_name"),
         }
     return cache[offering_id]
+
+
+def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
+    """Every offering of ``course_id`` a note of the student's can sit in:
+    all of the course's offerings, or — if that read cannot tell — the ones
+    the student is enrolled in (#831 follow-up)."""
+    ids = course_offering_ids(course_id)
+    return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
 
 
 class CreateNoteBody(BaseModel):
@@ -153,30 +153,31 @@ async def list_user_notes(
     semester: str | None = None,
 ):
     await guard_off_loop(require_self, user_id, request)
-    # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering —
-    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
-    # an unknown label or a term with no offering of the course answers with
-    # the empty shape, never a silent fall-back to another term. `semester`
-    # without `course_id` is ignored (this is the course-filtered read; the
-    # notetaker UI itself carries no semester context — the param exists for
-    # API completeness).
-    offering_id = None
-    semester_missed = False
+    # The API speaks abstract course ids; notes key on the offering. A course
+    # filter covers EVERY offering of the course (#831 follow-up): a note is
+    # filed under the student's enrollment (any term, the #115 gate) and,
+    # before that gate, under the term it was written in, so the current
+    # term's offering alone hid notes from past terms. Rows stay the
+    # caller's own (`list_notes` filters on user_id). With a `semester` (term
+    # label, #141) it is STRICTLY that term's offering: an unknown label or a
+    # term with no offering of the course answers with the empty shape, never
+    # a silent fall-back to another term. `semester` without `course_id` is
+    # ignored (the notetaker UI itself carries no semester context — the
+    # param exists for API completeness).
+    offering_id: str | list[str] | None = None
     if course_id:
         if semester:
-            term_id = term_id_for_label(semester)
+            term_id = await asyncio.to_thread(term_id_for_label, semester)
             offering_id = (
-                resolve_offering(course_id, term_id, fallback=False)
+                await asyncio.to_thread(resolve_offering, course_id, term_id, fallback=False)
                 if term_id
                 else None
-            )
-            semester_missed = offering_id is None
+            ) or []
         else:
-            offering_id = resolve_offering(course_id)
+            offering_id = await asyncio.to_thread(_course_offering_ids, user_id, course_id)
     notes = (
         []
-        if semester_missed
+        if offering_id == []
         else await list_notes(user_id=user_id, offering_id=offering_id)
     )
     # Attach the abstract course id + labels resolved from each note's offering.
@@ -185,12 +186,12 @@ async def list_user_notes(
     # resolve the courses row once.
     meta_cache: dict = {}
     for n in notes:
-        n.update(_course_meta(n.get("offering_id"), meta_cache))
+        n.update(await _course_meta(n.get("offering_id"), meta_cache))
     # ETag from each note's (id, updated_at) — any create/edit/delete changes the
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
     etag = make_etag(
-        "notes", user_id, offering_id or "",
+        "notes", user_id, ",".join(offering_id) if isinstance(offering_id, list) else offering_id or "",
         *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
     )
     not_modified = conditional(request, etag)
@@ -219,7 +220,7 @@ async def create(body: CreateNoteBody, request: Request):
     )
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
-    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    note.update(await _course_meta(note.get("offering_id") or offering_id, {}))
     # create_note (services/notes_service.py) inserts a single notes row per
     # call and this route calls it exactly once — award immediately after it
     # returns, keyed on the freshly-created note id so a client retry is an
@@ -251,7 +252,7 @@ async def read(note_id: str, request: Request, user_id: str):
         raise HTTPException(status_code=404, detail="Note not found.")
     # Same offering → course_id/label enrichment as the list route (F4), so a
     # single-note read returns a consistent shape.
-    note.update(_course_meta(note.get("offering_id"), {}))
+    note.update(await _course_meta(note.get("offering_id"), {}))
     return note
 
 
@@ -377,34 +378,14 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
-def _note_texts(note: dict) -> tuple[str | None, ...]:
-    """The student-written note text an agent action hands a model (the title
-    and body; `last_summary` is model output, not the student's words)."""
-    return (note.get("title"), note.get("body"))
-
-
-def _note_chat_texts(message: str, note: dict) -> tuple[str | None, ...]:
-    """Everything student-written the note-chat agent reads: the message, the
-    note's title and body, and its tags (its read_active_note tool serves them;
-    A125's integrity guard checks the same four)."""
-    tags = [t for t in note.get("tags") or [] if isinstance(t, str)]
-    return (message, *_note_texts(note), *tags)
-
-
 async def _integrity_guard(
     user_id: str, surface: str, texts: Iterable[str | None]
 ) -> integrity_guard.Guard:
-    """Spec §13 A125: the request's integrity guard — ONE read of the student's
-    posed items and the pre-call check of everything the model will read that the
-    student wrote, off the event loop (the reads are DB calls). Off with the loop
-    (the kill switch; the gate is read here, at route entry, once)."""
-    return await asyncio.to_thread(
-        integrity_guard.open_guard,
-        user_id,
-        surface=surface,
-        texts=list(texts),
-        active=learning_loop_for_request(user_id),
-        request_id=current_request_id(),
+    """Spec §13 A125: the request's integrity guard (services/note_guard.py).
+    Off with the loop (the kill switch; the gate is read here, at route entry,
+    once)."""
+    return await open_note_guard(
+        user_id, surface, texts, active=learning_loop_for_request(user_id)
     )
 
 
@@ -425,10 +406,9 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # docs/safety/crisis-support.md: no summary is generated or saved. The
-    # crisis screen runs BEFORE the A125 integrity guard: a student in crisis
-    # gets the card, never a refusal, and no posed-items read is made for them.
-    if crisis := await crisis_support.screen_async(body.user_id, "note_summarize", *_note_texts(note)):
+    # docs/safety/crisis-support.md: no summary is generated or saved; the crisis
+    # screen runs BEFORE the A125 guard (services/note_guard.py says why).
+    if crisis := await crisis_support.screen_async(body.user_id, "note_summarize", *note_texts(note)):
         return crisis_support.json_body(crisis)
     # spec §13 A125: a note holding one of the student's posed checks is never
     # handed to the model; a summary stating one's key is never saved or served
@@ -465,7 +445,7 @@ async def extract_concepts(
     # crisis support: no concepts are extracted, merged or linked (the crisis
     # screen first, then the A125 integrity guard, as in summarize)
     if crisis := await crisis_support.screen_async(
-        body.user_id, "note_extract_concepts", *_note_texts(note)
+        body.user_id, "note_extract_concepts", *note_texts(note)
     ):
         return crisis_support.json_body(crisis)
     # spec §13 A125: as summarize; a concept name the note itself holds is the
@@ -523,14 +503,14 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     # body and tags (the crisis screen first, then the A125 integrity guard, as
     # in summarize)
     if crisis := await crisis_support.screen_async(
-        body.user_id, "note_chat", *_note_chat_texts(body.message, note)
+        body.user_id, "note_chat", *note_chat_texts(body.message, note)
     ):
         return crisis_support.json_body(crisis, degraded=False)
     # spec §13 A125: the message and the note the agent grounds in (its
     # read_active_note tool serves this very row, deps.note) are checked against
     # the student's posed items before any model call; the reply after it
     guard = await _integrity_guard(
-        body.user_id, "note_chat", _note_chat_texts(body.message, note)
+        body.user_id, "note_chat", note_chat_texts(body.message, note)
     )
     if guard.refused:
         return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
@@ -578,7 +558,7 @@ async def send_to_tutor(
         raise HTTPException(status_code=404, detail="Note not found.")
     # crisis support: nothing is handed to the tutor (no topic, no preface)
     if crisis := await crisis_support.screen_async(
-        body.user_id, "note_send_to_tutor", *_note_texts(note)
+        body.user_id, "note_send_to_tutor", *note_texts(note)
     ):
         return crisis_support.json_body(crisis)
     title = (note.get("title") or "").strip() or "Untitled note"

@@ -87,6 +87,9 @@ def test_close_limits_are_tool_less():
 
 import pytest  # noqa: E402
 
+from tests.db_fakes import with_async_twins  # noqa: E402
+from tests.split_patches import setattr_tutor  # noqa: E402
+
 
 def _msgs(n: int, prefix: str = "turn") -> list[dict]:
     out = []
@@ -1861,15 +1864,14 @@ def _legacy_end_session_tables(loop_state=None):
 
 
 def test_end_session_flag_off_is_byte_identical(monkeypatch):
-    import routes.learn as learn
     import routes.learn_loop as loop
 
     _gate(monkeypatch, False)
     factory, tables = _legacy_end_session_tables({"phase": "teach"})
     called = []
-    monkeypatch.setattr(learn, "table", factory)
+    setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
 
     async def must_not_run(*a, **k):
         called.append(a)
@@ -1889,15 +1891,14 @@ def test_end_session_flag_off_is_byte_identical(monkeypatch):
 
 
 def test_end_session_flag_on_loop_session_closes_then_writes_legacy_summary(monkeypatch):
-    import routes.learn as learn
     import routes.learn_loop as loop
 
     _gate(monkeypatch, True)
     factory, tables = _legacy_end_session_tables({"phase": "teach"})
     called = []
-    monkeypatch.setattr(learn, "table", factory)
+    setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
 
     async def fake_close(session_id, user_id, **kw):
         called.append((session_id, user_id))
@@ -1913,15 +1914,14 @@ def test_end_session_flag_on_loop_session_closes_then_writes_legacy_summary(monk
 
 
 def test_end_session_flag_on_session_without_loop_state_does_not_close(monkeypatch):
-    import routes.learn as learn
     import routes.learn_loop as loop
 
     _gate(monkeypatch, True)
     factory, _ = _legacy_end_session_tables(None)
     called = []
-    monkeypatch.setattr(learn, "table", factory)
+    setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
 
     async def fake_close(*a, **k):
         called.append(a)
@@ -1951,14 +1951,13 @@ def test_end_session_flag_on_pending_session_keeps_the_legacy_early_return(monke
 
 
 def test_end_session_defers_legacy_end_when_close_persistence_fails(monkeypatch, caplog):
-    import routes.learn as learn
     import routes.learn_loop as loop
 
     _gate(monkeypatch, True)
     factory, tables = _legacy_end_session_tables({"phase": "teach"})
-    monkeypatch.setattr(learn, "table", factory)
+    setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
 
     async def boom(session_id, user_id, **kw):
         raise RuntimeError("close store failed: SECRET")
@@ -2130,7 +2129,6 @@ def test_close_route_404s_a_review_session_and_writes_nothing(monkeypatch):
 
 
 def test_end_session_never_closes_a_review_session(monkeypatch):
-    import routes.learn as learn
     import routes.learn_loop as loop
 
     _gate(monkeypatch, True)
@@ -2147,7 +2145,7 @@ def test_end_session_never_closes_a_review_session(monkeypatch):
             ]
         }
     )
-    monkeypatch.setattr(learn, "table", tables)
+    setattr_tutor(monkeypatch, "table", with_async_twins(tables))
     monkeypatch.setattr(loop, "table", tables)
     called = []
 
@@ -2473,7 +2471,6 @@ def test_a_timed_out_close_run_stores_the_fallback(monkeypatch):
 def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
     """Review M3: the delegate applies the A20 inline check; rate-limited, the
     session still ends with its deterministic close (never a 429 from end-session)."""
-    import routes.learn as learn
     import routes.learn_loop as loop
     from services import ai_budget
     from services.ai_budget import AIBudgetExceeded
@@ -2482,8 +2479,8 @@ def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
         monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"}
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
-    monkeypatch.setattr(learn, "table", tables)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "table", with_async_twins(tables))
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
 
     def limited(uid):
         raise AIBudgetExceeded(
@@ -2500,7 +2497,6 @@ def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
 
 def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, caplog):
     """A live grading claim must complete before either close or legacy end."""
-    import routes.learn as learn
 
     tables, events, _ = _wire_close(
         monkeypatch,
@@ -2519,8 +2515,8 @@ def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, 
         },
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
-    monkeypatch.setattr(learn, "table", tables)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "table", with_async_twins(tables))
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
     assert r.status_code == 409 and events == []
@@ -2534,7 +2530,6 @@ def test_end_session_after_a_stale_grading_claim_closes_and_ends(monkeypatch):
     anything) goes stale after LOOP_GRADING_CLAIM_STALE_S; from then on the
     same end-session closes the session (the deterministic close here) and
     the legacy end writes ended_at."""
-    import routes.learn as learn
     import routes.learn_loop as loop
     from learning.params import LOOP_GRADING_CLAIM_STALE_S
 
@@ -2556,8 +2551,8 @@ def test_end_session_after_a_stale_grading_claim_closes_and_ends(monkeypatch):
         },
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
-    monkeypatch.setattr(learn, "table", tables)
-    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "table", with_async_twins(tables))
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
     monkeypatch.setattr(loop, "_now_s", lambda: now)
     monkeypatch.setattr(loop, "_unreleased_items", lambda doc: [])
     monkeypatch.setattr(loop, "run_session_close", _fake_run(None))  # unavailable → deterministic
