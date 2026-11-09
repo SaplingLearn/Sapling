@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 
 import {
   CLEARED_CURVE,
@@ -139,8 +139,16 @@ describe("parsePercent / formatPercent", () => {
 
 describe("isDueDateInvalid", () => {
   // Parsed as LOCAL midnight and compared against the UTC ISO date, exactly
-  // as before the split — this file's valid-date cases assume a UTC-or-west
-  // timezone (CI and the dev machines run UTC / US time).
+  // as before the split — the valid-date cases only hold in a UTC-or-west
+  // timezone, so the zone is pinned to UTC (what CI runs) for this block.
+  beforeEach(() => {
+    vi.stubEnv("TZ", "UTC");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
     [null, false],
     ["", false],
