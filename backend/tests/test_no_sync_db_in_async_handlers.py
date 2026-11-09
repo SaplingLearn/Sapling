@@ -43,11 +43,18 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 ROUTES = BACKEND / "routes"
-#: Domain packages that hold handler bodies moved out of routes/ (#118). The
-#: split keeps each body verbatim, async ones included, so they stay in scope.
+#: Domain packages that hold handler bodies moved out of routes/ (#118): the
+#: documents library CRUD over the a* seam, the upload SSE stream, quiz
+#: attempts and the tutor turn path. Each body moved verbatim, async ones
+#: included, so they stay in scope.
 #: The in-module transitive walk is per FILE: a sync DB helper imported from
 #: a sibling module is not followed (the runtime guard still covers it).
-DOMAIN_PACKAGES = (BACKEND / "services" / "quiz",)
+DOMAIN_PACKAGES = (
+    BACKEND / "services" / "documents",
+    BACKEND / "services" / "gradescope",
+    BACKEND / "services" / "quiz",
+    BACKEND / "services" / "tutor",
+)
 
 SYNC_VERBS = frozenset({"select", "select_with_count", "insert", "update", "upsert", "delete"})
 DB_FUNCS = frozenset({"rpc", "page_all"})
@@ -155,16 +162,6 @@ def _offenders_in(source: str, rel: str) -> set[tuple[str, str, str]]:
             if hit is not None:
                 out.add((rel, fn.name, hit))
     return out
-
-
-#: Domain packages the #118 splits moved async route helpers into (the
-#: documents library's CRUD over the a* seam, the upload's SSE stream, the
-#: tutor's turn path): the same rule holds there.
-DOMAIN_PACKAGES = (
-    BACKEND / "services" / "documents",
-    BACKEND / "services" / "gradescope",
-    BACKEND / "services" / "tutor",
-)
 
 
 def _all_offenders() -> set[tuple[str, str, str]]:
