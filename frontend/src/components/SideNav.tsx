@@ -17,54 +17,45 @@ export const SIDE_NAV_EXPANDED = 200;
 export const SIDE_NAV_COLLAPSED = 64;
 const COLLAPSE_KEY = "sapling_sidenav_collapsed";
 
-/* Palette and geometry follow the "Sapling Sidebar" handoff design
-   (rounded tabs, dark text on the light sage rail). The rail's token block
-   in globals.css ([data-app-sidenav]) re-declares --text/--border/--accent
-   for anything nested that still reads shell tokens (focus ring, Avatar). */
-export const SIDENAV = {
-  bg: "#DCE8CE",
-  hoverBg: "#EBF0E1",
-  activeBg: "#C9DCB2",
-  activeRing: "inset 0 0 0 1px rgba(68,93,34,0.28), 0 1px 2px rgba(25,37,11,0.08)",
-  heading: "#4A5A38",
-  divider: "rgba(74,90,56,0.22)",
-  icon: "#416207",
-  iconHover: "#597536",
-  label: "#3f3b31",
-  labelHover: "#1a1814",
-  labelActive: "#1a1814",
-  shadow: "0 0 0 1px rgba(74,90,56,0.06), 6px 0 24px -6px rgba(25,37,11,0.10)",
-} as const;
+/* Row rhythm. 44px is the WCAG comfort target and this rail used to sit there,
+   but a desktop-only sidebar carrying 12 destinations reads as a wall at that
+   pitch. 38px is the dense-desktop value: still above the 36px floor we hold
+   ourselves to on a pointer-first surface, and ~15% tighter per row once the
+   1px gap is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
+const NAV_ITEM_MIN_HEIGHT = 38;
+const NAV_GAP = 1;
 
-/* Row rhythm from the design: 47px rows, 16px labels, 20px glyphs, 4px
-   between rows. On a window too short to show every destination at 47px,
-   rows (and the group headers) shrink together instead of the list
-   scrolling, down to the 36px floor. Never take NAV_ITEM_MIN_HEIGHT below 36. */
-const NAV_ITEM_HEIGHT = 47;
-const NAV_ITEM_MIN_HEIGHT = 36;
-const HEADER_MIN_HEIGHT = 22;
-/* 4px between rows at full height, tightening on short windows so the whole
-   rail fits without scrolling (1080px tall → 4px, 768px → ~3px). */
-const NAV_GAP = "clamp(1px, 0.37vh, 4px)";
-/* Collapse sits one tab gap from the last tab above and from the footer rule
-   below. The rail itself already puts 1px between its children. */
-const COLLAPSE_SPACING = `calc(${NAV_GAP} - 1px)`;
-const ICON_SIZE = 20;
-const ROW_RADIUS = 10;
+/* Horizontal inset shared by every horizontal rule in the rail — the collapsed
+   group separators and the Settings/Admin rule — so they read as one line
+   family instead of three different indents. */
+const RULE_INSET = 8;
 
-/* Collapse/expand geometry. Wide rows sit 10px in from the rail edge with
-   the glyph 12px inside the pill; narrow rows keep a 6px inset and centre the
-   glyph with a computed left padding, so margin and padding tween on the same
-   curve as the rail's width and every icon glides to the centre. */
-const ROW = {
-  wide: { inset: 10, padX: 12 },
-  narrow: { inset: 6, padX: (SIDE_NAV_COLLAPSED - 2 * 6 - ICON_SIZE) / 2 },
-};
+/* Collapse/expand geometry.
+ *
+ * Each width keeps its own layout — wide rows run the full width of the rail
+ * with the icon 12px inside the pill (so icons line up with the avatar);
+ * narrow rows full-width with the icon centred — and the
+ * rail animates BETWEEN them rather than snapping. The trick is that nothing
+ * uses `justify-content: center` any more (it cannot be interpolated):
+ * centring in the narrow rail is expressed as a computed left padding, so
+ * margin and padding tween on the same curve and duration as the rail's
+ * width and every icon glides from its wide position to the centre. */
+const RAIL_PAD_X = { wide: 10, narrow: 6 };
+const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
+const ICON_SIZE = 15;
+/* Logo slot: the wordmark's height at 112px wide; the collapsed-rail symbol
+   is drawn at that same height (its own aspect sets the width). */
 const LOGO_SLOT_HEIGHT = 34;
 const SAPLING_SYMBOL_SRC = "/design/sapling/originals/logo-symbol.svg";
 const SYMBOL_WIDTH = Math.round(LOGO_SLOT_HEIGHT * (258.58 / 366.39));
-/* Group header slot: 32px tall, label 6px off its bottom, 20px from the rail edge. */
-const HEADER = { height: 32, below: 6, line: 14, left: 20 };
+const ROW = {
+  wide: { inset: 0, padX: 12 },
+  narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
+};
+/* Wide-rail group header slot: space above the label, the label's line, and
+   space below it before the first row. Kept tight so the groups read as one
+   list with light dividers, not as separate blocks. */
+const HEADER = { above: 12, line: 14, below: 6 };
 
 const GEOMETRY_TRANSITION =
   "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
@@ -79,7 +70,9 @@ function rowGeometry(collapsed: boolean): React.CSSProperties {
   };
 }
 
-/* Text fades rather than mounting/unmounting: out at once, in a beat late. */
+/* Text fades rather than mounting/unmounting. Out: immediately and quickly,
+   so nothing is visibly squeezed as the rail narrows. In: a beat late, so the
+   label arrives once there is room for it. */
 function fade(collapsed: boolean): React.CSSProperties {
   return {
     opacity: collapsed ? 0 : 1,
@@ -87,6 +80,18 @@ function fade(collapsed: boolean): React.CSSProperties {
     transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "0ms" : "90ms"}`,
   };
 }
+
+/* Active/hover surfaces.
+ *
+ * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
+ * which inside the olive rail resolves to a translucent cream wash (see
+ * [data-app-sidenav] in globals.css), with the label in bold cream.
+ * No rail, no hue on the label: the fill IS the treatment.
+ *
+ * Hover is the same colour at half strength, so it is unmistakably the
+ * weaker, transient state and never reads as a second selection. */
+const NAV_ACTIVE_BG = "var(--bg-soft)";
+const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -107,23 +112,12 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
   return [collapsed, update];
 }
 
-/* Shared row surface: hover is a lighter sage, active a deeper sage with a
-   hairline ring. Hover is handled in React state (not by mutating style) so
-   the label and glyph colours change together. */
-function rowSurface(active: boolean, hover: boolean): React.CSSProperties {
-  return {
-    background: active ? SIDENAV.activeBg : hover ? SIDENAV.hoverBg : "transparent",
-    boxShadow: active ? SIDENAV.activeRing : "none",
-    color: active ? SIDENAV.labelActive : hover ? SIDENAV.labelHover : SIDENAV.label,
-  };
-}
-
 export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
-  const [collapseHover, setCollapseHover] = React.useState(false);
   const sections = useVisibleNavSections();
+  const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -137,30 +131,23 @@ export function SideNav() {
         width,
         minWidth: width,
         height: "100%",
-        background: SIDENAV.bg,
-        borderRadius: "0 36px 36px 0",
-        // Progressive: squircle corners where supported, round elsewhere.
-        ...({ cornerShape: "squircle" } as React.CSSProperties),
-        boxShadow: SIDENAV.shadow,
+        background: "var(--sidenav-bg)",
+        borderRadius: "0 var(--r-lg) var(--r-lg) 0",
         position: "relative",
         zIndex: 1,
-        padding: "16px 0",
-        boxSizing: "border-box",
+        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
-        gap: 1,
-        fontFamily: "var(--font-sans)",
-        fontSize: 14,
-        lineHeight: 1.5,
-        color: "#1a1814",
-        // The rail never scrolls: only the destinations region below does,
-        // so the account footer stays pinned at the bottom.
+        gap: NAV_GAP,
+        // The rail itself never scrolls: only the destinations region below
+        // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
+        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
-      {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. They
-          cross-fade in one fixed-height slot so nothing below shifts. */}
+      {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
+          cross-fade in one fixed-height slot so nothing below shifts, and the
+          link stays a live home link in both widths. */}
       <Link
         href="/dashboard"
         aria-label="Sapling — home"
@@ -169,19 +156,19 @@ export function SideNav() {
           position: "relative",
           display: "block",
           height: LOGO_SLOT_HEIGHT,
-          padding: collapsed ? "6px 0 clamp(6px, 1.3vh, 14px) 0" : "6px 0 clamp(6px, 1.3vh, 14px) 12px",
-          margin: collapsed ? "0 6px 8px" : "0 10px 8px",
+          paddingBottom: 14,
           boxSizing: "content-box",
           overflow: "hidden",
-          borderBottom: `1px solid ${SIDENAV.divider}`,
+          borderBottom: "1px solid var(--border)",
+          marginBottom: 8,
           textDecoration: "none",
-          transition: GEOMETRY_TRANSITION,
         }}
       >
         <SaplingWordmark
           width={112}
           decorative
-          style={{ position: "absolute", left: 12, top: 6, ...fade(collapsed) }}
+          tone="light"
+          style={{ position: "absolute", left: 6, top: 0, ...fade(collapsed) }}
         />
         {/* eslint-disable-next-line @next/next/no-img-element -- a static vector; next/image adds nothing for SVG */}
         <img
@@ -194,18 +181,26 @@ export function SideNav() {
           draggable={false}
           style={{
             position: "absolute",
-            top: 6,
-            left: (SIDE_NAV_COLLAPSED - 12 - SYMBOL_WIDTH) / 2,
+            top: 0,
+            left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2,
             width: SYMBOL_WIDTH,
             height: LOGO_SLOT_HEIGHT,
+            // The source is brand green; the rail is olive, so render it in
+            // cream like the wordmark.
+            filter: "brightness(0) invert(1)",
+            // Inverse of `fade`: in once the rail is narrow, out at once when it widens.
             opacity: collapsed ? 1 : 0,
             transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "90ms" : "0ms"}`,
           }}
         />
       </Link>
 
-      {/* Destinations scroll on their own when the viewport is short, with
-          the scrollbar hidden (globals.css + scrollbarWidth). */}
+      {/* The destinations scroll on their own when the viewport is too short
+          for them, with the scrollbar hidden (`scrollbarWidth` here, the
+          WebKit pseudo-element in globals.css) — a 10px gutter in a 200px
+          rail read as clutter, and wheel/trackpad/keyboard scrolling all
+          still work. `minHeight: 0` is what lets a flex child shrink below
+          its content and scroll at all. */}
       <div
         data-sidenav-scroll=""
         style={{
@@ -219,209 +214,233 @@ export function SideNav() {
           gap: NAV_GAP,
         }}
       >
-        {sections.map((section, i) => (
-          <React.Fragment key={section.label}>
-            {/* Header slot. Wide: the mono group label. Narrow: a hairline
-                (none above the first group; the logo rule does that job). */}
+      {sections.map((section, i) => (
+        <React.Fragment key={section.label}>
+          {/* Header slot. Wide: the group label. Narrow: a hairline (none
+              above the first group — the logo rule already does that job).
+              The slot's height tweens between the two so the rows below
+              slide rather than jump, and label/hairline cross-fade.
+              Spacing lives in HEADER. */}
+          <div
+            aria-hidden={collapsed || undefined}
+            style={{
+              position: "relative",
+              flexShrink: 0,
+              overflow: "hidden",
+              height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below,
+              transition: GEOMETRY_TRANSITION,
+            }}
+          >
             <div
-              aria-hidden={collapsed || undefined}
-              style={{
-                position: "relative",
-                flexShrink: 1,
-                overflow: "hidden",
-                height: collapsed ? (i === 0 ? 0 : 17) : HEADER.height,
-                minHeight: collapsed ? 0 : HEADER_MIN_HEIGHT,
-                transition: GEOMETRY_TRANSITION,
-              }}
+              className="label-micro"
+              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
             >
+              {section.label}
+            </div>
+            {i > 0 && (
               <div
+                data-sidenav-group-rule=""
+                aria-hidden
                 style={{
                   position: "absolute",
-                  left: HEADER.left,
-                  bottom: HEADER.below,
-                  lineHeight: `${HEADER.line}px`,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                  color: SIDENAV.heading,
-                  ...fade(collapsed),
+                  left: RULE_INSET,
+                  right: RULE_INSET,
+                  top: 18,
+                  height: 1,
+                  background: "var(--border)",
+                  opacity: collapsed ? 1 : 0,
+                  transition: "opacity var(--dur-fast) var(--ease)",
                 }}
-              >
-                {section.label}
-              </div>
-              {i > 0 && (
-                <div
-                  data-sidenav-group-rule=""
-                  aria-hidden
-                  style={{
-                    position: "absolute",
-                    left: 12,
-                    right: 12,
-                    top: 8,
-                    height: 1,
-                    background: SIDENAV.divider,
-                    opacity: collapsed ? 1 : 0,
-                    transition: "opacity var(--dur-fast) var(--ease)",
-                  }}
-                />
-              )}
-            </div>
-            {section.items.map(item => (
-              <NavLink
-                key={item.href}
-                entry={item}
-                active={isActive(pathname, item.href)}
-                collapsed={collapsed}
               />
-            ))}
-          </React.Fragment>
-        ))}
+            )}
+          </div>
+          {section.items.map(item => (
+            <NavLink
+              key={item.href}
+              entry={item}
+              active={isActive(pathname, item.href)}
+              collapsed={collapsed}
+            />
+          ))}
+        </React.Fragment>
+      ))}
+
       </div>
 
-      {/* Collapse/expand: built like a nav row, panel glyph + "Collapse". */}
-      <button
-        type="button"
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        title={collapsed ? "Expand sidebar" : undefined}
-        onClick={() => setCollapsed(!collapsed)}
-        onMouseEnter={() => setCollapseHover(true)}
-        onMouseLeave={() => setCollapseHover(false)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexShrink: 1,
-          height: NAV_ITEM_HEIGHT,
-          minHeight: NAV_ITEM_MIN_HEIGHT,
-          ...rowGeometry(collapsed),
-          // One tab gap above Collapse (the rail's own 1px gap + the rest).
-          marginTop: COLLAPSE_SPACING,
-          borderRadius: ROW_RADIUS,
-          border: "none",
-          boxSizing: "border-box",
-          background: collapseHover ? SIDENAV.hoverBg : "transparent",
-          color: collapseHover ? SIDENAV.labelHover : SIDENAV.label,
-          fontFamily: "inherit",
-          fontSize: 16,
-          textAlign: "left",
-          cursor: "pointer",
-          transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
-        }}
-      >
-        <span style={{ display: "inline-flex", color: collapseHover ? SIDENAV.iconHover : SIDENAV.icon }}>
-          <PanelToggleIcon collapsed={collapsed} />
-        </span>
-        <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
-      </button>
 
-      {/* Account footer under one full-width rule: Settings, Admin, profile. */}
+      {/* The account footer — Collapse, Admin and the profile block — sits
+          under one full-width rule, the same line as the logo's, so the pair
+          frames the rail top and bottom and the account cluster reads as split
+          off from the main nav. Pinned: it never scrolls with the list above. */}
       <div
         data-sidenav-footer=""
         style={{
           display: "flex",
           flexDirection: "column",
           gap: NAV_GAP,
-          flexShrink: 1,
-          // One tab gap between Collapse and the footer rule.
-          marginTop: COLLAPSE_SPACING,
-          paddingTop: "clamp(4px, 0.93vh, 10px)",
-          borderTop: `1px solid ${SIDENAV.divider}`,
+          flexShrink: 0,
+          marginTop: 4,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border)",
         }}
       >
+      {/* Collapse/expand opens the footer, just under its rule and above the
+          account block, and is built like a nav row: panel icon + "Collapse" in the wide rail, the
+          bare icon in the narrow one — the usual sidebar toggle.
+          Same insets, padding and row height as NavLink so it lines up with
+          the destinations above it. */}
+      <button
+        type="button"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : undefined}
+        onClick={() => setCollapsed(!collapsed)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexShrink: 0,
+          minHeight: NAV_ITEM_MIN_HEIGHT,
+          ...rowGeometry(collapsed),
+          borderRadius: "var(--r-xs)",
+          color: "var(--text-dim)",
+          fontSize: 13,
+          textAlign: "left",
+          transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = NAV_HOVER_BG;
+          e.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "var(--text-dim)";
+        }}
+      >
+        <PanelToggleIcon collapsed={collapsed} />
+        <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
+      </button>
+
+      {isAdmin && (
         <NavLink
-          entry={{ href: "/settings", label: "Settings", icon: "setting" }}
-          active={isActive(pathname, "/settings")}
+          entry={{ href: "/admin", label: "Admin", icon: "shield" }}
+          active={isActive(pathname, "/admin")}
           collapsed={collapsed}
-          testId="nav-link-settings"
         />
+      )}
 
-        {isAdmin && (
-          <NavLink
-            entry={{ href: "/admin", label: "Admin", icon: "shield" }}
-            active={isActive(pathname, "/admin")}
-            collapsed={collapsed}
-          />
-        )}
-
-        {isAuthenticated && (
-          <div data-sidenav-account="" style={{ padding: "clamp(2px, 0.93vh, 10px) 0 4px" }}>
-            <div
+      {/* The profile block carries no rule of its own — the footer's rule
+          already opened this cluster, and a second hairline here would box the
+          avatar in. The whole block is the Settings button: avatar + name +
+          a trailing gear, one link to /settings. */}
+      {isAuthenticated && (
+        <div style={{ padding: "10px 0 4px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              width: "100%",
+            }}
+          >
+            <Link
+              href="/settings"
+              data-testid="nav-link-settings"
+              aria-label="Settings"
+              aria-current={settingsActive ? "page" : undefined}
+              title={collapsed ? "Settings" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                padding: `6px ${collapsed ? (SIDE_NAV_COLLAPSED - 30) / 2 : 22}px`,
+                flex: 1,
+                minWidth: 0,
+                // Wide: 12px in. Narrow: centred (computed, so it tweens).
+                padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px`,
+                borderRadius: "var(--r-sm)",
+                textAlign: "left",
                 overflow: "hidden",
-                transition: GEOMETRY_TRANSITION,
+                textDecoration: "none",
+                color: settingsActive ? "var(--text)" : "var(--text-dim)",
+                background: settingsActive ? NAV_ACTIVE_BG : "transparent",
+                transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
+              }}
+              onMouseEnter={(e) => {
+                if (settingsActive) return;
+                e.currentTarget.style.background = NAV_HOVER_BG;
+                e.currentTarget.style.color = "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                if (settingsActive) return;
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--text-dim)";
               }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-              <div aria-hidden={collapsed || undefined} style={{ minWidth: 0, flex: 1, ...fade(collapsed) }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: SIDENAV.labelHover,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {userName || "You"}
+                <div aria-hidden={collapsed || undefined} style={{ minWidth: 0, flex: 1, ...fade(collapsed) }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "var(--text)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {userName || "You"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
                 </div>
-                <div style={{ fontSize: 11, color: SIDENAV.heading }}>Account</div>
-              </div>
-            </div>
+                <span aria-hidden style={{ display: "inline-flex", flexShrink: 0, ...fade(collapsed) }}>
+                  <Icon name="setting" size={ICON_SIZE} />
+                </span>
+            </Link>
           </div>
-        )}
+        </div>
+      )}
       </div>
     </aside>
   );
 }
 
-function NavLink({
-  entry,
-  active,
-  collapsed,
-  testId,
-}: {
-  entry: Entry;
-  active: boolean;
-  collapsed: boolean;
-  testId?: string;
-}) {
-  const [hover, setHover] = React.useState(false);
-  const hot = hover && !active;
+function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; collapsed: boolean }) {
   return (
     <Link
       href={entry.href}
-      data-testid={testId ?? `nav-link-${entry.href.slice(1)}`}
-      aria-current={active ? "page" : undefined}
+      data-testid={`nav-link-${entry.href.slice(1)}`}
       title={collapsed ? entry.label : undefined}
       aria-label={collapsed ? entry.label : undefined}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
-        // Shrinks with its siblings when the window is short (see NAV_ITEM_HEIGHT).
-        flexShrink: 1,
-        height: NAV_ITEM_HEIGHT,
+        gap: 10,
+        // No explicit width: the rail is a flex column, so a row stretches to
+        // the content box on its own and the margins below actually inset it.
+        // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
-        boxSizing: "border-box",
+        // Wide: the pill runs the rail's full width and the icon sits 12px
+        // inside it, on the same line as the avatar below. Narrow: the icon
+        // is centred. See ROW.
         ...rowGeometry(collapsed),
-        borderRadius: ROW_RADIUS,
-        ...rowSurface(active, hot),
-        fontWeight: active ? 700 : 400,
-        fontSize: 16,
-        cursor: "pointer",
+        borderRadius: "var(--r-xs)",
+        background: active ? NAV_ACTIVE_BG : "transparent",
+        color: active ? "var(--text)" : "var(--text-dim)",
+        fontWeight: active ? 600 : 400,
+        fontSize: 13,
         transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
         textDecoration: "none",
       }}
+      onMouseEnter={(e) => {
+        if (active) return;
+        e.currentTarget.style.background = NAV_HOVER_BG;
+        e.currentTarget.style.color = "var(--text)";
+      }}
+      onMouseLeave={(e) => {
+        if (active) return;
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--text-dim)";
+      }}
     >
-      <span style={{ display: "inline-flex", flexShrink: 0, color: hot ? SIDENAV.iconHover : SIDENAV.icon }}>
+      <span style={{ display: "inline-flex", flexShrink: 0 }}>
         <Icon name={entry.icon} size={ICON_SIZE} />
       </span>
       <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
@@ -432,7 +451,10 @@ function NavLink({
 }
 
 /* The sidebar-toggle glyph: a panel with its left column ruled off and a
-   chevron that flips with the collapse. */
+   chevron in the open area. Only the chevron moves — it points in (close)
+   when the rail is wide and flips to point out (open) when narrow, turning
+   about its own centre on the rail's duration so it animates with the
+   collapse. Stroke weight and caps match `Icon`. */
 function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg

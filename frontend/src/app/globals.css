@@ -41,7 +41,7 @@
      A light olive, a step above --brand-forest-bright, so the rail sits back
      from the forest CTAs. Deliberately past the AA line: pure white is 4.23:1
      here (AA for normal text needs 4.5:1). Going lighter means dark rail text. */
-  --sidenav-bg: #DCE8CE;
+  --sidenav-bg: #688443;
 
   /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
      the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
@@ -602,18 +602,21 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .study-tabs a:hover { color: var(--accent); }
 
-/* The rail is the one sage-filled surface in the shell (#DCE8CE, the
-   "Sapling Sidebar" design). SideNav paints its rows with explicit design
-   colours; this block re-declares the semantic tokens for anything nested
-   that still reads shell tokens (Avatar, the focus ring). Its fill,
-   --sidenav-bg, is declared on :root so every shell layout uses it. */
+/* The rail is the one olive-filled surface in the shell. Rather than thread
+   light-on-dark colours through every row, it re-declares the semantic tokens
+   its children already read (text, border, the --bg-soft active fill, the
+   focus --accent), so SideNav keeps speaking in shell tokens and the swap
+   lives here. On #688443 pure white is 4.23:1, just under AA's 4.5:1, so
+   text is #fff and the dim/muted tints stay near-opaque to lose as little
+   as possible. Its fill, --sidenav-bg, is
+   declared on :root so every shell layout uses the same rail fill. */
 [data-app-sidenav] {
-  --text:        #1a1814;
-  --text-dim:    #3f3b31;
-  --text-muted:  #4A5A38;
-  --border:      rgba(74, 90, 56, 0.22);
-  --bg-soft:     #C9DCB2;
-  --accent:      #445D22;
+  --text:        #ffffff;
+  --text-dim:    rgba(255, 255, 255, 0.98);
+  --text-muted:  rgba(255, 255, 255, 0.96);
+  --border:      rgba(250, 248, 243, 0.14);
+  --bg-soft:     rgba(250, 248, 243, 0.16);
+  --accent:      #faf8f3;
 }
 
 /* Settings' "label on the left, control on the right" profile rows. */
