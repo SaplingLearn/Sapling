@@ -21,6 +21,9 @@ export interface ProgressDotsProps {
   /** How many items are answered — contiguous from 0. */
   answered: number;
   orientation?: "column" | "row";
+  /** Per dot: true = answered correctly, false = incorrectly, null/absent =
+   *  not marked (or the verdict is being held back). Colours the dot. */
+  outcomes?: ReadonlyArray<boolean | null>;
   ariaLabel: string;
   testid?: string;
 }
@@ -30,6 +33,7 @@ export function ProgressDots({
   current,
   answered,
   orientation = "column",
+  outcomes,
   ariaLabel,
   testid,
 }: ProgressDotsProps) {
@@ -44,7 +48,14 @@ export function ProgressDots({
         // Current wins over answered: revisiting an answered item still shows
         // "you are here", which is the question the rail exists to answer.
         const kind = i === current ? "current" : i < answered ? "done" : "todo";
-        return <span key={i} className={`progress-dots__dot progress-dots__dot--${kind}`} />;
+        const outcome = outcomes?.[i];
+        return (
+          <span
+            key={i}
+            className={`progress-dots__dot progress-dots__dot--${kind}`}
+            data-outcome={outcome == null ? undefined : outcome ? "correct" : "incorrect"}
+          />
+        );
       })}
     </div>
   );

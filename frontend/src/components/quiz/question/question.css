@@ -176,23 +176,19 @@
   outline: none;
 }
 
-/* The verdict, once there is one: a plain `.card` (the app's panel) holding
-   the status chip, the sentence when there is something to correct, and the
-   reason. The outcome colour lives in the chip and nowhere else. */
-.quiz-question__feedback.card {
+/* The verdict, once there is one. The outcome sits OUTSIDE the card — a
+   mark and a word in the outcome's colour — and the card (the app's plain
+   `.card`) holds the correction and the reason. */
+.quiz-question__feedback[data-outcome] {
+  --verdict-tone: var(--positive);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--pad-sm);
-  padding: var(--pad-md) var(--pad-lg);
   animation: quiz-verdict-in var(--dur) var(--ease);
 }
 
-/* The card takes focus when the verdict lands (so it is announced); the
-   app-wide `:focus-visible` rule would square its corners and ring it. */
-.quiz-question__feedback.card:focus-visible {
-  border-radius: var(--r-lg);
-  outline: none;
+.quiz-question__feedback[data-outcome="incorrect"] {
+  --verdict-tone: var(--err);
 }
 
 @keyframes quiz-verdict-in {
@@ -200,7 +196,34 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quiz-question__feedback.card { animation: none; }
+  .quiz-question__feedback[data-outcome] { animation: none; }
+}
+
+.quiz-question__verdict-status {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-sm);
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--verdict-tone);
+}
+
+.quiz-question__verdict-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-full);
+  background: var(--verdict-tone);
+  color: #fff;
+}
+
+.quiz-question__verdict-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--pad-md) var(--pad-lg);
 }
 
 .quiz-question__verdict-line {
@@ -241,7 +264,7 @@
 }
 
 /* The aside follows the verdict card rather than butting into it. */
-.quiz-question__feedback.card + .quiz-question__aside {
+.quiz-question__feedback[data-outcome] + .quiz-question__aside {
   margin-top: var(--pad-md);
 }
 

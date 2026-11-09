@@ -24,7 +24,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Check, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
-import { AnswerOption, Badge, Button, Chip, ProgressDots, type AnswerState } from "@/components/ui";
+import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
@@ -345,6 +345,11 @@ export function QuizQuestion({
         // Nothing is "here" yet while the quiz is still being written.
         current={total === 0 ? -1 : cursor}
         answered={total === 0 ? 0 : answeredCount}
+        // As-you-go shows each verdict, so the rail keeps the tally too. At-end
+        // holds every verdict back, and the rail must not leak them.
+        outcomes={session.config.feedback === "as-you-go"
+          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
+          : undefined}
         orientation="column"
         ariaLabel={`Question ${Math.min(cursor + 1, railTotal)} of ${railTotal}`}
         testid="quiz-progress"
@@ -510,7 +515,7 @@ export function QuizQuestion({
 
         <div
           ref={feedbackRef}
-          className={`quiz-question__feedback${showVerdict && verdict ? " card" : ""}`}
+          className="quiz-question__feedback"
           data-testid="quiz-review-verdict"
           data-outcome={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : undefined}
           aria-live="polite"
@@ -518,17 +523,16 @@ export function QuizQuestion({
         >
           {showVerdict && verdict && (
             <>
-              {/* The outcome is the app's own status chip — the same pill as the
-                  difficulty badge, in its correct / error variants. */}
-              <Chip
-                variant={verdict.isCorrect ? "accent" : "err"}
-                icon={verdict.isCorrect
-                  ? <Check size={12} strokeWidth={3} aria-hidden="true" />
-                  : <X size={12} strokeWidth={3} aria-hidden="true" />}
-                className="quiz-question__verdict-chip"
-              >
+              {/* The outcome, outside the card: the mark and the word. */}
+              <p className="quiz-question__verdict-status">
+                <span className="quiz-question__verdict-mark" aria-hidden="true">
+                  {verdict.isCorrect ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />}
+                </span>
                 {verdict.isCorrect ? "Correct" : "Incorrect"}
-              </Chip>
+              </p>
+              {/* The card is the reading: what the answer was, and why. */}
+              {(!verdict.isCorrect || verdict.explanation) && (
+              <div className="card quiz-question__verdict-card">
               {!verdict.isCorrect && (
                 <p className="quiz-question__verdict-line h-sans">
                   {verdict.correctAnswer && format === "symbolic"
@@ -543,6 +547,8 @@ export function QuizQuestion({
               )}
               {verdict.explanation && (
                 <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+              )}
+              </div>
               )}
             </>
           )}

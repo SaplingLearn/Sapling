@@ -782,4 +782,30 @@ describe("QuizQuestion — each format looks like itself", () => {
     expect(document.querySelector(".quiz-question__written")).toHaveAttribute("data-marked", "true");
     expect(screen.getByTestId("quiz-review-verdict").querySelector("sup")).toHaveTextContent("2");
   });
+
+  it("keeps the tally on the rail as you go, and holds it back in at-end mode", () => {
+    const marked = [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }),
+      item(1, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "" } }),
+      item(2),
+    ];
+    const dots = () => Array.from(document.querySelectorAll(".progress-dots__dot")).map(d => d.getAttribute("data-outcome"));
+    const view = renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked }));
+    expect(dots()).toEqual(["correct", "incorrect", null]);
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked,
+      config: { count: 3, difficulty: "easy", feedback: "at-end" } }));
+    expect(dots()).toEqual([null, null, null]);
+  });
+
+  it("states the outcome outside the card, and reads Correct / Incorrect", () => {
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "Because." } }), item(1), item(2),
+    ] }));
+    const verdict = screen.getByTestId("quiz-review-verdict");
+    const status = verdict.querySelector(".quiz-question__verdict-status")!;
+    expect(status).toHaveTextContent("Incorrect");
+    expect(status.closest(".card")).toBeNull();
+    expect(verdict.querySelector(".card")).toHaveTextContent("Because.");
+  });
 });

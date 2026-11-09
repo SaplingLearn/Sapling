@@ -1002,6 +1002,10 @@ body { font-size: 14px; line-height: 1.5; }
   background: var(--bg);
   border: 1px solid var(--border-strong);
 }
+/* A marked question keeps its result on the rail: the run of right and wrong
+   so far, readable at a glance. */
+.progress-dots__dot[data-outcome="correct"] { background: var(--positive); border-color: var(--positive); }
+.progress-dots__dot[data-outcome="incorrect"] { background: var(--err); border-color: var(--err); }
 
 /* ── InlineBanner ────────────────────────────────────────────────────
    The tinted strip under a page header. No precedent existed anywhere. */
