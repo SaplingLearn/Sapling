@@ -184,6 +184,18 @@ def router_backends(user_id: str | None) -> tuple[str, str]:
     return _backends_for(explain(ROUTER_FLAG, user_id))
 
 
+async def router_backends_off_loop(user_id: str | None) -> tuple[str, str]:
+    """:func:`router_backends` for code on the event loop: no I/O when the
+    flag cache can answer, else one bounded store read in a worker thread
+    (feature_flags.resolve_off_loop). Raises :class:`FlagUnreadable` like
+    :func:`router_backends`, and whatever the thread hop raises."""
+    from services.feature_flags import resolve_off_loop
+
+    return await resolve_off_loop(
+        lambda: router_backends_cached(user_id), lambda: router_backends(user_id),
+    )
+
+
 def router_backends_cached(user_id: str | None) -> tuple[str, str] | None:
     """:func:`router_backends` without I/O — safe on the event loop — or None
     when the flag cache is cold for this student. Raises

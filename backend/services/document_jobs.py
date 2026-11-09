@@ -76,11 +76,12 @@ from typing import Any, AsyncIterator
 
 from db.connection import table
 from db.scope import runs_as_service
-from services import jobs
+from services import jobs, llm_budget
 from services.agent_events import SaplingEvent
 from services.documents_read import saved_document
 from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
 from services.feature_flags import flag_on
+from services.llm_budget import budget_error_in
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,9 @@ ERR_PERSIST = "persist_failed"
 ERR_WORKER = "worker_failed"
 ERR_NO_FILE = "file_missing"
 ERR_ABANDONED = "abandoned"
+#: #119: the per-user LLM budget refused the upload's model work (agents or
+#: vision OCR). The stream says when it resets; /upload/sync answers 429.
+ERR_BUDGET = "llm_budget"
 
 _STATUS_COLUMNS = "id,user_id,request_id,stage,progress,error_code,document_id,job_id,updated_at"
 #: PostgREST filters on the owner tokens kept in the plaintext `progress`
@@ -700,6 +704,8 @@ async def _retrying(fn, *args: Any, default: Any = None, tries: int = 3) -> Any:
 
 def _error_message(code: str | None) -> str:
     docs = _routes()
+    if code == ERR_BUDGET:
+        return llm_budget.user_message(llm_budget.next_reset())
     return {
         ERR_UNREADABLE: docs.UNREADABLE_DOCUMENT_DETAIL,
         ERR_EXTRACT: "Could not read this document. Please try a different file.",
@@ -805,8 +811,13 @@ async def stream_events(
             return
         if stage == FAILED:
             outcome.kind = FAILED
+            code = row.get("error_code")
+            data = err_data
+            if code == ERR_BUDGET:  # #119: the inline route's budget event shape
+                data = {**(err_data or {}), "code": llm_budget.ERROR_CODE,
+                        "reset_at": llm_budget.next_reset().isoformat()}
             yield SaplingEvent(type="error", step="failed",
-                               message=_error_message(row.get("error_code")), data=err_data)
+                               message=_error_message(code), data=data)
             yield SaplingEvent(type="status", step="done", message="Failed.")
             return
         events, rank = events_between(rank, row)
@@ -953,8 +964,14 @@ def _run_document_process_job(payload: dict) -> None:
         logger.warning("document.process: upload %s taken over from stage %s (owner %s)",
                        upload_id, stage, (row.get("progress") or {}).get("owner"))
     run = _Run(upload_id=upload_id, owner=owner, stage=EXTRACTING)
+    # #119: the work is the uploader's — llm_usage rows are attributed to them
+    # and the per-user LLM budget applies, as on the inline path. Reset on
+    # exit, so the worker's next job never inherits this user.
+    from services.request_context import acting_for
+
     try:
-        _process(row, run)
+        with acting_for(row.get("user_id")):
+            _process(row, run)
     except _Superseded as exc:
         logger.info("document.process: stopping, this attempt lost the upload (%s)", exc)
 
@@ -998,7 +1015,11 @@ def _process(row: dict, run: _Run) -> None:
     try:
         file_bytes = decrypt_bytes(row["file_data"])
         text = docs.extract_text_from_file(file_bytes, filename, row.get("content_type") or "")
-    except Exception:
+    except Exception as exc:
+        if budget_error_in(exc) is not None:
+            logger.warning("document.process: LLM budget refused OCR for upload %s", upload_id)
+            _finish_failed(run, ERR_BUDGET)
+            return
         logger.exception("document.process: extraction failed for upload %s", upload_id)
         _finish_failed(run, ERR_EXTRACT)
         return
@@ -1015,7 +1036,11 @@ def _process(row: dict, run: _Run) -> None:
         result, merged = run_agent_sync(_run_agents(row, text, run))
     except _Superseded:
         raise
-    except Exception:
+    except Exception as exc:
+        if budget_error_in(exc) is not None:
+            logger.warning("document.process: LLM budget refused upload %s", upload_id)
+            _finish_failed(run, ERR_BUDGET)
+            return
         logger.exception("document.process: agent pipeline failed for upload %s", upload_id)
         _finish_failed(run, ERR_AGENT)
         return
@@ -1172,6 +1197,10 @@ async def sync_via_queue(**stage_kwargs: Any) -> dict | None:
     if outcome.kind == "timeout":
         raise HTTPException(status_code=504, detail=TIMEOUT_MESSAGE)
     code = (outcome.row or {}).get("error_code")
+    if code == ERR_BUDGET:  # #119: the same 429 the inline route raises
+        raise llm_budget.LLMBudgetExceeded(
+            limit=None, used=None, reset_at=llm_budget.next_reset(), source="job",
+        )
     if code in (ERR_UNREADABLE, ERR_EXTRACT):
         raise HTTPException(status_code=422, detail=_error_message(code))
     raise HTTPException(status_code=502, detail=docs.UPLOAD_FAILED_DETAIL)

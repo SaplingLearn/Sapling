@@ -25,6 +25,8 @@ from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self, guard_off_loop
+from services import llm_budget
+from services.llm_budget import LLMBudgetExceeded
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -1926,6 +1928,18 @@ async def _generate_or_502(
             # only tell it what we just saw — once per generation, forever.
             has_graph=True,
         )
+    except LLMBudgetExceeded as e:
+        # #119: the per-user LLM budget refused the run before it spent
+        # anything. Answered with the code the quiz spend cap (#544 F1) uses,
+        # which the client already renders; the slot goes back like any
+        # refusal that generated nothing.
+        _refund_generate_slot(body.user_id, slot)
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
+            message=e.detail,
+            headers=e.headers,
+        ) from e
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.
@@ -3022,9 +3036,12 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # `quiz.context_write_failed` analytics event, and a re-raise in
         # local/test envs so a regression fails CI instead of going quiet.
         try:
+            # #119: post-response work — the per-user LLM budget never refuses
+            # it (services/llm_budget.py); its tokens still count.
+            with llm_budget.background_work():
+                run = run_agent_sync(quiz_context_agent.run(prompt))
             result = record_agent_usage(
-                run_agent_sync(quiz_context_agent.run(prompt)),
-                feature="quiz", task="quiz_context", user_id=uid,
+                run, feature="quiz", task="quiz_context", user_id=uid,
             )
             save_quiz_context(uid, node_id, result.output.model_dump())
         except UnregisteredHandlerError:

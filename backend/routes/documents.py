@@ -45,6 +45,7 @@ from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
 from services.documents_read import decrypt_document_row
+from services.llm_budget import LLMBudgetExceeded
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -332,6 +333,18 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
     return updated[0] if updated else {"id": document_id, **updates}
 
 
+def _budget_failed_frames(e: LLMBudgetExceeded, request_id: str | None) -> list[str]:
+    """#119: the upload stream's terminal pair for a per-user LLM budget
+    refusal (services/llm_budget.py) — the budget's own message and code."""
+    return [
+        sapling_event_to_sse(SaplingEvent(
+            type="error", step="failed", message=e.detail,
+            data={"request_id": request_id, "code": e.code, "reset_at": e.reset_at_iso},
+        )),
+        sapling_event_to_sse(SaplingEvent(type="status", step="done", message="Failed.")),
+    ]
+
+
 def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) -> str:
     """Run synchronous text extraction. Convert any failure into a clean
     HTTP 422 with a friendly detail instead of a bubbled-up 500.
@@ -342,6 +355,8 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
     """
     try:
         text = extract_text_from_file(file_bytes, filename, content_type)
+    except LLMBudgetExceeded:
+        raise  # #119: vision OCR refused by the per-user LLM budget -> the 429
     except Exception:
         logger.exception("Text extraction failed for '%s'", filename)
         raise HTTPException(
@@ -786,6 +801,8 @@ async def upload_document_sync(
     try:
         with workflow_id(f"doc:{user_id}:{request_id}"):
             result: DocumentProcessingResult = await process_document(extracted_text, deps)
+    except LLMBudgetExceeded:
+        raise  # #119: the 429 itself, not "upload failed" (services/llm_budget.py)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
             "Agent guardrails tripped for '%s'; returning 502",
@@ -997,6 +1014,11 @@ async def upload_document(
                         extract_text_from_file, file_bytes, filename,
                         file.content_type or "",
                     )
+                except LLMBudgetExceeded as e:
+                    # #119: vision OCR refused by the per-user LLM budget.
+                    for frame in _budget_failed_frames(e, request_id):
+                        yield frame
+                    return
                 except Exception:
                     logger.exception(
                         "Async text extraction failed for '%s'", filename,
@@ -1121,6 +1143,13 @@ async def upload_document(
                 message="Processing complete.",
                 data=final_output.model_dump(mode="json"),
             ))
+        except LLMBudgetExceeded as e:
+            # #119: the per-user LLM budget refused the pipeline before any
+            # model call; nothing was persisted. Same terminal tail, with the
+            # budget's own message instead of "please try again".
+            for frame in _budget_failed_frames(e, request_id):
+                yield frame
+            return
         except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
             # Terminal (#151b): `step="fallback"` left the SSE vocabulary
             # with the legacy pipeline (ADR 0024). Emit the exact

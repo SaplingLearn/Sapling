@@ -420,6 +420,62 @@ def test_endpoints_reject_non_admin(seeded, monkeypatch):
         ("/usage/by-user", RANGE),
         ("/llm/cost", {**RANGE, "group_by": "feature"}),
         ("/errors", RANGE),
+        ("/llm/cost-per-active-user", {}),
     ]:
         resp = client.get(f"{BASE}{path}", params=params)
         assert resp.status_code == 403, f"{path} should be admin-only"
+
+
+# ── /llm/cost-per-active-user (#119) ─────────────────────────────────────────
+
+_SIGNAL = {
+    "as_of": "2026-11-08T21:00:00+00:00", "threshold": 2.0,
+    "usd_per_active_user_7d": 3.0, "baseline_usd_per_active_user": 1.0,
+    "baseline_weeks": 4, "ratio": 3.0, "jump": True,
+    "weeks": [{"week": w, "from": f"2026-10-{25 - 7 * w:02d}T21:00:00+00:00",
+               "to": f"2026-11-0{1 if w else 8}T21:00:00+00:00", "usd": 2.0 if w else 3.0,
+               "active_users": 2 if w else 1, "usd_per_active_user": 1.0 if w else 3.0}
+              for w in range(5)],
+}
+
+
+def test_cost_per_active_user_serves_the_sql_signal(monkeypatch):
+    calls = []
+    monkeypatch.setattr(analytics, "rpc", lambda name, params: calls.append((name, params)) or _SIGNAL)
+    r = client.get(f"{BASE}/llm/cost-per-active-user")
+    assert r.status_code == 200
+    body = r.json()
+    assert calls == [("llm_cost_per_active_user_weekly", {})]
+    assert body["jump"] is True and body["ratio"] == 3.0
+    assert body["weeks"][0]["from"].startswith("2026-")  # wire key is "from"
+    assert r.headers["cache-control"] == "private"
+
+
+def test_cost_per_active_user_without_data_says_so(monkeypatch):
+    empty = {**_SIGNAL, "usd_per_active_user_7d": None, "baseline_usd_per_active_user": None,
+             "baseline_weeks": 0, "ratio": None, "jump": None}
+    monkeypatch.setattr(analytics, "rpc", lambda name, params: empty)
+    body = client.get(f"{BASE}/llm/cost-per-active-user").json()
+    assert body["jump"] is None and body["ratio"] is None
+
+
+def test_a_week_with_no_priced_usage_is_null_not_zero(monkeypatch):
+    """The metrics contract's "absent, not zero": a window with active users
+    but no priced llm_usage rows reports NULL cost, not $0."""
+    unpriced = [{**w, "usd": None, "usd_per_active_user": None} for w in _SIGNAL["weeks"]]
+    payload = {**_SIGNAL, "weeks": unpriced, "usd_per_active_user_7d": None,
+               "baseline_usd_per_active_user": None, "ratio": None, "jump": None}
+    monkeypatch.setattr(analytics, "rpc", lambda name, params: payload)
+    r = client.get(f"{BASE}/llm/cost-per-active-user")
+    assert r.status_code == 200
+    assert r.json()["weeks"][0]["usd"] is None
+    props = analytics.CostPerActiveUser.model_json_schema()["properties"]
+    assert "no priced usage" in props["usd_per_active_user_7d"]["description"]
+
+
+def test_cost_per_active_user_is_a_503_never_a_zero_when_the_db_cannot_answer(monkeypatch):
+    def down(name, params):
+        raise RuntimeError("function missing")
+
+    monkeypatch.setattr(analytics, "rpc", down)
+    assert client.get(f"{BASE}/llm/cost-per-active-user").status_code == 503

@@ -741,7 +741,13 @@ def _run_gradescope_sync_job(payload: dict) -> None:
     if stage != QUEUED:
         logger.warning("gradescope.sync: sync %s taken over from stage %s (owner %s)",
                        sync_id, stage, _token_of(row, "owner"))
-    outcome = _worker_outcome(row)
+    # #119: the sync is the student's work: anything it attributes or
+    # budgets (llm_usage rows, the per-user LLM budget) sees them, as on the
+    # inline path. Reset on exit so the worker's next job never inherits it.
+    from services.request_context import acting_for
+
+    with acting_for(row.get("user_id")):
+        outcome = _worker_outcome(row)
     won = table("gradescope_syncs").update(outcome.row_fields(), filters={
         "id": f"eq.{sync_id}", "stage": f"eq.{RUNNING}", _OWNER: f"eq.{owner}",
     })
