@@ -83,19 +83,13 @@ describe("WrittenAnswer", () => {
 
   it("adds no read-back when the number already reads as typed", () => {
     render(<Harness type="numeric" initial="15" />);
-    expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("");
-    expect(input()).not.toHaveAttribute("aria-describedby", expect.stringContaining("quiz-written-readback"));
+    expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
+    expect(input()).toHaveAttribute("aria-describedby", "hint");
   });
 
-  it("gives each format its own surface", () => {
-    const { container, unmount } = render(<Harness type="short_answer" />);
-    expect(container.querySelector(".quiz-written__line")).not.toBeNull();
-    unmount();
-    const numeric = render(<Harness type="numeric" />);
-    expect(numeric.container.querySelector(".quiz-written__readout")).not.toBeNull();
-    numeric.unmount();
-    const symbolic = render(<Harness type="symbolic" />);
-    expect(symbolic.container.querySelector(".quiz-written__sheet .quiz-written__preview")).not.toBeNull();
+  it.each(["short_answer", "numeric", "symbolic"] as const)("renders %s in the app's standard field", type => {
+    render(<Harness type={type} />);
+    expect(input()).toHaveClass("field", `quiz-written__input--${type}`);
   });
 
   it("carries the verdict on the field once the answer is marked", () => {

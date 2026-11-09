@@ -15,10 +15,9 @@
  *   plain warning for what the grammar refuses (functions, equations, an
  *   unclosed bracket).
  *
- * Each also has its own surface, so the screen looks like the kind of answer
- * it wants: a ruled line to write a term on, a readout that shows the number
- * the grader will read, and a worksheet whose lower half typesets the
- * expression as it is typed.
+ * All three are the app's standard `.field`; what differs is the face (the
+ * reading serif for a term, monospace for a number or an expression) and the
+ * keys and read-back underneath.
  *
  * Enter submits from all three. The screen's own Enter handler skips typing
  * targets (it would steal a textarea's newline), so the input forwards Enter
@@ -121,7 +120,7 @@ export function WrittenAnswer({
             ok: true,
             node: (
               <>
-                <span className="quiz-written__readback-label">Reads as </span>
+                Reads as{" "}
                 <span className="quiz-written__value">{formatNumber(n)}</span>
               </>
             ),
@@ -134,7 +133,7 @@ export function WrittenAnswer({
         ok: true,
         node: (
           <>
-            <span className="quiz-written__readback-label">Reads as </span>
+            Reads as{" "}
             <span className="quiz-written__value quiz-written__expr">
               {expressionParts(value).map((part, i) =>
                 part.sup ? <sup key={i}>{part.text}</sup> : <React.Fragment key={i}>{part.text}</React.Fragment>,
@@ -153,7 +152,7 @@ export function WrittenAnswer({
       id="quiz-written-answer"
       data-testid="quiz-written-answer"
       type="text"
-      className={`quiz-question__written-input quiz-written__input--${type}`}
+      className={`field quiz-question__written-input quiz-written__input--${type}`}
       aria-labelledby={labelledBy}
       aria-describedby={readBack ? `${describedBy} quiz-written-readback` : describedBy}
       aria-invalid={readBack && !readBack.ok ? true : undefined}
@@ -175,37 +174,9 @@ export function WrittenAnswer({
     />
   );
 
-  const readBackLine = (
-    <p
-      id="quiz-written-readback"
-      className="quiz-written__readback"
-      data-testid="quiz-written-readback"
-      data-ok={readBack ? (readBack.ok ? "true" : "false") : undefined}
-      aria-live="polite"
-    >
-      {/* Rendered (empty) before anything is typed, so the readout and the
-          worksheet hold their size instead of growing on the first key. */}
-      {readBack?.node ?? (type === "symbolic" ? <span className="quiz-written__readback-label">Your expression will appear here</span> : null)}
-    </p>
-  );
-
   return (
     <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
-      {type === "short_answer" && <div className="quiz-written__line">{input}</div>}
-
-      {type === "numeric" && (
-        <div className="quiz-written__readout">
-          {input}
-          {readBackLine}
-        </div>
-      )}
-
-      {type === "symbolic" && (
-        <div className="quiz-written__sheet">
-          {input}
-          <div className="quiz-written__preview">{readBackLine}</div>
-        </div>
-      )}
+      {input}
 
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
@@ -225,6 +196,18 @@ export function WrittenAnswer({
             </button>
           ))}
         </div>
+      )}
+
+      {readBack && (
+        <p
+          id="quiz-written-readback"
+          className="quiz-written__readback"
+          data-testid="quiz-written-readback"
+          data-ok={readBack.ok ? "true" : "false"}
+          aria-live="polite"
+        >
+          {readBack.node}
+        </p>
       )}
     </div>
   );

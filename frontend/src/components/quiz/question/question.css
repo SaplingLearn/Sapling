@@ -28,10 +28,9 @@
      will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
      the same number today by coincidence, not by construction. */
   --quiz-q-skeleton-inset: 14px;
-  --quiz-q-written-fs: 22px;   /* the answer line reads at near-stem size */
-  --quiz-q-numeric-fs: 30px;   /* the readout's digits */
-  --quiz-q-key-h: 36px;
-  --quiz-q-key-min-w: 44px;    /* touch-sized, on the decimal-pad screens */
+  --quiz-q-numeric-w: 22ch;    /* a number needs a field, not the column */
+  --quiz-q-key-h: 30px;
+  --quiz-q-key-min-w: 40px;
   --quiz-q-key-gap: 6px;
 
   display: flex;
@@ -486,10 +485,7 @@
   border-color: var(--border-strong);
 }
 
-/* ── Written answers ────────────────────────────────────────────────
-   One surface per format (`WrittenAnswer`): a ruled line to write a term on,
-   a readout for a number, a worksheet for an expression. They share the
-   verdict colouring at the bottom of this block. */
+/* ── Written answers (`WrittenAnswer`) ─────────────────────────────── */
 
 .quiz-question__sr {
   position: absolute;
@@ -524,189 +520,75 @@
 }
 
 .quiz-written {
-  --written-tone: var(--quiz-accent, var(--accent));
   display: grid;
   gap: var(--pad-sm);
+  justify-items: start;
 }
 
-.quiz-written[data-verdict="correct"] { --written-tone: var(--positive); }
-.quiz-written[data-verdict="incorrect"] { --written-tone: var(--state-struggle); }
-
-.quiz-question__written-input {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--quiz-q-written-fs);
+/* The answer field is the app's `.field`, at the answer tiles' text size so
+   it doesn't read smaller than the choices on a multiple-choice question. */
+.field.quiz-question__written-input {
+  padding: 10px 12px;
+  font-size: var(--answer-text-fs);
   line-height: 1.4;
-  outline: none;
+  color: var(--text);
 }
 
-.quiz-question__written-input::placeholder {
-  color: color-mix(in srgb, var(--text-muted) 70%, transparent);
-}
-
-.quiz-question__written-input:disabled {
+.field.quiz-question__written-input:disabled {
   color: var(--text);
   -webkit-text-fill-color: var(--text);
   opacity: 1;
 }
 
-/* Short answer: a ruled line, written on in the reading face. */
-.quiz-written__line {
-  margin-top: var(--pad-sm);
-  border-bottom: 2px solid var(--border-strong);
-  transition: border-color var(--dur-fast) var(--ease);
+.field.quiz-question__written-input[aria-invalid="true"] {
+  border-color: var(--err);
 }
 
-.quiz-written__line:focus-within,
-.quiz-written[data-verdict] .quiz-written__line {
-  border-bottom-color: var(--written-tone);
-}
+/* Marked: the field's border carries the outcome, as `.field:focus` carries
+   focus. Nothing else about it changes. */
+.quiz-written[data-verdict="correct"] .field { border-color: var(--positive); }
+.quiz-written[data-verdict="incorrect"] .field { border-color: var(--err); }
 
-.quiz-written__input--short_answer {
-  padding: 6px 2px 10px;
-  font-family: var(--font-serif);
-}
+.quiz-written__input--short_answer { font-family: var(--font-serif); }
 
-/* Numeric: the number as typed on the left, the number as read on the right. */
-.quiz-written__readout {
-  /* Tall enough for the two-line read-back, so the panel doesn't grow the
-     moment a typed number first becomes readable. */
-  min-height: 80px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--pad-md);
-  padding: var(--pad-md) var(--pad-lg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg);
-  background: var(--bg-inset);
-  box-shadow: inset 0 1px 3px rgba(42, 39, 31, 0.06);
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
-}
-
-.quiz-written__readout:focus-within,
-.quiz-written[data-verdict] .quiz-written__readout {
-  border-color: var(--written-tone);
-  box-shadow: inset 0 1px 3px rgba(42, 39, 31, 0.06), 0 0 0 1px var(--written-tone);
-}
-
+/* A number is short: a field sized to it, digits aligned. */
 .quiz-written__input--numeric {
-  flex: 1;
+  max-width: var(--quiz-q-numeric-w);
   font-family: var(--font-mono);
-  font-size: var(--quiz-q-numeric-fs);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-
-.quiz-written__input--numeric::placeholder {
-  font-size: var(--fs-xl);
-}
-
-.quiz-written__readout .quiz-written__readback {
-  flex-shrink: 0;
-  text-align: right;
-}
-
-.quiz-written__readout .quiz-written__value {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xl);
   font-variant-numeric: tabular-nums;
 }
 
-.quiz-written__readout .quiz-written__readback-label {
-  display: block;
-}
+/* An expression is code-like: monospace, so x, × and 1 stay distinct. */
+.quiz-written__input--symbolic { font-family: var(--font-mono); }
 
-/* Algebra: type on the top line, read it typeset underneath. */
-.quiz-written__sheet {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg);
-  background: var(--bg-panel);
-  overflow: hidden;
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
-}
-
-.quiz-written__sheet:focus-within,
-.quiz-written[data-verdict] .quiz-written__sheet {
-  border-color: var(--written-tone);
-  box-shadow: 0 0 0 1px var(--written-tone);
-}
-
-.quiz-written__input--symbolic {
-  padding: var(--pad-md) var(--pad-lg);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xl);
-}
-
-.quiz-written__preview {
-  min-height: 64px;
-  display: flex;
-  align-items: center;
-  padding: var(--pad-sm) var(--pad-lg);
-  border-top: 1px dashed var(--border-strong);
-  background:
-    repeating-linear-gradient(to bottom, transparent 0 23px, color-mix(in srgb, var(--quiz-accent, var(--accent)) 7%, transparent) 23px 24px),
-    var(--bg-inset);
-}
-
-.quiz-written__preview .quiz-written__readback {
-  display: flex;
-  align-items: baseline;
-  gap: var(--pad-sm);
-}
-
-.quiz-written__preview .quiz-written__expr {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--fs-3xl);
-  line-height: 1.3;
-}
-
-.quiz-written__preview .quiz-written__expr sup {
-  font-size: 0.6em;
-  line-height: 0;
-}
-
-/* Keys sit under the field like the row above a phone keyboard. */
 .quiz-written__keys {
   display: flex;
   flex-wrap: wrap;
   gap: var(--quiz-q-key-gap);
 }
 
+/* `.btn--sm` proportions, in monospace so the symbols line up. */
 .quiz-written__key {
   min-width: var(--quiz-q-key-min-w);
   height: var(--quiz-q-key-h);
   padding: 0 var(--pad-sm);
-  border: 1px solid var(--border-strong);
-  border-bottom-width: 2px;
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: var(--fs-base);
+  font-size: var(--fs-md);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .quiz-written__key:hover:not(:disabled) {
-  border-color: var(--quiz-accent, var(--accent));
-  background: color-mix(in srgb, var(--quiz-accent, var(--accent)) 6%, var(--bg-panel));
-}
-
-.quiz-written__key:active:not(:disabled) {
-  transform: translateY(1px);
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
 }
 
 .quiz-written__key:focus-visible {
-  outline: 2px solid var(--quiz-accent, var(--accent));
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -722,29 +604,25 @@
 }
 
 .quiz-written__readback[data-ok="false"] {
-  color: var(--state-struggle);
+  color: var(--err);
 }
 
 .quiz-written__value {
   color: var(--text);
+  font-family: var(--font-mono);
   font-size: var(--fs-md);
 }
 
+/* The algebra read-back is the one place the expression is typeset. */
 .quiz-written__expr {
-  font-family: var(--font-mono);
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-lg);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .quiz-written__line,
-  .quiz-written__readout,
-  .quiz-written__sheet,
-  .quiz-written__key { transition: none; }
-}
-
-@media (max-width: 560px) {
-  .quiz-written__readout { padding: var(--pad-sm) var(--pad-md); }
-  .quiz-written__input--numeric { font-size: var(--fs-3xl); }
-  .quiz-written__preview .quiz-written__expr { font-size: var(--fs-2xl); }
+.quiz-written__expr sup {
+  font-size: 0.65em;
+  line-height: 0;
 }
 
 /* Phones: the rail narrows and its mirror goes, so the reading column keeps
