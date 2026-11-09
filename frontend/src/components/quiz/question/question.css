@@ -12,7 +12,6 @@
 
 .quiz-question {
   /* ── Geometry the design pins ─────────────────────────────────────── */
-  --quiz-q-rail-top: 8px;      /* the rail's optical alignment with the header */
   --quiz-q-stem-fs: 24px;      /* the --fs-* ramp has no 24px step */
   --quiz-q-stem-mw: 560px;     /* the reading measure of the stem */
   --quiz-q-stem-my: 40px;      /* the air above and below it */
@@ -43,34 +42,13 @@
   outline: none;
 }
 
-/* The ONE rule here that names a class from the shared `quiz.css`.
- *
- * Every other screen's wrapper is exactly its content column. This one is
- * FLANKED — a 64px progress rail on the left, a 64px spacer on the right — so
- * for the reading column itself to come out at `--quiz-col-question` the
- * wrapper has to be that much wider, and it has to stretch to full height for
- * the footer to reach the bottom. Scoped with `:has()` to a wrapper that
- * actually holds this screen, so the error card (which shares the `question`
- * layout) and every other screen are untouched. Where `:has()` is unsupported
- * the layout degrades to a narrower reading column and a footer that follows
- * the content — never to a broken one. */
+/* The ONE rule here that names a class from the shared `quiz.css`: the
+   column wrapper stretches to full height so the footer reaches the bottom of
+   the screen. Scoped with `:has()` to a wrapper holding this screen, so the
+   error card (which shares the `question` layout) is untouched; where `:has()`
+   is unsupported the footer simply follows the content. */
 .quiz-col--question:has(.quiz-question) {
-  max-width: calc(var(--quiz-col-question) + 2 * var(--quiz-rail));
   align-self: stretch;
-}
-
-.quiz-question__rail {
-  width: var(--quiz-rail);
-  flex-shrink: 0;
-  display: flex;
-  justify-content: center;
-  padding-top: var(--quiz-q-rail-top);
-}
-
-/* Mirrored on the right so the reading column stays optically centred. */
-.quiz-question__spacer {
-  width: var(--quiz-rail);
-  flex-shrink: 0;
 }
 
 .quiz-question__col {
@@ -101,6 +79,20 @@
 
 .quiz-question__header-gap {
   flex: 1;
+}
+
+/* Progress: the dots and "2 of 5", together. */
+.quiz-question__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pad-sm);
+}
+
+.quiz-question__count {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* What kind of answer this question wants. In a mixed quiz it changes from
@@ -692,8 +684,7 @@
 }
 
 
-/* Phones: the rail narrows and its mirror goes, so the reading column keeps
-   the width instead of giving a third of the screen to symmetry. */
+/* Phones: a smaller stem, and the header wraps rather than squeezes. */
 @media (max-width: 640px) {
   .quiz-question {
     --quiz-q-key-min-w: 36px;
@@ -701,9 +692,9 @@
     --quiz-q-stem-fs: 20px;
     --quiz-q-stem-my: 24px;
   }
-  .quiz-question__rail { width: 28px; }
-  .quiz-question__spacer { display: none; }
-  .quiz-col--question:has(.quiz-question) { max-width: 100%; }
-  .quiz-question__header { flex-wrap: wrap; }
+  /* Two rows: the concept, then progress (left) and the tags (right). */
+  .quiz-question__header { flex-wrap: wrap; row-gap: var(--pad-sm); }
+  .quiz-question__header-gap { flex-basis: 100%; height: 0; }
+  .quiz-question__progress { margin-right: auto; }
   .quiz-question__aside { flex-wrap: wrap; gap: var(--pad-sm); }
 }

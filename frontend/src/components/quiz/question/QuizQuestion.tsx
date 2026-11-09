@@ -182,7 +182,7 @@ export function QuizQuestion({
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
   const difficulty = (item?.question.difficulty ?? session.config.difficulty ?? "").toUpperCase();
-  const railTotal = total || session.config.count;
+  const quizLength = total || session.config.count;
 
   // ── Effects ──────────────────────────────────────────────────────────
 
@@ -315,6 +315,34 @@ export function QuizQuestion({
 
   // ── Pieces shared by the generating and the live render ──────────────
 
+  // Where the student is in the quiz: one dot per question (green / red once
+  // marked, in as-you-go mode) and "2 of 5". It lives in the header, not in
+  // a rail beside the content, so nothing appears to line up with it.
+  const position = Math.min(cursor + 1, quizLength);
+  const progress = (
+    <span className="quiz-question__progress">
+      <ProgressDots
+        total={quizLength}
+        // Nothing is "here" yet while the quiz is still being written.
+        current={total === 0 ? -1 : cursor}
+        answered={total === 0 ? 0 : answeredCount}
+        // As-you-go shows each verdict, so the dots keep the tally too. At-end
+        // holds every verdict back, and the dots must not leak them.
+        outcomes={session.config.feedback === "as-you-go"
+          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
+          : undefined}
+        orientation="row"
+        ariaLabel={`Question ${position} of ${quizLength}`}
+        testid="quiz-progress"
+      />
+      {total > 0 && (
+        <span className="quiz-question__count" aria-hidden="true">
+          {position} of {quizLength}
+        </span>
+      )}
+    </span>
+  );
+
   const header = (
     <div className="quiz-question__header">
       <ConceptNode
@@ -328,6 +356,7 @@ export function QuizQuestion({
         {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
       </span>
       <span className="quiz-question__header-gap" />
+      {progress}
       {phase !== "generating" && item && (
         <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
           <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
@@ -338,31 +367,11 @@ export function QuizQuestion({
     </div>
   );
 
-  const rail = (
-    <div className="quiz-question__rail">
-      <ProgressDots
-        total={railTotal}
-        // Nothing is "here" yet while the quiz is still being written.
-        current={total === 0 ? -1 : cursor}
-        answered={total === 0 ? 0 : answeredCount}
-        // As-you-go shows each verdict, so the rail keeps the tally too. At-end
-        // holds every verdict back, and the rail must not leak them.
-        outcomes={session.config.feedback === "as-you-go"
-          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
-          : undefined}
-        orientation="column"
-        ariaLabel={`Question ${Math.min(cursor + 1, railTotal)} of ${railTotal}`}
-        testid="quiz-progress"
-      />
-    </div>
-  );
-
   // ── generating ───────────────────────────────────────────────────────
 
   if (phase === "generating") {
     return (
       <div className="quiz-question" data-testid="quiz-generating">
-        {rail}
         <div className="quiz-question__col">
           {header}
           <p className="label-micro quiz-question__generating-copy" role="status">
@@ -389,7 +398,6 @@ export function QuizQuestion({
             </Button>
           </div>
         </div>
-        <div className="quiz-question__spacer" />
       </div>
     );
   }
@@ -429,8 +437,6 @@ export function QuizQuestion({
       tabIndex={-1}
       onKeyDown={onRootKeyDown}
     >
-      {rail}
-
       <div className="quiz-question__col">
         {header}
 
@@ -604,8 +610,6 @@ export function QuizQuestion({
           </Button>
         </div>
       </div>
-
-      <div className="quiz-question__spacer" />
 
       <LeaveDialog
         open={phase === "confirm-leave"}

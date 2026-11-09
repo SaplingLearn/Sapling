@@ -139,5 +139,5 @@
 
 /* Phones: the question page keeps a 16px gutter instead of the desktop air. */
 @media (max-width: 640px) {
-  .quiz-root { --quiz-pad-question: 24px 16px 20px 4px; }
+  .quiz-root { --quiz-pad-question: 24px 16px 20px; }
 }
