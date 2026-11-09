@@ -179,37 +179,33 @@ class TestListSessions:
     def test_message_counts_are_head_counts_with_bounded_concurrency(self):
         """One count=exact read per session with a one-row body (never every
         message id), at most _SESSION_COUNT_CONCURRENCY in flight at once."""
-        import threading
-        import time as _time
-
         from routes import learn
 
         sessions = [{"id": f"s{i}", "topic": "T", "mode": "socratic",
                      "started_at": "2026-01-01T00:00:00", "ended_at": None} for i in range(30)]
-        live, peak, lock, calls = [0], [0], threading.Lock(), []
+        live, peak, calls = [0], [0], []
 
-        def count(cols, filters=None, limit=None, **_k):
-            with lock:
-                calls.append((cols, filters, limit))
-                live[0] += 1
-                peak[0] = max(peak[0], live[0])
-            _time.sleep(0.02)
-            with lock:
-                live[0] -= 1
+        async def count(cols, filters=None, limit=None, **_k):
+            calls.append((cols, limit))
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+            await asyncio.sleep(0.01)
+            live[0] -= 1
             return [{"id": "m"}], int(filters["session_id"][4:])
 
         def factory(name):
             mock = MagicMock()
             mock.select.return_value = sessions if name == "sessions" else []
-            mock.select_with_count.side_effect = count
+            mock = add_async_twins(mock)
+            mock.aselect_with_count = AsyncMock(side_effect=count)
             return mock
 
-        with patch("routes.learn.table", side_effect=with_async_twins(factory)):
+        with patch("routes.learn.table", side_effect=factory):
             r = client.get("/api/learn/sessions/user_andres?limit=30")
         assert r.status_code == 200
         assert [s["message_count"] for s in r.json()["sessions"]] == list(range(30))
-        assert len(calls) == 30 and all(lim == 1 and cols == "id" for cols, _f, lim in calls)
-        assert 1 <= peak[0] <= learn._SESSION_COUNT_CONCURRENCY
+        assert calls == [("id", 1)] * 30
+        assert peak[0] == learn._SESSION_COUNT_CONCURRENCY
 
     @pytest.mark.parametrize("asked,sent", [(10, 10), (500, 100), (0, 100), (-3, 100)])
     def test_limit_is_clamped(self, asked, sent):
