@@ -943,10 +943,13 @@ export function StudyHub({
           {qr.length > 0 && (
             <div onMouseEnter={() => set({ qrOpen: true })} onMouseLeave={() => set({ qrOpen: false })} style={{ position: "relative" }}>
               <button className={s.hoverQr} onClick={() => setPicker({ kind: "cards", picks: Object.fromEntries(qr.map(x => [x.t.id, true])) })} onFocus={() => set({ qrOpen: true })} onBlur={() => set({ qrOpen: false })} aria-expanded={st.qrOpen}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, height: 56, padding: "0 8px", border: "1px solid #C9DAEC", borderRadius: 14, background: "#E3ECF5", color: "#1E3F6B", ...INHERIT_FONT, textAlign: "left", cursor: "pointer", whiteSpace: "nowrap" }}>
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 56, padding: "0 8px", border: "1px solid #C9DAEC", borderRadius: 14, background: "#E3ECF5", color: "#1E3F6B", ...INHERIT_FONT, textAlign: "left", cursor: "pointer", whiteSpace: "nowrap" }}>
                 <span style={{ width: 40, height: 40, borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><CardsIcon size={18} /></span>
-                <span style={{ flex: 1, fontSize: 17, fontWeight: 700 }}>{qr.length} Quick {qr.length === 1 ? "Review" : "Reviews"}</span>
-                <span style={{ marginLeft: 8, height: 38, padding: "0 14px", borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", fontSize: 17, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                {/* minWidth 0 lets the label give way (ellipsis) instead of
+                    pushing the pill past the border at the rail's width; the
+                    pill never shrinks, and its inset matches the tile's. */}
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: 17, fontWeight: 700 }}>{qr.length} Quick {qr.length === 1 ? "Review" : "Reviews"}</span>
+                <span style={{ flexShrink: 0, height: 38, padding: "0 12px", borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", fontSize: 17, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                   {qr.length * 2} min
                   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </span>
