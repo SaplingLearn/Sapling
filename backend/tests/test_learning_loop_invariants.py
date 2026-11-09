@@ -315,8 +315,22 @@ LEARNER_STATE_SANCTIONED = (LEARNER_STATE_METRICS_WRITE,)
 SANCTIONED_GRAPH_WRITES = {
     (GRAPH_WRITER, *w) for w in GRAPH_WRITER_SANCTIONED
 } | {(LEARNER_STATE_MODULE, *w) for w in LEARNER_STATE_SANCTIONED}
+#: main's graph ops scripts (#803, #847): staff-run, dry-run by default. Their
+#: writes go through apply_graph_update (edges) and graph_service.delete_node
+#: (junk nodes); what they touch directly is (file, table, method, def):
+#: paged reads that hand the table to a page_all imported in function scope
+#: (method None: the canonical-page_all exemption is module-level only), and
+#: the edge backfill's --rollback, which deletes exactly the edge rows its own
+#: manifest recorded (topology only: no node, belief or evidence).
+SANCTIONED_OPS_SCRIPT_GRAPH_USES = frozenset({
+    ("scripts/backfill_concept_edges.py", "graph_edges", None, "_user_edges"),
+    ("scripts/backfill_concept_edges.py", "graph_nodes", None, "main"),
+    ("scripts/backfill_concept_edges.py", "graph_edges", "delete", "_rollback"),
+    ("scripts/prune_junk_concepts.py", "graph_nodes", None, "main"),
+})
 METRICS_SCRIPT = "scripts/derive_zpd_metrics.py"
-GRAPH_TABLE_READ_METHODS = ("select", "select_with_count")
+#: the sync reads and main's async-seam twins (#117, db/async_connection.py)
+GRAPH_TABLE_READ_METHODS = ("select", "select_with_count", "aselect", "aselect_with_count")
 INV01_EXEMPT_PREFIXES = ("tests/", "venv/", "db/archive/", "db/e2e_checks/")
 _WRITE_CHAIN = re.compile(
     r'table\(\s*"(' + "|".join(GRAPH_TABLES) + r')"\s*\)\s*\.\s*(insert|update|upsert)\s*\('
@@ -419,11 +433,10 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
             continue
         method = None
         parent = parents.get(node)
-        if (
-            isinstance(parent, ast.Attribute)
-            and isinstance(parents.get(parent), ast.Call)
-            and parents[parent].func is parent
-        ):
+        if isinstance(parent, ast.Attribute):
+            # called on the spot, or the bound method handed to a hop
+            # (`await run_in_threadpool(table("graph_nodes").select, ...)`,
+            # main's #117 idiom): either way that one method is the use
             method = parent.attr
         elif (
             canonical_page_all
@@ -452,6 +465,8 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
         if method in GRAPH_TABLE_READ_METHODS:
             continue
         if (rel, tbl, method, enclosing) in SANCTIONED_GRAPH_WRITES:
+            continue
+        if (rel, tbl, method, enclosing) in SANCTIONED_OPS_SCRIPT_GRAPH_USES:
             continue
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
@@ -700,6 +715,14 @@ def test_inv_01_single_graph_writer():
         for _line, tbl, method, enclosing in _graph_table_uses((BACKEND / rel).read_text())
     }
     assert SANCTIONED_GRAPH_WRITES <= present, sorted(SANCTIONED_GRAPH_WRITES - present)
+    scripts_present = {
+        (rel, tbl, method, enclosing)
+        for rel in {f for f, *_ in SANCTIONED_OPS_SCRIPT_GRAPH_USES}
+        for _line, tbl, method, enclosing in _graph_table_uses((BACKEND / rel).read_text())
+    }
+    assert SANCTIONED_OPS_SCRIPT_GRAPH_USES <= scripts_present, sorted(
+        SANCTIONED_OPS_SCRIPT_GRAPH_USES - scripts_present
+    )
 
     # PKG-11: the two routes on the loop path never write graph tables
     # directly; the quiz route reaches the graph only through apply_graph_update.
@@ -2527,6 +2550,17 @@ def test_inv_13b_seed_opts_in_exactly_the_loop_users():
 # ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────
 
 LEGACY_MASTERY_SYMBOLS = ("mastery_delta", "MASTERY_DELTA_PER", "get_mastery_tier")
+#: main's RLS step 2 (#115) tests name the legacy `apply_mastery_delta` SQL
+#: function, which still exists in the database (main's 20261108094130 grants
+#: and policy tests pin it) though no backend code calls it any more (the
+#: integration lane's test_backend_rpc_list_matches_the_call_sites lists every
+#: rpc( call site). Test files only: an application file naming it still fails.
+INV21_TEST_FILES_NAMING_THE_DORMANT_FUNCTION = frozenset({
+    "tests/integration/test_rls_lockdown_db.py",
+    "tests/integration/test_rls_policies_db.py",
+    "tests/test_db_scope_report.py",
+    "tests/test_db_user_scope.py",
+})
 
 
 def test_inv_21_no_legacy_mastery_writers():
@@ -2535,6 +2569,11 @@ def test_inv_21_no_legacy_mastery_writers():
     for path in BACKEND.rglob("*.py"):
         rel = path.relative_to(BACKEND)
         if rel.parts[0] in ("venv", "learning") or rel.name == "test_learning_loop_invariants.py":
+            continue
+        if rel.as_posix() in INV21_TEST_FILES_NAMING_THE_DORMANT_FUNCTION:
+            for line in path.read_text().splitlines():
+                legacy = line.replace("apply_mastery_delta", "")
+                hits += [f"{rel}: {sym}" for sym in LEGACY_MASTERY_SYMBOLS if sym in legacy]
             continue
         for i, line in enumerate(path.read_text().splitlines(), 1):
             for sym in LEGACY_MASTERY_SYMBOLS:

@@ -41,6 +41,27 @@ class Change(NamedTuple):
 
 
 REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
+    # main's Canopy metrics (not a loop function): in scope because main's
+    # wave 2 re-created it on 2026-11-08 (#116/#119). Each definition is the
+    # previous one plus its own change, copied verbatim.
+    ("canopy_metrics", 0): {
+        "20260921055024_canopy_metrics.sql": Change(
+            requires=("'active_users'", "'counts'", "'totals'", "'llm_cost_cents'"),
+        ),
+        # #760: completed quizzes count only scored attempts
+        "20261106055333_state_machines_audit.sql": Change(
+            requires=("WHERE completed_at >= now() - interval '30 days' AND score IS NOT NULL",),
+        ),
+        # #116/#119: the job-queue and weekly LLM-cost numbers
+        "20261108213623_jobs_upkeep.sql": Change(
+            requires=(
+                "'jobs_dead_lettered'",
+                "'jobs_queue_depth'",
+                "public.llm_cost_per_active_user_weekly()",
+                "jsonb_strip_nulls(jsonb_build_object(",
+            ),
+        ),
+    },
     ("learning_evidence_commit", 5): {
         "20261019131339_learning_evidence_transaction.sql": Change(
             requires=(

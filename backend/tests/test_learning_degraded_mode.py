@@ -374,7 +374,8 @@ def sweeper(monkeypatch):
     from services import index_sweeper
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    monkeypatch.delenv("INDEX_SWEEPER_ENABLED", raising=False)
+    # #806 (main): unset, the sweeper runs in production only; the tests force it on
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "true")
     queue = {"rows": [{"id": f"d{i}"} for i in range(5)], "claims": 0}
 
     def fake_rpc(fn, params):
