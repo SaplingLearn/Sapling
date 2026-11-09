@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
+import GOLDEN from "./__fixtures__/knowledgeGraph2D.follow.golden.json";
+import { followForce } from "./KnowledgeGraph2D";
 
 /**
  * The drag "follow" force (ropes between a dragged concept and everything
- * linked to it). It used to live inline in the simulation effect, closing
- * over refs; `legacyFollow` below is that body VERBATIM, wrapped in a factory
- * that supplies the same closure variables, so the extracted module-level
- * force can be proven to do exactly the same per-tick math.
+ * linked to it), one simulation tick at a time. It used to live inline in the
+ * simulation effect, closing over refs. The golden
+ * (`__fixtures__/knowledgeGraph2D.follow.golden.json`) was captured from that
+ * inline body, run verbatim on these scenarios (two ticks each), so the
+ * extracted `followForce` is held to exactly the same per-tick math.
  */
 
 type Node = { id: string; x?: number; y?: number; vx?: number; vy?: number; fx?: number | null; fy?: number | null };
@@ -24,62 +27,17 @@ type World = {
   settles: number;
 };
 
-/** The pre-extraction inline force, closure variables supplied by `world`. */
-function legacyFollow(world: World) {
-  const freeRef = { current: world.free };
-  const planRef = { current: { orbit: world.orbit } };
+/** One tick of `followForce`, wired the way the simulation effect wires it. */
+function tick(world: World, alpha: number) {
   const nodeById = new Map(world.nodes.map((n) => [n.id, n]));
-  const width = world.width;
-  const height = world.height;
   const centerOf = (rootId: string | null) => {
     const root = rootId ? nodeById.get(rootId) : undefined;
     if (root && root.x != null && root.y != null) return { x: root.x, y: root.y };
-    return { x: width / 2, y: height / 2 };
+    return { x: world.width / 2, y: world.height / 2 };
   };
-  const settleFreed = () => {
+  followForce(alpha, world.free, nodeById, world.orbit, centerOf, () => {
     world.settles += 1;
-  };
-  return (alpha: number) => {
-    // Freed nodes (see freeRef): a rope stretched past its length pulls
-    // the follower after its leader — or, when the follower is pinned (a
-    // classic-layout course root), pulls the leader back instead. Each
-    // freed concept's orbit target tracks it so the orbit force (next)
-    // doesn't hold it on its old ring. Once everything has slowed down,
-    // wherever it all came to rest becomes the layout.
-    const free = freeRef.current;
-    if (!free.leader.size) return;
-    let moving = free.dragging != null;
-    for (const [id, { leader: leaderId, gap }] of free.leader) {
-      const n = nodeById.get(id);
-      if (!n || n.x == null || n.y == null) continue;
-      const l = leaderId ? nodeById.get(leaderId) : undefined;
-      if (l && l.x != null && l.y != null) {
-        const dx = l.x - n.x;
-        const dy = l.y - n.y;
-        const len = Math.hypot(dx, dy) || 1e-6;
-        const slack = len - gap;
-        if (slack > 0) {
-          const px = (dx / len) * slack * FOLLOW_PULL;
-          const py = (dy / len) * slack * FOLLOW_PULL;
-          if (n.fx == null) {
-            n.vx = (n.vx ?? 0) + px;
-            n.vy = (n.vy ?? 0) + py;
-          } else if (l.fx == null) {
-            l.vx = (l.vx ?? 0) - px;
-            l.vy = (l.vy ?? 0) - py;
-          }
-        }
-      }
-      const o = planRef.current.orbit.get(id);
-      if (o && id !== free.dragging) {
-        const c = centerOf(o.rootId);
-        o.angle = Math.atan2(n.y - c.y, n.x - c.x);
-        o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
-      }
-      if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
-    }
-    if (!moving || (free.dragging == null && alpha < 0.02)) settleFreed();
-  };
+  });
 }
 
 const tethers = (entries: Array<[string, string | null, number]>) =>
@@ -222,17 +180,40 @@ function stateOf(world: World) {
   };
 }
 
-describe("follow force (legacy inline body, characterised)", () => {
+describe("followForce", () => {
+  it.each(Object.keys(SCENARIOS))("matches the pre-extraction inline force over two ticks: %s", (name) => {
+    const { world, alpha } = SCENARIOS[name]();
+    tick(world, alpha);
+    tick(world, alpha);
+    expect(stateOf(world)).toEqual((GOLDEN as Record<string, unknown>)[name]);
+  });
+
+  it("never pulls on a NaN slack", () => {
+    const world: World = {
+      free: { leader: tethers([["a", null, 70], ["b", "a", NaN]]), dragging: "a" },
+      nodes: [
+        { id: "a", x: 0, y: 0 },
+        { id: "b", x: 300, y: 300, vx: 0, vy: 0 },
+      ],
+      orbit: new Map(),
+      width: 600,
+      height: 480,
+      settles: 0,
+    };
+    tick(world, 0.3);
+    expect(world.nodes[1]).toEqual({ id: "b", x: 300, y: 300, vx: 0, vy: 0 });
+  });
+
   it("does nothing with no freed nodes", () => {
     const { world, alpha } = SCENARIOS["nothing freed"]();
     const before = stateOf(world);
-    legacyFollow(world)(alpha);
+    tick(world, alpha);
     expect(stateOf(world)).toEqual(before);
   });
 
   it("pulls a free follower along a stretched rope and moves its orbit target", () => {
     const { world, alpha } = SCENARIOS["dragging: a stretched rope pulls a free follower; its orbit tracks it"]();
-    legacyFollow(world)(alpha);
+    tick(world, alpha);
     const b = world.nodes.find((n) => n.id === "b")!;
     const dx = 500 - 330;
     const dy = 100 - 260;
@@ -253,7 +234,7 @@ describe("follow force (legacy inline body, characterised)", () => {
 
   it("pulls the leader back when the follower is pinned", () => {
     const { world, alpha } = SCENARIOS["pinned follower pulls its free leader back"]();
-    legacyFollow(world)(alpha);
+    tick(world, alpha);
     const a = world.nodes.find((n) => n.id === "a")!;
     const dx = 450 - 300;
     const dy = 400 - 240;
@@ -265,7 +246,7 @@ describe("follow force (legacy inline body, characterised)", () => {
   it("settles only once released and slow (or below the alpha floor)", () => {
     const settles = (name: string) => {
       const { world, alpha } = SCENARIOS[name]();
-      legacyFollow(world)(alpha);
+      tick(world, alpha);
       return world.settles;
     };
     expect(settles("both ends pinned: no pull")).toBe(0);
@@ -275,3 +256,4 @@ describe("follow force (legacy inline body, characterised)", () => {
     expect(settles("slack rope and coincident ends: no pull, unpositioned nodes skipped")).toBe(1);
   });
 });
+
