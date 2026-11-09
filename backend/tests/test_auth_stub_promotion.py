@@ -36,6 +36,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
+from tests.split_patches import set_auth_session_secret, set_auth_table
 
 # Mount ONLY the auth router — main.py pulls in logfire and the full stack.
 _app = FastAPI()
@@ -88,7 +89,7 @@ def _mock_table_factory(users_rows):
 @pytest.fixture
 def drive_callback(monkeypatch):
     """Drive the real callback past the two Google network hops."""
-    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    set_auth_session_secret(monkeypatch, "test-secret-key")
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
@@ -115,7 +116,7 @@ def drive_callback(monkeypatch):
             factory("newsletter_emails").select.return_value = [
                 {"id": "w1", "email": EMAIL, "approved_at": "2026-10-20T00:00:00+00:00"},
             ]
-        monkeypatch.setattr(auth_module, "table", factory)
+        set_auth_table(monkeypatch, factory)
 
         nonce = "nonce-abc"
         cookie = auth_module._encode_oauth_cookie(

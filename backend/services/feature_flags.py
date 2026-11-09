@@ -153,18 +153,25 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Run each request's database calls as the student (RLS) instead of "
             "the service role. shadow compares a sample of reads; enforce "
             "applies RLS and fails closed.", False),
-    # #115 RLS step 2e (docs/security/realtime-jwt-bridge-design.md): the
-    # study-room live chat authenticates Supabase Realtime with a
-    # backend-minted token (GET /api/auth/realtime-token, iss
-    # sapling-realtime) instead of the public anon key, so it keeps working
-    # once RLS is on for room_messages. Client-visible: Social.tsx reads it.
-    # Off = today's anon subscription. Turn on only where
-    # SUPABASE_JWT_SIGNING_KEY is set and trusted by that project's Realtime
-    # (else the endpoint 503s and the room falls back to REST-only).
+    # #115 RLS step 2e: RETIRED IN CODE, kept registered for ONE release.
+    # Nothing in this release reads it: GET /api/auth/realtime-token and
+    # Social.tsx always use the backend-minted Realtime token, the only path
+    # 20261109073255_room_messages_rls_enable.sql leaves. It stays registered
+    # and client-visible only so a browser still running the PREVIOUS bundle
+    # (which reads `realtime_rls` from GET /api/flags and, when it is not
+    # "on", subscribes with the anon key that RLS now blocks) keeps live
+    # chat until it reloads. Staging and prod carry a stored default of "on";
+    # variants[0] stays "off" per ADR 0029, so a fresh local/CI database
+    # resolves it "off", which is harmless there: those stacks build the
+    # frontend from the same commit, so no old bundle exists to read it. Do
+    # NOT set SAPLING_FLAG_REALTIME_RLS=off: it would only push old bundles
+    # onto the dead anon path. Delete this entry, its kill switch in
+    # .railway/railway.ts and its stored feature_flags/feature_flag_targets
+    # rows together in the follow-up, once every client is on the new bundle.
     FlagDef("realtime_rls", ("off", "on"),
-            "Study-room live chat authenticates Supabase Realtime with a "
-            "backend-minted, member-scoped token instead of the anon key "
-            "(RLS step 2e). Needs SUPABASE_JWT_SIGNING_KEY.", True),
+            "RETIRED: read only by frontend bundles older than the RLS step 2e "
+            "graduation. Keep it on until it is deleted; new code ignores it.",
+            True),
     # #117 (docs/design/async-db-client.md §3): whether the `a*` twins of
     # table()'s verbs use the native httpx.AsyncClient ("on") or run the sync
     # verb on a worker thread ("off": today's client and limiter, reached from
@@ -182,6 +189,26 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("stateless_rate_limit", ("off", "on"),
             "Keep rate-limit counters in Postgres so every replica shares one "
             "budget. Global: per-user rules and rollouts do not apply.", False),
+    # #117 wave 3: the per-process locks (study-guide single-flight, admin
+    # account operations, consumed OAuth nonces) also take a Postgres lease
+    # (`claim_lease()`, services/pg_lease.py), so they hold across replicas.
+    # Resolved GLOBALLY. Off = today's in-process locks only; on keeps them as
+    # the first layer, and a failing DB falls back to them. Server-only.
+    FlagDef("stateless_locks", ("off", "on"),
+            "Back the per-process locks with Postgres leases so they hold "
+            "across replicas. Global: per-user rules and rollouts do not apply.", False),
+    # #117: lazy tutor sessions (pending between start-session and the first
+    # turn) and their end/delete tombstones in the service-only
+    # `tutor_pending_sessions` table instead of process memory, so a session
+    # started on one replica can be continued, ended or deleted on another.
+    # Resolved GLOBALLY (user_id=None). Off = today's in-memory store; a
+    # session started under one setting finishes there only if it is
+    # continued on the same side (flipping it strands the other side's
+    # pending greetings: their first turn answers 404). Server-only.
+    FlagDef("stateless_tutor_sessions", ("off", "on"),
+            "Keep not-yet-started tutor sessions in Postgres so every replica "
+            "can continue, end or delete them. Global: per-user rules and "
+            "rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

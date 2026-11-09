@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -26,6 +25,7 @@ from agents import _resilience
 from agents._providers import _ResilientModelMixin
 from services import llm_budget, request_context
 from services.llm_budget import BudgetStatus, LLMBudgetExceeded
+from tests.split_patches import patch_documents
 
 USER = "user_budget"
 RESET = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -399,14 +399,15 @@ def test_a_streamed_tutor_turn_ends_in_a_terminal_budget_error(status):
 
 def test_quiz_generation_answers_its_daily_limit_code_and_refunds_the_slot(monkeypatch):
     import routes.quiz as quiz
-    from services.quiz_errors import QuizAPIError, QuizErrorCode
+    from services.quiz.errors import QuizAPIError, QuizErrorCode
+    from tests.split_patches import setattr_quiz
 
     async def refused(**_kw):
         raise _exc()
 
     refunds = []
-    monkeypatch.setattr(quiz, "_quiz_via_agent", refused)
-    monkeypatch.setattr(quiz, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
+    setattr_quiz(monkeypatch, "_quiz_via_agent", refused)
+    setattr_quiz(monkeypatch, "_refund_generate_slot", lambda uid, slot: refunds.append((uid, slot)))
     body = SimpleNamespace(user_id=USER, concept_node_id="n1", difficulty="medium",
                            use_shared_context=True, model_pref=None,
                            question_format="multiple_choice", num_questions=5)
@@ -426,9 +427,9 @@ def test_document_upload_sync_answers_429_not_502():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-        patch("routes.documents.process_document", side_effect=_exc()),
-        patch("routes.documents.table") as t,
+        patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+        patch_documents("process_document", side_effect=_exc()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _make_upload()
@@ -550,3 +551,59 @@ def test_admin_llm_routes_are_admin_only(monkeypatch):
     assert c.get("/api/admin/llm/drill").status_code == 403
     assert c.put("/api/admin/llm/budgets", json={"scope": "default",
                                                  "daily_token_limit": 1}).status_code == 403
+
+
+# ── reraise_budget_refusal: the routes' broad `except` (release doc §11) ─────
+
+
+def _a_refusal() -> LLMBudgetExceeded:
+    return LLMBudgetExceeded(limit=1, used=1,
+                             reset_at=datetime.now(timezone.utc) + timedelta(hours=1))
+
+
+def test_reraise_budget_refusal_is_a_no_op_for_other_errors():
+    llm_budget.reraise_budget_refusal(None)
+    llm_budget.reraise_budget_refusal(RuntimeError("model exploded"))
+
+
+@pytest.mark.parametrize("wrap", ["itself", "cause", "context", "group"])
+def test_reraise_budget_refusal_finds_the_refusal(wrap):
+    refusal = _a_refusal()
+    if wrap == "itself":
+        exc = refusal
+    elif wrap == "group":
+        exc = ExceptionGroup("tg", [ValueError("x"), refusal])
+    else:
+        exc = RuntimeError("wrapper")
+        setattr(exc, f"__{wrap}__", refusal)
+    with pytest.raises(LLMBudgetExceeded) as raised:
+        llm_budget.reraise_budget_refusal(exc)
+    assert raised.value is refusal
+
+
+def test_admin_view_shows_the_builtin_default_when_the_row_is_missing(admin):
+    """#826/#838: with no default row the gate still enforces the built-in 2M
+    (llm_budget_status's 'default:builtin'); the admin view says so instead of
+    showing no default at all."""
+    import routes.admin_llm as admin_llm
+
+    body = admin.client.get("/api/admin/llm/budgets").json()
+    assert body["default"]["daily_token_limit"] == 2_000_000
+    assert body["default"]["builtin"] is False  # the stored row
+    admin.store["llm_budgets"].clear()
+    body = admin.client.get("/api/admin/llm/budgets").json()
+    assert body["default"]["builtin"] is True
+    assert body["default"]["daily_token_limit"] == admin_llm.BUILTIN_DEFAULT_TOKENS == 2_000_000
+    r = admin.client.put("/api/admin/llm/budgets", json={"scope": "default", "daily_token_limit": 7})
+    assert r.json()["default"] == {**r.json()["default"], "builtin": False, "daily_token_limit": 7}
+
+
+def test_the_builtin_default_matches_the_sql_fallback():
+    """BUILTIN_DEFAULT_TOKENS mirrors the migration's 'default:builtin' row."""
+    from pathlib import Path
+
+    import routes.admin_llm as admin_llm
+
+    sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+           / "20261108213311_llm_budgets_and_cost_signal.sql").read_text()
+    assert f"SELECT {admin_llm.BUILTIN_DEFAULT_TOKENS}::bigint, 'default:builtin'" in sql

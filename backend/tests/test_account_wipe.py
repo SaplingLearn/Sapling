@@ -19,7 +19,7 @@ U, OTHER = "user_wipe", "user_keep"
 WIPED = (
     "enrollments", "documents", "notes", "flashcards", "sessions", "study_guides",
     "quiz_attempts", "quiz_context", "graph_nodes", "xp_events", "user_achievements",
-    "document_uploads", "library_folders",
+    "document_uploads", "library_folders", "tutor_pending_sessions",
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
@@ -165,6 +165,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("user_achievements", achievement_id=f"{p}-ach{i}", user_id=uid)
         db.add("document_uploads", id=f"{p}-up{i}", user_id=uid)
         db.add("library_folders", id=f"{p}-fold{i}", user_id=uid)
+        db.add("tutor_pending_sessions", session_id=f"{p}-tps{i}", user_id=uid)
         # A private chunk of this document, ledgered as its source.
         db.add("course_chunks", id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}", uploader_id=uid,
                visibility="private", category="lecture_notes")
@@ -210,6 +211,7 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,
         "xp_events": 2, "user_achievements": 2, "document_uploads": 2,
         "library_folders": 2,
+        "tutor_pending_sessions": 2,
     }
     assert [r["id"] for r in db.rows["course_chunks"]] == [f"{OTHER}-ck0", f"{OTHER}-ck1"]
 
@@ -385,6 +387,28 @@ def test_every_bundle_table_is_wiped():
             # cascade parent that is itself deleted directly.
             parent = aw.WIPED_BY_CASCADE.get(spec.name)
             assert spec.name in aw.WIPED_DIRECTLY or parent in aw.WIPED_DIRECTLY, spec.name
+
+
+#: Wiped but never bundled, each for a stated reason. CLAUDE.md (the admin
+#: account tools entry) names the in-flight staging tables; a new per-user
+#: table that is wiped but not copied must be added here, with its reason.
+WIPED_NOT_BUNDLED = {
+    "document_uploads": "in-flight upload staging (#116)",
+    "gradescope_syncs": "in-flight Gradescope sync staging (#116)",
+    "tutor_pending_sessions": "a tutor session not yet chatted in, or its tombstone (#117)",
+    "gradescope_course_links": "Gradescope credentials do not move, so neither do their links",
+}
+
+
+def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
+    from services.account_bundle import SPECS
+
+    assert set(aw.wiped_tables()) - {s.name for s in SPECS} == set(WIPED_NOT_BUNDLED)
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
+    exception = exception[:exception.index("\n")]
+    for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
+        assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
 
 
 def test_cascade_chains_end_in_a_direct_delete():

@@ -41,7 +41,7 @@ from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from routes.library_folders import router as library_folders_router
 from routes.study import router as study_router
-from services import quiz_config, quiz_errors
+from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate
 from services.llm_budget import LLMBudgetExceeded
 from db.scope import (

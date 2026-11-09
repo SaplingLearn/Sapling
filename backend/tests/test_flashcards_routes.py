@@ -58,7 +58,7 @@ def _tables(term_offerings):
 
 class TestListFlashcards:
     def test_unscoped_returns_every_card(self):
-        with patch("routes.flashcards.table", side_effect=_tables([])):
+        with patch("services.flashcards.cards.table", side_effect=_tables([])):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
         assert r.status_code == 200
         assert [c["id"] for c in r.json()["flashcards"]] == [
@@ -66,8 +66,8 @@ class TestListFlashcards:
         ]
 
     def test_semester_keeps_that_terms_cards_plus_termless_ones(self):
-        with patch("routes.flashcards.table", side_effect=_tables([{"id": "off-f25"}])), \
-             patch("routes.flashcards.term_id_for_label", return_value="term-f25") as tl:
+        with patch("services.flashcards.cards.table", side_effect=_tables([{"id": "off-f25"}])), \
+             patch("services.flashcards.cards.term_id_for_label", return_value="term-f25") as tl:
             r = client.get(f"/api/flashcards/user/{USER_ID}?semester=Fall+2025")
         assert r.status_code == 200
         ids = [c["id"] for c in r.json()["flashcards"]]
@@ -75,8 +75,8 @@ class TestListFlashcards:
         tl.assert_called_once_with("Fall 2025")
 
     def test_unknown_semester_degrades_to_termless_cards_only(self):
-        with patch("routes.flashcards.table", side_effect=_tables([])), \
-             patch("routes.flashcards.term_id_for_label", return_value=None):
+        with patch("services.flashcards.cards.table", side_effect=_tables([])), \
+             patch("services.flashcards.cards.term_id_for_label", return_value=None):
             r = client.get(f"/api/flashcards/user/{USER_ID}?semester=Never+2099")
         assert r.status_code == 200
         assert [c["id"] for c in r.json()["flashcards"]] == ["f-unscoped"]
@@ -114,10 +114,10 @@ class TestCourseDocumentsByCourseId:
 
     def test_course_id_reads_the_users_docs_in_every_offering_of_the_course(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.course_offering_ids",
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.course_offering_ids",
                    return_value=["off-f25", "off-s26"]) as co, \
-             patch("routes.flashcards.user_enrolled_course_ids") as enrolled:
+             patch("services.flashcards.context.user_enrolled_course_ids") as enrolled:
             docs = _get_course_documents(USER_ID, "Intro CS", course_id="c1")
         co.assert_called_once_with("c1")
         enrolled.assert_not_called()  # no name match, no enrollment gate
@@ -134,18 +134,18 @@ class TestCourseDocumentsByCourseId:
     def test_course_id_ignores_a_misleading_topic(self):
         # The topic is only the prompt label once a course id is present.
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]):
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.course_offering_ids", return_value=["off-1"]):
             _get_course_documents(USER_ID, "Some Other Name", course_id="c1")
         assert "courses" not in captured
         assert captured["documents"]["filters"]["offering_id"] == "in.(off-1)"
 
     def test_course_id_with_semester_is_strict_to_that_terms_offering(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.term_id_for_label", return_value="term-f25") as tl, \
-             patch("routes.flashcards.resolve_offering", return_value="off-f25") as ro, \
-             patch("routes.flashcards.course_offering_ids") as co:
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.term_id_for_label", return_value="term-f25") as tl, \
+             patch("services.flashcards.context.resolve_offering", return_value="off-f25") as ro, \
+             patch("services.flashcards.context.course_offering_ids") as co:
             docs = _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025", course_id="c1")
         tl.assert_called_once_with("Fall 2025")
         ro.assert_called_once_with("c1", "term-f25", fallback=False)
@@ -155,18 +155,18 @@ class TestCourseDocumentsByCourseId:
 
     def test_semester_with_no_offering_yields_no_docs(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.term_id_for_label", return_value="term-su26"), \
-             patch("routes.flashcards.resolve_offering", return_value=None):
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.term_id_for_label", return_value="term-su26"), \
+             patch("services.flashcards.context.resolve_offering", return_value=None):
             docs = _get_course_documents(USER_ID, "Intro CS", semester="Summer 2026", course_id="c1")
         assert docs == []
         assert "documents" not in captured  # never widened to other terms
 
     def test_unknown_semester_label_yields_no_docs(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.term_id_for_label", return_value=None), \
-             patch("routes.flashcards.resolve_offering") as ro:
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.term_id_for_label", return_value=None), \
+             patch("services.flashcards.context.resolve_offering") as ro:
             assert _get_course_documents(USER_ID, "Intro CS", semester="Nope", course_id="c1") == []
         ro.assert_not_called()
         assert "documents" not in captured
@@ -174,8 +174,8 @@ class TestCourseDocumentsByCourseId:
     def test_offering_scope_unknown_yields_no_docs(self):
         # course_offering_ids -> None = "could not tell" (it logs); never all docs.
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.course_offering_ids", return_value=None):
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.course_offering_ids", return_value=None):
             assert _get_course_documents(USER_ID, "Intro CS", course_id="c1") == []
         assert "documents" not in captured
 
@@ -189,11 +189,11 @@ class TestCourseDocumentsByName:
 
     def test_name_matched_within_enrolled_courses_deterministically(self):
         captured = {}
-        with patch("routes.flashcards.table",
+        with patch("services.flashcards.context.table",
                    side_effect=_doc_tables(captured, courses=[{"id": "c-a"}])), \
-             patch("routes.flashcards.user_enrolled_course_ids",
+             patch("services.flashcards.context.user_enrolled_course_ids",
                    return_value={"c-b", "c-a"}) as enrolled, \
-             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]) as co:
+             patch("services.flashcards.context.course_offering_ids", return_value=["off-1"]) as co:
             docs = _get_course_documents(USER_ID, "Intro CS")
         enrolled.assert_called_once_with(USER_ID)
         assert captured["courses"] == {
@@ -207,27 +207,27 @@ class TestCourseDocumentsByName:
 
     def test_name_match_with_semester_is_strict(self):
         captured = {}
-        with patch("routes.flashcards.table",
+        with patch("services.flashcards.context.table",
                    side_effect=_doc_tables(captured, courses=[{"id": "c1"}])), \
-             patch("routes.flashcards.user_enrolled_course_ids", return_value={"c1"}), \
-             patch("routes.flashcards.term_id_for_label", return_value="term-f25"), \
-             patch("routes.flashcards.resolve_offering", return_value="off-f25") as ro:
+             patch("services.flashcards.context.user_enrolled_course_ids", return_value={"c1"}), \
+             patch("services.flashcards.context.term_id_for_label", return_value="term-f25"), \
+             patch("services.flashcards.context.resolve_offering", return_value="off-f25") as ro:
             _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025")
         ro.assert_called_once_with("c1", "term-f25", fallback=False)
         assert captured["documents"]["filters"]["offering_id"] == "in.(off-f25)"
 
     def test_no_enrolled_course_matches_yields_no_docs_never_the_whole_library(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured, courses=[])), \
-             patch("routes.flashcards.user_enrolled_course_ids", return_value={"c-other"}):
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured, courses=[])), \
+             patch("services.flashcards.context.user_enrolled_course_ids", return_value={"c-other"}):
             docs = _get_course_documents(USER_ID, "Mitosis")
         assert docs == []
         assert "documents" not in captured  # the all-docs read is gone
 
     def test_no_enrollments_yields_no_docs_without_a_courses_read(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
-             patch("routes.flashcards.user_enrolled_course_ids", return_value=set()):
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(captured)), \
+             patch("services.flashcards.context.user_enrolled_course_ids", return_value=set()):
             assert _get_course_documents(USER_ID, "Intro CS") == []
             assert _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025") == []
         assert captured == {}
@@ -236,10 +236,10 @@ class TestCourseDocumentsByName:
 class TestCourseDocumentsFailure:
     def test_lookup_failure_is_logged_and_degrades_to_no_docs(self, caplog):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=_doc_tables(
+        with patch("services.flashcards.context.table", side_effect=_doc_tables(
                  captured, documents_raise=RuntimeError("PostgREST 400"))), \
-             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]), \
-             caplog.at_level("WARNING", logger="routes.flashcards"):
+             patch("services.flashcards.context.course_offering_ids", return_value=["off-1"]), \
+             caplog.at_level("WARNING", logger="services.flashcards.context"):
             assert _get_course_documents(USER_ID, "Intro CS", course_id="c1") == []
         assert "could not load course documents" in caplog.text
         assert any(r.exc_info for r in caplog.records)
@@ -376,7 +376,7 @@ class TestFlashcardEncryption:
                 m.select.return_value = []
             return m
 
-        with patch("routes.flashcards.table", side_effect=side_effect):
+        with patch("services.flashcards.cards.table", side_effect=side_effect):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
 
         assert r.status_code == 200
@@ -399,7 +399,7 @@ class TestFlashcardEncryption:
                 m.select.return_value = []
             return m
 
-        with patch("routes.flashcards.table", side_effect=side_effect):
+        with patch("services.flashcards.cards.table", side_effect=side_effect):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
 
         assert r.status_code == 200

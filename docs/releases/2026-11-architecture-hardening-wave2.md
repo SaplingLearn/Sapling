@@ -254,7 +254,7 @@ role rule, rollout, default (§8.1 for what that means for turning one off).
 
 | Flag | From | Variants | Scope | Client-visible | Kill switch |
 |---|---|---|---|---|---|
-| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off` |
+| `realtime_rls` | #833 | off / on | Per user | **yes** (`Social.tsx` reads it) | `SAPLING_FLAG_REALTIME_RLS=off`. **Retired in code since** (after it reached default `on` on staging and prod): the anon path is gone and nothing new reads it. It stays registered, client-visible and default `on` for one release, only so bundles older than that change keep live chat; **never set it `off`** (it would push those bundles onto the dead anon path). Deleted with its stored rows in a follow-up; see step 1 below. |
 | `llm_budget` | #838 | off / on | Per user (role rules and rollouts apply) | no | `SAPLING_FLAG_LLM_BUDGET=off` |
 | `llm_outage_drill` | #838 | off / anthropic / google / both | **Global** (`user_id=None`) | no | Unset `SAPLING_FLAG_LLM_OUTAGE_DRILL`, default `off`. Refused in `APP_ENV=production` (also what an unset `APP_ENV` means) unless `SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes`. A flag-store outage resolves to `off`, so the store can never arm it. |
 | `async_db_client` | #839 | off / on | Per user, resolved once per request | no | `SAPLING_FLAG_ASYNC_DB_CLIENT=off` |
@@ -288,6 +288,14 @@ on staging before prod:
    grant. Pin the end state in a new migration afterwards
    (`docs/security/realtime-jwt-bridge-design.md` "Enable sequence", steps
    4–5). Before this step, staging's anon key still reads room messages.
+   **Update, done:** the flag reached default `on` on staging and prod, and
+   steps 4–5 landed as one change instead of a manual step:
+   `20261109073255_room_messages_rls_enable.sql` (the SQL above, idempotent;
+   a no-op on prod, changes staging when it migrates), the client's anon
+   subscription path removed, and nothing reads `realtime_rls` any more. It
+   stays registered (and in `.railway/railway.ts`) one release for old
+   bundles; a follow-up deletes it and its stored rows. Nothing manual is
+   left.
 2. **`llm_budget`.** Check the seeded default first:
    `GET /api/admin/llm/budgets` (2,000,000 tokens per UTC day, a runaway guard,
    not a study limit). Ladder: admins, then 10/50/100%. Watch 429s with
@@ -534,9 +542,12 @@ The stages: preflight, **backup**, snapshot, migrate (the irreversible step:
      targets, set the rollout to 0, **and** set the default to `off`. With
      #839 each process notices within about 5 s under traffic (the version
      check), never later than its 30 s snapshot.
-   - `realtime_rls` off sends clients back to the anon subscription on their
-     next flags refresh. On staging after the manual close-the-anon-path step,
-     that path delivers nothing until you roll that step back too
+   - `realtime_rls` is retired in code (§4, step 1): the token endpoint and
+     the new client ignore it, and `SAPLING_FLAG_REALTIME_RLS=off` would
+     only break old bundles, so there is no flag to turn off. Rolling live chat
+     back to the anon key means reverting the change that retired it (it
+     restores the anon subscription path) and then, on staging only, the
+     reverse SQL in `20261109073255_room_messages_rls_enable.sql`
      (`GRANT SELECT ... TO anon; ALTER TABLE ... DISABLE ROW LEVEL SECURITY;`,
      never on prod).
    - `jobs_queue` off: in-flight queued uploads and syncs still finish on the
@@ -735,21 +746,23 @@ additive.
 
 ## 11. Open findings and follow-ups (not fixed in this release)
 
-| Finding | Where | Severity | Note |
-|---|---|---|---|
-| **22 sync-DB-on-loop call sites remain** on async handlers: 17 in `routes/learn.py` (the tutor turn path, including `chat_stream`'s pre-stream reads), 3 in `routes/notes.py`, 2 in `routes/documents.py`. They are allowlisted in `tests/test_no_sync_db_in_async_handlers.py` (the list may only shrink) and log `db.sync_on_loop`. | #839 | **perf, the biggest TTFT issue** | Next phase-3 step: move the tutor path onto the `a*` twins. |
-| `document_jobs.py` and `gradescope_jobs.py` implement the same staged-job state machine twice (stage/attach/re-stage, token take-back, owner-fenced claim, liveness, watch loop). | #835, #837 | maintainability | Proposal in #837's addendum: one `services/staged_jobs.py`, after both land, with the two test files as the net. |
-| The upload pipeline exists twice (the SSE route and the worker's `_run_agents`). | #835 | maintainability | Phase 4 (#118): one `run_document_agents(text, deps, on_stage)` yielding stages. |
-| `GET /api/admin/jobs` counts unfinished rows by scanning (capped at 10,000, with a truncated flag). | #836 | low | A `jobs_overview()` SQL aggregate (GROUP BY type, status) needs a migration. |
-| `GET /api/admin/analytics/db-scope` aggregates `events` in Python over a capped scan (20k events, ≤ 168 h). | #834 | low | A SQL GROUP BY function needs a migration. |
-| Duplicate study-guide rows are prevented in code only. | #828 | low | `UNIQUE(user_id, offering_id, exam_id)` after deduping existing rows, in its own migration PR. |
-| **The code-size ratchet will fail teammate PRs** that grow a baselined route file or push a function over 25: #750, #751, #752, #801, #673, #735, #717 touch baselined files. | #840 | process | Merge theirs first, or have them split / hand-raise the ceiling in `code_size_baseline.json` (a reviewed edit). |
-| **The API image still needs Chromium** for Gradescope BU SSO, and OCR for `extract`, flashcard import and syllabus import. | #836, #837 | blocks the cut-over | §9. |
-| A 20 MB queued upload is a ~27 MB JSON body to PostgREST over the 30 s sync client. **Untested on hosted Supabase.** | #835 | med (flag on) | Test on staging before `jobs_queue` goes wide, or lower `QUEUED_UPLOAD_MAX_BYTES`, or move to Storage (§9). |
-| Budget refusals on study guide, flashcards, social summary, concept describe and course summary map to those routes' existing generic error (e.g. 502), not a 429. | #838 | low (flag on) | Only the tutor, quiz and uploads have the friendly 429. |
-| `/api/admin/llm/budgets` does not show the built-in 2M default when the default row is missing. | #826, #838 | low | |
-| A tab loaded before the deploy reads a Gradescope 202 body as counts (only for syncs over 60 s with `jobs_queue` on). | #837 | low | |
-| `GET /api/notes/user/{id}?course_id=` still filters on the current-term offering. | #831 | low | The frontend never sends it. |
-| Room activity history still names soft-deleted users. | #832 | low | |
-| `.railway/railway.ts` is unverified against the live project (reference syntax). | #836 | — | Runbook step 3's plan is the check. |
-| **Wave-1 §10 items still open:** the `school_match` same-school decision (#813); stored cross-room `reply_to_id` rows stay in the table (hidden on read), and `edit_room_message`/`delete_room_message` do not check `room_id` (author-gated, not a leak); `room_messages` stays outside RLS on staging until the manual step after `realtime_rls` is at 100% (§4). | wave 1 | low/decision | The other wave-1 §10 findings (Quizlet SSRF, `link_concept`, course-write enrollment, profile roles/deleted, study-guide regenerate, flashcards `courses.user_id`, the 5 blocking async handlers) are fixed by #827–#832 and #839. |
+*Updated 2026-11-09 after #850 and #851 merged: the last column says which PR closed each item. The wave-3 release note, `docs/releases/2026-11-architecture-hardening-wave3.md`, carries what is still open.*
+
+| Finding | Where | Severity | Note | Closed by |
+|---|---|---|---|---|
+| **22 sync-DB-on-loop call sites remain** on async handlers: 17 in `routes/learn.py` (the tutor turn path, including `chat_stream`'s pre-stream reads), 3 in `routes/notes.py`, 2 in `routes/documents.py`. They are allowlisted in `tests/test_no_sync_db_in_async_handlers.py` (the list may only shrink) and log `db.sync_on_loop`. | #839 | **perf, the biggest TTFT issue** | Next phase-3 step: move the tutor path onto the `a*` twins. | **#850** (allowlist 22 → 0) |
+| `document_jobs.py` and `gradescope_jobs.py` implement the same staged-job state machine twice (stage/attach/re-stage, token take-back, owner-fenced claim, liveness, watch loop). | #835, #837 | maintainability | Proposal in #837's addendum: one `services/staged_jobs.py`, after both land, with the two test files as the net. | **#850** (`services/staged_jobs.py`) |
+| The upload pipeline exists twice (the SSE route and the worker's `_run_agents`). | #835 | maintainability | Phase 4 (#118): one `run_document_agents(text, deps, on_stage)` yielding stages. | **#850** (`agents/document.py::run_document_agents` + `services/document_pipeline.py`) |
+| `GET /api/admin/jobs` counts unfinished rows by scanning (capped at 10,000, with a truncated flag). | #836 | low | A `jobs_overview()` SQL aggregate (GROUP BY type, status) needs a migration. | **#850** (`jobs_overview()`; falls back to the scan until it exists) |
+| `GET /api/admin/analytics/db-scope` aggregates `events` in Python over a capped scan (20k events, ≤ 168 h). | #834 | low | A SQL GROUP BY function needs a migration. | **#850** (`db_scope_divergences()`; falls back to the scan until it exists) |
+| Duplicate study-guide rows are prevented in code only. | #828 | low | `UNIQUE(user_id, offering_id, exam_id)` after deduping existing rows, in its own migration PR. | **#850**, once `ensure_study_guides_unique_key()` is run by hand (wave-3 doc §4) |
+| **The code-size ratchet will fail teammate PRs** that grow a baselined route file or push a function over 25: #750, #751, #752, #801, #673, #735, #717 touch baselined files. | #840 | process | Merge theirs first, or have them split / hand-raise the ceiling in `code_size_baseline.json` (a reviewed edit). | Superseded by **#851**: the baseline is empty, so every PR now meets ≤ 600 / ≤ 25; open teammate PRs must also rebase onto the split modules (wave-3 doc §9) |
+| **The API image still needs Chromium** for Gradescope BU SSO, and OCR for `extract`, flashcard import and syllabus import. | #836, #837 | blocks the cut-over | §9. | open |
+| A 20 MB queued upload is a ~27 MB JSON body to PostgREST over the 30 s sync client. **Untested on hosted Supabase.** | #835 | med (flag on) | Test on staging before `jobs_queue` goes wide, or lower `QUEUED_UPLOAD_MAX_BYTES`, or move to Storage (§9). | open |
+| Budget refusals on study guide, flashcards, social summary, concept describe and course summary map to those routes' existing generic error (e.g. 502), not a 429. | #838 | low (flag on) | Only the tutor, quiz and uploads have the friendly 429. | **#850** for concept describe, study guide and flashcards; the room summary stays 200 on purpose; course summary unchanged |
+| `/api/admin/llm/budgets` does not show the built-in 2M default when the default row is missing. | #826, #838 | low | | **#850** (`builtin: true`) |
+| A tab loaded before the deploy reads a Gradescope 202 body as counts (only for syncs over 60 s with `jobs_queue` on). | #837 | low | | open |
+| `GET /api/notes/user/{id}?course_id=` still filters on the current-term offering. | #831 | low | The frontend never sends it. | **#850** |
+| Room activity history still names soft-deleted users. | #832 | low | | **#850** |
+| `.railway/railway.ts` is unverified against the live project (reference syntax). | #836 | — | Runbook step 3's plan is the check. | open |
+| **Wave-1 §10 items still open:** the `school_match` same-school decision (#813); stored cross-room `reply_to_id` rows stay in the table (hidden on read), and `edit_room_message`/`delete_room_message` do not check `room_id` (author-gated, not a leak); `room_messages` stays outside RLS on staging until the manual step after `realtime_rls` is at 100% (§4; since done by `20261109073255_room_messages_rls_enable.sql`). | wave 1 | low/decision | The other wave-1 §10 findings (Quizlet SSRF, `link_concept`, course-write enrollment, profile roles/deleted, study-guide regenerate, flashcards `courses.user_id`, the 5 blocking async handlers) are fixed by #827–#832 and #839. | Partly **#850** (`edit_room_message`/`delete_room_message` check `room_id`) and **#858** (`room_messages` under RLS); the rest open |

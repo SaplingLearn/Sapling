@@ -225,8 +225,8 @@ entry points the quiz wave added inside other surfaces' files.
 
 Three ids are **renamed** from the pre-#537 quiz — same role, clearer name:
 `quiz-exit` → `quiz-leave`, `quiz-retake` → `quiz-again`,
-`quiz-explain-concept` → `quiz-ask`. Eleven are **kept** verbatim so existing
-journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
+`quiz-explain-concept` → `quiz-ask`. Ten are **kept** verbatim so existing
+journeys keep anchoring: `quiz-panel`, `quiz-start`,
 `quiz-answer-options`, `quiz-answer-option-{label}`, `quiz-submit-answer`,
 `quiz-next`, `quiz-review-verdict`, `quiz-results-score`,
 `quiz-results-mastery`, `quiz-done`.
@@ -237,15 +237,14 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-resume-strip` | the "you left a quiz on X" banner (`ui/InlineBanner`) |
 | `quiz-resume` | "Resume" on that banner |
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
-| `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-proposal` | the primary proposal card (headed by the concept's name; no eyebrow since #849) |
 | `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
-| `quiz-pick-reset` | "← Back to the suggestion", beside the eyebrow once a concept has been picked off the list (the eyebrow then reads "Your pick") |
+| `quiz-pick-reset` | "← Back to the suggestion", above the card's name once a concept has been picked off the list |
 | `quiz-definition-pending` | the definition's placeholder while its sentence is fetched (nothing remembered for that concept yet) |
 | `quiz-start` | "Start" on that card |
-| `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
 | `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
 | `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
-| `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
+| `quiz-pick-list` | the topic list beside the proposal (accessible name "Choose a topic"; groups headed by the course name) — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list — clicking it makes that concept the card (no dialog); the row the old card's concept returns to carries `data-returned` for a moment |
 | `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
 | `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |

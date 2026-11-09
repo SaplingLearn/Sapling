@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
+from tests.split_patches import patch_profile_table
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
 # users.id is TEXT, not a UUID — a UUID-only rule would drop every real user.
@@ -617,7 +618,7 @@ class TestDeletePerson:
             return m
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect), \
+             patch_profile_table(side_effect=table_side_effect), \
              patch("routes.profile.delete_posthog_person",
                    side_effect=lambda uid: order.append(f"posthog:{uid}")):
             r = TestClient(app).request(
@@ -630,7 +631,7 @@ class TestDeletePerson:
         from main import app
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table"), \
+             patch_profile_table(), \
              patch("routes.profile.delete_posthog_person") as delete:
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "nope"},
@@ -861,7 +862,7 @@ class TestSettingsContract:
         consent_db.answers[USER_ID] = Consent.DENIED  # the DB after the write
         table_side_effect, captured = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).patch(
                 f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": True},
             )
@@ -875,7 +876,7 @@ class TestSettingsContract:
 
         table_side_effect, _ = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect), \
+             patch_profile_table(side_effect=table_side_effect), \
              patch("routes.profile.clear_analytics_consent_cache") as clear:
             TestClient(app).patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
         clear.assert_not_called()
@@ -887,7 +888,7 @@ class TestSettingsContract:
         assert "analytics_opt_out" in _SETTINGS_COLS.split(",")
         table_side_effect, _ = self._tables({"user_id": USER_ID, "analytics_opt_out": True})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
         assert r.status_code == 200 and r.json()["analytics_opt_out"] is True
 
@@ -896,7 +897,7 @@ class TestSettingsContract:
 
         table_side_effect, captured = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).patch(
                 f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": "maybe"},
             )
@@ -954,7 +955,7 @@ class TestDeletedUsers:
         analytics_consent.consent_for(USER_ID)  # cached ALLOWED
         consent_db.answers[USER_ID] = Consent.DENIED  # the row after the soft delete
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table"), \
+             patch_profile_table(), \
              patch("routes.profile.delete_posthog_person"):
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"},
@@ -2149,7 +2150,7 @@ class TestSettingsEtagVersion:
             return m
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             client = TestClient(app)
             r = client.get(f"/api/profile/{USER_ID}/settings")
             assert r.status_code == 200

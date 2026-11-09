@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from functools import partial
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from config import (
     MASTERY_LEARNING_MIN,
@@ -17,6 +19,19 @@ from config import (
 from db.connection import rpc, table
 from db.scope import runs_as_service
 from services.streak_service import effective_streak, touch_streak_safe
+# Module imports, not names: tests patch these on their home modules, and a
+# call-time attribute lookup keeps those patches effective (#118 removed the
+# function-local imports that hid an ImportError under a broad except).
+# course_context_service is the one exception, imported in
+# _refresh_touched_course_contexts: see there.
+from services import academics, achievement_service
+from services.graph_update_model import (  # noqa: F401  (_coerce_unit: re-export, #118)
+    GraphUpdate,
+    NewEdge,
+    NewNode,
+    UpdatedNode,
+    _coerce_unit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +71,33 @@ def _reshape_enrollment(r: dict) -> dict:
     }
 
 
+_ENROLLED_COURSES_SELECT = (
+    "id,offering_id,color,nickname,enrolled_at,"
+    "course_offerings!inner(course_id,"
+    "courses!inner(course_code,course_name,department),terms!inner(label))"
+)
+
+
 def _user_enrolled_courses(user_id: str) -> list[dict]:
     """All courses a user is enrolled in, via enrollments → course_offerings →
     courses/terms, reshaped to the legacy flat shape (abstract course_id + nested
     courses dict + offering_id + term label)."""
     try:
         rows = table("enrollments").select(
-            "id,offering_id,color,nickname,enrolled_at,"
-            "course_offerings!inner(course_id,"
-            "courses!inner(course_code,course_name,department),terms!inner(label))",
+            _ENROLLED_COURSES_SELECT,
+            filters={"user_id": f"eq.{user_id}"},
+            order="enrolled_at.asc",
+        )
+    except Exception:
+        return []
+    return [_reshape_enrollment(r) for r in (rows or [])]
+
+
+async def _auser_enrolled_courses(user_id: str) -> list[dict]:
+    """Async twin of :func:`_user_enrolled_courses` (#117)."""
+    try:
+        rows = await table("enrollments").aselect(
+            _ENROLLED_COURSES_SELECT,
             filters={"user_id": f"eq.{user_id}"},
             order="enrolled_at.asc",
         )
@@ -94,6 +127,17 @@ def ensure_user_exists(user_id: str) -> None:
     if not existing:
         try:
             table("users").insert({"id": user_id, "streak_count": 0})
+        except Exception:
+            pass  # already exists (race condition) — safe to ignore
+
+
+@runs_as_service  # #115: inserts a users row (service-only)
+async def aensure_user_exists(user_id: str) -> None:
+    """Async twin of :func:`ensure_user_exists` (#117)."""
+    existing = await table("users").aselect("id", filters={"id": f"eq.{user_id}"})
+    if not existing:
+        try:
+            await table("users").ainsert({"id": user_id, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
 
@@ -147,33 +191,123 @@ def _compute_velocity(events: list) -> float:
     return round(positive_gain / days, 4)
 
 
-def get_graph(user_id: str, semester: str | None = None) -> dict:
-    ensure_user_exists(user_id)
+def _semester_course_ids(user_id: str, semester: str | None) -> set[str] | None:
+    """Optional semester scope (Path A): the courses the user is enrolled in for
+    that term. ``None`` means "all terms"; an unresolved label is the empty set.
+    Sync (services/academics.py): the async readers hop it off the loop."""
+    if not semester:
+        return None
+    from services.academics import term_id_for_label, user_course_ids_for_term
+    term_id = term_id_for_label(semester)
+    return user_course_ids_for_term(user_id, term_id) if term_id else set()
 
-    # Get all enrolled courses for this user
-    enrolled_courses = _user_enrolled_courses(user_id)
 
-    # Optional semester scope (Path A): restrict to the courses the user is
-    # enrolled in for that term. `allowed_course_ids is None` means "all terms".
-    allowed_course_ids: set[str] | None = None
-    if semester:
-        from services.academics import term_id_for_label, user_course_ids_for_term
-        term_id = term_id_for_label(semester)
-        allowed_course_ids = (
-            user_course_ids_for_term(user_id, term_id) if term_id else set()
-        )
-        enrolled_courses = [
-            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
-        ]
-
-    # Get all graph nodes for this user
-    nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
+def _scope_nodes(nodes_raw: list | None, allowed_course_ids: set[str] | None) -> list:
     nodes = nodes_raw or []
     if allowed_course_ids is not None:
         nodes = [n for n in nodes if n.get("course_id") in allowed_course_ids]
+    return nodes
+
+
+#: Mastery events live in the append-only node_mastery_events table (the
+#: graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
+#: of this user's node events in one query, then group by node id.
+_NODE_EVENTS_SELECT = "node_id,delta,reason,created_at"
+
+
+def _node_events_filters(nodes: list) -> dict | None:
+    node_ids = {n["id"] for n in nodes}
+    return {"node_id": f"in.({','.join(node_ids)})"} if node_ids else None
+
+
+def _node_events(nodes: list) -> list:
+    filters = _node_events_filters(nodes)
+    if filters is None:
+        return []
+    try:
+        return table("node_mastery_events").select(
+            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
+        ) or []
+    except Exception:
+        return []
+
+
+async def _anode_events(nodes: list) -> list:
+    filters = _node_events_filters(nodes)
+    if filters is None:
+        return []
+    try:
+        return await table("node_mastery_events").aselect(
+            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
+        ) or []
+    except Exception:
+        return []
+
+
+#: The STORED streak_count is only reset on the student's next activity, so a
+#: lapsed streak would still display; effective_streak reads it as of today
+#: (#767).
+_STREAK_SELECT = "streak_count,last_active_date"
+
+
+def get_graph(user_id: str, semester: str | None = None) -> dict:
+    ensure_user_exists(user_id)
+    enrolled_courses = _user_enrolled_courses(user_id)
+    allowed_course_ids = _semester_course_ids(user_id, semester)
+    nodes = _scope_nodes(
+        table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"}),
+        allowed_course_ids,
+    )
+    edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
+    event_rows = _node_events(nodes)
+    user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
+    return _assemble_graph(
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+    )
+
+
+async def _none() -> None:
+    """An awaitable None, for a gather slot with nothing to read."""
+    return None
+
+
+async def aget_graph(user_id: str, semester: str | None = None) -> dict:
+    """Async twin of :func:`get_graph` (#117): the same reads through the
+    ``a*`` seam, the academics term lookup hopped off the loop. The user row
+    is ensured first (the streak read depends on it); the five independent
+    reads then run concurrently, and the node-events read follows the nodes."""
+    await aensure_user_exists(user_id)
+    user_filter = {"user_id": f"eq.{user_id}"}
+    enrolled_courses, allowed_course_ids, nodes_raw, edges_raw, user_rows = await asyncio.gather(
+        _auser_enrolled_courses(user_id),
+        run_in_threadpool(_semester_course_ids, user_id, semester) if semester else _none(),
+        table("graph_nodes").aselect("*", filters=user_filter),
+        table("graph_edges").aselect("*", filters=user_filter),
+        table("users").aselect(_STREAK_SELECT, filters={"id": f"eq.{user_id}"}),
+    )
+    nodes = _scope_nodes(nodes_raw, allowed_course_ids)
+    event_rows = await _anode_events(nodes)
+    return _assemble_graph(
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+    )
+
+
+def _assemble_graph(
+    user_id: str,
+    enrolled_courses: list[dict],
+    allowed_course_ids: set[str] | None,
+    nodes: list,
+    edges_raw: list,
+    event_rows: list,
+    user_rows: list | None,
+) -> dict:
+    """The pure half of :func:`get_graph` / :func:`aget_graph`: no I/O."""
+    if allowed_course_ids is not None:
+        enrolled_courses = [
+            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
+        ]
     node_ids = {n["id"] for n in nodes}
 
-    edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
     edges = [
         {
             "id": e["id"],
@@ -186,21 +320,9 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
         if e["source_node_id"] in node_ids and e["target_node_id"] in node_ids
     ]
 
-    # Mastery events live in the append-only node_mastery_events table (the
-    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
-    # of this user's node events in one query, then group by node id.
     events_by_node: dict[str, list] = {}
-    if node_ids:
-        try:
-            event_rows = table("node_mastery_events").select(
-                "node_id,delta,reason,created_at",
-                filters={"node_id": f"in.({','.join(node_ids)})"},
-                order="created_at.asc",
-            ) or []
-        except Exception:
-            event_rows = []
-        for ev in event_rows:
-            events_by_node.setdefault(ev.get("node_id"), []).append(ev)
+    for ev in event_rows:
+        events_by_node.setdefault(ev.get("node_id"), []).append(ev)
 
     # Enrich each node with learning velocity; trim event history for API response
     for n in nodes:
@@ -216,12 +338,6 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
     avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
-    # The STORED streak_count is only reset on the student's next activity, so
-    # a lapsed streak would still display; effective_streak reads it as of
-    # today (#767).
-    user_rows = table("users").select(
-        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"},
-    )
     streak = effective_streak(user_rows[0] if user_rows else None)
 
     stats = {
@@ -340,10 +456,39 @@ def get_courses(user_id: str) -> list:
     course_name, school, department, color, nickname, term, node_count,
     enrolled_at, enrollment_ids, terms.
     """
-    rows = _user_enrolled_courses(user_id)
+    return [
+        _course_entry(group, len(_course_node_ids(user_id, group[0])))
+        for group in _collapse_enrollments(_user_enrolled_courses(user_id))
+    ]
 
-    # Collapse enrollments to one representative row per abstract course_id,
-    # preserving first-seen order, while accumulating every enrollment id / term.
+
+#: Per-course node-count reads in flight at once in :func:`aget_courses`.
+_COURSE_COUNT_CONCURRENCY = 8
+
+
+async def aget_courses(user_id: str) -> list:
+    """Async twin of :func:`get_courses` (#117): the per-course node counts
+    run concurrently (at most ``_COURSE_COUNT_CONCURRENCY`` at a time), in
+    the same order."""
+    gate = asyncio.Semaphore(_COURSE_COUNT_CONCURRENCY)
+
+    async def entry(group) -> dict:
+        async with gate:
+            node_rows = await table("graph_nodes").aselect(
+                "id", filters=_course_nodes_filters(user_id, group[0]),
+            ) or []
+        return _course_entry(group, len(node_rows))
+
+    groups = _collapse_enrollments(await _auser_enrolled_courses(user_id))
+    return list(await asyncio.gather(*(entry(g) for g in groups)))
+
+
+def _collapse_enrollments(
+    rows: list[dict],
+) -> list[tuple[str, dict, list[str], list[str]]]:
+    """Collapse enrollments to one representative row per abstract course_id,
+    preserving first-seen order, while accumulating every enrollment id / term.
+    Returns ``(course_id, representative, enrollment_ids, terms)`` groups."""
     order: list[str] = []
     reps: dict[str, dict] = {}
     enrollment_ids: dict[str, list[str]] = {}
@@ -363,36 +508,40 @@ def get_courses(user_id: str) -> list:
         term_label = r.get("term")
         if term_label and term_label not in terms[course_id]:
             terms[course_id].append(term_label)
+    return [(cid, reps[cid], enrollment_ids[cid], terms[cid]) for cid in order]
 
-    result = []
-    for course_id in order:
-        r = reps[course_id]
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
 
-        # Count nodes for this course (graph keys on the abstract course id).
-        # Counted once per distinct course — the fan-out used to run this per
-        # enrollment, double-counting the same abstract course's nodes.
-        node_rows = table("graph_nodes").select(
-            "id",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        ) or []
+def _course_nodes_filters(user_id: str, course_id: str) -> dict:
+    # Count nodes for this course (graph keys on the abstract course id).
+    # Counted once per distinct course — the fan-out used to run this per
+    # enrollment, double-counting the same abstract course's nodes.
+    return {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
 
-        result.append({
-            "enrollment_id": r["id"],
-            "course_id": course_id,
-            "course_code": course.get("course_code", ""),
-            "course_name": course.get("course_name", ""),
-            "school": course.get("school", ""),
-            "department": course.get("department", ""),
-            "color": r.get("color"),
-            "nickname": r.get("nickname"),
-            "term": r.get("term", ""),
-            "node_count": len(node_rows),
-            "enrolled_at": r.get("enrolled_at"),
-            "enrollment_ids": enrollment_ids[course_id],
-            "terms": terms[course_id],
-        })
-    return result
+
+def _course_node_ids(user_id: str, course_id: str) -> list:
+    return table("graph_nodes").select(
+        "id", filters=_course_nodes_filters(user_id, course_id),
+    ) or []
+
+
+def _course_entry(group: tuple[str, dict, list[str], list[str]], node_count: int) -> dict:
+    course_id, r, enrollment_ids, terms = group
+    course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+    return {
+        "enrollment_id": r["id"],
+        "course_id": course_id,
+        "course_code": course.get("course_code", ""),
+        "course_name": course.get("course_name", ""),
+        "school": course.get("school", ""),
+        "department": course.get("department", ""),
+        "color": r.get("color"),
+        "nickname": r.get("nickname"),
+        "term": r.get("term", ""),
+        "node_count": node_count,
+        "enrolled_at": r.get("enrolled_at"),
+        "enrollment_ids": enrollment_ids,
+        "terms": terms,
+    }
 
 
 def add_course(
@@ -604,15 +753,6 @@ def _normalize_concept(name: str) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def _coerce_unit(value, default: float = 0.0) -> float:
-    """Coerce an LLM-emitted scalar into a [0,1] float, tolerant of None/strings."""
-    try:
-        f = float(value if value is not None else default)
-    except (TypeError, ValueError):
-        f = default
-    return max(0.0, min(1.0, f))
-
-
 def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, float] | None:
     """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
 
@@ -783,44 +923,13 @@ def _insert_mastery_event(event_row: dict) -> None:
         )
 
 
-def _refresh_course_contexts(user_id: str, course_ids: frozenset[str]) -> None:
-    """Refresh the class aggregates of each of this user's offerings of
-    `course_ids`. Best-effort: a failed refresh never fails the graph write."""
-    from services.course_context_service import refresh_course_context
-    from services.academics import user_offering_ids_for_course
+def _existing_nodes_by_name(user_id: str, course_id: str | None) -> dict[str, dict]:
+    """Normalized name → the user's existing node row (scoped to the course when given).
 
-    for cid in course_ids:
-        for offering_id in user_offering_ids_for_course(user_id, cid):
-            try:
-                refresh_course_context(offering_id, user_id=user_id)
-            except Exception:
-                pass
-
-
-def apply_graph_update(
-    user_id: str,
-    graph_update: dict,
-    course_id: str | None = None,
-    *,
-    defer: Callable[[Callable[[], None]], object] | None = None,
-) -> list:
+    The UNIQUE (user_id, course_id, concept_name) constraint from 0023 prevents
+    duplicates; this map resolves updated_nodes / new_edges against
+    pre-existing rows.
     """
-    Apply a graph_update dict to the DB. Returns mastery_changes list.
-    If course_id is provided, all new/updated nodes will be associated with that course.
-
-    `defer`: where to run the class-aggregate refresh this update triggers
-    (`refresh_course_context` for each touched offering). That refresh can make
-    an LLM call (the offering summary, regenerated whenever the stats change),
-    and nothing the caller returns depends on it — so a route that can run work
-    after its response passes `background_tasks.add_task` here. Omitted, the
-    refresh runs inline, as it always has.
-
-    Concept dedup is case- and whitespace-insensitive: "Linear Regression",
-    "linear regression", and " Linear  Regression " all resolve to the same node.
-    """
-    mastery_changes: list = []
-    touched_courses: set = set()
-
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         fetch_filters["course_id"] = f"eq.{course_id}"
@@ -828,28 +937,37 @@ def apply_graph_update(
         "id,concept_name,mastery_score,times_studied,course_id",
         filters=fetch_filters,
     ) or []
-
-    # Normalized name → row, scoped to (user_id [, course_id]). The UNIQUE
-    # (user_id, course_id, concept_name) constraint from 0023 prevents duplicates;
-    # this map resolves updated_nodes / new_edges against pre-existing rows.
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
         if norm:
             by_name[norm] = row
+    return by_name
 
+
+def _upsert_new_nodes(
+    user_id: str,
+    new_nodes: list[NewNode],
+    course_id: str | None,
+    by_name: dict[str, dict],
+    touched_courses: set,
+) -> dict[str, dict]:
+    """Create the batch's new concepts; return them keyed by normalized name.
+
+    A concept that already exists (or appeared earlier in the batch) is skipped,
+    as is a blank name.
+    """
     inserted_in_batch: dict[str, dict] = {}
-
-    for new_node in graph_update.get("new_nodes", []):
-        name = " ".join((new_node.get("concept_name") or "").split())
+    for new_node in new_nodes:
+        name = new_node.concept_name
         if not name:
             continue
         norm = _normalize_concept(name)
         if norm in by_name or norm in inserted_in_batch:
             continue
 
-        node_course_id = course_id or new_node.get("course_id")
-        init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
+        node_course_id = course_id or new_node.course_id
+        init_m = new_node.initial_mastery
 
         new_id = str(uuid.uuid4())
         # UNIQUE-backed upsert (0023) replaces the old select-then-insert. On a
@@ -881,24 +999,79 @@ def apply_graph_update(
         }
         if node_course_id:
             touched_courses.add(node_course_id)
+    return inserted_in_batch
 
-    def _lookup(name: str) -> dict | None:
-        norm = _normalize_concept(name)
-        return by_name.get(norm) or inserted_in_batch.get(norm)
 
-    for upd in graph_update.get("updated_nodes", []):
-        name = (upd.get("concept_name") or "").strip()
-        if not name:
+def _mastery_event_row(row: dict, upd: UpdatedNode) -> dict:
+    """The node_mastery_events row for one applied mastery move."""
+    # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
+    event_row = {
+        "id": str(uuid.uuid4()),
+        "node_id": row["id"],
+        "delta": upd.mastery_delta,
+        "reason": upd.reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # E7: the caller's categorical read of WHY mastery moved. It was
+    # computed and then dropped here for months, so the event log
+    # recorded how much mastery moved but never what kind of evidence
+    # moved it.
+    #
+    # TWO producers supply one, and both namespace their values by
+    # producer because the column has no CHECK and their vocabularies
+    # are otherwise disjoint-but-confusable:
+    #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
+    #     quiz_confusion, from the score ratio;
+    #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
+    #     tutor_interaction / tutor_correction / tutor_quiz, and only
+    #     when the model actually classified the turn (the tool's field
+    #     is nullable and the key is omitted when it is None).
+    # Callers that classify nothing at all (the document pipeline, notes
+    # extraction, manual adds via add_node) supply no key, and NULL is
+    # the honest value for "this writer doesn't classify".
+    #
+    # Omitted rather than written as an explicit null when absent because
+    # naming a column PostgREST's schema cache doesn't have is a hard
+    # 400 — so omitting keeps the non-classifying paths working on an
+    # environment that took this code before the migration.
+    #
+    # It does NOT make the two classifying paths safe there, and the
+    # blast radius is not cosmetic:
+    #   * the TUTOR is the highest-volume writer here (a mastery update
+    #     can land on every conversational turn), and it takes the
+    #     `_insert_mastery_event` retry — one wasted 400 plus a warning
+    #     per classified turn until the migration lands;
+    #   * submit_quiz always supplies one, and a code-before-migration
+    #     deploy 400s that insert. The retry is what keeps it from
+    #     propagating out of apply_graph_update (submit does not wrap the
+    #     call), which would land a 500 AFTER the atomic completed_at
+    #     claim but BEFORE score/answers are written — losing the graded
+    #     attempt, not just its mastery event.
+    # The migration
+    # (20260814051517_node_mastery_events_event_type.sql) must be
+    # applied strictly before this code ships to any environment.
+    # (GraphUpdate has already stripped it; blank/non-string is None.)
+    if upd.event_type is not None:
+        event_row["event_type"] = upd.event_type
+    return event_row
+
+
+def _apply_mastery_updates(
+    user_id: str,
+    updated_nodes: list[UpdatedNode],
+    lookup,
+    touched_courses: set,
+) -> list:
+    """Move mastery on each named concept, journal it, and return the changes."""
+    mastery_changes: list = []
+    for upd in updated_nodes:
+        if not upd.concept_name:
             continue
-        try:
-            delta = float(upd.get("mastery_delta", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            delta = 0.0
-        row = _lookup(name)
+        row = lookup(upd.concept_name)
         if not row:
             continue
 
-        applied = _apply_mastery_delta(user_id, row, delta)
+        applied = _apply_mastery_delta(user_id, row, upd.mastery_delta)
         if applied is None:
             continue  # node deleted under us: nothing to log against
         before, after = applied
@@ -906,84 +1079,22 @@ def apply_graph_update(
         row["mastery_score"] = after
         row["times_studied"] = (row.get("times_studied") or 0) + 1
 
-        now = datetime.now(timezone.utc).isoformat()
-        # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
-        event_row = {
-            "id": str(uuid.uuid4()),
-            "node_id": row["id"],
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "created_at": now,
-        }
-        # E7: the caller's categorical read of WHY mastery moved. It was
-        # computed and then dropped here for months, so the event log
-        # recorded how much mastery moved but never what kind of evidence
-        # moved it.
-        #
-        # TWO producers supply one, and both namespace their values by
-        # producer because the column has no CHECK and their vocabularies
-        # are otherwise disjoint-but-confusable:
-        #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
-        #     quiz_confusion, from the score ratio;
-        #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
-        #     tutor_interaction / tutor_correction / tutor_quiz, and only
-        #     when the model actually classified the turn (the tool's field
-        #     is nullable and the key is omitted when it is None).
-        # Callers that classify nothing at all (the document pipeline, notes
-        # extraction, manual adds via add_node) supply no key, and NULL is
-        # the honest value for "this writer doesn't classify".
-        #
-        # Omitted rather than written as an explicit null when absent because
-        # naming a column PostgREST's schema cache doesn't have is a hard
-        # 400 — so omitting keeps the non-classifying paths working on an
-        # environment that took this code before the migration.
-        #
-        # It does NOT make the two classifying paths safe there, and the
-        # blast radius is not cosmetic:
-        #   * the TUTOR is the highest-volume writer here (a mastery update
-        #     can land on every conversational turn), and it takes the
-        #     `_insert_mastery_event` retry — one wasted 400 plus a warning
-        #     per classified turn until the migration lands;
-        #   * submit_quiz always supplies one, and a code-before-migration
-        #     deploy 400s that insert. The retry is what keeps it from
-        #     propagating out of apply_graph_update (submit does not wrap the
-        #     call), which would land a 500 AFTER the atomic completed_at
-        #     claim but BEFORE score/answers are written — losing the graded
-        #     attempt, not just its mastery event.
-        # The migration
-        # (20260814051517_node_mastery_events_event_type.sql) must be
-        # applied strictly before this code ships to any environment.
-        event_type = upd.get("event_type")
-        if isinstance(event_type, str) and event_type.strip():
-            event_row["event_type"] = event_type.strip()
-        _insert_mastery_event(event_row)
+        _insert_mastery_event(_mastery_event_row(row, upd))
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")
         if cid:
             touched_courses.add(cid)
+    return mastery_changes
 
-    if mastery_changes:
-        # services/streak_service.py::touch_streak is the sole writer of
-        # streak_count/longest_streak (UTC calendar days); mastery activity
-        # legitimately counts as a study day, so this stays a call site, but
-        # the maths lives in exactly one place — not duplicated here.
-        touch_streak_safe(user_id)
 
-    for new_edge in graph_update.get("new_edges", []):
-        src_name = " ".join((new_edge.get("source") or "").split())
-        tgt_name = " ".join((new_edge.get("target") or "").split())
-        if not src_name or not tgt_name:
+def _upsert_new_edges(user_id: str, new_edges: list[NewEdge], lookup) -> None:
+    """Wire each edge whose two endpoints resolve to distinct known concepts."""
+    for new_edge in new_edges:
+        if not new_edge.source or not new_edge.target:
             continue
-        try:
-            strength = float(new_edge.get("strength", 0.5) or 0.5)
-        except (TypeError, ValueError):
-            strength = 0.5
-        strength = max(0.0, min(1.0, strength))
-        relationship_type = new_edge.get("relationship_type", "related")
-
-        src = _lookup(src_name)
-        tgt = _lookup(tgt_name)
+        src = lookup(new_edge.source)
+        tgt = lookup(new_edge.target)
         if not src or not tgt:
             continue
         if src["id"] == tgt["id"]:
@@ -998,61 +1109,169 @@ def apply_graph_update(
                 "user_id": user_id,
                 "source_node_id": src["id"],
                 "target_node_id": tgt["id"],
-                "strength": strength,
-                "relationship_type": relationship_type,
+                "strength": new_edge.strength,
+                "relationship_type": new_edge.relationship_type,
             },
             on_conflict="user_id,source_node_id,target_node_id,relationship_type",
         )
 
+
+def _refresh_touched_course_contexts(user_id: str, touched_courses: set) -> None:
+    """Refresh the offering-scoped course context of every course the batch touched.
+
+    touched_courses holds abstract course ids (the graph key). Analytics is
+    offering-scoped, so refresh each of this user's offerings of those courses.
+    Best-effort — the graph is already written — but a failure is logged, not
+    swallowed.
+    """
+    # Function-level on purpose: course_context_service runs the course-summary
+    # agent, so a top-level import drags the agents stack into every
+    # graph_service importer and closes a loop (agents.tools.graph ->
+    # graph_service -> course_context_service -> agents.course_summary). It
+    # sits OUTSIDE the try below: an ImportError is a bug and propagates; only
+    # the refresh's runtime failure is logged and passed over.
+    from services import course_context_service
+
+    for cid in touched_courses:
+        for offering_id in academics.user_offering_ids_for_course(user_id, cid):
+            try:
+                course_context_service.refresh_course_context(offering_id, user_id=user_id)
+            except Exception:
+                logger.warning(
+                    "graph: course-context refresh failed after graph update "
+                    "user=%s offering=%s", user_id, offering_id, exc_info=True,
+                )
+
+
+def _dispatch_graph_achievements(user_id: str) -> None:
+    """Fire the three graph-driven achievement stats.
+
+    The knowledge graph is the ONLY thing that advances these three stats, so
+    this is the only place they can be dispatched from. Without it `rooted`,
+    `branching`, `canopy` (concepts_mastered), `web` (graph_nodes_count) and
+    `polymath` (courses_with_mastery) are live badges nothing can ever award.
+    Dispatched at the end rather than beside the touch_streak_safe call on
+    purpose: graph_nodes_count grows when nodes are created, which happens on
+    updates that change no mastery at all. Post-commit side effect — the graph
+    is already written, so a failure here must not propagate into the caller's
+    turn.
+    """
+    try:
+        achievement_service.check_achievements(user_id, "graph_nodes_count", {})
+        achievement_service.check_achievements(user_id, "concepts_mastered", {})
+        achievement_service.check_achievements(user_id, "courses_with_mastery", {})
+    except Exception:
+        logger.exception("achievement dispatch failed after graph update user=%s", user_id)
+
+
+def apply_graph_update(
+    user_id: str,
+    graph_update: GraphUpdate | dict,
+    course_id: str | None = None,
+    *,
+    defer: Callable[[Callable[[], None]], object] | None = None,
+) -> list:
+    """
+    Apply a graph update to the DB. Returns mastery_changes list.
+    If course_id is provided, all new/updated nodes will be associated with that course.
+
+    `defer`: where to run the class-aggregate refresh this update triggers
+    (`refresh_course_context` for each touched offering). That refresh can make
+    an LLM call (the offering summary, regenerated whenever the stats change),
+    and nothing the caller returns depends on it — so a route that can run work
+    after its response passes `background_tasks.add_task` here. Omitted, the
+    refresh runs inline, as it always has.
+
+    ``graph_update`` is a :class:`services.graph_update_model.GraphUpdate` or the
+    legacy dict of that shape (``new_nodes`` / ``updated_nodes`` / ``new_edges``);
+    a dict is validated into the model first, as leniently as this function
+    always read it (see that module).
+
+    Concept dedup is case- and whitespace-insensitive: "Linear Regression",
+    "linear regression", and " Linear  Regression " all resolve to the same node.
+    """
+    update = GraphUpdate.coerce(graph_update)
+    touched_courses: set = set()
+
+    by_name = _existing_nodes_by_name(user_id, course_id)
+    inserted_in_batch = _upsert_new_nodes(
+        user_id, update.new_nodes, course_id, by_name, touched_courses,
+    )
+
+    def _lookup(name: str) -> dict | None:
+        norm = _normalize_concept(name)
+        return by_name.get(norm) or inserted_in_batch.get(norm)
+
+    mastery_changes = _apply_mastery_updates(
+        user_id, update.updated_nodes, _lookup, touched_courses,
+    )
+    if mastery_changes:
+        # services/streak_service.py::touch_streak is the sole writer of
+        # streak_count/longest_streak (UTC calendar days); mastery activity
+        # legitimately counts as a study day, so this stays a call site, but
+        # the maths lives in exactly one place — not duplicated here.
+        touch_streak_safe(user_id)
+
+    _upsert_new_edges(user_id, update.new_edges, _lookup)
     if touched_courses:
-        # touched_courses holds abstract course ids (the graph key). Analytics is
-        # offering-scoped, so refresh each of this user's offerings of those courses.
-        refresh = partial(_refresh_course_contexts, user_id, frozenset(touched_courses))
+        refresh = partial(_refresh_touched_course_contexts, user_id, frozenset(touched_courses))
         if defer is not None:
             defer(refresh)
         else:
             refresh()
-
-    # The knowledge graph is the ONLY thing that advances these three stats, so
-    # this is the only place they can be dispatched from. Without it `rooted`,
-    # `branching`, `canopy` (concepts_mastered), `web` (graph_nodes_count) and
-    # `polymath` (courses_with_mastery) are live badges nothing can ever award.
-    # Placed at the end rather than beside the touch_streak_safe call inside
-    # `if mastery_changes:` on purpose: graph_nodes_count grows when nodes are
-    # created, which happens on updates that change no mastery at all.
-    # Post-commit side effect — the graph is already written, so a failure here
-    # must not propagate into the caller's turn.
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(user_id, "graph_nodes_count", {})
-        check_achievements(user_id, "concepts_mastered", {})
-        check_achievements(user_id, "courses_with_mastery", {})
-    except Exception:
-        logger.exception("achievement dispatch failed after graph update user=%s", user_id)
-
+    _dispatch_graph_achievements(user_id)
     return mastery_changes
 
 
-def get_recommendations(user_id: str, semester: str | None = None) -> list:
+def _recommendation_filters(user_id: str, semester: str | None) -> dict | None:
+    """The graph_nodes filters for the user's recommendations, or None when the
+    semester scope leaves nothing to recommend. Sync: a semester resolves
+    through services/academics.py (the async reader hops it off the loop)."""
     filters = {
         "user_id": f"eq.{user_id}",
         "mastery_tier": "in.(struggling,learning,unexplored)",
     }
     if semester:
-        from services.academics import term_id_for_label, user_course_ids_for_term
-        term_id = term_id_for_label(semester)
-        allowed = user_course_ids_for_term(user_id, term_id) if term_id else set()
+        allowed = _semester_course_ids(user_id, semester)
         # Unresolved label / no enrollment in that term → no recommendations.
         if not allowed:
-            return []
+            return None
         filters["course_id"] = f"in.({','.join(allowed)})"
+    return filters
 
+
+_RECOMMENDATION_READ = {
+    "order": "mastery_score.asc",
+    "limit": 5,
+}
+_RECOMMENDATION_COLUMNS = "concept_name,mastery_score,mastery_tier,course_id"
+
+
+def get_recommendations(user_id: str, semester: str | None = None) -> list:
+    filters = _recommendation_filters(user_id, semester)
+    if filters is None:
+        return []
     rows = table("graph_nodes").select(
-        "concept_name,mastery_score,mastery_tier,course_id",
-        filters=filters,
-        order="mastery_score.asc",
-        limit=5,
+        _RECOMMENDATION_COLUMNS, filters=filters, **_RECOMMENDATION_READ,
     )
+    return _recommendations_from(rows)
+
+
+async def aget_recommendations(user_id: str, semester: str | None = None) -> list:
+    """Async twin of :func:`get_recommendations` (#117)."""
+    filters = (
+        await run_in_threadpool(_recommendation_filters, user_id, semester)
+        if semester else _recommendation_filters(user_id, None)
+    )
+    if filters is None:
+        return []
+    rows = await table("graph_nodes").aselect(
+        _RECOMMENDATION_COLUMNS, filters=filters, **_RECOMMENDATION_READ,
+    )
+    return _recommendations_from(rows)
+
+
+def _recommendations_from(rows: list) -> list:
     recs = []
     for r in rows:
         tier = r["mastery_tier"]

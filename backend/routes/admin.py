@@ -1,17 +1,19 @@
 """
 Admin routes — role, achievement, cosmetic, and user management.
 All routes require admin role.
+
+The handlers check the caller and call ``services/admin/`` (#118), which
+holds the reads, writes and audit logging; ``_admin_errors`` maps that
+package's domain errors to the status codes these routes always answered.
 """
 
-import base64
 import logging
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from db.connection import page_all, pg_quote_value, table
+from db.connection import table
 from models import (
     CreateRoleBody,
     AssignRoleBody,
@@ -28,34 +30,60 @@ from models import (
     AchievementIconBody,
     UpdateXpRuleBody,
 )
-from services import email_service
+from services.admin import (
+    AdminError,
+    Conflict,
+    InvalidRequest,
+    NotFound,
+    Unprocessable,
+    achievements,
+    allowlist,
+    audit,
+    cosmetics,
+    feedback,
+    overview,
+    roles,
+    users,
+    xp_rules,
+)
+from routes._errors import domain_status
 from services.admin_audit import log_admin_action
-from services.auth_guard import clear_account_state_cache, require_admin, get_session_user_id
-from services.achievement_service import check_achievements, grant_linked_cosmetics
+from services.auth_guard import require_admin, get_session_user_id
 from routes.admin_flags import record_flag_change
 from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
 from services.users_search import paginate_users
-from services.encryption import decrypt_if_present
-from services.profiles import get_display_names
-from services.storage_service import upload_achievement_icon
-from services.xp_service import award_xp_safe
+
+# Moved to services/admin/ (#118); re-exported so imports and patches of the
+# old names on this module keep working.
+from services.admin.allowlist import (  # noqa: F401  (re-export, #118)
+    _ALLOWLIST_COLUMNS,
+    _APPROVE_COLUMNS,
+    _IN_CHUNK,
+    _approve_waitlist,
+    _chunks,
+    _grant_linked_accounts,
+    _in_list,
+    _send_statuses,
+    _waitlist_rows,
+    _with_invite_status,
+)
+from services.admin.roles import _admin_user_count, _role_slug  # noqa: F401  (re-export, #118)
+from services.admin.users import _back_on_waitlist  # noqa: F401  (re-export, #118)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
-def _role_slug(role_id: str) -> Optional[str]:
-    rows = table("roles").select("id,slug", filters={"id": f"eq.{role_id}"})
-    return rows[0]["slug"] if rows else None
+_ERROR_STATUS = {InvalidRequest: 400, NotFound: 404, Conflict: 409, Unprocessable: 422}
 
 
-def _admin_user_count() -> int:
-    rows = table("user_roles").select(
-        "user_id,roles!inner(slug)",
-        filters={"roles.slug": "eq.admin"},
-    )
-    return len(rows or [])
+@contextmanager
+def _admin_errors():
+    """Map a ``services.admin`` domain error to its HTTP status, same detail."""
+    try:
+        yield
+    except AdminError as e:
+        raise HTTPException(status_code=domain_status(e, _ERROR_STATUS), detail=e.detail)
 
 
 # ── Roles ────────────────────────────────────────────────────────────────────
@@ -63,132 +91,57 @@ def _admin_user_count() -> int:
 @router.get("/roles")
 def list_roles(request: Request):
     require_admin(request)
-    rows = table("roles").select("*", order="display_priority.desc")
-    return {"roles": rows or []}
+    return roles.list_roles()
 
 
 @router.post("/roles")
 def create_role(body: CreateRoleBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    result = table("roles").insert({
-        "name": body.name,
-        "slug": body.slug,
-        "color": body.color,
-        "icon": body.icon,
-        "description": body.description,
-        "is_staff_assigned": body.is_staff_assigned,
-        "is_earnable": body.is_earnable,
-        "display_priority": body.display_priority,
-    })
-    role = result[0] if result else None
-    log_admin_action(
-        actor_id=actor, action="role.create", target_type="role",
-        target_id=role["id"] if role else None,
-        payload={"slug": body.slug, "name": body.name},
-    )
-    return {"role": role}
+    return roles.create_role(body, actor)
 
 
 @router.patch("/roles/{role_id}")
 def update_role(role_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "color", "icon", "description", "is_staff_assigned", "is_earnable", "display_priority"}
-    updates = {k: v for k, v in body.items() if k in allowed}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-    table("roles").update(updates, filters={"id": f"eq.{role_id}"})
-    log_admin_action(actor_id=actor, action="role.update", target_type="role", target_id=role_id, payload=updates)
-    # display_priority rides in every holder's cached roles (#620 role rules).
-    clear_user_roles_cache()
-    return {"updated": True}
+    with _admin_errors():
+        return roles.update_role(role_id, body, actor)
 
 
 @router.post("/roles/assign")
 def assign_role(body: AssignRoleBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    granted_by = actor
-    table("user_roles").upsert(
-        {
-            "user_id": body.user_id,
-            "role_id": body.role_id,
-            "granted_by": granted_by,
-            "granted_at": datetime.now(timezone.utc).isoformat(),
-        },
-        on_conflict="user_id,role_id",
-    )
-    log_admin_action(
-        actor_id=actor, action="role.assign", target_type="role", target_id=body.role_id,
-        payload={"user_id": body.user_id, "granted_by": granted_by},
-    )
-    clear_user_roles_cache(body.user_id)
-    return {"assigned": True}
+    return roles.assign_role(body, actor)
 
 
 @router.delete("/roles/revoke")
 def revoke_role(body: RevokeRoleBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    slug = _role_slug(body.role_id)
-    if slug == "admin":
-        if body.user_id == actor:
-            raise HTTPException(status_code=409, detail="You cannot revoke your own admin role.")
-        if _admin_user_count() <= 1:
-            raise HTTPException(status_code=409, detail="Cannot revoke the last admin.")
-    table("user_roles").delete(filters={
-        "user_id": f"eq.{body.user_id}",
-        "role_id": f"eq.{body.role_id}",
-    })
-    log_admin_action(
-        actor_id=actor, action="role.revoke", target_type="role", target_id=body.role_id,
-        payload={"user_id": body.user_id},
-    )
-    clear_user_roles_cache(body.user_id)
-    return {"revoked": True}
+    with _admin_errors():
+        return roles.revoke_role(body, actor)
 
 
 @router.get("/roles/{role_id}/cosmetics")
 def list_role_cosmetics(role_id: str, request: Request):
     require_admin(request)
-    rows = table("role_cosmetics").select(
-        "role_id,cosmetic_id",
-        filters={"role_id": f"eq.{role_id}"},
-    )
-    return {"links": rows or []}
+    return roles.list_role_cosmetics(role_id)
 
 
 @router.post("/roles/cosmetics")
 def link_role_cosmetic(body: LinkRoleCosmeticBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("role_cosmetics").upsert(
-        {"role_id": body.role_id, "cosmetic_id": body.cosmetic_id},
-        on_conflict="role_id,cosmetic_id",
-    )
-    log_admin_action(
-        actor_id=actor, action="role_cosmetic.link",
-        target_type="role_cosmetic", target_id=body.role_id,
-        payload={"cosmetic_id": body.cosmetic_id},
-    )
-    return {"linked": True}
+    return roles.link_role_cosmetic(body, actor)
 
 
 @router.delete("/roles/cosmetics")
 def unlink_role_cosmetic(body: LinkRoleCosmeticBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("role_cosmetics").delete(filters={
-        "role_id": f"eq.{body.role_id}",
-        "cosmetic_id": f"eq.{body.cosmetic_id}",
-    })
-    log_admin_action(
-        actor_id=actor, action="role_cosmetic.unlink",
-        target_type="role_cosmetic", target_id=body.role_id,
-        payload={"cosmetic_id": body.cosmetic_id},
-    )
-    return {"unlinked": True}
+    return roles.unlink_role_cosmetic(body, actor)
 
 
 @router.delete("/roles/{role_id}")
@@ -216,260 +169,93 @@ def delete_role(role_id: str, request: Request):
 @router.get("/achievements")
 def list_achievements(request: Request):
     require_admin(request)
-    rows = table("achievements").select("*", order="created_at.desc")
-    return {"achievements": rows or []}
+    return achievements.list_achievements()
 
 
 @router.post("/achievements")
 def create_achievement(body: CreateAchievementBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    result = table("achievements").insert({
-        "name": body.name,
-        "slug": body.slug,
-        "description": body.description,
-        "icon": body.icon,
-        "category": body.category,
-        "rarity": body.rarity,
-        "is_secret": body.is_secret,
-    })
-    log_admin_action(
-        actor_id=actor, action="achievement.create", target_type="achievement",
-        target_id=result[0]["id"] if result else None,
-        payload={"slug": body.slug, "name": body.name},
-    )
-    return {"achievement": result[0] if result else None}
+    return achievements.create_achievement(body, actor)
 
 
 @router.patch("/achievements/{achievement_id}")
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "description", "icon", "icon_url", "category", "rarity",
-               "is_secret", "xp_reward", "sort_order", "status"}
-    updates = {k: v for k, v in body.items() if k in allowed}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-    # Mirror achievements_status_check (20260731193214) so a bad value is a
-    # 422 here, not a CHECK violation surfacing as a 500 (#767).
-    #
-    # live → draft is UNPUBLISH, not revoke: existing user_achievements rows
-    # (and the XP/cosmetics they paid) are kept, but every user-facing read
-    # filters to live (profile list + showcase, the hero card's N of M), so the
-    # badge disappears for everyone, and check_achievements neither grants it
-    # nor heals it while it is a draft. Publishing it again restores it as it
-    # was — the same contract 20260731194102 used to demote legacy seeds.
-    if "status" in updates and updates["status"] not in ("draft", "live"):
-        raise HTTPException(status_code=422, detail="status must be 'draft' or 'live'")
-    table("achievements").update(updates, filters={"id": f"eq.{achievement_id}"})
-    log_admin_action(
-        actor_id=actor, action="achievement.update", target_type="achievement",
-        target_id=achievement_id, payload=updates,
-    )
-    return {"updated": True}
+    with _admin_errors():
+        return achievements.update_achievement(achievement_id, body, actor)
 
 
 @router.post("/achievements/{achievement_id}/icon")
 def upload_icon(achievement_id: str, body: AchievementIconBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    try:
-        file_bytes = base64.b64decode(body.file_base64, validate=True)
-    except Exception:
-        raise HTTPException(status_code=400, detail="file_base64 is not valid base64")
-    icon_url = upload_achievement_icon(achievement_id, file_bytes, body.content_type)
-    table("achievements").update(
-        {"icon_url": icon_url}, filters={"id": f"eq.{achievement_id}"}
-    )
-    log_admin_action(
-        actor_id=actor, action="achievement.icon", target_type="achievement",
-        target_id=achievement_id, payload={"icon_url": icon_url},
-    )
-    return {"icon_url": icon_url}
+    with _admin_errors():
+        return achievements.upload_icon(achievement_id, body, actor)
 
 
 @router.delete("/achievements/cosmetics")
 def unlink_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("achievement_cosmetics").delete(filters={
-        "achievement_id": f"eq.{body.achievement_id}",
-        "cosmetic_id": f"eq.{body.cosmetic_id}",
-    })
-    log_admin_action(
-        actor_id=actor, action="achievement_cosmetic.unlink",
-        target_type="achievement_cosmetic", target_id=body.achievement_id,
-        payload={"cosmetic_id": body.cosmetic_id},
-    )
-    return {"unlinked": True}
+    return achievements.unlink_achievement_cosmetic(body, actor)
 
 
 @router.delete("/achievements/{achievement_id}")
 def delete_achievement(achievement_id: str, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("achievements").delete(filters={"id": f"eq.{achievement_id}"})
-    log_admin_action(
-        actor_id=actor, action="achievement.delete", target_type="achievement",
-        target_id=achievement_id,
-    )
-    return {"deleted": True}
+    return achievements.delete_achievement(achievement_id, actor)
 
 
 @router.post("/achievements/grant")
 def grant_achievement(body: GrantAchievementBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-
-    # Resolve the badge BEFORE granting: a 'draft' achievement is
-    # work-in-progress in the admin wiki and must never reach a user.
-    achievement = table("achievements").select(
-        "id,slug,status,xp_reward", filters={"id": f"eq.{body.achievement_id}"},
-    )
-    if not achievement:
-        raise HTTPException(status_code=404, detail="Achievement not found")
-    achievement_row = achievement[0]
-    if achievement_row.get("status") != "live":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Achievement '{achievement_row.get('slug')}' is a draft — "
-                   f"publish it before granting.",
-        )
-
-    # Check if already earned
-    existing = table("user_achievements").select(
-        "achievement_id",
-        filters={"user_id": f"eq.{body.user_id}", "achievement_id": f"eq.{body.achievement_id}"},
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="User already has this achievement")
-
-    table("user_achievements").insert({
-        "user_id": body.user_id,
-        "achievement_id": body.achievement_id,
-        "earned_at": datetime.now(timezone.utc).isoformat(),
-        "is_featured": False,
-    })
-    log_admin_action(
-        actor_id=actor, action="achievement.grant", target_type="achievement",
-        target_id=body.achievement_id, payload={"user_id": body.user_id},
-    )
-
-    # Pay the badge's xp_reward, exactly as achievement_service.check_achievements
-    # does on the earned path. `mentor`, `comeback`, `secret` and `methuselah`
-    # are manual-grant-only, so without this they paid 0 and two users with
-    # identical badge sets ended up with different XP totals. Same rule_key +
-    # source_id as the earned path, so the xp_events idempotency key makes a
-    # re-grant (or an earned-then-granted badge) a clean no-op rather than a
-    # double payout. _safe: XP must never fail the grant that earned it.
-    reward = int(achievement_row.get("xp_reward") or 0)
-    if reward:
-        award_xp_safe(
-            body.user_id, "achievement_unlocked",
-            source_type="achievement", source_id=body.achievement_id,
-            amount=reward,
-        )
-
-    # Unlock the badge's linked cosmetics, exactly as the earned path does.
-    # This must be the direct call, NOT check_achievements: _get_user_stat
-    # returns a hard-coded 0 for `manual_admin_grant` and every such trigger
-    # in the catalog has a threshold of 1, so the dispatch below skips every
-    # trigger and grants nothing. `mentor`, `comeback`, `secret` and
-    # `methuselah` are manual-grant-only, so their cosmetics were unreachable.
-    # Post-commit: the badge row and its XP are already written, so a failure
-    # here must not 500 a grant that did succeed.
-    try:
-        grant_linked_cosmetics(body.user_id, body.achievement_id)
-    except Exception:
-        logger.exception(
-            "linked cosmetics failed after admin grant user=%s achievement=%s",
-            body.user_id, body.achievement_id,
-        )
-
-    # Kept for the cosmetics linked to OTHER achievements this grant may now
-    # qualify the user for (check_achievements re-evaluates every
-    # manual_admin_grant trigger they haven't earned).
-    check_achievements(body.user_id, "manual_admin_grant", {})
-
-    return {"granted": True}
+    with _admin_errors():
+        return achievements.grant_achievement(body, actor)
 
 
 @router.post("/achievements/triggers")
 def create_trigger(body: CreateAchievementTriggerBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    result = table("achievement_triggers").insert({
-        "achievement_id": body.achievement_id,
-        "trigger_type": body.trigger_type,
-        "trigger_threshold": body.trigger_threshold,
-    })
-    log_admin_action(
-        actor_id=actor, action="trigger.create", target_type="trigger",
-        target_id=result[0]["id"] if result else None,
-        payload={
-            "achievement_id": body.achievement_id,
-            "trigger_type": body.trigger_type,
-            "trigger_threshold": body.trigger_threshold,
-        },
-    )
-    return {"trigger": result[0] if result else None}
+    return achievements.create_trigger(body, actor)
 
 
 @router.get("/achievements/{achievement_id}/triggers")
 def list_triggers(achievement_id: str, request: Request):
     require_admin(request)
-    rows = table("achievement_triggers").select(
-        "id,achievement_id,trigger_type,trigger_threshold",
-        filters={"achievement_id": f"eq.{achievement_id}"},
-    )
-    return {"triggers": rows or []}
+    return achievements.list_triggers(achievement_id)
 
 
 @router.patch("/achievements/triggers/{trigger_id}")
 def update_trigger(trigger_id: str, body: UpdateAchievementTriggerBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-    table("achievement_triggers").update(updates, filters={"id": f"eq.{trigger_id}"})
-    log_admin_action(actor_id=actor, action="trigger.update", target_type="trigger", target_id=trigger_id, payload=updates)
-    return {"updated": True}
+    with _admin_errors():
+        return achievements.update_trigger(trigger_id, body, actor)
 
 
 @router.delete("/achievements/triggers/{trigger_id}")
 def delete_trigger(trigger_id: str, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("achievement_triggers").delete(filters={"id": f"eq.{trigger_id}"})
-    log_admin_action(actor_id=actor, action="trigger.delete", target_type="trigger", target_id=trigger_id)
-    return {"deleted": True}
+    return achievements.delete_trigger(trigger_id, actor)
 
 
 @router.get("/achievements/{achievement_id}/cosmetics")
 def list_achievement_cosmetics(achievement_id: str, request: Request):
     require_admin(request)
-    rows = table("achievement_cosmetics").select(
-        "achievement_id,cosmetic_id",
-        filters={"achievement_id": f"eq.{achievement_id}"},
-    )
-    return {"links": rows or []}
+    return achievements.list_achievement_cosmetics(achievement_id)
 
 
 @router.post("/achievements/cosmetics")
 def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("achievement_cosmetics").upsert(
-        {"achievement_id": body.achievement_id, "cosmetic_id": body.cosmetic_id},
-        on_conflict="achievement_id,cosmetic_id",
-    )
-    log_admin_action(
-        actor_id=actor, action="achievement_cosmetic.link",
-        target_type="achievement_cosmetic", target_id=body.achievement_id,
-        payload={"cosmetic_id": body.cosmetic_id},
-    )
-    return {"linked": True}
+    return achievements.link_achievement_cosmetic(body, actor)
 
 
 # ── XP rules ─────────────────────────────────────────────────────────────────
@@ -477,30 +263,15 @@ def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Reques
 @router.get("/xp-rules")
 def list_xp_rules(request: Request):
     require_admin(request)
-    rows = table("xp_rules").select("*", order="key.asc")
-    return {"rules": rows or []}
+    return xp_rules.list_xp_rules()
 
 
 @router.patch("/xp-rules/{key}")
 def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    updates: dict = {}
-    if body.amount is not None:
-        if body.amount < 0:
-            raise HTTPException(status_code=400, detail="amount must be >= 0")
-        updates["amount"] = body.amount
-    if body.enabled is not None:
-        updates["enabled"] = body.enabled
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    table("xp_rules").update(updates, filters={"key": f"eq.{key}"})
-    log_admin_action(
-        actor_id=actor, action="xp_rule.update", target_type="xp_rule",
-        target_id=key, payload=updates,
-    )
-    return {"updated": True}
+    with _admin_errors():
+        return xp_rules.update_xp_rule(key, body, actor)
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
@@ -508,57 +279,29 @@ def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
 @router.get("/cosmetics")
 def list_cosmetics(request: Request):
     require_admin(request)
-    rows = table("cosmetics").select("*", order="type.asc")
-    return {"cosmetics": rows or []}
+    return cosmetics.list_cosmetics()
 
 
 @router.post("/cosmetics")
 def create_cosmetic(body: CreateCosmeticBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    result = table("cosmetics").insert({
-        "type": body.type,
-        "name": body.name,
-        "slug": body.slug,
-        "asset_url": body.asset_url,
-        "css_value": body.css_value,
-        "rarity": body.rarity,
-        "unlock_source": body.unlock_source,
-    })
-    log_admin_action(
-        actor_id=actor, action="cosmetic.create",
-        target_type="cosmetic", target_id=result[0]["id"] if result else None,
-        payload={"slug": body.slug, "name": body.name, "type": body.type},
-    )
-    return {"cosmetic": result[0] if result else None}
+    return cosmetics.create_cosmetic(body, actor)
 
 
 @router.patch("/cosmetics/{cosmetic_id}")
 def update_cosmetic(cosmetic_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "asset_url", "css_value", "rarity", "unlock_source"}
-    updates = {k: v for k, v in body.items() if k in allowed}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-    table("cosmetics").update(updates, filters={"id": f"eq.{cosmetic_id}"})
-    log_admin_action(
-        actor_id=actor, action="cosmetic.update",
-        target_type="cosmetic", target_id=cosmetic_id, payload=updates,
-    )
-    return {"updated": True}
+    with _admin_errors():
+        return cosmetics.update_cosmetic(cosmetic_id, body, actor)
 
 
 @router.delete("/cosmetics/{cosmetic_id}")
 def delete_cosmetic(cosmetic_id: str, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    table("cosmetics").delete(filters={"id": f"eq.{cosmetic_id}"})
-    log_admin_action(
-        actor_id=actor, action="cosmetic.delete",
-        target_type="cosmetic", target_id=cosmetic_id,
-    )
-    return {"deleted": True}
+    return cosmetics.delete_cosmetic(cosmetic_id, actor)
 
 
 # ── Users ────────────────────────────────────────────────────────────────────
@@ -574,181 +317,24 @@ def list_users(
     return paginate_users(q=q, page=page, page_size=page_size)
 
 
-def _back_on_waitlist(email: str, user_id: str) -> None:
-    """Put `email` back on the waitlist as an unapproved signup, so a user whose
-    access was removed shows up in Admin → Allowlist. Every case twin is reset,
-    and each keeps `joined_user_id` pointing at the account: users.email is
-    encrypted with a per-call nonce, so that link is the only way approving the
-    entry again can reach the account (#757). Best-effort: access is already
-    gone."""
-    from routes.auth import _waitlist_entries
-
-    try:
-        twins = _waitlist_entries(email, "id,email,approved_at")
-        if twins:
-            table("newsletter_emails").update(
-                {"approved_at": None, "joined_at": None, "joined_user_id": user_id},
-                filters={"id": f"in.({','.join(r['id'] for r in twins)})"},
-            )
-        else:
-            table("newsletter_emails").upsert(
-                {"email": email.strip().lower(), "joined_user_id": user_id},
-                on_conflict="email",
-            )
-    except Exception:
-        logger.warning("could not put a removed user back on the waitlist", exc_info=True)
-
-
 @router.patch("/users/{user_id}/unapprove")
 def unapprove_user(user_id: str, request: Request):
     """Remove a user's access. They leave Admin → Users and reappear in
     Admin → Allowlist as a signup; their account and data are kept."""
     require_admin(request)
     actor = get_session_user_id(request)
-    if user_id == actor:
-        raise HTTPException(status_code=409, detail="You cannot remove your own access.")
-    rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
-    clear_account_state_cache(user_id)  # #756: the guard refuses it now, not at the TTL
-    email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
-    if "@" in email:
-        _back_on_waitlist(email, user_id)
-    log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
-    return {"unapproved": True}
+    with _admin_errors():
+        return users.unapprove_user(user_id, actor)
 
 
 # ── Newsletter Allowlist ──────────────────────────────────────────────────────
-
-_ALLOWLIST_COLUMNS = "id,email,created_at,approved_at,joined_at,joined_user_id"
-#: dedupe keys are ~82 chars; 50 per `in.(…)` keeps each URL around 4 KB, well
-#: under the 8 KB request-line limits common in front of PostgREST.
-_IN_CHUNK = 50
-
-
-def _chunks(items: list, size: int = _IN_CHUNK):
-    for i in range(0, len(items), size):
-        yield items[i:i + size]
-
-
-def _send_statuses(dedupe_keys: list[str]) -> dict[str, str]:
-    """dedupe_key → email_sends.status for the keys that have a row.
-
-    Degrades to "no statuses" on a read error: the allowlist is still useful
-    without them, and a missing column/table must not 500 the admin page."""
-    statuses: dict[str, str] = {}
-    keys = sorted(set(k for k in dedupe_keys if k))
-    try:
-        for chunk in _chunks(keys):
-            rows = table("email_sends").select(
-                "dedupe_key,status",
-                filters={"dedupe_key": f"in.({','.join(chunk)})"},
-            )
-            for r in rows or []:
-                statuses[r.get("dedupe_key")] = r.get("status")
-    except Exception:  # noqa: BLE001
-        logger.warning("email_sends status read failed", exc_info=True)
-    return statuses
-
-
-def _with_invite_status(rows: list[dict]) -> list[dict]:
-    """Attach `invite_status`: the status of that address's "you're in" send."""
-    keyed = [
-        (r, email_service.waitlist_approved_key(r["email"])) if r.get("email") else (r, None)
-        for r in rows
-    ]
-    statuses = _send_statuses([k for _, k in keyed if k])
-    return [{**r, "invite_status": statuses.get(k) if k else None} for r, k in keyed]
-
-
-def _waitlist_rows(columns: str = _ALLOWLIST_COLUMNS) -> list[dict]:
-    # Paged: the waitlist can outgrow PostgREST's max_rows (1000), and a
-    # capped read answers 206 — a silent truncation.
-    return list(page_all(table("newsletter_emails"), columns, order="created_at.desc,id.desc"))
-
 
 @router.get("/allowlist")
 def list_allowlist(request: Request):
     # #130: the admin portal's adminListAllowlist() (frontend/src/lib/api.ts)
     # reads this list; approve/revoke existed without the GET.
     require_admin(request)
-    return {"emails": _with_invite_status(_waitlist_rows())}
-
-
-#: What an approval reads off each existing row: the stored spelling and 🔒
-#: first name for the "you're in" email, and the linked account to let in.
-_APPROVE_COLUMNS = "id,email,approved_at,first_name,joined_user_id"
-
-
-def _in_list(values) -> str:
-    return f"in.({','.join(pg_quote_value(v) for v in values)})"
-
-
-def _grant_linked_accounts(rows: list[dict], now_iso: str) -> None:
-    """Let the accounts behind approved waitlist rows in now (#757).
-
-    A row's `joined_user_id` is the account it was matched to at sign-in (or
-    the one Admin → Users removed). Sign-in copies an approval onto
-    `users.is_approved` only when the student signs in again, so a re-approval
-    used to sit unseen until then; flipping the account here makes it take
-    effect at once. Rows without a link have no account yet: their first
-    sign-in creates it approved. Idempotent, so a retried approve finishes the
-    job a failed one started.
-    """
-    linked = [r for r in rows if r.get("joined_user_id")]
-    user_ids = sorted({r["joined_user_id"] for r in linked})
-    for chunk in _chunks(user_ids, 100):
-        table("users").update({"is_approved": True}, filters={"id": _in_list(chunk)})
-        for uid in chunk:
-            clear_account_state_cache(uid)  # #756: honoured now, not at the TTL
-    for chunk in _chunks([r["id"] for r in linked], 100):
-        table("newsletter_emails").update(
-            {"joined_at": now_iso},
-            filters={"id": f"in.({','.join(chunk)})", "joined_at": "is.null"},
-        )
-
-
-def _approve_waitlist(
-    wanted: list[str], by_lower: dict[str, list[dict]], now_iso: str,
-) -> tuple[list[tuple[str, str | None]], list[str]]:
-    """Approve normalised addresses against their existing rows (`by_lower`).
-
-    Addresses already on the waitlist keep their stored spelling (the waitlist
-    keeps emails as typed, so a lowercased insert would create a case twin) and
-    an already-approved row keeps its original `approved_at`: only NULLs are
-    stamped, via a PATCH filtered on `approved_at=is.null`. New addresses are
-    inserted approved with ON CONFLICT DO NOTHING, so a concurrent signup is
-    never overwritten. Returns the "you're in" recipients (address, 🔒 first
-    name — one per email) and every stored spelling, for the read-back.
-    """
-    pending_ids: list[str] = []
-    missing: list[str] = []
-    linked: list[dict] = []
-    recipients: list[tuple[str, str | None]] = []
-    spellings: list[str] = []
-    for email in wanted:
-        existing = by_lower.get(email)
-        if existing:
-            pending_ids.extend(r["id"] for r in existing if not r.get("approved_at"))
-            spellings.extend(r["email"] for r in existing)
-            linked.extend(existing)
-            recipients.append((existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))))
-        else:
-            missing.append(email)
-            spellings.append(email)
-            recipients.append((email, None))
-
-    for chunk in _chunks(pending_ids, 100):
-        table("newsletter_emails").update(
-            {"approved_at": now_iso},
-            filters={"id": f"in.({','.join(chunk)})", "approved_at": "is.null"},
-        )
-    if missing:
-        table("newsletter_emails").upsert(
-            [{"email": e, "approved_at": now_iso} for e in missing],
-            on_conflict="email",
-            ignore_duplicates=True,
-        )
-    _grant_linked_accounts(linked, now_iso)
-    return recipients, spellings
+    return allowlist.list_allowlist()
 
 
 @router.post("/allowlist/approve")
@@ -756,30 +342,9 @@ def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tas
     """Approve one address — the bulk path's rules for a single email (#757):
     normalised, case twins reached, `approved_at` never re-stamped, and an
     existing account let in at once."""
-    from routes.auth import _waitlist_entries
-
     require_admin(request)
     actor = get_session_user_id(request)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    email = body.email  # normalized: lowercased, stripped
-    recipients, _ = _approve_waitlist(
-        [email], {email: _waitlist_entries(email, _APPROVE_COLUMNS)}, now_iso,
-    )
-    log_admin_action(
-        actor_id=actor, action="allowlist.approve",
-        target_type="allowlist", target_id=email,
-        payload={"email": email},
-    )
-    # "You're in". Deduped per address in email_sends, so a revoke followed
-    # by a re-approve never sends it twice. The 🔒 first name is there only
-    # for someone who joined from /pending; it never leaves this function.
-    for address, first_name in recipients:
-        email_service.queue_waitlist_approved(background_tasks, address, first_name)
-    rows = _waitlist_entries(email, _ALLOWLIST_COLUMNS)
-    row = dict(rows[0]) if rows else None
-    if row:
-        row.pop("first_name", None)  # 🔒; never in a response
-    return {"email": row}
+    return allowlist.approve_allowlist(body, actor, background_tasks)
 
 
 @router.post("/allowlist/approve-bulk")
@@ -787,38 +352,7 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background
     """Approve up to 500 addresses at once (rules: `_approve_waitlist`)."""
     require_admin(request)
     actor = get_session_user_id(request)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    wanted = body.emails  # normalized: lowercased, stripped, deduped
-
-    by_lower: dict[str, list[dict]] = {}
-    for r in _waitlist_rows(_APPROVE_COLUMNS):
-        key = (r.get("email") or "").strip().lower()
-        if key:
-            by_lower.setdefault(key, []).append(r)
-
-    recipients, spellings = _approve_waitlist(wanted, by_lower, now_iso)
-
-    log_admin_action(
-        actor_id=actor, action="allowlist.approve_bulk",
-        target_type="allowlist", target_id=None,
-        payload={"count": len(wanted), "emails": wanted},
-    )
-
-    for address, first_name in recipients:
-        email_service.queue_waitlist_approved(background_tasks, address, first_name)
-
-    rows: list[dict] = []
-    seen_ids: set = set()
-    for chunk in _chunks(sorted(set(spellings))):
-        quoted = ",".join(pg_quote_value(e) for e in chunk)
-        for r in table("newsletter_emails").select(
-            _ALLOWLIST_COLUMNS, filters={"email": f"in.({quoted})"},
-        ) or []:
-            if r.get("id") not in seen_ids:
-                seen_ids.add(r.get("id"))
-                rows.append(r)
-    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-    return {"approved": len(wanted), "emails": _with_invite_status(rows)}
+    return allowlist.approve_allowlist_bulk(body, actor, background_tasks)
 
 
 @router.post("/allowlist/revoke")
@@ -835,31 +369,10 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
     by the admin repeating the revoke, never undone by the student's next
     sign-in re-reading an approved row.
     """
-    from routes.auth import _waitlist_entries
-
     require_admin(request)
     actor = get_session_user_id(request)
-    email = body.email  # normalized: lowercased, stripped
-    twins = _waitlist_entries(email, _ALLOWLIST_COLUMNS)
-    if not twins:
-        raise HTTPException(status_code=404, detail="Email not found")
-    user_ids = sorted({r["joined_user_id"] for r in twins if r.get("joined_user_id")})
-    if actor in user_ids:
-        raise HTTPException(status_code=409, detail="You cannot remove your own access.")
-    rows = table("newsletter_emails").update(
-        {"approved_at": None, "joined_at": None},
-        filters={"id": f"in.({','.join(r['id'] for r in twins)})"},
-    )
-    for chunk in _chunks(user_ids, 100):
-        table("users").update({"is_approved": False}, filters={"id": _in_list(chunk)})
-        for uid in chunk:
-            clear_account_state_cache(uid)  # #756: refused now, not at the TTL
-    log_admin_action(
-        actor_id=actor, action="allowlist.revoke",
-        target_type="allowlist", target_id=email,
-        payload={"email": email, "user_ids": user_ids},
-    )
-    return {"email": (rows or twins)[0]}
+    with _admin_errors():
+        return allowlist.revoke_allowlist(body, actor)
 
 
 # ── Feedback + issue reports (#520) ──────────────────────────────────────────
@@ -869,33 +382,13 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
 @router.get("/feedback")
 def list_feedback(request: Request, limit: int = 200):
     require_admin(request)
-    rows = table("feedback").select(
-        "id,user_id,type,rating,selected_options,comment,session_id,topic,created_at",
-        order="created_at.desc",
-        limit=max(1, min(int(limit), 500)),
-    ) or []
-    names = get_display_names([r["user_id"] for r in rows])
-    for r in rows:
-        r["comment"] = decrypt_if_present(r.get("comment"))
-        r["topic"] = decrypt_if_present(r.get("topic"))
-        r["user_name"] = names.get(r["user_id"], "")
-    return {"feedback": rows}
+    return feedback.list_feedback(limit)
 
 
 @router.get("/issue-reports")
 def list_issue_reports(request: Request, limit: int = 200):
     require_admin(request)
-    rows = table("issue_reports").select(
-        "id,user_id,topic,description,screenshot_urls,created_at",
-        order="created_at.desc",
-        limit=max(1, min(int(limit), 500)),
-    ) or []
-    names = get_display_names([r["user_id"] for r in rows])
-    for r in rows:
-        r["topic"] = decrypt_if_present(r.get("topic"))
-        r["description"] = decrypt_if_present(r.get("description"))
-        r["user_name"] = names.get(r["user_id"], "")
-    return {"reports": rows}
+    return feedback.list_issue_reports(limit)
 
 
 # ── Audit log ────────────────────────────────────────────────────────────────
@@ -910,24 +403,7 @@ def list_audit(
     actor_id: Optional[str] = None,
 ):
     require_admin(request)
-    page = max(1, int(page))
-    page_size = max(1, min(200, int(page_size)))
-    offset = (page - 1) * page_size
-    filters: dict = {}
-    if action:
-        filters["action"] = f"eq.{action}"
-    if target_type:
-        filters["target_type"] = f"eq.{target_type}"
-    if actor_id:
-        filters["actor_id"] = f"eq.{actor_id}"
-    rows, total = table("admin_audit_log").select_with_count(
-        columns="id,actor_id,action,target_type,target_id,payload,created_at",
-        filters=filters or None,
-        order="created_at.desc",
-        limit=page_size,
-        offset=offset,
-    )
-    return {"entries": rows, "total": total, "page": page, "page_size": page_size}
+    return audit.list_audit(page, page_size, action, target_type, actor_id)
 
 
 # ── Analytics ────────────────────────────────────────────────────────────────
@@ -935,71 +411,4 @@ def list_audit(
 @router.get("/analytics/overview")
 def analytics_overview(request: Request):
     require_admin(request)
-
-    users = table("users").select("id,is_approved,created_at") or []
-    roles = table("roles").select("id,slug,name,color") or []
-    user_roles = table("user_roles").select("role_id") or []
-
-    role_index = {r["id"]: r for r in roles}
-    role_counter: Counter = Counter()
-    for ur in user_roles:
-        role_counter[ur["role_id"]] += 1
-
-    admin_role_ids = {r["id"] for r in roles if r.get("slug") == "admin"}
-    admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
-
-    approved = sum(1 for u in users if u.get("is_approved"))
-    # Waiting on approval = waitlist signups not yet approved. Unapproved
-    # sign-ins don't create accounts, so `users` can't answer this.
-    waitlist = table("newsletter_emails").select("approved_at") or []
-    totals = {
-        "users": len(users),
-        "approved": approved,
-        "pending": sum(1 for w in waitlist if not w.get("approved_at")),
-        "admins": admin_count,
-    }
-
-    today = datetime.now(timezone.utc).date()
-    window = [today - timedelta(days=i) for i in range(29, -1, -1)]
-    by_day_signups: Counter = Counter()
-    for u in users:
-        ca = u.get("created_at") or ""
-        try:
-            d = datetime.fromisoformat(ca.replace("Z", "+00:00")).date()
-        except ValueError:
-            continue
-        if d in window:
-            by_day_signups[d.isoformat()] += 1
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    approval_events = table("admin_audit_log").select(
-        "created_at",
-        filters={"action": "eq.user.approve", "created_at": f"gte.{cutoff}"},
-    ) or []
-    by_day_approvals: Counter = Counter()
-    for ev in approval_events:
-        ca = ev.get("created_at") or ""
-        try:
-            d = datetime.fromisoformat(ca.replace("Z", "+00:00")).date()
-        except ValueError:
-            continue
-        if d in window:
-            by_day_approvals[d.isoformat()] += 1
-
-    signups_by_day = [{"date": d.isoformat(), "count": by_day_signups.get(d.isoformat(), 0)} for d in window]
-    approvals_by_day = [{"date": d.isoformat(), "count": by_day_approvals.get(d.isoformat(), 0)} for d in window]
-
-    role_counts = []
-    for rid, count in role_counter.items():
-        r = role_index.get(rid)
-        if not r:
-            continue
-        role_counts.append({"slug": r["slug"], "name": r["name"], "color": r["color"], "count": count})
-    role_counts.sort(key=lambda x: x["count"], reverse=True)
-
-    return {
-        "totals": totals,
-        "signups_by_day": signups_by_day,
-        "approvals_by_day": approvals_by_day,
-        "role_counts": role_counts,
-    }
+    return overview.analytics_overview()

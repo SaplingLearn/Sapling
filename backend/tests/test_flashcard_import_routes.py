@@ -112,7 +112,7 @@ class TestImportParse:
         assert r.json()["cards"][0]["front"] == "F"
 
     def test_url_blocked_returns_422(self):
-        from services.flashcard_import_service import QuizletBlocked
+        from services.flashcards.importing import QuizletBlocked
         body = {"user_id": "u1", "source": "url", "payload": "https://quizlet.com/x"}
         with _mock_self(), patch("routes.flashcards.scrape_quizlet_url", side_effect=QuizletBlocked("blocked")):
             r = client.post("/api/flashcards/import/parse", json=body)
@@ -120,7 +120,7 @@ class TestImportParse:
         assert "blocked" in r.json()["detail"].lower()
 
     def test_url_rejected_returns_400(self):
-        from services.flashcard_import_service import QuizletURLRejected
+        from services.flashcards.importing import QuizletURLRejected
         body = {"user_id": "u1", "source": "url", "payload": "http://169.254.169.254/"}
         with _mock_self(), patch(
             "routes.flashcards.scrape_quizlet_url",
@@ -133,7 +133,7 @@ class TestImportParse:
     def test_url_ssrf_target_rejected_end_to_end(self):
         # No scraper patch: the real policy runs and refuses before any fetch.
         body = {"user_id": "u1", "source": "url", "payload": "http://169.254.169.254/latest/meta-data/"}
-        with _mock_self(), patch("services.flashcard_import_service._quizlet_client") as g:
+        with _mock_self(), patch("services.flashcards.importing._quizlet_client") as g:
             r = client.post("/api/flashcards/import/parse", json=body)
         assert r.status_code == 400
         g.assert_not_called()
@@ -148,10 +148,10 @@ class TestImportParse:
 
         body = {"user_id": "u1", "source": "url", "payload": "https://quizlet.com/123/abc"}
         with _mock_self(), patch(
-            "services.flashcard_import_service.socket.getaddrinfo",
+            "services.flashcards.importing.socket.getaddrinfo",
             return_value=[(2, 1, 6, "", ("104.16.1.1", 443))],
         ), patch(
-            "services.flashcard_import_service._quizlet_client",
+            "services.flashcards.importing._quizlet_client",
             side_effect=lambda resolver: httpx.Client(transport=httpx.MockTransport(handler)),
         ):
             r = client.post("/api/flashcards/import/parse", json=body)
@@ -209,7 +209,7 @@ class TestImportGenerate:
             "difficulty": "conceptual",
         }
         with _mock_self(), \
-             patch("routes.flashcards.table") as t, \
+             patch("services.flashcards.cards.table") as t, \
              patch("routes.flashcards.gemini_generate_cards") as gen, \
              patch("routes.flashcards.check_rate_limit", return_value=None):
             t.return_value.select.return_value = [{
@@ -242,7 +242,7 @@ class TestImportGenerate:
         body = {"user_id": "u1", "source": "paste", "text": "notes", "count": 5, "difficulty": "recall"}
         run = AsyncMock(side_effect=ContentFilterError("blocked: RECITATION"))
         with _mock_self(), \
-             patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("services.flashcards.importing.flashcard_agent.run", new=run), \
              patch("routes.flashcards.check_rate_limit", return_value=None):
             r = client.post("/api/flashcards/import/generate", json=body)
         assert r.status_code == 502
@@ -251,7 +251,7 @@ class TestImportGenerate:
     def test_library_doc_belonging_to_other_user_returns_404(self):
         body = {"user_id": "u1", "source": "library_doc", "document_id": "doc1", "count": 5, "difficulty": "recall"}
         with _mock_self(), \
-             patch("routes.flashcards.table") as t, \
+             patch("services.flashcards.cards.table") as t, \
              patch("routes.flashcards.check_rate_limit", return_value=None):
             t.return_value.select.return_value = []
             r = client.post("/api/flashcards/import/generate", json=body)
@@ -290,3 +290,58 @@ class TestImportCloze:
             r = client.post("/api/flashcards/import/cloze", json=body)
         assert r.status_code == 200
         assert r.json()["cards"][0]["back"] == "Mitochondria"
+
+
+# ── #838: an LLM budget refusal is the budget's 429, not the generic 502 ─────
+
+from services.llm_budget import ERROR_CODE, LLMBudgetExceeded, next_reset  # noqa: E402
+
+
+def _refused(*_a, **_k):
+    raise LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset())
+
+
+@pytest.mark.parametrize("path,target,body", [
+    ("/api/flashcards/import/generate", "gemini_generate_cards",
+     {"user_id": "u1", "source": "paste", "text": "x", "count": 5, "difficulty": "recall"}),
+    ("/api/flashcards/import/cleanup", "gemini_cleanup_cards",
+     {"user_id": "u1", "cards": [{"front": "f", "back": "b"}]}),
+    ("/api/flashcards/import/cloze", "gemini_cloze",
+     {"user_id": "u1", "paragraph": "The mitochondria is the powerhouse of the cell."}),
+])
+def test_import_llm_routes_answer_a_budget_refusal_with_its_429(path, target, body):
+    with _mock_self(), patch(f"routes.flashcards.{target}", side_effect=_refused), \
+         patch("routes.flashcards.check_rate_limit", return_value=None):
+        r = client.post(path, json=body)
+    assert r.status_code == 429, r.text
+    assert r.json()["error"]["code"] == ERROR_CODE
+    assert "Retry-After" in r.headers
+
+
+def test_generate_answers_a_budget_refusal_with_its_429():
+    body = {"user_id": "u1", "topic": "Biology", "count": 3}
+    with _mock_self(), patch("routes.flashcards._generate", side_effect=_refused), \
+         patch("routes.flashcards.table") as t, \
+         patch("routes.flashcards.check_achievements"):
+        t.return_value.select.return_value = []
+        r = client.post("/api/flashcards/generate", json=body)
+    assert r.status_code == 429, r.text
+    t.return_value.insert.assert_not_called()
+
+
+def test_other_failures_keep_the_502():
+    body = {"user_id": "u1", "paragraph": "p"}
+    with _mock_self(), patch("routes.flashcards.gemini_cloze", side_effect=RuntimeError("x")), \
+         patch("routes.flashcards.check_rate_limit", return_value=None):
+        r = client.post("/api/flashcards/import/cloze", json=body)
+    assert r.status_code == 502
+
+
+def test_the_agent_runner_lets_a_budget_refusal_through_unlogged(caplog):
+    from services.flashcards import importing as svc
+
+    with patch.object(svc, "run_agent_sync", side_effect=_refused), \
+         patch.object(svc.flashcard_agent, "run", new=lambda *_a, **_k: None), \
+         caplog.at_level("ERROR"), pytest.raises(LLMBudgetExceeded):
+        svc._run_flashcard_agent("prompt")
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]

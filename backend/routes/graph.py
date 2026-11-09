@@ -7,11 +7,11 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
-from services import cache
-from services.auth_guard import require_self
+from services import cache, llm_budget
+from services.auth_guard import guard_off_loop, require_self
 from services.graph_service import (
-    get_graph, get_recommendations,
-    get_courses, add_course, delete_course, update_course_color,
+    aget_graph, aget_recommendations, aget_courses,
+    add_course, delete_course, update_course_color,
     add_node, delete_node, update_node_color,
 )
 from services.request_context import current_request_id
@@ -24,17 +24,24 @@ from agents.usage import record_agent_usage
 
 router = APIRouter()
 
+# #117 (docs/design/async-db-client.md §4.1 wave 1): the read handlers are
+# `async def` over the graph_service `a*` twins; the write and LLM handlers
+# stay plain `def` (FastAPI runs them in the threadpool) until their service
+# functions have async forms.
+
 
 @router.get("/{user_id}")
-def get_user_graph(user_id: str, request: Request, semester: str | None = Query(None)):
-    require_self(user_id, request)
-    return get_graph(user_id, semester)
+async def get_user_graph(user_id: str, request: Request, semester: str | None = Query(None)):
+    await guard_off_loop(require_self, user_id, request)
+    return await aget_graph(user_id, semester)
 
 
 @router.get("/{user_id}/recommendations")
-def get_user_recommendations(user_id: str, request: Request, semester: str | None = Query(None)):
-    require_self(user_id, request)
-    return {"recommendations": get_recommendations(user_id, semester)}
+async def get_user_recommendations(
+    user_id: str, request: Request, semester: str | None = Query(None),
+):
+    await guard_off_loop(require_self, user_id, request)
+    return {"recommendations": await aget_recommendations(user_id, semester)}
 
 
 # ── Course endpoints ──────────────────────────────────────────────────────────
@@ -62,9 +69,9 @@ class ConceptDescriptionBody(BaseModel):
 
 
 @router.get("/{user_id}/courses")
-def list_courses(user_id: str, request: Request):
-    require_self(user_id, request)
-    return {"courses": get_courses(user_id)}
+async def list_courses(user_id: str, request: Request):
+    await guard_off_loop(require_self, user_id, request)
+    return {"courses": await aget_courses(user_id)}
 
 
 @router.post("/{user_id}/courses")
@@ -211,6 +218,11 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
         # silently downgrade an unrelated KeyError/IndexError bug elsewhere in
         # the agent-run path to this 502 instead of the generic 500. Anything
         # else propagates to the generic handler.
+        #
+        # A budget refusal (#119) is its own 429 (LLMBudgetExceeded is an
+        # HTTPException, so it is not caught here); one wrapped inside a caught
+        # error is re-raised so it is never mislabelled as an agent failure.
+        llm_budget.reraise_budget_refusal(e)
         raise HTTPException(
             status_code=502, detail=f"concept-description agent failed: {e}"
         ) from e

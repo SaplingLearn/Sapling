@@ -25,6 +25,15 @@ def test_require_local_rejects_non_loopback(url):
         require_local(url, "db")
 
 
+@pytest.fixture(autouse=True)
+def _stack_adopted(monkeypatch):
+    """The exit-code tests judge fake checks, not a stack: skip the stack
+    lookup, which would otherwise refuse on any laptop (no slot, not CI) and,
+    with a held stack, write its URLs into this process's environment. The
+    lookup itself is tested in test_e2e_oracles_adopt.py."""
+    monkeypatch.setattr(cli, "_adopt_e2e_stack", lambda argv: None)
+
+
 def _fake_check(findings, suppressed=0):
     def run(args):
         return findings, suppressed

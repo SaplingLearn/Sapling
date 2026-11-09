@@ -1,6 +1,8 @@
 """/api/admin/jobs: the job queue's depth and dead letters (#116).
 
-`table()` is faked: these pin the route's reads and its shape. What the
+`table()` and `rpc()` are faked: these pin the route's reads and its shape —
+the `jobs_overview()` aggregate when it answers, and the capped-scan fallback
+(the default here: `rpc` raises as before the migration). What the
 statuses mean is pinned against real SQL in
 tests/integration/test_jobs_queue_db.py / test_jobs_upkeep_db.py.
 """
@@ -63,9 +65,27 @@ def _rows():
         ("course_context.refresh", "running"), ("document.index", "failed"),
         ("document.index", "succeeded"), ("jobs.prune", "succeeded"),
     ]):
-        rows.append({"id": f"j-{i}", "type": type_, "status": status})
+        rows.append({"id": f"j-{i}", "type": type_, "status": status,
+                     "created_at": f"2026-11-08T0{i}:00:00Z"})
     rows.append(dict(DEAD, status="dead"))
     return rows
+
+
+class _NoOverview(RuntimeError):
+    pass
+
+
+@pytest.fixture(autouse=True)
+def _no_overview(monkeypatch):
+    """Default: the migration is not applied (PostgREST's 404 PGRST202)."""
+    calls = []
+
+    def rpc(name, params):
+        calls.append(name)
+        raise _NoOverview("PGRST202")
+
+    monkeypatch.setattr(admin_jobs, "rpc", rpc)
+    return calls
 
 
 @pytest.fixture
@@ -97,6 +117,10 @@ def test_reports_depth_by_status_and_type_and_the_dead_letters(fake):
         "course_context.refresh": {"queued": 2, "failed": 0, "running": 1},
         "document.index": {"queued": 0, "failed": 1, "running": 0},
     }
+    assert body["outstanding_oldest"] == {
+        "course_context.refresh": "2026-11-08T00:00:00Z",
+        "document.index": "2026-11-08T03:00:00Z",
+    }
     assert body["outstanding_truncated"] is False
     assert body["dead_total"] == 1
     (dead,) = body["dead_letter"]
@@ -125,7 +149,7 @@ def _scan(monkeypatch, n, *, page=10, cap=20):
     monkeypatch.setattr(admin_jobs, "MAX_ROWS", page)
     monkeypatch.setattr(admin_jobs, "OUTSTANDING_SCAN_CAP", cap)
     body = client.get(BASE).json()
-    scans = [c for c in jobs.counts if c["columns"] == "id,type,status"]
+    scans = [c for c in jobs.counts if c["columns"] == "id,type,status,created_at"]
     return body, scans
 
 
@@ -151,3 +175,66 @@ def test_one_row_past_the_cap_is_truncated(monkeypatch):
     body, _ = _scan(monkeypatch, 21)
     assert body["outstanding_truncated"] is True
     assert body["outstanding"]["t.x"]["queued"] == 20
+
+
+# ── jobs_overview(): one exact aggregate ────────────────────────────────────
+
+
+OVERVIEW = [
+    {"type": "course_context.refresh", "status": "queued", "n": 20000,
+     "oldest_created_at": "2026-11-08T01:00:00+00:00"},
+    {"type": "course_context.refresh", "status": "running", "n": 1,
+     "oldest_created_at": "2026-11-08T00:30:00+00:00"},
+    {"type": "document.index", "status": "failed", "n": 3,
+     "oldest_created_at": "2026-11-08T02:00:00+00:00"},
+    {"type": "document.index", "status": "succeeded", "n": 7,
+     "oldest_created_at": "2026-11-01T00:00:00+00:00"},
+    {"type": "document.index", "status": "dead", "n": 1,
+     "oldest_created_at": "2026-11-08T10:00:00+00:00"},
+]
+
+
+def test_the_aggregate_answers_exactly_with_no_scan(fake, monkeypatch):
+    calls = []
+    monkeypatch.setattr(admin_jobs, "rpc",
+                        lambda name, params: calls.append((name, params)) or OVERVIEW)
+    body = client.get(BASE).json()
+    assert calls == [("jobs_overview", {})]
+    assert body["status_counts"] == {
+        "queued": 20000, "failed": 3, "running": 1, "succeeded": 7, "dead": 1,
+    }
+    assert body["depth"] == 20004
+    assert body["outstanding"] == {
+        "course_context.refresh": {"queued": 20000, "failed": 0, "running": 1},
+        "document.index": {"queued": 0, "failed": 3, "running": 0},
+    }
+    assert body["outstanding_oldest"] == {
+        "course_context.refresh": "2026-11-08T00:30:00+00:00",
+        "document.index": "2026-11-08T02:00:00+00:00",
+    }
+    assert body["outstanding_truncated"] is False
+    assert body["dead_total"] == 1
+    assert fake.counts == []  # no per-status counts, no outstanding scan
+    assert [s["filters"]["status"] for s in fake.selects] == ["eq.dead"]
+
+
+def test_an_empty_queue_from_the_aggregate(fake, monkeypatch):
+    monkeypatch.setattr(admin_jobs, "rpc", lambda name, params: [])
+    body = client.get(BASE).json()
+    assert body["status_counts"] == {s: 0 for s in admin_jobs.STATUSES}
+    assert body["outstanding"] == {} and body["outstanding_oldest"] == {}
+    assert body["depth"] == 0
+
+
+@pytest.mark.parametrize("answer", [{"oops": 1}, [{"type": "t.x"}], None])
+def test_a_malformed_answer_falls_back_to_the_scan(fake, monkeypatch, answer):
+    monkeypatch.setattr(admin_jobs, "rpc", lambda name, params: answer)
+    body = client.get(BASE).json()
+    assert body["status_counts"]["queued"] == 2  # the fallback's exact counts
+    assert body["outstanding"]["document.index"]["failed"] == 1
+
+
+def test_the_fallback_is_used_before_the_migration(fake, _no_overview):
+    body = client.get(BASE).json()
+    assert _no_overview == ["jobs_overview"]
+    assert body["depth"] == 4
