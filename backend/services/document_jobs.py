@@ -71,12 +71,11 @@ import time
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from db.connection import table
 from db.scope import runs_as_service
-from services import jobs, llm_budget
+from services import jobs, llm_budget, staged_jobs
 from services.agent_events import SaplingEvent
 from services.documents_read import saved_document
 from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
@@ -151,13 +150,12 @@ ERR_ABANDONED = "abandoned"
 ERR_BUDGET = "llm_budget"
 
 _STATUS_COLUMNS = "id,user_id,request_id,stage,progress,error_code,document_id,job_id,updated_at"
-#: PostgREST filters on the owner tokens kept in the plaintext `progress`
-#: (opaque ids, never content): the worker attempt that runs the row, and the
-#: request that took it back to run inline.
-_OWNER = "progress->>owner"
-_INLINE_OWNER = "progress->>inline_owner"
-#: Job statuses that will still run the job (`failed` = waiting for a retry).
-_LIVE_JOB = frozenset({"queued", "running", "failed"})
+#: The staged-job machinery (services/staged_jobs.py): the owner tokens live
+#: in the plaintext `progress` (opaque ids, never content) — the worker
+#: attempt that runs the row (`owner`), and the request that took it back to
+#: run inline (`inline_owner`).
+SPEC = staged_jobs.Spec(table="document_uploads", job_type=DOCUMENT_PROCESS_JOB,
+                        owner_column="progress", label="upload")
 
 
 def _routes():
@@ -168,16 +166,7 @@ def _routes():
 
 def _age_seconds(row: dict) -> float | None:
     """Seconds since the row's `updated_at`, or None when it is unreadable."""
-    raw = row.get("updated_at")
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - ts).total_seconds()
+    return staged_jobs.age_seconds(row.get("updated_at"))
 
 
 # ── request side: decide, stage, enqueue ────────────────────────────────────
@@ -196,12 +185,9 @@ def should_queue(user_id: str, file_size: int) -> bool:
         return False
 
 
-@dataclass
-class Staged:
-    id: str
-    #: True when this call (re)queued the upload and must enqueue its job;
-    #: False when it attached to one a retry of the same request already has.
-    fresh: bool
+#: `fresh`: this call (re)queued the upload and must enqueue its job; False
+#: when it attached to one a retry of the same request already has.
+Staged = staged_jobs.Staged
 
 
 def _select_by_request(user_id: str, request_id: str) -> dict | None:
@@ -249,7 +235,7 @@ def _restageable(row: dict, user_id: str) -> bool:
         if stage == DONE:
             return not _document_alive(row.get("document_id"), user_id)
         if stage == QUEUED and age is not None and age > PICKUP_GRACE_SECONDS:
-            return job_status(str(row["id"]), row.get("job_id")) not in _LIVE_JOB
+            return job_status(str(row["id"]), row.get("job_id")) not in staged_jobs.LIVE_JOB
     except Exception:
         logger.warning("upload %s: liveness check failed; attaching", row.get("id"),
                        exc_info=True)
@@ -314,27 +300,7 @@ def stage_upload(
 @runs_as_service
 def enqueue_process(upload_id: str) -> str | None:
     """Enqueue the worker's job for a staged upload. Raises on failure."""
-    out = jobs.enqueue(
-        DOCUMENT_PROCESS_JOB, {"upload_id": upload_id},
-        dedupe_key=_dedupe_key(upload_id),
-    )
-    job_id = out.get("id")
-    if job_id:
-        try:
-            table("document_uploads").update(
-                {"job_id": job_id}, filters={"id": f"eq.{upload_id}"},
-                prefer_return_minimal=True,
-            )
-        except Exception:
-            # Only the dead-letter check reads it, and that falls back to the
-            # dedupe key (job_status).
-            logger.warning("could not record job %s on upload %s", job_id, upload_id,
-                           exc_info=True)
-    return job_id
-
-
-def _dedupe_key(upload_id: str) -> str:
-    return f"{DOCUMENT_PROCESS_JOB}:{upload_id}"
+    return staged_jobs.enqueue(SPEC, table, upload_id, {"upload_id": upload_id})
 
 
 @runs_as_service
@@ -342,11 +308,7 @@ def take_back(upload_id: str, token: str) -> bool:
     """queued -> inline, for the request holding `token` to run the upload
     itself (recorded as `progress.inline_owner`). False when a worker already
     started it, another request took it, or it ended."""
-    won = table("document_uploads").update(
-        {"stage": INLINE, "file_data": None, "progress": {"inline_owner": token}},
-        filters={"id": f"eq.{upload_id}", "stage": f"eq.{QUEUED}"},
-    )
-    return bool(won)
+    return staged_jobs.take_back(SPEC, table, upload_id, token, clear={"file_data": None})
 
 
 @runs_as_service
@@ -390,25 +352,18 @@ def job_status(upload_id: str, job_id: str | None = None) -> str | None:
     """The status of the upload's `document.process` job: by the id recorded
     on the row, or — when that best-effort write never landed — by the job's
     dedupe key (the newest job enqueued for this upload)."""
-    if job_id:
-        rows = table("jobs").select("status", filters={"id": f"eq.{job_id}"}, limit=1)
-    else:
-        rows = table("jobs").select(
-            "status", filters={"dedupe_key": f"eq.{_dedupe_key(upload_id)}"},
-            order="created_at.desc", limit=1,
-        )
-    return rows[0].get("status") if isinstance(rows, list) and rows else None
+    job = staged_jobs.job_row(SPEC, table, upload_id, job_id)
+    return job.get("status") if job else None
 
 
 @runs_as_service
 def fail_if_running(upload_id: str, stage: str, code: str) -> bool:
     """Record a terminal failure the worker could not (its job dead-lettered
     mid-run). Conditional on the stage the caller saw."""
-    won = table("document_uploads").update(
-        {"stage": FAILED, "error_code": code, "file_data": None, "result": None},
-        filters={"id": f"eq.{upload_id}", "stage": f"eq.{stage}"},
+    return staged_jobs.cas_update(
+        SPEC, table, upload_id,
+        {"stage": FAILED, "error_code": code, "file_data": None, "result": None}, stage=stage,
     )
-    return bool(won)
 
 
 def stage_and_enqueue(**kwargs: Any) -> str | None:
@@ -423,23 +378,11 @@ def stage_and_enqueue(**kwargs: Any) -> str | None:
         return None
     if not staged.fresh:
         return staged.id
-    try:
-        enqueue_process(staged.id)
-    except Exception:
-        logger.warning("document.process enqueue failed for upload %s; running inline",
-                       staged.id, exc_info=True)
-        # Ours to run now. If the swap loses (or errors), watch the row: a
-        # worker has it after all, or the watch takes it back after the grace.
-        token = uuid.uuid4().hex
-        try:
-            won = take_back(staged.id, token)
-        except Exception:
-            logger.warning("take-back of upload %s failed; watching it", staged.id,
-                           exc_info=True)
-            return staged.id
-        if won:
-            _claim_inline(staged.id, token)
-            return None
+    token = uuid.uuid4().hex
+    if staged_jobs.enqueue_or_take_back(SPEC, staged.id, enqueue_fn=enqueue_process,
+                                        take_back_fn=take_back, token=token):
+        _claim_inline(staged.id, token)  # ours to run now
+        return None
     return staged.id
 
 
@@ -482,15 +425,7 @@ def finish_inline(claim: InlineClaim, *, document_id: str | None = None,
     else:
         data = {"stage": FAILED, "error_code": error_code or ERR_WORKER}
     data.update(file_data=None, result=None)
-    try:
-        return bool(table("document_uploads").update(data, filters={
-            "id": f"eq.{claim.upload_id}", "stage": f"eq.{INLINE}",
-            _INLINE_OWNER: f"eq.{claim.token}",
-        }))
-    except Exception:
-        logger.warning("could not record the inline outcome of upload %s", claim.upload_id,
-                       exc_info=True)
-        return False
+    return staged_jobs.finish_inline(SPEC, table, claim.upload_id, claim.token, data)
 
 
 def _finish_inline_detached(claim: InlineClaim, **kwargs: Any) -> None:
@@ -615,7 +550,7 @@ async def _watch(
 ) -> AsyncIterator[dict]:
     """Yield the upload's status row each time its stage changes, until it is
     terminal, THIS request takes it back (an ``inline`` row: run it), or
-    `max_wait`.
+    `max_wait` (services/staged_jobs.py runs the loop).
 
     An ``inline`` row another request took back is not an end: that request
     records its outcome on the row (done/failed), and its saved `documents`
@@ -623,69 +558,38 @@ async def _watch(
     ``adopted``). A transient database error on any read or swap is retried on
     the next poll; only `_MAX_DB_ERRORS` in a row end the watch, with the
     timeout answer."""
-    grace = PICKUP_GRACE_SECONDS if grace is None else grace
-    poll = POLL_INTERVAL_SECONDS if poll is None else poll
     token = uuid.uuid4().hex
-    started = time.monotonic()
-    last_stage = None
-    last_row: dict | None = None
-    polls = 0
-    errors = 0
-    while True:
-        elapsed = time.monotonic() - started
-        try:
-            row = await asyncio.to_thread(read_status, upload_id)
-            if row is None:
-                yield {"id": upload_id, "stage": FAILED, "error_code": ERR_WORKER, "progress": {}}
-                return
-            last_row = row
-            stage = row.get("stage")
-            if stage == QUEUED and elapsed >= grace:
-                if await asyncio.to_thread(take_back, upload_id, token):
-                    logger.info("upload %s: no worker took it in %.0fs; running inline",
-                                upload_id, grace)
-                    _claim_inline(upload_id, token)
-                    yield {**row, "stage": INLINE}
-                    return
-                errors = 0
-                await asyncio.sleep(poll)
-                continue  # a worker (or another request) took it: re-read
-            if stage == INLINE:
-                if (row.get("progress") or {}).get("inline_owner") == token:
-                    # Our own take-back, whose answer was lost to a blip.
-                    _claim_inline(upload_id, token)
-                    yield row
-                    return
-                doc = await asyncio.to_thread(_adopted_document, row)
-                if doc and doc.get("id"):
-                    yield {**row, "stage": DONE, "document_id": doc["id"],
-                           "progress": {"adopted": True}}
-                    return
-            elif stage != last_stage or stage in TERMINAL:
-                last_stage = stage
-                yield row
-                if stage in TERMINAL:
-                    return
-            if elapsed >= max_wait:
-                yield {**row, "_timeout": True}
-                return
-            polls += 1
-            if stage in _RUNNING and polls % _JOB_CHECK_EVERY == 0:
-                status = await asyncio.to_thread(job_status, upload_id, row.get("job_id"))
-                if status == "dead":
-                    await asyncio.to_thread(fail_if_running, upload_id, stage, ERR_WORKER)
-                    errors = 0
-                    continue
-            errors = 0
-        except Exception:
-            errors += 1
-            logger.warning("upload %s: status poll failed (%d in a row)", upload_id, errors,
-                           exc_info=True)
-            if errors >= _MAX_DB_ERRORS or elapsed >= max_wait:
-                base = last_row or {"id": upload_id, "stage": QUEUED, "progress": {}}
-                yield {**base, "_timeout": True}
-                return
-        await asyncio.sleep(poll)
+    plan = staged_jobs.WatchPlan(
+        spec=SPEC, row_id=upload_id, token=token, ends=frozenset({DONE, FAILED}),
+        running=_RUNNING, grace=PICKUP_GRACE_SECONDS if grace is None else grace,
+        max_wait=max_wait, poll=POLL_INTERVAL_SECONDS if poll is None else poll,
+        job_check_every=_JOB_CHECK_EVERY, max_errors=_MAX_DB_ERRORS,
+    )
+
+    def _adopt(row: dict) -> dict | None:
+        doc = _adopted_document(row)
+        if doc and doc.get("id"):
+            return {**row, "stage": DONE, "document_id": doc["id"], "progress": {"adopted": True}}
+        return None
+
+    io = staged_jobs.WatchIO(
+        read=lambda: read_status(upload_id),
+        take_back=lambda: take_back(upload_id, token),
+        job_dead=lambda row: job_status(upload_id, row.get("job_id")) == "dead",
+        fail_dead=lambda row: fail_if_running(upload_id, row.get("stage"), ERR_WORKER),
+        adopt=_adopt,
+    )
+    async for end in staged_jobs.awatch(plan, io):
+        if end.kind == staged_jobs.TOOK_BACK:
+            _claim_inline(upload_id, token)
+            yield end.row
+        elif end.kind == staged_jobs.GONE:
+            yield {"id": upload_id, "stage": FAILED, "error_code": ERR_WORKER, "progress": {}}
+        elif end.kind in (staged_jobs.PENDING, staged_jobs.TIMEOUT):
+            base = end.row or {"id": upload_id, "stage": QUEUED, "progress": {}}
+            yield {**base, "_timeout": True}
+        else:  # PROGRESS, END, ADOPTED
+            yield end.row
 
 
 async def _retrying(fn, *args: Any, default: Any = None, tries: int = 3) -> Any:
@@ -877,20 +781,14 @@ class _Run:
 
     def advance(self, stage: str, data: dict | None = None, **progress: Any) -> None:
         new_progress = {**self.progress, **progress, "owner": self.owner}
-        won = table("document_uploads").update(
+        won = staged_jobs.cas_update(
+            SPEC, table, self.upload_id,
             {**(data or {}), "stage": stage, "progress": new_progress},
-            filters={"id": f"eq.{self.upload_id}", "stage": f"eq.{self.stage}",
-                     _OWNER: f"eq.{self.owner}"},
+            stage=self.stage, owner=self.owner,
         )
         if not won:
             raise _Superseded(f"upload {self.upload_id}: {self.stage} -> {stage} refused")
         self.stage, self.progress = stage, new_progress
-
-
-def _owner_token(job: jobs.Job | None) -> str:
-    if job is None:  # called outside a worker run (tests, a script)
-        return f"direct#{uuid.uuid4().hex}"
-    return f"{job.locked_by}#{job.attempt}"
 
 
 def _attempt_is_current(job: jobs.Job) -> bool:
@@ -936,10 +834,8 @@ def _run_document_process_job(payload: dict) -> None:
         logger.warning("document.process: attempt %d of job %s is no longer current; "
                        "leaving upload %s alone", job.attempt, job.id, upload_id)
         return
-    owner = _owner_token(job)
-    if stage == QUEUED:
-        filters = {"id": f"eq.{upload_id}", "stage": f"eq.{QUEUED}"}
-    else:
+    owner = staged_jobs.owner_token(job)
+    if stage != QUEUED:
         # A re-delivery: an earlier attempt moved it past `queued`. Take it
         # over only if that attempt has gone quiet for a lease; a live one
         # keeps it (with the heartbeat, a live run is never re-delivered).
@@ -950,13 +846,8 @@ def _run_document_process_job(payload: dict) -> None:
                 raise UploadBusy(f"upload {upload_id} moved {age:.0f}s ago ({stage}); "
                                  "another attempt still runs it")
             _sleep(remaining)  # still quiet after it? the swap below finds out
-        previous = (row.get("progress") or {}).get("owner")
-        filters = {"id": f"eq.{upload_id}", "stage": f"eq.{stage}",
-                   _OWNER: f"eq.{previous}" if previous else "is.null"}
-    won = table("document_uploads").update(
-        {"stage": EXTRACTING, "progress": {"owner": owner}}, filters=filters,
-    )
-    if not won:
+    # queued -> extracting, or a takeover from the previous attempt's token.
+    if not staged_jobs.claim(SPEC, table, row, to_stage=EXTRACTING, owner=owner):
         if stage == QUEUED:
             return  # the request took it back between our read and the swap
         raise UploadBusy(f"upload {upload_id} moved while being taken over")

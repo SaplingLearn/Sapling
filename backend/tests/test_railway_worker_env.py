@@ -38,6 +38,7 @@ WORKER_PATH_MODULES = (
     "services/extraction_backends/*.py",
     "services/cache.py",
     "services/document_jobs.py",
+    "services/staged_jobs.py",
     "services/document_indexing.py",
     "services/course_context_service.py",
     "services/rag_service.py",
