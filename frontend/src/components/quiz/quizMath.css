@@ -1,0 +1,5 @@
+.quiz-math-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}

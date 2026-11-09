@@ -1,12 +1,4 @@
-/**
- * Live read-backs for the written answer inputs — what the grader will make of
- * what the student has typed, before they submit it.
- *
- * DISPLAY ONLY. Grading stays server-side (`services/quiz_grading.py`,
- * `services/quiz_algebra.py`); these mirror the accepted notation closely
- * enough to say "this reads as 0.75" or "functions aren't supported", and a
- * disagreement can only mislabel a preview, never a score.
- */
+import type { QuestionType } from "./types";
 
 const THOUSANDS = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?$/;
 const MIXED = /^([+-]?)(\d{1,40})\s+(\d{1,40})\/(\d{1,40})$/;
@@ -55,22 +47,49 @@ export function formatNumber(value: number): string {
 /** Letter runs the algebra grammar refuses rather than read as products. */
 const FUNCTION_NAME = /sin|cos|tan|sec|csc|cot|log|ln|exp|sqrt|abs/i;
 
-/** Why an algebra answer can't be graded as typed, or null. */
-export function symbolicProblem(raw: string): string | null {
-  const text = raw.trim();
-  if (!text) return null;
-  if (text.includes("=")) return "Enter an expression, not an equation — leave out the “=”.";
-  for (const run of text.match(/[A-Za-z]+/g) ?? []) {
-    if (FUNCTION_NAME.test(run)) return "Functions like sin, log or sqrt aren't supported.";
-  }
+function validSymbolicFormat(raw: string): boolean {
+  const text = raw.normalize("NFKC").replace(/−/g, "-").replace(/×/g, "*").replace(/÷/g, "/");
+  if (text.length > 256 || FUNCTION_NAME.test(text)) return false;
+
+  const tokens = text.match(/\d{1,20}(?:\.\d{0,20})?|\.\d{1,20}|[a-zA-Z]|[()+*/^-]/g) ?? [];
+  if (tokens.length > 96 || tokens.join("") !== text.replace(/\s/g, "")) return false;
+
   let depth = 0;
-  for (const ch of text) {
-    if (ch === "(") depth += 1;
-    if (ch === ")") depth -= 1;
-    if (depth < 0) return "There's a “)” without a matching “(”.";
+  let needsOperand = true;
+  let canRaise = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === "(") {
+      depth++;
+      needsOperand = true;
+    } else if (token === ")") {
+      if (needsOperand || depth === 0) return false;
+      depth--;
+      canRaise = true;
+    } else if (token === "^") {
+      if (needsOperand || !canRaise) return false;
+      if (tokens[i + 1] === "+" || tokens[i + 1] === "-") i++;
+      if (!/^[0-8]$/.test(tokens[++i] ?? "")) return false;
+      canRaise = false;
+    } else if (token === "+" || token === "-" || token === "*" || token === "/") {
+      if (needsOperand && (token === "*" || token === "/")) return false;
+      needsOperand = true;
+    } else {
+      needsOperand = false;
+      canRaise = true;
+    }
   }
-  if (depth > 0) return "A bracket isn't closed yet.";
-  return null;
+  return !needsOperand && depth === 0;
+}
+
+export function isWrittenAnswerFormatValid(type: QuestionType | undefined, value: string, numericUnit?: string): boolean {
+  if (!value.trim()) return false;
+  if (type === "numeric") {
+    if (!numericUnit) return numericValue(value) !== null;
+    const quantity = /^([\s\S]+) ([A-Za-zμΩ°][A-Za-zμΩ°0-9*/^·.−+-]{0,31})$/.exec(value.normalize("NFKC").trim());
+    return quantity !== null && numericValue(quantity[1]) !== null;
+  }
+  return type !== "symbolic" || validSymbolicFormat(value);
 }
 
 export type ExpressionPart = { text: string; sup: boolean };

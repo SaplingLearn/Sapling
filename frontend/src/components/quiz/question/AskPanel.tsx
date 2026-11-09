@@ -31,6 +31,7 @@
  * backend marked non-retryable, or a 413) surfaces an inline error with Retry.
  */
 
+import { QuizMath } from "../QuizMath";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Sheet } from "@/components/ui";
@@ -379,17 +380,17 @@ export function AskPanel({
     <Sheet open={open} onClose={onClose} title="Ask about this" testid={testid}>
       <div className="quiz-ask">
         <div className="quiz-ask__seed" data-testid="quiz-ask-seed">
-          <p className="quiz-ask__seed-stem h-serif">{seed.stem}</p>
+          <p className="quiz-ask__seed-stem h-serif"><QuizMath text={seed.stem} /></p>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--chosen">
             <span className="quiz-ask__seed-label">You chose {seed.chosenLabel} ·</span>
-            {seed.chosenText}
+            <QuizMath text={seed.chosenText} />
           </div>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--correct">
             <span className="quiz-ask__seed-label">The answer is {seed.correctLabel} ·</span>
-            {seed.correctText}
+            <QuizMath text={seed.correctText} />
           </div>
           {seed.explanation && (
-            <p className="quiz-ask__seed-explanation body-serif">{seed.explanation}</p>
+            <p className="quiz-ask__seed-explanation body-serif"><QuizMath text={seed.explanation} /></p>
           )}
           <span className="quiz-ask__sr">Asking the tutor about {subtitle}.</span>
         </div>

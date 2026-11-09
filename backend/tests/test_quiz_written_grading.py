@@ -15,6 +15,15 @@ def test_numeric_rejects_invalid_or_inexact_answers(answer):
     assert not grade_written({"type": "numeric", "correct_answer": "0.5"}, answer)
 
 
+@pytest.mark.parametrize(("answer", "correct"), [
+    ("2.5 m", True), ("250 cm", True), ("0.0025 km", True),
+    ("2.5", False), ("250 m", False), ("2.5 s", False),
+])
+def test_numeric_questions_grade_equivalent_units(answer, correct):
+    question = {"type": "numeric", "correct_answer": "2.5", "numeric_unit": "m"}
+    assert grade_written(question, answer) is correct
+
+
 def test_short_answer_accepts_only_explicit_equivalents():
     question = {"type": "short_answer", "correct_answer": "World Health Organization", "accepted_answers": ["WHO"]}
     assert grade_written(question, "  world   HEALTH organization ")
@@ -57,6 +66,20 @@ def test_written_wire_projection_never_exposes_grading_key():
     served = _strip_answer_key([wire])[0]
     assert served["type"] == "short_answer"
     assert not {"correct_answer", "accepted_answers", "explanation", "question_hash"} & served.keys()
+
+
+def test_generated_numeric_question_exposes_unit_without_answer_key():
+    from agents.quiz import QuizQuestion
+    from routes.quiz import _agent_question_to_wire, _strip_answer_key
+
+    question = QuizQuestion(question="How far did the object travel?", type="numeric",
+                            difficulty="easy", correct_answer="2.5 m",
+                            explanation="Multiply speed by elapsed time.", concept="Motion")
+    wire = _agent_question_to_wire(question, 1)
+    assert wire is not None and grade_written(wire, "250 cm")
+    served = _strip_answer_key([wire])[0]
+    assert served["numeric_unit"] == "m"
+    assert "correct_answer" not in served
 
 
 def test_invalid_symbolic_key_is_not_servable():

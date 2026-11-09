@@ -51,6 +51,7 @@ export function isWrittenType(type: string | null | undefined): boolean {
 }
 
 export interface WireQuestion {
+  numeric_unit?: string;
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
   id: number;

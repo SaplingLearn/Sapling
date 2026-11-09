@@ -37,6 +37,7 @@ const MARK: Partial<Record<AnswerState, string>> = {
 export interface AnswerOptionProps {
   letter: string;
   text: string;
+  formattedText?: React.ReactNode;
   state: AnswerState;
   disabled?: boolean;
   onSelect?: () => void;
@@ -48,6 +49,7 @@ export interface AnswerOptionProps {
 export function AnswerOption({
   letter,
   text,
+  formattedText,
   state,
   disabled = false,
   onSelect,
@@ -75,7 +77,7 @@ export function AnswerOption({
       <span className="answer-option__letter label-micro" aria-hidden="true">
         {letter}
       </span>
-      <span className="answer-option__text">{text}</span>
+      <span className="answer-option__text">{formattedText ?? text}</span>
       <span className="answer-option__mark" aria-hidden="true">
         {mark}
       </span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expressionParts, formatNumber, numericValue, symbolicProblem } from "./answerFormats";
+import { expressionParts, formatNumber, isWrittenAnswerFormatValid, numericValue } from "./answerFormats";
 
 describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   it.each([
@@ -30,19 +30,21 @@ describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   });
 });
 
-describe("symbolicProblem", () => {
-  it.each([
-    ["y = 2x", /not an equation/],
-    ["sin(x)", /Functions/],
-    ["2sqrt(x)", /Functions/],
-    ["2(x + 1", /isn't closed/],
-    ["x + 1)", /without a matching/],
-  ])("flags %j", (raw, message) => {
-    expect(symbolicProblem(raw)).toMatch(message);
-  });
+describe("isWrittenAnswerFormatValid", () => {
+  it.each(["", "y = 2x", "sin(x)", "2(x + 1", "x + 1)", "x^", "x^9", "x**2", "x/", "()", "x$"])(
+    "blocks malformed algebra %j",
+    raw => expect(isWrittenAnswerFormatValid("symbolic", raw)).toBe(false),
+  );
 
-  it.each(["", "2(x + 1)", "x^2 - 1", "mgh", "ab/c"])("passes %j", raw => {
-    expect(symbolicProblem(raw)).toBeNull();
+  it.each(["2(x + 1)", "x^2 - 1", "mgh", "ab/c", "x^-2", "a × b"])(
+    "accepts algebra %j",
+    raw => expect(isWrittenAnswerFormatValid("symbolic", raw)).toBe(true),
+  );
+
+  it("requires a number and a unit symbol when the question asks for units", () => {
+    expect(isWrittenAnswerFormatValid("numeric", "250 cm", "m")).toBe(true);
+    expect(isWrittenAnswerFormatValid("numeric", "250", "m")).toBe(false);
+    expect(isWrittenAnswerFormatValid("numeric", "cm", "m")).toBe(false);
   });
 });
 

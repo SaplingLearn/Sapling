@@ -71,11 +71,72 @@ def numeric_value(value: str) -> Fraction | None:
         return None
 
 
+_METRIC_BASE_UNITS = frozenset({"m", "g", "s", "L", "N", "J", "W", "Pa", "Hz", "V", "A", "mol"})
+_METRIC_PREFIX_EXPONENTS = {
+    "T": 12, "G": 9, "M": 6, "k": 3, "h": 2, "da": 1,
+    "d": -1, "c": -2, "m": -3, "μ": -6, "u": -6, "n": -9, "p": -12,
+}
+
+
+def numeric_quantity(value: str) -> tuple[Fraction, str] | None:
+    number, separator, unit = unicodedata.normalize("NFKC", value).strip().rpartition(" ")
+    amount = numeric_value(number) if separator else None
+    if amount is None or not re.fullmatch(r"[A-Za-zμΩ°][A-Za-zμΩ°0-9*/^·.−+-]{0,31}", unit):
+        return None
+    if unit not in _METRIC_BASE_UNITS:
+        for prefix, exponent in _METRIC_PREFIX_EXPONENTS.items():
+            base = unit.removeprefix(prefix)
+            if base != unit and base in _METRIC_BASE_UNITS:
+                return amount * Fraction(10) ** exponent, base
+    return amount, unit
+
+
+def _numeric_quantity_keys(question: dict) -> list[tuple[Fraction, str]]:
+    keys = [expected_written_answer(question), *question.get("accepted_answers", [])]
+    return [
+        quantity for key in keys
+        if isinstance(key, str) and (quantity := numeric_quantity(key)) is not None
+    ]
+
+
+def expected_written_answer(question: dict) -> str:
+    answer = question.get("correct_answer", "")
+    unit = question.get("numeric_unit")
+    return f"{answer} {unit}" if question.get("type") == "numeric" and unit else answer
+
+
+def written_feedback(question: dict, answer: str) -> str:
+    explanation = question.get("explanation", "")
+    if question.get("type") != "numeric" or not answer.strip() or grade_written(question, answer):
+        return explanation
+    if question.get("numeric_unit"):
+        actual = numeric_quantity(answer)
+        if actual is None:
+            return f"Enter a number followed by its unit. {explanation}".strip()
+        accepted = _numeric_quantity_keys(question)
+        if all(actual[1] != unit for _, unit in accepted):
+            return f"The unit you entered does not match an accepted unit for this question. {explanation}".strip()
+        if (-actual[0], actual[1]) in accepted:
+            return f"Check the sign of your result. {explanation}".strip()
+    else:
+        actual = numeric_value(answer)
+        if actual is None:
+            return f"Enter a number in the requested format. {explanation}".strip()
+        key = question.get("correct_answer")
+        expected = numeric_value(key) if isinstance(key, str) else None
+        if expected is not None and actual == -expected:
+            return f"Check the sign of your result. {explanation}".strip()
+    return explanation
+
+
 def grade_written(question: dict, answer: str) -> bool:
     expected = question.get("correct_answer", "")
     if not isinstance(expected, str) or not expected.strip() or not answer.strip():
         return False
     if question.get("type") == "numeric":
+        if question.get("numeric_unit"):
+            actual_quantity = numeric_quantity(answer)
+            return actual_quantity is not None and actual_quantity in _numeric_quantity_keys(question)
         actual = numeric_value(answer)
         target = numeric_value(expected)
         return actual is not None and target is not None and actual == target
