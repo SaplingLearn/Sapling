@@ -528,6 +528,7 @@ export function Library() {
 
   // ── Markup ──────────────────────────────────────────────────────────────
   return (
+    <div className={styles.libShell}>
     <div
       data-testid="library-screen"
       className={isMobile ? undefined : styles.libGrid}
@@ -952,6 +953,7 @@ export function Library() {
           }
         }}
       />
+    </div>
     </div>
   );
 }

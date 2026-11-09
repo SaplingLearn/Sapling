@@ -28,40 +28,36 @@
   container-name: home;
 }
 
-/* Both tracks are PROPORTIONAL. A fixed 380px rail meant every pixel the side
-   nav took when it expanded came out of the middle column alone, so the middle
-   read as squished while the rail sat untouched. Sharing the loss keeps the
-   two in the ratio the design draws (~2.4 : 1) at any nav state, and the rail
-   still refuses to go under 300px. */
+/* 1:1 with the 1920x1080 design: a 380px rail, a 56px gap and 64/56 side
+   padding put the main column at 1164px and the rail at x1484 — the exact
+   positions measured off the reference screenshot.
+   The rail is CLAMPED rather than fixed so it gives ground as the container
+   narrows (a fixed one charged the whole loss to the middle column when the
+   side nav expanded). 22.1cqi of the 1720px container at 1920 is 380px, so
+   the design width is reproduced exactly and every width below scales down. */
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 22.1cqi, 380px);
   gap: 56px;
   padding: 36px 56px 32px 64px;
   box-sizing: border-box;
   align-content: start;
 }
 
-/* The greeting + pills + action cards, with the quote to their right and
-   top-aligned — the arrangement the design draws. A GRID, not flex-wrap:
-   under wrap the two sides competed for one pool of free space, so the quote
-   dropped below the cards with the nav expanded and the cards stacked on each
-   other with it collapsed. Two proportional tracks give each side a
-   predictable share, and both shrink together. */
+/* The greeting + pills + action cards, with the quote to their right.
+   Reference: cards at x264-915, quote at x1031-1428 inside a 1164px column —
+   a 724px left block, a 40px gap, a 400px quote. Flex with those bases
+   reproduces it exactly; both sides shrink, and they wrap onto separate rows
+   only when even their minimums can't sit together. */
 .greetRow {
-  display: grid;
-  grid-template-columns: minmax(0, 2.05fr) minmax(230px, 1fr);
-  align-items: start;
-  gap: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 40px;
+  max-width: 1164px;
 }
-.greetMain { min-width: 0; }
-.greetQuote { min-width: 0; }
-
-/* Only once the left track can no longer hold the card pair does the quote go
-   under it — past that there is genuinely no room beside. */
-@container home (max-width: 1150px) {
-  .greetRow { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-}
+.greetMain { flex: 1 1 612px; min-width: 0; }
+.greetQuote { flex: 0 1 400px; min-width: 260px; }
 
 /* Up Next + Quick Reviews. A card may shrink, but only to the width where its
    title still reads; past that the pair wraps onto two rows instead of

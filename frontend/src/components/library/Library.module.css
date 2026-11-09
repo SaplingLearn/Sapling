@@ -33,8 +33,18 @@
    every pixel the side nav took when it expanded came out of the document
    list in the middle. All three tracks are proportional now, each with a
    floor, so the loss is shared and the middle never collapses on its own. */
+/* 1:1 with the 1920x1080 design: a 236px course rail, a 400px preview panel,
+   40px gaps and 56/48 side padding put the columns at x256, x532 and x1472 —
+   the positions measured off the reference screenshot. Both outer columns are
+   CLAMPED rather than fixed so they give ground as the container narrows;
+   with both fixed, every pixel the side nav took came out of the document
+   list in the middle. 13.72cqi and 23.26cqi of the 1720px container at 1920
+   are 236px and 400px, so the design widths are exact. */
 .libGrid {
-  grid-template-columns: minmax(196px, 0.78fr) minmax(0, 2.5fr) minmax(300px, 1.3fr);
+  grid-template-columns:
+    clamp(190px, 13.72cqi, 236px)
+    minmax(0, 1fr)
+    clamp(300px, 23.26cqi, 400px);
 }
 
 /* A course's full name wraps to a second line rather than ellipsing — the
@@ -46,4 +56,14 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* The column clamps above are sized in `cqi`, so the grid needs a container
+   to resolve them against — without one they'd fall back to the viewport and
+   ignore the side nav entirely. */
+.libShell {
+  container-type: inline-size;
+  container-name: library;
+  height: 100%;
+  min-height: 0;
 }

@@ -101,12 +101,15 @@
 .hub {
   position: relative;
   display: grid;
-  /* PROPORTIONAL, not a fixed rail: with a fixed one, every pixel the side nav
-     took when it expanded came out of the main column alone, so the roadmap
-     and readiness squeezed while the rail sat untouched. Sharing the loss
-     holds the design's ratio at any nav state; the rail still won't go under
-     300px. */
-  grid-template-columns: minmax(0, 2.6fr) minmax(300px, 1fr);
+  /* 1:1 with the 1920x1080 design: a 360px rail, a 56px gap and 56/48 side
+     padding put the main column at 1200px, roadmap tiles at x256 and the
+     focus card's right edge at x1455 — the positions measured off the
+     reference screenshot.
+     CLAMPED, not fixed, so the rail gives ground as the container narrows (a
+     fixed one charged the whole loss to the main column when the side nav
+     expanded). 20.94cqi of the 1720px container at 1920 is 360px, so the
+     design width is exact and every width below scales down. */
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 20.94cqi, 360px);
   grid-template-rows: auto auto auto auto;
   align-content: start;
   column-gap: 56px;
@@ -135,9 +138,14 @@
    their minimums holds the Up Next card where the design puts it — beside the
    figure, not pushed below it — on a narrow window or with the side nav
    expanded. The warning under the legend takes the extra lines instead. */
+/* Reference: the focus card is 540px at x916-1455, leaving the readiness
+   figure 612px beside it. The card is clamped so BOTH give ground as the
+   column narrows — a rigid 540 drove the figure's column to zero and the
+   card painted over "Ready for <exam>". 31.4cqi of 1720 is 540px, so the
+   design width is exact. */
 .readyGrid {
   display: grid;
-  grid-template-columns: minmax(270px, 1fr) minmax(330px, 540px);
+  grid-template-columns: minmax(0, 1fr) clamp(330px, 31.4cqi, 540px);
   align-items: start;
   gap: 48px;
 }
