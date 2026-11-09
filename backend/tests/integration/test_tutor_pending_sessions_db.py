@@ -27,10 +27,10 @@ def _stash(conn, sid, *, user=USER, offering="", cap=CAP):
     )
 
 
-def _materialize(conn, sid, user=USER) -> dict:
+def _materialize(conn, sid, user=USER, created_at=None) -> dict:
     return conn.execute(
-        "SELECT * FROM public.materialize_tutor_session(%s, %s, %s, %s)",
-        (sid, user, TTL, TOMB),
+        "SELECT * FROM public.materialize_tutor_session(%s, %s, %s, %s, %s)",
+        (sid, user, TTL, TOMB, created_at),
     ).fetchone()
 
 
@@ -62,6 +62,23 @@ def test_first_turn_writes_the_row_and_greeting_once(db_conn):
                            "WHERE session_id = 'tps-1'").fetchall()
     assert [(m["role"], m["content"]) for m in msgs] == [("assistant", "ENC:greeting")]
     assert _state(db_conn, "tps-1") is None
+
+
+def test_the_greeting_takes_the_apps_timestamp(db_conn):
+    """The app stamps the greeting on the clock its next (user) row uses, so
+    DB/app clock skew can never sort the user's message before it."""
+    from datetime import datetime, timedelta, timezone
+
+    stamp = datetime.now(timezone.utc) - timedelta(minutes=5)  # an app clock behind the DB
+    _stash(db_conn, "tps-ts")
+    assert _materialize(db_conn, "tps-ts", created_at=stamp)["outcome"] == "materialized"
+    got = db_conn.execute("SELECT created_at FROM public.messages "
+                          "WHERE session_id = 'tps-ts'").fetchone()["created_at"]
+    assert got == stamp
+    _stash(db_conn, "tps-ts2")  # NULL: the DB clock, as before
+    _materialize(db_conn, "tps-ts2")
+    assert db_conn.execute("SELECT created_at FROM public.messages "
+                           "WHERE session_id = 'tps-ts2'").fetchone()["created_at"] is not None
 
 
 def test_an_ended_pending_session_is_a_tombstone_for_its_owner_only(db_conn):
@@ -112,7 +129,7 @@ def test_the_store_is_service_only(db_conn):
     with db_conn.transaction() as tx:
         db_conn.execute("SET LOCAL ROLE authenticated")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            db_conn.execute("SELECT * FROM public.materialize_tutor_session('x', 'y', 1, 1)")
+            db_conn.execute("SELECT * FROM public.materialize_tutor_session('x', 'y', 1, 1, now())")
         raise psycopg.Rollback(tx)
 
 

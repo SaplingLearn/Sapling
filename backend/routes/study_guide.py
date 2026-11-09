@@ -299,19 +299,32 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "generated_at": now,
         "content": encrypt_json(content),
     }
-    row["id"] = _insert_or_replace(row)
+    row["id"], replaced = _insert_or_replace(row)
     # #771: if the material changed while this guide was generating, its
     # invalidation may already have run — take the stale row back out so the
     # next request regenerates from the current documents. The student still
     # gets this answer; it just is not cached.
+    #
+    # Not when the write REPLACED the key's existing row in place (the unique
+    # index, 20261109023732): that row is the student's only guide, and
+    # deleting it would leave them with none — the outcome the index-free
+    # path avoids by keeping the older row. The replaced row is no staler
+    # than the one it overwrote, and the change's own invalidation (which
+    # runs after the document row lands) still clears it.
     cached = True
     if _material_fingerprint(user_id, offering_id) != material:
-        logger.info(
-            "study guide for offering %s generated across a document change; "
-            "not caching it", offering_id,
-        )
-        table("study_guides").delete(filters={"id": f"eq.{row['id']}"})
         cached = False
+        if replaced:
+            logger.info(
+                "study guide for offering %s generated across a document change; "
+                "kept the replaced row (the key's only guide)", offering_id,
+            )
+        else:
+            logger.info(
+                "study guide for offering %s generated across a document change; "
+                "not caching it", offering_id,
+            )
+            table("study_guides").delete(filters={"id": f"eq.{row['id']}"})
 
     return {"id": row["id"], "content": content, "generated_at": now, "cached": cached}
 
@@ -326,21 +339,22 @@ def _is_unique_violation(exc: httpx.HTTPStatusError) -> bool:
         return False
 
 
-def _insert_or_replace(row: dict) -> str:
-    """Insert the guide row and return its id. Where the
+def _insert_or_replace(row: dict) -> tuple[str, bool]:
+    """Insert the guide row; return ``(id, replaced)``. Where the
     `study_guides_user_offering_exam_key` unique index exists (built by hand
     with `SELECT ensure_study_guides_unique_key()` after this code deploys,
     migration 20261109023732; only on a table with no duplicates) a second row
     for the key is refused, so a regenerate — or a cross-replica race the
     lease did not serialise — replaces the key's row IN PLACE instead (new
     content and generated_at, same id). Without the index this is the plain
-    insert it always was."""
+    insert it always was. ``replaced`` is True when an existing row was
+    overwritten in place rather than a new one inserted."""
     key = {"user_id": f"eq.{row['user_id']}", "offering_id": f"eq.{row['offering_id']}",
            "exam_id": f"eq.{row['exam_id']}"}
     for _attempt in range(2):
         try:
             table("study_guides").insert(row)
-            return row["id"]
+            return row["id"], False
         except httpx.HTTPStatusError as exc:
             if not _is_unique_violation(exc):
                 raise
@@ -348,7 +362,7 @@ def _insert_or_replace(row: dict) -> str:
             {"content": row["content"], "generated_at": row["generated_at"]}, filters=key,
         ) or []
         if replaced:
-            return replaced[0].get("id") or row["id"]
+            return replaced[0].get("id") or row["id"], True
         # The row went between the two calls (an invalidation): insert again.
     raise HTTPException(status_code=409, detail="Study guide is being updated; try again.")
 

@@ -393,6 +393,7 @@ BACKEND_RPCS = frozenset({
     "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
     "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
     "release_lease",                 # services/pg_lease.py (#117, stateless_locks)
+    "renew_lease",                   # services/pg_lease.py (#117, stateless_locks)
     "stash_tutor_session",           # services/tutor_sessions.py (#117, stateless_tutor_sessions)
 })
 

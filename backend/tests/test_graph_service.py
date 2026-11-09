@@ -6,7 +6,7 @@ All Supabase calls are mocked so no live DB connection is needed.
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import services.graph_service as gs
 from services.graph_service import (
@@ -1663,6 +1663,61 @@ class TestAsyncReadTwins:
         (sync, _), (asynced, _) = self._both(gs.get_courses, gs.aget_courses, data, "u1")
         assert asynced == sync
         assert [c["course_id"] for c in asynced] == ["c1", "c2"]
+
+    def test_aget_graph_runs_its_independent_reads_concurrently(self):
+        """#117 review: the enrollments, nodes, edges and streak reads used to
+        be awaited one after another. Each waits here until all four have
+        started, so a sequential run never gets past the first."""
+        import asyncio
+
+        rows = _PARITY_GRAPHS["full"]
+
+        async def go():
+            barrier = asyncio.Barrier(4)
+
+            def factory(name):
+                mock = MagicMock()
+
+                async def aselect(cols="*", filters=None, **_k):
+                    if name == "users" and cols == "id":  # aensure_user_exists: first, alone
+                        return [{"id": "u1"}]
+                    if name in ("enrollments", "graph_nodes", "graph_edges", "users"):
+                        await asyncio.wait_for(barrier.wait(), 2)
+                    return rows.get(name, [])
+                mock.aselect = AsyncMock(side_effect=aselect)
+                return mock
+
+            with patch("services.graph_service.table", side_effect=factory):
+                return await gs.aget_graph("u1")
+
+        graph = asyncio.run(go())
+        assert {"n1", "n2"} <= {n["id"] for n in graph["nodes"]}
+
+    def test_aget_courses_counts_concurrently_and_keeps_order(self):
+        import asyncio
+
+        enrollments = [_enrollment_row(f"c{i}", f"C{i}", f"Course {i}") for i in range(20)]
+        live, peak = [0], [0]
+
+        def factory(name):
+            mock = MagicMock()
+
+            async def aselect(cols="*", filters=None, **_k):
+                if name == "enrollments":
+                    return enrollments
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+                await asyncio.sleep(0.01)
+                live[0] -= 1
+                return [{"id": f"n{j}"} for j in range(int(filters["course_id"][len("eq.c"):]))]
+            mock.aselect = AsyncMock(side_effect=aselect)
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            courses = asyncio.run(gs.aget_courses("u1"))
+        assert [c["course_id"] for c in courses] == [f"c{i}" for i in range(20)]
+        assert [c["node_count"] for c in courses] == list(range(20))
+        assert peak[0] == gs._COURSE_COUNT_CONCURRENCY
 
     def test_aget_courses_empty_on_enrollment_read_failure(self):
         import asyncio

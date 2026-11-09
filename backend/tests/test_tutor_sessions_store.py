@@ -59,6 +59,7 @@ class _FakeDB:
         }
         self.rpcs: list[str] = []
         self.touched: set[str] = set()
+        self.reads: list[str] = []
 
     # ── table() ──
     def table(self, name):
@@ -67,6 +68,7 @@ class _FakeDB:
         m = MagicMock(name=f"table({name})")
 
         def select(_cols="*", filters=None, limit=None, **_k):
+            self.reads.append(name)
             out = [dict(r) for r in rows if _match(r, filters)]
             return out[:limit] if limit else out
 
@@ -152,7 +154,8 @@ class _FakeDB:
         self.rows["messages"].append({
             "id": f"m-{len(self.rows['messages'])}", "session_id": r["session_id"],
             "role": "assistant", "content": r["assistant_reply"],
-            "graph_update_json": r["graph_update"], "created_at": now.isoformat(),
+            "graph_update_json": r["graph_update"],
+            "created_at": p["p_created_at"] or now.isoformat(),
         })
         self.rows["tutor_pending_sessions"].remove(r)
         return [{"outcome": "materialized", "session_mode": r["mode"],
@@ -272,6 +275,17 @@ def test_a_discard_on_one_replica_stops_turns_on_the_other(db, reason, status):
     assert db.rows["sessions"] == [] and db.rows["messages"] == []
 
 
+def test_the_materialised_greeting_sorts_before_the_turns_user_row(db):
+    """The greeting is stamped on the app clock at the turn, before the turn's
+    own rows (finding: a DB-clock stamp could sort after a skewed user row)."""
+    sid = _start()
+    _replica_hop()
+    assert _chat(sid).status_code == 200
+    stamps = [(m["role"], datetime.fromisoformat(m["created_at"])) for m in db.rows["messages"]]
+    assert [r for r, _ in stamps] == ["assistant", "user", "assistant"]
+    assert stamps[0][1] <= stamps[1][1] <= stamps[2][1]
+
+
 def test_another_students_stored_session_is_404_and_left_intact(db):
     sid = _start()
     _replica_hop()
@@ -323,6 +337,66 @@ def test_a_session_pending_in_memory_finishes_there_after_the_flag_turns_on(db, 
     assert _chat(sid).status_code == 200
     assert "materialize_tutor_session" not in db.rpcs
     assert [s["id"] for s in db.rows["sessions"]] == [sid]
+
+
+def test_a_memory_tombstone_answers_409_with_the_flag_on(db, monkeypatch):
+    """A session pending in memory when the flag went on is ENDED in memory
+    (discard_if_pending pops it here). Its next turn must still be the 409
+    SESSION_ENDED, not the bare 404 the table path gives an unknown id."""
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
+    sid = _start()
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "on")
+    assert client.post("/api/learn/end-session",
+                       json={"session_id": sid, "user_id": USER}).status_code == 200
+    assert sid in ts._DISCARDED and db.store(sid) is None
+    r = _chat(sid)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == ts.SESSION_ENDED_CODE
+    assert "materialize_tutor_session" not in db.rpcs, "answered from memory, no I/O"
+
+
+def _live_session(db) -> str:
+    sid = _start()
+    _replica_hop()
+    assert _chat(sid).status_code == 200  # the first turn materialises it
+    db.rpcs.clear()
+    db.reads.clear()
+    _replica_hop()
+    return sid
+
+
+def test_a_turn_on_a_live_stored_session_skips_the_materialise_call(db):
+    """#117 review: every turn used to call materialize_tutor_session first
+    and read the tombstone table once per written row. A live session now
+    answers from its sessions row, and the turn reads the store once."""
+    sid = _live_session(db)
+    assert _chat(sid).status_code == 200
+    assert "materialize_tutor_session" not in db.rpcs
+    assert db.reads.count("sessions") >= 1
+    assert db.reads.count("tutor_pending_sessions") == 1
+
+
+def test_a_live_session_ended_on_the_other_replica_still_refuses(db):
+    sid = _live_session(db)
+    r = client.post("/api/learn/end-session", json={"session_id": sid, "user_id": USER})
+    assert r.status_code == 200
+    _replica_hop()
+    r = _chat(sid)
+    assert r.status_code == 409 and r.json()["error"]["code"] == ts.SESSION_ENDED_CODE
+    assert _chat(sid, uid=OTHER).status_code == 404
+
+
+def test_a_delete_tombstone_written_mid_turn_still_stops_the_write(db):
+    """The delete's tombstone lands before its row delete: a turn that saw the
+    row is refused at its write (the one store read), as before."""
+    sid = _live_session(db)
+    db.rows["tutor_pending_sessions"].append({
+        "session_id": sid, "user_id": USER, "state": "deleted",
+        "discarded_at": _now().isoformat(), "stashed_at": _now().isoformat(),
+    })
+    before = len(db.rows["messages"])
+    assert _chat(sid).status_code == 404
+    assert len(db.rows["messages"]) == before
 
 
 def test_flag_off_never_touches_the_store(db, monkeypatch):

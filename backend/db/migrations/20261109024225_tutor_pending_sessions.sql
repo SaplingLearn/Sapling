@@ -32,13 +32,16 @@
 --   enforces per process (PENDING_TTL_SECONDS, DISCARD_TOMBSTONE_TTL_SECONDS,
 --   PENDING_MAX_ENTRIES), now across replicas.
 -- public.materialize_tutor_session(p_session_id, p_user_id, p_ttl_seconds,
---                                  p_tombstone_ttl_seconds)
+--                                  p_tombstone_ttl_seconds, p_created_at)
 --     -> TABLE (outcome text, session_mode text, session_topic text,
 --               session_offering_id text)
 --   The first turn: ONE transaction that locks the row (FOR UPDATE), and if it
 --   is the caller's live pending session writes the `sessions` row (ON
 --   CONFLICT DO NOTHING) and the greeting `messages` row and deletes the
---   pending row. outcome: 'materialized' | 'none' (not pending: never was,
+--   pending row. The greeting's `created_at` is p_created_at, stamped by the
+--   app on the same clock as the turn's own rows that follow (messages order
+--   by created_at; a DB-clock stamp could sort after a skewed app-clock user
+--   row). NULL falls back to the DB clock. outcome: 'materialized' | 'none' (not pending: never was,
 --   expired, or materialised already) | 'foreign' (another user's pending
 --   session) | 'ended' / 'deleted' (the caller's tombstone, within its TTL).
 --   Atomic, so a row is never half-materialised and the per-process lock is
@@ -71,7 +74,7 @@
 -- off first; sessions still pending in the table are then simply never
 -- materialised (their first turn answers 404, as an expired one does today).
 --   DROP FUNCTION IF EXISTS public.discard_tutor_session(text, text, text, boolean, integer);
---   DROP FUNCTION IF EXISTS public.materialize_tutor_session(text, text, integer, integer);
+--   DROP FUNCTION IF EXISTS public.materialize_tutor_session(text, text, integer, integer, timestamptz);
 --   DROP FUNCTION IF EXISTS public.stash_tutor_session(text, text, text, text, text, text, boolean, text, jsonb, integer, integer, integer);
 --   DROP TABLE IF EXISTS public.tutor_pending_sessions;   -- drops its indexes too
 -- (Only greetings of sessions nobody has chatted in yet, and short-lived
@@ -188,7 +191,8 @@ CREATE OR REPLACE FUNCTION public.materialize_tutor_session(
     p_session_id            TEXT,
     p_user_id               TEXT,
     p_ttl_seconds           INTEGER,
-    p_tombstone_ttl_seconds INTEGER
+    p_tombstone_ttl_seconds INTEGER,
+    p_created_at            TIMESTAMPTZ
 )
 RETURNS TABLE (outcome TEXT, session_mode TEXT, session_topic TEXT, session_offering_id TEXT)
 LANGUAGE plpgsql
@@ -240,7 +244,8 @@ BEGIN
     ON CONFLICT (id) DO NOTHING;
 
     INSERT INTO public.messages (session_id, role, content, graph_update_json, created_at)
-    VALUES (r.session_id, 'assistant', r.assistant_reply, r.graph_update, v_now);
+    VALUES (r.session_id, 'assistant', r.assistant_reply, r.graph_update,
+            COALESCE(p_created_at, v_now));
 
     DELETE FROM public.tutor_pending_sessions t WHERE t.session_id = p_session_id;
 
@@ -252,7 +257,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.materialize_tutor_session(TEXT, TEXT, INTEGER, INTEGER) IS
+COMMENT ON FUNCTION public.materialize_tutor_session(TEXT, TEXT, INTEGER, INTEGER, TIMESTAMPTZ) IS
     'First tutor turn (#117): atomically write a pending session''s sessions row + greeting and drop the pending row.';
 
 -- ── discard_tutor_session ───────────────────────────────────────────────────
@@ -317,7 +322,7 @@ DECLARE
 BEGIN
     FOREACH f IN ARRAY ARRAY[
         'public.stash_tutor_session(text, text, text, text, text, text, boolean, text, jsonb, integer, integer, integer)',
-        'public.materialize_tutor_session(text, text, integer, integer)',
+        'public.materialize_tutor_session(text, text, integer, integer, timestamptz)',
         'public.discard_tutor_session(text, text, text, boolean, integer)'
     ] LOOP
         EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f);

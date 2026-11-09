@@ -204,12 +204,13 @@ set it to `full`) and redeploy. That rebuilds today's image.
 
 ## Two API replicas
 
-`.railway/railway.ts` declares the API service with `replicas: API_REPLICAS`
-(2). That line does nothing until `MANAGE_API` is on (runbook step 6), and it
-must not take effect before the flags below are on: until then several guards
-live in process memory, and a second replica would see only its own half.
-Nothing in this section has been applied; it is the order to do it in,
-staging first.
+`.railway/railway.ts` declares the API service with `replicas: API_REPLICAS`,
+committed as **1**. That line does nothing until `MANAGE_API` is on (runbook
+step 6), so the first apply that manages the API keeps it at one replica.
+Raising it to 2 is the LAST step below, after the flags are on: until then
+several guards live in process memory, and a second replica would see only
+its own half. Nothing in this section has been applied; it is the order to
+do it in, staging first.
 
 ### Prerequisites: the flags, in this order
 
@@ -234,8 +235,13 @@ already replica-safe: every process re-checks `feature_flags_version`
 (`FEATURE_FLAGS_VERSION_CHECK_S`) and drops its snapshot when another process
 changed a flag.
 
-Then set `MANAGE_API = true` (step 6's variable paste first), plan (it must
-show `replicas: 2` on the API and no variable deletes) and apply.
+If `MANAGE_API` is not on yet, turn it on first (step 6's variable paste
+first), with `API_REPLICAS` still 1: plan (it must show `replicas: 1` on the
+API and no variable deletes) and apply.
+
+**Last step:** with all of the above on and watched, change `API_REPLICAS` to
+2 in `.railway/railway.ts`, plan (the only API change it may show is
+`replicas: 1 -> 2`) and apply.
 
 ### The audit: per-process state on the API
 

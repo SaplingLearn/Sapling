@@ -145,7 +145,8 @@ class TestListSessions:
             if name == "sessions":
                 mock.select.return_value = sessions
             elif name == "messages":
-                mock.select.return_value = [{"id": "m1"}, {"id": "m2"}]
+                # count=exact over a one-row body: the total, not every id
+                mock.select_with_count.return_value = ([{"id": "m1"}], 2)
             else:
                 mock.select.return_value = []
             return mock
@@ -166,12 +167,62 @@ class TestListSessions:
         def factory(name):
             mock = MagicMock()
             mock.select.return_value = sessions if name == "sessions" else []
+            mock.select_with_count.return_value = ([], 0)
             return mock
 
         with patch("routes.learn.table", side_effect=with_async_twins(factory)):
             r = client.get("/api/learn/sessions/user_andres")
 
         assert r.json()["sessions"][0]["is_active"] is False
+        assert r.json()["sessions"][0]["message_count"] == 0
+
+    def test_message_counts_are_head_counts_with_bounded_concurrency(self):
+        """One count=exact read per session with a one-row body (never every
+        message id), at most _SESSION_COUNT_CONCURRENCY in flight at once."""
+        from routes import learn
+
+        sessions = [{"id": f"s{i}", "topic": "T", "mode": "socratic",
+                     "started_at": "2026-01-01T00:00:00", "ended_at": None} for i in range(30)]
+        live, peak, calls = [0], [0], []
+
+        async def count(cols, filters=None, limit=None, **_k):
+            calls.append((cols, limit))
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+            await asyncio.sleep(0.01)
+            live[0] -= 1
+            return [{"id": "m"}], int(filters["session_id"][4:])
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.return_value = sessions if name == "sessions" else []
+            mock = add_async_twins(mock)
+            mock.aselect_with_count = AsyncMock(side_effect=count)
+            return mock
+
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.get("/api/learn/sessions/user_andres?limit=30")
+        assert r.status_code == 200
+        assert [s["message_count"] for s in r.json()["sessions"]] == list(range(30))
+        assert calls == [("id", 1)] * 30
+        assert peak[0] == learn._SESSION_COUNT_CONCURRENCY
+
+    @pytest.mark.parametrize("asked,sent", [(10, 10), (500, 100), (0, 100), (-3, 100)])
+    def test_limit_is_clamped(self, asked, sent):
+        seen = {}
+
+        def factory(name):
+            mock = MagicMock()
+
+            def select(cols, filters=None, order=None, limit=None, **_k):
+                seen["limit"] = limit
+                return []
+            mock.select.side_effect = select
+            return mock
+
+        with patch("routes.learn.table", side_effect=with_async_twins(factory)):
+            r = client.get(f"/api/learn/sessions/user_andres?limit={asked}")
+        assert r.status_code == 200 and seen["limit"] == sent
 
     def test_empty_sessions(self):
         with patch("routes.learn.table", return_value=fake_table()) as t:

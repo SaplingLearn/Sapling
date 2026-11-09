@@ -22,11 +22,17 @@
 --   over an hour ago, skipping rows another pruner holds, so keys nobody
 --   claims again (one per consumed OAuth nonce) do not accumulate.
 --
+-- public.renew_lease(p_key, p_holder, p_ttl_sec) -> boolean
+--   The renewal a held lease's body runs every ttl/3: moves `expires_at` out
+--   ONLY on an existing row p_holder still holds. Never inserts, so a renewal
+--   that lands after its own release (or after another holder took an expired
+--   lease over) cannot bring the lease back. TRUE when the row was extended.
+--
 -- public.release_lease(p_key, p_holder) -> boolean
 --   Deletes the lease only when p_holder still holds it (a lease that expired
 --   and was taken over is left to its new holder). TRUE when a row went.
 --
--- Both SECURITY INVOKER with search_path pinned to '', EXECUTE for
+-- All three SECURITY INVOKER with search_path pinned to '', EXECUTE for
 -- service_role only.
 --
 -- Inert until used: nothing calls these until the `stateless_locks` flag
@@ -39,6 +45,7 @@
 -- Reverse (by hand, as the migration role). Turn `stateless_locks` off first;
 -- the app falls back to its in-process locks on its own if these disappear.
 --   DROP FUNCTION IF EXISTS public.release_lease(text, text);
+--   DROP FUNCTION IF EXISTS public.renew_lease(text, text, integer);
 --   DROP FUNCTION IF EXISTS public.claim_lease(text, text, integer);
 --   DROP TABLE IF EXISTS public.app_leases;
 -- (The table is brand new and holds only ephemeral leases.)
@@ -53,7 +60,7 @@ CREATE TABLE IF NOT EXISTS public.app_leases (
 );
 
 COMMENT ON TABLE public.app_leases IS
-    'Cross-replica leases (#117 stateless_locks), written only by claim_lease()/release_lease(). Service-only; ephemeral.';
+    'Cross-replica leases (#117 stateless_locks), written only by claim_lease()/renew_lease()/release_lease(). Service-only; ephemeral.';
 
 -- The opportunistic prune of long-expired keys.
 CREATE INDEX IF NOT EXISTS app_leases_expires_at_idx
@@ -117,6 +124,37 @@ $$;
 COMMENT ON FUNCTION public.claim_lease(TEXT, TEXT, INTEGER) IS
     'Atomic lease claim/renewal (#117): TRUE when p_holder holds p_key for p_ttl_sec more seconds.';
 
+-- ── renew_lease ─────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.renew_lease(
+    p_key     TEXT,
+    p_holder  TEXT,
+    p_ttl_sec INTEGER
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+VOLATILE
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+    IF p_key IS NULL OR length(p_key) NOT BETWEEN 1 AND 300
+       OR p_holder IS NULL OR length(p_holder) NOT BETWEEN 1 AND 200
+       OR p_ttl_sec IS NULL OR p_ttl_sec NOT BETWEEN 1 AND 86400 THEN
+        RAISE EXCEPTION 'renew_lease: invalid arguments'
+            USING ERRCODE = '22023';
+    END IF;
+
+    UPDATE public.app_leases l
+       SET expires_at = clock_timestamp() + pg_catalog.make_interval(secs => p_ttl_sec)
+     WHERE l.key = p_key AND l.holder = p_holder;
+    RETURN FOUND;
+END;
+$$;
+
+COMMENT ON FUNCTION public.renew_lease(TEXT, TEXT, INTEGER) IS
+    'Extend a lease p_holder still holds (#117); never recreates a released or taken-over one.';
+
 -- ── release_lease ───────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.release_lease(
@@ -157,6 +195,7 @@ BEGIN
 
     FOREACH fn IN ARRAY ARRAY[
         'public.claim_lease(text, text, integer)',
+        'public.renew_lease(text, text, integer)',
         'public.release_lease(text, text)'
     ] LOOP
         EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);

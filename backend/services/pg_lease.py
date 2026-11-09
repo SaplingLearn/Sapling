@@ -5,8 +5,9 @@ Some guards in this app are per-process: the study-guide single-flight
 (``services/account_ops_lock.py``) and the consumed-OAuth-nonce set
 (``routes/auth.py``). With two API replicas each process only sees its own
 half. This module is the one primitive that closes the gap: a lease row in
-``app_leases``, claimed and released through the atomic ``claim_lease`` /
-``release_lease`` SQL functions (migration ``*_app_leases.sql``).
+``app_leases``, claimed, renewed and released through the atomic
+``claim_lease`` / ``renew_lease`` / ``release_lease`` SQL functions (migration
+``*_app_leases.sql``).
 
 The callers keep their in-process lock as the FIRST layer and take a lease
 here as the second, so with the flag off nothing changes at all:
@@ -16,8 +17,11 @@ here as the second, so with the flag off nothing changes at all:
 * ``on`` -- one bounded ``claim_lease`` round trip (``CLAIM_TIMEOUT_S``, not
   the client's 30 s). A lease is held for ``ttl_s`` and, while a ``with``
   body runs, renewed every ``ttl_s / 3`` so a slow body never loses it; a
-  crashed process's lease simply expires. Release deletes the row only while
-  this acquisition still holds it.
+  crashed process's lease simply expires. A renewal only extends a row this
+  acquisition still holds (it never inserts one), and the body's exit stops
+  and joins the renewer before releasing, so a release can never be undone
+  by a renewal still in flight. Release deletes the row only while this
+  acquisition still holds it.
 * DB failure (or a pre-migration 404) -- the lease is GRANTED (fail open to
   the in-process layer: these guard double-submits, they are not
   authorization) and the store is marked down for ``DB_DOWN_S``: inside that
@@ -29,12 +33,12 @@ Keys are caller-chosen strings of at most 300 characters. A key derived from
 secret or user-supplied data must go through :func:`hashed_key` (never store a
 raw OAuth nonce).
 
-Sync callers use :func:`lease` / :func:`consume_once`; an ``async def`` uses
-:func:`alease` / :func:`aconsume_once`, which never block the loop.
+The API is sync (:func:`lease`, :func:`consume_once`, :func:`try_claim`):
+every caller runs in the threadpool. There are no async twins; an
+``async def`` caller would have to add them.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import logging
@@ -43,16 +47,16 @@ import socket
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from typing import Optional
 
-import anyio
 
 logger = logging.getLogger("sapling.pg_lease")
 
 FLAG_KEY = "stateless_locks"
 #: The SQL functions the migration adds.
 CLAIM_FN = "claim_lease"
+RENEW_FN = "renew_lease"
 RELEASE_FN = "release_lease"
 
 #: Bound on one lease round trip.
@@ -63,6 +67,9 @@ DB_DOWN_S = 30.0
 MAX_TTL_S = 86_400
 #: Floor on the renewal interval (ttl/3); tests shrink it.
 RENEW_MIN_S = 1.0
+#: How long the body's exit waits for an in-flight renewal before releasing:
+#: one bounded round trip, plus slack.
+RENEW_JOIN_S = CLAIM_TIMEOUT_S + 0.5
 
 _HOST = f"{socket.gethostname()[:60]}:{os.getpid()}"
 
@@ -137,18 +144,6 @@ def _enabled() -> bool:
         return False
 
 
-async def _aenabled() -> bool:
-    try:
-        from services.feature_flags import cached_explain
-
-        res = cached_explain(FLAG_KEY, None)
-    except Exception:
-        res = None
-    if res is not None:
-        return res.variant == "on"
-    return await anyio.to_thread.run_sync(_enabled)
-
-
 # ── the two round trips ─────────────────────────────────────────────────────
 
 
@@ -189,14 +184,15 @@ def _claim_db(key: str, holder: str, ttl_s: float) -> Optional[bool]:
     return _settle(answer)
 
 
-async def _aclaim_db(key: str, holder: str, ttl_s: float) -> Optional[bool]:
-    from db.async_connection import arpc
+def _renew_db(key: str, holder: str, ttl_s: float) -> Optional[bool]:
+    """True = extended, False = this holder no longer holds it (released,
+    expired and taken over), None = no answer. Never creates a row."""
+    from db.connection import rpc
     from db.scope import service_scope
 
     try:
-        with service_scope():  # one coroutine, no yield: reset in the same context
-            answer = await arpc(CLAIM_FN, _claim_params(key, holder, ttl_s),
-                                timeout=CLAIM_TIMEOUT_S)
+        with service_scope():
+            answer = rpc(RENEW_FN, _claim_params(key, holder, ttl_s), timeout=CLAIM_TIMEOUT_S)
     except Exception as exc:
         _db_failed(exc)
         return None
@@ -216,18 +212,6 @@ def _release_db(key: str, holder: str) -> None:
                        key.split(":", 1)[0], exc_info=True)
 
 
-async def _arelease_db(key: str, holder: str) -> None:
-    from db.async_connection import arpc
-    from db.scope import service_scope
-
-    try:
-        with service_scope():
-            await arpc(RELEASE_FN, {"p_key": key, "p_holder": holder}, timeout=CLAIM_TIMEOUT_S)
-    except Exception:
-        logger.warning("stateless_locks: release of %s failed; it expires on its own",
-                       key.split(":", 1)[0], exc_info=True)
-
-
 # ── public API ──────────────────────────────────────────────────────────────
 
 
@@ -240,12 +224,6 @@ def try_claim(key: str, ttl_s: float, holder: str) -> Optional[bool]:
     return _claim_db(key, holder, ttl_s)
 
 
-async def atry_claim(key: str, ttl_s: float, holder: str) -> Optional[bool]:
-    if _db_down() or not await _aenabled():
-        return None
-    return await _aclaim_db(key, holder, ttl_s)
-
-
 def _wait_for(claim, deadline: float, poll_s: float, sleep) -> Optional[bool]:
     got = claim()
     while got is False and time.monotonic() < deadline:
@@ -255,7 +233,7 @@ def _wait_for(claim, deadline: float, poll_s: float, sleep) -> Optional[bool]:
 
 
 class _Renewer:
-    """Re-claims a held lease every ttl/3 on a daemon thread until stopped."""
+    """Extends a held lease every ttl/3 on a daemon thread until stopped."""
 
     def __init__(self, key: str, ttl_s: float, holder: str):
         self._key, self._ttl, self._holder = key, ttl_s, holder
@@ -266,13 +244,18 @@ class _Renewer:
 
     def _run(self) -> None:
         while not self._stop.wait(max(RENEW_MIN_S, self._ttl / 3)):
-            if _claim_db(self._key, self._holder, self._ttl) is False:
+            if _renew_db(self._key, self._holder, self._ttl) is False:
+                if self._stop.is_set():
+                    return  # the body finished while this renewal ran
                 logger.warning("stateless_locks: lost the lease on %s mid-run",
                                self._key.split(":", 1)[0])
                 return
 
     def stop(self) -> None:
+        """Stop renewing and wait (bounded) for a renewal already in flight,
+        so the release that follows is the last word on the row."""
         self._stop.set()
+        self._thread.join(RENEW_JOIN_S)
 
 
 @contextlib.contextmanager
@@ -301,45 +284,8 @@ def lease(key: str, ttl_s: float, *, wait_s: float = 0.0, poll_s: float = 0.5,
         _release_db(key, holder)
 
 
-@contextlib.asynccontextmanager
-async def alease(key: str, ttl_s: float, *, wait_s: float = 0.0, poll_s: float = 0.5,
-                 renew: bool = True) -> AsyncIterator[bool]:
-    """:func:`lease` for an ``async def``: never blocks the loop."""
-    holder = new_holder()
-    deadline = time.monotonic() + max(0.0, wait_s)
-    got = await atry_claim(key, ttl_s, holder)
-    while got is False and time.monotonic() < deadline:
-        await asyncio.sleep(min(poll_s, max(0.0, deadline - time.monotonic())))
-        got = await atry_claim(key, ttl_s, holder)
-    if not got:
-        yield got is None
-        return
-
-    async def _renew() -> None:
-        while True:
-            await asyncio.sleep(max(RENEW_MIN_S, ttl_s / 3))
-            if await _aclaim_db(key, holder, ttl_s) is False:
-                logger.warning("stateless_locks: lost the lease on %s mid-run",
-                               key.split(":", 1)[0])
-                return
-
-    task = asyncio.create_task(_renew()) if renew else None
-    try:
-        yield True
-    finally:
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-        await _arelease_db(key, holder)
-
-
 def consume_once(key: str, ttl_s: float) -> Optional[bool]:
     """Mark ``key`` used for ``ttl_s`` across replicas: a lease that is never
     released. True the first time, False when it was already consumed (and
     has not expired), None when the store is off or unavailable."""
     return try_claim(key, ttl_s, new_holder())
-
-
-async def aconsume_once(key: str, ttl_s: float) -> Optional[bool]:
-    return await atry_claim(key, ttl_s, new_holder())
