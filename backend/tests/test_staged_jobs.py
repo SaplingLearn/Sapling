@@ -65,14 +65,16 @@ def test_owner_token_is_worker_and_attempt_or_unique():
     (None, None, False),
     ({"status": "queued"}, 60, True),
     ({"status": "failed"}, 60, True),
-    ({"status": "running", "locked_at": _iso(10)}, 60, True),
-    ({"status": "running", "locked_at": _iso(600)}, 60, False),
-    ({"status": "running", "locked_at": _iso(600)}, None, True),  # lease not judged
+    ({"status": "running", "locked_ago": 10}, 60, True),
+    ({"status": "running", "locked_ago": 600}, 60, False),
+    ({"status": "running", "locked_ago": 600}, None, True),  # lease not judged
     ({"status": "running"}, 60, True),  # unreadable locked_at reads alive
     ({"status": "dead"}, None, False),
     ({"status": "succeeded"}, None, False),
 ])
 def test_job_alive(job, lease, alive):
+    if job and "locked_ago" in job:  # built at run time, not collection time
+        job = {"status": job["status"], "locked_at": _iso(job["locked_ago"])}
     assert sj.job_alive(job, lease_seconds=lease) is alive
 
 
