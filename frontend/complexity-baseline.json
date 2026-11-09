@@ -4,7 +4,6 @@
     "src/app/(shell)/notetaker/page.tsx::NotetakerScreen": 30,
     "src/components/Gradebook/AssignmentModal.tsx::AssignmentModal": 29,
     "src/components/Gradebook/GradePredictorPanel.tsx::AssignmentSliderRow": 34,
-    "src/components/Gradebook/GradescopeSyncModal.tsx::GradescopeSyncDialog": 45,
     "src/components/ProfileView.tsx::ProfileView": 38,
     "src/components/flashcards/FlashcardImportModal.tsx::FlashcardImportModal": 27,
     "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl": 30,
