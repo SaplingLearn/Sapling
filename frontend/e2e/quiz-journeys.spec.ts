@@ -722,9 +722,11 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 
   // (e) Plain nav — no target, so the ranked primary is the offer. The name is
   //     derived from the database through the same rule the client mirrors.
+  //     Since #849 the card has no "Ready for you" eyebrow: the suggestion is
+  //     the card without "← Back to the suggestion", which only a pick shows.
   await openQuizHome(page, "/quiz");
-  await expect(page.getByTestId("quiz-home")).toContainText("Ready for you");
   await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name);
+  await expect(page.getByTestId("quiz-pick-reset")).toHaveCount(0);
 });
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
@@ -732,23 +734,22 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 // The other three destinations ride on the runs that already reach them (one
 // journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
-// "Done → /quiz" on the keyboard pass. Cancel is the one that needs no quiz.
+// "Done → /quiz" on the keyboard pass. Quiz home itself has no Cancel since
+// #849 (it duplicated the sidebar), so leaving a quiz you never started is the
+// sidebar's job, whatever the entry source.
 
-test("exits: Cancel honours the entry source, and falls back to the dashboard without one", async ({
-  page,
-}) => {
+test("exits: quiz home has no Cancel of its own; the sidebar leaves it", async ({ page }) => {
   test.setTimeout(120_000);
   await preAckDisclaimer(page);
 
   await openQuizHome(page, TREE_ENTRY);
-  await page.getByTestId("quiz-cancel").click();
-  await expectLocation(page, TREE_RETURN);
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  await expect(page.getByTestId("quiz-cancel")).toHaveCount(0);
 
-  // Cancelling out of a quiz you never started, with nowhere to go back to,
-  // lands on the dashboard — never on the tree you didn't come from (§5 B1.8),
-  // and never on /learn, which is where every pre-#537 exit went.
   await openQuizHome(page, "/quiz");
-  await page.getByTestId("quiz-cancel").click();
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  await expect(page.getByTestId("quiz-cancel")).toHaveCount(0);
+  await page.getByTestId("nav-link-dashboard").click();
   await expectLocation(page, "/dashboard");
 });
 
