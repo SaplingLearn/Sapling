@@ -187,13 +187,31 @@ export function followersOf(
   return leader;
 }
 
-function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
+/**
+ * The visible part of a link: rim of the source to rim of the target, so no
+ * line is ever drawn underneath a node. Node fills are translucent (mastery
+ * tier opacity, legible-mode fades), so a line running to a node's centre
+ * shows through it. Nodes that touch or overlap leave nothing to draw.
+ */
+function rimToRim(
+  x1: number, y1: number, x2: number, y2: number, r1: number, r2: number,
+): [number, number, number, number] {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const len = Math.hypot(dx, dy);
-  if (len <= inset * 1.5) return [x2, y2];
-  return [x2 - (dx / len) * inset, y2 - (dy / len) * inset];
+  if (len <= r1 + r2) {
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    return [mx, my, mx, my];
+  }
+  const ux = dx / len;
+  const uy = dy / len;
+  return [x1 + ux * r1, y1 + uy * r1, x2 - ux * r2, y2 - uy * r2];
 }
+// Clearance past a node's radius: half its stroke, so the line meets the rim.
+const rimGap = (n: GraphNode) => (n.is_subject_root ? 1.25 : 0.75);
+// Legible mode leaves room at the target for the arrowhead.
+const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
 
 // Visually-hidden but screen-reader-available, so the pointer-only SVG graph
@@ -358,17 +376,25 @@ function KnowledgeGraph2DImpl({
       const s = resolve(l.source);
       const t = resolve(l.target);
       if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
-      // Legible mode ends each line at the target's rim so its arrow shows.
-      const [ex, ey] = legibleRef.current
-        ? lineEnd(s.x, s.y, t.x, t.y,
-            Math.max(radiusRef.current.get(t.id) ?? 0, MIN_SCREEN_R / viewScaleRef.current) + 2)
-        : [t.x, t.y];
+      // Same radii the render draws: legible nodes never shrink below
+      // MIN_SCREEN_R on screen.
+      const legible = legibleRef.current;
+      const rOf = (n: SimNode) => {
+        const r = radiusRef.current.get(n.id) ?? 0;
+        return legible ? Math.max(r, MIN_SCREEN_R / viewScaleRef.current) : r;
+      };
+      const [x1, y1, x2, y2] = rimToRim(
+        s.x, s.y, t.x, t.y,
+        rOf(s) + rimGap(s),
+        rOf(t) + (legible ? ARROW_GAP : rimGap(t)),
+      );
+      // The mastery gradient spans exactly the visible segment.
       for (const target of [el, gradElsRef.current.get(i)]) {
         if (!target) continue;
-        target.setAttribute("x1", String(s.x));
-        target.setAttribute("y1", String(s.y));
-        target.setAttribute("x2", String(target === el ? ex : t.x));
-        target.setAttribute("y2", String(target === el ? ey : t.y));
+        target.setAttribute("x1", String(x1));
+        target.setAttribute("y1", String(y1));
+        target.setAttribute("x2", String(x2));
+        target.setAttribute("y2", String(y2));
       }
     });
   }, []);
@@ -1083,7 +1109,11 @@ function KnowledgeGraph2DImpl({
               const directed = legible && !l.anchor && isDirected(l);
               // Arrowheads don't fade with their line, so a dimmed link drops its arrow.
               const arrow = directed && (focusId ? incident : view.scale >= 0.9);
-              const [ex, ey] = legible ? lineEnd(s.x!, s.y!, t.x!, t.y!, drawRadius(t) + 2) : [t.x, t.y];
+              const [x1, y1, x2, y2] = rimToRim(
+                s.x!, s.y!, t.x!, t.y!,
+                drawRadius(s) + rimGap(s),
+                drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
+              );
               const gradId = `${gradPrefix}-e${i}`;
               return (
                 <React.Fragment key={i}>
@@ -1096,10 +1126,10 @@ function KnowledgeGraph2DImpl({
                           else gradElsRef.current.delete(i);
                         }}
                         gradientUnits="userSpaceOnUse"
-                        x1={s.x}
-                        y1={s.y}
-                        x2={t.x}
-                        y2={t.y}
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
                       >
                         <stop offset="0%" stopColor={fillFor(s)} />
                         <stop offset="100%" stopColor={fillFor(t)} />
@@ -1112,10 +1142,10 @@ function KnowledgeGraph2DImpl({
                       else edgeElsRef.current.delete(i);
                     }}
                     data-testid="graph-edge"
-                    x1={s.x}
-                    y1={s.y}
-                    x2={ex}
-                    y2={ey}
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
                     stroke={mastery ? `url(#${gradId})` : incident ? "var(--text-dim)" : "var(--text-muted)"}
                     strokeOpacity={op}
                     markerEnd={arrow ? `url(#${gradPrefix}-arrow${incident ? "-on" : ""})` : undefined}
