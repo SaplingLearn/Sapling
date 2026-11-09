@@ -468,7 +468,8 @@ def test_roles_need_a_session_and_deleted_profiles_are_gone(mode, db_conn, seede
     ).fetchone()
     assert role, "precondition: the rich seed grants rich-user-admin a role"
     table("user_settings").upsert(
-        {"user_id": admin, "featured_role_id": role["role_id"]}, on_conflict="user_id",
+        # psycopg hands back a uuid.UUID; the PostgREST client JSON-encodes.
+        {"user_id": admin, "featured_role_id": str(role["role_id"])}, on_conflict="user_id",
     )
 
     signed_in = b_client.get(f"/api/profile/{admin}")
