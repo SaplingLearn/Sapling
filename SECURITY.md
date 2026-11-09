@@ -2,6 +2,10 @@
 
 This document describes the security controls currently implemented in Sapling. It is sourced directly from the code; every claim cites the file (and where useful, the line) that implements it.
 
+## Reporting a vulnerability
+
+Do not open a public issue for a security problem. Message a maintainer directly (see "Team" in the [README](README.md)) with the affected route or file, steps to reproduce, and the impact. We acknowledge reports within a few days and credit reporters in the fix PR unless asked not to.
+
 The codebase is split into a FastAPI backend (`backend/`) and a Next.js frontend (`frontend/`) deployed to Cloudflare Workers. The threat model assumes a hostile public internet, untrusted user-uploaded content, and the need to keep student PII unreadable to anyone who lifts the database.
 
 ---

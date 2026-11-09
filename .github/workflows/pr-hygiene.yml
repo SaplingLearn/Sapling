@@ -1,0 +1,72 @@
+# PR hygiene: every PR title follows Conventional Commits, gets a type label,
+# and feat/fix PRs carry the spec (user story + acceptance criteria) from the
+# PR template. Squash merges use the PR title as the commit message, so this
+# check is also what keeps `main`'s history conventional.
+name: PR hygiene
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = pr.title.trim();
+            const body = pr.body || "";
+
+            // 1. Conventional title: type(scope)!: subject
+            const m = title.match(/^(feat|fix|docs|refactor|perf|test|ci|chore|build|revert)(\([\w\-\/.,# ]+\))?!?: \S.*/);
+            if (!m) {
+              core.setFailed(
+                `PR title "${title}" is not a Conventional Commit. ` +
+                "Use `type(scope): subject`, e.g. `fix(quiz): keep the selected exam`. " +
+                "Types: feat, fix, docs, refactor, perf, test, ci, chore, build, revert."
+              );
+              return;
+            }
+            const type = m[1];
+
+            // 2. Label by type, mapped onto the repo's existing labels.
+            const labelFor = {
+              feat: "enhancement", fix: "bug", docs: "documentation",
+              refactor: "tech-debt", perf: "performance", test: "test-infra",
+              ci: "ci", build: "dependencies", chore: "tech-debt", revert: "bug",
+            };
+            const label = labelFor[type];
+            if (!pr.labels.some(l => l.name === label)) {
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: pr.number, labels: [label],
+              });
+            }
+
+            // 3. feat/fix PRs must carry a spec. Draft PRs get a pass until ready.
+            if (["feat", "fix"].includes(type) && !pr.draft) {
+              const section = (name) => {
+                const re = new RegExp(`##\\s*${name}[^\\n]*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i");
+                const hit = body.match(re);
+                // Strip HTML comments, empty checkboxes, and the template placeholder.
+                return hit ? hit[1].replace(/<!--[\s\S]*?-->/g, "")
+                                   .replace(/^\s*-\s*\[ \]\s*$/gm, "")
+                                   .replace(/<type of student\/user>|<goal>|<benefit>/g, "")
+                                   .trim() : "";
+              };
+              const missing = [];
+              const story = section("User story");
+              if (!story || /^As a \*\*\*\*, I want \*\*\*\* so that \*\*\*\*\.?$/.test(story)) missing.push("User story");
+              if (!section("Acceptance criteria")) missing.push("Acceptance criteria");
+              if (missing.length) {
+                core.setFailed(
+                  `${type} PRs need a filled-in ${missing.join(" and ")} section ` +
+                  "(see .github/pull_request_template.md). A linked issue's criteria can be copied in."
+                );
+              }
+            }
