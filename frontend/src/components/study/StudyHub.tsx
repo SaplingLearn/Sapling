@@ -808,7 +808,13 @@ export function StudyHub({
 
       {/* ── right column ── */}
       <aside aria-label="Activity" className={s.scroll} onScroll={onPaneScroll}
-        style={{ gridColumn: isMobile ? 1 : 2, gridRow: isMobile ? "auto" : "2 / 5", minHeight: 0, overflowY: isMobile ? "visible" : "auto", padding: "6px 2px 24px 0", display: "flex", flexDirection: "column" }}>
+        // Desktop: this column scrolls, and a scroll container clips anything
+        // drawn past its padding box, which cut the Quick Reviews pop-up's
+        // 40px drop shadow into a hard-edged grey slab. 40px of side padding
+        // with a matching negative margin gives the shadow room to fade out
+        // while the content stays exactly where it was (the bleed sits in the
+        // 56px column gap and the 48px page padding).
+        style={{ gridColumn: isMobile ? 1 : 2, gridRow: isMobile ? "auto" : "2 / 5", minHeight: 0, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "6px 2px 24px 0" : "6px 42px 24px 40px", margin: isMobile ? 0 : "0 -40px", display: "flex", flexDirection: "column" }}>
         <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 24 }}>
           <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
             <span style={monoLabel}>Daily Goal</span>
