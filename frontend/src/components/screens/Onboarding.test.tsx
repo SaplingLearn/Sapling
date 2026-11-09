@@ -46,6 +46,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }));
 
 import { Onboarding, onboardingDraftKey, ageOn, GUEST_OWNER } from "./Onboarding";
+import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
 import { graphStage } from "@/components/onboarding/chapterLayer";
 import { ApiError } from "@/lib/api";
 
@@ -306,6 +307,37 @@ describe("Onboarding over the landing (Get Started)", () => {
     expect(graphStage.phase).toBe("active");
     view.unmount();
     expect(graphStage.active).toBe(false);
+  });
+
+  it("the mark holds the landing navbar's own box, so Get Started doesn't move it", async () => {
+    user = { userId: "", userName: "" };
+    authed = false;
+    // Stand in for the landing navbar's wordmark: the horizontal box comes
+    // from its rect, the vertical offset from layout (see Onboarding.tsx).
+    const navMark = document.createElement("img");
+    navMark.className = "ld-nav-mark";
+    Object.defineProperty(navMark, "offsetTop", { value: 23 });
+    navMark.getBoundingClientRect = () =>
+      ({ x: 60.5, y: 23, width: 132, height: 40.4, top: 23, left: 60.5, right: 192.5, bottom: 63.4, toJSON: () => {} }) as DOMRect;
+    document.body.appendChild(navMark);
+    try {
+      render(<Onboarding takeover />);
+      await screen.findByTestId("onboarding-name");
+      const logo = document.querySelector(".ob-logo") as HTMLElement;
+      await waitFor(() => expect(logo.style.left).toBe("60.5px"));
+      expect(logo.style.top).toBe("23px");
+      expect((logo.querySelector("img") as HTMLImageElement).style.width).toBe("132px");
+    } finally {
+      navMark.remove();
+    }
+  });
+
+  it("every mark in the flow is the one shared wordmark", async () => {
+    render(<Onboarding takeover />);
+    await screen.findByTestId("onboarding-name");
+    const marks = [...document.querySelectorAll<HTMLImageElement>(".ob-logo img, .ob-welcome img")];
+    expect(marks.length).toBeGreaterThan(0);
+    for (const m of marks) expect(m.getAttribute("src")).toBe(SAPLING_WORDMARK_SRC);
   });
 
   it("the /onboarding route keeps its own graph", async () => {

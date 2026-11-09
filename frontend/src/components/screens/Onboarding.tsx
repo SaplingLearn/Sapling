@@ -251,6 +251,31 @@ export function Onboarding({ takeover = false }: {
     return () => window.removeEventListener("resize", apply);
   }, []);
 
+  // Over the landing, the mark keeps the exact box the landing navbar drew it
+  // in, so Get Started's zoom never moves or resizes it. The navbar centres
+  // its logo against the taller Sign In / Get Started row, so the offset is
+  // measured rather than assumed; the navbar stays mounted under the veil, so
+  // it can be re-measured on resize. Without it the CSS fallback applies.
+  const [markBox, setMarkBox] = useState<{ top: number; left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!takeover) return;
+    const measure = () => {
+      const mark = document.querySelector<HTMLElement>(".ld-nav-mark");
+      if (!mark) return;
+      // The navbar's entry animation only translates Y, so its box is exact
+      // horizontally; the vertical offset comes from layout instead, which a
+      // click during that animation can't skew. The navbar is fixed at top 0,
+      // so the summed offsets are the viewport position.
+      const r = mark.getBoundingClientRect();
+      let top = 0;
+      for (let el: HTMLElement | null = mark; el; el = el.offsetParent as HTMLElement | null) top += el.offsetTop;
+      if (r.width > 0) setMarkBox({ top, left: r.left, width: r.width });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [takeover]);
+
   // Over the landing, the landing hero's own canvas is the graph: hand it the
   // camera and chapter state instead of drawing a second one.
   const stageChapter = SCREENS[draft.screen].ch;
@@ -424,8 +449,8 @@ export function Onboarding({ takeover = false }: {
       {!takeover && <OnboardingGraph phase={phase} zoom={zoom} activeChapter={screen.ch} completed={draft.done} />}
       <div className="ob-scrim" aria-hidden="true" style={{ opacity: phase === "idle" || (phase === "out" && zoom === "rest") ? 0 : 1 }} />
 
-      <div className="ob-logo">
-        <img src={SAPLING_WORDMARK_SRC} alt="Sapling" />
+      <div className="ob-logo" style={markBox ? { top: markBox.top, left: markBox.left } : undefined}>
+        <img src={SAPLING_WORDMARK_SRC} alt="Sapling" style={markBox ? { width: markBox.width, height: "auto" } : undefined} />
       </div>
 
       <div
