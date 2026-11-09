@@ -20,6 +20,12 @@ Pinned here two ways:
 
 The hashes were computed at 50e9ded8 by this file's own helpers. Change one
 only together with a recorded eval and a §13 row that says why.
+
+Re-verified after the merge with main (spec §13 A148): at the main sync's tip
+before the quiz merge (4b09d765, main's quiz changes included) every digest
+here is unchanged, so "flags off" there and here is still 50e9ded8's. The one
+harness change: main's route claims its rate limit through the async twin
+(`aclaim_rate_limit`, #117), so that is what the flow patches.
 """
 
 from __future__ import annotations
@@ -339,7 +345,8 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
             stack.enter_context(
                 patch("routes.quiz.decrypt_json_column", side_effect=lambda v: v.get("enc") if isinstance(v, dict) and "enc" in v else v)
             )
-            stack.enter_context(patch("routes.quiz.claim_rate_limit", return_value=(None, 1.0)))
+            # main (#117): the route claims through the async limiter twin
+            stack.enter_context(patch("routes.quiz.aclaim_rate_limit", new=AsyncMock(return_value=(None, 1.0))))
             stack.enter_context(patch("routes.quiz._daily_spend_exceeded", return_value=False))
             stack.enter_context(patch("routes.quiz.apply_graph_update", side_effect=apply))
             stack.enter_context(patch("routes.quiz.max_help_many", return_value={}))
