@@ -33,6 +33,11 @@ describe("flashcardsHref", () => {
     expect(flashcardsHref("c1")).toBe("/flashcards?course=c1");
     expect(flashcardsHref()).toBe("/flashcards");
   });
+
+  it("asks the page to start when told to", () => {
+    expect(flashcardsHref("c1", ["Loops"], { start: true }))
+      .toBe("/flashcards?course=c1&concepts=Loops&start=1");
+  });
 });
 
 describe("STUDY_TOOL_PATHS", () => {

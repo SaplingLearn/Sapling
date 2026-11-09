@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * Study hub (Sapling Study v2): every panel renders from the real clients, and
- * each control does what the design says (tabs, picker -> tool pages, manage
+ * each control does what the design says (tabs, tool buttons -> tool pages, manage
  * dates -> calendar writes, legend filter, tile menu).
  */
 import React from "react";
@@ -175,7 +175,7 @@ describe("StudyHub", () => {
     const href = (name: RegExp) =>
       within(menu).getByRole("menuitem", { name }).getAttribute("href");
     expect(href(/Quiz Me/)).toContain("concept=rec");
-    expect(href(/Flashcards/)).toBe("/flashcards?course=c1&concepts=Recursion");
+    expect(href(/Flashcards/)).toBe("/flashcards?course=c1&concepts=Recursion&start=1");
     // The course's material FOR this concept, not its study-guide shelf.
     expect(href(/Study Guide/)).toBe("/library?course=c1&q=Recursion");
   });
@@ -198,36 +198,25 @@ describe("StudyHub", () => {
     expect(screen.getByText("Ready for Quiz 3")).toBeTruthy();
   });
 
-  it("Quiz opens the concept picker and starts on the picked concept", async () => {
+  it("Quiz goes straight to a started quiz, no picker in between", async () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("button", { name: "Quiz" }));
-    const dlg = screen.getByRole("dialog", { name: "Quiz" });
-    // Struggling and learning preselected: Loops + Recursion. A quiz covers one
-    // concept or the whole course, so two picks say "Whole Course".
-    expect(within(dlg).getByText("Start Quiz · Whole Course")).toBeTruthy();
-    fireEvent.click(within(dlg).getByRole("button", { name: "Loops" }));
-    fireEvent.click(within(dlg).getByText("Start Quiz · 1 Concept"));
-    expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/quiz\?concept=rec&from=link&return=%2Fstudy$/));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Struggling + learning is Loops and Recursion: two concepts, and a quiz is
+    // one concept or the whole course, so this is the course's quiz.
+    expect(push).toHaveBeenLastCalledWith("/quiz?course=c1&from=link&return=%2Fstudy&start=1");
   });
 
-  it("a multi-concept quiz pick starts a whole-course quiz", async () => {
-    renderHub();
-    await screen.findByText("Ready for Exam 2");
-    fireEvent.click(screen.getByRole("button", { name: "Quiz" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Quiz" })).getByText("Start Quiz · Whole Course"));
-    expect(push).toHaveBeenLastCalledWith(expect.stringMatching(/^\/quiz\?course=c1&/));
-  });
-
-  it("Flashcards and Study Guide go to their tool pages", async () => {
+  it("Flashcards and Study Guide go straight to their tool pages", async () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
     // Study guides are Library documents now, filed by course and type.
     expect(push).toHaveBeenLastCalledWith("/library?course=c1&type=study_guide");
     fireEvent.click(screen.getByRole("button", { name: "Flashcards" }));
-    fireEvent.click(screen.getByText("Start Flashcards · 2 Concepts"));
-    expect(push).toHaveBeenLastCalledWith("/flashcards?course=c1&concepts=Loops%7CRecursion");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(push).toHaveBeenLastCalledWith("/flashcards?course=c1&concepts=Loops%7CRecursion&start=1");
   });
 
   it("legend chips filter the roadmap and tiles open their action menu", async () => {
@@ -241,8 +230,11 @@ describe("StudyHub", () => {
     expect(within(menu).getByText("1 Flashcards")).toBeTruthy();
     // The menu items are real links now (middle-click / open-in-new-tab),
     // so the destination is the href rather than a router.push argument.
+    // Both ask the tool to START, not just to open.
     expect(within(menu).getByRole("menuitem", { name: /Quiz Me/ }).getAttribute("href"))
-      .toContain("/quiz?concept=loop");
+      .toBe("/quiz?concept=loop&from=link&return=%2Fstudy&start=1");
+    expect(within(menu).getByRole("menuitem", { name: /1 Flashcards/ }).getAttribute("href"))
+      .toBe("/flashcards?course=c1&concepts=Loops&start=1");
   });
 
   it("only one tile menu is open; Esc and an outside press close it", async () => {

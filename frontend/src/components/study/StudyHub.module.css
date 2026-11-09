@@ -14,8 +14,6 @@
 .hoverQrStart:hover { background: #23497A !important; }
 .hoverRemove:hover { background: #F6E3E1 !important; }
 .hoverAdd:hover { background: #F2F6EE !important; }
-.hoverChip:hover { background: #F2F6EE !important; }
-.hoverGhost:hover { background: #F0ECE3 !important; }
 
 
 /* Always-visible thin green bar (Quick Reviews list). */

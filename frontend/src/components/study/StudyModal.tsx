@@ -5,10 +5,10 @@ import { useOverlayBehaviour } from "@/components/Dialog";
 import s from "./StudyModal.module.css";
 
 /**
- * StudyModal — the shell of the Study hub's centred modals (the Quiz /
- * Flashcards concept picker and Exams and Deadlines).
+ * StudyModal — the shell of the Study hub's centred modal (Exams and
+ * Deadlines; the Quiz / Flashcards concept picker that shared it is gone).
  *
- * Both used to be an absolutely positioned backdrop + card inside the hub, so
+ * It used to be an absolutely positioned backdrop + card inside the hub, so
  * the scrim covered the hub's box rather than the viewport (a paper band below
  * it on a short or scrolled page), nothing animated, and Escape did nothing.
  * This portals to <body> with a fixed overlay and takes every modal behaviour
