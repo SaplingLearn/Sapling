@@ -306,7 +306,8 @@ table read), `inv_15_gate_never_inside_chat_stream`,
   an evidence slot on an unevaluated model warns at boot (A128).
 - A key is verified only by a solve on another model than its writer's: the
   loop's `check_items_solve` against `check_items` (`INDEPENDENT_SLOTS`,
-  A124), and the quiz's `quiz_check` against `quiz`, which the quiz gate
+  A124), and the quiz's `quiz_check` against the model that wrote the
+  request (`quiz`, or its fast/smart override), which the quiz gate
   enforces itself — when the two resolve to one model no quiz key is
   verified (`backend/services/quiz_learning.py::checks_independent`, A145).
 

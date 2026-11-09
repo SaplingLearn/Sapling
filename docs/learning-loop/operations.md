@@ -106,7 +106,10 @@ Operationally:
   quiz questions. It must resolve to a model other than the `quiz` writer's
   (`claude-haiku-5-5`); when an override makes them one model, no quiz key is
   verified and every gated question is practice
-  (`backend/services/quiz_learning.py::checks_independent`). A `gemini-*`
+  (`backend/services/quiz_learning.py::checks_independent`). The writer is
+  the model that wrote the request: a quiz request's `model_pref` `smart`
+  writes on `claude-sonnet-5-5`, so its questions are practice under the
+  default slot (`backend/routes/quiz.py::_writer_model_name`). A `gemini-*`
   override keeps it independent at a fraction of the cost.
 - **Model mode.** `SAPLING_MODEL_MODE` is `real` (default) or `function`;
   it is frozen at boot (`backend/agents/_providers.py::freeze_model_mode`,

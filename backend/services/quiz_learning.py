@@ -276,15 +276,19 @@ def generation_plan(
 # ── A145: the item gates ───────────────────────────────────────────────────
 
 
-def checks_independent() -> bool:
+def checks_independent(writer_model: str | None = None) -> bool:
     """A124: the blind solve verifies a key only when it runs on a model other
-    than the writer's. In real mode the two slots' resolved models must
-    differ; outside it the scripted handlers stand in for both."""
+    than the writer's. In real mode the quiz_check slot's resolved model must
+    differ from the model that wrote the questions — `writer_model`, the
+    request's fast/smart override when it had one (routes/quiz.py
+    `_writer_model_name`), else the quiz slot's. Outside real mode the
+    scripted handlers stand in for both."""
     from agents._providers import _bare_model_name, model_mode, model_name_for
 
     if model_mode() != "real":
         return True
-    return _bare_model_name(model_name_for(CHECK_TASK)) != _bare_model_name(model_name_for("quiz"))
+    writer = writer_model or model_name_for("quiz")
+    return _bare_model_name(model_name_for(CHECK_TASK)) != _bare_model_name(writer)
 
 
 @dataclass
@@ -361,13 +365,15 @@ async def gate_questions(
     concept_names: Sequence[str],
     passages: Sequence[dict],
     request_id: str | None,
+    writer_model: str | None = None,
 ) -> GateRun:
     """A145: run the concept check and the blind solve over `questions` (one
     call each, concurrently; then one key match for the written pairs code
     could not settle) and decide each question's gate. A DROPPED question is
     left out of `kept`; every kept one carries its stored "gate". Never
     raises: a check that is unavailable leaves its half unverified, so its
-    questions are practice-only."""
+    questions are practice-only. `writer_model` is the model that wrote them
+    (`checks_independent`)."""
     from agents.check_items import CheckItemsUnavailable
     from agents.check_items_key_match import MatchItem, build_match_prompt, check_items_key_match_agent
     from agents.check_items_solve import build_solve_prompt, check_items_solve_agent, solutions
@@ -382,7 +388,7 @@ async def gate_questions(
     )
     names = list(dict.fromkeys([concept_name, *[n for n in concept_names if n]]))
     ids = [quiz_gates.item_id(i) for i in range(1, len(questions) + 1)]
-    independent = checks_independent()
+    independent = checks_independent(writer_model)
     verify_call = _run_check(
         check_items_verify_agent,
         build_verify_prompt(names, [_verify_item(i, q) for i, q in enumerate(questions, 1)]),
@@ -399,8 +405,8 @@ async def gate_questions(
         verified_out, solved_out = await asyncio.gather(verify_call, solve_call)
     else:
         logger.warning(
-            "quiz: the quiz_check slot resolves to the quiz writer's model; no key is "
-            "verified (A124 needs another model)"
+            "quiz: the quiz_check slot resolves to the model that wrote the questions; "
+            "no key is verified (A124 needs another model)"
         )
         verified_out, solved_out = await verify_call, None
 

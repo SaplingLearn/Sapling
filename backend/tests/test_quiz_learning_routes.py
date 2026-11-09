@@ -334,6 +334,44 @@ def test_independence_compares_the_two_slots_resolved_models(monkeypatch):
     assert ql.checks_independent()
 
 
+def test_independence_is_against_the_model_that_wrote_this_request(monkeypatch):
+    """The quiz's fast/smart preference can put the writer on the checks' own
+    model: then no key is verified, whatever the slots say."""
+    import agents._providers as providers
+    from routes import quiz as quiz_route
+
+    monkeypatch.setattr(providers, "model_mode", lambda: "real")
+    monkeypatch.setattr(providers, "_model_mode", lambda: "real")
+    smart = quiz_route._writer_model_name("smart")
+    assert smart == "claude-sonnet-5-5"
+    assert not ql.checks_independent(smart)  # Sonnet wrote, Sonnet would solve
+    assert ql.checks_independent(quiz_route._writer_model_name("fast"))
+    assert quiz_route._writer_model_name(None) == providers.model_name_for("quiz")
+    assert quiz_route._writer_model_name("unknown") == providers.model_name_for("quiz")
+    # Outside real mode the override is never built, so the writer is the slot's.
+    monkeypatch.setattr(providers, "_model_mode", lambda: "function")
+    assert quiz_route._writer_model_name("smart") == providers.model_name_for("quiz")
+
+
+def test_the_route_gate_hands_the_writer_model_to_the_checks():
+    from routes import quiz as quiz_route
+
+    seen = {}
+
+    async def gate_questions(questions, **kw):
+        seen.update(kw)
+        return ql.GateRun(kept=list(questions))
+
+    material = quiz_route.CourseMaterial(block="", chunk_ids=(), has_catalog=False)
+    with (
+        patch.object(ql, "course_concept_names", return_value=["Recursion"]),
+        patch.object(ql, "gate_questions", side_effect=gate_questions),
+    ):
+        gate = quiz_route._item_gate("u", "c", "Recursion", "r", "claude-sonnet-5-5")
+        asyncio.run(gate([_wire(1)], material))
+    assert seen["writer_model"] == "claude-sonnet-5-5"
+
+
 def test_a_written_answer_the_grader_rejects_goes_to_one_key_match():
     from agents.check_items_key_match import KeyMatch, KeyMatches
     from agents.check_items_solve import Solution, Solutions

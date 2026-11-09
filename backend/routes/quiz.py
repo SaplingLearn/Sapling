@@ -855,6 +855,19 @@ def _resolve_model_pref(model_pref: str | None):
     return override_model(name, "quiz")
 
 
+def _writer_model_name(model_pref: str | None) -> str:
+    """The name of the model that writes this request's questions: the
+    fast/smart override exactly when `_resolve_model_pref` builds one, else
+    the quiz slot's model. Learning-loop spec §13 A145: the item gates' blind
+    solve verifies a key only on a model other than this one (A124)."""
+    from agents._providers import _model_mode, model_name_for
+
+    name = _PREF_MODEL_NAMES.get(model_pref) if model_pref else None
+    if name and _model_mode() == "real":
+        return name
+    return model_name_for("quiz")
+
+
 class BuCodeLookup(NamedTuple):
     """Tri-state result of course id -> BU course_code resolution (E8).
 
@@ -2049,13 +2062,15 @@ def _lint_questions(questions: list[dict]) -> list[dict]:
     return questions
 
 
-def _item_gate(user_id: str, course_id: str | None, concept_name: str, request_id: str):
+def _item_gate(
+    user_id: str, course_id: str | None, concept_name: str, request_id: str, writer_model: str
+):
     """Learning-loop spec §13 A145: the gate hook `_quiz_via_agent` runs on
     each generation run's new questions — the A119 concept check and the
     A124 blind solve against the course's concepts and the passages the
-    questions were written from. It never fails the quiz: when the checks
-    cannot run at all, the run's questions are served as practice, never
-    evidence."""
+    questions were written from, on a model other than `writer_model` (the
+    one that wrote them). It never fails the quiz: when the checks cannot run
+    at all, the run's questions are served as practice, never evidence."""
 
     async def gate(questions: list[dict], material: CourseMaterial):
         try:
@@ -2068,6 +2083,7 @@ def _item_gate(user_id: str, course_id: str | None, concept_name: str, request_i
                 concept_names=names,
                 passages=list(material.passages),
                 request_id=request_id,
+                writer_model=writer_model,
             )
         except Exception as exc:
             logger.warning("quiz: item gates unavailable (%s); serving as practice", type(exc).__name__)
@@ -2323,7 +2339,13 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 slot=slot,
                 plan=plan,
                 gate=(
-                    _item_gate(body.user_id, course_id, concept_name, request_id)
+                    _item_gate(
+                        body.user_id,
+                        course_id,
+                        concept_name,
+                        request_id,
+                        _writer_model_name(body.model_pref),
+                    )
                     if gates_on
                     else None
                 ),

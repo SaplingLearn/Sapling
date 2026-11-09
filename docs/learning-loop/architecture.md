@@ -313,7 +313,8 @@ planned quiz writer `backend/agents/quiz_planned.py` rides the quiz's own
 `quiz` slot (`claude-haiku-5-5`; its handler `_quiz_handler` answers both
 schemas), and `quiz_check` (`claude-sonnet-5-5`, effort low) runs the A119
 alignment agent, the A124 solve and the key match on generated quiz
-questions — a model other than the quiz writer's, which A124 requires
+questions — a model other than the one that wrote them (the `quiz` slot's
+or the request's fast/smart override), which A124 requires
 (`backend/services/quiz_learning.py::checks_independent`). Neither is a loop
 slot: their spend is the quiz's, outside the loop's session cost.
 
