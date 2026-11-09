@@ -36,7 +36,7 @@
      documented as derived from an audit, not invented — see globals.css). */
   --quiz-home-name-fs: 34px;
   --quiz-home-def-fs: 15px;
-  --quiz-home-config-fs: 18px;
+  --quiz-home-config-fs: 15px;
 
   /* ── The two columns ──────────────────────────────────────────────── */
   --quiz-home-grid-gap: 56px;
@@ -282,8 +282,11 @@
 }
 
 .quiz-home .quiz-eyebrow,
-.quiz-home__pick-group .label-micro {
-  font-size: var(--quiz-home-eyebrow-fs);
+.quiz-home__pick-group {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 /* ── The proposal ───────────────────────────────────────────────────── */
@@ -330,6 +333,7 @@
 .quiz-home__config {
   margin: var(--quiz-home-config-top) 0 0;
   font-size: var(--quiz-home-config-fs);
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -392,8 +396,12 @@
   display: inline-flex;
 }
 
+/* The UI face, not the display face: the display face is the card's title,
+   and a list of fifteen of them competed with it. */
 .quiz-home__row-name {
-  font-size: var(--fs-xl);
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -428,10 +436,8 @@
 
 /* A course heading, drawn only when the list spans more than one course. */
 .quiz-home__pick-group {
-  display: flex;
-  align-items: center;
-  gap: var(--quiz-home-group-gap);
   margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
+  padding-left: 2px;
 }
 
 .quiz-home__topics > section:first-child .quiz-home__pick-group {

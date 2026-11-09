@@ -587,12 +587,19 @@ describe("QuizHome — picking a concept", () => {
     expect(within(list).getByTestId("quiz-pick-base-cases")).toHaveTextContent("52% · learning");
   });
 
+  it("heads each course group with its name alone when there are several", () => {
+    mount();
+    const list = screen.getByTestId("quiz-pick-list");
+    expect(within(list).getByRole("heading", { name: "Intro to Computer Science" })).toBeInTheDocument();
+    expect(within(list).queryByText(/CS101 ·/)).toBeNull();
+  });
+
   it("draws no course heading when there is only one course", () => {
     const csOnly = NODES.filter(n => n.course_id === "c-cs");
     mount({ home: { nodes: csOnly } });
 
     const list = screen.getByTestId("quiz-pick-list");
-    expect(within(list).queryByText("CS101 · Intro to Computer Science")).toBeNull();
+    expect(within(list).queryByRole("heading", { name: "Intro to Computer Science" })).toBeNull();
     expect(within(list).getByTestId("quiz-pick-base-cases")).toBeInTheDocument();
   });
 });
