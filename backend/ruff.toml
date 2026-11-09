@@ -22,7 +22,22 @@ target-version = "py313"
 line-length = 100
 
 [lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "C901"]
+
+# C901 (McCabe complexity) is the Phase 4 "no function over complexity 25"
+# target of the architecture-hardening plan (#118). ruff can only baseline per
+# FILE, so the C901 entries below exempt whole files; the per-FUNCTION ceilings
+# live in code_size_baseline.json and are enforced by
+# tests/test_code_size_ratchet.py (scripts/code_size_ratchet.py), which also
+# fails if a C901 entry here outlives its last baselined function. Do not add
+# C901 entries: split the function instead (docs/design/domain-modules.md).
+# The one exception is the "tests/**" entry: test code is out of scope for the
+# Phase 4 complexity target. The ratchet measures with `ruff --isolated`, so
+# nothing in this file can hide a function from it; the same test also fails
+# on any exclude / include / extend-per-file-ignores / ignore setting here that
+# would hide one from plain `ruff check .`.
+[lint.mccabe]
+max-complexity = 25
 
 # Baseline of pre-existing violations as of 2026-06-12 (generated from
 # `ruff check . --select E4,E7,E9,F`). Do NOT add new entries — fix the
@@ -38,8 +53,11 @@ select = ["E4", "E7", "E9", "F"]
 "routes/notes.py" = ["F401"]
 "routes/profile.py" = ["F401"]
 "routes/social.py" = ["F841"]
+"services/achievement_service.py" = ["C901"]
 "services/flashcard_import_service.py" = ["F401"]
+"services/graph_service.py" = ["C901"]
 "services/notes_service.py" = ["E741"]
+"tests/**" = ["C901"]
 "tests/evals/concept_extraction.py" = ["F401"]
 "tests/evals/document_classification.py" = ["F401"]
 "tests/evals/document_summary.py" = ["F401"]
