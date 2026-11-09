@@ -29,6 +29,7 @@ from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
 from tests.split_patches import patch_documents
 from tests.split_patches import patch_quiz
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -1194,8 +1195,8 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
-        patch("routes.learn.table", side_effect=with_async_twins(_learn_table_factory())),
-        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch_tutor("table", side_effect=with_async_twins(_learn_table_factory())),
+        patch_tutor("agent_for_mode", return_value=agent),
     ):
         r = client.post("/api/learn/chat", json={
             "session_id": "s1",
@@ -1231,17 +1232,17 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
         )
 
     with (
-        patch("routes.learn.stream_agent_turn", fake_stream),
-        patch(
-            "routes.learn._prepare_chat_run",
+        patch_tutor("stream_agent_turn", fake_stream),
+        patch_tutor(
+            "_prepare_chat_run",
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
-        patch("routes.learn._consume_pending"),
-        patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
-        patch("routes.learn._get_session_offering_id", return_value="off-1"),
-        patch("routes.learn.offering_course_id", return_value="c1"),
-        patch("routes.learn._load_message_history", return_value=[]),
-        patch("routes.learn.save_message"),
+        patch_tutor("_consume_pending"),
+        patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"),
+        patch_tutor("_get_session_offering_id", return_value="off-1"),
+        patch_tutor("offering_course_id", return_value="c1"),
+        patch_tutor("_load_message_history", return_value=[]),
+        patch_tutor("save_message"),
     ):
         r = client.post("/api/learn/chat/stream", json={
             "session_id": "s1",
@@ -1277,7 +1278,7 @@ def test_consume_pending_emits_session_started(sink):
         "assistant_reply": "hello",
         "graph_update": {},
     }
-    with patch("routes.learn.table"):
+    with patch_tutor("table"):
         learn._consume_pending("sess-p1", "u1")
 
     events = _of_type(sink, "session.started")
@@ -1341,7 +1342,7 @@ def test_end_session_emits_session_ended(sink):
         mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
-    with patch("routes.learn.table", side_effect=with_async_twins(factory)):
+    with patch_tutor("table", side_effect=with_async_twins(factory)):
         r = client.post("/api/learn/end-session", json={
             "session_id": "s-ended", "user_id": "user_andres",
         })
@@ -1461,7 +1462,6 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     (the single JSON-turn emission site), and stream_agent_turn's
     mutual-exclusion contract guarantees the on_complete hook (the streamed
     route's own emission site) never also runs on that branch."""
-    import routes.learn as learn_routes
 
     async def fake_stream(**kwargs):
         from services.agent_events import SaplingEvent
@@ -1475,12 +1475,12 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     fallback_agent.run = AsyncMock(return_value=run_result("a fallback reply"))
 
     with (
-        patch.object(learn_routes, "stream_agent_turn", fake_stream),
-        patch.object(learn_routes, "_consume_pending"),
-        patch.object(learn_routes, "require_session_owner"),
-        patch.object(learn_routes, "table", side_effect=with_async_twins(_learn_table_factory())),
-        patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
-        patch.object(learn_routes, "save_message"),
+        patch_tutor("stream_agent_turn", fake_stream),
+        patch_tutor("_consume_pending"),
+        patch_tutor("require_session_owner"),
+        patch_tutor("table", side_effect=with_async_twins(_learn_table_factory())),
+        patch_tutor("agent_for_mode", return_value=fallback_agent),
+        patch_tutor("save_message"),
     ):
         client = TestClient(app)
         r = client.post("/api/learn/chat/stream", json={

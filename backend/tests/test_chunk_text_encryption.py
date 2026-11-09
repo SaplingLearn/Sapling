@@ -25,6 +25,7 @@ from tests.split_patches import patch_quiz
 import pytest
 
 from services.encryption import decrypt, encrypt
+from tests.split_patches import patch_tutor
 
 
 # ── Write ───────────────────────────────────────────────────────────────────
@@ -186,7 +187,7 @@ def test_the_catalog_block_decrypts_before_choosing_a_chunk():
         m.select.return_value = rows
         return m
 
-    with patch("routes.learn.table", side_effect=_table):
+    with patch_tutor("table", side_effect=_table):
         assert _get_catalog_chunk("CAS CS 330") == short_with_prereq
 
 

@@ -60,7 +60,7 @@ def _do_learn_message_write():
             "updated_at",
         ),
         (
-            "routes.learn.table",
+            "services.tutor.messages.table",
             _do_learn_message_write,
             _insert_payload,
             "created_at",

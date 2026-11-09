@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.split_patches import patch_social
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -220,9 +221,9 @@ class TestEndSessionDispatch:
             "started_at": "2026-07-31T10:00:00+00:00",
         }]
         handles["messages"].select.return_value = []
-        with patch("routes.learn.table", side_effect=_tables(handles)), \
-             patch("routes.learn.award_xp_safe"), \
-             patch("routes.learn.touch_streak_safe"), \
+        with patch_tutor("table", side_effect=_tables(handles)), \
+             patch_tutor("award_xp_safe"), \
+             patch_tutor("touch_streak_safe"), \
              patch("services.achievement_service.check_achievements",
                    return_value=[]) as check:
             r = client.post("/api/learn/end-session",

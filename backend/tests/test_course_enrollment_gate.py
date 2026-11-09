@@ -25,6 +25,7 @@ from db import seed_local_rich as seed
 from main import app
 from services import academics
 from tests.split_patches import patch_documents
+from tests.split_patches import patch_tutor
 
 pytestmark = pytest.mark.real_course_enrollment
 
@@ -427,8 +428,8 @@ class TestNoteMoveGate:
 class TestStartSessionGate:
     def test_a_foreign_course_id_is_404_before_any_agent_setup(self, path):
         with _enrolled(None), \
-             patch("routes.learn.resolve_offering") as ro, \
-             patch("routes.learn._prepare_chat_run") as prep:
+             patch_tutor("resolve_offering") as ro, \
+             patch_tutor("_prepare_chat_run") as prep:
             r = client.post(path, json={"user_id": "u1", "topic": "Cells",
                                         "course_id": "c-foreign"})
         _assert_not_enrolled_404(r)
@@ -437,7 +438,7 @@ class TestStartSessionGate:
 
     def test_an_enrolled_course_id_reaches_the_agent(self, path):
         with _enrolled("off-mine") as gate, \
-             patch("routes.learn._prepare_chat_run",
+             patch_tutor("_prepare_chat_run",
                    side_effect=RuntimeError("reached the agent")) as prep:
             lenient_client.post(path, json={"user_id": "u1", "topic": "Cells",
                                             "course_id": "c1"})
@@ -446,9 +447,9 @@ class TestStartSessionGate:
 
     def test_a_topic_only_session_is_not_gated(self, path):
         with _enrolled(None) as gate, \
-             patch("routes.learn._get_course_id_for_topic", return_value="c-topic"), \
-             patch("routes.learn.resolve_offering", return_value="off-cur") as ro, \
-             patch("routes.learn._prepare_chat_run",
+             patch_tutor("_get_course_id_for_topic", return_value="c-topic"), \
+             patch_tutor("resolve_offering", return_value="off-cur") as ro, \
+             patch_tutor("_prepare_chat_run",
                    side_effect=RuntimeError("reached the agent")) as prep:
             lenient_client.post(path, json={"user_id": "u1", "topic": "Cells"})
         gate.assert_not_called()

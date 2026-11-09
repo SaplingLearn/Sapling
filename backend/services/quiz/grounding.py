@@ -15,11 +15,9 @@ from db.connection import pg_quote_value, table
 from services import events_service
 from services.quiz.repetition import RecentQuestion
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
-# The catalog read is routes/learn.py's and moves with the learn split
-# (services/tutor/, last in the #118 order). Until then it is the one route
-# this package imports: "don't touch other routers" outranks "no routes
-# imports" for a move-only PR.
-from routes.learn import _get_catalog_chunk
+# The catalog read is the tutor's (services/tutor/course.py), reached through
+# the tutor package's __init__ like any cross-domain import (#118).
+from services.tutor import _get_catalog_chunk
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.

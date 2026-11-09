@@ -53,14 +53,11 @@ ignore_imports =
     db.e2e_staging_http -> services.encryption
     db.e2e_staging_http -> services.session_tokens
     db.e2e_staging_http -> services.academics
-    # services/ -> routes/: both go away with the remaining splits.
+    # services/ -> routes/: the one left; goes away with the remaining splits.
     # document_jobs reaches the documents persistence helpers through
     # routes/documents.py's re-exports (lazily) so a test patch on the route
     # module still intercepts the queued path (see its module docstring).
     services.document_jobs -> routes.documents
-    # _get_catalog_chunk still lives in routes/learn.py; it moves into
-    # services/tutor/ with the learn split (#118, last in the order).
-    services.quiz.grounding -> routes.learn
 
 [importlinter:contract:domains]
 name = Domain packages import each other only through the package __init__
@@ -80,9 +77,7 @@ source_modules =
     services.profile
     services.quiz
     services.social
-    # services.tutor  -- add with the learn split; import-linter rejects a
-    # source module that does not exist yet (its wildcard below matches nothing
-    # until then, which is fine).
+    services.tutor
 forbidden_modules =
     services.admin.*
     services.auth.*

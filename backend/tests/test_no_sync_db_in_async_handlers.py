@@ -158,9 +158,13 @@ def _offenders_in(source: str, rel: str) -> set[tuple[str, str, str]]:
 
 
 #: Domain packages the #118 splits moved async route helpers into (the
-#: documents library's CRUD over the a* seam, the upload's SSE stream): the
-#: same rule holds there.
-DOMAIN_PACKAGES = (BACKEND / "services" / "documents", BACKEND / "services" / "gradescope")
+#: documents library's CRUD over the a* seam, the upload's SSE stream, the
+#: tutor's turn path): the same rule holds there.
+DOMAIN_PACKAGES = (
+    BACKEND / "services" / "documents",
+    BACKEND / "services" / "gradescope",
+    BACKEND / "services" / "tutor",
+)
 
 
 def _all_offenders() -> set[tuple[str, str, str]]:

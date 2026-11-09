@@ -28,6 +28,7 @@ from agents.tools.graph import (
     apply_graph_update_tool,
     update_mastery_tool,
 )
+from tests.split_patches import patch_tutor
 
 
 def _run(coro):
@@ -344,9 +345,9 @@ class TestOrchestratorLimitsWired:
         mock_agent.run = AsyncMock(return_value=run_result("Great question!"))
 
         with (
-            patch("routes.learn.agent_for_mode", return_value=mock_agent),
-            patch("routes.learn._resolve_model_pref", return_value=None),
-            patch("routes.learn._build_deep_turn_model_settings", return_value=None),
+            patch_tutor("agent_for_mode", return_value=mock_agent),
+            patch_tutor("_resolve_model_pref", return_value=None),
+            patch_tutor("_build_deep_turn_model_settings", return_value=None),
         ):
             from routes.learn import _chat_via_agent
             import asyncio as _asyncio
@@ -439,16 +440,16 @@ class TestOrchestratorLimitsWired:
         mock_agent.run = AsyncMock(side_effect=fake_run_side_effect)
 
         with (
-            patch("routes.learn.agent_for_mode", return_value=mock_agent),
-            patch("routes.learn._get_session_offering_id", return_value=None),
-            patch("routes.learn._resolve_model_pref", return_value=None),
-            patch("routes.learn._build_deep_turn_model_settings", return_value=None),
-            patch("routes.learn.save_message", side_effect=mock_save_message),
-            patch("routes.learn._consume_pending"),
-            patch("routes.learn.arequire_session_owner"), patch("routes.learn.arequire_session_open"),
-            patch("routes.learn._load_message_history", return_value=[]),
-            patch("routes.learn.table", return_value=fake_table()) as mock_table,
-            patch("routes.learn.require_self"),
+            patch_tutor("agent_for_mode", return_value=mock_agent),
+            patch_tutor("_get_session_offering_id", return_value=None),
+            patch_tutor("_resolve_model_pref", return_value=None),
+            patch_tutor("_build_deep_turn_model_settings", return_value=None),
+            patch_tutor("save_message", side_effect=mock_save_message),
+            patch_tutor("_consume_pending"),
+            patch_tutor("arequire_session_owner"), patch_tutor("arequire_session_open"),
+            patch_tutor("_load_message_history", return_value=[]),
+            patch_tutor("table", return_value=fake_table()) as mock_table,
+            patch_tutor("require_self"),
         ):
             mock_table.return_value.select.return_value = []
 
@@ -504,10 +505,10 @@ class TestEndSessionConceptsCovered:
         mock_request = MagicMock()
 
         with (
-            patch("routes.learn.table", side_effect=with_async_twins(table_factory)),
-            patch("routes.learn.require_self"),
-            patch("routes.learn.get_session_user_id", return_value="u1"),
-            patch("routes.learn.encrypt_json", return_value="{}"),
+            patch_tutor("table", side_effect=with_async_twins(table_factory)),
+            patch_tutor("require_self"),
+            patch_tutor("get_session_user_id", return_value="u1"),
+            patch_tutor("encrypt_json", return_value="{}"),
         ):
             from models import EndSessionBody
             body = EndSessionBody(session_id="s1", user_id="u1")

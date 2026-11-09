@@ -205,3 +205,33 @@ def patch_quiz(name, new=DEFAULT, **kwargs):
 def setattr_quiz(monkeypatch, name, value):
     """``monkeypatch.setattr(routes.quiz, name, value)`` across the split."""
     setattr_in(monkeypatch, QUIZ_MODULES, name, value)
+
+
+# ── tutor (learn) ─────────────────────────────────────────────────────────────
+
+# services/chat_stream.py, tutor_router.py and tutor_sessions.py stayed flat
+# beside the package and are deliberately absent: see the module docstring.
+# (tutor_sessions' own `table` follows the tutor modules' through the autouse
+# `_tutor_session_reads_follow_learn_table` fixture in conftest.py, as it
+# followed routes.learn's before the split.)
+TUTOR_MODULES = (
+    "routes.learn",
+    "services.tutor.run",
+    "services.tutor.course",
+    "services.tutor.messages",
+    "services.tutor.pending",
+    "services.tutor.turns",
+    "services.tutor.streams",
+    "services.tutor.sessions",
+)
+
+
+def patch_tutor(name, new=DEFAULT, **kwargs):
+    """``patch("routes.learn.<name>", ...)`` across routes/learn.py and the
+    services/tutor/ modules split out of it."""
+    return patch_in(TUTOR_MODULES, name, new, **kwargs)
+
+
+def setattr_tutor(monkeypatch, name, value):
+    """``monkeypatch.setattr(routes.learn, name, value)`` across the split."""
+    setattr_in(monkeypatch, TUTOR_MODULES, name, value)

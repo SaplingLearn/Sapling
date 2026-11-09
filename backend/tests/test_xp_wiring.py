@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services.xp_service import idempotency_key
 from tests.split_patches import patch_documents
+from tests.split_patches import patch_tutor
 
 client = TestClient(app)
 
@@ -293,7 +294,7 @@ class TestSessionCompletedAward:
         session_user_id = "user-xp-session"
         xp_table, xp_handles = _xp_tables("session_completed")
         with (
-            patch("routes.learn.table", side_effect=_session_table_factory(session_user_id)),
+            patch_tutor("table", side_effect=_session_table_factory(session_user_id)),
             patch("services.xp_service.table", side_effect=xp_table),
         ):
             r = client.post("/api/learn/end-session", json={
@@ -326,7 +327,7 @@ class TestSessionCompletedAward:
             "assistant_reply": "hi",
             "graph_update": {},
         }
-        with patch("routes.learn.award_xp_safe") as award_mock:
+        with patch_tutor("award_xp_safe") as award_mock:
             r = client.post("/api/learn/end-session", json={
                 "session_id": "sess-xp-pending", "user_id": "user-xp-pending",
             })
