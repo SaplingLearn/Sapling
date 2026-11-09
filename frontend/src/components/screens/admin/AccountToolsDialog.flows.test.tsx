@@ -37,12 +37,10 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => api);
 
+import type { AdminUserListItem } from "@/lib/types";
 import { AccountToolsDialog } from "./AccountToolsDialog";
 
-type User = {
-  id: string; name: string; email: string | null; is_approved: boolean;
-  last_sign_in_at: string | null; created_at: string; roles: string[];
-};
+type User = AdminUserListItem;
 
 const ADA: User = {
   id: "u-ada", name: "Ada Lovelace", email: "Ada@bu.edu", is_approved: true,
