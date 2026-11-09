@@ -12,7 +12,7 @@
  *     and links each course only to its concepts that nothing leads into
  *     (no incoming prerequisite / builds_on / part_of edge in the course);
  *   - mastery classification — each node's DB `mastery_score` maps through
- *     the canonical thresholds (backend/config.py::get_mastery_tier) to the
+ *     the canonical thresholds (backend/learning/bkt.py::tier_for) to the
  *     class the UI renders: the 2D graph encodes the tier as the node
  *     circle's opacity, and the /tree tier filter partitions nodes by the
  *     same field.
