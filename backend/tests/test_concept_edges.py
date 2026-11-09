@@ -97,3 +97,32 @@ def test_ring_depths_are_longest_paths_and_ignore_related():
 def test_build_message_lists_every_concept():
     msg = build_message("MA 123 — Calculus I", NAMES)
     assert "MA 123" in msg and all(f"- {n}" in msg for n in NAMES)
+
+
+# ── concept_prune ──────────────────────────────────────────────────────────
+
+from agents.concept_prune import JunkConcepts, concept_prune_agent  # noqa: E402
+from scripts.prune_junk_concepts import plan_removals  # noqa: E402
+
+
+def test_prune_agent_is_configured():
+    assert isinstance(concept_prune_agent, Agent)
+    assert concept_prune_agent.output_type is JunkConcepts
+    assert model_for("concept_prune").model_name == "claude-haiku-5-5"
+
+
+def _j(name, kind="logistics"):
+    return {"name": name, "kind": kind, "reason": "x"}
+
+
+def test_prune_resolves_exact_names_and_ignores_unknowns_and_dupes():
+    remove, held = plan_removals(["Final Exam", "Scarcity", "Markets"],
+                                 [_j(" final  exam"), _j("Final Exam"), _j("Office Hours")])
+    assert [r["name"] for r in remove] == ["Final Exam"] and held == []
+
+
+def test_prune_never_deletes_off_topic_only_logistics():
+    names = ["Limits", "Derivatives", "Exports", "Final Exam"]
+    remove, held = plan_removals(names, [_j("Exports", "off_topic"), _j("Final Exam")])
+    assert [r["name"] for r in remove] == ["Final Exam"]
+    assert [h["name"] for h in held] == ["Exports"]
