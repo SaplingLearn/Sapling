@@ -1,31 +1,6 @@
 {
   "_comment": "Phase 4 (Trov #118) ratchet: per-function complexity ceilings for today's offenders, keyed <path relative to frontend/>::<qualified function name>. Entries may only be lowered or deleted (npm run complexity:shrink). Enforced by scripts/complexity_ratchet.test.ts; eslint.config.mjs switches the rule off for the files listed here.",
   "complexity": {
-    "src/app/(shell)/notetaker/page.tsx::NotetakerScreen": 30,
-    "src/components/Gradebook/AssignmentModal.tsx::AssignmentModal": 29,
-    "src/components/Gradebook/GradePredictorPanel.tsx::AssignmentSliderRow": 34,
-    "src/components/Gradebook/GradescopeSyncModal.tsx::GradescopeSyncDialog": 45,
-    "src/components/ProfileView.tsx::ProfileView": 38,
-    "src/components/flashcards/FlashcardImportModal.tsx::FlashcardImportModal": 27,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl": 30,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>React.useEffect()>force('follow')": 26,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simLinks.map()": 31,
-    "src/components/graph/KnowledgeGraph2D.tsx::KnowledgeGraph2DImpl>simNodes.map()": 30,
-    "src/components/quiz/home/QuizHome.tsx::QuizHome": 87,
-    "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
-    "src/components/quiz/question/QuizQuestion.tsx::QuizQuestion": 108,
-    "src/components/quiz/question/WrittenAnswer.tsx::WrittenAnswer": 27,
-    "src/components/screens/Dashboard.tsx::Dashboard": 48,
-    "src/components/screens/Dashboard.tsx::Dashboard>load": 29,
-    "src/components/screens/Learn.tsx::LearnInner": 76,
-    "src/components/screens/Onboarding.tsx::Onboarding": 51,
-    "src/components/screens/Settings.tsx::Settings": 26,
-    "src/components/screens/Study.tsx::GuideMode": 44,
-    "src/components/screens/Tree.tsx::Tree": 31,
-    "src/components/screens/admin/AccountToolsDialog.tsx::AccountToolsDialog": 31,
-    "src/components/screens/admin/EmailBroadcasts.tsx::EmailBroadcastsTab": 44,
-    "src/context/UserContext.tsx::UserProvider>fetchProfileData": 31,
-    "src/lib/quiz/machine.ts::reduce": 90,
-    "src/lib/quiz/machine.ts::resumeFrom": 33
+    "src/components/screens/Onboarding.tsx::Onboarding": 51
   }
 }

@@ -108,6 +108,7 @@ const eslintConfig = [
       // <button> there would silently un-anchor the whole surface.
       "src/components/quiz/QuizScreen.tsx",
       "src/components/quiz/home/QuizHome.tsx",
+      "src/components/quiz/home/TopicsColumn.tsx",
       "src/components/quiz/home/AdjustDialog.tsx",
       "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",

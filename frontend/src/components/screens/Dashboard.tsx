@@ -31,6 +31,13 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
+import {
+  activeDaysFrom,
+  assignmentUrgency,
+  statsFromGraph,
+  streakMarkState,
+  type DashboardStats,
+} from "../dashboard/dashboardModel";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -210,28 +217,76 @@ function getWeekDays(today: Date) {
   });
 }
 
-export function Dashboard() {
-  const router = useRouter();
-  const search = useSearchParams();
-  const { userId, userName, userReady } = useUser();
-  const [activeSemester, , semesterHydrated] = useActiveSemester();
-  const isMobile = useIsMobile();
-  const [layoutPref] = useLayoutPref();
-  // Top-nav layout keeps the pre-revamp 3-column dashboard with the
-  // streak widget, Learn-next recommendations, and My Courses as a
-  // proper panel on the left. Sidebar layout uses the new 2-column
-  // design with the CoursesKey overlay inside the graph panel.
-  const useLegacyPanels = layoutPref === "topnav";
+type Navigate = (href: string) => void;
+type Recommendation = { concept_name: string; reason?: string };
 
+function fetchDashboard(userId: string, activeSemester: string) {
+  // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
+  // fetch goes out unscoped. Scoping is opt-in: it only applies once the
+  // user picks a term in the Courses & Semesters hub (nothing auto-resolves
+  // a default term; an auto-picked term hides cross-term data — vetoed by
+  // the e2e lane, #360).
+  return Promise.all([
+    getGraph(userId, activeSemester || undefined),
+    getCourses(userId),
+    getUpcomingAssignments(userId),
+    getSessions(userId, 10),
+    getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
+  ]);
+}
+
+type DashboardFetch = Awaited<ReturnType<typeof fetchDashboard>>;
+
+type DashboardSetters = {
+  setCourses: (v: EnrolledCourse[]) => void;
+  setNodes: (v: GraphNode[]) => void;
+  setEdges: (v: GraphEdge[]) => void;
+  setStats: (v: DashboardStats) => void;
+  setAssignments: (v: DatedAssignment[]) => void;
+  setSessions: (v: Session[]) => void;
+  setRecommendations: (v: Recommendation[]) => void;
+  setActiveDays: (v: Set<string>) => void;
+};
+
+/** Writes one load's replies into state, in the order load() always has. */
+function applyDashboardResult(
+  [graphRes, coursesRes, assignsRes, sessionsRes, recsRes]: DashboardFetch,
+  set: DashboardSetters,
+) {
+  const cs = coursesRes.courses || [];
+  set.setCourses(cs);
+  const rawNodes: ApiNode[] = graphRes.nodes || [];
+  const gNodes: GraphNode[] = rawNodes.map((n) => apiToGraphNode(n, cs));
+  set.setNodes(gNodes);
+  set.setEdges((graphRes.edges || []).map(apiToGraphEdge));
+  set.setStats(statsFromGraph(graphRes.stats));
+  // /upcoming already filters due_date >= today; drop undated rows here too
+  // so the urgency chips can never compute from new Date(null) (1970).
+  set.setAssignments((assignsRes.assignments || []).filter(hasDueDate));
+  set.setSessions(sessionsRes.sessions || []);
+  set.setRecommendations(recsRes.recommendations || []);
+  set.setActiveDays(activeDaysFrom(gNodes));
+}
+
+/** Everything the dashboard loads: the graph, courses, upcoming work,
+ *  sessions and recommendations (load), plus the streak extras. */
+function useDashboardData({
+  userId, userReady, activeSemester, semesterHydrated,
+}: {
+  userId: string | null | undefined;
+  userReady: boolean;
+  activeSemester: string;
+  semesterHydrated: boolean;
+}) {
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
-  const [stats, setStats] = React.useState<{ streak: number; mastered: number; total: number; learning: number; struggling: number; unexplored: number }>({
+  const [stats, setStats] = React.useState<DashboardStats>({
     streak: 0, mastered: 0, total: 0, learning: 0, struggling: 0, unexplored: 0,
   });
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
-  const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
+  const [recommendations, setRecommendations] = React.useState<Recommendation[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
@@ -245,18 +300,114 @@ export function Dashboard() {
   // dashboard (Retry, a semester switch, a course change), not just on mount.
   const [extrasKey, setExtrasKey] = React.useState(0);
 
-  const [coursesOpen, setCoursesOpen] = React.useState(false);
-  const [fullscreen, setFullscreen] = React.useState(false);
-  // The "My courses" key and the graph, wired together: hovering a course row
-  // fades the other courses; hovering a concept lights its course's row;
-  // clicking a row zooms the graph to that course, clicking it again zooms
-  // back out.
+  // Latest load wins (#769): a semester switch mid-flight, or a Retry /
+  // course change racing the first load, must not let the OLDER reply
+  // repaint the screen (or its finally clear the newer load's skeleton).
+  const loadReq = useLatestRequest();
+  const load = React.useCallback(async () => {
+    if (!userId) return;
+    const run = loadReq.begin();
+    setExtrasKey((k) => k + 1);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetchDashboard(userId, activeSemester);
+      if (!run.isCurrent()) return;
+      applyDashboardResult(res, {
+        setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setRecommendations, setActiveDays,
+      });
+    } catch (err) {
+      if (!run.isCurrent()) return;
+      console.error("dashboard load failed", err);
+      setLoadError(String(err));
+    } finally {
+      if (run.isCurrent()) setLoading(false);
+    }
+  }, [userId, activeSemester, loadReq]);
+
+  React.useEffect(() => {
+    if (!userReady || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [activity, me] = await Promise.all([
+          fetchActivity(userId).catch(() => null),
+          fetchGamificationMe(userId).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setXpDays(new Set((activity?.week ?? []).filter((d) => d.xp > 0).map((d) => d.date)));
+        setBestStreak(me ? me.longest_streak : null);
+      } catch {
+        /* streak extras are decoration; the dashboard renders without them */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userReady, userId, extrasKey]);
+
+  React.useEffect(() => {
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
+
+  return {
+    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    loading, loadError, activeDays, xpDays, bestStreak, load,
+  };
+}
+
+/** The "My courses" key and the graph, wired together: hovering a course row
+ *  fades the other courses; hovering a concept lights its course's row;
+ *  clicking a row zooms the graph to that course, clicking it again zooms
+ *  back out. */
+function useCourseFocus() {
   const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
   const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
   const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string | null; seq: number } | null>(null);
   const zoomedCourse = zoomRequest?.courseId ?? null;
   const zoomToCourse = (courseId: string) =>
     setZoomRequest((r) => ({ courseId: r?.courseId === courseId ? null : courseId, seq: (r?.seq ?? 0) + 1 }));
+  return {
+    keyHoverCourse, setKeyHoverCourse, graphHoverCourse, setGraphHoverCourse,
+    zoomRequest, zoomedCourse, zoomToCourse,
+  };
+}
+
+type CourseFocus = ReturnType<typeof useCourseFocus>;
+
+/** The hero greeting: "<time-of-day>, <first name>" once both are known. */
+function useGreeting(userName: string | null | undefined) {
+  const firstName = userName ? userName.split(" ")[0] : "";
+  const [greetingPrefix, setGreetingPrefix] = React.useState<string>("Welcome back");
+  React.useEffect(() => {
+    setGreetingPrefix(getGreetingPrefix(new Date(now())));
+  }, []);
+  const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
+  // WHICH greeting finished typing (#769), not a one-way latch: the text
+  // changes after mount (the name and the time-of-day prefix arrive late),
+  // the Typewriter restarts, and the quote must hide again until the NEW
+  // text settles.
+  const [greetingDoneFor, setGreetingDoneFor] = React.useState<string | null>(null);
+  const greetingDone = greetingDoneFor === greetingText;
+  return { greetingText, greetingDone, setGreetingDoneFor };
+}
+
+export function Dashboard() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const { userId, userName, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
+  const isMobile = useIsMobile();
+  const [layoutPref] = useLayoutPref();
+  // Top-nav layout keeps the pre-revamp 3-column dashboard with the
+  // streak widget, Learn-next recommendations, and My Courses as a
+  // proper panel on the left. Sidebar layout uses the new 2-column
+  // design with the CoursesKey overlay inside the graph panel.
+  const useLegacyPanels = layoutPref === "topnav";
+
+  const [coursesOpen, setCoursesOpen] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const focus = useCourseFocus();
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
   // Graph container is now flex-filled, so there's no "correct" initial
@@ -298,91 +449,10 @@ export function Dashboard() {
   }, []);
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
-
-  // Latest load wins (#769): a semester switch mid-flight, or a Retry /
-  // course change racing the first load, must not let the OLDER reply
-  // repaint the screen (or its finally clear the newer load's skeleton).
-  const loadReq = useLatestRequest();
-  const load = React.useCallback(async () => {
-    if (!userId) return;
-    const run = loadReq.begin();
-    setExtrasKey((k) => k + 1);
-    setLoading(true);
-    setLoadError(null);
-    try {
-      // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
-      // fetch goes out unscoped. Scoping is opt-in: it only applies once the
-      // user picks a term in the Courses & Semesters hub (nothing auto-resolves
-      // a default term; an auto-picked term hides cross-term data — vetoed by
-      // the e2e lane, #360).
-      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
-        getGraph(userId, activeSemester || undefined),
-        getCourses(userId),
-        getUpcomingAssignments(userId),
-        getSessions(userId, 10),
-        getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
-      ]);
-      if (!run.isCurrent()) return;
-      const cs = coursesRes.courses || [];
-      setCourses(cs);
-      const rawNodes: ApiNode[] = graphRes.nodes || [];
-      const gNodes: GraphNode[] = rawNodes.map((n) => apiToGraphNode(n, cs));
-      setNodes(gNodes);
-      setEdges((graphRes.edges || []).map(apiToGraphEdge));
-      setStats({
-        streak: graphRes.stats?.streak ?? 0,
-        mastered: graphRes.stats?.mastered ?? 0,
-        total: graphRes.stats?.total_nodes ?? 0,
-        learning: graphRes.stats?.learning ?? 0,
-        struggling: graphRes.stats?.struggling ?? 0,
-        unexplored: graphRes.stats?.unexplored ?? 0,
-      });
-      // /upcoming already filters due_date >= today; drop undated rows here too
-      // so the urgency chips can never compute from new Date(null) (1970).
-      setAssignments((assignsRes.assignments || []).filter(hasDueDate));
-      setSessions(sessionsRes.sessions || []);
-      setRecommendations(recsRes.recommendations || []);
-
-      const days = new Set<string>();
-      for (const n of gNodes) {
-        if (!n.last_studied_at) continue;
-        const d = new Date(n.last_studied_at);
-        if (!isNaN(d.getTime())) days.add(d.toISOString().slice(0, 10));
-      }
-      setActiveDays(days);
-    } catch (err) {
-      if (!run.isCurrent()) return;
-      console.error("dashboard load failed", err);
-      setLoadError(String(err));
-    } finally {
-      if (run.isCurrent()) setLoading(false);
-    }
-  }, [userId, activeSemester, loadReq]);
-
-  React.useEffect(() => {
-    if (!userReady || !userId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [activity, me] = await Promise.all([
-          fetchActivity(userId).catch(() => null),
-          fetchGamificationMe(userId).catch(() => null),
-        ]);
-        if (cancelled) return;
-        setXpDays(new Set((activity?.week ?? []).filter((d) => d.xp > 0).map((d) => d.date)));
-        setBestStreak(me ? me.longest_streak : null);
-      } catch {
-        /* streak extras are decoration; the dashboard renders without them */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userReady, userId, extrasKey]);
-
-  React.useEffect(() => {
-    // Wait for the active-semester read from localStorage before the first load,
-    // so returning users fetch scoped once instead of unscoped-then-scoped.
-    if (userReady && userId && semesterHydrated) load();
-  }, [userReady, userId, semesterHydrated, load]);
+  const {
+    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    loading, loadError, activeDays, xpDays, bestStreak, load,
+  } = useDashboardData({ userId, userReady, activeSemester, semesterHydrated });
 
   useScrollLock(fullscreen);
 
@@ -395,18 +465,7 @@ export function Dashboard() {
     };
   }, [fullscreen]);
 
-  const firstName = userName ? userName.split(" ")[0] : "";
-  const [greetingPrefix, setGreetingPrefix] = React.useState<string>("Welcome back");
-  React.useEffect(() => {
-    setGreetingPrefix(getGreetingPrefix(new Date(now())));
-  }, []);
-  const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
-  // WHICH greeting finished typing (#769), not a one-way latch: the text
-  // changes after mount (the name and the time-of-day prefix arrive late),
-  // the Typewriter restarts, and the quote must hide again until the NEW
-  // text settles.
-  const [greetingDoneFor, setGreetingDoneFor] = React.useState<string | null>(null);
-  const greetingDone = greetingDoneFor === greetingText;
+  const { greetingText, greetingDone, setGreetingDoneFor } = useGreeting(userName);
   // Greeting + quote render as a centered hero below the TopBar (see
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
@@ -454,7 +513,215 @@ export function Dashboard() {
     );
   }
 
-  const graphBlock = (
+  const navigate: Navigate = (href) => router.push(href);
+  const highlightId = suggestNode?.id;
+
+  const graphPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
+      {renderGraphCard({
+        stats,
+        nodes,
+        scopedCourses,
+        useLegacyPanels,
+        focus,
+        onFullscreen: () => setFullscreen(true),
+        // The callback ref stays in this JSX (React may not see it handed to
+        // a render-time call); the layers inside are a plain render call.
+        graphArea: (
+          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
+            {renderGraphLayers({
+              nodes,
+              edges,
+              courseProgress,
+              useLegacyPanels,
+              focus,
+              size,
+              highlightId,
+              onNodeClick: (n) => router.push(learnHrefForNode(n)),
+            })}
+          </div>
+        ),
+      })}
+    </div>
+  );
+
+  const relTime = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const diff = now() - new Date(iso).getTime();
+    const mins = Math.round(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.round(hrs / 24);
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+
+  const courseNameFor = (id: string | null) => {
+    if (!id) return null;
+    const c = courses.find((co) => co.course_id === id);
+    return c?.course_code || c?.course_name || null;
+  };
+
+  const rightPanel = (
+    <TodayColumn
+      sessions={sessions}
+      nodes={nodes}
+      assignments={assignments}
+      hasCourses={courses.length > 0}
+      stats={stats}
+      bestStreak={bestStreak}
+      xpDays={xpDays}
+      today={today}
+      weekDays={weekDays}
+      nowMs={now()}
+      courseLabel={(id) => courseNameFor(id ?? null)}
+      relTime={relTime}
+      navigate={navigate}
+      openCourses={() => setCoursesOpen(true)}
+      courseRows={
+        courseProgress.length > 0
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
+          : undefined
+      }
+    />
+  );
+
+  // The panels below are plain render calls, not components: React must see
+  // the same element tree (the same <div>s in the same slots) the inline JSX
+  // always produced, so a layout flip or a mobile tab switch patches nodes in
+  // place instead of remounting them (the graph, the typing greeting).
+  const heroBlock = renderHeroBlock({
+    centered: useLegacyPanels && !isMobile,
+    isMobile,
+    greetingText,
+    greetingDone,
+    onGreetingDone: () => setGreetingDoneFor(greetingText),
+    quote,
+  });
+
+  const suggestBlock = suggestDismissed ? null : renderSuggestCard({ node: suggestNode, navigate, onDismiss: dismissSuggest });
+
+  const mainColumn = (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        minWidth: 0,
+        minHeight: 0,
+        alignSelf: "stretch",
+      }}
+    >
+      {heroBlock}
+      {renderMobileMetaRow({ isMobile, navigate })}
+      {suggestBlock}
+      {graphPanel}
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+      {isMobile && useLegacyPanels && renderMobileTabs({ mobileTab, setMobileTab })}
+
+      {useLegacyPanels ? (
+        renderLegacyGrid({
+          isMobile,
+          mobileTab,
+          mainColumn,
+          coursesPanel: renderLegacyCoursesPanel({
+            hasCourses: courses.length > 0,
+            courseProgress,
+            assignments,
+            onOpenCourses: () => setCoursesOpen(true),
+            navigate,
+          }),
+          rightPanel: renderLegacyRightPanel({
+            isMobile,
+            stats,
+            weekDays,
+            today,
+            activeDays,
+            recommendations,
+            navigate,
+          }),
+        })
+      ) : isMobile ? (
+        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
+          {mainColumn}
+          {rightPanel}
+        </div>
+      ) : (
+        // Desktop sidebar layout: the greeting and the actions share one header
+        // row, so the graph and the right column start on the same line and
+        // stretch to the same bottom edge.
+        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
+            <div style={{ minWidth: 0 }}>{heroBlock}</div>
+            {/* Bottom-aligned with the quote: both sides of the header end on
+                one line, the same distance above the cards. */}
+            <div
+              style={{
+                paddingBottom: HERO_PAD_BOTTOM,
+                display: "flex", alignItems: "flex-end", flexShrink: 0,
+              }}
+            >
+              <DashboardActions navigate={navigate} />
+            </div>
+          </div>
+          {suggestBlock}
+          <div
+            style={{
+              display: "grid", gap: PANEL_GAP,
+              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
+              alignItems: "stretch", flex: 1, minHeight: 0,
+            }}
+          >
+            {graphPanel}
+            {rightPanel}
+          </div>
+        </div>
+      )}
+
+
+      {fullscreen && renderFullscreenOverlay({
+        nodes,
+        edges,
+        highlightId,
+        onClose: () => setFullscreen(false),
+        onNodeClick: (n) => {
+          setFullscreen(false);
+          router.push(learnHrefForNode(n));
+        },
+      })}
+
+      <ManageCoursesModal
+        open={coursesOpen}
+        userId={userId}
+        courses={courses}
+        onClose={() => setCoursesOpen(false)}
+        onChanged={load}
+      />
+    </div>
+  );
+}
+
+function renderGraphCard({
+  stats, nodes, scopedCourses, useLegacyPanels, focus, onFullscreen, graphArea,
+}: {
+  stats: DashboardStats;
+  nodes: GraphNode[];
+  scopedCourses: EnrolledCourse[];
+  useLegacyPanels: boolean;
+  focus: CourseFocus;
+  onFullscreen: () => void;
+  /** The measured graph container (carries the ResizeObserver ref). */
+  graphArea: React.ReactNode;
+}) {
+  const { keyHoverCourse, setKeyHoverCourse, graphHoverCourse, zoomedCourse, zoomToCourse } = focus;
+  return (
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
     // left determines the row height via align-items: stretch).
@@ -503,97 +770,79 @@ export function Dashboard() {
           })}
           <button
             className="btn btn--ghost btn--sm"
-            onClick={() => setFullscreen(true)}
+            onClick={onFullscreen}
             aria-label="Fullscreen graph"
           >
             <Icon name="max" size={12} />
           </button>
         </div>
       </div>
-      <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
-        <KnowledgeGraph
-          legible
-          nodes={nodes}
-          edges={edges}
-          width={size.w}
-          height={size.h}
-          highlightId={suggestNode?.id}
-          onNodeClick={(n) => router.push(learnHrefForNode(n))}
-          focusCourseId={keyHoverCourse ?? zoomedCourse}
-          onHoverCourse={setGraphHoverCourse}
-          zoomRequest={zoomRequest}
+      {graphArea}
+    </div>
+  );
+}
+
+function renderGraphLayers({
+  nodes, edges, courseProgress, useLegacyPanels, focus, size, highlightId, onNodeClick,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  courseProgress: CourseProgressEntry[];
+  useLegacyPanels: boolean;
+  focus: CourseFocus;
+  size: { w: number; h: number };
+  highlightId: string | undefined;
+  onNodeClick: (n: GraphNode) => void;
+}) {
+  const {
+    keyHoverCourse, setKeyHoverCourse, graphHoverCourse, setGraphHoverCourse,
+    zoomRequest, zoomedCourse, zoomToCourse,
+  } = focus;
+  return (
+    <>
+      <KnowledgeGraph
+        legible
+        nodes={nodes}
+        edges={edges}
+        width={size.w}
+        height={size.h}
+        highlightId={highlightId}
+        onNodeClick={onNodeClick}
+        focusCourseId={keyHoverCourse ?? zoomedCourse}
+        onHoverCourse={setGraphHoverCourse}
+        zoomRequest={zoomRequest}
+      />
+      {/* Courses key — sidebar layout only. Top-nav layout uses the
+          full My Courses panel in the left column instead. */}
+      {!useLegacyPanels && (
+        <CoursesKey
+          courseProgress={courseProgress}
+          activeCourseId={keyHoverCourse ?? graphHoverCourse}
+          onHoverCourse={setKeyHoverCourse}
+          selectedCourseId={zoomedCourse}
+          onSelectCourse={zoomToCourse}
+          selectHint="Click to zoom to this course, again to zoom out"
         />
-        {/* Courses key — sidebar layout only. Top-nav layout uses the
-            full My Courses panel in the left column instead. */}
-        {!useLegacyPanels && (
-          <CoursesKey
-            courseProgress={courseProgress}
-            activeCourseId={keyHoverCourse ?? graphHoverCourse}
-            onHoverCourse={setKeyHoverCourse}
-            selectedCourseId={zoomedCourse}
-            onSelectCourse={zoomToCourse}
-            selectHint="Click to zoom to this course, again to zoom out"
-          />
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
+}
 
-
-  const graphPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
-      {graphBlock}
-    </div>
-  );
-
-  const relTime = (iso: string | null | undefined) => {
-    if (!iso) return "—";
-    const diff = now() - new Date(iso).getTime();
-    const mins = Math.round(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.round(hrs / 24);
-    if (days === 1) return "yesterday";
-    if (days < 7) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
-  };
-
-  const courseNameFor = (id: string | null) => {
-    if (!id) return null;
-    const c = courses.find((co) => co.course_id === id);
-    return c?.course_code || c?.course_name || null;
-  };
-
-  const rightPanel = (
-    <TodayColumn
-      sessions={sessions}
-      nodes={nodes}
-      assignments={assignments}
-      hasCourses={courses.length > 0}
-      stats={stats}
-      bestStreak={bestStreak}
-      xpDays={xpDays}
-      today={today}
-      weekDays={weekDays}
-      nowMs={now()}
-      courseLabel={(id) => courseNameFor(id ?? null)}
-      relTime={relTime}
-      navigate={(href) => router.push(href)}
-      openCourses={() => setCoursesOpen(true)}
-      courseRows={
-        courseProgress.length > 0
-          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
-          : undefined
-      }
-    />
-  );
-
-  const heroBlock = (
+function renderHeroBlock({
+  centered, isMobile, greetingText, greetingDone, onGreetingDone, quote,
+}: {
+  /** Legacy (top-nav) desktop centres the hero. */
+  centered: boolean;
+  isMobile: boolean;
+  greetingText: string;
+  greetingDone: boolean;
+  onGreetingDone: () => void;
+  quote: string;
+}) {
+  return (
     <div
       style={{
-        textAlign: useLegacyPanels && !isMobile ? "center" : "left",
+        textAlign: centered ? "center" : "left",
         padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 ${HERO_PAD_BOTTOM}px`,
       }}
     >
@@ -608,14 +857,14 @@ export function Dashboard() {
           lineHeight: HERO_LINE_HEIGHT,
         }}
       >
-        <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
+        <Typewriter text={greetingText} onDone={onGreetingDone} />
       </h1>
       {quote && (
         <p
           aria-hidden={!greetingDone}
           className="body-serif"
           style={{
-            margin: useLegacyPanels && !isMobile ? "8px auto 0" : "8px 0 0",
+            margin: centered ? "8px auto 0" : "8px 0 0",
             maxWidth: 640,
             fontSize: 14,
             fontStyle: "italic",
@@ -632,8 +881,11 @@ export function Dashboard() {
       )}
     </div>
   );
+}
 
-  const mobileMetaRow = isMobile ? (
+function renderMobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
+  if (!isMobile) return null;
+  return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div
         style={{
@@ -646,69 +898,140 @@ export function Dashboard() {
       >
         <button
           className="btn btn--sm btn--primary"
-          onClick={() => router.push("/learn")}
+          onClick={() => navigate("/learn")}
           style={{ padding: "7px 14px", fontSize: 12 }}
         >
           <Icon name="sparkle" size={13} /> Start learning
         </button>
       </div>
     </div>
-  ) : null;
+  );
+}
 
-  const suggestBlock = suggestNode && !suggestDismissed ? (
+function renderSuggestCard({
+  node, navigate, onDismiss,
+}: {
+  node: GraphNode | null;
+  navigate: Navigate;
+  onDismiss: () => void;
+}) {
+  if (!node) return null;
+  return (
     <div className="card fade-in" style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}>
       <Icon name="sparkle" size={16} />
       <div style={{ flex: 1, fontSize: 13 }}>
-        <strong>Try this next:</strong> {suggestNode.name}
-        {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
+        <strong>Try this next:</strong> {node.name}
+        {node.subject && <span style={{ color: "var(--text-dim)" }}> · {node.subject}</span>}
       </div>
       <button
         className="btn btn--sm btn--primary"
-        onClick={() => router.push(
+        onClick={() => navigate(
           buildQuizHref(
-            { concept: suggestNode.id },
+            { concept: node.id },
             { kind: "dashboard", returnTo: "/dashboard" },
           ),
         )}
       >
         Start quiz
       </button>
-      <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
-    </div>
-  ) : null;
-
-  const mainColumn = (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        minWidth: 0,
-        minHeight: 0,
-        alignSelf: "stretch",
-      }}
-    >
-      {heroBlock}
-      {mobileMetaRow}
-      {suggestBlock}
-      {graphPanel}
+      <button className="btn btn--sm btn--ghost" onClick={onDismiss}>Dismiss</button>
     </div>
   );
+}
 
-  // ── Legacy (top-nav) layout panels ──────────────────────────────────────
-  // Pre-revamp 3-column dashboard: My Courses + Upcoming on the left,
-  // hero + graph in the middle, streak widget + MiniStat + Learn next
-  // on the right. Only rendered when layoutPref === "topnav".
-  const legacyCoursesPanel = (
+function renderMobileTabs({
+  mobileTab, setMobileTab,
+}: {
+  mobileTab: "courses" | "stats";
+  setMobileTab: (t: "courses" | "stats") => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
+      {(["courses", "stats"] as const).map(t => (
+        <button
+          key={t}
+          onClick={() => setMobileTab(t)}
+          style={{
+            flex: 1, padding: "8px 12px", borderRadius: "var(--r-sm)",
+            background: mobileTab === t ? "var(--accent-soft)" : "var(--bg-panel)",
+            color: mobileTab === t ? "var(--accent)" : "var(--text-dim)",
+            border: "1px solid var(--border)", fontSize: 12, fontWeight: 600,
+            textTransform: "capitalize",
+          }}
+        >
+          {t === "courses" ? "My Courses" : "Stats & More"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Legacy (top-nav) layout panels ──────────────────────────────────────
+// Pre-revamp 3-column dashboard: My Courses + Upcoming on the left,
+// hero + graph in the middle, streak widget + MiniStat + Learn next
+// on the right. Only rendered when layoutPref === "topnav".
+function renderLegacyGrid({
+  isMobile, mobileTab, mainColumn, coursesPanel, rightPanel,
+}: {
+  isMobile: boolean;
+  mobileTab: "courses" | "stats";
+  mainColumn: React.ReactNode;
+  coursesPanel: React.ReactNode;
+  rightPanel: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
+        display: "grid", gap: 16,
+        gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
+        alignItems: isMobile ? "start" : "stretch",
+        flex: isMobile ? "0 0 auto" : 1,
+        minHeight: 0,
+      }}
+    >
+      {isMobile ? (
+        mobileTab === "courses" ? (
+          <>
+            {mainColumn}
+            {coursesPanel}
+          </>
+        ) : (
+          <>
+            {mainColumn}
+            {rightPanel}
+          </>
+        )
+      ) : (
+        <>
+          {coursesPanel}
+          {mainColumn}
+          {rightPanel}
+        </>
+      )}
+    </div>
+  );
+}
+
+function renderLegacyCoursesPanel({
+  hasCourses, courseProgress, assignments, onOpenCourses, navigate,
+}: {
+  hasCourses: boolean;
+  courseProgress: CourseProgressEntry[];
+  assignments: DatedAssignment[];
+  onOpenCourses: () => void;
+  navigate: Navigate;
+}) {
+  return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
+          <button className="btn btn--ghost btn--sm" onClick={onOpenCourses}>
             <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
-        {courses.length === 0 ? (
+        {!hasCourses ? (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
         ) : courseProgress.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
@@ -723,26 +1046,13 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - now();
-          const hours = diffMs / (1000 * 60 * 60);
-          const days = Math.ceil(diffMs / 86400000);
-          let chipClass = "chip--info";
-          let label = `${days}D`;
-          if (hours <= 0) {
-            chipClass = "chip--err";
-            label = "OVERDUE";
-          } else if (hours <= 24) {
-            chipClass = "chip--err";
-            label = hours < 1 ? "NOW" : `${Math.max(1, Math.round(hours))}H`;
-          } else if (days <= 2) {
-            chipClass = "chip--warn";
-          }
+          const { chipClass, label } = assignmentUrgency(a.due_date, now());
           return (
             <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -758,14 +1068,26 @@ export function Dashboard() {
       </div>
     </div>
   );
+}
 
-  const legacyRightPanel = (
+function renderLegacyRightPanel({
+  isMobile, stats, weekDays, today, activeDays, recommendations, navigate,
+}: {
+  isMobile: boolean;
+  stats: DashboardStats;
+  weekDays: Date[];
+  today: Date;
+  activeDays: Set<string>;
+  recommendations: Recommendation[];
+  navigate: Navigate;
+}) {
+  return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {!isMobile && (
         <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
           <button
             className="btn btn--sm btn--primary"
-            onClick={() => router.push("/learn")}
+            onClick={() => navigate("/learn")}
             style={{ padding: "7px 14px", fontSize: 12 }}
           >
             <Icon name="sparkle" size={13} /> Start learning
@@ -784,18 +1106,13 @@ export function Dashboard() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
           {weekDays.map(d => {
             const key = d.toISOString().slice(0, 10);
-            const active = activeDays.has(key);
-            const isToday = d.getTime() === today.getTime();
-            const isPast = d.getTime() < today.getTime();
-            const state: "done" | "today" | "missed" | "future" =
-              active ? "done" : isToday ? "today" : isPast ? "missed" : "future";
             return (
               <div key={key} style={{ textAlign: "center" }}>
                 <div className="label-micro" style={{ fontSize: 9 }}>
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
                 <div style={{ marginTop: 6, display: "grid", placeItems: "center" }}>
-                  <StreakMark state={state} day={d.getDate()} />
+                  <StreakMark state={streakMarkState(d, today, activeDays)} day={d.getDate()} />
                 </div>
               </div>
             );
@@ -819,7 +1136,7 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Learn next</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/tree")}>Tree →</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/tree")}>Tree →</button>
         </div>
         {recommendations.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
@@ -827,7 +1144,7 @@ export function Dashboard() {
         {recommendations.slice(0, 3).map((r, i) => (
           <button
             key={`${r.concept_name}-${i}`}
-            onClick={() => router.push(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
+            onClick={() => navigate(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
             style={{
               display: "flex", alignItems: "flex-start", gap: 10, width: "100%",
               padding: "10px 12px", borderRadius: "var(--r-md)",
@@ -843,139 +1160,45 @@ export function Dashboard() {
           </button>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
+          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => navigate("/social")}>
             <Icon name="users" size={12} /> Study room
           </button>
         </div>
       </div>
     </div>
   );
+}
 
+function renderFullscreenOverlay({
+  nodes, edges, highlightId, onClose, onNodeClick,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  highlightId: string | undefined;
+  onClose: () => void;
+  onNodeClick: (n: GraphNode) => void;
+}) {
   return (
-    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
-      {isMobile && useLegacyPanels && (
-        <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
-          {(["courses", "stats"] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setMobileTab(t)}
-              style={{
-                flex: 1, padding: "8px 12px", borderRadius: "var(--r-sm)",
-                background: mobileTab === t ? "var(--accent-soft)" : "var(--bg-panel)",
-                color: mobileTab === t ? "var(--accent)" : "var(--text-dim)",
-                border: "1px solid var(--border)", fontSize: 12, fontWeight: 600,
-                textTransform: "capitalize",
-              }}
-            >
-              {t === "courses" ? "My Courses" : "Stats & More"}
-            </button>
-          ))}
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)",
+        display: "flex", flexDirection: "column",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div>
+          <div className="label-micro">Knowledge graph — fullscreen</div>
+          <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
         </div>
-      )}
-
-      {useLegacyPanels ? (
-        <div
-          style={{
-            padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
-            display: "grid", gap: 16,
-            gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
-            alignItems: isMobile ? "start" : "stretch",
-            flex: isMobile ? "0 0 auto" : 1,
-            minHeight: 0,
-          }}
-        >
-          {isMobile ? (
-            mobileTab === "courses" ? (
-              <>
-                {mainColumn}
-                {legacyCoursesPanel}
-              </>
-            ) : (
-              <>
-                {mainColumn}
-                {legacyRightPanel}
-              </>
-            )
-          ) : (
-            <>
-              {legacyCoursesPanel}
-              {mainColumn}
-              {legacyRightPanel}
-            </>
-          )}
-        </div>
-      ) : isMobile ? (
-        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
-          {mainColumn}
-          {rightPanel}
-        </div>
-      ) : (
-        // Desktop sidebar layout: the greeting and the actions share one header
-        // row, so the graph and the right column start on the same line and
-        // stretch to the same bottom edge.
-        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
-            <div style={{ minWidth: 0 }}>{heroBlock}</div>
-            {/* Bottom-aligned with the quote: both sides of the header end on
-                one line, the same distance above the cards. */}
-            <div
-              style={{
-                paddingBottom: HERO_PAD_BOTTOM,
-                display: "flex", alignItems: "flex-end", flexShrink: 0,
-              }}
-            >
-              <DashboardActions navigate={(href) => router.push(href)} />
-            </div>
-          </div>
-          {suggestBlock}
-          <div
-            style={{
-              display: "grid", gap: PANEL_GAP,
-              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
-              alignItems: "stretch", flex: 1, minHeight: 0,
-            }}
-          >
-            {graphPanel}
-            {rightPanel}
-          </div>
-        </div>
-      )}
-
-
-      {fullscreen && (
-        <div
-          style={{
-            position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)",
-            display: "flex", flexDirection: "column",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
-            <div>
-              <div className="label-micro">Knowledge graph — fullscreen</div>
-              <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
-            </div>
-            <button className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
-              <Icon name="x" size={14} />
-            </button>
-          </div>
-          <FullscreenGraph
-            nodes={nodes}
-            edges={edges}
-            highlightId={suggestNode?.id}
-            onNodeClick={(n) => {
-              setFullscreen(false);
-              router.push(learnHrefForNode(n));
-            }}
-          />
-        </div>
-      )}
-
-      <ManageCoursesModal
-        open={coursesOpen}
-        userId={userId}
-        courses={courses}
-        onClose={() => setCoursesOpen(false)}
-        onChanged={load}
+        <button className="btn btn--ghost btn--sm" onClick={onClose}>
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <FullscreenGraph
+        nodes={nodes}
+        edges={edges}
+        highlightId={highlightId}
+        onNodeClick={onNodeClick}
       />
     </div>
   );
