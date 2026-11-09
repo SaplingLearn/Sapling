@@ -2,7 +2,6 @@
   "_comment": "Phase 4 (Trov #118) ratchet: per-function complexity ceilings for today's offenders, keyed <path relative to frontend/>::<qualified function name>. Entries may only be lowered or deleted (npm run complexity:shrink). Enforced by scripts/complexity_ratchet.test.ts; eslint.config.mjs switches the rule off for the files listed here.",
   "complexity": {
     "src/components/flashcards/FlashcardImportModal.tsx::FlashcardImportModal": 27,
-    "src/components/quiz/question/AskPanel.tsx::AskPanel>runTurn": 28,
     "src/components/screens/Settings.tsx::Settings": 26
   }
 }
