@@ -531,13 +531,13 @@ class TestUploadDocumentOrchestrator:
 
     def test_persisted_row_contains_user_and_offering(self):
         """The documents row keys on the OFFERING (0025). The upload form
-        sends the abstract course id, which the route resolves to the
-        current-term offering before persisting — the row carries
-        offering_id, never course_id."""
+        sends the abstract course id, which the #115 enrollment gate resolves
+        to the uploader's enrolled offering before persisting — the row
+        carries offering_id, never course_id."""
         result = _make_orchestrator_result()
         with (
             _mock_validate_user(),
-            patch("routes.documents.resolve_offering", return_value="off-99") as ro,
+            patch("routes.documents.require_course_enrollment", return_value="off-99") as ro,
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
@@ -548,7 +548,7 @@ class TestUploadDocumentOrchestrator:
             insert_call = t.return_value.insert.call_args[0][0]
 
         # The abstract course id was resolved to the offering for the row.
-        ro.assert_called_once_with("c-99", create=True)
+        ro.assert_called_once_with("user_andres", "c-99")
         assert insert_call["user_id"] == "user_andres"
         assert insert_call["offering_id"] == "off-99"
         assert "course_id" not in insert_call

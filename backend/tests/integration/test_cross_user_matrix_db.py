@@ -421,3 +421,27 @@ def test_link_concept_refuses_a_foreign_graph_node(mode, matrix_world, db_conn, 
         {"n": B_NOTE, "c": a_node},
     ).fetchone()
     assert row["n"] == 0, "a note_concepts row links B's note to A's graph node"
+
+
+@pytest.mark.parametrize("mode", m.MODES)
+def test_note_move_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_world, db_conn, b_client):
+    """#115: PATCH /api/notes/{id} with a course_id re-homes the note, so it
+    passes the same enrollment gate as create. The matrix's own case for this
+    route sends A's note id (404 either way) with a neutralised course; this
+    probe isolates the gate: B's OWN note, A's A-only course -> 404, and the
+    note's offering is unchanged (no current-term offering minted for it)."""
+    before = db_conn.execute(
+        "SELECT offering_id FROM notes WHERE id = %(n)s", {"n": B_NOTE},
+    ).fetchone()
+    assert before, "the rich seed's B note is missing"
+    probe = m.Case(
+        "probe", "PATCH", "/api/notes/{note_id}", f"/api/notes/{B_NOTE}",
+        json={"user_id": m.USER_B, "course_id": matrix_world["course_id"]},
+        has_json=True, expect=(404,), probed=("course_id",),
+        note="B's note moved into A's course",
+    )
+    _report(_run(b_client, db_conn, [probe], mode), f"note-move probe [{mode}]")
+    after = db_conn.execute(
+        "SELECT offering_id FROM notes WHERE id = %(n)s", {"n": B_NOTE},
+    ).fetchone()
+    assert after["offering_id"] == before["offering_id"], "B's note was moved into A's course"

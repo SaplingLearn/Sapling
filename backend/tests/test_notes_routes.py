@@ -151,7 +151,7 @@ class TestCreateNote:
                     "created_at": "2026-05-11T00:00:00Z",
                     "updated_at": "2026-05-11T00:00:00Z"}
         with (
-            patch("routes.notes.resolve_offering", return_value="off1") as ro,
+            patch("routes.notes.require_course_enrollment", return_value="off1") as gate,
             patch("routes.notes.create_note", side_effect=fake_create),
         ):
             r = client.post(
@@ -162,8 +162,8 @@ class TestCreateNote:
         assert r.status_code == 200
         body = r.json()
         assert body["id"] == "n1"
-        # Abstract course id resolved to the current-term offering on create.
-        ro.assert_called_once_with("c1", create=True)
+        # #115: the enrollment gate names the offering the note is stored on.
+        gate.assert_called_once_with("u1", "c1")
         assert body["offering_id"] == "off1"
 
     def test_missing_course_id_returns_422(self, client):

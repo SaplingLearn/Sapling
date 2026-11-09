@@ -95,6 +95,7 @@ def test_registry_entries_are_not_stale(routes):
         ("SWAP_EXPECT", m.SWAP_EXPECT), ("SWAP_SKIP", m.SWAP_SKIP),
         ("RESOURCE_SKIP", m.RESOURCE_SKIP), ("BODY_OVERRIDES", m.BODY_OVERRIDES),
         ("QUERY_OVERRIDES", m.QUERY_OVERRIDES), ("PATH_OVERRIDES", m.PATH_OVERRIDES),
+        ("SELF_ENROLLING", m.SELF_ENROLLING),
     ):
         stale += [f"{table_name}: {k}" for k in entries if k not in keys]
     stale += [f"KNOWN_LEAKS: {k}" for k in m.KNOWN_LEAKS if (k[1], k[2]) not in keys]
@@ -166,3 +167,29 @@ def test_enforce_404_entries_are_known_403_resource_cases(routes):
     resource = {c.key for c in m.build_cases(routes, _A_VALUES) if c.group == "resource"}
     assert m.ENFORCE_404 <= resource
     assert "enforce" in m.MODES and m.MODES[0] == "off"
+
+
+def test_enrollment_gated_cases_run_before_b_enrolls_in_the_course(routes):
+    """#115: the gated course-keyed writes expect 404 because B is not
+    enrolled in A's A-only course. `POST /api/graph/{user_id}/courses` (B
+    adding that catalog course for themselves, a legitimate 200) makes B
+    enrolled for every case after it — which is how the lane's
+    `POST /api/notes` turned 404 -> 200. Every gated case must sort first."""
+    resource = [c for c in m.build_cases(routes, _A_VALUES) if c.group == "resource"]
+    gated = [i for i, c in enumerate(resource) if "require_course_enrollment" in c.note]
+    enrolling = [i for i, c in enumerate(resource) if c.key in m.SELF_ENROLLING]
+    assert gated and enrolling
+    assert max(gated) < min(enrolling), [resource[i].key for i in gated if i > min(enrolling)]
+    # ...and the DELETE that drops that enrollment again still comes after.
+    drop = next(i for i, c in enumerate(resource)
+                if c.key == ("DELETE", "/api/graph/{user_id}/courses/{course_id}"))
+    assert max(enrolling) < drop
+    # The gated set covers the routes #115 gates.
+    assert {resource[i].key for i in gated} >= {
+        ("POST", "/api/notes"),
+        ("POST", "/api/learn/start-session"),
+        ("POST", "/api/learn/start-session/stream"),
+        ("POST", "/api/documents/upload"),
+        ("POST", "/api/documents/upload/sync"),
+        ("POST", "/api/documents/course/{course_id}/scan-concepts"),
+    }

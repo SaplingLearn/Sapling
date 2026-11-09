@@ -45,6 +45,11 @@ def pytest_configure(config):
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
         "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
+        "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -490,6 +495,42 @@ def live_accounts(monkeypatch):
     from services import auth_guard
 
     monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
+
+
+#: The offering `_bypass_course_enrollment` hands a gated write when the
+#: test's fake table resolves none.
+BYPASS_OFFERING_ID = "off-bypass"
+
+
+@pytest.fixture(autouse=True)
+def _bypass_course_enrollment(request, monkeypatch):
+    """#115: course-keyed writes (upload, scan-concepts, notes create/move,
+    tutor start-session with a course_id) go through
+    `academics.require_course_enrollment`, which answers with ONE read:
+    `academics.enrolled_offering_for_course`. Tests that mock `table()` for
+    the route's own logic predate it and do not model enrollments, so — like
+    the auth guard below — that read is replaced by the pre-#115 resolution
+    (the current-term offering, `resolve_offering(create=True)`, or the
+    stand-in `BYPASS_OFFERING_ID` when the test's fake table models no
+    offering): the gate passes and the write lands where it used to. One
+    module-level patch covers every importer, because
+    `require_course_enrollment` looks the function up as a module global. A
+    test that pins the offering patches `routes.<module>.require_course_enrollment`.
+
+    Opt out with `@pytest.mark.real_course_enrollment`; tests against a real
+    DB (integration / e2e_staging) always run the real gate."""
+    if (request.node.get_closest_marker("real_course_enrollment")
+            or request.node.get_closest_marker("e2e_staging")
+            or request.node.get_closest_marker("integration")):
+        return
+    from services import academics
+
+    monkeypatch.setattr(
+        academics, "enrolled_offering_for_course",
+        lambda _user_id, course_id: (
+            academics.resolve_offering(course_id, create=True) or BYPASS_OFFERING_ID
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)

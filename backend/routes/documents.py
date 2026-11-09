@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering
+from services.academics import offering_course_id, require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
@@ -686,6 +686,32 @@ async def upload_document_sync(
     await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
 
+    # Unify with the middleware-stamped request ID so agent traces and
+    # client-facing error payloads share the same correlation key.
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
+
+    # Idempotency: if the client retries with the same X-Request-ID,
+    # short-circuit to the previously persisted document instead of
+    # re-running the orchestrator. BEFORE the enrollment gate (#115 review):
+    # a retry of an upload that already completed returns the stored row
+    # even if the course was dropped since. Threaded: a sync PostgREST trip.
+    existing = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
+    if existing:
+        response = dict(existing)
+        response.setdefault("categories", [])
+        return response
+
+    # #115: only into a course the uploader is enrolled in (else 404). The
+    # upload form sends the ABSTRACT course id; documents key on the
+    # OFFERING — the uploader's own enrolled one, which the gate returns (so
+    # the check and the write agree on the term). The abstract course_id
+    # stays the key for the graph + course-context + calendar side effects.
+    offering_id = await asyncio.to_thread(require_course_enrollment, user_id, course_id)
+
     # ── Validation ────────────────────────────────────────────────────────────
     filename = file.filename or ""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -709,30 +735,7 @@ async def upload_document_sync(
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
 
-    # The upload form sends the ABSTRACT course id; documents key on the
-    # OFFERING. Resolve to the current-term offering once (create=True so a
-    # fresh upload lands in the real semester). The abstract course_id stays
-    # the key for the graph + course-context + calendar side effects below.
-    offering_id = resolve_offering(course_id, create=True)
-
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
-    # Unify with the middleware-stamped request ID so agent traces and
-    # client-facing error payloads share the same correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
-
-    # Idempotency: if the client retries with the same X-Request-ID,
-    # short-circuit to the previously persisted document instead of
-    # re-running the orchestrator. Threaded: a sync PostgREST round trip.
-    existing = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
-    if existing:
-        response = dict(existing)
-        response.setdefault("categories", [])
-        return response
-
     # #117: one document.upload per accepted upload attempt — AFTER the
     # idempotency short-circuit (PR #465 review), so an X-Request-ID retry of
     # an already-persisted upload doesn't inflate the count. Counts only —
@@ -830,6 +833,29 @@ async def upload_document(
     await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
 
+    # Unify the agent-trace request_id with the middleware-stamped one so
+    # SSE error payloads and Logfire spans share a single correlation key.
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
+    # Idempotency: a client retry with the same X-Request-ID should not
+    # re-run the orchestrator; the stream replays the persisted row instead.
+    # Looked up BEFORE the enrollment gate (#115 review), so a retry of an
+    # upload that already completed still gets its document. Threaded: a
+    # sync PostgREST round trip on the loop stalls every other open stream.
+    existing = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
+    # #115: only into a course the uploader is enrolled in (else 404).
+    # Documents key on the offering (0025) — the uploader's own enrolled one,
+    # which the gate returns so the check and the write agree on the term;
+    # the graph + course-context key on the abstract course id (kept in
+    # SaplingDeps for the agent's graph tools).
+    offering_id = (
+        None if existing
+        else await asyncio.to_thread(require_course_enrollment, user_id, course_id)
+    )
+
     filename = file.filename or ""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
@@ -848,16 +874,6 @@ async def upload_document(
             ),
         )
 
-    # Unify the agent-trace request_id with the middleware-stamped one so
-    # SSE error payloads and Logfire spans share a single correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
-    # Documents key on the offering (0025); the graph + course-context key on
-    # the abstract course id (kept in SaplingDeps for the agent's graph tools).
-    offering_id = resolve_offering(course_id, create=True)
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -871,7 +887,7 @@ async def upload_document(
     # behavior is unchanged (synchronous extraction before stream opens)
     # so existing tests and clients keep working.
     extracted_text: str | None = (
-        None if OCR_ASYNC_ENABLED
+        None if OCR_ASYNC_ENABLED or existing
         else _extract_text_or_422(file_bytes, filename, file.content_type or "")
     )
 
@@ -883,14 +899,9 @@ async def upload_document(
                 message="Document received. Processing...",
             ))
 
-            # Idempotency: a client retry with the same X-Request-ID
-            # should not re-run the orchestrator. Emit a result+done pair
-            # built from the previously persisted row instead — in the fresh
-            # result's shape (#759). Threaded: a sync PostgREST round trip
-            # on the loop stalls every other open stream.
-            existing = await asyncio.to_thread(
-                _existing_doc_by_request_id, user_id, request_id,
-            )
+            # Idempotency (looked up above, before the gate): emit a
+            # result+done pair built from the previously persisted row
+            # instead — in the fresh result's shape (#759).
             if existing:
                 yield sapling_event_to_sse(SaplingEvent(
                     type="result", step="finalize",
@@ -1372,6 +1383,10 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     course_id = offering_course_id(doc.get("offering_id"))
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
+    # #115: the scan writes the course's graph and spends model quota, so —
+    # like /course/{id}/scan-concepts — the caller must still be enrolled in
+    # the course (a dropped course's document is readable, not scannable).
+    require_course_enrollment(user_id, course_id)
 
     doc_summary = decrypt_if_present(doc.get("summary"))
     notes_raw = doc.get("concept_notes")
@@ -1401,4 +1416,5 @@ def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
     _validate_user(user_id)
+    require_course_enrollment(user_id, course_id)  # #115
     return _scan_concepts_for_course(user_id, course_id)

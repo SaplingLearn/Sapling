@@ -295,7 +295,7 @@ class TestCourseContextOffering:
         a, b, c, d = _agent_patches()
         with (
             patch("routes.documents._validate_user"),
-            patch("routes.documents.resolve_offering", return_value="off-7"),
+            patch("routes.documents.require_course_enrollment", return_value="off-7"),
             patch("routes.documents.extract_text_from_file", return_value=_TEXT),
             patch("routes.documents._existing_doc_by_request_id", return_value=None),
             a, b, c, d,
@@ -325,7 +325,7 @@ class TestCourseContextOffering:
         refresh = MagicMock()
         with (
             patch("routes.documents._validate_user"),
-            patch("routes.documents.resolve_offering", return_value="off-7"),
+            patch("routes.documents.require_course_enrollment", return_value="off-7"),
             patch("routes.documents.extract_text_from_file", return_value=_TEXT),
             patch("routes.documents._existing_doc_by_request_id", return_value=None),
             patch("routes.documents.process_document", AsyncMock(return_value=result)),
