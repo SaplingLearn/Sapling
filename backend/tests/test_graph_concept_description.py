@@ -16,12 +16,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from agents._providers import UnregisteredHandlerError
 from main import app
 from routes.graph import _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -124,6 +129,7 @@ def test_unrelated_key_error_falls_through_to_500():
         resp = safe_client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Internal server error."
+
 
 
 # ── Cross-student description cache (#97's Redis cache) ───────────────────────

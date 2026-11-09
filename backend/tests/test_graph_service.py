@@ -20,6 +20,10 @@ from services.graph_service import (
 )
 
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _mock_table(data: dict):
@@ -1456,12 +1460,12 @@ def test_graph_route_passes_semester_through():
 
     captured = {}
 
-    def fake_get_graph(user_id, semester=None):
+    async def fake_get_graph(user_id, semester=None):
         captured["user_id"] = user_id
         captured["semester"] = semester
         return {"nodes": [], "edges": [], "stats": {}}
 
-    with patch.object(graph_route, "get_graph", side_effect=fake_get_graph):
+    with patch.object(graph_route, "aget_graph", side_effect=fake_get_graph):
         client = TestClient(app)
         resp = client.get("/api/graph/user_andres?semester=Spring%202026")
 
@@ -1571,3 +1575,128 @@ class TestRemoveCourseRoute:
                    return_value={"deleted": False, "error": "Unknown term: X"}):
             r = self._client().delete("/api/graph/u1/courses/cs101?term=X")
         assert r.status_code == 404
+
+
+# ── async read twins (#117, docs/design/async-db-client.md §4.1 wave 1) ──────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+_PARITY_GRAPHS = {
+    "empty": {"users": [{"streak_count": 5, "last_active_date": None}],
+              "graph_nodes": [], "graph_edges": [], "enrollments": []},
+    "full": {
+        "users": [{"streak_count": 2,
+                   "last_active_date": datetime.now(timezone.utc).date().isoformat()}],
+        "enrollments": [
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-1"),
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-2"),
+            _enrollment_row("c2", "MA", "Math", term="Fall 2025"),
+        ],
+        "graph_nodes": [
+            {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+             "mastery_score": 0.5, "course_id": "c1", "times_studied": 2, "user_id": "u1"},
+            {"id": "n2", "concept_name": "Sets", "mastery_tier": "mastered",
+             "mastery_score": 0.9, "course_id": "c2", "times_studied": 1, "user_id": "u1"},
+        ],
+        "graph_edges": [
+            {"id": "e1", "source_node_id": "n1", "target_node_id": "n2", "strength": 0.4},
+            {"id": "e2", "source_node_id": "n1", "target_node_id": "gone", "strength": 0.4},
+        ],
+        "node_mastery_events": [
+            {"node_id": "n1", "delta": 0.2, "reason": "r", "created_at": _now_iso()},
+        ],
+    },
+}
+
+
+class TestAsyncReadTwins:
+    """Each `a*` twin returns exactly what its sync sibling returns over the
+    same rows (the routes' behaviour must not depend on which one ran)."""
+
+    @staticmethod
+    def _both(fn, afn, data, *args, extra_patches=()):
+        import asyncio
+        import copy
+        from contextlib import ExitStack
+
+        from tests.db_fakes import with_async_twins
+
+        out = []
+        for run in (lambda: fn(*args), lambda: asyncio.run(afn(*args))):
+            factory, mocks = _cached_mock_table(copy.deepcopy(data))
+            with ExitStack() as stack:
+                stack.enter_context(patch(
+                    "services.graph_service.table", side_effect=with_async_twins(factory)))
+                for p in extra_patches:
+                    stack.enter_context(p())
+                out.append((run(), {n: m.method_calls for n, m in mocks.items()}))
+        return out
+
+    @pytest.mark.parametrize("scenario", sorted(_PARITY_GRAPHS))
+    def test_aget_graph_matches_get_graph(self, scenario):
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS[scenario], "u1")
+        assert asynced == sync
+
+    def test_aget_graph_semester_scope_matches(self):
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value="t-fall"),
+            lambda: patch("services.academics.user_course_ids_for_term", return_value={"c2"}),
+        )
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS["full"], "u1", "Fall 2025",
+            extra_patches=patches)
+        assert asynced == sync
+        assert {n["id"] for n in asynced["nodes"]} == {"n2", "subject_root__c2"}
+
+    def test_aget_graph_inserts_a_missing_user_like_the_sync_one(self):
+        data = {"users": [], "graph_nodes": [], "graph_edges": [], "enrollments": []}
+        (_, sync_calls), (_, async_calls) = self._both(gs.get_graph, gs.aget_graph, data, "u1")
+        inserts = [c for c in async_calls["users"] if c[0] == "insert"]
+        assert inserts == [c for c in sync_calls["users"] if c[0] == "insert"]
+        assert inserts and inserts[0].args[0] == {"id": "u1", "streak_count": 0}
+
+    def test_aget_courses_matches_get_courses(self):
+        data = {**_PARITY_GRAPHS["full"], "graph_nodes": [{"id": "n1"}, {"id": "n2"}]}
+        (sync, _), (asynced, _) = self._both(gs.get_courses, gs.aget_courses, data, "u1")
+        assert asynced == sync
+        assert [c["course_id"] for c in asynced] == ["c1", "c2"]
+
+    def test_aget_courses_empty_on_enrollment_read_failure(self):
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.side_effect = Exception("DB error")
+            return mock
+
+        with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(gs.aget_courses("u1")) == []
+
+    @pytest.mark.parametrize("semester,allowed", [
+        (None, None), ("Fall 2025", {"c1"}), ("Fall 2025", set()), ("Nope", None),
+    ])
+    def test_aget_recommendations_matches(self, semester, allowed):
+        data = {"graph_nodes": [
+            {"concept_name": "A", "mastery_score": 0.1, "mastery_tier": "struggling"},
+            {"concept_name": "B", "mastery_score": 0.0, "mastery_tier": "unexplored"},
+            {"concept_name": "C", "mastery_score": 0.6, "mastery_tier": "learning"},
+        ]}
+        term = None if semester == "Nope" else "t-fall"
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value=term),
+            lambda: patch("services.academics.user_course_ids_for_term",
+                          return_value=allowed or set()),
+        )
+        (sync, sync_calls), (asynced, async_calls) = self._both(
+            gs.get_recommendations, gs.aget_recommendations, data, "u1", semester,
+            extra_patches=patches)
+        assert asynced == sync
+        sync_reads = [c for c in sync_calls.get("graph_nodes", []) if c[0] == "select"]
+        async_reads = [c for c in async_calls.get("graph_nodes", []) if c[0] == "select"]
+        assert async_reads == sync_reads
+        assert bool(sync) == (semester is None or bool(allowed))

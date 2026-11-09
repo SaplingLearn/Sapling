@@ -121,6 +121,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_read_version", "service_scope"):
         "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
+        "inserts a users row (#117 async twin)",
     ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
         "#116 gradescope_syncs is service-only (bucket E): staged sync",
     ("services/gradescope_jobs.py", "enqueue_sync", "runs_as_service"):
