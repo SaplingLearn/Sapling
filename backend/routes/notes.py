@@ -22,7 +22,8 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
 from services.academics import (
-    offering_course_id, require_course_enrollment, resolve_offering, term_id_for_label,
+    course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
+    term_id_for_label, user_offering_ids_for_course,
 )
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
@@ -113,6 +114,14 @@ async def _course_meta(offering_id: str | None, cache: dict) -> dict:
     return cache[offering_id]
 
 
+def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
+    """Every offering of ``course_id`` a note of the student's can sit in:
+    all of the course's offerings, or — if that read cannot tell — the ones
+    the student is enrolled in (#831 follow-up)."""
+    ids = course_offering_ids(course_id)
+    return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
+
+
 class CreateNoteBody(BaseModel):
     user_id: str
     course_id: str
@@ -137,30 +146,31 @@ async def list_user_notes(
     semester: str | None = None,
 ):
     await guard_off_loop(require_self, user_id, request)
-    # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering —
-    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
-    # an unknown label or a term with no offering of the course answers with
-    # the empty shape, never a silent fall-back to another term. `semester`
-    # without `course_id` is ignored (this is the course-filtered read; the
-    # notetaker UI itself carries no semester context — the param exists for
-    # API completeness).
-    offering_id = None
-    semester_missed = False
+    # The API speaks abstract course ids; notes key on the offering. A course
+    # filter covers EVERY offering of the course (#831 follow-up): a note is
+    # filed under the student's enrollment (any term, the #115 gate) and,
+    # before that gate, under the term it was written in, so the current
+    # term's offering alone hid notes from past terms. Rows stay the
+    # caller's own (`list_notes` filters on user_id). With a `semester` (term
+    # label, #141) it is STRICTLY that term's offering: an unknown label or a
+    # term with no offering of the course answers with the empty shape, never
+    # a silent fall-back to another term. `semester` without `course_id` is
+    # ignored (the notetaker UI itself carries no semester context — the
+    # param exists for API completeness).
+    offering_id: str | list[str] | None = None
     if course_id:
         if semester:
-            term_id = term_id_for_label(semester)
+            term_id = await asyncio.to_thread(term_id_for_label, semester)
             offering_id = (
-                resolve_offering(course_id, term_id, fallback=False)
+                await asyncio.to_thread(resolve_offering, course_id, term_id, fallback=False)
                 if term_id
                 else None
-            )
-            semester_missed = offering_id is None
+            ) or []
         else:
-            offering_id = resolve_offering(course_id)
+            offering_id = await asyncio.to_thread(_course_offering_ids, user_id, course_id)
     notes = (
         []
-        if semester_missed
+        if offering_id == []
         else await list_notes(user_id=user_id, offering_id=offering_id)
     )
     # Attach the abstract course id + labels resolved from each note's offering.
@@ -174,7 +184,7 @@ async def list_user_notes(
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
     etag = make_etag(
-        "notes", user_id, offering_id or "",
+        "notes", user_id, ",".join(offering_id) if isinstance(offering_id, list) else offering_id or "",
         *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
     )
     not_modified = conditional(request, etag)

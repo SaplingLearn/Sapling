@@ -95,10 +95,14 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
 
 async def list_notes(
     user_id: str,
-    offering_id: str | None = None,
+    offering_id: str | list[str] | None = None,
 ) -> list[dict]:
+    """The user's live notes, newest first. ``offering_id`` narrows them to
+    one offering, or (a list) to any of several — a course's offerings."""
     filters: dict[str, str] = {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}
-    if offering_id:
+    if isinstance(offering_id, list):
+        filters["offering_id"] = f"in.({','.join(offering_id)})"
+    elif offering_id:
         filters["offering_id"] = f"eq.{offering_id}"
 
     def _fetch() -> list[dict]:

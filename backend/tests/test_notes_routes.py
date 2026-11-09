@@ -56,19 +56,48 @@ class TestListNotes:
         assert r.status_code == 200
         assert r.json() == {"notes": notes}
 
-    def test_course_filter_resolves_to_offering(self, client):
+    def test_course_filter_covers_every_offering_of_the_course(self, client):
         # The query param is the abstract course id; the service is called
-        # with the resolved offering id.
+        # with EVERY offering of it (#831 follow-up), not the current term's
+        # alone — a note filed under a past-term enrollment must still list.
         async def fake_list(user_id, offering_id=None):
-            assert offering_id == "off-c2"
+            assert offering_id == ["off-s25", "off-f25"]
             return []
         with (
-            patch("routes.notes.resolve_offering", return_value="off-c2") as ro,
+            patch("routes.notes.course_offering_ids", return_value=["off-s25", "off-f25"]) as co,
+            patch("routes.notes.resolve_offering") as ro,
             patch("routes.notes.list_notes", side_effect=fake_list),
         ):
             r = client.get("/api/notes/user/u1?course_id=c2")
         assert r.status_code == 200
-        ro.assert_called_once_with("c2")
+        co.assert_called_once_with("c2")
+        ro.assert_not_called()
+
+    def test_course_filter_falls_back_to_enrolled_offerings_when_unknown(self, client):
+        # course_offering_ids answers None when it could not tell: the read
+        # falls back to the student's enrolled offerings of the course.
+        async def fake_list(user_id, offering_id=None):
+            assert offering_id == ["off-enrolled"]
+            return []
+        with (
+            patch("routes.notes.course_offering_ids", return_value=None),
+            patch("routes.notes.user_offering_ids_for_course",
+                  return_value=["off-enrolled"]) as uo,
+            patch("routes.notes.list_notes", side_effect=fake_list),
+        ):
+            r = client.get("/api/notes/user/u1?course_id=c2")
+        assert r.status_code == 200
+        uo.assert_called_once_with("u1", "c2")
+
+    def test_course_with_no_offerings_is_empty_not_every_note(self, client):
+        with (
+            patch("routes.notes.course_offering_ids", return_value=[]),
+            patch("routes.notes.list_notes") as ln,
+        ):
+            r = client.get("/api/notes/user/u1?course_id=c2")
+        assert r.status_code == 200
+        assert r.json() == {"notes": []}
+        ln.assert_not_called()
 
     def test_notes_carry_resolved_course_id_and_labels(self, client):
         # Finding F4: notes key on the OFFERING, but the notetaker UI keys on
