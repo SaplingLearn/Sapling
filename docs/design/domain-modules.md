@@ -108,3 +108,33 @@ The two over-25 functions sit in `services/graph_service.py` and `services/achie
 - A move-only split must move the baseline key and the `ruff.toml` `C901` entry in the same PR. `--shrink` only lowers or deletes entries; it cannot re-key one. If a function over 25 moves from `services/graph_service.py` to `services/graph/update.py`, rename its `code_size_baseline.json` key to the new path and move the file's `C901` per-file-ignores line with it. A route file that is split below 600 lines just loses its entry (`--shrink` deletes it).
 - Pass the hermetic suite, then the E2E lane and oracles for any file in E2E-covered territory (per `CLAUDE.md`).
 - Move `CLAUDE.md` repo-map entries that name a moved function in the same PR.
+
+## As built (wave 3)
+
+Wave 3 (2026-11-08) split every route file except `routes/learn.py`. The baseline now holds two entries: `routes/learn.py` (1,997 lines, the learn split is pending) and `services/graph_service.py::apply_graph_update` (28, being split separately). `_get_user_stat` went from 26 to a dispatch table (`_STAT_READERS`, one reader per trigger type), pinned by `tests/test_achievement_stat_characterization.py` (value and exact reads for every trigger type).
+
+**Deviation from "keep no re-export shims".** Open teammate PRs (#673, #735, #752, #801) still import the old paths, so the splits kept them working. Each route re-imports every moved name (public and private) that other code or tests import from it (`# noqa: F401  (re-export, #118)`). Each flat module that moved into a package (`gradebook_service.py`, `flashcard_import_service.py`, `gradescope_service.py`, `gradescope_jobs.py`, the ten `quiz_*.py`) is a shim at its old path that aliases the new module, so a patch through either name reaches the code that runs. New code imports the package. Drop the shims once those PRs land.
+
+Where each route's logic lives now (route file lines in brackets):
+
+- gradebook [466]: `services/gradebook/` (`enrollments`, `grades` (was `gradebook_service.py`), `syllabus`, `errors`).
+- social [272]: `services/social/` (`rooms`, `messages`, `friends`, `matching`, `directory`, `overview`, `errors`).
+- admin [419]: `services/admin/` (`roles`, `achievements`, `cosmetics`, `xp_rules`, `users`, `allowlist`, `feedback`, `audit`, `overview`, `types`, `errors`).
+- admin_analytics [377]: `services/admin/analytics/` (`scan`, `series`, `db_scope`, `models`).
+- flashcards [501]: `services/flashcards/` (`cards`, `context`, `importing` (was `flashcard_import_service.py`)).
+- profile [492]: `services/profile/` (`account`, `achievements`, `cosmetics`, `public`, `users`, `errors`).
+- auth [539]: `services/auth/` (`signin`, `oauth_state`, `pending`, `waitlist`, `accounts`, `dev_login`, `errors`).
+- gradescope [538]: `services/gradescope/` (`credentials`, `links`, `sync`, `client` (was `gradescope_service.py`), `jobs` (was `gradescope_jobs.py`), `errors`).
+- documents [528]: `services/documents/` (`upload`, `persistence`, `post_roll`, `library`, `scan`, `stream`, `errors`).
+- quiz [182]: `services/quiz/` (`generation`, `attempts`, `history`, `submission`, `wire`, `grounding`, `practice`, `limits`, plus the ten former `services/quiz_*.py`: `algebra`, `config`, `context`, `distractors`, `errors`, `grading`, `identity`, `repetition`, `reserve`, `signals`).
+
+**Domain errors.** Each package (except flashcards, which needed none) has an `errors.py` with a base error carrying `detail` and one subclass per failure. The route maps them back to the exact status and detail it answered with before the split, usually through one small helper (for example `routes/social.py::_social_errors`, a context manager over an `_ERROR_STATUS` table). `services/quiz/errors.py` is the old `quiz_errors.py` (`QuizAPIError`, an `HTTPException` subclass enveloped by `main.py`), so the quiz package keeps that one fastapi seam. Some moved handlers still take a starlette `Request`/`BackgroundTasks` or use `run_in_threadpool`.
+
+**Test patches.** `tests/split_patches.py` is the one helper for every split: `patch_in(modules, name, ...)` patches a name with ONE mock in every listed module that has it, `setattr_in` is its `monkeypatch` twin, and each domain has a `<DOMAIN>_MODULES` tuple plus `patch_<domain>` conveniences (`patch_admin`, `patch_social`, `patch_profile_table`, `set_auth_table`/`set_auth_session_secret`, `patch_gradescope`, `patch_documents`, `patch_quiz`/`setattr_quiz`). A tuple lists the route and the modules split out of it, never a module that existed before the split.
+
+**Import contracts.** `backend/.importlinter` (import-linter, `lint-imports` from `backend/`; a CI step after ruff and `tests/test_import_contracts.py`) holds two contracts:
+
+- *Layering*: `routes | worker` (independent) over `services : agents : models` (they import each other today, so they share a layer) over `db`. Known exceptions are in `ignore_imports` with their reasons: `db/` reading request context and flags from `services/` (`request_context`, `auth_guard`, `feature_flags`, `events_service`), the `db/` seed and backfill CLIs encrypting through `services/`, `services.document_jobs -> routes.documents` (it reaches the documents helpers through the route's re-exports so test patches intercept), and `services.quiz.grounding -> routes.learn` (`_get_catalog_chunk`, gone with the learn split). A stale entry fails the run.
+- *Domain internals*: a `forbidden` contract over the nine packages: one domain may import another only through its package `__init__`, never `services.<other>.<module>`. `services.tutor` joins the sources once it exists.
+
+**Left:** the learn split (`routes/learn.py` → `services/tutor/`, which also removes the `services.quiz.grounding -> routes.learn` exception), `apply_graph_update`, then the shim removal and lowering `max-complexity` as planned above.
