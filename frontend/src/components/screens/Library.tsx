@@ -527,9 +527,11 @@ export function Library() {
   return (
     <div
       data-testid="library-screen"
+      className={isMobile ? undefined : styles.libGrid}
       style={{
         height: "100%", display: "grid", boxSizing: "border-box", overflow: "hidden",
-        gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "236px minmax(0, 1fr) 400px",
+        // Desktop columns come from styles.libGrid (proportional, with floors).
+        ...(isMobile ? { gridTemplateColumns: "minmax(0, 1fr)" } : null),
         gridTemplateRows: isMobile ? "auto auto minmax(0, 1fr)" : "auto minmax(0, 1fr)",
         columnGap: 40, padding: isMobile ? "20px 16px 0" : "36px 48px 0 56px",
         background: "#FAF8F3", color: "#1A1814", fontFamily: "var(--font-sans)", fontSize: 15, lineHeight: 1.45,
@@ -563,7 +565,10 @@ export function Library() {
                   <CourseDot color={c.color} size={10} />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 15, fontWeight: st.fontWeight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
-                    {c.sub && <span style={{ display: "block", fontSize: 13, color: "#6F6857", fontWeight: 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.sub}</span>}
+                    {/* The full course name wraps to two lines instead of
+                        ellipsing — this column is narrow by design and the
+                        name is what identifies the course. */}
+                    {c.sub && <span className={styles.courseName} style={{ fontSize: 13, color: "#6F6857", fontWeight: 400, lineHeight: 1.25 }}>{c.sub}</span>}
                   </span>
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "#6F6857", fontWeight: 400 }}>{count}</span>
                 </button>

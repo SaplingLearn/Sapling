@@ -112,13 +112,6 @@ const TOOLS = [
   { key: "guide", title: "Study Guide", icon: "file", bg: "#F1E3C4", fg: "#8A6420" },
 ] as const;
 
-/** Shows a pane's scrollbar only while it scrolls (design: data-scrolling). */
-function onPaneScroll(e: React.UIEvent<HTMLElement>) {
-  const el = e.currentTarget as HTMLElement & { __sbT?: ReturnType<typeof setTimeout> };
-  el.setAttribute("data-scrolling", "");
-  clearTimeout(el.__sbT);
-  el.__sbT = setTimeout(() => el.removeAttribute("data-scrolling"), 900);
-}
 
 const sameName = (a?: string | null, b?: string | null) =>
   !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -513,20 +506,22 @@ export function StudyHub({
   const hit = week.slice(0, 6).filter(d => d.minutes >= goal).length;
 
   return (
+    <div className={s.shell} style={{ background: "#FAF8F3" }}>
     <div
+      className={s.hub}
       style={{
-        position: "relative", height: isMobile ? "auto" : "100%", minHeight: isMobile ? "100%" : 640,
-        display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 360px",
-        gridTemplateRows: isMobile ? "auto" : "auto auto auto minmax(0, 1fr)", columnGap: 56,
-        padding: isMobile ? "20px 16px 24px" : "32px 48px 0 56px", boxSizing: "border-box",
-        background: "#FAF8F3", color: "#1A1814", fontFamily: SANS, fontSize: 15, lineHeight: 1.45,
+        color: "#1A1814", fontFamily: SANS, fontSize: 15, lineHeight: 1.45,
         WebkitFontSmoothing: "antialiased",
       }}
     >
       {/* ── header ── */}
-      <header style={{ gridColumn: isMobile ? "1" : "1 / 3", gridRow: 1, display: "flex", alignItems: "center", gap: 20, paddingBottom: 18, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+      <header className={s.areaHeader} style={{ display: "flex", alignItems: "center", gap: 20, paddingBottom: 18 }}>
         <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Study</h1>
-        <div style={{ position: "relative", width: isMobile ? "100%" : 320, maxWidth: 320, flexShrink: 0 }}>
+        {/* Was a hard 320px, which ellipsed "Introduction to Computer Science"
+            even on a 1920 screen with room to spare. It now takes what the
+            header has and caps only so a long name can't crowd out the bell
+            and settings beside it. */}
+        <div style={{ position: "relative", flex: isMobile ? "1 1 100%" : "0 1 auto", minWidth: 0, maxWidth: 560 }}>
           <button className={s.hoverCourse} onClick={() => set({ menu: st.menu === "course" ? null : "course" })} aria-haspopup="listbox" aria-expanded={st.menu === "course"}
             style={{ display: "inline-flex", alignItems: "center", gap: 10, maxWidth: "100%", height: 44, padding: "0 12px", border: 0, borderRadius: 12, background: "transparent", ...INHERIT_FONT, color: "#1A1814", cursor: "pointer" }}>
             <span style={{ width: 11, height: 11, borderRadius: "50%", background: course?.color || "#6F6857", flexShrink: 0 }} />
@@ -557,7 +552,7 @@ export function StudyHub({
           )}
         </div>
 
-        <div aria-label="Notifications" style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 10, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+        <div aria-label="Notifications" style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 10 }}>
           {ai && (
             <div onMouseEnter={() => set({ aiOpen: true })} onMouseLeave={() => set({ aiOpen: false })} style={{ position: "relative" }}>
               <div role="button" tabIndex={0} aria-expanded={st.aiOpen} onFocus={() => set({ aiOpen: true })} onBlur={() => set({ aiOpen: false })}
@@ -632,7 +627,7 @@ export function StudyHub({
       </header>
 
       {/* ── exam tabs + tools ── */}
-      <div key={cid} className={s.paneEnter} style={{ gridColumn: 1, gridRow: 2, display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+      <div key={cid} className={`${s.areaTabs} ${s.paneEnter}`} style={{ display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid rgba(42,39,31,0.10)", minWidth: 0 }}>
         <div role="tablist" aria-label="Exams" style={{ flex: 1, minWidth: 0, alignSelf: "stretch", display: "flex", gap: 36, overflowX: "auto", overflowY: "hidden" }}>
           {exams.map(e => {
             const on = !!exam && e.id === exam.id;
@@ -660,7 +655,7 @@ export function StudyHub({
       </div>
 
       {/* ── readiness band ── */}
-      <section aria-label="Readiness" key={`${cid}:${exam?.id ?? ""}`} className={s.examEnter} style={{ gridColumn: 1, gridRow: 3, display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 540px", alignItems: "start", gap: isMobile ? 24 : 48, padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
+      <section aria-label="Readiness" key={`${cid}:${exam?.id ?? ""}`} className={`${s.areaReady} ${s.readyGrid} ${s.examEnter}`} style={{ padding: "24px 0", borderBottom: "1px solid rgba(42,39,31,0.10)" }}>
         {/* Top-anchored, not centred: the prerequisite warning below the legend
             appears and disappears with the selected concept, and centring made
             the readiness % jump ~35px whenever it did. */}
@@ -701,20 +696,22 @@ export function StudyHub({
           </div>
           {/* In flow under the legend (the design pins it absolute at the
               column bottom, which covers the legend chips once a real course
-              has more than one row of content). The slot is ALWAYS reserved at
-              a fixed two-line height, filled or empty, so picking a concept
-              with or without a prerequisite gap never changes the band's
-              height and the roadmap below never moves. Longer text clamps to
-              two lines; the full sentence is on hover. */}
-          <div aria-hidden={!(warnLeft && focus) || undefined} style={{ marginTop: -8, height: 61, flexShrink: 0 }}>
+              has more than one row of content). The slot RESERVES two lines,
+              filled or empty, so picking a concept with or without a
+              prerequisite gap doesn't shift the band for the ordinary case —
+              but it is a minimum, not a cap: the sentence gets as many lines
+              as it needs. It used to be a hard height with a two-line clamp,
+              which on a narrow column (or with the side nav expanded) cut the
+              warning off mid-word and left the reason hidden behind a
+              tooltip. */}
+          <div aria-hidden={!(warnLeft && focus) || undefined} style={{ marginTop: -8, minHeight: 61, flexShrink: 0 }}>
             {warnLeft && focus && (
               <div
                 data-testid="focus-gap-warning"
-                title={`${focus.name} · ${focus.gap}`}
-                style={{ height: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.45, color: "#6B4E12" }}
+                style={{ minHeight: 61, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.45, color: "#6B4E12" }}
               >
                 <WarnIcon />
-                <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>
+                <span style={{ textWrap: "pretty" } as React.CSSProperties}>
                   <strong style={{ fontWeight: 700 }}>{focus.name}</strong> · {focus.gap}
                 </span>
               </div>
@@ -764,7 +761,7 @@ export function StudyHub({
               </div>
             </div>
             {warnInCard ? (
-              <div style={{ height: 78, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.4, color: "#6B4E12" }}>
+              <div style={{ minHeight: 78, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "#FBF1DC", fontSize: 14, lineHeight: 1.4, color: "#6B4E12" }}>
                 <WarnIcon /><span style={{ textWrap: "pretty" } as React.CSSProperties}>{focus.gap}</span>
               </div>
             ) : (
@@ -801,8 +798,8 @@ export function StudyHub({
       </section>
 
       {/* ── roadmap ── */}
-      <section aria-label="Roadmap" key={cid} className={`${s.scroll} ${s.paneEnter}`} onScroll={onPaneScroll}
-        style={{ gridColumn: 1, gridRow: 4, minHeight: 0, overflowY: isMobile ? "visible" : "auto", scrollbarGutter: "stable", padding: "22px 6px 28px 0" }}>
+      <section aria-label="Roadmap" key={cid} className={`${s.areaRoadmap} ${s.paneEnter}`}
+        style={{ padding: "22px 6px 28px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={monoLabel}>Roadmap</span>
         </div>
@@ -882,14 +879,10 @@ export function StudyHub({
       </section>
 
       {/* ── right column ── */}
-      <aside aria-label="Activity" className={s.scroll} onScroll={onPaneScroll}
-        // Desktop: this column scrolls, and a scroll container clips anything
-        // drawn past its padding box, which cut the Quick Reviews pop-up's
-        // 40px drop shadow into a hard-edged grey slab. 40px of side padding
-        // with a matching negative margin gives the shadow room to fade out
-        // while the content stays exactly where it was (the bleed sits in the
-        // 56px column gap and the 48px page padding).
-        style={{ gridColumn: isMobile ? 1 : 2, gridRow: isMobile ? "auto" : "2 / 5", minHeight: 0, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "6px 2px 24px 0" : "6px 42px 24px 40px", margin: isMobile ? 0 : "0 -40px", display: "flex", flexDirection: "column" }}>
+      {/* The 40px side bleed (padding + negative margin, in the stylesheet so
+          the narrow layout can drop it) gives the Quick Reviews pop-up's drop
+          shadow room to fade out; it sits in the 56px column gap. */}
+      <aside aria-label="Activity" className={s.areaRail} style={{ display: "flex", flexDirection: "column" }}>
         <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 24 }}>
           <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
             <span style={monoLabel}>Daily Goal</span>
@@ -1105,6 +1098,7 @@ export function StudyHub({
           </>
         );
       })()}
+    </div>
     </div>
   );
 }

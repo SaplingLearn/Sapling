@@ -11,3 +11,61 @@
 .noteLink:hover .noteTitle { color: #445D22; }
 .primary:hover { background: #597536 !important; }
 .focusRing:focus-visible { outline: 2px solid #597536; outline-offset: 2px; border-radius: 6px; }
+
+/* ── responsive layout ───────────────────────────────────────────────────────
+   Home sized itself from one JS breakpoint (useIsMobile, 768px) against a
+   fixed 380px right rail, so every pixel the side nav took when it expanded
+   came out of the LEFT column alone: the Up Next and Quick Reviews cards
+   squeezed until "Control Flow" became "Contro…" and the "QUICK REVIEWS"
+   label wrapped under its own title.
+
+   Width now comes from the CONTAINER, not the viewport — the side nav
+   collapses (64px) and expands (~200px), so a viewport media query is wrong
+   in one of those two states and a container query is right in both. */
+
+.shell {
+  container-type: inline-size;
+  container-name: home;
+}
+
+/* Both tracks are PROPORTIONAL. A fixed 380px rail meant every pixel the side
+   nav took when it expanded came out of the middle column alone, so the middle
+   read as squished while the rail sat untouched. Sharing the loss keeps the
+   two in the ratio the design draws (~2.4 : 1) at any nav state, and the rail
+   still refuses to go under 300px. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr);
+  gap: 56px;
+  padding: 36px 56px 32px 64px;
+  box-sizing: border-box;
+  align-content: start;
+}
+
+/* The greeting + pills + action cards, and the quote beside them — the quote
+   sits to their right as in the design, top-aligned with the pills. Both
+   sides may shrink; they only drop onto separate rows when even their
+   minimums can't sit together. */
+.greetRow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 32px; }
+.greetMain { flex: 1 1 420px; min-width: 0; }
+.greetQuote { flex: 0 1 360px; min-width: 250px; }
+
+/* Up Next + Quick Reviews. A card may shrink, but only to the width where its
+   title still reads; past that the pair wraps onto two rows instead of
+   truncating both of them. */
+.planRow { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* Past here the rail's 300px floor leaves the middle too little to hold the
+   graph and the card pair, so the rail goes under it and both get full width. */
+@container home (max-width: 1040px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    padding: 28px 28px 32px;
+  }
+}
+
+@container home (max-width: 700px) {
+  .grid { gap: 24px; padding: 20px 16px 24px; }
+  .greetRow { gap: 16px; }
+}

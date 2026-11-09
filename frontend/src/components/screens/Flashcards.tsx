@@ -118,7 +118,7 @@ function FlashcardsMode({
   const { userId } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const searchParams = useSearchParams();
-  // Deep link from the Study hub: /study?mode=cards&course=…&concepts=A|B
+  // Deep link from the Study hub: /flashcards?course=…&concepts=A|B
   const [courseId, setCourseId] = React.useState<string>(searchParams.get("course") || "all");
   const [concepts, setConcepts] = React.useState<string[]>(
     (searchParams.get("concepts") || "").split("|").map(x => x.trim()).filter(Boolean),

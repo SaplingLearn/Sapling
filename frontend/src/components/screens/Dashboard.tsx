@@ -84,13 +84,13 @@ function ActionCard(props: {
     <div
       data-testid={props.testId}
       style={{
-        flex: "0 1 320px", minWidth: 0, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 14, height: 68,
+        flex: "1 1 300px", minWidth: 0, maxWidth: 420, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 14, height: 68,
         padding: "0 16px 0 18px", border: `1px solid ${props.border}`, borderRadius: 14, background: props.bg, color: "#1A1814",
       }}
     >
       <span style={{ color: props.accent, display: "flex", flexShrink: 0, transform: "translateY(-3px)" }}>{props.icon}</span>
       <span style={{ flex: "1 1 0%", minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ height: 14, fontSize: 12, lineHeight: "14px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: props.accent }}>
+        <span style={{ height: 14, fontSize: 12, lineHeight: "14px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", whiteSpace: "nowrap", color: props.accent }}>
           {props.label}
         </span>
         <span style={{ height: 22, fontSize: 17, lineHeight: "22px", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -463,8 +463,8 @@ export function Dashboard() {
   const greetingDone = greetingDoneFor === greetingText;
 
   const header = (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: isMobile ? 18 : 40, maxWidth: 1164, flexWrap: isMobile ? "wrap" : "nowrap" }}>
-      <div style={{ flex: "1 1 612px", minWidth: 0 }}>
+    <div className={styles.greetRow} style={{ justifyContent: "space-between", gap: isMobile ? 18 : 40, maxWidth: 1164 }}>
+      <div className={styles.greetMain}>
         <h1 aria-label={greetingText} style={{ margin: 0, fontFamily: "var(--font-serif)", fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
           <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
         </h1>
@@ -489,7 +489,7 @@ export function Dashboard() {
             ))}
           </div>
         )}
-        <section aria-label="Study plan" style={{ marginTop: 18, display: "flex", flexWrap: isMobile ? "wrap" : "nowrap", gap: 12 }}>
+        <section aria-label="Study plan" className={styles.planRow} style={{ marginTop: 18 }}>
           <ActionCard
             testId="home-up-next" label="Up Next" title={upNext?.name ?? "Start your first session"}
             href={upNext ? studyHref(upNext.courseId) : "/learn"} icon={TargetIcon}
@@ -503,7 +503,7 @@ export function Dashboard() {
           />
         </section>
       </div>
-      <figure style={{ margin: 0, flex: "0 1 400px", minWidth: 0, paddingLeft: 16, borderLeft: DIVIDER }}>
+      <figure className={styles.greetQuote} style={{ margin: 0, paddingLeft: 16, borderLeft: DIVIDER }}>
         {/* Fades in once the greeting has typed out, like the original. */}
         <div
           aria-hidden={!greetingDone}
@@ -626,13 +626,13 @@ export function Dashboard() {
   );
 
   return (
+    <div className={styles.shell} style={{ background: "#FAF8F3", minHeight: "100%" }}>
     <div
       data-testid="home"
+      className={styles.grid}
       style={{
-        minHeight: "100%", height: isMobile ? undefined : "100%", boxSizing: "border-box", background: "#FAF8F3", color: "#1A1814",
+        minHeight: "100%", background: "#FAF8F3", color: "#1A1814",
         fontFamily: "var(--font-sans)", fontSize: 15, lineHeight: 1.45,
-        display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 380px", gap: isMobile ? 28 : 56,
-        padding: isMobile ? "20px 16px 24px" : "36px 56px 0 64px",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: isMobile ? undefined : 760 }}>
@@ -661,6 +661,7 @@ export function Dashboard() {
         </div>
       )}
       <ManageCoursesModal open={coursesOpen} userId={userId} courses={courses} onClose={() => setCoursesOpen(false)} onChanged={load} />
+    </div>
     </div>
   );
 }
