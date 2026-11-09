@@ -16,8 +16,8 @@ function open(over: Partial<React.ComponentProps<typeof StudyModal>> = {}) {
   const onClose = vi.fn();
   const utils = render(
     <div data-testid="page">
-      <StudyModal open onClose={onClose} label="Quiz" width={760} maxHeight={820} top={110} gap={18} {...over}>
-        <button type="button">Struggling and Learning</button>
+      <StudyModal open onClose={onClose} label="Exams and deadlines" width={720} maxHeight={760} top={120} gap={16} {...over}>
+        <button type="button">Save Dates</button>
       </StudyModal>
     </div>,
   );
@@ -27,7 +27,7 @@ function open(over: Partial<React.ComponentProps<typeof StudyModal>> = {}) {
 describe("StudyModal", () => {
   it("is a labelled modal dialog portalled to <body>, not inside the page", () => {
     open();
-    const dlg = screen.getByRole("dialog", { name: "Quiz" });
+    const dlg = screen.getByRole("dialog", { name: "Exams and deadlines" });
     expect(dlg).toHaveAttribute("aria-modal", "true");
     // The scrim's old containing block was the hub: it must not be any more.
     expect(screen.getByTestId("page")).not.toContainElement(dlg);
@@ -41,13 +41,13 @@ describe("StudyModal", () => {
 
   it("closes on Escape", () => {
     const { onClose } = open();
-    fireEvent.keyDown(screen.getByRole("button", { name: "Struggling and Learning" }), { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Save Dates" }), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("closes on a backdrop click but not on a click inside the card", () => {
     const { onClose } = open();
-    fireEvent.click(screen.getByRole("button", { name: "Struggling and Learning" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Dates" }));
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("study-modal-backdrop"));
     expect(onClose).toHaveBeenCalledTimes(1);

@@ -1,4 +1,4 @@
-/* The Study hub's centred modals (concept picker, Exams and Deadlines).
+/* The Study hub's centred modal (Exams and Deadlines).
 
    The overlay is fixed to the viewport and portalled to <body>: the old
    backdrop was `position: absolute` inside the hub, so it covered the hub's

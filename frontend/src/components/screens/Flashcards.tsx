@@ -7,7 +7,11 @@
  * instead, so the pane owns the page: it loads the courses itself and scopes
  * them to the active term exactly as its old host did.
  *
- * Deep link from the hub: /flashcards?course=<id>&concepts=A|B
+ * Deep link from the hub: /flashcards?course=<id>&concepts=A|B[&start=1].
+ * `start=1` is the hub's "Flashcards" / "Make Flashcards": the student asked
+ * to study, so a deck with no cards for those concepts generates them on
+ * arrival instead of waiting on the Generate button. The page itself enters
+ * with the Study tools' `study-mode-enter` fade.
  */
 import React from "react";
 import dynamic from "next/dynamic";
@@ -41,6 +45,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { START_PARAM, consumeStartParam } from "@/lib/toolHrefs";
 
 type RawCard = {
   id: string;
@@ -87,7 +92,7 @@ export function Flashcards() {
           </>
         }
       />
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div className="study-mode-enter" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <FlashcardsMode
           courses={scopedCourses}
           isMobile={isMobile}
@@ -127,6 +132,10 @@ function FlashcardsMode({
   const [idx, setIdx] = React.useState(0);
   const [flipped, setFlipped] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
+  /** The first card load has answered: an empty `filtered` means "none yet". */
+  const [loaded, setLoaded] = React.useState(false);
+  /** Arrived with `start=1`, not yet acted on (see the file header). */
+  const startRequested = React.useRef(searchParams.get(START_PARAM) === "1");
   const [generating, setGenerating] = React.useState(false);
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -160,6 +169,7 @@ function FlashcardsMode({
       const res = await getFlashcards(userId, undefined, semester || undefined);
       if (!run.isCurrent()) return;
       setCards(res.flashcards || []);
+      setLoaded(true);
       if (keepCardId) {
         anchorRef.current = keepCardId;
       } else {
@@ -311,6 +321,21 @@ function FlashcardsMode({
     }
   };
 
+  // `start=1`: once the first load has answered (and the course list, which
+  // scopes generation to the course's documents, is in), an empty deck for
+  // what the hub asked for generates; a deck with cards is already the
+  // review. Once only: the marker leaves the URL either way. `generate` is
+  // rebuilt every render, so the effect reaches the current one by ref.
+  const generateRef = React.useRef(generate);
+  React.useEffect(() => { generateRef.current = generate; });
+  React.useEffect(() => {
+    if (!startRequested.current || !loaded || loading) return;
+    if (courseId !== "all" && courses.length === 0) return;
+    startRequested.current = false;
+    consumeStartParam();
+    if (filtered.length === 0) void generateRef.current();
+  }, [loaded, loading, courseId, courses.length, filtered.length]);
+
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -360,14 +385,18 @@ function FlashcardsMode({
           {filtered.length === 0 && !loading && (
             <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
               <div className="h-serif" style={{ fontSize: 20 }}>
-                {concepts.length ? `No cards for ${concepts.join(", ")} yet` : "No cards here yet"}
+                {generating
+                  ? `Making cards${concepts.length ? ` for ${concepts.join(", ")}` : ""}…`
+                  : concepts.length ? `No cards for ${concepts.join(", ")} yet` : "No cards here yet"}
               </div>
               <div style={{ fontSize: 13, marginTop: 6 }}>
                 {/* Arriving from a concept's "Make Flashcards", the generate
                     button already targets that concept — say so, instead of
                     the course-level copy that reads as though the concept was
                     dropped on the way in. */}
-                {concepts.length
+                {generating
+                  ? "From your course material. Review starts as soon as they're ready."
+                  : concepts.length
                   ? `Generate cards to start reviewing ${concepts.length === 1 ? "it" : "them"}.`
                   : courseId === "all"
                     ? "Pick a course and generate cards from your library material."

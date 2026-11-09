@@ -81,7 +81,6 @@ const TYPE_RAW: Record<AssessType, string> = { Exam: "exam", Quiz: "quiz", Homew
 
 type FlashcardRow = { id: string; topic?: string; last_reviewed_at?: string | null };
 type Draft = { id: string; type: AssessType; rawType: string; title: string; iso: string; isNew?: boolean };
-type Picker = { kind: "quiz" | "cards"; picks: Record<string, boolean> } | null;
 
 /* ── small inline icons the repo's Icon set doesn't carry ───────────────────── */
 function CardsIcon({ size }: { size: number }) {
@@ -216,7 +215,6 @@ export function StudyHub({
    *  otherwise read every row the drafts never saw as "removed" and delete it. */
   const manageBase = React.useRef<{ cid: string; rows: Map<string, Assessment> } | null>(null);
   const [saving, setSaving] = React.useState(false);
-  const [picker, setPicker] = React.useState<Picker>(null);
   const [goalDraft, setGoalDraft] = React.useState("");
 
   const assessFor = React.useCallback((id: string): Assessment[] =>
@@ -309,24 +307,25 @@ export function StudyHub({
   const soon = upcoming.filter(e => daysTo(e.iso, today) <= 7).length;
 
   /* ── navigation to the tool pages ─────────────────────────────────────── */
+  // Every Quiz / Flashcards control here goes straight to the tool and asks it
+  // to START (`start=1`): the quiz begins on the concept, or on the course's
+  // queue, and flashcards open on the concept's deck, generating it when there
+  // are no cards yet. There used to be a concept picker in between, whose only
+  // effect was this same navigation one click later.
   const quizHref = (ids: string[]) =>
-    buildQuizHref(ids.length === 1 ? { concept: ids[0] } : { course: cid }, { kind: "link", returnTo: "/study" });
-  const cardsHref = (names: string[]) => flashcardsHref(cid, names);
+    buildQuizHref(ids.length === 1 ? { concept: ids[0] } : { course: cid }, { kind: "link", returnTo: "/study" }, { start: true });
+  const cardsHref = (names: string[]) => flashcardsHref(cid, names, { start: true });
   // Study guides are Library documents now. For one concept this opens the
   // course's material FOR that concept; with no concept, the course's
   // study-guide shelf. (The selected exam has nothing to narrow there.)
   const guideHref = (concept?: string) => studyGuideHref(cid, concept);
-  const weakPicks = () => Object.fromEntries(topics.filter(t => t.st === "review" || t.st === "progress").map(t => [t.id, true]));
+  // The top tool buttons cover what the picker used to preselect: the
+  // struggling and learning concepts. One of them is a concept quiz; none or
+  // several is the course's quiz (a quiz is one concept or the whole course).
   const goTool = (k: "quiz" | "cards" | "guide") => {
     if (k === "guide") { router.push(guideHref()); return; }
-    setPicker({ kind: k, picks: weakPicks() });
-  };
-  const startPicker = () => {
-    if (!picker) return;
-    const chosen = topics.filter(t => picker.picks[t.id]);
-    if (!chosen.length) return;
-    setPicker(null);
-    router.push(picker.kind === "quiz" ? quizHref(chosen.map(t => t.id)) : cardsHref(chosen.map(t => t.name)));
+    const weak = topics.filter(t => t.st === "review" || t.st === "progress");
+    router.push(k === "quiz" ? quizHref(weak.map(t => t.id)) : cardsHref(weak.map(t => t.name)));
   };
 
   /* ── exams and deadlines modal ────────────────────────────────────────── */
@@ -988,7 +987,7 @@ export function StudyHub({
 
           {qr.length > 0 && (
             <div onMouseEnter={() => set({ qrOpen: true })} onMouseLeave={() => set({ qrOpen: false })} style={{ position: "relative" }}>
-              <button className={s.hoverQr} onClick={() => setPicker({ kind: "cards", picks: Object.fromEntries(qr.map(x => [x.t.id, true])) })} onFocus={() => set({ qrOpen: true })} onBlur={() => set({ qrOpen: false })} aria-expanded={st.qrOpen}
+              <button className={s.hoverQr} onClick={() => router.push(cardsHref(qr.map(x => x.t.name)))} onFocus={() => set({ qrOpen: true })} onBlur={() => set({ qrOpen: false })} aria-expanded={st.qrOpen}
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 56, padding: "0 8px", border: "1px solid #C9DAEC", borderRadius: 14, background: "#E3ECF5", color: "#1E3F6B", ...INHERIT_FONT, textAlign: "left", cursor: "pointer", whiteSpace: "nowrap" }}>
                 <span style={{ width: 40, height: 40, borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><CardsIcon size={18} /></span>
                 {/* minWidth 0 lets the label give way (ellipsis) instead of
@@ -1016,7 +1015,7 @@ export function StudyHub({
                         </span>
                       ))}
                     </span>
-                    <button className={s.hoverQrStart} onClick={() => { set({ qrOpen: false }); setPicker({ kind: "cards", picks: Object.fromEntries(qr.map(x => [x.t.id, true])) }); }}
+                    <button className={s.hoverQrStart} onClick={() => { set({ qrOpen: false }); router.push(cardsHref(qr.map(x => x.t.name))); }}
                       style={{ height: 40, border: 0, borderRadius: 10, background: "#2E5F96", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Start Review</button>
                   </div>
                 </div>
@@ -1094,54 +1093,6 @@ export function StudyHub({
             </div>
           </StudyModal>
       )}
-
-      {/* ── concept picker (Quiz / Flashcards) ── */}
-      {picker && (() => {
-        const name = picker.kind === "quiz" ? "Quiz" : "Flashcards";
-        const n = topics.filter(t => picker.picks[t.id]).length;
-        // A quiz targets one concept or the whole course (quizHref): two or
-        // more picks start a course quiz, so the button says so.
-        const wholeCourse = picker.kind === "quiz" && n > 1;
-        const setPicks = (picks: Record<string, boolean>) => setPicker({ ...picker, picks });
-        const chip: React.CSSProperties = { height: 32, padding: "0 12px", border: 0, borderRadius: 16, ...INHERIT_FONT, fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" };
-        return (
-            <StudyModal open onClose={() => setPicker(null)} label={name} width={760} maxHeight={820} top={isMobile ? 40 : 110} gap={18}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 600 }}>{name}</span>
-                <span style={{ fontSize: 15, color: "#3F3B31" }}>Choose the {exam ? exam.title : course?.course_code || course?.course_name} concepts to cover</span>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className={s.hoverChip} onClick={() => setPicks(weakPicks())} style={{ ...chip, background: "#F0ECE3", color: "#1A1814" }}>Struggling and Learning</button>
-                <button className={s.hoverChip} onClick={() => setPicks(Object.fromEntries(topics.map(t => [t.id, true])))} style={{ ...chip, background: "#F0ECE3", color: "#1A1814" }}>All Concepts</button>
-                <button className={s.hoverGhost} onClick={() => setPicks({})} style={{ ...chip, background: "transparent", color: "#6F6857" }}>Clear</button>
-              </div>
-              {groups.map(label => (
-                <div key={label} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#3F3B31" }}>{label}</span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {topics.filter(t => t.group === label).map(t => {
-                      const on = !!picker.picks[t.id];
-                      return (
-                        <button key={t.id} aria-pressed={on} onClick={() => setPicks({ ...picker.picks, [t.id]: !on })}
-                          style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 36, padding: "0 14px 0 12px", border: `1px solid ${on ? "#445D22" : "rgba(42,39,31,0.16)"}`, borderRadius: 18, background: on ? "#445D22" : "#FDFCF9", color: on ? "#FFFFFF" : "#1A1814", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                          <span style={{ width: 9, height: 9, borderRadius: "50%", background: TC[t.st], boxShadow: "0 0 0 1.5px #FDFCF9" }} />{t.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 10, borderTop: "1px solid rgba(42,39,31,0.10)" }}>
-                <button onClick={() => setPicker(null)} style={{ height: 46, padding: "0 18px", border: 0, borderRadius: 12, background: "transparent", color: "#3F3B31", ...INHERIT_FONT, fontSize: 15, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>Cancel</button>
-                <button onClick={startPicker} disabled={!n} title={wholeCourse ? "A quiz covers one concept or the whole course" : undefined} style={{ height: 46, padding: "0 22px", border: 0, borderRadius: 12, background: "#445D22", color: "#FFFFFF", ...INHERIT_FONT, fontSize: 15, fontWeight: 700, opacity: n ? 1 : 0.5, whiteSpace: "nowrap", flexShrink: 0, cursor: n ? "pointer" : "default" }}>
-                  {!n ? "Pick at Least One Concept"
-                    : wholeCourse ? "Start Quiz · Whole Course"
-                    : `Start ${name} · ${n} ${n === 1 ? "Concept" : "Concepts"}`}
-                </button>
-              </div>
-            </StudyModal>
-        );
-      })()}
     </div>
     </div>
   );
