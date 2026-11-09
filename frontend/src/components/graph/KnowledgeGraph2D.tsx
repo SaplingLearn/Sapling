@@ -454,6 +454,8 @@ function KnowledgeGraph2DImpl({
   /** Re-assigned every render (it closes over the current size and zoom);
    *  the simulation's tick calls the latest one. */
   const frameContentRef = React.useRef<() => void>(() => {});
+  /** The node set the opening frame was last fitted to. */
+  const framedIdsRef = React.useRef<string | null>(null);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
 
   React.useEffect(() => {
@@ -481,6 +483,16 @@ function KnowledgeGraph2DImpl({
         if (!viewTouchedRef.current) setView(fittedViewRef.current);
       }
     }
+
+    // A graph with its own opening frame (the quiz preview) that is handed a
+    // different set of nodes — a new focus concept — follows the new cluster
+    // into frame again, easing there rather than staying where the student
+    // left the old one. A resize alone keeps their view.
+    const idsKey = nodes.map((n) => n.id).sort().join("|");
+    if (initialZoom !== 1 && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
+      viewTouchedRef.current = false;
+    }
+    framedIdsRef.current = idsKey;
 
     // Merge new node data into existing sim nodes to preserve motion state.
     const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
@@ -859,11 +871,11 @@ function KnowledgeGraph2DImpl({
 
   // ── Smooth view changes (legible) ───────────────────────────────────────
   // Wheel, zoom buttons, reset and course zooms ease toward a target view
-  // over a few frames instead of jumping. Other graphs (and test mode /
-  // reduced motion) still jump, so their behaviour is unchanged.
+  // over a few frames instead of jumping — in every mode (the plain mode used
+  // to jump, so quiz home's preview felt nothing like the tree). Test mode
+  // and reduced motion still jump.
   const easeView = (target: { tx: number; ty: number; scale: number }) => {
     const instant =
-      !legible ||
       IS_TEST_MODE ||
       typeof requestAnimationFrame === "undefined" ||
       (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
@@ -1065,20 +1077,10 @@ function KnowledgeGraph2DImpl({
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     viewTouchedRef.current = true;
-    if (legible) {
-      // Exponential, capped per event: a mouse wheel notch (deltaY ~100) and
-      // a trackpad's many small deltas both feel even, then ease in.
-      const d = Math.max(-120, Math.min(120, e.deltaY));
-      zoomAbout(Math.exp(-d * 0.0022), mx, my);
-      return;
-    }
-    const delta = -e.deltaY * 0.0015;
-    setView((v) => {
-      const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
-      const factor = nextScale / v.scale;
-      const c = clampView(mx - (mx - v.tx) * factor, my - (my - v.ty) * factor, nextScale);
-      return { tx: c.tx, ty: c.ty, scale: nextScale };
-    });
+    // Exponential, capped per event: a mouse wheel notch (deltaY ~100) and a
+    // trackpad's many small deltas both feel even, then ease in.
+    const d = Math.max(-120, Math.min(120, e.deltaY));
+    zoomAbout(Math.exp(-d * 0.0022), mx, my);
   };
 
   const resetView = () => {

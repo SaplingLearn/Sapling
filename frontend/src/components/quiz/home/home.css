@@ -542,7 +542,7 @@
   }
 }
 
-.quiz-home__proposal[data-entering="true"] {
+.quiz-home__proposal[data-entering="true"] .quiz-home__card-text {
   animation: quiz-home-enter var(--quiz-home-enter-dur) var(--quiz-home-enter-ease);
 }
 
@@ -585,7 +585,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quiz-home__proposal[data-entering="true"],
+  .quiz-home__proposal[data-entering="true"] .quiz-home__card-text,
   .quiz-home__definition,
   .quiz-home__row[data-returned="true"] {
     animation: none;

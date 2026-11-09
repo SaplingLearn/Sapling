@@ -705,6 +705,15 @@ describe("QuizHome — the due set", () => {
 });
 
 describe("QuizHome — the live neighbourhood", () => {
+  it("keeps the same graph when another topic is picked, so it moves rather than rebuilds", () => {
+    mount();
+    const before = screen.getByTestId("quiz-neighbourhood");
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Determinants");
+    // Same element: only the card's text remounts (and fades up).
+    expect(screen.getByTestId("quiz-neighbourhood")).toBe(before);
+  });
+
   it("draws the card's concept with its neighbours, and a neighbour becomes the card", () => {
     mount();
     const graph = screen.getByTestId("quiz-neighbourhood");

@@ -432,11 +432,14 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       ref={proposalRef}
       className="quiz-home__proposal"
       data-testid="quiz-proposal"
-      // Keyed on the concept so a swap remounts the card and plays its
-      // entrance; the first card of a visit arrives without one.
-      key={card.node.id}
       data-entering={swapped && !reducedMotion ? "true" : undefined}
     >
+      {/* The card's TEXT is keyed on the concept, so a swap remounts it and
+          plays its entrance (the first card of a visit arrives without one).
+          The neighbourhood below is NOT: it stays mounted, so the concepts
+          two neighbourhoods share glide to their new places and the view
+          eases onto the new cluster, instead of the graph being rebuilt. */}
+      <div className="quiz-home__card-text" key={card.node.id}>
       {/* No eyebrow: the concept's name heads the card. Once a topic is
           picked, the one line above it is the way back to the suggestion. */}
       {pickedId && suggested && (
@@ -467,6 +470,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
         </p>
       )}
       <p className="quiz-home__config">{configLine}</p>
+      </div>
 
       <LiveNeighbourhood
         centreId={card.node.id}
