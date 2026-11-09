@@ -454,6 +454,7 @@ export function QuizQuestion({
     correctText:
       verdict?.correctAnswer ?? (verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.text : undefined) ?? "",
     explanation: verdict?.explanation ?? "",
+    written,
   };
 
   return (

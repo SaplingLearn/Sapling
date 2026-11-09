@@ -287,6 +287,7 @@ describe("QuizResults", () => {
       correctLabel: "B",
       correctText: "It recurses forever and overflows the stack",
       explanation: "Without a base case the recursion never stops.",
+      written: false,
     });
   });
 
@@ -393,6 +394,33 @@ describe("QuizResults", () => {
       },
     });
     expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · the answer is B");
+  });
+
+  it("reads a typed answer as what was written, never as placeholder labels", () => {
+    // A numeric item: `selected` is the text the student typed and
+    // `correct_answer` the expected text — there are no option letters.
+    const numeric = (id: number): QuizItem => ({
+      ...item(id),
+      question: { ...item(id).question, type: "numeric", options: [] },
+      selectedIndex: null,
+    });
+    const written = {
+      items: [numeric(101), numeric(102), numeric(103)],
+      result: {
+        ...RESULT,
+        results: [
+          { question_id: "101", selected: "4", correct: false, correct_answer: "2", explanation: "Two." },
+          { question_id: "102", selected: "", correct: false, correct_answer: "3", explanation: "Three." },
+          { question_id: "103", selected: "4", correct: true, correct_answer: "4", explanation: "Four." },
+        ],
+      },
+    };
+    expect(buildMissedItems(session(written))[0]).toMatchObject({ written: true, chosenText: "4", correctText: "2" });
+
+    renderResults(written);
+    expect(screen.getByTestId("quiz-missed-101")).toHaveTextContent("You wrote 4 · the answer is 2");
+    expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · the answer is 3");
+    expect(screen.getByTestId("quiz-missed-list")).not.toHaveTextContent(/Your answer|Expected/);
   });
 
   it("labels the secondary exit from the source and calls exit()", () => {
