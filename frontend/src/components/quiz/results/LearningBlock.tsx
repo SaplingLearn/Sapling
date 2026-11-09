@@ -92,8 +92,8 @@ export function LearningBlock({
         </ul>
       ) : (
         <p className="quiz-learning__line" data-testid="quiz-results-no-change">
-          No meter moved this time: answers already counted today, or kept out because the question
-          could not be checked, don&apos;t change it.
+          No skill meter moved this time. Each question counts toward your meters once a day, and
+          only if it passed its checks.
         </p>
       )}
 
