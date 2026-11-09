@@ -811,11 +811,11 @@ class TestUploadDocumentStreaming:
         syl_run = AsyncMock(return_value=SimpleNamespace(output=syllabus))
 
         return (
-            patch("routes.documents.classifier_agent.run", cls_run),
-            patch("routes.documents.summary_agent.run", sum_run),
-            patch("routes.documents.concept_extraction_agent.run", cpt_run),
-            patch("routes.documents.syllabus_extraction_agent.run", syl_run),
-            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("agents.classifier.classifier_agent.run", cls_run),
+            patch("agents.summary.summary_agent.run", sum_run),
+            patch("agents.concept_extraction.concept_extraction_agent.run", cpt_run),
+            patch("agents.syllabus_extraction.syllabus_extraction_agent.run", syl_run),
+            patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=0)),
         )
 
     def test_emits_full_event_sequence_on_happy_path(self):
@@ -1114,7 +1114,7 @@ class TestUploadStreamingAgentFailure:
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.classifier_agent.run", AsyncMock(side_effect=exc)),
+            patch("agents.classifier.classifier_agent.run", AsyncMock(side_effect=exc)),
             patch("routes.documents.table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1250,7 +1250,7 @@ class TestUploadIdempotency:
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("agents.classifier.classifier_agent.run", cls_run),
             patch("routes.documents.table", return_value=fake_table()) as t,
             patch("routes.documents._spawn_post_roll"),
         ):

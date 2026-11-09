@@ -48,15 +48,13 @@ from services import document_jobs
 from services.documents_read import decrypt_document_row
 from services.llm_budget import LLMBudgetExceeded
 from services.xp_service import award_xp_safe
+from contextlib import aclosing
+
 from agents import WORKER_LIMITS
-from agents.classifier import classifier_agent
-from agents.summary import summary_agent
-from agents.concept_extraction import concept_extraction_agent
-from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
-from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
+from services import document_pipeline
 from agents.concept_scan import concept_scan_agent
 from agents.usage import record_agent_usage
 
@@ -1002,10 +1000,7 @@ async def upload_document(
             # return so the client gets a clean failure instead of a
             # double-fault.
             if extracted_text is None:
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracting_text",
-                    message="Extracting text from document...",
-                ))
+                yield sapling_event_to_sse(document_pipeline.extracting_text_event())
                 try:
                     extracted_text = await asyncio.to_thread(
                         extract_text_from_file, file_bytes, filename,
@@ -1030,10 +1025,8 @@ async def upload_document(
                         message="Failed.",
                     ))
                     return
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracted_text",
-                    message=f"Extracted {len(extracted_text):,} chars.",
-                ))
+                yield sapling_event_to_sse(
+                    document_pipeline.extracted_text_event(len(extracted_text)))
                 # Extraction can succeed and still yield nothing usable -- a
                 # rasterized PDF has no text layer, so the except branch above
                 # never fires. Stop here rather than asking the model to
@@ -1057,84 +1050,17 @@ async def upload_document(
                     ))
                     return
 
-            # ── Phase 1: classifier (serial gate) ─────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classify",
-                message="Classifying document...",
-            ))
-            cls_run = record_agent_usage(
-                await classifier_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                ),
-                feature="document", task="classifier",
-            )
-            classification = cls_run.output
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classified",
-                message=f"Classified as {classification.category}.",
-                data={
-                    "category": classification.category,
-                    "is_syllabus": classification.is_syllabus,
-                },
-            ))
-
-            # ── Phase 2: workers in parallel ──────────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extract",
-                message="Extracting summary, concepts"
-                        + (" and syllabus" if classification.is_syllabus else "")
-                        + " in parallel...",
-            ))
-            summary_task = summary_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            concepts_task = concept_extraction_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            if classification.is_syllabus:
-                syllabus_task = syllabus_extraction_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
-                )
-                record_agent_usage(syllabus_r, feature="document", task="syllabus")
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = syllabus_r.output
-            else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = None
-            record_agent_usage(summary_r, feature="document", task="summary")
-            record_agent_usage(concepts_r, feature="document", task="concepts")
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extracted",
-                message=f"Extracted {len(concepts.concepts)} concept(s).",
-            ))
-
-            # ── Phase 3: graph update (direct call, no agent loop) ──────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_update",
-                message="Merging concepts into the course graph...",
-            ))
-            concept_names = [c.name for c in concepts.concepts]
-            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
-            graph_updated = merged > 0
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_updated",
-                message=f"Merged {merged} concept(s).",
-            ))
-
-            # ── Compose final result + emit ──────────────────────────────────
-            final_output = DocumentProcessingResult(
-                classification=classification,
-                summary=summary,
-                concepts=concepts,
-                syllabus=syllabus,
-                graph_updated=graph_updated,
-            )
+            # ── Phases 1-3: the one pipeline (agents.document) ────────────────
+            # classify -> summary/concepts(/syllabus) in parallel -> graph
+            # merge, each boundary relayed as its progress events (#835: the
+            # same steps and events a queued upload's worker records).
+            final_output: DocumentProcessingResult | None = None
+            async with aclosing(document_pipeline.run_document_agents(extracted_text, deps)) as steps:
+                async for step in steps:
+                    for ev in document_pipeline.step_events(step):
+                        yield sapling_event_to_sse(ev)
+                    if step.name == document_pipeline.DONE:
+                        final_output = step.result
             yield sapling_event_to_sse(SaplingEvent(
                 type="result", step="finalize",
                 message="Processing complete.",

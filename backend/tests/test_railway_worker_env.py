@@ -39,6 +39,7 @@ WORKER_PATH_MODULES = (
     "services/cache.py",
     "services/document_jobs.py",
     "services/staged_jobs.py",
+    "services/document_pipeline.py",
     "services/document_indexing.py",
     "services/course_context_service.py",
     "services/rag_service.py",

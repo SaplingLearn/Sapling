@@ -54,10 +54,13 @@ Retention: `file_data` is cleared at every terminal stage and `result` once
 the outcome has been handed to the client (the SSE result / the sync JSON);
 an outcome nobody comes back for is removed by `prune_document_uploads`.
 
-Pipeline helpers (`_persist_document`, the syllabus/graph post-steps, the
-post-roll side effects, the error strings) still live in routes/documents.py
-and are imported from there lazily: moving them is phase 4's job (#118), and
-teammate PRs edit that file.
+The agents run through the ONE upload pipeline the streaming route runs
+(agents.document.run_document_agents; its steps become this row's stages, and
+the events a watcher replays come from services/document_pipeline.py, #835).
+The persistence helpers (`_persist_document`, the syllabus/graph post-steps,
+the post-roll side effects, the error strings) still live in
+routes/documents.py and are imported from there lazily: teammate PRs edit
+that file.
 """
 from __future__ import annotations
 
@@ -625,39 +628,26 @@ TIMEOUT_MESSAGE = (
 
 
 def _stage_events(stage: str, progress: dict) -> list[SaplingEvent]:
-    """The progress events the inline pipeline emits on entering `stage`."""
+    """The progress events the inline pipeline emits on entering `stage`:
+    the worker records each pipeline step as a stage, and the events come
+    from the same vocabulary the streaming route uses (document_pipeline)."""
+    from services import document_pipeline as dp
+
     p = progress or {}
     if stage == EXTRACTING:
-        return [SaplingEvent(type="progress", step="extracting_text",
-                             message="Extracting text from document...")]
+        return [dp.extracting_text_event()]
     if stage == CLASSIFYING:
-        return [
-            SaplingEvent(type="progress", step="extracted_text",
-                         message=f"Extracted {int(p.get('char_count') or 0):,} chars."),
-            SaplingEvent(type="progress", step="classify", message="Classifying document..."),
-        ]
+        return [dp.extracted_text_event(int(p.get("char_count") or 0)),
+                *dp.step_events(dp.PipelineStep(dp.CLASSIFY))]
     if stage == EXTRACTING_CONCEPTS:
-        is_syllabus = bool(p.get("is_syllabus"))
-        return [
-            SaplingEvent(type="progress", step="classified",
-                         message=f"Classified as {p.get('category') or 'other'}.",
-                         data={"category": p.get("category") or "other",
-                               "is_syllabus": is_syllabus}),
-            SaplingEvent(type="progress", step="extract",
-                         message="Extracting summary, concepts"
-                                 + (" and syllabus" if is_syllabus else "")
-                                 + " in parallel..."),
-        ]
+        return dp.step_events(dp.PipelineStep(
+            dp.CLASSIFIED, category=p.get("category") or "other",
+            is_syllabus=bool(p.get("is_syllabus"))))
     if stage == MERGING:
-        return [
-            SaplingEvent(type="progress", step="extracted",
-                         message=f"Extracted {int(p.get('concept_count') or 0)} concept(s)."),
-            SaplingEvent(type="progress", step="graph_update",
-                         message="Merging concepts into the course graph..."),
-        ]
+        return dp.step_events(dp.PipelineStep(
+            dp.EXTRACTED, concept_count=int(p.get("concept_count") or 0)))
     if stage == SAVING:
-        return [SaplingEvent(type="progress", step="graph_updated",
-                             message=f"Merged {int(p.get('merged_count') or 0)} concept(s).")]
+        return dp.step_events(dp.PipelineStep(dp.MERGED, merged=int(p.get("merged_count") or 0)))
     return []
 
 
@@ -986,55 +976,29 @@ def _done(run: _Run, doc_id: str, stored: dict, **progress: Any) -> None:
 
 
 async def _run_agents(row: dict, text: str, run: _Run):
-    """The inline SSE route's phases 1-3, with the stage recorded between
-    them. Same agents, limits and usage tasks (function mode serves the same
-    handlers in the worker: it freezes the mode at boot like the API).
-    Returns (result, merged concept count)."""
-    from agents import WORKER_LIMITS
-    from agents.classifier import classifier_agent
-    from agents.concept_extraction import concept_extraction_agent
+    """The one upload pipeline (agents.document.run_document_agents, as the
+    streaming route runs it), with each step recorded as the row's stage.
+    Function mode serves the same handlers in the worker: it freezes the mode
+    at boot like the API. Returns (result, merged concept count)."""
+    from contextlib import aclosing
+
     from agents.deps import SaplingDeps
-    from agents.document import DocumentProcessingResult
-    from agents.summary import summary_agent
-    from agents.syllabus_extraction import syllabus_extraction_agent
-    from agents.tools.graph import apply_concepts_to_graph
-    from agents.usage import record_agent_usage
+    from services import document_pipeline as dp
 
-    user_id, course_id = row["user_id"], row["course_id"]
-    request_id = row.get("request_id")
-    deps = SaplingDeps(user_id=user_id, course_id=course_id, supabase=None,
-                       request_id=request_id)
-
-    def usage(r, task):
-        return record_agent_usage(r, feature="document", task=task,
-                                  user_id=user_id, request_id=request_id)
-
-    classification = usage(
-        await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS), "classifier",
-    ).output
-    await asyncio.to_thread(run.advance, EXTRACTING_CONCEPTS, None,
-                            category=classification.category,
-                            is_syllabus=classification.is_syllabus)
-
-    summary_task = summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    concepts_task = concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    syllabus = None
-    if classification.is_syllabus:
-        syllabus_task = syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-        summary_r, concepts_r, syllabus_r = await asyncio.gather(
-            summary_task, concepts_task, syllabus_task)
-        syllabus = usage(syllabus_r, "syllabus").output
-    else:
-        summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
-    summary = usage(summary_r, "summary").output
-    concepts = usage(concepts_r, "concepts").output
-    await asyncio.to_thread(run.advance, MERGING, None, concept_count=len(concepts.concepts))
-
-    merged = await apply_concepts_to_graph(user_id, course_id, [c.name for c in concepts.concepts])
-    return DocumentProcessingResult(
-        classification=classification, summary=summary, concepts=concepts,
-        syllabus=syllabus, graph_updated=merged > 0,
-    ), merged
+    deps = SaplingDeps(user_id=row["user_id"], course_id=row["course_id"], supabase=None,
+                       request_id=row.get("request_id"))
+    result, merged = None, 0
+    async with aclosing(dp.run_document_agents(text, deps)) as steps:
+        async for step in steps:
+            if step.name == dp.CLASSIFIED:
+                await asyncio.to_thread(run.advance, EXTRACTING_CONCEPTS, None,
+                                        category=step.category, is_syllabus=step.is_syllabus)
+            elif step.name == dp.EXTRACTED:
+                await asyncio.to_thread(run.advance, MERGING, None,
+                                        concept_count=step.concept_count)
+            elif step.name == dp.DONE:
+                result, merged = step.result, step.merged
+    return result, merged
 
 
 def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str) -> None:
