@@ -583,9 +583,9 @@ export function Dashboard() {
           the v3 design: no card, just the heading row over a divider. */}
       <div
         data-testid="home-graph-panel"
-        style={{ position: "relative", minHeight: 420, display: "flex", flexDirection: "column", flex: 1, background: "transparent" }}
+        style={{ position: "relative", minHeight: 420, display: "flex", flexDirection: "column", flex: 1, background: "transparent", border: DIVIDER, borderRadius: 14, overflow: "hidden" }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, paddingBottom: 10, borderBottom: DIVIDER }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 18px", borderBottom: DIVIDER }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, minWidth: 0 }}>
             <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 600, whiteSpace: "nowrap" }}>Knowledge Graph</span>
             <span style={{ fontSize: 14, color: "#6F6857", whiteSpace: "nowrap" }}>
