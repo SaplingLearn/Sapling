@@ -57,6 +57,11 @@ percentage rollout → stored default. Reads come from a 30-second snapshot
 | `varied_isomorphs` | The uploader's items are drafted with varied scenarios and representations and a stored surface descriptor; the student's picks prefer a surface not yet met; difficulty-1 items are kept out of the review interleave (A140). Read per uploader for drafting and per student for picks. | no | Only after the varied drafter's eval dataset is recorded live and passes. |
 | `multi_concept_items` | The uploader's uploads also draft items combining a concept with its direct prerequisites; a student proficient in every component is served one, at most once a session per concept, counted as a half-weight observation on the apex (A141). | no | Only after the combination drafter and its alignment check are recorded live; it drafts nothing unless the uploader also has `upload_prereq_edges`. |
 | `crisis_support` | A message stating suicidal ideation, self-harm or acute danger gets a fixed resources card instead of a model turn, on every tutor, loop and notes surface. | no | Owner, after reviewing the copy (`docs/safety/crisis-support.md`). |
+| `quiz_concept_plan` | The quiz home proposes concepts from the learner model — FSRS-due reviews first, then open misconceptions, then the ready fringe — and "Review everything due" is the FSRS-due set (`GET /api/quiz/plan`, 404 off; A143). Reads only. | yes | Owner, any time: no model call, no write. |
+| `quiz_planned_questions` | Code chooses each quiz question's difficulty and misconception target; the planned writer (`backend/agents/quiz_planned.py`) only writes them, tagging distractors with the named keys (A144). | no | Only after `backend/tests/evals/quiz_generation_planned.py` is recorded live and passes (then it joins `run_all.py`). |
+| `quiz_item_gates` | Each generated quiz question passes A119's concept check and A124's blind solve on `quiz_check` before it is served; a misaligned or disputed one is never served, and only a verified one is evidence (A145). Two to three model calls per quiz. | no | After the live smoke of the checks on quiz questions (`backend/tests/evals/quiz_item_gates.py`) is recorded and passes, and the cost is measured (`quiz.items_gated`; the cost projection's quiz section). Before or with `quiz_planned_questions`. |
+| `quiz_misconceptions` | A "Sure" wrong answer on a verified quiz question's tagged distractor records that misconception; a correct, unassisted first answer to a verified question listing an open key closes it (A146). | no | After `quiz_planned_questions` and `quiz_item_gates` are on (it acts only on questions generated under both) and the tag yield is measured. |
+| `quiz_results_routing` | The quiz results show each skill meter that moved, what is due, and the next step: the review queue, or Learn on the weakest ready concept (A147). Reads only. | no | Owner, any time. |
 | `decision_router` | Main's observe-only tutor router (ADR 0027). Not part of the loop; acts on nothing. | no | — |
 
 A flag is resolved once per request, turn or upload and the answer carried
@@ -96,6 +101,16 @@ Operationally:
 - **Routing.** Only the `standard` and `deep` tutor tiers are routable today
   (`backend/agents/loop_tutor.py::LOOP_ROUTABLE_TIERS`); a turn the policy
   assigns to `lite` runs on `standard` (A49, A108).
+- **The quiz's check slot (A145).** `quiz_check` (default
+  `claude-sonnet-5-5`, effort low) runs the A119 and A124 agents on generated
+  quiz questions. It must resolve to a model other than the `quiz` writer's
+  (`claude-haiku-5-5`); when an override makes them one model, no quiz key is
+  verified and every gated question is practice
+  (`backend/services/quiz_learning.py::checks_independent`). The writer is
+  the model that wrote the request: a quiz request's `model_pref` `smart`
+  writes on `claude-sonnet-5-5`, so its questions are practice under the
+  default slot (`backend/routes/quiz.py::_writer_model_name`). A `gemini-*`
+  override keeps it independent at a fraction of the cost.
 - **Model mode.** `SAPLING_MODEL_MODE` is `real` (default) or `function`;
   it is frozen at boot (`backend/agents/_providers.py::freeze_model_mode`,
   the first call in the lifespan), and `/api/health` reports it.
@@ -141,6 +156,13 @@ at the hard level), a self-explanation prompt adds none (code serves it; only
 the next turn carries a one-line acknowledgement), and multi-concept drafting
 adds a drafting call and an alignment check per batch of combinations, billed
 to the uploader like all drafting (A44). None of this has been costed yet.
+
+The quiz's item gates (A145) are costed offline in the projection's "The quiz
+in the learning system" section: about $0.013 per gated five-question quiz
+($0.0026 a question) on the default `quiz_check` (Sonnet), about $0.0006 on a
+Gemini Flash-Lite override, against about $0.0008 for the planned writer's own
+call. They are billed to the student inside the quiz's daily spend cap, not to
+the loop.
 
 ### Per-student budget
 
@@ -280,7 +302,12 @@ flag-on prompts — the prequestion's explaining turn, the self-explanation
 acknowledgement, the varied drafter and top-up, the combination drafter and
 its alignment check — have **no live recording yet**; they run only in
 function mode and the offline tests until the owner approves the spend, and
-each flag waits on its recording.
+each flag waits on its recording. The same holds for the quiz's planned
+writer (`backend/tests/evals/quiz_generation_planned.py`, cases and
+evaluators ready, no cassette) and for the A119/A124 agents on quiz
+questions on `quiz_check` (`backend/tests/evals/quiz_item_gates.py`). The quiz journeys with the quiz flags on are in
+`frontend/e2e/quiz-learning.spec.ts`; the flag-off pins are
+`backend/tests/test_quiz_learning_flags_off.py`.
 
 ### Hermetic guards
 

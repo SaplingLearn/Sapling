@@ -506,6 +506,46 @@ Varied practice (spec §13 A140, A141; `feat/learning-varied-practice`):
    `backend/tests/integration/test_misconceptions_record_db.py` prove the
    bodies on the local stack.
 
+#### The quiz in the learning system (A143–A147)
+
+The quiz package (spec §13 A143–A147; `feat/quiz-learning-system`, on the
+wave-4 tip 50e9ded8) adds **no migration**: its stored fields ride inside the
+encrypted `quiz_attempts.questions_json`, and a quiz misconception goes into
+the existing `misconceptions` / `misconception_attempts` tables under the item
+id `quiz:<question_hash>`. `REQUIRED_COLUMNS` does not change.
+
+1. Deploy order: the code alone, any time after the wave-4 migrations. It
+   reads the columns A127 (`node_mastery_events.student_confidence`), A123
+   (`learning_evidence_voids`) and A142 (the seven-argument
+   `misconception_record`) added, so those must be in place first — they are,
+   wherever wave 4 was applied.
+2. Five flags ship OFF and are per student. Off, every quiz generation
+   request, served question, evidence row, stored row and response is
+   byte-identical to 50e9ded8 (`backend/tests/test_quiz_learning_flags_off.py`),
+   so the `quiz_generation` cassettes replay. Turn them on in this order, each
+   when its condition holds:
+   - `quiz_concept_plan` and `quiz_results_routing`: reads only, no model
+     call — the owner's call, any time.
+   - `quiz_item_gates`: after the live smoke of the A119 and A124 agents on quiz
+     questions on the `quiz_check` slot (`backend/tests/evals/quiz_item_gates.py`,
+     recorded and passing; it then joins `run_all.py`) and a measured cost (`quiz.items_gated`,
+     `llm_usage` features `quiz_check_*`; the offline estimate is in the cost
+     projection). `quiz_check` must resolve to a model other than `quiz`'s, or
+     no key is verified (every gated question is then practice). Decide the
+     `quiz_check` model first (Sonnet default, or a Gemini override).
+   - `quiz_planned_questions`: after `backend/tests/evals/quiz_generation_planned.py`
+     is recorded live and passes; it joins `run_all.py` in that change.
+     Turning it on before `quiz_item_gates` leaves planned questions ungated,
+     as plain ones are today.
+   - `quiz_misconceptions`: after both above, once the tag rate is measured;
+     it acts only on questions generated under both.
+3. Rollback: the flags off (the admin flags API, or `SAPLING_FLAG_*`).
+   Questions generated meanwhile keep their stored gate, plan and tags: an
+   unverified one stays out of evidence whatever the flags say, and nothing
+   else reads the fields. Misconceptions recorded meanwhile stay open (the
+   loop's readers see them) until a correct answer closes them or they age out
+   after `MISCONCEPTION_RECENT_DAYS`.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,

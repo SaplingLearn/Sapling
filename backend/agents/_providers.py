@@ -69,6 +69,10 @@ AgentTask = Literal[
     # The drafted items' key check: a blind independent solve, and the
     # free-text key match on the same slot (§13 A124).
     "check_items_solve",
+    # The quiz's item gates (§13 A145): the A119 concept check, the A124 blind
+    # solve and key match, run on generated quiz questions on a model other
+    # than the quiz writer's.
+    "quiz_check",
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
     "grader", "grader_second",
     # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
@@ -158,6 +162,18 @@ _DEFAULTS: dict[AgentTask, str] = {
     # When check_items moves to a claude-* model (A111's runbook), move this
     # slot off that model too, for the same reason.
     "check_items_solve": "claude-haiku-5-5",
+    # The quiz's item gates (spec §13 A145): the A119 concept check, the A124
+    # blind solve and the key match, run by their own agents on generated quiz
+    # questions with this slot's model. The solve must come from a model other
+    # than the quiz writer's (A124: a solver sharing the writer's mistakes
+    # passes a wrong key as verified), and the quiz writes on Haiku, so the
+    # checks run on the other Claude model. The gate itself refuses to verify
+    # a key when both slots resolve to one model
+    # (services/quiz_learning.py::checks_independent). Pointing it at a
+    # gemini-* model (SAPLING_MODEL_QUIZ_CHECK) keeps it independent at a
+    # fraction of the cost: the owner's call (the cost projection's "Quiz item
+    # gates" section).
+    "quiz_check": "claude-sonnet-5-5",
     # The rubric grader (PKG-05): short per-item binary judgments (spec §2).
     "grader": "gemini-2.5-flash-lite",
     # One second opinion on a DIFFERENT model, same agent and prompt (spec
@@ -373,6 +389,10 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     # transfer question at difficulty 3) — the item author's kind of work, so
     # check_items' level; the key match rides the slot.
     "check_items_solve": "medium",
+    # A145 †: the quiz checks on the step-up model, at its lowest effort: the
+    # questions are single-concept practice items, and Sonnet's thinking is
+    # billed at $10/MTok. Measured with the live smoke before the flag is on.
+    "quiz_check": "low",
     "grader": "low",
     "grader_second": "medium",
     "learning_decision": "low",

@@ -336,6 +336,7 @@ async def run_drafting(
     flex: bool,
     feature: str,
     task: AgentTask = "check_items",
+    model=None,
 ):
     """One background run of `agent` on the `task` model slot (check_items for
     the drafting agents; check_items_verify for the A119 alignment check).
@@ -344,13 +345,18 @@ async def run_drafting(
     once on the standard tier. Returns the run's output; any failure returns
     CheckItemsUnavailable — never raises — and records in llm_usage (`task`,
     `feature`) whatever the provider billed before it. Shared by draft_items,
-    the A37 top-up and the A119 verifier."""
+    the A37 top-up and the A119 verifier. `model` (spec §13 A145) runs the
+    agent on another slot's model — the quiz's checks, on `quiz_check` — and
+    is passed to the run only when given, so every other run is unchanged."""
     settings = _flex_settings(task) if flex else None
     attempts = CHECK_ITEM_FLEX_RETRIES + 1 if flex else 1
+    extra = {} if model is None else {"model": model}
     for attempt in range(1, attempts + 1):
         usage = RunUsage()  # passed in, so a run that raises still says what it cost
         try:
-            result = await agent.run(prompt, deps=deps, model_settings=settings, usage=usage)
+            result = await agent.run(
+                prompt, deps=deps, model_settings=settings, usage=usage, **extra
+            )
         except ModelHTTPError as exc:
             _record_unfinished(usage, deps, feature, task)
             if exc.status_code in _FLEX_RETRY_STATUS and attempt < attempts:

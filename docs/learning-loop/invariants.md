@@ -68,6 +68,14 @@ effect on grading is indirect and deliberate: its answer is shown, so the
 item is revealed and A76 makes the concept's next graded item a half-weight
 re-check.
 
+**The quiz (A145).** With `quiz_item_gates` on, a quiz answer is evidence
+only when its question passed the item gates (A119's concept check and an
+independent A124 blind solve); an unverified question is served as practice
+and its answer, right or wrong, writes nothing
+(`backend/learning/quiz_gates.py::evidence_exclusion`, run inside the A132
+lint gate). A question stored without a gate (the flag off when it was
+generated) counts as before.
+
 **Why.** Grading chat would reward talking, and the tutor would grade its own
 teaching. Recording only one side of an outage (say, only the wrong answers
 that failed fast) would bias the belief in a direction no one could see. A
@@ -149,6 +157,11 @@ student read drops it; every picker serves only
 The staff-hold codes are derived by the database from `check_item_reviews`;
 Python never sets or clears them. Every quality gate on drafting fails
 closed: an unavailable alignment or key check drops the drafts.
+
+The quiz follows the same rule for its own questions (A145): a generated
+quiz question whose key the blind solve disputes, or that the passages it was
+written from do not settle, is dropped before it is served
+(`backend/learning/quiz_gates.py::decide`).
 
 **Why.** A wrong key does double damage: it grades students wrong, and the
 wrong-answer feedback teaches the wrong answer to the whole course (A124).
@@ -259,7 +272,10 @@ leave every model request, served text, response and stored row exactly as
 before it existed: wave 4's four flags are pinned that way against
 `f9eca612` (`backend/tests/test_learning_teach_prompts_flag_off.py`,
 `backend/tests/test_learning_varied_drafting.py`,
-`backend/tests/test_learning_varied_serving.py`).
+`backend/tests/test_learning_varied_serving.py`), and the quiz's five
+(A143–A147) against `50e9ded8` (`backend/tests/test_quiz_learning_flags_off.py`:
+the quiz agent's request on four variants, and the whole generate, answer and
+submit flow).
 
 **Why.** A kill switch must work even when the database is down and must not
 leave a half-loop running; a flag that fails open would change pedagogy or
@@ -288,6 +304,12 @@ table read), `inv_15_gate_never_inside_chat_stream`,
 - A loop slot's default moves from Gemini to Claude only with its eval
   re-recorded (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`; `backend/tests/test_anthropic_provider.py`);
   an evidence slot on an unevaluated model warns at boot (A128).
+- A key is verified only by a solve on another model than its writer's: the
+  loop's `check_items_solve` against `check_items` (`INDEPENDENT_SLOTS`,
+  A124), and the quiz's `quiz_check` against the model that wrote the
+  request (`quiz`, or its fast/smart override), which the quiz gate
+  enforces itself — when the two resolve to one model no quiz key is
+  verified (`backend/services/quiz_learning.py::checks_independent`, A145).
 
 **Why.** Agents are built at import; a mode that changes mid-process makes
 some calls billable and others scripted. A model run without a budget check

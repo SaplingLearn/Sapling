@@ -11,8 +11,10 @@
  *    detail panel, the upload dialog), study (guides, a guide open, flashcards),
  *    notes, settings (every tab), another student's profile, quiz (the AI
  *    notice, home, the adjust dialog, a multiple-choice question, its checked
- *    answer, the ask panel, a written answer, results), the admin check-item
- *    queue and key audit — in both lanes;
+ *    answer, the ask panel, a written answer, results; with the quiz's
+ *    learning-system flags on for the student (spec §13 A143–A147), home with
+ *    the plan's reason and results with the learning block), the admin
+ *    check-item queue and key audit — in both lanes;
  *  - the learning loop (default lane only, spec §11.4): the check-in question,
  *    the answer shown after a miss, the plan, a teaching turn, a check card
  *    with its worked-example hint, a refused hint, feedback after an answer, a
@@ -45,7 +47,7 @@ import { learningParams } from "./support/params";
 import { showsAnotherItem } from "./support/probe";
 import { expectAskReply, STREAM_TIMEOUT } from "./support/quiz";
 import { mintStorageState } from "./support/session";
-import { USER_CAPPED, USER_LOOP } from "./support/stack";
+import { USER_ACTIVE, USER_CAPPED, USER_LOOP } from "./support/stack";
 
 const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
 const USER_SECOND = "rich-user-second";
@@ -277,6 +279,36 @@ test("quiz: a written answer", async ({ page }) => {
   await written.fill("50%");
   await expect(page.getByTestId("quiz-written-readback")).toContainText("Reads as 0.5");
   await expectAccessible(page, "quiz: numeric answer read back");
+});
+
+test("quiz, learning system on: home with the plan's reason, results with the learning block", async ({ page }) => {
+  test.setTimeout(QUIZ_TIMEOUT_MS);
+  for (const key of ["quiz_concept_plan", "quiz_planned_questions", "quiz_item_gates", "quiz_results_routing"]) {
+    await setUserFlag(key, USER_ACTIVE, "on");
+  }
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "sapling_quiz_prefs",
+      JSON.stringify({ count: 3, difficulty: "adaptive", feedback: "at-end" }),
+    );
+  });
+  await page.goto("/quiz");
+  await expect(page.getByTestId("quiz-plan-reason")).toBeVisible({ timeout: 30_000 });
+  await expectAccessible(page, "quiz: home with the plan's reason");
+
+  await page.goto(`/quiz?concept=${QUIZ_NODE}`);
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("quiz-start").click();
+  // The planned questions (function_handlers_e2e.py::_e2e_planned), keyed B, C, A.
+  for (const [i, label] of ["B", "C", "A"].entries()) {
+    await expect(page.getByTestId("quiz-panel")).toContainText(`E2E planned question ${i + 1} `, {
+      timeout: GENERATE_TIMEOUT,
+    });
+    await page.getByTestId(`quiz-answer-option-${label}`).click();
+    await page.getByTestId("quiz-submit-answer").click();
+  }
+  await expect(page.getByTestId("quiz-results-learning")).toBeVisible({ timeout: 30_000 });
+  await expectAccessible(page, "quiz: results with the learning block");
 });
 
 test("admin: check-item review queue and key audit", async ({ browser }) => {

@@ -30,6 +30,7 @@ import type { QuizSession } from "@/lib/quiz/types";
 import { sourceLabel } from "@/lib/quiz/exits";
 import { AskPanel } from "../question/AskPanel";
 import type { QuizConceptSummary } from "../question/QuizQuestion";
+import { LearningBlock } from "./LearningBlock";
 import { MissedList, buildMissedItems, type MissedItem } from "./MissedList";
 import "./results.css";
 
@@ -186,6 +187,10 @@ export function QuizResults({
           </span>
         )}
       </div>
+
+      {/* Spec §13 A147: the learner model's account of this quiz — only when
+          the submit reply carries one (`quiz_results_routing`). */}
+      {result.learning && <LearningBlock learning={result.learning} conceptName={concept.name} />}
 
       {isPerfect ? (
         <p className="quiz-results__perfect" data-testid="quiz-results-perfect">

@@ -65,8 +65,20 @@ quiz.answer_key_flag_omitted  usage     quiz_id
 quiz.evidence_excluded        system    quiz_id, concept_node_id, question_hash, flags (the
                                         item's lint codes), excluded_by (the codes that kept it
                                         out), correct — a submitted quiz answer kept out of
-                                        mastery evidence for an item-flaw code (spec §13 A132);
-                                        codes and ids only, never the item's text
+                                        mastery evidence for an item-flaw code (spec §13 A132)
+                                        or, with quiz_item_gates, for a question its gate did
+                                        not verify (excluded_by then holds the gate's codes,
+                                        A145); codes and ids only, never the item's text
+quiz.items_gated              system    questions, grounded, and a count per gate code
+                                        (verified / practice / dropped, aligned / misaligned /
+                                        alignment_unverified, key_agreed / key_disputed /
+                                        key_unsolved / key_unverified / key_not_independent)
+                                        — one generation's questions through the quiz item
+                                        gates (spec §13 A145); counts only
+quiz.misconception_recorded   usage     node_id, wrong_key, question_hash, count — a "Sure"
+                                        wrong answer on a verified quiz question recorded a
+                                        misconception (spec §13 A146); ids, the plaintext key
+                                        and a count only, never the answer
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 flashcard.generated           usage     card_count, documents_used, weak_concepts_used, via
@@ -171,7 +183,9 @@ learn.session_closed          usage     session_id, concepts, misconceptions, ha
                                         model_written — a loop session's close was stored
                                         (PKG-09, spec §6, §13 A8); counts and bools only
 learn.misconception_resolved  usage     node_id, wrong_key, check_item_id, recorded_on, count,
-                                        surface (check / probe / review), session_id — a
+                                        surface (check / probe / review / quiz — a quiz
+                                        question's item id is "quiz:<question_hash>", A146),
+                                        session_id — a
                                         correct, unassisted answer on an isomorph closed one
                                         open misconception (spec §13 A127); ids, the
                                         plaintext key, a count and enums only
@@ -331,6 +345,16 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # counts the evidence the linter withheld, and its `correct` split is the
     # measure of the cue (correct rate on cued items against clean ones).
     "quiz.evidence_excluded",
+    # Learning-loop spec §13 A145: one generation's questions through the quiz
+    # item gates — a count per gate code (verified / practice / dropped and the
+    # two halves'). category="system": the server's decision about items. It
+    # is what measures the gates' yield and their cost per kept question
+    # before the flag is turned on for everyone.
+    "quiz.items_gated",
+    # Learning-loop spec §13 A146: a "Sure" wrong answer on a verified quiz
+    # question whose chosen option is tagged with a misconception key recorded
+    # that misconception (one per record). Ids, the plaintext key and a count.
+    "quiz.misconception_recorded",
     "chat.message_sent",
     "note.created",
     # ADR 0028: flashcard generation (an LLM feature) and review had no event

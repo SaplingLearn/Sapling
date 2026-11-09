@@ -74,6 +74,7 @@ const eslintConfig = [
       "src/components/quiz/question/LeaveDialog.tsx",
       "src/components/quiz/results/QuizResults.tsx",
       "src/components/quiz/results/MissedList.tsx",
+      "src/components/quiz/results/LearningBlock.tsx",
       "src/components/ui/AnswerOption.tsx",
       "src/components/ui/SegmentedControl.tsx",
       "src/components/ui/Sheet.tsx",

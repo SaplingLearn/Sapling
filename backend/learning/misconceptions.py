@@ -57,9 +57,10 @@ from services.events_service import log_event
 logger = logging.getLogger("sapling.learning.misconceptions")
 
 #: Spec §13 A127: one closed misconception (the event names the surface that
-#: closed it: the check route, the probe or the review).
+#: closed it: the check route, the probe or the review; A146: the quiz, whose
+#: questions go under services/quiz_learning.py's "quiz:<hash>" item ids).
 RESOLVED_EVENT = "learn.misconception_resolved"
-RESOLVE_SURFACES = ("check", "probe", "review")
+RESOLVE_SURFACES = ("check", "probe", "review", "quiz")
 
 #: The rule's verdict: the six spec §3.3 verdicts plus "none" (a plain correct
 #: attempt with nothing to diagnose). One type with Evidence.verdict.

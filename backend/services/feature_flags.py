@@ -238,6 +238,70 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "On sends new drafting prompts, so turn it on only after the multi-"
             "concept eval dataset is recorded live and passes. Off: drafting and "
             "every pick are byte-identical to before A141.", False),
+    # Learning loop spec §13 A143-A147: the quiz in the learning system. Five
+    # flags because each part rolls out on its own condition; all ship off and,
+    # off, the quiz is byte-identical to before them
+    # (tests/test_quiz_learning_flags_off.py).
+    #
+    # A143: the quiz home's proposals and its "due" queue come from the learner
+    # model (GET /api/quiz/plan, 404 while off). Client-visible: the home asks
+    # for the plan only when it is on. Reads only, no model call.
+    FlagDef("quiz_concept_plan", ("off", "on"),
+            "Quiz concept plan (A143): the quiz home proposes concepts from the "
+            "learner model — reviews due by their FSRS date first, then concepts "
+            "with an open misconception, then concepts whose prerequisites are "
+            "proficient but which are not yet — and 'Review everything due' means "
+            "due by FSRS. Reads only. Off: the home ranks by the graph's mastery "
+            "tier as before.", True),
+    # A144: code chooses each question's difficulty (the band's loop check
+    # level when the student asked for adaptive) and the misconception one
+    # distractor must embody; a separate prompt (agents/quiz_planned.py) is
+    # told only that, and tags its distractors with the named keys. Resolved
+    # once per /generate for the student. Server-only.
+    FlagDef("quiz_planned_questions", ("off", "on"),
+            "Quiz planned questions (A144): the learner model chooses each "
+            "question's difficulty and the misconception a distractor targets; "
+            "the model only writes them, with options alike in length, and tags "
+            "its distractors with the named misconception keys. On sends a new "
+            "quiz prompt and schema, so turn it on only after the "
+            "quiz_generation_planned eval dataset is recorded live and passes. "
+            "Off: the quiz request is byte-identical to before A144.", False),
+    # A145: every generated question passes the A119 concept check and the
+    # A124 blind key solve (slot `quiz_check`, a different model from the
+    # quiz writer) before it is served; only a verified one is evidence.
+    # Resolved once per /generate for the student. Server-only.
+    FlagDef("quiz_item_gates", ("off", "on"),
+            "Quiz item gates (A145): each generated question is checked before it "
+            "is served — does it test this concept (the A119 check) and does an "
+            "independent blind solve reach its key (A124) — on the quiz_check "
+            "slot. A question testing another concept, or whose key the solve "
+            "disputes, is never served; only a verified one moves mastery. Adds "
+            "two to three model calls per quiz: turn it on after a live smoke of "
+            "the checks on quiz questions and a measured cost. Off: unchanged.",
+            False),
+    # A146: a verified question's tagged distractor chosen with "Sure" records
+    # the misconception; a correct, unassisted, first answer to a verified
+    # question listing an open key closes it (A127). Resolved once per /submit.
+    # Needs quiz_planned_questions (the tags) and quiz_item_gates (verified
+    # items) on when the quiz was generated. Server-only.
+    FlagDef("quiz_misconceptions", ("off", "on"),
+            "Quiz misconceptions (A146): a wrong answer stated 'Sure' on a verified "
+            "quiz question whose chosen option embodies a known misconception "
+            "records that misconception for the student (the Learn tutor and the "
+            "review queue then see it), and a correct, unassisted first answer to a "
+            "verified question listing an open misconception closes it. Acts only "
+            "on questions generated with quiz_planned_questions and "
+            "quiz_item_gates on. Off: the quiz records and closes nothing.",
+            False),
+    # A147: the submit response's `learning` block — each concept's skill-meter
+    # change, what is due for review, and the next step. Resolved once per
+    # /submit for the student. Server-only: the results screen renders the
+    # block whenever the response carries one.
+    FlagDef("quiz_results_routing", ("off", "on"),
+            "Quiz results routing (A147): the quiz results show, in plain words, "
+            "how each concept's skill meter moved, what is due for review, and the "
+            "next step — review what is due, or practise the weakest concept in "
+            "Learn. Reads only. Off: the results are unchanged.", False),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

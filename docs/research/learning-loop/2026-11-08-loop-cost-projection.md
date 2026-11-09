@@ -261,6 +261,58 @@ Findings:
    turns: run it with `SAPLING_EVAL_USAGE_LOG`, and the lines it writes replace
    this addendum's estimates.
 
+## The quiz in the learning system (spec §13 A144, A145)
+
+2026-11-08, added with the quiz flags. The quiz is not the loop: its calls are
+billed to the student under the quiz's own features and its daily spend cap
+(`QUIZ_DAILY_SPEND_CAP_USD`), never to the loop's per-session cost. Offline,
+by this document's method: characters / 4 of the prompts the code builds
+(the system prompt, the output schema and the user message, from
+`agents/quiz_planned.py::build_message`, `agents/check_items_verify.py::build_verify_prompt`,
+`agents/check_items_solve.py::build_solve_prompt` and
+`agents/check_items_key_match.py::build_match_prompt`), thinking at the
+effort allowance above (low 100 tokens), no caching, no live call.
+
+**The shape** (†): a five-question multiple-choice quiz, grounded in the
+route's five retrieved chunks of about 266 tokens each; a plan naming seven
+misconception keys; twenty concept names for the concept check. Output per
+question: about 182 tokens from the writer (stem, four options, a tag each,
+explanation), 28 from the concept check, 35 from the solve.
+
+| Call | Slot (default model) | Input tokens | Output tokens | $ per quiz |
+|---|---|---|---|---|
+| Planned writer (`quiz_planned_questions`) | `quiz` (Haiku 5.5, low) | 2,988 | 1,010 | $0.0008 |
+| Concept check (A119's agent) | `quiz_check` (Sonnet 5.5, low) | 1,518 | 240 | $0.0054 |
+| Blind solve (A124's agent) | `quiz_check` (Sonnet 5.5, low) | 2,501 | 275 | $0.0078 |
+| Key match, two written pairs (written quizzes only) | `quiz_check` (Sonnet 5.5, low) | 558 | 160 | $0.0027 |
+
+**The gate calls per question** (`quiz_item_gates`: the concept check and the
+solve, run concurrently once per generation run; the key match only for a
+written answer the quiz grader rejects):
+
+| `quiz_check` model | Gates per five-question quiz | Per question | Per student-month at 8 quizzes † |
+|---|---|---|---|
+| Sonnet 5.5 (the default) | $0.0132 | $0.0026 | $0.106 (0.29× the loop's $0.36 target) |
+| Gemini 2.5 Flash (`SAPLING_MODEL_QUIZ_CHECK`) | $0.0025 | $0.0005 | $0.020 |
+| Gemini 2.5 Flash-Lite | $0.0006 | $0.0001 | $0.005 |
+
+Haiku is not an option: the quiz writes on Haiku, and A124 verifies a key
+only by a solve from another model (`services/quiz_learning.py::checks_independent`
+refuses it). A drop that triggers the bounded top-up adds one more writer call
+and one more gate pass over the new questions (at most double, once). The
+planned writer is cheaper than the plain quiz agent it replaces: no tools,
+one request, a 1,014-token system prompt against the plain agent's 1,850 and
+its tool round trip.
+
+**For the owner's decision (not a decision).** The Sonnet default keeps ADR
+0030's Claude-only defaults and costs about as much per quiz as two loop
+sessions' grading on Haiku; a cross-family Gemini solver is what A124 itself
+prefers and costs a twentieth. Thinking is unmeasured: measure both with
+`SAPLING_EVAL_USAGE_LOG` when the planned dataset and the live smoke of the
+checks on quiz questions are recorded, and read `quiz.items_gated` for the
+yield (verified, practice and dropped per generation) before the flag goes on
+for everyone.
+
 ## Re-running
 
 ```sh

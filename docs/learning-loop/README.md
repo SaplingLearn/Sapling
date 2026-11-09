@@ -200,3 +200,23 @@ the two owner questions still open), and wave 4.
 Neither a prequestion nor a self-explanation is ever evidence. Each flag
 waits for a live eval recording of its new prompts before it is turned on
 ([operations.md](operations.md#feature-flags)).
+
+**The quiz** (A143–A147, branch `feat/quiz-learning-system` on the wave-4
+tip) joins the learning system behind five more per-student flags, all off
+and byte-identical while off
+([flows.md](flows.md#8-the-quiz-in-the-learning-system)):
+
+- A143, `quiz_concept_plan`: the quiz home proposes concepts from the learner
+  model — FSRS-due reviews first, then open misconceptions, then concepts the
+  student is ready for.
+- A144, `quiz_planned_questions`: code chooses each question's difficulty and
+  the misconception one distractor targets; the model only writes them.
+- A145, `quiz_item_gates`: each generated question passes the loop's concept
+  check and an independent blind key solve before it is served; only a
+  verified one is evidence.
+- A146, `quiz_misconceptions`: a "Sure" wrong answer on a tagged distractor
+  records the misconception; a correct first answer closes one.
+- A147, `quiz_results_routing`: the results show each skill meter that moved,
+  what is due, and the next step (the review queue, or Learn).
+
+The quiz serves no check item and is never a post-test.

@@ -171,6 +171,17 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Recompute, replay | After a void, the student's state is rebuilt from the non-void journal with the same code the writer uses. | `backend/learning/evidence_replay.py::replay` |
 | Evidence reader vs exposure reader | Readers of evidence (spans, planning, close, brief, item statistics) leave void rows out; readers of exposure (seen, revealed) keep them. | `backend/learning/void_store.py::voided_event_ids` |
 
+## The quiz
+
+| Spec term | Plain words | Code |
+|---|---|---|
+| Quiz plan | The quiz home's proposals from the learner model: FSRS-due reviews, then concepts with an open misconception, then concepts the student is ready for, A143. | `backend/learning/quiz_plan.py::rank_concepts` |
+| Question spec | What one planned quiz question must be: its slot, its difficulty, and the misconception one distractor targets, A144. | `backend/learning/quiz_plan.py::QuestionSpec` |
+| Tag | The misconception key a quiz distractor embodies, kept only when the plan named it; stored, never served, A144. | `backend/learning/quiz_gates.py::validate_tags` |
+| Gate (quiz) | A generated quiz question's verdict from the loop's concept check and blind key solve: verified (evidence), practice (served, never evidence) or dropped (never served), A145. | `backend/learning/quiz_gates.py::decide` |
+| `quiz_check` | The model slot the quiz's checks run on, which must differ from the quiz writer's, A145. | `backend/services/quiz_learning.py::checks_independent` |
+| Learning block | The quiz results' account of what changed: the skill meters that moved, what is due, the next step, A147. | `backend/services/quiz_learning.py::results_block` |
+
 ## Models, cost and modes
 
 | Spec term | Plain words | Code |

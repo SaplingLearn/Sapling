@@ -115,6 +115,11 @@ def test_event_taxonomy_is_pinned():
         # evidence for an item-flaw code. Emit coverage lives in
         # test_quiz_confidence_lint.py.
         "quiz.evidence_excluded",
+        # Learning-loop spec §13 A145 / A146: a generation's questions through
+        # the quiz item gates, and a misconception the quiz recorded. Emit
+        # coverage lives in test_quiz_learning.py.
+        "quiz.items_gated",
+        "quiz.misconception_recorded",
         "chat.message_sent",
         "note.created",
         # ADR 0028: flashcard generation/review had no event; added so both

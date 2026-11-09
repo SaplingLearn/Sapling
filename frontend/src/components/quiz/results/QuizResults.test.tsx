@@ -195,6 +195,32 @@ const PERFECT: Partial<QuizSession> = {
 };
 
 describe("QuizResults", () => {
+  it("shows the learner model's block only when the submit reply carries one (A147)", () => {
+    renderResults();
+    expect(screen.queryByTestId("quiz-results-learning")).toBeNull();
+    cleanup();
+    renderResults({
+      result: {
+        ...RESULT,
+        learning: {
+          changes: [
+            { concept_id: "recursion", concept_name: "Recursion", before: 0.29, after: 0.46, band_before: "novice", band_after: "develop" },
+          ],
+          review: { due_count: 0, next_due_at: null },
+          next_step: "learn",
+          learn: { concept_id: "recursion", concept_name: "Recursion", course_id: "cs101" },
+        },
+      },
+    });
+    expect(screen.getByTestId("quiz-results-change")).toHaveTextContent(
+      "Recursion: rose from 29% to 46% (now developing)",
+    );
+    expect(screen.getByTestId("quiz-next-step-learn")).toHaveAttribute(
+      "href",
+      "/learn?topic=Recursion&course=cs101",
+    );
+  });
+
   it("shows the score, the mastery delta and the XP line", () => {
     renderResults();
     expect(screen.getByTestId("quiz-results-score")).toHaveTextContent("2 of 3 correct");

@@ -18,25 +18,29 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useFlag } from "@/context/FlagsContext";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import { courseInTerm } from "@/lib/useActiveSemester";
 import type { GraphEdge, GraphNode } from "@/lib/types";
-import { abandonAttempt, getAttempt, listAttempts } from "./api";
+import { abandonAttempt, getAttempt, getQuizPlan, listAttempts } from "./api";
 import { cachedDescription, loadDescription } from "./conceptDescriptions";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
+  courseQueueFromPlan,
+  dueFromPlan,
   dueSet,
   entrySelection,
   groupByCourse,
   primaryOf,
   queueFor,
   rankCandidates,
+  rankFromPlan,
   type Candidate,
 } from "./proposals";
-import { dismissAttempt, isDismissed, loadSession } from "./session";
+import { dismissAttempt, isDismissed, loadSession, QUEUE_MAX } from "./session";
 import type { EntryRequest } from "./source";
-import type { AttemptDetail, AttemptSummary, QuizSession } from "./types";
+import type { AttemptDetail, AttemptSummary, QuizPlan, QuizSession } from "./types";
 
 /** One page of history is enough for both the resume sweep and the "missed N
  *  last time" join; the route clamps `limit` to 100 anyway. */
@@ -61,6 +65,14 @@ export interface QuizHome {
   primary: Candidate | null;
   alternatives: Candidate[];
   due: ReturnType<typeof dueSet>;
+  /** The concept ids "Review everything due" works through, in order. */
+  dueQueue: string[];
+  /**
+   * Learning-loop spec §13 A143: the proposals, the card's suggestion and the
+   * due queue come from the learner model's plan (`quiz_concept_plan` on and
+   * `GET /api/quiz/plan` answered). False: the graph-tier ranking above.
+   */
+  planned: boolean;
   byCourse: ReturnType<typeof groupByCourse>;
   resumable: ResumableQuiz | null;
   /**
@@ -158,6 +170,8 @@ interface Loaded {
   edges: GraphEdge[];
   courses: EnrolledCourse[];
   attempts: AttemptSummary[];
+  /** Spec §13 A143: the learner model's plan, or null (flag off, or it failed). */
+  plan: QuizPlan | null;
   error: QuizError | null;
 }
 
@@ -166,6 +180,7 @@ const EMPTY_LOAD = {
   edges: [] as GraphEdge[],
   courses: [] as EnrolledCourse[],
   attempts: [] as AttemptSummary[],
+  plan: null as QuizPlan | null,
 };
 
 /**
@@ -188,6 +203,10 @@ export function useQuizHome(
     null,
   );
   const [nonce, setNonce] = useState(0);
+  // Spec §13 A143: the learner model's plan replaces the tier ranking. Read
+  // once per load; while the flags are still loading this is "off", and the
+  // load re-runs when it turns on.
+  const planOn = useFlag("quiz_concept_plan") === "on";
 
   const refresh = useCallback(() => setNonce(n => n + 1), []);
 
@@ -242,7 +261,7 @@ export function useQuizHome(
   // binary, and this one hid the resume-discovery hook from every diff.
   const key = semester === null || !userId
     ? ""
-    : `${nonce}\u0000${userId}\u0000${semester}`;
+    : `${nonce}\u0000${userId}\u0000${semester}\u0000${planOn ? "plan" : ""}`;
   const current = loaded?.key === key ? loaded : null;
   const status: QuizHome["status"] = !key || !current
     ? "loading"
@@ -258,12 +277,14 @@ export function useQuizHome(
       try {
         // The three reads are independent; a failing history must not cost the
         // student their whole home screen, so only the graph pair is fatal.
-        const [courseRes, graphRes, attemptRes] = await Promise.all([
+        const [courseRes, graphRes, attemptRes, plan] = await Promise.all([
           getCourses(userId),
           getGraph(userId, semester || undefined),
           listAttempts(userId, { limit: HISTORY_LIMIT }).catch(
             () => ({ total: 0, limit: HISTORY_LIMIT, offset: 0, attempts: [] as AttemptSummary[] }),
           ),
+          // A failed plan costs nothing but the plan: the tier ranking stands in.
+          planOn ? getQuizPlan(userId).catch(() => null) : Promise.resolve(null),
         ]);
         if (cancelled) return;
 
@@ -274,6 +295,7 @@ export function useQuizHome(
           nodes: (graphRes.nodes ?? []) as GraphNode[],
           edges: (graphRes.edges ?? []) as GraphEdge[],
           attempts,
+          plan,
           error: null,
         });
 
@@ -289,9 +311,9 @@ export function useQuizHome(
     return () => {
       cancelled = true;
     };
-  }, [key, userId, semester]);
+  }, [key, userId, semester, planOn]);
 
-  const { nodes, edges, courses, attempts } = current ?? EMPTY_LOAD;
+  const { nodes, edges, courses, attempts, plan } = current ?? EMPTY_LOAD;
   const error = current?.error ?? null;
 
   // The graph fetch is already scoped server-side; this mirrors the Tree/Learn
@@ -307,12 +329,26 @@ export function useQuizHome(
   }, [nodes, semester, scopedCourses]);
 
   const candidates = useMemo(
-    () => rankCandidates(scopedNodes, scopedCourses, attempts),
-    [scopedNodes, scopedCourses, attempts],
+    () => (plan
+      ? rankFromPlan(plan, scopedNodes, scopedCourses, attempts)
+      : rankCandidates(scopedNodes, scopedCourses, attempts)),
+    [plan, scopedNodes, scopedCourses, attempts],
   );
-  const primary = useMemo(() => primaryOf(candidates), [candidates]);
+  // The plan's first concept IS the learner model's choice: no studied-first
+  // tie-break on top of it (R-7's rule answers the tier ranking's blind spot).
+  const primary = useMemo(
+    () => (plan ? candidates[0] ?? null : primaryOf(candidates)),
+    [plan, candidates],
+  );
   const alternatives = useMemo(() => alternativesOf(candidates, primary), [candidates, primary]);
-  const due = useMemo(() => dueSet(scopedNodes), [scopedNodes]);
+  const due = useMemo(
+    () => (plan ? dueFromPlan(plan, scopedNodes) : dueSet(scopedNodes)),
+    [plan, scopedNodes],
+  );
+  const dueQueue = useMemo(
+    () => (plan ? due.conceptIds.slice(0, QUEUE_MAX) : queueFor("due", scopedNodes)),
+    [plan, due, scopedNodes],
+  );
   const byCourse = useMemo(
     () => groupByCourse(scopedNodes, scopedCourses),
     [scopedNodes, scopedCourses],
@@ -339,16 +375,18 @@ export function useQuizHome(
       const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
       if (resolved) return { conceptId: resolved, describable: true };
     } else if (entry?.course) {
-      const first = queueFor("course", scopedNodes, entry.course)[0];
+      const first = (plan
+        ? courseQueueFromPlan(candidates, entry.course)
+        : queueFor("course", scopedNodes, entry.course))[0];
       if (first) return { conceptId: first, describable: false };
     } else if (entry?.scope === "due") {
-      const first = queueFor("due", scopedNodes)[0];
+      const first = dueQueue[0];
       if (first) return { conceptId: first, describable: false };
     }
     // An entry that resolved to nothing lands here too, so an unusable
     // `?course=` degrades to an ordinary primary card — description and all.
     return { conceptId: primary?.node.id ?? null, describable: true };
-  }, [entry, scopedNodes, scopedCourses, primary, picked]);
+  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, candidates]);
   const cardConceptId = card.conceptId;
   const describable = card.describable;
 
@@ -431,6 +469,8 @@ export function useQuizHome(
     primary,
     alternatives,
     due,
+    dueQueue,
+    planned: plan !== null,
     byCourse,
     resumable: resumable?.key === key ? resumable.value : null,
     cardConceptId,
