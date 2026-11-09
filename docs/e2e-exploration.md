@@ -104,7 +104,8 @@ Unlike `make explore`, you watch (and can steer) the exploration live:
    the same stack lock `make explore` does; if another session holds it, the
    skill stops and tells you).
 2. It opens a real browser tab (Playwright MCP if configured for the session,
-   else the Claude-in-Chrome tools) at the slot's frontend (`http://localhost:310N`, printed by `up`) and signs in as
+   else the Claude-in-Chrome tools) at the slot's frontend (`http://127.0.0.1:310N`, printed by `up` — 127.0.0.1, so the seeded
+   student's cookie never replaces the operator's dev-app sign-in on `localhost`) and signs in as
    `rich-user-active` by minting a session directly from the page.
 3. It reads `scripts/explore/explorer-prompt.md` as its own mission briefing
    and starts exploring — narrating what it's trying so you can redirect it

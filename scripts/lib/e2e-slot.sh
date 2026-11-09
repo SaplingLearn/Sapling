@@ -126,6 +126,45 @@ write_e2e_slot_supabase_config() { # repo_root
   ' "$repo/supabase/config.toml" >"$SUPABASE_WORKDIR/supabase/config.toml"
 }
 
+# The held cycle (make e2e-up's background hold) a checkout runs, if any —
+# THE ownership test, shared by e2e-cycle.sh and explore.sh. Ownership is the
+# checkout lock; .e2e/cycle.pid only says which process holds it, so a stale
+# pid (a hold that died, its pid since reused) never counts: the lock must be
+# held AND the pid must still be an e2e-cycle.sh.
+e2e_held_cycle_pid() { # repo_root
+  local dir="$1/.e2e" pid
+  pid="$(cat "$dir/cycle.pid" 2>/dev/null)" || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  flock -n "$dir/cycle.lock" true 2>/dev/null && return 1
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'e2e-cycle\.sh' || return 1
+  fi
+  echo "$pid"
+}
+
+# The slot of the stack .e2e/stack.json describes (empty when none is up).
+e2e_manifest_slot() { # repo_root
+  sed -n 's/^ *"slot": *\([0-9]*\).*/\1/p' "$1/.e2e/stack.json" 2>/dev/null
+}
+
+# Is anything listening on slot N's ports? A free slot LOCK with busy ports is
+# a stack whose cycle died without its teardown (its servers and containers
+# outlive it): a cycle skips that slot rather than failing its preflight.
+e2e_slot_ports_busy() { # slot
+  (
+    E2E_SLOT="$1"
+    resolve_e2e_slot "" >/dev/null 2>&1 || exit 1
+    for p in "$FRONTEND_PORT" "$BACKEND_PORT" "$SUPABASE_API_PORT" "$SUPABASE_DB_PORT"; do
+      if command -v ss >/dev/null 2>&1; then
+        [ -n "$(ss -Hltn "sport = :$p" 2>/dev/null)" ] && exit 0
+      else
+        (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && exit 0
+      fi
+    done
+    exit 1
+  )
+}
+
 # Write what the run resolved where the harnesses look for it, so
 # `npx playwright test` and `python -m e2e_oracles` find this slot after a bare
 # `make e2e-up` without anyone exporting anything (frontend/e2e/support/stack.ts
@@ -144,7 +183,8 @@ write_e2e_slot_manifest() { # e2e_dir
 JSON
   cat >"$dir/env.sh" <<ENV
 # E2E slot $E2E_SLOT — written by scripts/e2e-up.sh. \`source .e2e/env.sh\`
-export E2E_SLOT=$E2E_SLOT
+# (E2E_SLOT is deliberately not exported: a later cycle from this shell would
+# then wait for this one slot instead of taking a free one.)
 export E2E_FRONTEND_URL=$E2E_FRONTEND_URL
 export E2E_BACKEND_URL=$E2E_BACKEND_URL
 export E2E_DB_URL=$E2E_DB_URL
