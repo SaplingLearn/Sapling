@@ -387,8 +387,6 @@ function LearnInner() {
   });
   const { sessionId, starting, summary, beginSession, handleResume } = session;
 
-  const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
-
   // Scope the course picker to the active semester (falls back to all
   // courses when no semester is selected). The suggest/highlight logic that
   // sat next to this pre-revamp now lives up top with the rail-focus state.
