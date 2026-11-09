@@ -36,9 +36,18 @@ export const SIDENAV = {
 } as const;
 
 /* Row rhythm from the design: 47px rows, 16px labels, 20px glyphs, 4px
-   between rows. Never take NAV_ITEM_MIN_HEIGHT below 36. */
-const NAV_ITEM_MIN_HEIGHT = 47;
-const NAV_GAP = 4;
+   between rows. On a window too short to show every destination at 47px,
+   rows (and the group headers) shrink together instead of the list
+   scrolling, down to the 36px floor. Never take NAV_ITEM_MIN_HEIGHT below 36. */
+const NAV_ITEM_HEIGHT = 47;
+const NAV_ITEM_MIN_HEIGHT = 36;
+const HEADER_MIN_HEIGHT = 22;
+/* 4px between rows at full height, tightening on short windows so the whole
+   rail fits without scrolling (1080px tall → 4px, 768px → ~3px). */
+const NAV_GAP = "clamp(1px, 0.37vh, 4px)";
+/* Collapse sits one tab gap from the last tab above and from the footer rule
+   below. The rail itself already puts 1px between its children. */
+const COLLAPSE_SPACING = `calc(${NAV_GAP} - 1px)`;
 const ICON_SIZE = 20;
 const ROW_RADIUS = 10;
 
@@ -158,7 +167,7 @@ export function SideNav() {
           position: "relative",
           display: "block",
           height: LOGO_SLOT_HEIGHT,
-          padding: collapsed ? "6px 0 14px 0" : "6px 0 14px 12px",
+          padding: collapsed ? "6px 0 clamp(6px, 1.3vh, 14px) 0" : "6px 0 clamp(6px, 1.3vh, 14px) 12px",
           margin: collapsed ? "0 6px 8px" : "0 10px 8px",
           boxSizing: "content-box",
           overflow: "hidden",
@@ -216,9 +225,10 @@ export function SideNav() {
               aria-hidden={collapsed || undefined}
               style={{
                 position: "relative",
-                flexShrink: 0,
+                flexShrink: 1,
                 overflow: "hidden",
                 height: collapsed ? (i === 0 ? 0 : 17) : HEADER.height,
+                minHeight: collapsed ? 0 : HEADER_MIN_HEIGHT,
                 transition: GEOMETRY_TRANSITION,
               }}
             >
@@ -279,9 +289,12 @@ export function SideNav() {
           display: "flex",
           alignItems: "center",
           gap: 10,
-          flexShrink: 0,
+          flexShrink: 1,
+          height: NAV_ITEM_HEIGHT,
           minHeight: NAV_ITEM_MIN_HEIGHT,
           ...rowGeometry(collapsed),
+          // One tab gap above Collapse (the rail's own 1px gap + the rest).
+          marginTop: COLLAPSE_SPACING,
           borderRadius: ROW_RADIUS,
           border: "none",
           boxSizing: "border-box",
@@ -307,9 +320,10 @@ export function SideNav() {
           display: "flex",
           flexDirection: "column",
           gap: NAV_GAP,
-          flexShrink: 0,
-          marginTop: 4,
-          paddingTop: 10,
+          flexShrink: 1,
+          // One tab gap between Collapse and the footer rule.
+          marginTop: COLLAPSE_SPACING,
+          paddingTop: "clamp(4px, 0.93vh, 10px)",
           borderTop: `1px solid ${SIDENAV.divider}`,
         }}
       >
@@ -329,7 +343,7 @@ export function SideNav() {
         )}
 
         {isAuthenticated && (
-          <div data-sidenav-account="" style={{ padding: "10px 0 4px" }}>
+          <div data-sidenav-account="" style={{ padding: "clamp(2px, 0.93vh, 10px) 0 4px" }}>
             <div
               style={{
                 display: "flex",
@@ -390,7 +404,9 @@ function NavLink({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        flexShrink: 0,
+        // Shrinks with its siblings when the window is short (see NAV_ITEM_HEIGHT).
+        flexShrink: 1,
+        height: NAV_ITEM_HEIGHT,
         minHeight: NAV_ITEM_MIN_HEIGHT,
         boxSizing: "border-box",
         ...rowGeometry(collapsed),
