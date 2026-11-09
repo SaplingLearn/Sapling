@@ -278,7 +278,13 @@ export function StudyHub({
   const rec = queue[0] || null;
   const sel = (st.topic && byId.get(st.topic)) || null;
   const hov = (st.hover && byId.get(st.hover)) || null;
-  const focus = hov || sel || rec;
+  // The focus card and the prerequisite warning beside it follow the CLICKED
+  // concept, never the hovered one. Both are in flow above the roadmap and
+  // change height with the concept (a longer name or gap sentence wraps), so
+  // previewing the hovered tile there pushed the whole roadmap down or up
+  // under the pointer (~20-40px at 1280-1440 wide). Hover only highlights
+  // prerequisites on the roadmap itself, which is paint-only.
+  const focus = sel || rec;
   const hot = hov || sel;
   const hp = new Set(hot ? hot.pre : []);
   const hd = new Set(hot ? hot.post : []);
@@ -388,6 +394,34 @@ export function StudyHub({
   /* ── roadmap columns ──────────────────────────────────────────────────── */
   const groups = roadmapGroups(topics);
   const LIM = 4;
+  // The open tile menu closes on Esc (focus returns to its tile) or on a press
+  // anywhere outside its tile. A press on ANOTHER tile closes this one and
+  // that tile's click opens its own, so at most one menu is ever open. (This
+  // replaced a full-screen click-catcher inside the tile, which lived in the
+  // tile's stacking context and so sat under the later tiles it was meant
+  // to cover.)
+  const tileMenuOwner = React.useRef<HTMLDivElement | null>(null);
+  const openTileMenu = st.tileMenu;
+  React.useEffect(() => {
+    if (!openTileMenu) return;
+    const close = () => setSt(prev => (prev.tileMenu === openTileMenu ? { ...prev, tileMenu: null } : prev));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      close();
+      tileMenuOwner.current?.focus();
+    };
+    const onDown = (e: Event) => {
+      const owner = tileMenuOwner.current;
+      if (owner && e.target instanceof Node && owner.contains(e.target)) return;
+      close();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [openTileMenu]);
   const columns = groups.map(label => {
     const ts = topics.filter(t => t.group === label);
     const tiles = ts.map(t => {
@@ -799,15 +833,23 @@ export function StudyHub({
       </section>
 
       {/* ── roadmap ── */}
-      <section aria-label="Roadmap" key={cid} className={`${s.areaRoadmap} ${s.paneEnter}`}
-        style={{ padding: "22px 6px 28px 0" }}>
+      {/* An open tile menu can hang past the section's bottom edge; lifting
+          the section keeps it over whatever follows (the rail, once the
+          narrow layout stacks it underneath). */}
+      <section aria-label="Roadmap" key={`roadmap:${cid}`} className={`${s.areaRoadmap} ${s.paneEnter}`}
+        style={{ position: "relative", zIndex: st.tileMenu ? 2 : undefined, padding: "22px 6px 28px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={monoLabel}>Roadmap</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "26px 20px", alignItems: "start" }}>
+          {/* Stacking: every column is its own stacking context (its colEnter
+              opacity/transform animation), and so is any hovered (lifted) or
+              dimmed tile. A z-index on the menu alone is therefore trapped
+              and later tiles/columns paint over it, so the column AND the
+              tile that own the open menu are lifted above their siblings. */}
           {columns.map((col, ci) => (
             <div key={col.key} className={s.colEnter}
-              style={{ "--i": Math.min(ci, 6), display: "flex", flexDirection: "column", gap: 8, minWidth: 0 } as React.CSSProperties}>
+              style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: col.shown.some(x => x.t.id === st.tileMenu) ? 2 : undefined, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 } as React.CSSProperties}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 4 }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
                   <span style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</span>
@@ -825,12 +867,13 @@ export function StudyHub({
                   { label: n ? `${n} Flashcards` : "Make Flashcards", icon: "cards" as const, bg: "#E1ECD7", fg: "#445D22", href: cardsHref([t.name]) },
                   { label: "Study Guide", icon: "file" as const, bg: "#F1E3C4", fg: "#8A6420", href: guideHref(t.name) },
                 ];
+                const menuOpen = st.tileMenu === t.id;
                 return (
-                  <div key={t.id} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} className={s.tile}
+                  <div key={t.id} ref={menuOpen ? tileMenuOwner : undefined} role="button" tabIndex={0} aria-pressed={isSel} aria-haspopup="menu" aria-expanded={menuOpen} data-testid={`tile-${t.id}`} className={s.tile}
                     onClick={() => set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id })}
                     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set({ topic: t.id, tileMenu: st.tileMenu === t.id ? null : t.id }); } }}
                     onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
-                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#F2F6EE" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
+                    style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: isSel ? "#F2F6EE" : "#FDFCF9", border: `1px solid ${isSel || isNext ? "#445D22" : "rgba(42,39,31,0.12)"}`, boxShadow: isSel ? "0 0 0 1px #445D22" : isNext ? "0 0 0 1px #445D22, 0 8px 20px rgba(68,93,34,0.16)" : isHot ? "0 6px 16px rgba(25,37,11,0.10)" : "none", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
                     <span style={{ position: "relative", width: 34, height: 34, flexShrink: 0 }}>
                       <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
                         <circle cx="17" cy="17" r="14" fill="none" stroke="#E6E2D9" strokeWidth="3.5" />
@@ -848,10 +891,12 @@ export function StudyHub({
                     {isNext && !isSel && <span style={{ position: "absolute", top: -10, right: 10, height: 20, padding: "0 8px", borderRadius: 10, background: "#445D22", color: "#FFFFFF", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>Next</span>}
                     {rel && <span style={{ position: "absolute", top: -10, right: 10, height: 20, padding: "0 8px", borderRadius: 10, background: rel === "Unlocks" ? "#E3ECF5" : "#F7EEDC", color: rel === "Unlocks" ? "#2E5F96" : "#7A5A1C", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px #FAF8F3" }}>{rel}</span>}
                     {warn && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0 }}><WarnIcon size={16} /></span>}
-                    {st.tileMenu === t.id && (
+                    {menuOpen && (
                       <>
-                        <div onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }} style={{ position: "fixed", inset: -2000, zIndex: 20, cursor: "default" }} />
-                        <div role="menu" style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 220, ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
+                        <div role="menu" aria-label={`${t.name} actions`} onClick={e => e.stopPropagation()}
+                          // Enter/Space on an item must follow the link, not reach the tile's toggle.
+                          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
+                          style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 220, ...popover, borderRadius: 12, boxShadow: "0 14px 36px rgba(25,37,11,0.16)", padding: 6, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
                           {actions.map(ac => (
                             <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={e => { e.stopPropagation(); set({ tileMenu: null }); }}
                               style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 8px", border: 0, borderRadius: 8, background: "transparent", ...INHERIT_FONT, fontSize: 14, fontWeight: 600, color: "#1A1814", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>

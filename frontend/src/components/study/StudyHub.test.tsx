@@ -245,6 +245,57 @@ describe("StudyHub", () => {
       .toContain("/quiz?concept=loop");
   });
 
+  it("only one tile menu is open; Esc and an outside press close it", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const loop = screen.getByTestId("tile-loop");
+    fireEvent.click(loop);
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    expect(loop.getAttribute("aria-expanded")).toBe("true");
+    // The open menu's tile (and its column) are lifted over the later tiles,
+    // or the next tile paints over the menu.
+    expect(loop.style.zIndex).toBe("2");
+    expect(screen.getByTestId("tile-rec").style.zIndex).toBe("");
+
+    // Esc closes it and hands focus back to the tile.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(loop);
+
+    // A press on another tile swaps the menu over rather than stacking two.
+    fireEvent.click(loop);
+    const rec = screen.getByTestId("tile-rec");
+    fireEvent.pointerDown(rec);
+    fireEvent.click(rec);
+    const menus = screen.getAllByRole("menu");
+    expect(menus).toHaveLength(1);
+    expect(rec.contains(menus[0])).toBe(true);
+
+    // A press inside the menu keeps it; a press anywhere else closes it.
+    fireEvent.pointerDown(menus[0]);
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("hovering a tile never swaps the focus card or the gap warning (no layout jump)", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const card = screen.getByTestId("focus-card");
+    expect(within(card).getByText("Recursion")).toBeTruthy();
+    expect(screen.getByTestId("focus-gap-warning").textContent).toContain("Recursion");
+    // Hovering the mastered tile (no gap) used to unmount the warning and
+    // re-render the card for Variables, reflowing the roadmap under the pointer.
+    fireEvent.mouseEnter(screen.getByTestId("tile-var"));
+    expect(within(card).getByText("Recursion")).toBeTruthy();
+    expect(screen.getByTestId("focus-gap-warning").textContent).toContain("Recursion");
+    fireEvent.mouseLeave(screen.getByTestId("tile-var"));
+    // A click is what moves the focus.
+    fireEvent.click(screen.getByTestId("tile-var"));
+    expect(within(screen.getByTestId("focus-card")).getByText("Variables")).toBeTruthy();
+    expect(screen.queryByTestId("focus-gap-warning")).toBeNull();
+  });
+
   it("Exams and Deadlines writes through the calendar endpoints", async () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
