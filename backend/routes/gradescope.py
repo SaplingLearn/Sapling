@@ -40,6 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from db.connection import table
+from routes._errors import domain_status
 from services.auth_guard import require_self, guard_off_loop
 from services.gradescope import client as gradescope_service
 from services.gradescope import jobs as gradescope_jobs
@@ -535,4 +536,4 @@ _LINK_STATUS = {CourseNotFound: 404, NoCourseLink: 400, AmbiguousEnrollment: 409
 
 def _link_http_error(e: GradescopeLinkError) -> HTTPException:
     """The HTTPException a link error answered with before the split (#118)."""
-    return HTTPException(status_code=_LINK_STATUS[type(e)], detail=e.detail)
+    return HTTPException(status_code=domain_status(e, _LINK_STATUS), detail=e.detail)

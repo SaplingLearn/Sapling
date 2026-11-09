@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
+from routes._errors import domain_status
 from services.auth_guard import require_self, get_session_user_id
 from services.social import (
     Conflict,
@@ -65,7 +66,7 @@ def _social_errors():
     try:
         yield
     except SocialError as e:
-        raise HTTPException(status_code=_ERROR_STATUS[type(e)], detail=e.detail)
+        raise HTTPException(status_code=domain_status(e, _ERROR_STATUS), detail=e.detail)
 
 
 @router.post("/rooms/create")

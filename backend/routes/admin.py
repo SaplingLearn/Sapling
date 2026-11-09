@@ -46,6 +46,7 @@ from services.admin import (
     users,
     xp_rules,
 )
+from routes._errors import domain_status
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from routes.admin_flags import record_flag_change
@@ -82,7 +83,7 @@ def _admin_errors():
     try:
         yield
     except AdminError as e:
-        raise HTTPException(status_code=_ERROR_STATUS[type(e)], detail=e.detail)
+        raise HTTPException(status_code=domain_status(e, _ERROR_STATUS), detail=e.detail)
 
 
 # ── Roles ────────────────────────────────────────────────────────────────────
