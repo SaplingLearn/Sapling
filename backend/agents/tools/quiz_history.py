@@ -27,7 +27,7 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from services import prompt_dimensions
 from services.encryption import decrypt_json_column
-from services.quiz_distractors import DIGEST_SCHEMA_VERSION
+from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)

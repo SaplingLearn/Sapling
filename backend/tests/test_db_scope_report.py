@@ -32,6 +32,7 @@ from db import scope_report
 from db import user_jwt
 from db.connection import rpc, table
 from services import auth_guard, request_context
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from tests.test_db_user_scope import ANON, FLAG_ENV, OCT_JWK, Wire, _app, _cookie
 
 SECRET_MARKER = "row-content-that-must-never-be-logged"
@@ -484,6 +485,13 @@ class _Events:
         return rows, len(self.rows)
 
 
+def _no_rpc(monkeypatch, analytics):
+    """`db_scope_divergences()` not migrated yet: PostgREST's 404 PGRST202."""
+    def rpc(name, params):
+        raise RuntimeError("PGRST202")
+    monkeypatch.setattr(analytics, "rpc", rpc)
+
+
 def _ev(event_type, payload, user="u1", rid="r1", at="2026-11-08T10:00:00+00:00"):
     return {"event_type": event_type, "user_id": user, "request_id": rid,
             "payload": payload, "created_at": at}
@@ -504,7 +512,8 @@ def test_admin_db_scope_report_groups_events_and_includes_the_process_tally(monk
                                          "scoped_count": -1, "error": "403"}),
         _ev("db.unscoped_query", {"table": "courses", "route": "/api/x", "mode": "shadow"}, user=None),
     ])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
+    _no_rpc(monkeypatch, analytics)
     scope_report.record(event="db.rls_shadow_divergence", kind="fewer_rows", mode="shadow",
                         method="GET", route="/api/notes/{note_id}", target="notes", op="select")
 
@@ -540,7 +549,8 @@ def test_admin_report_and_process_tally_use_the_same_key(monkeypatch):
     store = _Events([_ev("db.unscoped_query", {"table": "courses", "route": "/api/x",
                                                "mode": "shadow", "kind": "no_subject",
                                                "method": "GET"}, user=None)])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
+    _no_rpc(monkeypatch, analytics)
     body = TestClient(main.app).get("/api/admin/analytics/db-scope").json()
     keys = scope_report.KEY_FIELDS
     top = {k: body["top"][0][k] for k in keys}
@@ -555,8 +565,9 @@ def test_admin_db_scope_report_caps_scan_and_window(monkeypatch):
 
     store = _Events([_ev("db.unscoped_query", {"table": "t", "route": f"/r{i}"})
                      for i in range(5)])
-    monkeypatch.setattr(analytics, "table", lambda name: store)
-    monkeypatch.setattr(analytics, "_PAGE", 2)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
+    _no_rpc(monkeypatch, analytics)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 2)
     monkeypatch.setattr(analytics, "_DB_SCOPE_SCAN_CAP", 3)
     client = TestClient(main.app)
     body = client.get("/api/admin/analytics/db-scope").json()
@@ -578,3 +589,126 @@ def test_admin_db_scope_report_is_admin_only(monkeypatch):
     monkeypatch.setattr(analytics, "require_admin", _deny)
     r = TestClient(main.app).get("/api/admin/analytics/db-scope")
     assert r.status_code == 403
+
+
+# ── db_scope_divergences(): the GROUP BY in SQL (migration 20261109023455) ──
+
+_EMPTY_KIND = (None, "", False, 0, [], {})
+
+
+def _sql_groups(events):
+    """A model of db_scope_divergences(): group by the RAW key array the SQL
+    builds (status-or-error, counts only for kind-less rows), with distinct
+    users and the 3 most recent distinct request ids. Its real SQL is pinned
+    in tests/integration/test_admin_aggregates_db.py."""
+    groups: dict = {}
+    for e in events:
+        p = e["payload"] if isinstance(e["payload"], dict) else {}
+        kindless = p.get("kind") in _EMPTY_KIND
+        k = [e["event_type"], p.get("kind"), p.get("mode"), p.get("method"), p.get("route"),
+             p.get("table"), p.get("op"), p["status"] if "status" in p else p.get("error"),
+             p.get("code"), p.get("service_count") if kindless else None,
+             p.get("scoped_count") if kindless else None]
+        g = groups.setdefault(repr(k), {"k": k, "n": 0, "users": set(), "at": [], "rids": {}})
+        g["n"] += 1
+        if e["user_id"]:
+            g["users"].add(e["user_id"])
+        g["at"].append(e["created_at"])
+        if e["request_id"]:
+            g["rids"][e["request_id"]] = max(g["rids"].get(e["request_id"], ""), e["created_at"])
+    return [
+        {"k": g["k"], "n": g["n"], "users": sorted(g["users"]),
+         "first_seen": min(g["at"]), "last_seen": max(g["at"]),
+         "request_ids": [{"id": r, "at": a} for r, a in
+                         sorted(g["rids"].items(), key=lambda kv: kv[1], reverse=True)[:3]]}
+        for g in sorted(groups.values(), key=lambda g: -g["n"])
+    ]
+
+
+_MIXED = [
+    _ev("db.rls_shadow_divergence", {"table": "notes", "route": "/api/notes/{id}",
+                                     "kind": "fewer_rows", "method": "GET", "op": "select",
+                                     "service_count": 2, "scoped_count": 1}, user="u1", rid="r1"),
+    _ev("db.rls_shadow_divergence", {"table": "notes", "route": "/api/notes/{id}",
+                                     "kind": "fewer_rows", "method": "GET", "op": "select",
+                                     "service_count": 9, "scoped_count": 0}, user="u2", rid="r2",
+        at="2026-11-08T12:00:00+00:00"),
+    # Legacy rows: kind derived from the counts / the old `error` key.
+    _ev("db.rls_shadow_divergence", {"table": "notes", "route": "/x", "service_count": 1,
+                                     "scoped_count": 3}, user="u3", rid="r3"),
+    _ev("db.rls_shadow_divergence", {"table": "notes", "route": "/x", "service_count": 5,
+                                     "scoped_count": 7}, user="u1", rid="r3",
+        at="2026-11-08T09:00:00+00:00"),
+    _ev("db.rls_shadow_divergence", {"table": "notes", "route": "/x", "error": "403"}, rid="r4"),
+    # Two raw values that normalise to ONE key (a space becomes "_").
+    _ev("db.unscoped_query", {"table": "courses", "route": "/api/a b"}, user=None, rid="r5"),
+    _ev("db.unscoped_query", {"table": "courses", "route": "/api/a_b", "kind": ""},
+        user="u9", rid="r6", at="2026-11-08T13:00:00+00:00"),
+    _ev("db.rls_denied", {"table": "t", "route": "/d", "status": None, "error": "x"}, rid=None),
+]
+
+
+def _report(monkeypatch, *, via_rpc: bool, events=_MIXED):
+    import main
+    import routes.admin_analytics as analytics
+
+    calls = []
+    if via_rpc:
+        def rpc(name, params):
+            calls.append((name, params))
+            return _sql_groups(events)
+        monkeypatch.setattr(analytics, "rpc", rpc)
+        monkeypatch.setattr(analytics, "table",
+                            lambda name: pytest.fail("the aggregate path must not scan"))
+    else:
+        store = _Events(sorted(events, key=lambda e: e["created_at"], reverse=True))
+        setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
+        _no_rpc(monkeypatch, analytics)
+    body = TestClient(main.app).get("/api/admin/analytics/db-scope",
+                                    params={"hours": 24, "limit": 50}).json()
+    return body, calls
+
+
+def test_the_sql_aggregate_and_the_scan_report_the_same_groups(monkeypatch):
+    via_sql, calls = _report(monkeypatch, via_rpc=True)
+    scope_report.reset()
+    via_scan, _ = _report(monkeypatch, via_rpc=False)
+    ((name, params),) = calls
+    assert name == "db_scope_divergences"
+    assert params["p_events"] == ["db.rls_shadow_divergence", "db.unscoped_query",
+                                  "db.rls_denied"]
+    assert params["p_from"] < params["p_to"]
+
+    def norm(body):
+        return sorted(({**g, "sample_request_ids": sorted(g["sample_request_ids"])}
+                       for g in body["top"]), key=lambda g: (g["route"], g["kind"]))
+    assert norm(via_sql) == norm(via_scan)
+    assert via_sql["total"] == via_scan["total"] == len(_MIXED)
+    assert via_sql["groups"] == via_scan["groups"]
+    assert via_sql["truncated"] is False
+    merged = next(g for g in via_sql["top"] if g["route"] == "/api/a_b")
+    assert merged["count"] == 2 and merged["users"] == 1
+    assert merged["last_seen"] == "2026-11-08T13:00:00+00:00"
+    legacy = {g["kind"]: g["count"] for g in via_sql["top"] if g["route"] == "/x"}
+    assert legacy == {"more_rows": 2, "error": 1}
+
+
+def test_the_aggregate_keeps_the_newest_three_request_ids(monkeypatch):
+    events = [_ev("db.unscoped_query", {"table": "t", "route": "/r"}, rid=f"r{i}",
+                  at=f"2026-11-08T1{i}:00:00+00:00") for i in range(5)]
+    body, _ = _report(monkeypatch, via_rpc=True, events=events)
+    (top,) = body["top"]
+    assert top["sample_request_ids"] == ["r4", "r3", "r2"]
+    assert top["first_seen"] == "2026-11-08T10:00:00+00:00"
+
+
+@pytest.mark.parametrize("answer", [{"k": 1}, [{"k": "not-a-list", "n": 1}], [{"n": 1}]])
+def test_a_malformed_aggregate_falls_back_to_the_scan(monkeypatch, answer):
+    import main
+    import routes.admin_analytics as analytics
+
+    store = _Events([_ev("db.unscoped_query", {"table": "t", "route": "/r"})])
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: store)
+    monkeypatch.setattr(analytics, "rpc", lambda name, params: answer)
+    body = TestClient(main.app).get("/api/admin/analytics/db-scope").json()
+    assert body["total"] == 1 and body["top"][0]["route"] == "/r"

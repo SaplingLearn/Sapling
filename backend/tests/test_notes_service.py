@@ -155,6 +155,17 @@ def test_list_notes_filters_by_user_and_optional_offering():
     assert filters.get("deleted_at") == "is.null"
 
 
+def test_list_notes_filters_on_any_of_several_offerings():
+    """A course filter (#831 follow-up) passes all the course's offerings."""
+    fake = FakeTable(rows=[])
+    with patch("services.notes_service.table", return_value=fake):
+        _run(list_notes(user_id="u1", offering_id=["off1", "off2"]))
+    _args, kwargs = fake.select_calls[0]
+    filters = kwargs.get("filters", {})
+    assert filters.get("user_id") == "eq.u1"
+    assert filters.get("offering_id") == "in.(off1,off2)"
+
+
 def test_delete_note_soft_deletes_and_scopes_by_user():
     """0025: delete is a soft delete — sets deleted_at instead of removing
     the row, and stays scoped to (id, user_id)."""

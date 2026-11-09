@@ -30,7 +30,7 @@ def _insert_payload(table_mock):
 
 
 def _do_quiz_context_write():
-    from services.quiz_context_service import save_quiz_context
+    from services.quiz.context import save_quiz_context
     save_quiz_context("u1", "node-1", {"weak_areas": []})
 
 
@@ -40,15 +40,15 @@ def _do_social_cache_write():
 
 
 def _do_learn_message_write():
-    from routes.learn import save_message
-    save_message("sess-1", "user", "hello")
+    from routes.learn import save_message_sync
+    save_message_sync("sess-1", "user", "hello")
 
 
 @pytest.mark.parametrize(
     "patch_target,invoke,extract,field",
     [
         (
-            "services.quiz_context_service.table",
+            "services.quiz.context.table",
             _do_quiz_context_write,
             _upsert_payload,
             "updated_at",
@@ -60,7 +60,7 @@ def _do_learn_message_write():
             "updated_at",
         ),
         (
-            "routes.learn.table",
+            "services.tutor.messages.table",
             _do_learn_message_write,
             _insert_payload,
             "created_at",

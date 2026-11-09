@@ -27,6 +27,7 @@ from services import document_jobs as dj
 from services import jobs
 from services.agent_events import SaplingEvent
 from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
+from tests.split_patches import patch_documents
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -390,8 +391,8 @@ def _agent_patches(*, is_syllabus=False):
               AsyncMock(return_value=SimpleNamespace(output=summary))),
         patch("agents.concept_extraction.concept_extraction_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=concepts))),
-        patch("agents.tools.graph.apply_concepts_to_graph", AsyncMock(return_value=1)),
-        patch("agents.usage.record_agent_usage", side_effect=lambda r, **kw: r),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=1)),
+        patch("agents.document.record_agent_usage", side_effect=lambda r, **kw: r),
     )
 
 
@@ -463,15 +464,15 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
         "_check_upload_achievements")}
     sched = MagicMock()
     with patch.object(dj, "table", uploads), \
-         patch("routes.documents.extract_text_from_file", extract), \
-         patch("routes.documents._persist_document", persist), \
-         patch("routes.documents._existing_doc_by_request_id", side_effect=existing or
+         patch_documents("extract_text_from_file", extract), \
+         patch_documents("_persist_document", persist), \
+         patch_documents("_existing_doc_by_request_id", side_effect=existing or
                (lambda *a: None)), \
-         patch("routes.documents._save_orchestrator_syllabus"), \
-         patch("routes.documents._graph_backstop"), \
-         patch("routes.documents._invalidate_study_guide_cache", post["_invalidate_study_guide_cache"]), \
-         patch("routes.documents._refresh_course_context", post["_refresh_course_context"]), \
-         patch("routes.documents._check_upload_achievements", post["_check_upload_achievements"]), \
+         patch_documents("_save_orchestrator_syllabus"), \
+         patch_documents("_graph_backstop"), \
+         patch_documents("_invalidate_study_guide_cache", post["_invalidate_study_guide_cache"]), \
+         patch_documents("_refresh_course_context", post["_refresh_course_context"]), \
+         patch_documents("_check_upload_achievements", post["_check_upload_achievements"]), \
          patch("services.document_indexing.schedule_document_index", sched):
         for p in patches:
             p.start()
@@ -597,13 +598,13 @@ def _route_agent_patches():
     summary = Summary(headline="h", abstract="abstract.", key_points=["a", "b", "c"])
     concepts = ConceptList(concepts=[Concept(name="Backprop", description="d", importance=0.9)])
     return (
-        patch("routes.documents.classifier_agent.run",
+        patch("agents.classifier.classifier_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=cls))),
-        patch("routes.documents.summary_agent.run",
+        patch("agents.summary.summary_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=summary))),
-        patch("routes.documents.concept_extraction_agent.run",
+        patch("agents.concept_extraction.concept_extraction_agent.run",
               AsyncMock(return_value=SimpleNamespace(output=concepts))),
-        patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=0)),
     )
 
 
@@ -625,14 +626,14 @@ _INLINE_STEPS = [("status", "start"), ("progress", "classify"), ("progress", "cl
 
 def test_flag_off_stream_is_unchanged_and_never_touches_the_queue():
     a, b, c, d = _route_agent_patches()
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch.object(dj, "stage_and_enqueue", side_effect=AssertionError("staged")), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
+         patch_documents("extract_text_from_file", return_value=_text()) as ext, \
          a, b, c, d, \
-         patch("routes.documents.table") as t, \
-         patch("routes.documents._spawn_post_roll") as spawn:
+         patch_documents("table") as t, \
+         patch_documents("_spawn_post_roll") as spawn:
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "stream-1"}]
         events = _stream_upload(_client())
@@ -647,18 +648,18 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
     from tests.test_documents_routes import _make_orchestrator_result
 
     result = _make_orchestrator_result()
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch.object(dj, "sync_via_queue", side_effect=AssertionError("queued")), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
-         patch("routes.documents.process_document", AsyncMock(return_value=result)), \
-         patch("routes.documents._persist_document", return_value=("doc-1", {"id": "doc-1"})), \
-         patch("routes.documents.refresh_course_context"), \
-         patch("routes.documents._invalidate_study_guide_cache"), \
-         patch("routes.documents._check_upload_achievements"), \
-         patch("routes.documents.schedule_document_index") as sched:
+         patch_documents("extract_text_from_file", return_value=_text()) as ext, \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
+         patch_documents("process_document", AsyncMock(return_value=result)), \
+         patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
+         patch_documents("refresh_course_context"), \
+         patch_documents("_invalidate_study_guide_cache"), \
+         patch_documents("_check_upload_achievements"), \
+         patch_documents("schedule_document_index") as sched:
         r = _client().post(
             "/api/documents/upload/sync",
             files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
@@ -674,18 +675,18 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
 
 def test_flag_on_stream_relays_the_worker_and_runs_nothing_inline():
     done = {"id": "up-1", "stage": "done", "progress": _FULL_PROGRESS, "document_id": "doc-7"}
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value="up-1") as stage, \
          patch.object(dj, "read_status", side_effect=_rows(
              {"stage": "queued", "progress": {}}, done)), \
          patch.object(dj, "read_result", return_value={"result": {"id": "x"}}), \
          patch.object(dj, "POLL_INTERVAL_SECONDS", 0), \
-         patch("routes.documents.extract_text_from_file") as ext, \
-         patch("routes.documents.classifier_agent.run") as cls, \
-         patch("routes.documents._spawn_post_roll") as spawn:
+         patch_documents("extract_text_from_file") as ext, \
+         patch("agents.classifier.classifier_agent.run") as cls, \
+         patch_documents("_spawn_post_roll") as spawn:
         events = _stream_upload(_client())
     assert [(e, d["step"]) for e, d in events] == [("status", "start"), *_EXPECTED_STEPS]
     assert events[-1][1]["data"] == {"document_id": "doc-7"}
@@ -699,14 +700,14 @@ def test_flag_on_stream_relays_the_worker_and_runs_nothing_inline():
 
 def test_flag_on_stream_runs_inline_when_the_queue_cannot_take_it():
     a, b, c, d = _route_agent_patches()
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value=None), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
+         patch_documents("extract_text_from_file", return_value=_text()) as ext, \
          a, b, c, d, \
-         patch("routes.documents.table") as t, \
-         patch("routes.documents._spawn_post_roll") as spawn:
+         patch_documents("table") as t, \
+         patch_documents("_spawn_post_roll") as spawn:
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "stream-1"}]
         events = _stream_upload(_client())
@@ -728,9 +729,9 @@ def _sync_post(client):
 
 def _sync_flag_on(**over):
     base = dict(
-        validate=patch("routes.documents._validate_user"),
-        offering=patch("routes.documents.require_course_enrollment", return_value="off-1"),
-        replay=patch("routes.documents._existing_doc_by_request_id", return_value=None),
+        validate=patch_documents("_validate_user"),
+        offering=patch_documents("require_course_enrollment", return_value="off-1"),
+        replay=patch_documents("_existing_doc_by_request_id", return_value=None),
         flag=patch.object(dj, "flag_on", return_value=True),
         stage=patch.object(dj, "stage_and_enqueue", return_value="up-1"),
         poll=patch.object(dj, "POLL_INTERVAL_SECONDS", 0),
@@ -750,8 +751,8 @@ def test_flag_on_sync_returns_the_saved_row_and_categories():
                                                                        "weight": 0.5}]}), \
          patch("services.documents_read.table") as t, \
          patch.object(dj, "clear_result") as clear, \
-         patch("routes.documents.extract_text_from_file") as ext, \
-         patch("routes.documents.process_document") as proc:
+         patch_documents("extract_text_from_file") as ext, \
+         patch_documents("process_document") as proc:
         t.return_value.select.return_value = [{**saved, "extracted_text": "secret"}]
         r = _sync_post(_client())
     assert r.status_code == 200
@@ -796,14 +797,14 @@ def test_flag_on_sync_runs_inline_when_the_queue_cannot_take_it():
 
     cms = _sync_flag_on(stage=patch.object(dj, "stage_and_enqueue", return_value=None))
     with cms["validate"], cms["offering"], cms["replay"], cms["flag"], cms["stage"], \
-         patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
-         patch("routes.documents.process_document",
+         patch_documents("extract_text_from_file", return_value=_text()) as ext, \
+         patch_documents("process_document",
                AsyncMock(return_value=_make_orchestrator_result())), \
-         patch("routes.documents._persist_document", return_value=("doc-1", {"id": "doc-1"})), \
-         patch("routes.documents.refresh_course_context"), \
-         patch("routes.documents._invalidate_study_guide_cache"), \
-         patch("routes.documents._check_upload_achievements"), \
-         patch("routes.documents.schedule_document_index"):
+         patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
+         patch_documents("refresh_course_context"), \
+         patch_documents("_invalidate_study_guide_cache"), \
+         patch_documents("_check_upload_achievements"), \
+         patch_documents("schedule_document_index"):
         r = _sync_post(_client())
     assert r.status_code == 200 and r.json()["id"] == "doc-1"
     ext.assert_called_once()
@@ -871,9 +872,9 @@ def test_a_superseded_attempt_never_moves_the_stage_again():
     uploads_box["u"] = uploads
     persist = MagicMock()
     with patch.object(dj, "table", uploads), \
-         patch("routes.documents.extract_text_from_file", extract_then_lose_the_row), \
-         patch("routes.documents._persist_document", persist), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None):
+         patch_documents("extract_text_from_file", extract_then_lose_the_row), \
+         patch_documents("_persist_document", persist), \
+         patch_documents("_existing_doc_by_request_id", return_value=None):
         dj._run_document_process_job({"upload_id": "up-1"})  # returns quietly
     assert uploads.row["stage"] == "failed" and uploads.row["error_code"] == "worker_failed"
     assert [d["stage"] for d, _ in uploads.updates] == ["extracting"]
@@ -891,8 +892,8 @@ def test_an_attempt_taken_over_mid_run_cannot_overwrite_the_new_owner():
     uploads = _Uploads(_staged_row())
     uploads_box["u"] = uploads
     with patch.object(dj, "table", uploads), \
-         patch("routes.documents.extract_text_from_file", extract_then_get_taken_over), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None):
+         patch_documents("extract_text_from_file", extract_then_get_taken_over), \
+         patch_documents("_existing_doc_by_request_id", return_value=None):
         dj._run_document_process_job({"upload_id": "up-1"})
     assert uploads.row["progress"] == {"owner": "w2#2"}
     assert uploads.row["stage"] == "extracting"
@@ -1041,7 +1042,7 @@ def test_a_watcher_never_runs_a_row_another_request_took_inline():
              "concept_notes": [{"name": "Backprop", "description": "d"}]}
     calls = iter([None, None, saved])
     with patch.object(dj, "read_status", return_value=_foreign_inline()), \
-         patch("routes.documents._existing_doc_by_request_id",
+         patch_documents("_existing_doc_by_request_id",
                side_effect=lambda *a: next(calls)), \
          patch.object(dj, "read_result", return_value={}), \
          patch.object(dj, "saved_document", return_value=saved), \
@@ -1062,7 +1063,7 @@ def test_a_watcher_reports_the_failure_the_inline_owner_recorded():
     rows = [_foreign_inline(), {**_foreign_inline(), "stage": "failed",
                                 "error_code": "unreadable"}]
     with patch.object(dj, "read_status", side_effect=_rows(*rows)), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "POLL_INTERVAL_SECONDS", 0):
         out = _run(dj.wait_for_upload("up-1"))
     assert out.kind == "failed" and out.row["error_code"] == "unreadable"
@@ -1094,15 +1095,15 @@ def _claiming_stage(*_a, **_k):
 
 def test_flag_on_stream_records_the_inline_runs_outcome_on_the_row():
     a, b, c, d = _route_agent_patches()
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", side_effect=_claiming_stage), \
          patch.object(dj, "finish_inline") as finish, \
-         patch("routes.documents.extract_text_from_file", return_value=_text()), \
+         patch_documents("extract_text_from_file", return_value=_text()), \
          a, b, c, d, \
-         patch("routes.documents.table") as t, \
-         patch("routes.documents._spawn_post_roll"):
+         patch_documents("table") as t, \
+         patch_documents("_spawn_post_roll"):
         t.return_value.select.return_value = []
         t.return_value.insert.return_value = [{"id": "stream-1"}]
         events = _stream_upload(_client())
@@ -1113,13 +1114,13 @@ def test_flag_on_stream_records_the_inline_runs_outcome_on_the_row():
 
 
 def test_flag_on_stream_records_an_inline_failure_with_its_code():
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", side_effect=_claiming_stage), \
          patch.object(dj, "finish_inline") as finish, \
-         patch("routes.documents.extract_text_from_file", side_effect=RuntimeError("ocr")):
+         patch_documents("extract_text_from_file", side_effect=RuntimeError("ocr")):
         events = _stream_upload(_client())
     assert [(e, d["step"]) for e, d in events][-2:] == [("error", "failed"), ("status", "done")]
     assert finish.call_args.kwargs == {"error_code": "extract_failed"}
@@ -1127,9 +1128,9 @@ def test_flag_on_stream_records_an_inline_failure_with_its_code():
 
 def test_flag_on_stream_records_nothing_when_the_worker_ran_it():
     done = {"id": "up-1", "stage": "done", "progress": _FULL_PROGRESS, "document_id": "doc-7"}
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value="up-1"), \
          patch.object(dj, "read_status", return_value=done), \
@@ -1151,7 +1152,7 @@ def test_flag_on_sync_records_an_inline_failure(extract, code):
                                            side_effect=_claiming_stage))
     with cms["validate"], cms["offering"], cms["replay"], cms["flag"], cms["stage"], \
          patch.object(dj, "finish_inline") as finish, \
-         patch("routes.documents.extract_text_from_file", extract):
+         patch_documents("extract_text_from_file", extract):
         r = _sync_post(_client())
     assert r.status_code == 422
     assert finish.call_args.kwargs == {"error_code": code}
@@ -1164,14 +1165,14 @@ def test_flag_on_sync_records_the_inline_success():
                                            side_effect=_claiming_stage))
     with cms["validate"], cms["offering"], cms["replay"], cms["flag"], cms["stage"], \
          patch.object(dj, "finish_inline") as finish, \
-         patch("routes.documents.extract_text_from_file", return_value=_text()), \
-         patch("routes.documents.process_document",
+         patch_documents("extract_text_from_file", return_value=_text()), \
+         patch_documents("process_document",
                AsyncMock(return_value=_make_orchestrator_result())), \
-         patch("routes.documents._persist_document", return_value=("doc-1", {"id": "doc-1"})), \
-         patch("routes.documents.refresh_course_context"), \
-         patch("routes.documents._invalidate_study_guide_cache"), \
-         patch("routes.documents._check_upload_achievements"), \
-         patch("routes.documents.schedule_document_index"):
+         patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
+         patch_documents("refresh_course_context"), \
+         patch_documents("_invalidate_study_guide_cache"), \
+         patch_documents("_check_upload_achievements"), \
+         patch_documents("schedule_document_index"):
         r = _sync_post(_client())
     assert r.status_code == 200
     assert finish.call_args.kwargs == {"document_id": "doc-1", "error_code": None}
@@ -1181,15 +1182,15 @@ def test_sync_adopts_a_duplicate_that_saved_first_instead_of_500():
     from tests.test_documents_routes import _make_orchestrator_result
 
     winner = {"id": "doc-w", "file_name": "notes.pdf", "summary": "s", "concept_notes": []}
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()), \
-         patch("routes.documents._existing_doc_by_request_id", side_effect=[None, winner]), \
-         patch("routes.documents.process_document",
+         patch_documents("extract_text_from_file", return_value=_text()), \
+         patch_documents("_existing_doc_by_request_id", side_effect=[None, winner]), \
+         patch_documents("process_document",
                AsyncMock(return_value=_make_orchestrator_result())), \
-         patch("routes.documents._persist_document", side_effect=RuntimeError("23505")), \
-         patch("routes.documents.schedule_document_index") as sched:
+         patch_documents("_persist_document", side_effect=RuntimeError("23505")), \
+         patch_documents("schedule_document_index") as sched:
         r = _sync_post(_client())
     assert r.status_code == 200 and r.json() == {**winner, "categories": []}
     sched.assert_not_called()  # the winner ran the post-roll
@@ -1198,14 +1199,14 @@ def test_sync_adopts_a_duplicate_that_saved_first_instead_of_500():
 def test_sync_still_fails_when_the_insert_fails_and_nothing_was_saved():
     from tests.test_documents_routes import _make_orchestrator_result
 
-    with patch("routes.documents._validate_user"), \
-         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
+    with patch_documents("_validate_user"), \
+         patch_documents("require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
-         patch("routes.documents.process_document",
+         patch_documents("extract_text_from_file", return_value=_text()), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
+         patch_documents("process_document",
                AsyncMock(return_value=_make_orchestrator_result())), \
-         patch("routes.documents._persist_document", side_effect=RuntimeError("boom")):
+         patch_documents("_persist_document", side_effect=RuntimeError("boom")):
         from fastapi.testclient import TestClient
 
         from main import app
@@ -1369,15 +1370,15 @@ def test_the_pipeline_stores_its_outcome_before_the_insert():
     box["u"] = uploads
     patches = list(_agent_patches())
     with patch.object(dj, "table", uploads), \
-         patch("routes.documents.extract_text_from_file", return_value=_text()), \
-         patch("routes.documents._persist_document", side_effect=persist), \
-         patch("routes.documents._existing_doc_by_request_id", return_value=None), \
-         patch("routes.documents._save_orchestrator_syllabus"), \
-         patch("routes.documents._graph_backstop"), \
+         patch_documents("extract_text_from_file", return_value=_text()), \
+         patch_documents("_persist_document", side_effect=persist), \
+         patch_documents("_existing_doc_by_request_id", return_value=None), \
+         patch_documents("_save_orchestrator_syllabus"), \
+         patch_documents("_graph_backstop"), \
          patch("services.document_indexing.schedule_document_index"), \
-         patch("routes.documents._invalidate_study_guide_cache"), \
-         patch("routes.documents._refresh_course_context"), \
-         patch("routes.documents._check_upload_achievements"):
+         patch_documents("_invalidate_study_guide_cache"), \
+         patch_documents("_refresh_course_context"), \
+         patch_documents("_check_upload_achievements"):
         for p in patches:
             p.start()
         try:
@@ -1431,7 +1432,7 @@ def test_decrypt_document_row_is_shared_by_the_replay_and_the_queue():
     out = decrypt_document_row(row)
     assert out == {"id": "d", "summary": "plain", "concept_notes": [{"name": "A"}]}
     assert decrypt_document_row({"concept_notes": "garbage!"})["concept_notes"] == []
-    with patch("routes.documents.table") as t:
+    with patch_documents("table") as t:
         t.return_value.select.return_value = [row]
         from routes.documents import _existing_doc_by_request_id
         assert _existing_doc_by_request_id("u1", "r")["summary"] == "plain"

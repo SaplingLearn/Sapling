@@ -31,10 +31,10 @@ from services.calendar_service import extract_assignments_from_file, insert_new_
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 from services.request_context import current_request_id
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
-# the single source of truth for CSRF handling — see routes/auth.py. These are
-# pure helpers with no request state, so importing them keeps the calendar
-# connect flow DRY without duplicating the security-critical bits.
-from routes.auth import (
+# the single source of truth for CSRF handling — see services/auth/oauth_state.py.
+# These are pure helpers with no request state, so importing them keeps the
+# calendar connect flow DRY without duplicating the security-critical bits.
+from services.auth.oauth_state import (
     _google_client_config,
     _encode_state,
     _decode_state,

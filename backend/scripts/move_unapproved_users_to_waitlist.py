@@ -36,7 +36,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, table  # noqa: E402
-from routes.auth import _waitlist_entry  # noqa: E402
+from services.auth.waitlist import _waitlist_entry  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 
 #: Rows a never-approved account can hold. Deleted before the account itself;

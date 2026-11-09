@@ -15,6 +15,7 @@ the category reaching the row, and the route feeding both into the decision.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.split_patches import patch_documents
 
 
 # ── The classifier's new field ───────────────────────────────────────────────
@@ -243,8 +244,8 @@ def test_the_documents_row_records_its_shareability():
     result.concepts.concepts = []
 
     with (
-        patch("routes.documents.table", side_effect=_table),
-        patch("routes.documents.award_xp_safe"),
+        patch_documents("table", side_effect=_table),
+        patch_documents("award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
     ):
         _persist_document(
@@ -312,8 +313,8 @@ class TestPersistRetry:
             return m
 
         with (
-            patch("routes.documents.table", side_effect=_table),
-            patch("routes.documents.award_xp_safe"),
+            patch_documents("table", side_effect=_table),
+            patch_documents("award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
         ):
             _persist_document(
@@ -513,8 +514,8 @@ class TestRetryDropsOnlyTheNamedColumn:
             return m
 
         with (
-            patch("routes.documents.table", side_effect=_table),
-            patch("routes.documents.award_xp_safe"),
+            patch_documents("table", side_effect=_table),
+            patch_documents("award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
         ):
             _persist_document(

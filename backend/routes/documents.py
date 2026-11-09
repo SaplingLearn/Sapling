@@ -9,7 +9,6 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
 
 # Feature flag — when true, the streaming /upload route runs OCR off the
 # request critical path via asyncio.to_thread, so the SSE stream opens
@@ -33,31 +32,64 @@ from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
-from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.encryption import decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.calendar_service import save_assignments_to_db
-from services.graph_service import apply_graph_update
-from services.course_context_service import refresh_course_context
-from services.achievement_service import check_achievements
-from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
+from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
-from services.documents_read import decrypt_document_row
 from services.llm_budget import LLMBudgetExceeded
-from services.xp_service import award_xp_safe
-from agents import WORKER_LIMITS
-from agents.classifier import classifier_agent
-from agents.summary import summary_agent
-from agents.concept_extraction import concept_extraction_agent
-from agents.syllabus_extraction import syllabus_extraction_agent
+from services.documents.errors import ConceptScanFailed
+# The upload's persistence, post-roll side effects, concept scan and SSE event
+# stream live in services/documents/ (#118); every moved name stays importable
+# (and patchable, via tests/split_patches.py) here.
+from services.documents.upload import (  # noqa: F401  (re-export, #118)
+    MIN_EXTRACTED_CHARS,
+    UNREADABLE_DOCUMENT_DETAIL,
+    UPLOAD_FAILED_DETAIL,
+    _budget_failed_frames,
+    _has_usable_text,
+)
+from services.documents.persistence import (  # noqa: F401  (re-export, #118)
+    _DROPPABLE_COLUMNS,
+    _MISSING_COLUMN_MARKERS,
+    _existing_doc_by_request_id,
+    _graph_backstop,
+    _grading_categories_from,
+    _missing_column,
+    _persist_document,
+    _replay_result_payload,
+    _save_orchestrator_syllabus,
+    _stored_confidence,
+)
+from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
+    POST_ROLL_DRAIN_TIMEOUT_S,
+    _POST_ROLL_TASKS,
+    _check_upload_achievements,
+    _invalidate_study_guide_cache,
+    _log_post_roll_exc,
+    _refresh_course_context,
+    _spawn_post_roll,
+    drain_post_roll,
+)
+from services.documents.scan import (  # noqa: F401  (re-export, #118)
+    _course_label,
+    _extend_concepts,
+    _extend_via_agent,
+    _scan_concepts_for_course,
+    _scan_user_message,
+)
+from services.documents.library import (  # noqa: F401  (re-export, #118)
+    _courses_for_offerings,
+    list_user_documents,
+    soft_delete_document,
+    update_document_row,
+)
+from services.documents.stream import upload_event_stream
+
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
-from agents.tools.graph import apply_concepts_to_graph
-from agents._run import run_agent_sync
-from agents.concept_scan import concept_scan_agent
-from agents.usage import record_agent_usage
 
 logger = logging.getLogger(__name__)
 
@@ -77,236 +109,58 @@ VALID_CATEGORIES = {
     "assignment", "study_guide", "other",
 }
 
-# Minimum usable extracted text, in stripped characters. Below this a document
-# carries nothing to classify or summarize, and sending it to the model
-# produces a *fabrication* rather than an error: the classify prompt's JSON
-# schema requires a summary and a concept list with no "insufficient content"
-# escape hatch, so an empty `Content:` block makes the model invent a plausible
-# document. Those invented concepts then flow into the course's shared
-# knowledge graph, where they mislead every enrolled student.
-#
-# Matches the 50-char floor that
-# `extraction_service._extract_text_from_file_uncached` already applies when
-# deciding whether native PDF text is worth keeping.
-MIN_EXTRACTED_CHARS = 50
 
-# Shown for both the sync 422 and the SSE error event. Names the likely cause
-# (a scanned/image-only file) and the concrete fix.
-UNREADABLE_DOCUMENT_DETAIL = (
-    "No text could be read from this document. It looks like a scanned or "
-    "image-only file, so there is nothing to analyze. Try uploading a version "
-    "with selectable text."
-)
-
-# 502 detail for agent-pipeline failures on /upload/sync (#151b — the ADR-0001
-# legacy fallback is gone, see ADR 0024). Retry-friendly on purpose: nothing
-# was persisted, and the client mints a fresh X-Request-ID per attempt, so a
-# retry re-runs the pipeline instead of replaying the failure.
-UPLOAD_FAILED_DETAIL = (
-    "Document processing failed and nothing was saved. Please try uploading "
-    "the file again."
-)
+async def _validate_user(user_id: str) -> None:
+    """Verify that the user_id corresponds to an existing user (#117: async)."""
+    rows = await table("users").aselect("id", filters={"id": f"eq.{user_id}"}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=403, detail="Invalid user.")
 
 
-def _has_usable_text(text: str | None) -> bool:
-    """True when extraction produced enough text to be worth analyzing."""
-    return len((text or "").strip()) >= MIN_EXTRACTED_CHARS
-
-
-def _validate_user(user_id: str) -> None:
-    """Verify that the user_id corresponds to an existing user."""
+def _validate_user_sync(user_id: str) -> None:
+    """`_validate_user` for the plain-`def` scan handlers (threadpool)."""
     rows = table("users").select("id", filters={"id": f"eq.{user_id}"}, limit=1)
     if not rows:
         raise HTTPException(status_code=403, detail="Invalid user.")
 
 
-def _scan_user_message(
-    *,
-    course_label: str,
-    existing_concepts: list[str],
-    doc_filename: str | None = None,
-    doc_summary: str | None = None,
-    doc_concept_notes: list[dict] | None = None,
-) -> str:
-    """Build the concept_scan agent's user message: course label + existing
-    concepts + (optional) document context."""
-    existing_block = (
-        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
-    )
-    lines = [
-        f'Course: "{course_label}"',
-        "Concepts already in the graph:",
-        existing_block,
-    ]
-    if doc_filename or doc_summary or doc_concept_notes:
-        notes_block = (
-            "\n".join(
-                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
-                for n in (doc_concept_notes or [])
-            )
-            or "  (none)"
-        )
-        lines += [
-            "",
-            "New document being scanned:",
-            f"  Title: {doc_filename or '(untitled)'}",
-            f"  Summary: {doc_summary or '(none)'}",
-            "  Concepts already extracted from this document:",
-            notes_block,
-        ]
-    return "\n".join(lines)
-
-
-async def _extend_via_agent(
-    *,
-    user_id: str,
-    course_id: str,
-    course_label: str,
-    existing_concepts: list[str],
-    doc_filename: str | None = None,
-    doc_summary: str | None = None,
-    doc_concept_notes: list[dict] | None = None,
-) -> list[str]:
-    """Run concept_scan_agent and return new concept names. Raises on agent
-    failure; the sync dispatcher (_extend_concepts) degrades to []."""
-    deps = SaplingDeps(
-        user_id=user_id,
-        course_id=course_id,
-        supabase=None,
-        request_id=current_request_id() or str(uuid.uuid4()),
-    )
-    message = _scan_user_message(
-        course_label=course_label,
-        existing_concepts=existing_concepts,
-        doc_filename=doc_filename,
-        doc_summary=doc_summary,
-        doc_concept_notes=doc_concept_notes,
-    )
-    result = record_agent_usage(
-        await concept_scan_agent.run(
-            message, deps=deps, usage_limits=WORKER_LIMITS,
-        ),
-        feature="document", task="concept_scan",
-    )
-    return list(result.output.concepts)
-
-
-def _extend_concepts(
-    user_id: str,
-    course_id: str,
-    *,
-    course_label: str,
-    existing_concepts: list[str],
-    doc_filename: str | None = None,
-    doc_summary: str | None = None,
-    doc_concept_notes: list[dict] | None = None,
-) -> list[str]:
-    """Concept extension via concept_scan_agent — the only scan path since
-    #151b (ADR 0024 retired the legacy call_gemini_json fallback).
-
-    Sync entry point for the sync /scan-concepts handlers: drives the async
-    agent via run_agent_sync. Best-effort enrichment (D4): any agent failure
-    degrades to "no new concepts" with a warning log, so the scan response
-    reports {"concepts": [], "added": 0, "existing": N} instead of 500ing a
-    route whose whole job is optional graph enrichment.
-    """
-    try:
-        return run_agent_sync(
-            _extend_via_agent(
-                user_id=user_id,
-                course_id=course_id,
-                course_label=course_label,
-                existing_concepts=existing_concepts,
-                doc_filename=doc_filename,
-                doc_summary=doc_summary,
-                doc_concept_notes=doc_concept_notes,
-            )
-        )
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        logger.warning(
-            "concept_scan agent guardrails tripped; degrading to no new concepts",
-            exc_info=e,
-        )
-    except Exception:
-        logger.warning(
-            "concept_scan agent failed; degrading to no new concepts",
-            exc_info=True,
-        )
-    return []
-
-
 @router.get("/user/{user_id}")
-def list_documents(user_id: str, request: Request):
-    require_self(user_id, request)
-    _validate_user(user_id)
-    docs = table("documents").select(
-        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
-        filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
-        order="created_at.desc",
-    ) or []
-    # The row keys on the OFFERING (0025); the HTTP boundary keeps the
-    # abstract course_id (#435 — Library.tsx filters/labels on d.course_id).
-    # Resolve each unique offering_id once (mirrors routes/learn.py's
-    # list_sessions offering_to_course pattern), not once per row.
-    offering_to_course: dict[str, str | None] = {}
-    for d in docs:
-        d["summary"] = decrypt_if_present(d.get("summary"))
-        notes_raw = d.get("concept_notes")
-        if isinstance(notes_raw, str):
-            try:
-                d["concept_notes"] = decrypt_json(notes_raw)
-            except Exception:
-                # decrypt_json re-raises when both decrypt AND plaintext
-                # parse fail (a genuinely corrupted row) — degrade that one
-                # row instead of 500ing the whole list (matches
-                # _existing_doc_by_request_id and scan_document_concepts).
-                logger.warning(
-                    "concept_notes decrypt failed for document %s; degrading to []",
-                    d.get("id"),
-                )
-                d["concept_notes"] = []
-        off_id = d.get("offering_id")
-        if off_id and off_id not in offering_to_course:
-            offering_to_course[off_id] = offering_course_id(off_id)
-        d["course_id"] = offering_to_course.get(off_id)
-    return {"documents": docs}
+async def list_documents(user_id: str, request: Request):
+    await guard_off_loop(require_self, user_id, request)
+    await _validate_user(user_id)
+    return {"documents": await list_user_documents(user_id)}
 
 
-@router.delete("/doc/{document_id}")
-def delete_document(document_id: str, request: Request, user_id: str | None = None):
+async def _session_or_self(user_id: str | None, request: Request) -> str:
+    """The acting user: `user_id` (the session's own, existing) or the session's."""
     if user_id:
-        require_self(user_id, request)
-        _validate_user(user_id)
-    else:
-        user_id = get_session_user_id(request)
-    # Ensure the document belongs to the requesting user (and isn't already
-    # soft-deleted)
-    docs = table("documents").select(
+        await guard_off_loop(require_self, user_id, request)
+        await _validate_user(user_id)
+        return user_id
+    return await guard_off_loop(get_session_user_id, request)
+
+
+async def _require_owned_document(document_id: str, user_id: str) -> None:
+    """404 unless the document is this user's and not soft-deleted."""
+    docs = await table("documents").aselect(
         "id",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
-    # Soft delete (0025): stamp deleted_at; reads filter it out. The
-    # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
-    table("documents").update(
-        {"deleted_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
-    )
-    # #758: the stamp alone left every chunk the document produced — private
-    # ones included — in retrieval. Withdraw them now, after the stamp, so an
-    # index finishing concurrently sees the deletion (document_indexing
-    # re-checks). Never raises; retrieval refuses a chunk whose every source
-    # document is deleted, which covers a withdrawal that fails part-way.
-    from services.chunk_visibility import withdraw_document_chunks
 
-    withdraw_document_chunks(document_id, user_id)
+
+@router.delete("/doc/{document_id}")
+async def delete_document(document_id: str, request: Request, user_id: str | None = None):
+    user_id = await _session_or_self(user_id, request)
+    await _require_owned_document(document_id, user_id)
+    await soft_delete_document(document_id, user_id)
     return {"deleted": True}
 
 
 @router.patch("/doc/{document_id}")
-def update_document(document_id: str, request: Request, body: dict = Body(...)):
+async def update_document(document_id: str, request: Request, body: dict = Body(...)):
     """Update mutable fields on a document (currently only category)."""
     category = body.get("category")
     if category and category not in VALID_CATEGORIES:
@@ -316,33 +170,9 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
         updates["category"] = category
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update.")
-    user_id = body.get("user_id")
-    if user_id:
-        require_self(user_id, request)
-        _validate_user(user_id)
-    else:
-        user_id = get_session_user_id(request)
-    docs = table("documents").select(
-        "id",
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
-        limit=1,
-    )
-    if not docs:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
-    return updated[0] if updated else {"id": document_id, **updates}
-
-
-def _budget_failed_frames(e: LLMBudgetExceeded, request_id: str | None) -> list[str]:
-    """#119: the upload stream's terminal pair for a per-user LLM budget
-    refusal (services/llm_budget.py) — the budget's own message and code."""
-    return [
-        sapling_event_to_sse(SaplingEvent(
-            type="error", step="failed", message=e.detail,
-            data={"request_id": request_id, "code": e.code, "reset_at": e.reset_at_iso},
-        )),
-        sapling_event_to_sse(SaplingEvent(type="status", step="done", message="Failed.")),
-    ]
+    user_id = await _session_or_self(body.get("user_id"), request)
+    await _require_owned_document(document_id, user_id)
+    return await update_document_row(document_id, user_id, updates)
 
 
 def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) -> str:
@@ -375,311 +205,36 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
     return text
 
 
-def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
-    """Return an existing documents row for this user + request_id, if any.
+def _upload_request_id(request: Request) -> str:
+    """The middleware-stamped request id, so agent traces, Logfire spans and
+    client-facing error payloads share one correlation key."""
+    return (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
 
-    The request_id column may not exist in older schemas — catch that and
-    return None so deployments can ship the code before the migration runs.
-    Defensive against non-list return shapes (mocked DBs, partial errors)
-    so a misbehaving Supabase response can't masquerade as a cache hit.
-    """
-    try:
-        rows = table("documents").select(
-            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "request_id": f"eq.{request_id}",
-                "deleted_at": "is.null",
-            },
-            limit=1,
+
+async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
+    """(filename, bytes) of an accepted upload: 400 on a type or size the
+    routes refuse."""
+    filename = file.filename or ""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
         )
-    except Exception:
-        return None
-    if not isinstance(rows, list) or not rows:
-        return None
-    first = rows[0]
-    if not isinstance(first, dict):
-        return None
-    return decrypt_document_row(first)
-
-
-def _replay_result_payload(row: dict) -> dict:
-    """The idempotent-replay `result.data`, shaped like a fresh run's (#759).
-
-    A fresh stream sends `DocumentProcessingResult.model_dump()`; the replay
-    used to send the raw documents row under the same `result` event —
-    `summary` a string instead of `{abstract}`, `concept_notes` instead of
-    `concepts.concepts`, a top-level `category`. One event type now carries
-    one shape. Only what the row persists can be reproduced: `headline`,
-    `key_points`, confidence and rationale are absent, never invented.
-    `id` and `replayed` are additions on top of the fresh keys; the
-    document id is also on the trailing `status:done`, as on a fresh run.
-    """
-    category = row.get("category") or "other"
-    notes = row.get("concept_notes")
-    concepts = [
-        {"name": n["name"], "description": n.get("description") or ""}
-        for n in (notes if isinstance(notes, list) else [])
-        if isinstance(n, dict) and n.get("name")
-    ]
-    return {
-        "classification": {"category": category, "is_syllabus": category == "syllabus"},
-        "summary": {"abstract": row.get("summary") or ""},
-        "concepts": {"concepts": concepts},
-        "syllabus": None,
-        "graph_updated": False,
-        "id": row.get("id"),
-        "replayed": True,
-    }
-
-
-#: PostgREST's code for "column not found in the schema cache", plus the
-#: Postgres wording it wraps. Either shape means a column is genuinely absent
-#: rather than the row being bad.
-_MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
-
-#: The only columns `_persist_document` is willing to ship ahead of. Anything
-#: else reported absent is a real schema problem and must surface. The last
-#: three are #482's; `extracted_text` is deliberately NOT here — it predates
-#: this hatch (0030), and dropping it would silently cost the recovery text.
-_DROPPABLE_COLUMNS = (
-    "request_id", "shareability",
-    "index_status", "index_attempts", "shareability_confidence",
-)
-
-
-def _missing_column(exc: Exception) -> str | None:
-    """Which droppable column a PostgREST error says is absent, or None.
-
-    Reads the RESPONSE BODY, not `str(exc)`. `db/connection.py` raises through
-    httpx's `raise_for_status()`, whose message is only `Client error '400 Bad
-    Request' for url …` plus a link to MDN — the PGRST204 payload naming the
-    column never appears in it. A guard written against the exception string
-    therefore never fires, which is exactly how the first version of this
-    escape hatch shipped as dead code and left every upload failing in the one
-    window it existed to cover.
-
-    Returns the column NAME rather than a bool so the retry drops only that
-    one. Dropping both would lose `request_id` whenever `shareability` is the
-    absent one — and a client retrying with the same X-Request-ID would then no
-    longer be recognised as a replay, re-running the whole orchestrator and
-    persisting a duplicate document.
-    """
-    body = ""
-    response = getattr(exc, "response", None)
-    if response is not None:
-        try:
-            body = response.text or ""
-        except Exception:
-            body = ""
-    if not body:
-        body = str(exc)
-    if not any(m in body for m in _MISSING_COLUMN_MARKERS):
-        return None
-    for col in _DROPPABLE_COLUMNS:
-        if f"'{col}'" in body or f'"{col}"' in body:
-            return col
-    return None
-
-
-def _stored_confidence(classification) -> float | None:
-    """The classifier's confidence as the row can hold it, or None.
-
-    Only a real number in [0, 1] is stored — anything else would be rejected by
-    `documents_shareability_confidence_check` and fail the whole insert. None
-    reads as private at index time (#630), the safe direction.
-    """
-    value = getattr(classification, "confidence", None)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return float(value) if 0.0 <= value <= 1.0 else None
-
-
-def _persist_document(
-    *,
-    user_id: str,
-    offering_id: str,
-    filename: str,
-    result: DocumentProcessingResult,
-    request_id: str | None = None,
-    course_id: str | None = None,
-    char_count: int | None = None,
-    extracted_text: str | None = None,
-) -> tuple[str, dict]:
-    """Insert a documents row from an orchestrator result.
-
-    Shared by both upload_document_sync and the streaming upload_document.
-    The document keys on the OFFERING (0025), not the abstract course.
-    summary + concept_notes are encrypted at the insert boundary; the
-    returned row carries the plaintext shape so callers can pass it
-    straight back to the client without an extra decrypt step.
-    ``request_id`` (when provided) is stored verbatim for idempotent
-    replay detection. ``course_id``/``char_count`` only feed the
-    document.processed observability event (#117); they are not persisted
-    on the row.
-
-    ``extracted_text`` IS persisted, encrypted, and the row is enqueued for
-    indexing (#482). The indexer used to write the text, which made the
-    recovery path depend on the thing that failed: a document whose indexer
-    never ran had nothing for a re-drive to work from. It is stripped from the
-    returned row — `/upload/sync` hands that row to the client verbatim.
-    Returns (document_id, full_row).
-    """
-    now = datetime.now(timezone.utc).isoformat()
-    concept_notes = [
-        {"name": c.name, "description": c.description}
-        for c in result.concepts.concepts
-    ]
-    summary = result.summary.abstract or None
-    row = {
-        "id": str(uuid.uuid4()),
-        "user_id": user_id,
-        "offering_id": offering_id,
-        "file_name": filename,
-        "category": result.classification.category,
-        # #630: stored, not just acted on. Without a stored value, a re-index or
-        # a backfill has nothing to reproduce the sharing decision from, and
-        # `decide_visibility(None)` privatises everything — which is the same
-        # shape of silent corpus loss as #628.
-        "shareability": getattr(result.classification, "shareability", None),
-        # #482: the confidence the sharing decision was made at. A re-drive
-        # reads it back, because decide_visibility treats a missing confidence
-        # as private — without it, recovering a correctly shared document
-        # would silently privatise it.
-        "shareability_confidence": _stored_confidence(result.classification),
-        "extracted_text": encrypt_if_present(extracted_text),
-        "index_status": "pending",
-        "index_attempts": 0,
-        "summary": encrypt_if_present(summary),
-        "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
-        "created_at": now,
-        "processed_at": now,
-    }
-    if request_id:
-        row["request_id"] = request_id
-    # The schema may not yet have some of these columns; retry without each one
-    # PostgREST names, so a deployment can ship the code before its migration
-    # runs. Losing `shareability` is safe in the direction that matters: an
-    # absent stored value reads as private at index time (#630), never as
-    # shareable.
-    #
-    # Gated on the error BODY and narrowed to the column it names — not on
-    # which keys happen to be in the row, and not on `str(exc)`. Keyed on
-    # presence this was a universal retry that stripped `request_id` from
-    # every failure; read off the exception string it never fired at all.
-    #
-    # A LOOP, not one retry (#482): a single migration can add several columns
-    # to this insert, and a hatch that drops one and gives up fails every
-    # upload in exactly the window it exists for. Bounded by the droppable
-    # set, and a column named again after it was dropped is raised — the drop
-    # is then not what is failing.
-    for _ in range(len(_DROPPABLE_COLUMNS) + 1):
-        try:
-            inserted = table("documents").insert(row)
-            break
-        except Exception as exc:
-            column = _missing_column(exc)
-            if column is None or column not in row:
-                raise
-            logger.warning(
-                "documents insert rejected %r as absent — retrying without it. "
-                "The migration that adds it has not run in this environment.",
-                column,
-            )
-            row.pop(column)
-    else:  # pragma: no cover — unreachable: each pass removes a column or raises
-        raise RuntimeError("documents insert kept naming absent columns")
-    full_row = dict(inserted[0] if inserted else row)
-    full_row.pop("extracted_text", None)
-    full_row["summary"] = summary
-    full_row["concept_notes"] = concept_notes
-    # The documents row above is the single shared insert point for both
-    # upload_document_sync and the streaming upload_document (see docstring);
-    # each calls this helper exactly once per logical upload, so awarding
-    # here — keyed on the freshly-inserted document id — pays out exactly
-    # once per upload and is a clean idempotent no-op on any retry.
-    award_xp_safe(
-        user_id, "document_uploaded",
-        source_type="document", source_id=full_row["id"],
-    )
-    # #117: one document.processed per persisted document, covering both the
-    # sync and the streaming agent path. Ids/counts only — never the text,
-    # summary, or concept notes.
-    events_service.log_event(
-        "document.processed",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload={
-            "document_id": full_row["id"],
-            "category": result.classification.category,
-            "course_id": course_id,
-            "char_count": char_count,
-        },
-    )
-    return full_row["id"], full_row
-
-
-def _grading_categories_from(result: DocumentProcessingResult) -> list[dict]:
-    """Map orchestrator GradingCategory -> legacy {name, weight} shape.
-
-    Returns [] for non-syllabus documents or when the syllabus did not
-    state a grading breakdown — matches the legacy pipeline's contract
-    so the frontend's category-rendering branch sees the same shape.
-    """
-    if not (result.classification.is_syllabus and result.syllabus
-            and result.syllabus.grading_categories):
-        return []
-    return [
-        {"name": c.name, "weight": float(c.weight)}
-        for c in result.syllabus.grading_categories
-    ]
-
-
-def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
-                                result: DocumentProcessingResult) -> None:
-    """Map SyllabusAssignment -> legacy assignments shape and persist.
-
-    Drops entries with due_date=None per the no-invent contract.
-    Best-effort: any error is logged and swallowed.
-    """
-    if not (result.classification.is_syllabus and result.syllabus
-            and result.syllabus.assignments):
-        return
-    legacy: list[dict] = []
-    for a in result.syllabus.assignments:
-        if a.due_date is None:
-            continue
-        legacy.append({
-            "title": a.title,
-            "due_date": a.due_date.isoformat(),
-            "course_id": course_id,
-            "course_name": result.syllabus.course_title,
-            "assignment_type": "other",
-            "notes": a.description,
-        })
-    if legacy:
-        try:
-            save_assignments_to_db(user_id, legacy, source="syllabus")
-        except Exception:
-            logger.exception("Assignment save failed for '%s' (best-effort)", filename)
-
-
-def _graph_backstop(*, user_id: str, course_id: str, filename: str,
-                    result: DocumentProcessingResult) -> None:
-    """Apply graph update if the orchestrator skipped its tool call."""
-    if result.graph_updated:
-        return
-    if result.classification.category not in ("syllabus", "assignment"):
-        return
-    try:
-        new_nodes = [
-            {"concept_name": c.name, "initial_mastery": 0.0}
-            for c in result.concepts.concepts
-        ]
-        apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
-    except Exception:
-        logger.exception("Graph backstop failed for '%s' (best-effort)", filename)
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
+        )
+    return filename, file_bytes
 
 
 @router.post("/upload/sync")
@@ -694,15 +249,9 @@ async def upload_document_sync(
     """Non-streaming JSON upload. Original behavior preserved here so any
     frontend that hasn't migrated to the SSE /upload route keeps working."""
     await guard_off_loop(require_self, user_id, request)
-    _validate_user(user_id)
+    await _validate_user(user_id)
 
-    # Unify with the middleware-stamped request ID so agent traces and
-    # client-facing error payloads share the same correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
+    request_id = _upload_request_id(request)
 
     # Idempotency: if the client retries with the same X-Request-ID,
     # short-circuit to the previously persisted document instead of
@@ -722,32 +271,13 @@ async def upload_document_sync(
     # stays the key for the graph + course-context + calendar side effects.
     offering_id = await asyncio.to_thread(require_course_enrollment, user_id, course_id)
 
-    # ── Validation ────────────────────────────────────────────────────────────
-    filename = file.filename or ""
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
-        )
-
-    file_bytes = await file.read()
-
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
-                "Please upload a smaller file."
-            ),
-        )
+    filename, file_bytes = await _read_upload(file)
 
     # #116: with `jobs_queue` on for the uploader, extraction runs on the
     # worker (document_jobs); off, it runs here exactly as before.
     queued = await asyncio.to_thread(document_jobs.should_queue, user_id, len(file_bytes))
-    extracted_text = (
-        None if queued else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    extracted_text = None if queued else await asyncio.to_thread(  # #117: OCR off the loop
+        _extract_text_or_422, file_bytes, filename, file.content_type or "",
     )
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
@@ -874,15 +404,9 @@ async def upload_document(
     events; the client should NOT auto-retry against this route.
     """
     await guard_off_loop(require_self, user_id, request)
-    _validate_user(user_id)
+    await _validate_user(user_id)
 
-    # Unify the agent-trace request_id with the middleware-stamped one so
-    # SSE error payloads and Logfire spans share a single correlation key.
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
-    )
+    request_id = _upload_request_id(request)
     # Idempotency: a client retry with the same X-Request-ID should not
     # re-run the orchestrator; the stream replays the persisted row instead.
     # Looked up BEFORE the enrollment gate (#115 review), so a retry of an
@@ -899,23 +423,7 @@ async def upload_document(
         else await asyncio.to_thread(require_course_enrollment, user_id, course_id)
     )
 
-    filename = file.filename or ""
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
-        )
-
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
-                "Please upload a smaller file."
-            ),
-        )
+    filename, file_bytes = await _read_upload(file)
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -937,507 +445,21 @@ async def upload_document(
         document_jobs.should_queue, user_id, len(file_bytes))
     extracted_text: str | None = (
         None if OCR_ASYNC_ENABLED or existing or queued
-        else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+        else await asyncio.to_thread(  # #117: OCR off the event loop
+            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+        )
     )
-
-    async def event_stream():
-        nonlocal extracted_text
-        try:
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="start",
-                message="Document received. Processing...",
-            ))
-
-            # Idempotency (looked up above, before the gate): emit a
-            # result+done pair built from the previously persisted row
-            # instead — in the fresh result's shape (#759).
-            if existing:
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="result", step="finalize",
-                    message="Already processed (idempotent replay).",
-                    data=_replay_result_payload(existing),
-                ))
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="status", step="done",
-                    message="Saved.",
-                    data={"document_id": existing.get("id"), "request_id": request_id},
-                ))
-                return
-
-            # #117: one document.upload per accepted upload attempt — AFTER
-            # the idempotent-replay short-circuit (PR #465 review), so an
-            # X-Request-ID retry doesn't inflate the count. char_count is
-            # unknown (None) when OCR_ASYNC_ENABLED defers extraction below —
-            # document.processed carries the real count once extraction ran.
-            events_service.log_event(
-                "document.upload",
-                category="usage",
-                user_id=user_id,
-                request_id=request_id,
-                payload={
-                    "course_id": course_id,
-                    "offering_id": offering_id,
-                    "char_count": len(extracted_text) if extracted_text is not None else None,
-                },
-            )
-
-            # ── Queued (#116): the worker runs it; relay its progress ─────────
-            if queued:
-                upload_id = await asyncio.to_thread(
-                    document_jobs.stage_and_enqueue,
-                    user_id=user_id, offering_id=offering_id, course_id=course_id,
-                    request_id=request_id, filename=filename,
-                    content_type=file.content_type, file_bytes=file_bytes,
-                )
-                if upload_id is not None:
-                    watch = document_jobs.Watch()
-                    async for ev in document_jobs.stream_events(
-                        upload_id, request_id=request_id, outcome=watch,
-                    ):
-                        yield sapling_event_to_sse(ev)
-                    if watch.kind != document_jobs.INLINE:
-                        return
-
-            # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
-            # Failures here can NOT fall through to the legacy fallback —
-            # the legacy path uses the same extractor, and would crash on
-            # `extracted_text=None`. Emit a terminal error+done pair and
-            # return so the client gets a clean failure instead of a
-            # double-fault.
-            if extracted_text is None:
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracting_text",
-                    message="Extracting text from document...",
-                ))
-                try:
-                    extracted_text = await asyncio.to_thread(
-                        extract_text_from_file, file_bytes, filename,
-                        file.content_type or "",
-                    )
-                except LLMBudgetExceeded as e:
-                    # #119: vision OCR refused by the per-user LLM budget.
-                    for frame in _budget_failed_frames(e, request_id):
-                        yield frame
-                    return
-                except Exception:
-                    logger.exception(
-                        "Async text extraction failed for '%s'", filename,
-                    )
-                    yield sapling_event_to_sse(SaplingEvent(
-                        type="error", step="failed",
-                        message="Could not read this document. Please try a different file.",
-                        data={"request_id": request_id},
-                    ))
-                    yield sapling_event_to_sse(SaplingEvent(
-                        type="status", step="done",
-                        message="Failed.",
-                    ))
-                    return
-                yield sapling_event_to_sse(SaplingEvent(
-                    type="progress", step="extracted_text",
-                    message=f"Extracted {len(extracted_text):,} chars.",
-                ))
-                # Extraction can succeed and still yield nothing usable -- a
-                # rasterized PDF has no text layer, so the except branch above
-                # never fires. Stop here rather than asking the model to
-                # summarize an empty document, which it answers by inventing
-                # one (see MIN_EXTRACTED_CHARS). Same terminal error+done pair
-                # as the extraction-failure path, so clients need no new case.
-                if not _has_usable_text(extracted_text):
-                    logger.warning(
-                        "Async extraction yielded %d usable chars for '%s' - "
-                        "rejecting as unreadable",
-                        len((extracted_text or "").strip()), filename,
-                    )
-                    yield sapling_event_to_sse(SaplingEvent(
-                        type="error", step="failed",
-                        message=UNREADABLE_DOCUMENT_DETAIL,
-                        data={"request_id": request_id},
-                    ))
-                    yield sapling_event_to_sse(SaplingEvent(
-                        type="status", step="done",
-                        message="Failed.",
-                    ))
-                    return
-
-            # ── Phase 1: classifier (serial gate) ─────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classify",
-                message="Classifying document...",
-            ))
-            cls_run = record_agent_usage(
-                await classifier_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                ),
-                feature="document", task="classifier",
-            )
-            classification = cls_run.output
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="classified",
-                message=f"Classified as {classification.category}.",
-                data={
-                    "category": classification.category,
-                    "is_syllabus": classification.is_syllabus,
-                },
-            ))
-
-            # ── Phase 2: workers in parallel ──────────────────────────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extract",
-                message="Extracting summary, concepts"
-                        + (" and syllabus" if classification.is_syllabus else "")
-                        + " in parallel...",
-            ))
-            summary_task = summary_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            concepts_task = concept_extraction_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            if classification.is_syllabus:
-                syllabus_task = syllabus_extraction_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
-                )
-                record_agent_usage(syllabus_r, feature="document", task="syllabus")
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = syllabus_r.output
-            else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = None
-            record_agent_usage(summary_r, feature="document", task="summary")
-            record_agent_usage(concepts_r, feature="document", task="concepts")
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="extracted",
-                message=f"Extracted {len(concepts.concepts)} concept(s).",
-            ))
-
-            # ── Phase 3: graph update (direct call, no agent loop) ──────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_update",
-                message="Merging concepts into the course graph...",
-            ))
-            concept_names = [c.name for c in concepts.concepts]
-            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
-            graph_updated = merged > 0
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_updated",
-                message=f"Merged {merged} concept(s).",
-            ))
-
-            # ── Compose final result + emit ──────────────────────────────────
-            final_output = DocumentProcessingResult(
-                classification=classification,
-                summary=summary,
-                concepts=concepts,
-                syllabus=syllabus,
-                graph_updated=graph_updated,
-            )
-            yield sapling_event_to_sse(SaplingEvent(
-                type="result", step="finalize",
-                message="Processing complete.",
-                data=final_output.model_dump(mode="json"),
-            ))
-        except LLMBudgetExceeded as e:
-            # #119: the per-user LLM budget refused the pipeline before any
-            # model call; nothing was persisted. Same terminal tail, with the
-            # budget's own message instead of "please try again".
-            for frame in _budget_failed_frames(e, request_id):
-                yield frame
-            return
-        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-            # Terminal (#151b): `step="fallback"` left the SSE vocabulary
-            # with the legacy pipeline (ADR 0024). Emit the exact
-            # error:failed + status:done tail the deleted fallback used on
-            # double-failure, so clients need no new case. Retry is safe —
-            # nothing was persisted, so a retry (the modal reuses the same
-            # X-Request-ID for the same file, #759) finds no row to replay
-            # and re-runs the pipeline.
-            logger.warning(
-                "Agent guardrails tripped during stream for '%s'; failing",
-                filename, exc_info=e,
-            )
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="failed",
-                message="Document processing failed. Please try again.",
-                data={"request_id": request_id} if request_id else None,
-            ))
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="done",
-                message="Failed.",
-            ))
-            return
-        except Exception:
-            # Same terminal tail; a bare exception is a bug, so keep the
-            # full exception log where the guardrail branch logs a WARNING.
-            logger.exception("Unexpected streaming failure for '%s'", filename)
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="failed",
-                message="Document processing failed. Please try again.",
-                data={"request_id": request_id} if request_id else None,
-            ))
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="done",
-                message="Failed.",
-            ))
-            return
-
-        # ── Post-roll: side effects + persistence (#132 item 11) ──────────
-        # Runs AFTER the terminal `result` event is on the wire, in its own
-        # try/except. A post-result failure still emits the terminal
-        # error:failed + status:done pair and NEVER a second result — the
-        # client already holds the processed document, and every emitter in
-        # this generator sends at most one result per stream. The legacy
-        # fallback this separation used to guard against re-triggering
-        # (result → error → result → done, plus a second model call) is
-        # GONE (#151b, ADR 0024); the separate try/except now simply keeps
-        # the post-result failure tail identical to the pre-result failure
-        # branches above. #154 builds on this structure — keep persistence
-        # in the post-roll, after the result event.
-        try:
-            # Synchronous PostgREST writes — threaded so they don't block
-            # the event loop serving this (and every other) SSE stream
-            # (#132 item 22; same pattern as the async-OCR extraction above).
-            await asyncio.to_thread(
-                _save_orchestrator_syllabus,
-                user_id=user_id, course_id=course_id,
-                filename=filename, result=final_output,
-            )
-            await asyncio.to_thread(
-                _graph_backstop,
-                user_id=user_id, course_id=course_id,
-                filename=filename, result=final_output,
-            )
-            try:
-                doc_id, _ = await asyncio.to_thread(
-                    _persist_document,
-                    user_id=user_id, offering_id=offering_id,
-                    filename=filename, result=final_output,
-                    request_id=request_id,
-                    course_id=course_id,
-                    char_count=len(extracted_text) if extracted_text is not None else None,
-                    extracted_text=extracted_text,
-                )
-                adopted = False
-            except Exception:
-                # #759: the replay lookup at the top is check-then-act. Two
-                # attempts sharing an X-Request-ID can both miss it; the
-                # unique (user_id, request_id) index then rejects the
-                # loser's insert. That document WAS saved — by the winner —
-                # so adopt its row rather than report it lost.
-                winner = await asyncio.to_thread(
-                    _existing_doc_by_request_id, user_id, request_id,
-                )
-                if not winner or not winner.get("id"):
-                    raise
-                doc_id, adopted = winner["id"], True
-                logger.info(
-                    "Upload '%s' lost the request_id race; adopting %s",
-                    filename, doc_id,
-                )
-        except Exception:
-            logger.exception(
-                "Post-result persistence failed for '%s' — result already "
-                "sent, so no legacy fallback (it would re-run the pipeline "
-                "and emit a second result)", filename,
-            )
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="failed",
-                message="The document was processed but could not be saved. "
-                        "Please try uploading it again.",
-                data={"request_id": request_id} if request_id else None,
-            ))
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="done",
-                message="Failed.",
-            ))
-            return
-
-        # The row exists from here on, so nothing below may turn this stream
-        # into error:failed — the client would show "not saved" for a
-        # document sitting in the library (#759). The side effects are
-        # best-effort; the winner of a request_id race already spawned them.
-        #
-        # BackgroundTasks runs after response close — useless for SSE since
-        # the stream IS the response. _spawn_post_roll holds each task and
-        # logs its exception; drain_post_roll waits for them at shutdown.
-        if not adopted:
-            try:
-                _spawn_post_roll(
-                    ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
-                    # update_course_context aggregates an OFFERING (#759).
-                    ("update_course_context", _refresh_course_context, offering_id, user_id),
-                    ("check_upload_achievements", _check_upload_achievements, user_id),
-                    # #482: the id only. The indexer reads everything else off
-                    # the stored row, which is what lets the sweeper re-drive
-                    # this same work if the attempt below dies with the process.
-                    ("index_document", schedule_document_index, doc_id, user_id),
-                )
-            except Exception:
-                logger.exception("Post-roll spawn failed for '%s' (document %s saved)",
-                                 filename, doc_id)
-
-        yield sapling_event_to_sse(SaplingEvent(
-            type="status", step="done",
-            message="Saved.",
-            data={"document_id": doc_id},
-        ))
 
     return EventSourceResponse(
         # #116: a queued upload this request took back records its outcome.
-        document_jobs.record_inline_outcome(event_stream()),
+        document_jobs.record_inline_outcome(upload_event_stream(
+            existing=existing, user_id=user_id, course_id=course_id,
+            offering_id=offering_id, request_id=request_id, filename=filename,
+            content_type=file.content_type, file_bytes=file_bytes, deps=deps,
+            queued=queued, extracted_text=extracted_text,
+        )),
         headers={"Cache-Control": SSE_CACHE_CONTROL},
     )
-
-
-def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
-    """Background task: delete cached study guides so they regenerate fresh.
-
-    Study guides key on the offering (0025), matching the documents that
-    feed them.
-    """
-    try:
-        table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
-        )
-    except Exception:
-        logger.exception(
-            "Failed to invalidate study guides cache for user=%s offering=%s",
-            user_id, offering_id,
-        )
-
-
-def _refresh_course_context(offering_id: str, user_id: str) -> None:
-    """Post-upload class-aggregate refresh: inline, or a queued job when the
-    `jobs_queue` flag is on for the uploader (#116)."""
-    refresh_course_context(offering_id, user_id=user_id)
-
-
-def _check_upload_achievements(user_id: str) -> None:
-    """Background task: best-effort achievement check."""
-    try:
-        check_achievements(user_id, "documents_uploaded", {})
-    except Exception:
-        pass
-
-
-#: In-flight post-roll tasks (#759). The event loop holds only a WEAK
-#: reference to a task, so an unreferenced create_task result can be
-#: garbage-collected mid-flight; this set is the strong reference. Each task
-#: removes itself when done, and drain_post_roll waits on what remains.
-_POST_ROLL_TASKS: set[asyncio.Task] = set()
-
-#: Shutdown budget for drain_post_roll. The work is best-effort and
-#: re-drivable (the index sweeper picks up an unindexed row), so this bounds
-#: how long a deploy waits rather than guaranteeing completion.
-POST_ROLL_DRAIN_TIMEOUT_S = 15.0
-
-
-def _spawn_post_roll(*tasks: tuple) -> None:
-    """Fire-and-forget post-roll work for SSE / non-FastAPI-BackgroundTasks
-    contexts. Each tuple is (label, callable, *args). Exceptions in the
-    spawned task are logged via a done-callback so they don't disappear
-    silently the way bare asyncio.create_task(...) lets them; each task is
-    held in _POST_ROLL_TASKS until it finishes.
-    """
-    for label, fn, *args in tasks:
-        task = asyncio.create_task(asyncio.to_thread(fn, *args), name=f"post_roll:{label}")
-        _POST_ROLL_TASKS.add(task)
-        task.add_done_callback(_POST_ROLL_TASKS.discard)
-        task.add_done_callback(lambda t, _label=label: _log_post_roll_exc(t, _label))
-
-
-async def drain_post_roll(timeout: float = POST_ROLL_DRAIN_TIMEOUT_S) -> None:
-    """Wait (bounded) for in-flight post-roll tasks — called from the app
-    lifespan at shutdown so an upload's indexing / course-context refresh is
-    not cut off by a deploy. Only this loop's tasks are awaited. Never raises.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        pending = [t for t in _POST_ROLL_TASKS if not t.done() and t.get_loop() is loop]
-        if not pending:
-            return
-        _, still = await asyncio.wait(pending, timeout=timeout)
-        if still:
-            logger.warning(
-                "%d upload post-roll task(s) still running after %.0fs at shutdown",
-                len(still), timeout,
-            )
-    except Exception:
-        logger.debug("post-roll drain failed", exc_info=True)
-
-
-def _log_post_roll_exc(task: "asyncio.Task", label: str) -> None:
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("Post-roll task '%s' failed: %s", label, exc, exc_info=exc)
-
-
-def _course_label(course_id: str) -> str:
-    """Best-effort human label for a course (for prompts and toasts)."""
-    rows = table("courses").select(
-        "course_code,course_name", filters={"id": f"eq.{course_id}"}, limit=1,
-    ) or []
-    if not rows:
-        return "Course"
-    row = rows[0]
-    code = (row.get("course_code") or "").strip()
-    name = (row.get("course_name") or "").strip()
-    if code and name:
-        return f"{code} — {name}"
-    return code or name or "Course"
-
-
-def _scan_concepts_for_course(
-    user_id: str,
-    course_id: str,
-    *,
-    doc_filename: str | None = None,
-    doc_summary: str | None = None,
-    doc_concept_notes: list[dict] | None = None,
-) -> dict:
-    """Shared scan logic. Pulls existing course concepts, asks the LLM to
-    extend the set, and writes new nodes via apply_graph_update."""
-    existing_rows = table("graph_nodes").select(
-        "id,concept_name", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    ) or []
-    existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
-
-    concepts = _extend_concepts(
-        user_id,
-        course_id,
-        course_label=_course_label(course_id),
-        existing_concepts=existing_concepts,
-        doc_filename=doc_filename,
-        doc_summary=doc_summary,
-        doc_concept_notes=doc_concept_notes,
-    )
-    if not concepts:
-        return {"concepts": [], "added": 0, "existing": len(existing_concepts)}
-
-    before_count = len(existing_rows)
-    try:
-        new_nodes = [{"concept_name": name, "initial_mastery": 0.0} for name in concepts]
-        apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
-    except Exception:
-        logger.exception("Concept scan failed for course=%s", course_id)
-        raise HTTPException(status_code=500, detail="Concept scan failed.")
-
-    after_rows = table("graph_nodes").select(
-        "id", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    ) or []
-    return {
-        "concepts": concepts,
-        "added": max(0, len(after_rows) - before_count),
-        "existing": len(existing_concepts),
-    }
 
 
 @router.post("/doc/{document_id}/scan-concepts")
@@ -1448,7 +470,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
-    _validate_user(user_id)
+    _validate_user_sync(user_id)
 
     rows = table("documents").select(
         "id,user_id,offering_id,file_name,summary,concept_notes",
@@ -1478,13 +500,16 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     else:
         doc_concept_notes = notes_raw or []
 
-    return _scan_concepts_for_course(
-        user_id,
-        course_id,
-        doc_filename=doc.get("file_name"),
-        doc_summary=doc_summary,
-        doc_concept_notes=doc_concept_notes
-    )
+    try:
+        return _scan_concepts_for_course(
+            user_id,
+            course_id,
+            doc_filename=doc.get("file_name"),
+            doc_summary=doc_summary,
+            doc_concept_notes=doc_concept_notes
+        )
+    except ConceptScanFailed as e:
+        raise HTTPException(status_code=500, detail=e.detail)
 
 
 @router.post("/course/{course_id}/scan-concepts")
@@ -1495,6 +520,9 @@ def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
-    _validate_user(user_id)
+    _validate_user_sync(user_id)
     require_course_enrollment(user_id, course_id)  # #115
-    return _scan_concepts_for_course(user_id, course_id)
+    try:
+        return _scan_concepts_for_course(user_id, course_id)
+    except ConceptScanFailed as e:
+        raise HTTPException(status_code=500, detail=e.detail)

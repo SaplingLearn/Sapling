@@ -352,3 +352,29 @@ Consequences that bind both W3a and this work:
 - **Load test:** `loadtest/` (locust) and a `workflow_dispatch`-only workflow with a required
   `target_url`.
 
+
+## 8. What wave 3 shipped (#117, branch `harden3/phase3`)
+
+- **Sync-on-loop allowlist is empty.** The tutor turn path (`routes/learn.py`'s turn helpers,
+  `services/chat_stream.py`, `services/tutor_sessions.py`'s async twins), notes `_course_meta` and
+  documents `_validate_user` all run on the `a*` twins or hop with `run_in_threadpool`. A
+  coroutine `on_complete` in `chat_stream` is awaited under `asyncio.shield`, so a client
+  disconnect still lets the turn persist.
+- **Converted routers:** graph reads (`get_user_graph`, `get_user_recommendations`,
+  `list_courses` over `graph_service.aget_*` twins that share the pure assembly with the sync
+  path), quiz attempts (`get_attempt`, `answer_question`, `abandon_attempt`), learn
+  (`mode_switch`, `list_sessions`, `resume_session`), documents CRUD (list, delete, update).
+  Handlers that call `run_agent_sync`, `apply_graph_update` or heavy XP/achievement services stay
+  sync `def`. Each converted router has a `test_async_*_seam.py` that drives it through the real
+  DB layer with `async_db_client` off and on.
+- **Two replicas:** the remaining per-process state is audited in `docs/deploy/railway.md`
+  ("Two API replicas"). New: `services/pg_lease.py` (`stateless_locks`) for the study-guide,
+  account-operation and OAuth-nonce locks; `tutor_pending_sessions` (`stateless_tutor_sessions`)
+  for lazily started tutor sessions. `.railway/railway.ts` declares the API's replica count as
+  `API_REPLICAS`, committed as 1; raising it to 2 is the runbook's last step, after the cut-over
+  flags.
+- **Nightly load test:** `.github/workflows/loadtest-nightly.yml`, runs only when the repo
+  variable `LOADTEST_TARGET_URL` is set, and fails on the plan's targets via
+  `loadtest/check_thresholds.py` (p95 non-LLM < 300 ms, chat TTFT p95 < 3 s, ≤ 1 % failures).
+- **Still not built:** DB spans, the saturation gauges, a `PoolTimeout` → 503 handler, and the
+  shared request builder (the sync and async verbs still mirror each other).

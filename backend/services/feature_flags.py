@@ -182,6 +182,26 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("stateless_rate_limit", ("off", "on"),
             "Keep rate-limit counters in Postgres so every replica shares one "
             "budget. Global: per-user rules and rollouts do not apply.", False),
+    # #117 wave 3: the per-process locks (study-guide single-flight, admin
+    # account operations, consumed OAuth nonces) also take a Postgres lease
+    # (`claim_lease()`, services/pg_lease.py), so they hold across replicas.
+    # Resolved GLOBALLY. Off = today's in-process locks only; on keeps them as
+    # the first layer, and a failing DB falls back to them. Server-only.
+    FlagDef("stateless_locks", ("off", "on"),
+            "Back the per-process locks with Postgres leases so they hold "
+            "across replicas. Global: per-user rules and rollouts do not apply.", False),
+    # #117: lazy tutor sessions (pending between start-session and the first
+    # turn) and their end/delete tombstones in the service-only
+    # `tutor_pending_sessions` table instead of process memory, so a session
+    # started on one replica can be continued, ended or deleted on another.
+    # Resolved GLOBALLY (user_id=None). Off = today's in-memory store; a
+    # session started under one setting finishes there only if it is
+    # continued on the same side (flipping it strands the other side's
+    # pending greetings: their first turn answers 404). Server-only.
+    FlagDef("stateless_tutor_sessions", ("off", "on"),
+            "Keep not-yet-started tutor sessions in Postgres so every replica "
+            "can continue, end or delete them. Global: per-user rules and "
+            "rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

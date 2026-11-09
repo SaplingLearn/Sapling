@@ -17,6 +17,7 @@
  * E2E_DB_URL wiped whatever it pointed at.
  */
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -24,11 +25,32 @@ import { Client } from "pg";
 
 const execFileAsync = promisify(execFile);
 
-/** `make e2e-up`'s local Postgres (docs/local-supabase.md). */
-const DEFAULT_DB_URL =
-  "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
-
-const DB_URL = process.env.E2E_DB_URL?.trim() || DEFAULT_DB_URL;
+/**
+ * The stack's Postgres and PostgREST: the env (E2E_DB_URL, exported by
+ * scripts/e2e-cycle.sh), else .e2e/stack.json (the last `make e2e-up`), else —
+ * in CI only — the classic :54322. Locally :54322 is the DEV database, so with
+ * no slot booted DB_URL stays empty and every connection is refused.
+ *
+ * Resolved here rather than imported from ./stack: e2e/figma/reset-db.ts loads
+ * this module under plain Node ESM, which cannot resolve an extensionless
+ * relative import.
+ */
+function readStackManifest(): { dbUrl?: string; supabaseUrl?: string } {
+  try {
+    const file = path.resolve(__dirname, "..", "..", "..", ".e2e", "stack.json");
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+}
+const STACK = readStackManifest();
+const IN_CI = process.env.CI === "true";
+const DB_URL =
+  process.env.E2E_DB_URL?.trim() ||
+  STACK.dbUrl ||
+  (IN_CI ? "postgresql://postgres:postgres@127.0.0.1:54322/postgres" : "");
+const SUPABASE_URL =
+  STACK.supabaseUrl || process.env.SUPABASE_URL?.trim() || (IN_CI ? "http://127.0.0.1:54321" : "");
 
 // Exact-match loopback hosts — deliberately stricter than a substring check,
 // so `postgresql://…@127.0.0.1.evil.com/…` is rejected (same rationale as
@@ -36,6 +58,13 @@ const DB_URL = process.env.E2E_DB_URL?.trim() || DEFAULT_DB_URL;
 const LOCAL_DB_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 function requireLocalDbUrl(url: string): void {
+  if (!url) {
+    throw new Error(
+      "REFUSING to open the E2E Postgres connection: no E2E stack (E2E_DB_URL unset, no " +
+        ".e2e/stack.json). Outside CI the classic 127.0.0.1:54322 is the DEV database, and " +
+        "the per-test reset truncates it. Boot a slot first (scripts/e2e-cycle.sh or make e2e-up).",
+    );
+  }
   let host = "";
   try {
     host = new URL(url).hostname.trim().toLowerCase();
@@ -47,7 +76,7 @@ function requireLocalDbUrl(url: string): void {
       "REFUSING to open the E2E Postgres connection: DB URL host is not local " +
         `(got ${JSON.stringify(url)}). The truncate isolation bypasses PostgREST ` +
         "and would wipe whatever this points at. Point E2E_DB_URL at the local " +
-        `stack (${DEFAULT_DB_URL}) or unset it.`,
+        "E2E stack (an E2E slot's Postgres, 127.0.0.1) or unset it.",
     );
   }
 }
@@ -127,6 +156,9 @@ export async function reseedBaseline(): Promise<void> {
     await execFileAsync(python, ["-m", "db.seed_local_rich"], {
       cwd: backendDir,
       timeout: 120_000,
+      // The stack's DB, explicitly: left to backend/.env, the seeder would
+      // write to the dev database whenever the harness targets an E2E slot.
+      env: { ...process.env, SUPABASE_DB_URL: DB_URL, SUPABASE_URL },
     });
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string };

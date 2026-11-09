@@ -20,12 +20,17 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
 
 # The attempt-row shape is the D-workstream's (#542) and is single-sourced
 # there: two byte-identical copies drifted apart the moment either route grew
 # a column. `tests/` is on sys.path during collection, so this is the module
 # pytest already imported, not a second copy of it.
 from test_quiz_lifecycle_d import _attempt_row
+import pytest
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -136,7 +141,7 @@ class TestAbandon:
     def test_stamps_abandoned_at_and_reports_the_derived_status(self):
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert r.status_code == 200, r.text
@@ -154,7 +159,7 @@ class TestAbandon:
         arbitrate, so a concurrent submit and abandon cannot both win."""
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert len(attempts.updates) == 1
@@ -174,7 +179,7 @@ class TestAbandon:
         discard that already worked."""
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             first = client.post("/api/quiz/attempts/quiz1/abandon")
             second = client.post("/api/quiz/attempts/quiz1/abandon")
 
@@ -191,7 +196,7 @@ class TestAbandon:
         a fresh one that would pretend the student closed it just now."""
         attempts = _Attempts(_attempt_row(abandoned_at=STAMP))
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert r.status_code == 200, r.text
@@ -208,7 +213,7 @@ class TestAbandonRefusals:
             _attempt_row(completed_at="2026-08-23T01:00:00+00:00", score=1, total=1)
         )
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert r.status_code == 409
@@ -230,7 +235,7 @@ class TestAbandonRefusals:
 
         attempts.update = _update_after_a_concurrent_submit
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert r.status_code == 409
@@ -252,7 +257,7 @@ class TestAbandonRefusals:
 
         attempts.update = _deleted_under_the_claim
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert r.status_code == 404, r.text
@@ -261,7 +266,7 @@ class TestAbandonRefusals:
     def test_an_unknown_attempt_404s(self):
         attempts = _Attempts(None)
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             r = client.post("/api/quiz/attempts/nope/abandon")
 
         assert r.status_code == 404
@@ -276,8 +281,8 @@ class TestAbandonRefusals:
         attempts = _Attempts(_attempt_row(user_id="someone_else"))
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.require_self", _real_require_self),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("require_self", _real_require_self),
             patch("services.auth_guard.get_session_user_id", return_value="user_andres"),
         ):
             r = client.post("/api/quiz/attempts/quiz1/abandon")
@@ -298,7 +303,7 @@ class TestAbandonIsVisibleToTheReadPaths:
     def test_the_resume_read_stops_offering_the_attempt(self):
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             before = client.get("/api/quiz/attempts/quiz1")
             assert before.json()["resumable"] is True
 
@@ -316,7 +321,7 @@ class TestAbandonIsVisibleToTheReadPaths:
         strip filters on (`useQuizHome::discoverResumable`)."""
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=with_async_twins(_factory(attempts))):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             client.post("/api/quiz/attempts/quiz1/abandon")
             listing = client.get(
                 "/api/quiz/attempts", params={"user_id": "user_andres"}
@@ -341,7 +346,7 @@ class TestAbandonIsVisibleToTheReadPaths:
         """The discard has to bite on the write paths too, or it is a label."""
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch_quiz("table", side_effect=with_async_twins(_factory(attempts))):
             client.post("/api/quiz/attempts/quiz1/abandon")
             r = client.post(
                 "/api/quiz/attempts/quiz1/answer",
@@ -356,10 +361,10 @@ class TestAbandonIsVisibleToTheReadPaths:
         apply_mock = MagicMock()
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             client.post("/api/quiz/attempts/quiz1/abandon")
             r = client.post("/api/quiz/submit", json={
@@ -400,10 +405,10 @@ class TestSubmitAndAbandonCannotBothWin:
         attempts.select = _discarded_after_the_pre_read
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -437,10 +442,10 @@ class TestSubmitAndAbandonCannotBothWin:
         attempts.select = _submitted_after_the_pre_read
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -466,10 +471,10 @@ class TestSubmitAndAbandonCannotBothWin:
         attempts.update = _deleted_under_the_claim
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -505,10 +510,10 @@ class TestSubmitAndAbandonCannotBothWin:
         attempts.select = _select_that_falls_over
 
         with (
-            patch("routes.quiz.table", side_effect=_factory(attempts)),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("table", side_effect=with_async_twins(_factory(attempts))),
+            patch_quiz("apply_graph_update", new=apply_mock),
+            patch_quiz("get_quiz_context", return_value={}),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
