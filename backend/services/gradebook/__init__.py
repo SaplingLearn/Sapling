@@ -2,7 +2,7 @@
 backend/services/gradebook/ — the gradebook domain (#118).
 
 - ``grades``: pure grade math (curve, drop-lowest, letter scale, GPA); was
-  ``services/gradebook_service.py``, which stays as a re-export shim.
+  ``services/gradebook_service.py``, which stays as an alias shim.
 - ``enrollments``: (user, course, semester) → enrollment resolution, the
   category/assignment loaders and the ownership checks.
 - ``syllabus``: apply a confirmed syllabus extraction to an enrollment.

@@ -8,7 +8,7 @@ per-endpoint rollups); the shared pieces live here:
 - ``scan``: range resolution and the capped, paged range scan.
 - ``series``: day bucketing for ``?bucket=day``.
 - ``db_scope``: grouping for the ``db_user_scope`` rollout report (was
-  ``services/admin_db_scope.py``, which stays as a re-export shim).
+  ``services/admin_db_scope.py``, which stays as an alias shim).
 """
 from __future__ import annotations
 

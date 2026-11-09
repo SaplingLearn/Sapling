@@ -11,7 +11,7 @@ course in that term) and key categories/assignments on ``enrollment_id``.
 - gradebook_categories / assignments key on enrollment_id (no user_id/course_id).
 - points_possible/points_earned/notes stay 🔒 TEXT: encrypt at write, decrypt at read.
 - bell-curve (enrollments.curve_*) + drop-lowest (gradebook_categories.drop_lowest)
-  feed the weighted-score computation in services/gradebook_service.py.
+  feed the weighted-score computation in services/gradebook/grades.py.
 - GPA: per-semester (one term) and cumulative/transcript (credit-weighted across
   all the user's offerings of all enrolled courses).
 """
