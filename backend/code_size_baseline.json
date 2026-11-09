@@ -5,16 +5,12 @@
     "services/graph_service.py::apply_graph_update": 28
   },
   "route_file_lines": {
-    "routes/admin.py": 1005,
-    "routes/admin_analytics.py": 696,
     "routes/auth.py": 1173,
     "routes/documents.py": 1423,
     "routes/flashcards.py": 701,
-    "routes/gradebook.py": 649,
     "routes/gradescope.py": 868,
     "routes/learn.py": 2011,
     "routes/profile.py": 978,
-    "routes/quiz.py": 3150,
-    "routes/social.py": 1136
+    "routes/quiz.py": 3150
   }
 }

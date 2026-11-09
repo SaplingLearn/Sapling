@@ -201,7 +201,8 @@ def test_assignments_source_check_covers_every_value_routes_write():
     assert allowed, "no assignments.source CHECK found in migrations"
 
     written: dict[str, set[str]] = {}
-    for path in sorted(Path("routes").glob("*.py")):
+    # services/gradebook/: the syllabus apply moved there in the #118 split.
+    for path in sorted(Path("routes").glob("*.py")) + sorted(Path("services/gradebook").glob("*.py")):
         text = path.read_text(encoding="utf-8")
         for value in _SOURCE_WRITE_RE.findall(text):
             written.setdefault(value, set()).add(path.name)

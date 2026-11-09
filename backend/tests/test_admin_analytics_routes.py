@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 import routes.admin_analytics as analytics
+from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 
 client = TestClient(app)
 
@@ -109,7 +110,7 @@ class _FakeTable:
 @pytest.fixture
 def seeded(monkeypatch):
     store = _seed()
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable(store.get(name, [])))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable(store.get(name, [])))
     return store
 
 
@@ -279,7 +280,7 @@ def test_default_range_is_last_30_days(seeded, monkeypatch):
         def now(cls, tz=None):
             return cls(2026, 7, 21, 12, 0, 0, tzinfo=tz)
 
-    monkeypatch.setattr(analytics, "datetime", _FrozenDatetime)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "datetime", _FrozenDatetime)
     r = client.get(f"{BASE}/usage/summary")
     assert r.status_code == 200
     assert r.json()["total_events"] == 5
@@ -307,8 +308,8 @@ def test_rejects_from_after_to(seeded):
 
 def test_scan_cap_truncation_is_surfaced(seeded, monkeypatch):
     # Shrink the paging + cap so the 4 in-range event rows overflow the scan.
-    monkeypatch.setattr(analytics, "_PAGE", 1)
-    monkeypatch.setattr(analytics, "_SCAN_CAP", 2)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_SCAN_CAP", 2)
     r = client.get(f"{BASE}/usage/summary", params=RANGE)
     assert r.status_code == 200
     body = r.json()
@@ -395,9 +396,9 @@ def test_errors_bucket_series_truncation_is_surfaced(monkeypatch):
         ],
         "llm_usage": [],
     }
-    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable(store.get(name, [])))
-    monkeypatch.setattr(analytics, "_PAGE", 1)
-    monkeypatch.setattr(analytics, "_SCAN_CAP", 2)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", lambda name: _FakeTable(store.get(name, [])))
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 1)
+    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_SCAN_CAP", 2)
     r = client.get(f"{BASE}/errors", params={**RANGE, "bucket": "day"})
     assert r.status_code == 200
     body = r.json()

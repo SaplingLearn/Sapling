@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -108,10 +109,10 @@ class FakeDB:
 @pytest.fixture
 def db():
     fake = FakeDB()
-    with patch("routes.social.table", side_effect=fake.table), \
-         patch("routes.social.invalidate_summary"), \
+    with patch_social("table", side_effect=fake.table), \
+         patch_social("invalidate_summary"), \
          patch("services.achievement_service.check_achievements"), \
-         patch("routes.social.check_achievements"):
+         patch_social("check_achievements"):
         yield fake
 
 
@@ -239,8 +240,8 @@ class TestKickIsABan:
 class TestMatchRequiresMembership:
     def test_non_member_is_403_and_reads_no_graph(self, db):
         db.data.update(rooms=[_room()], room_members=[_member("u1", "2026-01-01")])
-        with patch("routes.social.get_graph") as graph, \
-             patch("routes.social.find_study_matches") as match:
+        with patch_social("get_graph") as graph, \
+             patch_social("find_study_matches") as match:
             r = client.post("/api/social/rooms/r1/match", json={"user_id": "u9"})
         assert r.status_code == 403
         graph.assert_not_called()
@@ -249,9 +250,9 @@ class TestMatchRequiresMembership:
     def test_member_matches(self, db):
         db.data.update(rooms=[_room()], room_members=[_member("u1", "2026-01-01"),
                                                      _member("u2", "2026-01-02")])
-        with patch("routes.social.get_graph", return_value={"nodes": [], "edges": []}), \
-             patch("routes.social.get_display_names", return_value={}), \
-             patch("routes.social.find_study_matches", return_value=[]):
+        with patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("find_study_matches", return_value=[]):
             r = client.post("/api/social/rooms/r1/match", json={"user_id": "u1"})
         assert r.status_code == 200
 
@@ -267,11 +268,11 @@ class TestSchoolMatchExcludesNonStudents:
             {"id": "u-deleted", "email": "ct", "is_approved": True, "deleted_at": "2026-01-01"},
         ])
         peers = {"u1", "u-real", "u-stub", "u-pending", "u-deleted"}
-        with patch("routes.social.academics.school_peer_user_ids", return_value=peers), \
-             patch("routes.social.get_graph", return_value={"nodes": [], "edges": []}), \
-             patch("routes.social.get_display_names", return_value={}), \
-             patch("routes.social.get_display_name", return_value="Me"), \
-             patch("routes.social.find_study_matches", return_value=[]) as match:
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("get_display_name", return_value="Me"), \
+             patch_social("find_study_matches", return_value=[]) as match:
             r = client.post("/api/social/school-match", json={"user_id": "u1"})
         assert r.status_code == 200
         candidates = [m["user_id"] for m in match.call_args.args[1]]
@@ -287,8 +288,8 @@ class TestDirectoryExcludesNonStudents:
             {"id": "u-deleted", "email": "ct", "is_approved": True, "deleted_at": "2026-01-01"},
         ])
         peers = {"u-real", "u-stub", "u-pending", "u-deleted"}
-        with patch("routes.social.academics.school_peer_user_ids", return_value=peers), \
-             patch("routes.social.get_display_names", return_value={}):
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_display_names", return_value={}):
             r = client.get("/api/social/students")
         assert r.status_code == 200
         assert [s["user_id"] for s in r.json()["students"]] == ["u-real"]
@@ -371,7 +372,7 @@ class TestFriendRequestTransitions:
                     raise RuntimeError("db down")
                 t.upsert = boom
             return t
-        with patch("routes.social.table", side_effect=failing), \
+        with patch_social("table", side_effect=failing), \
              TestClient(app, raise_server_exceptions=False) as c:
             r = c.post("/api/social/friends/requests/fr1/accept?user_id=u2")
         assert r.status_code == 500
@@ -641,7 +642,7 @@ class TestLeaveRequiresMembership:
         )
         before_rooms = [dict(r) for r in db.rows("rooms")]
         before_members = [dict(r) for r in db.rows("room_members")]
-        with patch("routes.social.invalidate_summary") as inv:
+        with patch_social("invalidate_summary") as inv:
             r = client.post("/api/social/rooms/r1/leave", json={"user_id": "u9"})
         assert r.status_code == 403
         assert "owner_id" not in r.text
@@ -674,11 +675,11 @@ class TestSchoolMatchScope:
         return [{"id": i, "email": "ct", "is_approved": True, "deleted_at": None} for i in ids]
 
     def _run(self, peers):
-        with patch("routes.social.academics.school_peer_user_ids", return_value=peers), \
-             patch("routes.social.get_graph", return_value={"nodes": [], "edges": []}), \
-             patch("routes.social.get_display_names", return_value={}), \
-             patch("routes.social.get_display_name", return_value="Me"), \
-             patch("routes.social.find_study_matches", return_value=[]) as match:
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("get_display_name", return_value="Me"), \
+             patch_social("find_study_matches", return_value=[]) as match:
             r = client.post("/api/social/school-match", json={"user_id": "u1"})
         assert r.status_code == 200
         return [m["user_id"] for m in match.call_args.args[1]]
@@ -752,8 +753,8 @@ class TestActivityHidesDeletedStudents:
                  "concept_name": "Series", "detail": "", "created_at": "2026-07-03T00:00:00Z"},
             ],
         )
-        with patch("routes.social.live_user_ids", return_value={"u1"}) as live, \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}) as names:
+        with patch_social("live_user_ids", return_value={"u1"}) as live, \
+             patch_social("get_display_names", return_value={"u1": "Alice"}) as names:
             r = client.get("/api/social/rooms/r1/activity?user_id=u1")
         assert r.status_code == 200, r.text
         acts = r.json()["activities"]

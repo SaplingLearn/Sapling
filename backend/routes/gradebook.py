@@ -32,156 +32,31 @@ from models import (
     SetCurveBody,
     SyllabusApplyBody,
 )
-from services import academics, gradebook_service
+from services import academics
 from services.achievement_service import check_achievements
 from services.auth_guard import require_self
 from services.encryption import encrypt_if_present, decrypt_if_present, decrypt_numeric
+from services.gradebook import (
+    DocumentNotOwned,
+    InvalidCategoryWeights,
+    apply_syllabus_to_enrollment,
+)
+from services.gradebook import grades as gradebook_service
+# Enrollment resolution + loaders live in services/gradebook/enrollments.py
+# (#118); the old private names stay importable/patchable here.
+from services.gradebook import (  # noqa: F401  (re-export, #118)
+    course_meta as _course_meta,
+    enrollment_grade as _enrollment_grade,
+    load_assignments as _load_assignments,
+    load_categories as _load_categories,
+    owned_assignment as _owned_assignment,
+    owned_category as _owned_category,
+    resolve_enrollment as _resolve_enrollment,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-# ── Enrollment resolution ────────────────────────────────────────────────────
-# `semester` query values (term labels, with a term-id fallback) resolve via
-# the shared `academics.term_id_for_label` — one mapping across the API.
-
-
-def _resolve_enrollment(user_id: str, course_id: str, semester: str | None) -> dict | None:
-    """Resolve (user, abstract course, term) → the user's enrollment row.
-
-    Intersect the user's offerings of the course with the target term:
-    - if `semester` is given, pick the offering in that term;
-    - else default to the current term's offering, falling back to the only /
-      most-recent offering the user has for the course.
-    Returns the full enrollments row (curve_*, letter_scale, syllabus_doc_id,
-    offering_id) or None when the user has no matching enrollment.
-    """
-    offering_ids = academics.user_offering_ids_for_course(user_id, course_id)
-    if not offering_ids:
-        return None
-
-    target_term_id = academics.term_id_for_label(semester)
-    if target_term_id is None and semester is None:
-        cur = academics.current_term()
-        target_term_id = cur["id"] if cur else None
-
-    chosen_offering: str | None = None
-    if target_term_id:
-        for oid in offering_ids:
-            t = academics.term_for_offering(oid)
-            if t and t.get("id") == target_term_id:
-                chosen_offering = oid
-                break
-    # No term match (or no term resolvable): fall back to the only offering, so
-    # single-section courses keep working without a semester param.
-    if chosen_offering is None and semester is None and len(offering_ids) == 1:
-        chosen_offering = offering_ids[0]
-    if chosen_offering is None:
-        return None
-
-    rows = table("enrollments").select(
-        "id,user_id,offering_id,letter_scale,syllabus_doc_id,"
-        "curve_mode,curve_avg_target,curve_sd_delta",
-        filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{chosen_offering}"},
-        limit=1,
-    )
-    return rows[0] if rows else None
-
-
-def _course_meta(offering_id: str) -> dict:
-    """Abstract course code/name + credits + term label for an offering."""
-    course_id = academics.offering_course_id(offering_id)
-    course = {}
-    if course_id:
-        rows = table("courses").select(
-            "id,course_code,course_name,credits",
-            filters={"id": f"eq.{course_id}"},
-            limit=1,
-        )
-        course = rows[0] if rows else {}
-    term = academics.term_for_offering(offering_id) or {}
-    return {
-        "course_id": course_id,
-        "course_code": course.get("course_code"),
-        "course_name": course.get("course_name"),
-        "credits": course.get("credits"),
-        "semester": term.get("label"),
-    }
-
-
-def _load_categories(enrollment_id: str, order: str | None = None) -> list[dict]:
-    return table("gradebook_categories").select(
-        "id,enrollment_id,name,weight,sort_order,drop_lowest",
-        filters={"enrollment_id": f"eq.{enrollment_id}"},
-        order=order or "sort_order.asc",
-    )
-
-
-def _load_assignments(enrollment_id: str, *, order: str | None = None, decrypt: bool = True) -> list[dict]:
-    assigns = table("assignments").select(
-        "id,enrollment_id,category_id,title,due_date,assignment_type,"
-        "points_possible,points_earned,notes,source,"
-        "curve_class_mean,curve_class_sd",
-        filters={"enrollment_id": f"eq.{enrollment_id}"},
-        order=order or "due_date.asc",
-    )
-    if decrypt:
-        for a in assigns:
-            a["points_possible"] = decrypt_numeric(a.get("points_possible"))
-            a["points_earned"] = decrypt_numeric(a.get("points_earned"))
-            a["notes"] = decrypt_if_present(a.get("notes"))
-    return assigns
-
-
-def _enrollment_grade(enr: dict, cats: list[dict], assigns: list[dict]):
-    """Computed (percent, letter) for an enrollment, applying curve + drop-lowest."""
-    percent = gradebook_service.current_grade(
-        cats,
-        assigns,
-        curve_mode=enr.get("curve_mode") or "raw",
-        curve_avg_target=enr.get("curve_avg_target"),
-        curve_sd_delta=enr.get("curve_sd_delta"),
-    )
-    letter = gradebook_service.letter_for(percent, enr.get("letter_scale"))
-    return percent, letter
-
-
-def _owned_category(user_id: str, category_id: str) -> dict | None:
-    """A gradebook_category by id whose enrollment belongs to `user_id`."""
-    rows = table("gradebook_categories").select(
-        "id,enrollment_id,name,weight,sort_order,drop_lowest",
-        filters={"id": f"eq.{category_id}"},
-        limit=1,
-    )
-    if not rows:
-        return None
-    cat = rows[0]
-    enr = table("enrollments").select(
-        "id,user_id",
-        filters={"id": f"eq.{cat['enrollment_id']}", "user_id": f"eq.{user_id}"},
-        limit=1,
-    )
-    return cat if enr else None
-
-
-def _owned_assignment(user_id: str, assignment_id: str) -> dict | None:
-    rows = table("assignments").select(
-        "id,enrollment_id,category_id",
-        filters={"id": f"eq.{assignment_id}"},
-        limit=1,
-    )
-    if not rows:
-        return None
-    a = rows[0]
-    if not a.get("enrollment_id"):
-        return None
-    enr = table("enrollments").select(
-        "id,user_id",
-        filters={"id": f"eq.{a['enrollment_id']}", "user_id": f"eq.{user_id}"},
-        limit=1,
-    )
-    return a if enr else None
 
 
 # ── GET /summary ─────────────────────────────────────────────────────────────
@@ -480,70 +355,12 @@ def apply_syllabus(body: SyllabusApplyBody, request: Request):
     if not enr:
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
 
-    doc_rows = table("documents").select(
-        "id,user_id",
-        filters={"id": f"eq.{body.doc_id}"},
-        limit=1,
-    )
-    if not doc_rows or doc_rows[0]["user_id"] != body.user_id:
-        raise HTTPException(status_code=403, detail="Document not yours")
-
-    total = sum(c.weight for c in body.categories)
-    if body.categories and abs(total - 100.0) > 0.5:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Category weights must sum to 100% (got {total:g}%)",
-        )
-
-    # Wipe + replace categories.
-    table("gradebook_categories").delete(filters={"enrollment_id": f"eq.{enr['id']}"})
-    new_cats = [
-        {
-            "id": str(uuid.uuid4()),
-            "enrollment_id": enr["id"],
-            "name": c.name,
-            "weight": c.weight,
-            "sort_order": c.sort_order,
-            "drop_lowest": c.drop_lowest,
-        }
-        for c in body.categories
-    ]
-    if new_cats:
-        table("gradebook_categories").insert(new_cats)
-
-    # Dedupe assignments by (title, due_date) within the enrollment.
-    existing = table("assignments").select(
-        "title,due_date",
-        filters={"enrollment_id": f"eq.{enr['id']}"},
-    )
-    seen = {(e.get("title", ""), e.get("due_date") or "") for e in existing}
-    new_assigns = []
-    for a in body.assignments:
-        title = a.get("title", "")
-        due = a.get("due_date") or ""
-        if (title, due) in seen:
-            continue
-        seen.add((title, due))
-        new_assigns.append({
-            "id": str(uuid.uuid4()),
-            "enrollment_id": enr["id"],
-            "title": title,
-            "due_date": a.get("due_date"),
-            "assignment_type": a.get("assignment_type"),
-            "notes": encrypt_if_present(a.get("notes")),
-            "category_id": None,
-            "points_possible": None,
-            "points_earned": None,
-            "source": "syllabus",
-        })
-    if new_assigns:
-        table("assignments").insert(new_assigns)
-
-    # Stamp the doc id on the enrollment.
-    table("enrollments").update(
-        {"syllabus_doc_id": body.doc_id},
-        filters={"id": f"eq.{enr['id']}"},
-    )
+    try:
+        apply_syllabus_to_enrollment(enr, body)
+    except DocumentNotOwned as e:
+        raise HTTPException(status_code=403, detail=e.detail)
+    except InvalidCategoryWeights as e:
+        raise HTTPException(status_code=400, detail=e.detail)
 
     # Return the refreshed course payload so the client can swap state in.
     refreshed = get_course(body.course_id, request, user_id=body.user_id, semester=body.semester)
