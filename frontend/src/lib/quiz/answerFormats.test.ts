@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { expressionParts, formatNumber, numericValue, superscriptParts, symbolicProblem } from "./answerFormats";
+import {
+  asciiExpression,
+  expressionParts,
+  formatNumber,
+  numericValue,
+  prettyExpression,
+  superscriptParts,
+  symbolicProblem,
+} from "./answerFormats";
 
 describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   it.each([
@@ -81,5 +89,41 @@ describe("superscriptParts — a stem's exponents, and nothing else", () => {
 
   it("returns prose without a caret as one part", () => {
     expect(superscriptParts("What is a base case?")).toEqual([{ text: "What is a base case?", sup: false }]);
+  });
+});
+
+describe("prettyExpression / asciiExpression — the algebra field typeset in place", () => {
+  it.each([
+    ["x^2 + 1", "x² + 1"],
+    ["2(x+1)^2 - 3*x", "2(x+1)² − 3·x"],
+    ["x^-1", "x⁻¹"],
+    ["x^(n+1)", "x⁽ⁿ⁺¹⁾"],
+    ["e^x", "eˣ"],
+    ["2^10", "2¹⁰"],
+  ])("shows %j as %j, and reads it back exactly", (ascii, shown) => {
+    expect(prettyExpression(ascii)).toBe(shown);
+    expect(asciiExpression(shown)).toBe(ascii);
+  });
+
+  it.each([
+    ["x^", "x^"],          // an exponent still being typed
+    ["x^-", "x^−"],
+    ["x^q", "x^q"],        // no superscript q
+    ["x^(2*y)", "x^(2·y)"], // no superscript ·
+    ["x^1.5", "x^1.5"],     // no superscript point
+    ["x^2^3", "x²^3"],      // a stacked power: two runs would read back as one
+    ["x^(n+1)^2", "x⁽ⁿ⁺¹⁾^2"],
+  ])("leaves %j raised only where it can be (%j)", (ascii, shown) => {
+    expect(prettyExpression(ascii)).toBe(shown);
+    expect(asciiExpression(shown)).toBe(ascii);
+  });
+
+  it("reads a digit typed after an exponent the way the grader will: as more exponent", () => {
+    expect(asciiExpression("x²3")).toBe("x^23");
+    expect(prettyExpression("x^23")).toBe("x²³");
+  });
+
+  it("never lets a typeset character through to the grader", () => {
+    expect(asciiExpression("x² × 3 ÷ y − 1")).toBe("x^2 * 3 / y - 1");
   });
 });

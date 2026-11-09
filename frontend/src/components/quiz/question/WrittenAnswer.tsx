@@ -8,12 +8,13 @@
  *   eight words, `routes/quiz.py`), so a paragraph box invited the very
  *   sentences the grader can never match.
  * - numeric: one line, the decimal keypad on a phone, keys for what that pad
- *   lacks (− / % and ×10ⁿ), and a live "Reads as 0.75" so a student sees
- *   their fraction or percentage parsed before they submit it.
+ *   lacks (− / % and ×10ⁿ), and a live "Reads as 0.75" at the field's
+ *   right end so a student sees their fraction or percentage parsed before
+ *   they submit it.
  * - symbolic: one monospace line, keys for powers, brackets and operators,
- *   and a live preview with real superscripts (2x^2 reads as 2x²), plus a
- *   plain warning for what the grammar refuses (functions, equations, an
- *   unclosed bracket).
+ *   typeset IN the field as it is typed (2x^2 shows as 2x², while the session
+ *   keeps the ASCII the grader reads), plus a plain warning for what the
+ *   grammar refuses (functions, equations, an unclosed bracket).
  *
  * All three are the app's standard `.field`; what differs is the face (the
  * reading serif for a term, monospace for a number or an expression) and the
@@ -28,9 +29,10 @@ import React from "react";
 import { Check, X } from "lucide-react";
 import type { QuestionType } from "@/lib/quiz/types";
 import {
-  expressionParts,
+  asciiExpression,
   formatNumber,
   numericValue,
+  prettyExpression,
   symbolicProblem,
 } from "@/lib/quiz/answerFormats";
 
@@ -65,7 +67,7 @@ const SYMBOLIC_KEYS: Key[] = [
 const PLACEHOLDER: Record<WrittenType, string> = {
   short_answer: "Type your answer",
   numeric: "e.g. 42, 3/4, 0.75 or 75%",
-  symbolic: "e.g. 2(x + 1) or x^2 - 1",
+  symbolic: "e.g. 2(x + 1) or x^2 − 1",
 };
 
 export interface WrittenAnswerProps {
@@ -96,13 +98,47 @@ export function WrittenAnswer({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
 
+  // An algebra answer is typeset IN the field: the session holds the ASCII
+  // the grader reads, the input shows it the way it will be read (x^2 → x²).
+  const typeset = type === "symbolic";
+  const toShown = (plain: string) => (typeset ? prettyExpression(plain) : plain);
+  const toPlain = (shown: string) => (typeset ? asciiExpression(shown) : shown);
+  const shown = toShown(value);
+
+  // Typesetting changes the text's length (^2 is two characters, ² is one),
+  // so the browser's caret has to be put back where the student was typing.
+  const pendingCaret = React.useRef<number | null>(null);
+  React.useLayoutEffect(() => {
+    const caret = pendingCaret.current;
+    if (caret === null) return;
+    pendingCaret.current = null;
+    inputRef.current?.setSelectionRange(caret, caret);
+  }, [shown]);
+
+  /**
+   * Store `next` (as typed into the field) and keep the caret after the same
+   * character. Counted from the END: what follows the caret is what the
+   * student has not touched, so its typeset length is stable even when the
+   * character just typed joined an exponent (x² + 3 → x²³).
+   */
+  const commit = (next: string, caret: number): number => {
+    const plain = toPlain(next);
+    const after = toShown(toPlain(next.slice(caret))).length;
+    const target = Math.max(0, toShown(plain).length - after);
+    pendingCaret.current = target;
+    onChange(plain);
+    return target;
+  };
+
   /** Put `key` in at the cursor (replacing any selection) and keep typing. */
   const insert = (key: Key) => {
     const input = inputRef.current;
-    const start = input?.selectionStart ?? value.length;
-    const end = input?.selectionEnd ?? value.length;
-    onChange(value.slice(0, start) + key.insert + value.slice(end));
-    const caret = start + (key.caret ?? key.insert.length);
+    const start = input?.selectionStart ?? shown.length;
+    const end = input?.selectionEnd ?? shown.length;
+    const caret = commit(
+      shown.slice(0, start) + key.insert + shown.slice(end),
+      start + (key.caret ?? key.insert.length),
+    );
     // After React has written the new value back into the input.
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -110,86 +146,84 @@ export function WrittenAnswer({
     });
   };
 
-  const readBack = (() => {
+  // What the grader will make of it. A good number is read back INSIDE the
+  // field (its right end); a problem gets the line under the field. A good
+  // expression needs neither — the field already shows it typeset.
+  const reading = (() => {
     if (!value.trim()) return null;
     if (type === "numeric") {
       const n = numericValue(value);
-      if (n !== null && formatNumber(n) === value.trim()) return null; // "15" reads as 15: nothing to add
-      return n === null
-        ? { ok: false, node: "Not a number the grader can read yet." }
-        : {
-            ok: true,
-            node: (
-              <>
-                Reads as{" "}
-                <span className="quiz-written__value">{formatNumber(n)}</span>
-              </>
-            ),
-          };
+      if (n === null) return { ok: false, node: "Not a number the grader can read yet." };
+      if (formatNumber(n) === value.trim()) return null; // "15" reads as 15: nothing to add
+      return { ok: true, node: <>Reads as <span className="quiz-written__value">{formatNumber(n)}</span></> };
     }
     if (type === "symbolic") {
       const problem = symbolicProblem(value);
-      if (problem) return { ok: false, node: problem };
-      return {
-        ok: true,
-        node: (
-          <>
-            Reads as{" "}
-            <span className="quiz-written__value quiz-written__expr">
-              {expressionParts(value).map((part, i) =>
-                part.sup ? <sup key={i}>{part.text}</sup> : <React.Fragment key={i}>{part.text}</React.Fragment>,
-              )}
-            </span>
-          </>
-        ),
-      };
+      return problem ? { ok: false, node: problem } : null;
     }
     return null;
   })();
 
-  const input = (
-    <input
-      ref={inputRef}
-      id="quiz-written-answer"
-      data-testid="quiz-written-answer"
-      type="text"
-      className={`field quiz-question__written-input quiz-written__input--${type}`}
-      aria-labelledby={labelledBy}
-      aria-describedby={readBack ? `${describedBy} quiz-written-readback` : describedBy}
-      aria-invalid={readBack && !readBack.ok ? true : undefined}
-      inputMode={type === "numeric" ? "decimal" : "text"}
-      placeholder={PLACEHOLDER[type]}
-      maxLength={2000}
-      value={value}
-      disabled={disabled}
-      onChange={event => onChange(event.target.value)}
-      onKeyDown={event => {
-        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-        event.preventDefault();
-        onSubmit();
-      }}
-      autoComplete="off"
-      autoCorrect="off"
-      autoCapitalize="off"
-      spellCheck={type === "short_answer"}
-    />
+  const readBack = reading && (
+    <span
+      id="quiz-written-readback"
+      className={reading.ok ? "quiz-written__reading" : "quiz-written__readback"}
+      data-testid="quiz-written-readback"
+      data-ok={reading.ok ? "true" : "false"}
+      aria-live="polite"
+    >
+      {reading.node}
+    </span>
   );
 
   return (
     <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
       <div className="quiz-written__field">
-        {input}
-        {/* The result, on the answer itself. Decorative: the verdict's live
-            region announces it. */}
-        {verdict && (
+        <input
+          ref={inputRef}
+          id="quiz-written-answer"
+          data-testid="quiz-written-answer"
+          type="text"
+          className={`field quiz-question__written-input quiz-written__input--${type}`}
+          aria-labelledby={labelledBy}
+          aria-describedby={reading && !verdict ? `${describedBy} quiz-written-readback` : describedBy}
+          aria-invalid={reading && !reading.ok ? true : undefined}
+          inputMode={type === "numeric" ? "decimal" : "text"}
+          placeholder={PLACEHOLDER[type]}
+          maxLength={2000}
+          value={shown}
+          disabled={disabled}
+          onChange={event => {
+            const field = event.target;
+            commit(field.value, field.selectionStart ?? field.value.length);
+          }}
+          onKeyDown={event => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            onSubmit();
+          }}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={type === "short_answer"}
+        />
+        {/* Once marked, the result takes the reading's place at the right end.
+            Decorative: the verdict's live region announces it. */}
+        {verdict ? (
           <span className="quiz-written__status" aria-hidden="true">
             {verdict === "correct" ? "Correct" : "Incorrect"}
             <span className="quiz-written__mark">
               {verdict === "correct" ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
             </span>
           </span>
-        )}
+        ) : reading?.ok && readBack}
       </div>
+
+      {/* Directly under the field, with its line held open, so a problem
+          appearing never pushes the keys out from under the cursor. */}
+      {type !== "short_answer" && (
+        <p className="quiz-written__problem">{!verdict && reading && !reading.ok && readBack}</p>
+      )}
 
       {keys.length > 0 && (
         <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
@@ -209,18 +243,6 @@ export function WrittenAnswer({
             </button>
           ))}
         </div>
-      )}
-
-      {readBack && (
-        <p
-          id="quiz-written-readback"
-          className="quiz-written__readback"
-          data-testid="quiz-written-readback"
-          data-ok={readBack.ok ? "true" : "false"}
-          aria-live="polite"
-        >
-          {readBack.node}
-        </p>
       )}
     </div>
   );

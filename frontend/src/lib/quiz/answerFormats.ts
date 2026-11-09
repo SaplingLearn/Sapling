@@ -105,3 +105,74 @@ export function superscriptParts(
   if (last < raw.length) parts.push({ text: pretty(raw.slice(last)), sup: false });
   return parts;
 }
+
+// ── The algebra field, typeset in place ─────────────────────────────────
+//
+// The symbolic input SHOWS its answer the way the grader will read it —
+// `x^2` as x², `*` as ·, `-` as − — while the session (and so the grader)
+// only ever holds the plain ASCII the grammar accepts. The two functions
+// below are that boundary: `prettyExpression` for what the field displays,
+// `asciiExpression` for what goes back into the session.
+//
+// The backend NFKC-normalises answers, which reads ² as a bare 2 (x² → x2),
+// so a typeset character must never reach it: `asciiExpression` is what
+// keeps that from happening.
+
+const SUPERSCRIPT: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "(": "⁽", ")": "⁾",
+  a: "ᵃ", b: "ᵇ", c: "ᶜ", d: "ᵈ", e: "ᵉ", f: "ᶠ", g: "ᵍ", h: "ʰ", i: "ⁱ", j: "ʲ", k: "ᵏ", l: "ˡ", m: "ᵐ",
+  n: "ⁿ", o: "ᵒ", p: "ᵖ", r: "ʳ", s: "ˢ", t: "ᵗ", u: "ᵘ", v: "ᵛ", w: "ʷ", x: "ˣ", y: "ʸ", z: "ᶻ",
+};
+const FROM_SUPERSCRIPT: Record<string, string> = Object.fromEntries(
+  Object.entries(SUPERSCRIPT).map(([plain, sup]) => [sup, plain]),
+);
+const PRETTY_OPERATOR: Record<string, string> = { "*": "·", "-": "−" };
+const PLAIN_OPERATOR: Record<string, string> = { "·": "*", "×": "*", "−": "-", "÷": "/" };
+
+/** The exponents `expressionParts` raises: `^(…)`, `^-12`, `^n`. */
+const EXPONENT = /\^(\([^()]*\)|[+-]?\d+(?:\.\d+)?|[A-Za-z])/g;
+
+/**
+ * ASCII → what the field shows. An exponent is raised only when every one of
+ * its characters has a superscript form (there is none for `q`, `.`, `*`,
+ * `/` or a capital); otherwise it stays as typed, caret and all, so the
+ * student is never shown a reading the grader would not make.
+ */
+export function prettyExpression(ascii: string): string {
+  const operators = (s: string) => s.replace(/[*-]/g, ch => PRETTY_OPERATOR[ch]);
+  let out = "";
+  let last = 0;
+  let raisedEnd = -1;
+  for (const m of ascii.matchAll(EXPONENT)) {
+    const at = m.index ?? 0;
+    const body = m[1];
+    if (![...body].every(ch => ch in SUPERSCRIPT)) continue;
+    // A power stacked straight onto a raised one (x^2^3) stays as typed: two
+    // superscript runs side by side would read back as ONE exponent.
+    if (at === raisedEnd) continue;
+    out += operators(ascii.slice(last, at)) + [...body].map(ch => SUPERSCRIPT[ch]).join("");
+    last = at + m[0].length;
+    raisedEnd = last;
+  }
+  return out + operators(ascii.slice(last));
+}
+
+/** What the field shows → the ASCII the grader reads. A run of superscripts
+ *  is one exponent (`x²³` → `x^23`, `x⁽ⁿ⁺¹⁾` → `x^(n+1)`). */
+export function asciiExpression(display: string): string {
+  let out = "";
+  let run = "";
+  for (const ch of display) {
+    if (ch in FROM_SUPERSCRIPT) {
+      run += FROM_SUPERSCRIPT[ch];
+      continue;
+    }
+    if (run) {
+      out += `^${run}`;
+      run = "";
+    }
+    out += PLAIN_OPERATOR[ch] ?? ch;
+  }
+  return run ? `${out}^${run}` : out;
+}

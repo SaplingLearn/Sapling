@@ -25,13 +25,15 @@ describe("WrittenAnswer", () => {
     expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
   });
 
-  it("gives numbers the decimal keypad, the keys it lacks, and a read-back", () => {
+  it("gives numbers the decimal keypad, the keys it lacks, and a reading inside the field", () => {
     render(<Harness type="numeric" initial="3/4" />);
     expect(input().getAttribute("inputmode")).toBe("decimal");
     for (const id of ["minus", "fraction", "percent", "exponent"]) {
       expect(screen.getByTestId(`quiz-key-${id}`)).toBeInTheDocument();
     }
-    expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("Reads as 0.75");
+    const readBack = screen.getByTestId("quiz-written-readback");
+    expect(readBack).toHaveTextContent("Reads as 0.75");
+    expect(readBack.closest(".quiz-written__field")).not.toBeNull();
   });
 
   it("says when a number can't be read, and marks the input invalid", () => {
@@ -40,12 +42,27 @@ describe("WrittenAnswer", () => {
     expect(input()).toHaveAttribute("aria-invalid", "true");
   });
 
-  it("previews algebra with real superscripts", () => {
-    render(<Harness type="symbolic" initial="x^2 - 1" />);
-    const readBack = screen.getByTestId("quiz-written-readback");
-    expect(readBack).toHaveTextContent("Reads as x2 − 1");
-    expect(readBack.querySelector("sup")).toHaveTextContent("2");
+  it("typesets algebra in the field itself, and keeps ASCII for the grader", () => {
+    const onChange = vi.fn();
+    render(<WrittenAnswer type="symbolic" value="x^2 - 1" disabled={false} onChange={onChange} onSubmit={vi.fn()} describedBy="hint" />);
+    expect(input().value).toBe("x² − 1");
+    expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
+    // Typing into the typeset text hands the session plain ASCII.
+    fireEvent.change(input(), { target: { value: "x² − 13" } });
+    expect(onChange).toHaveBeenLastCalledWith("x^2 - 13");
   });
+
+  it("keeps the caret after the character just typed when it joins an exponent", () => {
+    render(<Harness type="symbolic" initial="x^2+1" />);
+    expect(input().value).toBe("x²+1");
+    // Type "3" between ² and +: it joins the exponent (the grader reads x^23).
+    const typed = "x²3+1";
+    input().setSelectionRange(3, 3);
+    fireEvent.change(input(), { target: { value: typed, selectionStart: 3 } });
+    expect(input().value).toBe("x²³+1");
+    expect(input().selectionStart).toBe(3);
+  });
+
 
   it("warns about a function before it is submitted", () => {
     render(<Harness type="symbolic" initial="sin(x)" />);

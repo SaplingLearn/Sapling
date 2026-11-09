@@ -502,6 +502,7 @@
 /* Once the answer is marked, the symbol keys and the entry rules have done
    their job; the verdict card takes their place. */
 .quiz-question__written[data-marked] .quiz-written__keys,
+.quiz-question__written[data-marked] .quiz-written__problem,
 .quiz-question__written[data-marked] .quiz-question__format-hint {
   display: none;
 }
@@ -556,9 +557,33 @@
   max-width: var(--quiz-q-numeric-w);
 }
 
-/* Room for the result, so it never sits on top of the answer. */
-.quiz-written[data-verdict] .field.quiz-question__written-input {
+/* Room for the result (and, on a number, the reading), so neither ever
+   sits on top of the answer. Reserved up front on a number so the text
+   doesn't reflow when the reading first appears. */
+.quiz-written[data-verdict] .field.quiz-question__written-input,
+.quiz-written[data-format="numeric"] .field.quiz-question__written-input {
   padding-right: 120px;
+}
+
+/* A number's reading, at the field's right end. */
+.quiz-written__reading {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The line under the field: only ever a problem with what's typed. Held
+   open (one line) so it appearing moves nothing below it. */
+.quiz-written__problem {
+  min-height: calc(var(--fs-sm) * 1.5);
+  margin: -2px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
 }
 
 .quiz-written__status {
@@ -652,17 +677,6 @@
   font-size: var(--fs-md);
 }
 
-/* The algebra read-back is the one place the expression is typeset. */
-.quiz-written__expr {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--fs-lg);
-}
-
-.quiz-written__expr sup {
-  font-size: 0.65em;
-  line-height: 0;
-}
 
 /* Phones: the rail narrows and its mirror goes, so the reading column keeps
    the width instead of giving a third of the screen to symmetry. */
