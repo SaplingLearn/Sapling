@@ -328,8 +328,9 @@ def _is_unique_violation(exc: httpx.HTTPStatusError) -> bool:
 
 def _insert_or_replace(row: dict) -> str:
     """Insert the guide row and return its id. Where the
-    `study_guides_user_offering_exam_key` unique index exists (migration
-    20261109023732; created only on a table with no duplicates) a second row
+    `study_guides_user_offering_exam_key` unique index exists (built by hand
+    with `SELECT ensure_study_guides_unique_key()` after this code deploys,
+    migration 20261109023732; only on a table with no duplicates) a second row
     for the key is refused, so a regenerate — or a cross-replica race the
     lease did not serialise — replaces the key's row IN PLACE instead (new
     content and generated_at, same id). Without the index this is the plain
