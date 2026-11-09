@@ -379,6 +379,7 @@ BACKEND_RPCS = frozenset({
     "claim_lease",                   # services/pg_lease.py (#117, stateless_locks)
     "claim_rate_limit",              # services/request_limits.py (#117, stateless_rate_limit)
     "complete_job",                  # services/jobs.py (#116)
+    "db_scope_divergences",          # routes/admin_analytics.py (#115, 20261109023455)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
