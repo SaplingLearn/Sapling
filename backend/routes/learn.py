@@ -37,15 +37,22 @@ from services.streak_service import touch_streak_safe
 from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    aget_pending,
+    amaterialize_stored,
     araise_if_discarded,
+    arequire_owned_open,
     arequire_session_open,
     arequire_session_owner,
-    discard_pending,
+    astash_pending,
+    astored,
+    discard_if_pending,
     discarded_reason,
     elapsed_minutes as _elapsed_minutes,
     materialization_lock,
     raise_if_discarded,
+    rename_pending,
     require_session_owner,
+    row_may_exist as _session_row_may_exist,
     session_owned_by,
     stash_pending,
 )
@@ -738,15 +745,9 @@ async def _consume_pending_off_loop(session_id: str, user_id: str) -> bool:
     not pending takes the inline fast path and never leaves the loop.
     """
     if session_id not in PENDING_SESSIONS:
-        raise_if_discarded(session_id, user_id)
+        await araise_if_discarded(session_id, user_id)
         return False
     return await run_in_threadpool(_consume_pending, session_id, user_id)
-
-
-def _session_row_may_exist(pending: dict | None) -> bool:
-    """True when the session has (or may have) a ``sessions`` row: it is not
-    pending at all, or materialisation already attempted the row write."""
-    return pending is None or bool(pending.get("_row_may_exist"))
 
 
 async def _open_turn_session(session_id: str, user_id: str) -> None:
@@ -760,7 +761,15 @@ async def _open_turn_session(session_id: str, user_id: str) -> None:
     would give a session that has no row and no pending entry. A ready
     session never reaches `_consume_pending` (pinned in
     test_learn_session_ownership.py).
+
+    With `stateless_tutor_sessions` on (#117) a session not pending in THIS
+    process goes to the table: one atomic call answers tombstones and
+    materialises a pending session, one `sessions` read the rest.
     """
+    if session_id not in PENDING_SESSIONS and await astored():
+        if not await amaterialize_stored(session_id, user_id):
+            await arequire_owned_open(session_id, user_id)
+        return
     await araise_if_discarded(session_id, user_id)
     await arequire_session_owner(session_id, user_id)
     if await _consume_pending_off_loop(session_id, user_id):
@@ -936,7 +945,7 @@ async def _start_session_agent(
 
     # Lazy-session contract preserved: nothing hits `sessions` until the
     # first chat turn calls _consume_pending — exactly once per session_id.
-    stash_pending(session_id, {
+    await astash_pending(session_id, {
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
@@ -1641,10 +1650,7 @@ def end_session(body: EndSessionBody, request: Request):
     # row, so it is ended in the DB too, as is one that materialised while
     # we waited. The discard leaves an "ended" tombstone, so a turn racing
     # this end answers 409 instead of writing into a session with no row.
-    popped = None
-    if body.session_id in PENDING_SESSIONS:
-        with materialization_lock(body.session_id):
-            popped = discard_pending(body.session_id, user_id=body.user_id, reason="ended")
+    popped = discard_if_pending(body.session_id, user_id=body.user_id, reason="ended")
     if popped is not None and not _session_row_may_exist(popped):
         return {"summary": empty}
 
@@ -1780,17 +1786,10 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
     require_session_owner(session_id, body.user_id)
-    if session_id in PENDING_SESSIONS:
-        with materialization_lock(session_id):
-            pending = PENDING_SESSIONS.get(session_id)
-            if pending is not None:
-                # Rename the copy a later materialisation will write...
-                pending["topic"] = topic
-                if not _session_row_may_exist(pending):
-                    return {"updated": True, "session": {"id": session_id, "topic": topic}}
-                # ...and, since an earlier attempt may already have written
-                # the row (the retry's upsert won't overwrite it), the row too.
-        # Otherwise it materialised while we waited: rename the real row.
+    # A pending session: rename the copy a later materialisation will write
+    # (and the row too if an earlier attempt may already have written it).
+    if rename_pending(session_id, topic):
+        return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
     table("sessions").update(
         {"topic": topic},
@@ -1814,15 +1813,11 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     # its ownership check answers 404 at its next write instead of an FK
     # failure (or, for a pending session, instead of materialising a row the
     # student just deleted).
-    if session_id in PENDING_SESSIONS:
-        with materialization_lock(session_id):
-            popped = discard_pending(session_id, user_id=user_id, reason="deleted")
-        if popped is not None and not _session_row_may_exist(popped):
-            return {"deleted": True}
-        # A row may exist (an attempted materialisation, or one that finished
-        # while we waited): delete it too. Both deletes are no-ops if not.
-    else:
-        discard_pending(session_id, user_id=user_id, reason="deleted")
+    popped = discard_if_pending(session_id, user_id=user_id, reason="deleted", always=True)
+    if popped is not None and not _session_row_may_exist(popped):
+        return {"deleted": True}
+    # A row may exist (an attempted materialisation, one that finished while
+    # we waited, or a live session): delete it. Both deletes are no-ops if not.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -1835,7 +1830,7 @@ async def resume_session(session_id: str, request: Request):
     # .get(), not `in` + [...]: a concurrent first turn or delete can drop the
     # entry in between. Gone means it materialised (or was discarded): read
     # the DB below.
-    p = PENDING_SESSIONS.get(session_id)
+    p = await aget_pending(session_id)
     if p is not None:
         now = datetime.now(timezone.utc).isoformat()
         return {
