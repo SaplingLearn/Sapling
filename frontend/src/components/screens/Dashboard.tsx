@@ -579,7 +579,7 @@ export function Dashboard() {
       nowMs={now()}
       courseLabel={(id) => courseNameFor(id ?? null)}
       relTime={relTime}
-      navigate={(href) => router.push(href)}
+      navigate={navigate}
       openCourses={() => setCoursesOpen(true)}
       courseRows={
         courseProgress.length > 0
@@ -668,7 +668,7 @@ export function Dashboard() {
                 display: "flex", alignItems: "flex-end", flexShrink: 0,
               }}
             >
-              <DashboardActions navigate={(href) => router.push(href)} />
+              <DashboardActions navigate={navigate} />
             </div>
           </div>
           {suggestBlock}
