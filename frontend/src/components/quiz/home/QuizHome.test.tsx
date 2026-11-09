@@ -20,7 +20,7 @@
  */
 
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
@@ -1047,6 +1047,22 @@ function withMatchMedia(matches: (query: string) => boolean) {
 }
 
 describe("QuizHome — characterization: rendered DOM per state", () => {
+  // The meta line ("last studied N days ago") counts CALENDAR days from the
+  // real clock in the LOCAL timezone, so a snapshot of it depends on both the
+  // day and the machine's TZ. Pin both: only Date is faked (the tests' other
+  // timers stay real), and the zone is UTC so the fixture's 2026-08-18T00:00Z
+  // and this instant fall on the same calendar dates everywhere (84 days).
+  beforeEach(() => {
+    vi.stubEnv("TZ", "UTC");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-10T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
   const mastered = NODES.map(n => ({ ...n, mastery_tier: "mastered" as const }));
   const cases: [string, Parameters<typeof mount>[0]][] = [
     ["the ranked proposal", {}],
