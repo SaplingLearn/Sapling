@@ -33,6 +33,7 @@ CASCADES = {
     "gradebook_categories": ("enrollment_id", "enrollments", "id"),
     "assignments": ("enrollment_id", "enrollments", "id"),
     "gradescope_course_links": ("enrollment_id", "enrollments", "id"),
+    "gradescope_syncs": ("enrollment_id", "enrollments", "id"),
     "topic_checklists": ("enrollment_id", "enrollments", "id"),
     "messages": ("session_id", "sessions", "id"),
     "quiz_responses": ("attempt_id", "quiz_attempts", "id"),
@@ -147,6 +148,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("assignments", id=f"{p}-asg{i}", enrollment_id=f"{p}-enr{i}")
         db.add("topic_checklists", enrollment_id=f"{p}-enr{i}")
         db.add("gradescope_course_links", id=f"{p}-gsl{i}", enrollment_id=f"{p}-enr{i}")
+        db.add("gradescope_syncs", id=f"{p}-gss{i}", enrollment_id=f"{p}-enr{i}")
         db.add("documents", id=f"{p}-doc{i}", user_id=uid, deleted_at=None)
         db.add("notes", id=f"{p}-note{i}", user_id=uid)
         db.add("flashcards", id=f"{p}-fc{i}", user_id=uid)

@@ -98,11 +98,12 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # the index sweeper still recovers unindexed documents in production) and
     # uploads wait PICKUP_GRACE_SECONDS, then run inline. Hence default off.
     FlagDef("jobs_queue", ("off", "on"),
-            "Run course-context aggregation, document indexing and the upload "
-            "pipeline (extraction + document agents) on the job queue instead "
-            "of in the request. Needs a running `python -m worker`; without one "
-            "aggregation and indexing only queue, and uploads fall back to "
-            "inline after a short wait.", False),
+            "Run course-context aggregation, document indexing, the upload "
+            "pipeline (extraction + document agents) and the Gradescope sync on "
+            "the job queue instead of in the request. Needs a running `python -m "
+            "worker`; without one aggregation and indexing only queue, and "
+            "uploads and Gradescope syncs fall back to inline after a short "
+            "wait.", False),
     # #115 (RLS step 2, docs/security/rls-step2-plan.md §4.4): whether a
     # request's PostgREST calls run as the student (a backend-minted JWT, RLS
     # applies) instead of the service role. shadow = service answers, a
