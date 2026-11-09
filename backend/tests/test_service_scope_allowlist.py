@@ -59,7 +59,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "check_username", "service_route"): "unauthenticated; looks at other users' usernames",
     ("routes/profile.py", "get_public_profile", "service_route"):
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
-    ("routes/profile.py", "get_roles", "service_route"): "public roles of any user",
+    ("routes/profile.py", "get_roles", "service_route"):
+        "roles of any live user; needs a session (anonymous is a 401)",
     ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("routes/quiz.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
@@ -100,6 +101,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
+    ("services/profiles.py", "live_user_ids", "runs_as_service"):
+        "other users' account state (deleted_at) for cross-user lists",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",

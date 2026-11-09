@@ -445,3 +445,49 @@ def test_note_move_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_w
         "SELECT offering_id FROM notes WHERE id = %(n)s", {"n": B_NOTE},
     ).fetchone()
     assert after["offering_id"] == before["offering_id"], "B's note was moved into A's course"
+
+
+@pytest.mark.parametrize("mode", m.MODES)
+def test_roles_need_a_session_and_deleted_profiles_are_gone(mode, db_conn, seeded_user, b_client):
+    """#115, outside the B-as-caller groups: who is an admin is not an
+    anonymous read (the /roles route, the public profile's roles, and its
+    featured-role cosmetic), and a soft-deleted account's public profile and
+    roles are a 404.
+
+    Probes the seeded ADMIN (db/seed_local_rich.USER_ADMIN), who really holds
+    a role and features it — against a role-less user an empty `roles` would
+    prove nothing."""
+    from fastapi.testclient import TestClient
+
+    from db.connection import table
+    from main import app
+
+    admin = "rich-user-admin"  # db/seed_local_rich.USER_ADMIN
+    role = db_conn.execute(
+        "SELECT role_id FROM user_roles WHERE user_id = %(u)s LIMIT 1", {"u": admin},
+    ).fetchone()
+    assert role, "precondition: the rich seed grants rich-user-admin a role"
+    table("user_settings").upsert(
+        # psycopg hands back a uuid.UUID; the PostgREST client JSON-encodes.
+        {"user_id": admin, "featured_role_id": str(role["role_id"])}, on_conflict="user_id",
+    )
+
+    signed_in = b_client.get(f"/api/profile/{admin}")
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["roles"], "precondition: a signed-in viewer sees the admin's role"
+    assert "featured_role" in signed_in.json()["equipped_cosmetics"]
+
+    anon = TestClient(app, raise_server_exceptions=False)
+    r = anon.get(f"/api/profile/{admin}/roles")
+    assert r.status_code == 401, r.text
+    r = anon.get(f"/api/profile/{admin}")
+    assert r.status_code == 200, r.text
+    assert r.json()["roles"] == [], r.text
+    assert "featured_role" not in r.json()["equipped_cosmetics"], r.text
+
+    gone = seeded_user(name="Gone Student")
+    table("users").update({"deleted_at": "2026-11-08T00:00:00+00:00"},
+                          filters={"id": f"eq.{gone}"})
+    for path in (f"/api/profile/{gone}", f"/api/profile/{gone}/roles"):
+        r = b_client.get(path)
+        assert r.status_code == 404, f"[{mode}] {path}: {r.status_code} {r.text[:120]}"
