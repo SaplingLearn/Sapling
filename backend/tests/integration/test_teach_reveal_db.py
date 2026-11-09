@@ -148,10 +148,11 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
         "it-item-x": _It("qh-x", item_id="it-item-x"),
     }
     with (
-        patch("routes.learn_loop.get_check_item", side_effect=lambda i: loaded.get(i)),
-        # A101: the scan set batches its item reads (items_by_ids), not one
-        # get_check_item per id; the fixture ids are not real check_items rows
-        # spec §13 A149: the scan set lives in services/loop_posed.py
+        # A101: the scan set batches its item reads (items_by_ids), never one
+        # get_check_item per id; the fixture ids are not real check_items rows.
+        # spec §13 A149: the scan set lives in services/loop_posed.py, so its
+        # batched reads are patched there (a get_check_item patch on the route
+        # module intercepted nothing since A101 and is gone)
         patch(
             "services.loop_posed.items_by_ids",
             side_effect=lambda ids: [loaded[i] for i in ids if i in loaded],
