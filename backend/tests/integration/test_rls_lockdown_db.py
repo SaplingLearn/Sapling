@@ -378,15 +378,18 @@ BACKEND_RPCS = frozenset({
     "claim_jobs",                    # services/jobs.py (#116)
     "claim_rate_limit",              # services/request_limits.py (#117, stateless_rate_limit)
     "complete_job",                  # services/jobs.py (#116)
+    "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
     "llm_budget_status",             # services/llm_budget.py (#119, 20261108213311)
     "llm_cost_per_active_user_weekly",  # routes/admin_analytics.py (#119, 20261108213311)
     "match_course_chunks",           # services/rag_service.py
+    "materialize_tutor_session",     # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
     "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
     "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
+    "stash_tutor_session",           # services/tutor_sessions.py (#117, stateless_tutor_sessions)
 })
 
 APP_AUTH_FUNCTIONS = frozenset({
