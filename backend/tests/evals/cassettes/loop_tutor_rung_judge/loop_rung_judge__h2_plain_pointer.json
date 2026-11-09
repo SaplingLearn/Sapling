@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "c9eff22f636ff1327d55a8e94f7118fb364e2c52548856d5c4cea723ea0263fc",
+  "output": {
+    "evidence": "Your lecture notes define a base case as the simple version of a problem that a recursive function solves directly, without calling itself again.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "7ee81aab4f7517e4710c9f03ad90618e378be362851daa8c3a6bf9d01e66d54a"
+}

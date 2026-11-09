@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "cb3c2db8cf41195478289d2ec3919b0301887d74f02f82532b696d84c910394f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Following that pattern, what would `factorial(0)` call next?",
+    "only_states_correction": false
+  },
+  "served_sha256": "075a5e6f818eca4995f6148fd6731934128ef4a3b733fc947eaf06e859e0e54d"
+}

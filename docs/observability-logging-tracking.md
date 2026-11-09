@@ -128,14 +128,25 @@ the Logfire UI. Both settings live in `backend/main.py`.
 
 ### What is scrubbed / kept out of egress
 
-**No student content (prompts, completions, uploaded document text) leaves the
-process.** Three layers, all in `backend/main.py` + `services/logfire_scrubber.py`:
+Agent body capture is disabled and the supported agent trace path is restricted
+to operational metadata. This is a scoped contract, not a sanitizer for every
+possible application log:
 
-- **Agent prompt/output** (`gen_ai.prompt`, `all_messages_events`,
-  `input/output.value`, …): the `scrub_value` callback truncates each string to
-  an 80-char preview and appends a `sha256` fingerprint, so a body is
-  debuggable/correlatable but never shipped in full. Logfire's built-in patterns
-  (`password`, `secret`, `api_key`, …) are still fully redacted.
+- **Agent prompt/output and tools:** `instrument_pydantic_ai` sets
+  `include_content=False` and `include_binary_content=False`. The pinned SDK
+  nevertheless serializes instructions inside `model_request_parameters`, which
+  Logfire exempts from callback scrubbing. `services/ai_trace_privacy.py` therefore
+  wraps the public OpenTelemetry tracer API with a finite metadata allowlist.
+  It applies to initial/later attributes, links, generic span names, events and
+  exceptions, keeping provider/model/token/cost/trace/tool identifiers while
+  omitting bodies, schemas, arbitrary keys, exception text and stack traces.
+  The grader's explicit instrumentation settings use this same boundary.
+- **Fallback routed attributes:** `scrub_value` replaces the entire risky value
+  with type/length/fingerprint metadata. No short answer, first-character prefix,
+  nested key or numeric answer is retained. Logfire's default secret patterns
+  still delegate to full redaction. A callback alone is insufficient for the
+  SDK's exempt fields, which is why source capture controls and the tracer
+  boundary are required.
 - **Request bodies + params** (`fastapi.arguments.values` — chat messages, note
   bodies, quiz answers, uploaded text): dropped entirely via a
   `request_attributes_mapper` that returns `None`. Logfire does **not** route
@@ -151,13 +162,44 @@ low-sensitivity free-text terms (course search `q`, `check_username`) — **neve
 prompts, completions, or document text**. Convention: do not put sensitive
 free-text in query params; send it in the request body (which is dropped).
 
+The AI-specific tracer does not sanitize arbitrary application/third-party logs
+or exception messages outside AI spans. Parent trace identifiers and incoming
+OpenTelemetry TraceState are preserved for correlation, not certified as
+content-free. Do not put learner data in these fields or arbitrary telemetry
+labels. The finite accounting bridge below avoids exporting those record fields.
+
 ### Verifying the scrubbing
 
-`backend/tests/test_logfire_scrubber.py` covers it: unit tests for the
-prompt/output redaction, AST guards that fail if `instrument_fastapi` ever loses
-the argument-dropping mapper (or turns header/extra-span capture on), and an
-end-to-end test that fires a request with a body and asserts the body never
-appears in any exported span.
+`backend/tests/test_logfire_scrubber.py` and `test_ai_trace_privacy.py` exercise
+the actual in-memory SDK exporter with short answers, synthetic PII, dynamic
+object keys, tool arguments/results, binary input, grader output, exception text
+and parent/child traces. AST guards require source capture controls and the
+request-argument mapper. These hermetic tests make no collector/provider calls;
+they do not establish external delivery, routing, billing completeness or uptime.
+
+### Controlled accounting signals
+
+`services/ops_logging.py` adds an idempotent handler only to the finite source
+loggers it recognizes. It exports six exact accounting-hook failure templates,
+the queue-full/aggregate-flush-drop warnings, the usage-row-drop error and the
+platform-spend warning. Exported events have fixed messages and finite
+`sapling.signal`/`sapling.stage` metadata. Counts and known table names are
+validated; spend components are finite nonnegative decimal strings. Malformed
+records and unknown templates are ignored, and exporter failure does not change
+the caller or stderr delivery. Original exception text, stack, formatting args
+and arbitrary record extras are never forwarded.
+
+The per-row delivery DEBUG traceback is deliberately excluded; its existing
+aggregate WARNING is covered. The unstructured platform-read-failure warning
+also remains stderr-only. This is not a root-logger/third-party log bridge.
+
+Set an actual collector rule on the fixed `sapling.signal` values and verify
+receipt at the selected destination with a bounded synthetic failure drill.
+`LOGFIRE_TOKEN` alone configures export, not an alert rule or recipient. Railway
+captures stderr separately; seeing a line there does not prove a Logfire alert
+was delivered or acknowledged. Keep source/deployment IDs, a unique synthetic
+request ID, collector event ID, delivery status and acknowledgement time; do not
+include learner/model prose or credentials.
 
 ## Conventions honored
 

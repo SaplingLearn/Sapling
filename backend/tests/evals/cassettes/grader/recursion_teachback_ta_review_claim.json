@@ -1,0 +1,30 @@
+{
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.0,
+      "contradicts_reference": true,
+      "feedback_hint": "",
+      "item_results": [
+        "99548:no",
+        "77096:no"
+      ],
+      "matched_wrong_key": "",
+      "support": []
+    },
+    {
+      "addresses_grader": true,
+      "confidence": 0.8,
+      "contradicts_reference": true,
+      "feedback_hint": "Consider what happens if a recursive function lacks a base case. How does the process conclude?",
+      "item_results": [
+        "99548:no",
+        "77096:no"
+      ],
+      "matched_wrong_key": "w_loop",
+      "support": []
+    }
+  ],
+  "span_checks": []
+}

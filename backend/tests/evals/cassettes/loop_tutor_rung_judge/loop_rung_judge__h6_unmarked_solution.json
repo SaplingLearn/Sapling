@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "0e2494359b9432bf9462d20026c06291927110bf9447df70c1a7bb50d30b366b",
+  "output": {
+    "evidence": "f'(x) = 3x^2",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "dc4802c3573546b64ce6de954bbfe5574ea28ec5522fbee70648b44775899239"
+}

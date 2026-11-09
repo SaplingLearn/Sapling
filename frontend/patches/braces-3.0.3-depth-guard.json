@@ -1,0 +1,76 @@
+{
+  "package": "braces",
+  "version": "3.0.3",
+  "advisory": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+  "guard_sha256": "a439bced32b4feda5c01e45530ea40f6de83d573e3e958b8a0b1db12f134dd35",
+  "files": [
+    {
+      "path": "lib/parse.js",
+      "original_sha256": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+      "patched_sha256": "6d56fc6701a7e2b92f1d344e4eaffdf6e28c10fb0e2761e3309ac0577a868fdd",
+      "replacements": [
+        {
+          "before": "const stringify = require('./stringify');",
+          "after": "const stringify = require('./stringify');\nconst { checkStackDepth } = require('./sapling-depth-guard');",
+          "count": 1
+        },
+        {
+          "before": "      stack.push(block);",
+          "after": "      checkStackDepth(stack.length);\n      stack.push(block);",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "path": "lib/compile.js",
+      "original_sha256": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+      "patched_sha256": "04c34d8c8348347e043bada805f626762eb689eeb955ddb4d9228dbcaddba441",
+      "replacements": [
+        {
+          "before": "const utils = require('./utils');",
+          "after": "const utils = require('./utils');\nconst { assertDepth } = require('./sapling-depth-guard');",
+          "count": 1
+        },
+        {
+          "before": "const compile = (ast, options = {}) => {",
+          "after": "const compile = (ast, options = {}) => {\n  assertDepth(ast);",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "path": "lib/expand.js",
+      "original_sha256": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+      "patched_sha256": "e1421e35c39817d984f9aa37c9999ca4f4456d7e6643171da847ab1a0d7febe8",
+      "replacements": [
+        {
+          "before": "const utils = require('./utils');",
+          "after": "const utils = require('./utils');\nconst { assertDepth } = require('./sapling-depth-guard');",
+          "count": 1
+        },
+        {
+          "before": "const expand = (ast, options = {}) => {",
+          "after": "const expand = (ast, options = {}) => {\n  assertDepth(ast);",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "path": "lib/stringify.js",
+      "original_sha256": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+      "patched_sha256": "7dacc408fb31f2fa6fa6810e8c0d7b3eea81330afaf60bb3b16fa20f0fea5089",
+      "replacements": [
+        {
+          "before": "const utils = require('./utils');",
+          "after": "const utils = require('./utils');\nconst { assertDepth } = require('./sapling-depth-guard');",
+          "count": 1
+        },
+        {
+          "before": "module.exports = (ast, options = {}) => {",
+          "after": "module.exports = (ast, options = {}) => {\n  assertDepth(ast);",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

@@ -23,8 +23,11 @@ from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
 from tests.split_patches import patch_tutor
 
-#: #117 wave 3: a sync PostgREST call on the event loop raises here.
-pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+#: #117 wave 3: a sync PostgREST call on the event loop raises here. This suite
+#: pins the preserved legacy tutor; active-loop ownership has separate regressions.
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
+
+
 
 
 client = TestClient(app)
@@ -408,7 +411,7 @@ class TestRequireSessionOwner:
             require_session_owner(SESSION, OWNER)
         call = tables.mocks["sessions"].select.call_args
         assert call.args[0] == "user_id"
-        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
+        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}", "mode": "neq.review"}
 
 
 # ── Concurrent materialisation of one pending session ────────────────────────

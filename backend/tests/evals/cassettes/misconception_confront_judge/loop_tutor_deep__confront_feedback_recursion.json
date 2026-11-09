@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "59ea877759515c5dc619e30ae8b5388ab6da5eaf11ba2a4e5d4be1b0b7097e58",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Following that same rule, what would the call to `factorial(-1)` try to do next?",
+    "only_states_correction": false
+  },
+  "served_sha256": "e3882bae70eda196f4c93d64eaa18c87ab1b9affd070495447a232e6260deaec"
+}

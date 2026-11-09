@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "bd9d8b58e8a60531b049bb2e52fefc6981c73eae984f838db42b167e646824c0",
+  "output": {
+    "evidence": "What is the first thing you need to figure out here?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "593cdfb3269b5331fb48d4967e7fc31145eededcdfabde5f5f9b9e7e32fd0819"
+}

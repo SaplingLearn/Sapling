@@ -28,6 +28,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+import config
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, require_course_enrollment
@@ -39,6 +40,7 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
+from services.concept_prereqs import upload_prereqs_on
 from services.llm_budget import LLMBudgetExceeded
 from services.documents.errors import ConceptScanFailed
 # The upload's persistence, post-roll side effects, concept scan and SSE event
@@ -67,10 +69,13 @@ from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
     POST_ROLL_DRAIN_TIMEOUT_S,
     _POST_ROLL_TASKS,
     _check_upload_achievements,
+    _index_then_check_items,
+    _index_then_draft,
     _invalidate_study_guide_cache,
     _log_post_roll_exc,
     _refresh_course_context,
     _spawn_post_roll,
+    _stream_index_steps,
     drain_post_roll,
 )
 from services.documents.scan import (  # noqa: F401  (re-export, #118)
@@ -88,6 +93,7 @@ from services.documents.library import (  # noqa: F401  (re-export, #118)
 )
 from services.documents.stream import upload_event_stream
 
+from agents._providers import model_mode
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 
@@ -318,6 +324,11 @@ async def upload_document_sync(
         supabase=None,
         request_id=request_id,
     )
+    # Spec §13 A118: upload_prereq_edges, resolved ONCE for this upload and this
+    # student, before extraction. process_document carries the answer as a
+    # workflow input (a DBOS resume replays it); off, the pipeline is the
+    # pre-A118 one, request for request. Threaded: a cold flag cache reads.
+    prereqs_on = await asyncio.to_thread(upload_prereqs_on, user_id)
     # Failure mapping (#151b): the agent pipeline is the ONLY pipeline — the
     # ADR-0001 legacy fallback is gone (ADR 0024). Nothing has been persisted
     # at this point and the client mints a fresh X-Request-ID per attempt, so
@@ -330,7 +341,9 @@ async def upload_document_sync(
     # workflow (state poisoning). No-op (nullcontext) when DBOS is off.
     try:
         with workflow_id(f"doc:{user_id}:{request_id}"):
-            result: DocumentProcessingResult = await process_document(extracted_text, deps)
+            result: DocumentProcessingResult = await process_document(
+                extracted_text, deps, prerequisites=prereqs_on,
+            )
     except LLMBudgetExceeded:
         raise  # #119: the 429 itself, not "upload failed" (services/llm_budget.py)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
@@ -381,7 +394,23 @@ async def upload_document_sync(
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
-    background_tasks.add_task(schedule_document_index, doc_id, user_id)
+    if config.LEARNING_LOOP_ENABLED:
+        # Learning loop PKG-04: check items cite the chunks indexing writes, so
+        # indexing and drafting run in order as ONE task. Gated on the env flag
+        # at course level (items are course assets), never one student's gate.
+        concept_names = [c.name for c in result.concepts.concepts]
+        if model_mode() == "function":
+            # E2E lane: post-response handlers are unregistered by design, so
+            # run inline with the registered check_items handler (PKG-04).
+            await asyncio.to_thread(
+                _index_then_check_items, doc_id, user_id, course_id, concept_names
+            )
+        else:
+            background_tasks.add_task(
+                _index_then_check_items, doc_id, user_id, course_id, concept_names
+            )
+    else:
+        background_tasks.add_task(schedule_document_index, doc_id, user_id)
 
     response = dict(full_row)
     response["categories"] = _grading_categories_from(result)

@@ -42,19 +42,22 @@ import {
   QUIZ_LENGTH,
   SEEDED_MASTERY,
   SUBMIT_TIMEOUT,
+  BKT_L0,
   answerAtEnd,
   appAttempts,
+  bktAfterCorrect,
   expectOnQuestion,
   expectResults,
-  masteryAfter,
   masteryOf,
   openQuizHome,
   preAckDisclaimer,
   startQuiz,
 } from "./support/quiz";
 
-/** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
-const EXPECTED_DELTA = masteryAfter(0, QUIZ_LENGTH, QUIZ_LENGTH);
+/** PKG-14b (spec §11.2, PKG-14 §Derived expectations): 3 unassisted `mc`
+ *  corrects from the BKT prior (the seeded node has no learner_state row) →
+ *  0.710733 → 0.913664 → 0.978259. */
+const EXPECTED_AFTER = bktAfterCorrect(BKT_L0, QUIZ_LENGTH);
 
 /** The whole scripted quiz, answered correctly, in `at-end` order. */
 const ALL_CORRECT = CORRECT_LABELS.map((label, i) => ({ n: i + 1, label }));
@@ -126,7 +129,9 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
 
   // MONOTONICITY (UI): a fully correct quiz never lowers the score.
   expect(uiAfter).toBeGreaterThanOrEqual(uiBefore);
-  expect(uiBefore).toBe(Math.round(masteryBefore * 100));
+  // The evidence path's `before` is the BKT prior, not the legacy seeded
+  // score: a node with no learner_state row starts from BKT_L0 (HANDOFF-03).
+  expect(uiBefore).toBe(Math.round(BKT_L0 * 100));
 
   // ── DB: node score moved, and UI and DB agree ───────────────────────────
   const nodeAfter = await queryRaw(
@@ -138,25 +143,33 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
 
   // MONOTONICITY (DB): the persisted score did not drop…
   expect(masteryAfterDb).toBeGreaterThanOrEqual(masteryBefore);
-  // …and moved by exactly the all-correct delta (0.25 → 0.34, no clamp).
-  expect(masteryAfterDb).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
+  // …and landed on exactly the BKT posterior of three corrects (0.978259).
+  expect(masteryAfterDb).toBeCloseTo(EXPECTED_AFTER, 5);
   // UI ↔ DB agreement: the percentages the student saw are the DB state.
   expect(uiAfter).toBe(Math.round(masteryAfterDb * 100));
 
-  // apply_graph_update also bumps the study counters.
-  expect(Number(nodeAfter[0].times_studied)).toBe(1);
+  // apply_graph_update also bumps the study counters — once per evidence
+  // (one per question, HANDOFF-11).
+  expect(Number(nodeAfter[0].times_studied)).toBe(QUIZ_LENGTH);
   expect(nodeAfter[0].last_studied_at).not.toBeNull();
 
-  // ── DB: exactly ONE append-only mastery event, with a non-negative delta ─
+  // ── DB: one append-only evidence row per question, each a non-negative move ─
   const eventsAfter = await queryRaw(
-    "SELECT delta, reason FROM node_mastery_events WHERE node_id = $1 ORDER BY created_at",
+    `SELECT delta, reason, event_type, channel, correct, p_before, p_after
+       FROM node_mastery_events WHERE node_id = $1 ORDER BY created_at, evidence_seq`,
     [NODE_ID],
   );
-  expect(eventsAfter).toHaveLength(1);
-  // MONOTONICITY (event): a correct-only submission records a delta ≥ 0.
-  expect(Number(eventsAfter[0].delta)).toBeGreaterThanOrEqual(0);
-  expect(Number(eventsAfter[0].delta)).toBeCloseTo(EXPECTED_DELTA, 10);
-  expect(eventsAfter[0].reason).toBe(`Quiz: ${QUIZ_LENGTH}/${QUIZ_LENGTH} correct`);
+  expect(eventsAfter).toHaveLength(QUIZ_LENGTH);
+  for (const ev of eventsAfter) {
+    expect(ev.event_type).toBe("evidence");
+    expect(ev.channel).toBe("mc");
+    expect(ev.correct).toBe(true);
+    expect(ev.reason).toBe("evidence:mc");
+    // MONOTONICITY (event): a correct-only submission records a delta ≥ 0.
+    expect(Number(ev.delta)).toBeGreaterThanOrEqual(0);
+  }
+  expect(Number(eventsAfter[0].p_before)).toBeCloseTo(BKT_L0, 10);
+  expect(Number(eventsAfter[QUIZ_LENGTH - 1].p_after)).toBeCloseTo(EXPECTED_AFTER, 5);
 
   // ── DB: the attempt row was completed through the app ───────────────────
   const attempts = await appAttempts();
@@ -296,13 +309,13 @@ test("quiz resubmit: replaying a completed submission returns 409 and re-applies
 
   // First submit's DB state — the baseline the replay must not move.
   const masteryAfterFirst = await masteryOf();
-  expect(masteryAfterFirst).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
+  expect(masteryAfterFirst).toBeCloseTo(EXPECTED_AFTER, 5);
 
   const eventsAfterFirst = await queryRaw(
     "SELECT id FROM node_mastery_events WHERE node_id = $1",
     [NODE_ID],
   );
-  expect(eventsAfterFirst).toHaveLength(1);
+  expect(eventsAfterFirst).toHaveLength(QUIZ_LENGTH);
 
   // Replay the SAME submission over the page's cookie jar → 409, not 200.
   const replay = await page.request.post("/api/quiz/submit", { data: wireBody });
@@ -311,12 +324,12 @@ test("quiz resubmit: replaying a completed submission returns 409 and re-applies
   const replayBody = (await replay.json()) as { error?: { code?: string } };
   expect(replayBody.error?.code).toBe("QUIZ_ATTEMPT_ALREADY_COMPLETED");
 
-  // The replay re-applied nothing: still exactly ONE mastery event…
+  // The replay re-applied nothing: still exactly the first submit's events…
   const eventsAfterReplay = await queryRaw(
     "SELECT id FROM node_mastery_events WHERE node_id = $1",
     [NODE_ID],
   );
-  expect(eventsAfterReplay).toHaveLength(1);
+  expect(eventsAfterReplay).toHaveLength(QUIZ_LENGTH);
 
   // …and the node's score is unchanged from the first submit.
   expect(await masteryOf()).toBeCloseTo(masteryAfterFirst, 10);

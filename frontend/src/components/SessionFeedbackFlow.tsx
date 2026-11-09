@@ -6,9 +6,6 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 
-export const SESSION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
-
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions.
 const RATINGS: { value: number; label: string }[] = [
   { value: 1, label: "Frustrating" },
@@ -59,8 +56,9 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
 
   useScrollLock(open);
 
-  const close = useCallback((recordCooldown: boolean) => {
-    if (recordCooldown) localStorage.setItem(SESSION_COOLDOWN_KEY, String(Date.now()));
+  // Pacing (cooldown, one prompt per session) is recorded by the opener when
+  // the prompt opens — lib/feedbackPacing.ts — so every close here counts.
+  const close = useCallback(() => {
     setStep(0);
     setRating(null);
     setHelpful([]);
@@ -87,7 +85,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         topic: context?.topic,
       });
       toast.success("Thanks — this helps tune your tutor.");
-      close(true);
+      close();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit.");
     } finally {
@@ -110,7 +108,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         alignItems: "center",
         justifyContent: "center",
       }}
-      onClick={() => !submitting && close(true)}
+      onClick={() => !submitting && close()}
     >
       <div
         onClick={e => e.stopPropagation()}
@@ -125,7 +123,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="h-serif" style={{ fontSize: 22 }}>How was that session?</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
 
         {context?.topic && (
@@ -225,7 +223,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
           {step > 0 ? (
             <button className="btn" onClick={() => setStep(step - 1)} disabled={submitting}>Back</button>
           ) : (
-            <button className="btn btn--ghost" onClick={() => close(true)} disabled={submitting}>Skip</button>
+            <button className="btn btn--ghost" onClick={() => close()} disabled={submitting}>Skip</button>
           )}
           {step < 3 ? (
             <button className="btn btn--primary" onClick={() => setStep(step + 1)} disabled={!canNext || submitting}>

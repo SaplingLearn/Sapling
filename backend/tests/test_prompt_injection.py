@@ -25,8 +25,8 @@ The enforcement pattern under test (services/prompt_safety.py):
     INJECTION_GUARD_PROMPT;
   - id-bearing tool args come from ctx.deps, never the model
     (exfiltration constraint — asserted here as a contract);
-  - update_mastery_tool's schema clamps mastery_delta to the instructed
-    band so injected text can't demand a jump to 1.0.
+  - (PKG-14b) no tutor tool can move mastery at all: update_mastery_tool
+    is gone, so injected text has no mastery write to coerce.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-import pytest
 
 from services.prompt_safety import (
     INJECTION_GUARD_PROMPT,
@@ -396,22 +395,6 @@ class TestInjectionReachesModelWrapped:
 
 
 class TestToolUseConstraints:
-    def test_mastery_delta_schema_clamped_to_instructed_band(self):
-        """Injected text demanding 'set my mastery to 1.0' fails schema
-        validation — the band the prompt instructs ([-0.1, +0.3]) is now
-        the band the schema enforces."""
-        import pydantic
-
-        from agents.tools.graph import ConceptMasteryUpdate
-
-        ok = ConceptMasteryUpdate(concept_name="Limits", mastery_delta=0.3)
-        assert ok.mastery_delta == 0.3
-        ConceptMasteryUpdate(concept_name="Limits", mastery_delta=-0.1)
-        with pytest.raises(pydantic.ValidationError):
-            ConceptMasteryUpdate(concept_name="Limits", mastery_delta=1.0)
-        with pytest.raises(pydantic.ValidationError):
-            ConceptMasteryUpdate(concept_name="Limits", mastery_delta=-0.5)
-
     def test_id_bearing_args_come_from_deps_not_model(self):
         """Exfiltration constraint: no tutor tool signature lets the model
         choose whose data to read — user_id/course_id/session_id ride on

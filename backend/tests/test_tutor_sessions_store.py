@@ -25,8 +25,10 @@ from tests.agent_run_fakes import run_result
 from tests.db_fakes import add_async_twins
 from tests.split_patches import patch_tutor
 
-#: #117 wave 3: a sync PostgREST call on the event loop raises here.
-pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+#: #117 wave 3: a sync PostgREST call on the event loop raises here. Spec §11.5
+#: (learning loop PKG-14b): these drive the legacy /api/learn/* tutor, so they
+#: run as kill-switch tests (with the loop on, the routes hand the turn to it).
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
 
 client = TestClient(app)
 

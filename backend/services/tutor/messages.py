@@ -52,7 +52,24 @@ async def _load_message_history(session_id: str, *, exclude_id: str | None = Non
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
+    return _history_from_rows(rows, exclude_id)
 
+
+def _load_message_history_sync(session_id: str, *, exclude_id: str | None = None) -> list:
+    """`_load_message_history` for sync callers: the learning loop's turn
+    assembly (routes/learn_loop.py), which builds its history in sync code.
+    The same read and the same conversion (`_history_from_rows`)."""
+    rows = table("messages").select(
+        "id,role,content",
+        filters={"session_id": f"eq.{session_id}"},
+        order="created_at.asc",
+    )
+    return _history_from_rows(rows, exclude_id)
+
+
+def _history_from_rows(rows: list | None, exclude_id: str | None) -> list:
+    """The `messages` rows of `_load_message_history` as Pydantic AI messages
+    (its docstring has the mapping)."""
     history: list = []
     for r in rows or []:
         if exclude_id and r.get("id") == exclude_id:

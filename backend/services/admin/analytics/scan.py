@@ -62,7 +62,12 @@ _NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
 
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
-    extra_filters: dict | None = None, *, cap: int | None = None, newest_first: bool = False,
+    extra_filters: dict | None = None,
+    *,
+    time_column: str = "created_at",
+    order: str | None = None,
+    cap: int | None = None,
+    newest_first: bool = False,
 ) -> tuple[list[dict], bool]:
     """Fetch every row in [from, to] for a table, paging via select_with_count.
 
@@ -72,7 +77,9 @@ def _scan_range(
     enough to hit ``cap`` (default _SCAN_CAP) stops the scan early, logs a
     warning, and sets ``truncated=True`` so callers can surface the partial
     aggregation. ``newest_first`` pages newest → oldest, so a truncated scan
-    keeps the most recent rows rather than the oldest.
+    keeps the most recent rows rather than the oldest. `time_column` is the
+    timestamp the range bounds (``created_at`` unless a table has none);
+    `order` defaults to it, ascending (descending with ``newest_first``).
     """
     if cap is None:
         cap = _SCAN_CAP  # read at call time (tests shrink it)
@@ -80,12 +87,12 @@ def _scan_range(
     offset = 0
     truncated = False
     while True:
-        filters: dict = {"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"]}
+        filters: dict = {time_column: [f"gte.{from_iso}", f"lte.{to_iso}"]}
         if extra_filters:
             filters.update(extra_filters)
         rows, total = table(table_name).select_with_count(
             columns, filters=filters,
-            order="created_at.desc" if newest_first else "created_at.asc",
+            order=order or (f"{time_column}.desc" if newest_first else f"{time_column}.asc"),
             limit=_PAGE, offset=offset,
         )
         out.extend(rows)

@@ -37,7 +37,7 @@ HP151 = Course(
     nickname="Health Professions",
     color="#0EA5A4",
     concepts=[
-        Concept(name="Interprofessional Collaboration", mastery=0.88,
+        Concept(name="Interprofessional Collaboration", mastery=0.96,
                 description="How nurses, PTs, OTs, SLPs, dietitians and physicians share a care plan, "
                             "communicate with SBAR, and divide responsibility on a patient team."),
         Concept(name="Scope of Practice", mastery=0.81,
@@ -324,7 +324,7 @@ HS201 = Course(
     nickname="Nutrition",
     color="#F59E0B",
     concepts=[
-        Concept(name="Macronutrients", mastery=0.92,
+        Concept(name="Macronutrients", mastery=0.96,
                 description="Carbohydrate, protein and fat as energy sources: 4, 4 and 9 kcal per gram "
                             "(alcohol 7), and the AMDR ranges of 45–65%, 10–35% and 20–35%."),
         Concept(name="Dietary Reference Intakes", mastery=0.83,
@@ -613,7 +613,7 @@ HS300 = Course(
     nickname="Epi 1",
     color="#6366F1",
     concepts=[
-        Concept(name="Incidence and Prevalence", mastery=0.82,
+        Concept(name="Incidence and Prevalence", mastery=0.96,
                 description="Incidence = new cases / population at risk over time; prevalence = existing "
                             "cases at a point in time. P ≈ I x D for a steady-state disease."),
         Concept(name="Study Designs", mastery=0.77,
@@ -916,7 +916,7 @@ HS369 = Course(
     nickname="Gross Anatomy",
     color="#DC2626",
     concepts=[
-        Concept(name="Anatomical Terminology and Planes", mastery=0.9,
+        Concept(name="Anatomical Terminology and Planes", mastery=0.96,
                 description="Anatomical position, sagittal/coronal/transverse planes, and directional terms "
                             "(proximal/distal, superficial/deep, medial/lateral)."),
         Concept(name="Rotator Cuff Muscles", mastery=0.79,

@@ -26,7 +26,7 @@
  * "Card 1 of N" counter pins the scoped deck SIZE (N is data; the phrasing
  * is stable Study copy).
  */
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 
 test("study flashcards follow the semester selection; All semesters shows every term", async ({
   page,
@@ -39,6 +39,14 @@ test("study flashcards follow the semester selection; All semesters shows every 
   // surfaced; the "Card 1 of 6" counter is the actual scoping assertion.
   await expect(page.getByRole("button", { name: "Linear Algebra" }).first()).toBeVisible();
   await expect(page.getByText("Card 1 of 6")).toBeVisible();
+  // PKG-14b (spec §11.4), lane-aware: by default the loop's DueQueue sits
+  // above the semester deck and both render; under the kill switch the
+  // review panel is absent (the legacy Study flashcards UI).
+  if (killSwitchLane) {
+    await expect(page.getByTestId("review-due-panel")).toHaveCount(0);
+  } else {
+    await expect(page.getByTestId("review-due-panel")).toBeVisible();
+  }
 
   // 2. Scope to Fall 2025 via the Courses & Semesters hub (dashboard).
   await page.goto("/dashboard");

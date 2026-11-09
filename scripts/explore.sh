@@ -319,6 +319,12 @@ do_up() {
   # exported BEFORE it starts.
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
+  # Learning loop (PKG-14b, spec §7): the loop is the default, so the explorer's
+  # stack runs the code default — no LEARNING_LOOP_ENABLED export here (an
+  # operator who exports LEARNING_LOOP_ENABLED=false explores the kill-switch
+  # lane). Spec §13 A5: the E2E env scales the ZPD gate seconds; e2e-up.sh
+  # defaults it, set here so the explorer's stack is visibly the lane's.
+  export LEARNING_GATE_TIME_SCALE=0.01
   # ADR 0028: never send exploration traffic to PostHog: no project token,
   # no client. e2e-up.sh blanks both too; set here as well so the explore
   # lane does not depend on it.

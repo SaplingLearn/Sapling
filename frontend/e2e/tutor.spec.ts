@@ -19,9 +19,13 @@
  * seam replays the same constant on both lanes, so the assertions just wait
  * on the rendered reply locator either way — no SSE handling here.)
  */
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
+
+// PKG-14b (spec §11.4): the legacy Learn screen exists only under the kill
+// switch — this whole file runs in the kill-switch lane only.
+test.skip(!killSwitchLane, "legacy path: kill-switch lane only");
 
 /** Seeded by db/seed_local_rich.py for rich-user-active (4 prior messages). */
 const SESSION_ID = "rich-sess-cs-recursion";

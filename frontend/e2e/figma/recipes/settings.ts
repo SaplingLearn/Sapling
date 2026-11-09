@@ -1630,6 +1630,9 @@ async function openReport(page: Page): Promise<void> {
   await text(page, "Report an issue");
 }
 
+// The prompt normally needs a wrapped-up session; `?testFeedback=session` on
+// /learn skips that and the pacing (lib/feedbackPacing.ts) for the next client
+// navigation out, and it opens once LoopLearn's hold on prompts is released.
 const sessionStep = (step: number): Recipe => ({
   run: async (page) => {
     await page.goto("/learn?testFeedback=session");
@@ -1767,8 +1770,9 @@ const CHROME: RecipeBook = {
     run: async (page) => {
       await page.goto("/dashboard?testFeedback=global");
       await visible(page, "app-shell");
-      // FeedbackFlow opens after its fixed 45s delay (the override only skips
-      // the cooldown).
+      // FeedbackFlow opens after its fixed 45s delay (the override skips the
+      // pacing — cooldowns, one per session — never the delay; /dashboard holds
+      // no learning activity that would defer it).
       await expect(page.getByText("What's clicking?")).toBeVisible({ timeout: 70_000 });
     },
   },

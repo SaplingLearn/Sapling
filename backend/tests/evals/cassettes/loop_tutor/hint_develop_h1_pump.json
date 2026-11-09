@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"To solve this problem, you need to identify what the question is asking you to find.\", \"body\": \"You're working on a problem and asked for a hint.\", \"question\": \"What is the first thing you need to figure out about this problem?\"}"
+  ],
+  "input_sha256": "b46a20a0f8767d75c87133a86034957e3d5a29385b2be0d642a6d8c00e54e61b",
+  "model": "gemini-2.5-flash",
+  "output": {
+    "body": "You're working on a problem and asked for a hint.",
+    "key_idea": "To solve this problem, you need to identify what the question is asking you to find.",
+    "question": "What is the first thing you need to figure out about this problem?"
+  },
+  "prompt_hash": "10676b7d004e",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

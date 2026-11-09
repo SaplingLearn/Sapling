@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "To apply it, you multiply the term by the exponent n, then subtract one from the original exponent.",
+    "only_states_correction": true
+  },
+  "served_sha256": "88ef2e34e33ac79800c4d7da9e3495d9058a4f8cecee3c050da4f6302e7fcb56"
+}

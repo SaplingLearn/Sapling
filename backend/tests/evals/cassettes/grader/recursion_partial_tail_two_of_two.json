@@ -1,0 +1,36 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "41891:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "You have correctly identified the two most important aspects of a base case. Great job!",
+      "item_results": [
+        "41891:yes",
+        "87525:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "41891: It's the case where the function stops recursing.",
+        "87525: without it calls never end / stack overflows"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "41891:yes"
+      ],
+      "item_results": [
+        "41891:yes"
+      ]
+    }
+  ]
+}
