@@ -31,39 +31,56 @@ typed non-401 carrying ``error.code`` (ApiError.code on the client):
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from gradescopeapi.classes.connection import GSConnection
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from db.connection import page_all, table
-from services import gradescope_service
-from services.academics import (
-    current_term,
-    enrollment_id_for,
-    offering_course_id,
-    scoped_user_enrollments,
-    term_id_for_label,
-)
+from db.connection import table
+from routes._errors import domain_status
 from services.auth_guard import require_self, guard_off_loop
-from services.encryption import encrypt, decrypt, encrypt_if_present
+from services.gradescope import client as gradescope_service
+from services.gradescope import jobs as gradescope_jobs
+from services.gradescope.errors import (
+    AmbiguousEnrollment,
+    AmbiguousLink,
+    CourseNotFound,
+    GradescopeCredsError,
+    GradescopeLinkError,
+    NoCourseLink,
+)
+# Credentials, links and the sync body live in services/gradescope/ (#118);
+# the old names stay importable here.
+from services.gradescope.credentials import (  # noqa: F401  (re-export, #118)
+    AuthMode,
+    StoredCreds,
+    connection_status,
+    save_cookie_creds,
+    save_password_creds,
+    _establish_connection,
+    _load_creds,
+    _now_iso,
+    _write_connection_state,
+)
+from services.gradescope.links import (  # noqa: F401  (re-export, #118)
+    _all_enrollments_for,
+    _enrollment_for,
+    _enrollments_in,
+    course_links,
+    link_course,
+    linked_course,
+)
+from services.gradescope.sync import _due_to_date_string, _run_linked_sync  # noqa: F401  (re-export, #118)
 from services.request_context import current_request_id
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 # ── Body models ────────────────────────────────────────────────────────────
-
-
-AuthMode = Literal["password", "cookies"]
 
 
 class CredentialsBody(BaseModel):
@@ -111,18 +128,6 @@ class SyncResult(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-class StoredCreds(BaseModel):
-    auth_mode: AuthMode
-    email: str | None = None
-    password: str | None = None
-    gradescope_session: str | None = None
-    signed_token: str | None = None
-    # Row metadata, not secrets: which saved version these are (the guard for
-    # marking them stale) and whether they were already known to be rejected.
-    updated_at: str | None = None
-    needs_reauth: bool = False
-
-
 # Typed Gradescope error codes (#770) — see the module docstring.
 GS_AUTH_FAILED = "gradescope_auth_failed"
 GS_REAUTH_REQUIRED = "gradescope_reauth_required"
@@ -148,28 +153,6 @@ def _gs_error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _write_connection_state(user_id: str, fields: dict[str, Any], *, only_version: str | None = None) -> None:
-    """Persist connection/sync-outcome columns on the credentials row. Never
-    raises: the state is bookkeeping, and a failed write must not turn a
-    finished sync (or its real error) into a 500.
-
-    ``only_version`` pins the write to the credential version that produced the
-    outcome (``updated_at`` as read with the creds): marking credentials stale
-    must not land on a newer set the user saved while this request was running.
-    """
-    filters = {"user_id": f"eq.{user_id}"}
-    if only_version:
-        filters["updated_at"] = f"eq.{only_version}"
-    try:
-        table("gradescope_credentials").update(fields, filters=filters)
-    except Exception:
-        logger.warning("Failed to record Gradescope connection state for user_id=%s", user_id, exc_info=True)
-
-
 def _reauth_required(user_id: str, creds: StoredCreds, message: str, **outcome: Any) -> JSONResponse:
     """Stored credentials were rejected: mark them stale, answer 409."""
     _write_connection_state(user_id, {"needs_reauth": True, **outcome}, only_version=creds.updated_at)
@@ -178,100 +161,6 @@ def _reauth_required(user_id: str, creds: StoredCreds, message: str, **outcome: 
 
 def _not_connected() -> JSONResponse:
     return _gs_error(404, GS_NOT_CONNECTED, "No Gradescope credentials saved")
-
-
-def _load_creds(user_id: str) -> StoredCreds | None:
-    """Fetch and decrypt stored Gradescope credentials for user_id. Returns None if none saved."""
-    rows = table("gradescope_credentials").select(
-        "auth_mode,email_encrypted,password_encrypted,cookies_encrypted,updated_at,needs_reauth",
-        filters={"user_id": f"eq.{user_id}"},
-        limit=1,
-    )
-    if not rows:
-        return None
-    row = rows[0]
-    mode: AuthMode = row.get("auth_mode") or "password"
-    meta = {"updated_at": row.get("updated_at"), "needs_reauth": bool(row.get("needs_reauth"))}
-    try:
-        if mode == "password":
-            return StoredCreds(
-                auth_mode="password",
-                email=decrypt(row["email_encrypted"]) if row.get("email_encrypted") else None,
-                password=decrypt(row["password_encrypted"]) if row.get("password_encrypted") else None,
-                **meta,
-            )
-        else:  # cookies
-            raw = decrypt(row["cookies_encrypted"]) if row.get("cookies_encrypted") else None
-            payload = json.loads(raw) if raw else {}
-            return StoredCreds(
-                auth_mode="cookies",
-                gradescope_session=payload.get("_gradescope_session"),
-                signed_token=payload.get("signed_token"),
-                **meta,
-            )
-    except Exception:
-        logger.exception("Failed to decrypt Gradescope creds for user_id=%s", user_id)
-        raise HTTPException(
-            status_code=500, detail="Stored credentials could not be read."
-        )
-
-
-def _establish_connection(creds: StoredCreds) -> GSConnection:
-    """Re-establish an authenticated Gradescope session from stored creds.
-    Picks the right login path based on the user's chosen mode."""
-    if creds.auth_mode == "password":
-        if not creds.email or not creds.password:
-            raise HTTPException(
-                status_code=500, detail="Password-mode creds missing email/password"
-            )
-        return gradescope_service.login(creds.email, creds.password)
-    else:
-        return gradescope_service.login_with_cookies(
-            signed_token=creds.signed_token,
-            gradescope_session=creds.gradescope_session,
-        )
-
-
-def _enrollment_for(user_id: str, sapling_course_id: str) -> str | None:
-    """Resolve (user, abstract course) → the user's enrollment id, or None.
-
-    Doubles as the ownership check this module used to do against
-    `user_courses` — a table that stopped existing when 0020 renamed it to
-    `enrollments` (offering-keyed). No enrollment means the user isn't in the
-    course, which is the same 404 the old check produced.
-
-    Gradescope links key on `enrollment_id` (0027), not the abstract course:
-    grades land on enrollment-scoped `assignments` (0021), so a link has to
-    name the specific class instance the grades belong to — otherwise a retake
-    gives two enrollments and the sync cannot tell which term's assignments to
-    write. The HTTP boundary still speaks `course_id` per the repo convention;
-    resolution happens here.
-    """
-    return enrollment_id_for(user_id, sapling_course_id)
-
-
-def _enrollments_in(user_id: str, semester: str | None, sapling_course_id: str | None = None) -> list[dict]:
-    """The user's enrollments ({id, offering_id}), optionally narrowed to a
-    course and/or a semester label.
-
-    An explicit semester that doesn't resolve to a term matches nothing — it
-    never widens to every term.
-    """
-    term_id = None
-    if semester is not None:
-        term_id = term_id_for_label(semester)
-        if not term_id:
-            return []
-    return scoped_user_enrollments(user_id, course_id=sapling_course_id, term_id=term_id)
-
-
-def _all_enrollments_for(user_id: str, sapling_course_id: str, semester: str | None = None) -> list[str]:
-    """Owned enrollments in this course, optionally restricted to a semester.
-
-    An explicit term never falls back to a different enrollment. Without a
-    term, search all enrollments so legacy links survive a term rollover.
-    """
-    return [e["id"] for e in _enrollments_in(user_id, semester, sapling_course_id)]
 
 
 def _enforce_gs_rate_limit(user_id: str, action: str, *, limit: int, window_sec: int) -> None:
@@ -326,13 +215,7 @@ def save_credentials(body: CredentialsBody, request: Request):
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those credentials.")
         except gradescope_service.GradescopeFetchError as e:
             raise HTTPException(status_code=502, detail=str(e))
-        payload: dict[str, Any] = {
-            "user_id": body.user_id,
-            "auth_mode": "password",
-            "email_encrypted": encrypt(body.email),
-            "password_encrypted": encrypt(body.password),
-            "cookies_encrypted": None,
-        }
+        save_password_creds(body.user_id, body.email, body.password)
     else:  # cookies
         if not body.gradescope_session:
             raise HTTPException(
@@ -349,25 +232,7 @@ def save_credentials(body: CredentialsBody, request: Request):
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those cookies.")
         except gradescope_service.GradescopeFetchError as e:
             raise HTTPException(status_code=502, detail=str(e))
-        cookie_blob = json.dumps(
-            {
-                "_gradescope_session": body.gradescope_session,
-                "signed_token": body.signed_token or None,
-            }
-        )
-        payload = {
-            "user_id": body.user_id,
-            "auth_mode": "cookies",
-            "email_encrypted": None,
-            "password_encrypted": None,
-            "cookies_encrypted": encrypt(cookie_blob),
-        }
-
-    payload["updated_at"] = _now_iso()
-    # Fresh, verified credentials: whatever marked the old ones stale is moot.
-    payload["needs_reauth"] = False
-    payload["last_sync_error"] = None
-    table("gradescope_credentials").upsert(payload, on_conflict="user_id")
+        save_cookie_creds(body.user_id, body.gradescope_session, body.signed_token)
     return {"ok": True}
 
 
@@ -386,7 +251,10 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
     # Strictest cap: each call launches a Chromium that pins a worker thread for
     # up to duo_timeout_seconds and fires a Duo push at the user's phone.
-    _enforce_gs_rate_limit(body.user_id, "bu-sso", limit=3, window_sec=600)
+    # #117: off the loop -- with `stateless_rate_limit` on, the limiter is a
+    # PostgREST call.
+    await run_in_threadpool(_enforce_gs_rate_limit, body.user_id, "bu-sso",
+                            limit=3, window_sec=600)
 
     try:
         # sync_playwright wants its own event loop; run the whole flow in
@@ -424,22 +292,9 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     except gradescope_service.GradescopeFetchError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    cookie_blob = json.dumps({
-        "_gradescope_session": cookies.get("_gradescope_session"),
-        "signed_token": cookies.get("signed_token") or None,
-    })
-    table("gradescope_credentials").upsert(
-        {
-            "user_id": body.user_id,
-            "auth_mode": "cookies",
-            "email_encrypted": None,
-            "password_encrypted": None,
-            "cookies_encrypted": encrypt(cookie_blob),
-            "updated_at": _now_iso(),
-            "needs_reauth": False,
-            "last_sync_error": None,
-        },
-        on_conflict="user_id",
+    await run_in_threadpool(  # #117: an async handler; keep the write off the loop
+        save_cookie_creds, body.user_id,
+        cookies.get("_gradescope_session"), cookies.get("signed_token"),
     )
     return {"ok": True}
 
@@ -474,35 +329,7 @@ def get_status(user_id: str, request: Request):
     ``last_attempt_at`` / ``last_sync_error`` describe the last attempt.
     """
     require_self(user_id, request)
-    rows = table("gradescope_credentials").select(
-        "auth_mode,last_synced_at,updated_at,needs_reauth,last_attempt_at,last_sync_error",
-        filters={"user_id": f"eq.{user_id}"},
-        limit=1,
-    )
-    if not rows:
-        return {
-            "state": "disconnected",
-            "connected": False,
-            "has_credentials": False,
-            "needs_reauth": False,
-            "auth_mode": None,
-            "last_synced_at": None,
-            "last_attempt_at": None,
-            "last_sync_error": None,
-        }
-    row = rows[0]
-    needs_reauth = bool(row.get("needs_reauth"))
-    return {
-        "state": "needs_reauth" if needs_reauth else "connected",
-        "connected": not needs_reauth,
-        "has_credentials": True,
-        "needs_reauth": needs_reauth,
-        "auth_mode": row.get("auth_mode") or "password",
-        "last_synced_at": row.get("last_synced_at"),
-        "last_attempt_at": row.get("last_attempt_at"),
-        "last_sync_error": row.get("last_sync_error"),
-        "credentials_updated_at": row.get("updated_at"),
-    }
+    return connection_status(user_id)
 
 
 # ── Course listing + linking ───────────────────────────────────────────────
@@ -513,13 +340,18 @@ def list_gradescope_courses(user_id: str, request: Request):
     """Hit Gradescope live with the saved creds, list student-role courses."""
     require_self(user_id, request)
     _enforce_gs_rate_limit(user_id, "courses", limit=10, window_sec=300)
-    creds = _load_creds(user_id)
+    try:
+        creds = _load_creds(user_id)
+    except GradescopeCredsError as e:
+        raise HTTPException(status_code=500, detail=e.detail)
     if not creds:
         return _not_connected()
     conn = None
     try:
         conn = _establish_connection(creds)
         courses = gradescope_service.list_student_courses(conn)
+    except GradescopeCredsError as e:
+        raise HTTPException(status_code=500, detail=e.detail)
     except gradescope_service.GradescopeAuthError as e:
         return _reauth_required(user_id, creds, str(e))
     except gradescope_service.GradescopeFetchError as e:
@@ -542,62 +374,17 @@ def list_links(user_id: str, request: Request, semester: str | None = None):
     leaves — the frontend contract is unchanged.
     """
     require_self(user_id, request)
-    enrollments = _enrollments_in(user_id, semester)
-    if not enrollments:
-        return {"links": []}
-
-    course_by_enrollment = {
-        e["id"]: offering_course_id(e.get("offering_id")) for e in enrollments
-    }
-    rows = table("gradescope_course_links").select(
-        "id,enrollment_id,gradescope_course_id,last_synced_at",
-        filters={"enrollment_id": f"in.({','.join(course_by_enrollment)})"},
-    )
-    links = [
-        {
-            "id": r["id"],
-            "sapling_course_id": course_by_enrollment[r.get("enrollment_id")],
-            "gradescope_course_id": r.get("gradescope_course_id"),
-            "last_synced_at": r.get("last_synced_at"),
-        }
-        for r in rows
-        # Drop rather than answer sapling_course_id: null — an offering whose
-        # course can't be resolved has no id the client could act on, and a
-        # null there reads as a real link the UI can't do anything with.
-        if course_by_enrollment.get(r.get("enrollment_id"))
-    ]
-    return {"links": links}
+    return {"links": course_links(user_id, semester)}
 
 
 @router.post("/link")
 def upsert_link(body: LinkBody, request: Request):
     """Create or replace the link between a Sapling course and a Gradescope course."""
     require_self(body.user_id, request)
-    scoped = _all_enrollments_for(body.user_id, body.sapling_course_id, body.semester)
-    if body.semester is not None:
-        if len(scoped) > 1:
-            raise HTTPException(status_code=409, detail="Multiple enrollments match this semester. Contact support to resolve the course enrollment.")
-        enrollment_id = scoped[0] if scoped else None
-    else:
-        enrollment_id = _enrollment_for(body.user_id, body.sapling_course_id)
-    if not enrollment_id:
-        raise HTTPException(status_code=404, detail="Sapling course not found for user")
-
-    # Legacy callers replace the course's mapping across terms. Semester-aware
-    # callers replace only that term, preserving mappings for other enrollments.
-    all_enrollments = scoped
-    if all_enrollments:
-        table("gradescope_course_links").delete(
-            filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
-        )
-    inserted = table("gradescope_course_links").insert({
-        "enrollment_id": enrollment_id,
-        "gradescope_course_id": body.gradescope_course_id,
-    })
-    link = dict(inserted[0]) if inserted else None
-    if link is not None:
-        # Answer in the API's vocabulary, not the table's.
-        link["sapling_course_id"] = body.sapling_course_id
+    try:
+        link = link_course(body.user_id, body.sapling_course_id, body.gradescope_course_id, body.semester)
+    except GradescopeLinkError as e:
+        raise _link_http_error(e)
     return {"link": link}
 
 
@@ -624,175 +411,129 @@ def remove_link(sapling_course_id: str, user_id: str, request: Request, semester
 # ── Sync ───────────────────────────────────────────────────────────────────
 
 
-def _due_to_date_string(iso: str | None) -> str | None:
-    """Sapling stores due_date as a date string (YYYY-MM-DD). Gradescope
-    gives us a full ISO timestamp; pull just the date portion."""
-    if not iso:
-        return None
-    try:
-        return iso.split("T")[0] if "T" in iso else iso
-    except Exception:
-        return None
-
-
 @router.post("/sync/{sapling_course_id}")
 def sync_course(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None) -> dict[str, Any]:
     """Pull assignments from the linked Gradescope course and upsert into the Sapling gradebook."""
     require_self(user_id, request)
     _enforce_gs_rate_limit(user_id, "sync", limit=10, window_sec=300)
+    try:
+        gs_course_id, enrollment_id, link_id = linked_course(user_id, sapling_course_id, semester)
+    except GradescopeLinkError as e:
+        raise _link_http_error(e)
+
+    # #116: `jobs_queue` on -> the login, scrape and gradebook writes below run
+    # in the worker (services/gradescope/jobs.py) and this request waits for
+    # the outcome, answering exactly as below (202 when it outlasts the wait).
+    # None -> sync here after all.
+    if gradescope_jobs.should_queue(user_id):
+        queued = sync_via_queue(
+            user_id=user_id, enrollment_id=enrollment_id, link_id=link_id,
+            gradescope_course_id=gs_course_id,
+        )
+        if queued is not None:
+            return queued
+    return _sync_linked_course(user_id, gs_course_id, enrollment_id, link_id)
+
+
+@router.get("/sync/{sapling_course_id}/status")
+def sync_status(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None):
+    """The latest queued sync of this course (#116, `jobs_queue` on): 202
+    while it runs, then exactly what POST /sync would have answered (the
+    counts, or the same typed error). The client polls it after a POST that
+    answered 202 / 504. 404 when the course has no staged sync."""
+    require_self(user_id, request)
     all_enrollments = _all_enrollments_for(user_id, sapling_course_id, semester)
     if not all_enrollments:
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
+    answer = status_response(gradescope_jobs.latest_sync(user_id, all_enrollments))
+    if answer is None:
+        raise HTTPException(status_code=404, detail="No Gradescope sync found for this course")
+    return answer
 
-    # Find the link across every enrollment in the course, then key the whole
-    # sync on THAT row's enrollment — not on a re-derived term guess. The
-    # grades belong to the class instance the link was made against, and after
-    # a term rollover the heuristic points at a different one (#265 review).
-    link_rows = table("gradescope_course_links").select(
-        "id,enrollment_id,gradescope_course_id",
-        filters={"enrollment_id": f"in.({','.join(all_enrollments)})"},
-    )
-    if not link_rows:
-        raise HTTPException(
-            status_code=400,
-            detail="No Gradescope course is linked to this Sapling course",
-        )
-    if len(link_rows) > 1 and semester is None:
-        # A retake leaves a link on each term's enrollment. A caller that names
-        # no semester means the current one; only stay ambiguous when the
-        # current term doesn't settle it.
-        term = current_term()
-        current = {
-            e["id"]
-            for e in scoped_user_enrollments(user_id, course_id=sapling_course_id, term_id=term["id"])
-        } if term else set()
-        link_rows = [r for r in link_rows if r.get("enrollment_id") in current] or link_rows
-    if len(link_rows) != 1:
-        raise HTTPException(status_code=409, detail="Multiple Gradescope links match this course. Select a semester and reconnect the course.")
-    gs_course_id = link_rows[0]["gradescope_course_id"]
-    enrollment_id = link_rows[0]["enrollment_id"]
 
-    creds = _load_creds(user_id)
-    if not creds:
+#: The 502 detail when no assignment could be saved.
+SYNC_WRITE_FAILED_DETAIL = "No assignments could be saved. Please retry; if this continues, contact support."
+
+
+def _sync_linked_course(user_id: str, gs_course_id: str, enrollment_id: str, link_id: str | None) -> dict[str, Any] | JSONResponse:
+    """The inline sync: run it and answer with its outcome (the counts, a
+    typed JSONResponse, or a raised HTTPException)."""
+    return response_for_outcome(
+        _run_linked_sync(user_id, gs_course_id, enrollment_id, link_id))
+
+
+# ── Sync answers: outcome -> HTTP (#118: moved from services/gradescope_jobs.py) ──
+
+
+def response_for_outcome(outcome: gradescope_jobs.SyncOutcome):
+    """The sync route's answer for an outcome: the counts JSON, the typed
+    JSONResponse (404 not connected / 409 reauth), or the HTTPException the
+    inline route raises. The inline route (flag off) answers through this
+    too, so the two paths cannot drift."""
+    gj = gradescope_jobs
+    code = outcome.error_code
+    if code is None:
+        counts = outcome.counts or {}
+        return SyncResult(**{k: int(counts.get(k) or 0) for k in gj.COUNT_KEYS}).model_dump()
+    if code == gj.ERR_NOT_CONNECTED:
         return _not_connected()
+    if code == gj.ERR_AUTH:
+        return _gs_error(409, GS_REAUTH_REQUIRED, outcome.message or gj._REAUTH_MESSAGE)
+    if code == gj.ERR_FETCH:
+        detail = outcome.message if outcome.message is not None else gj._FETCH_MESSAGE
+        raise HTTPException(status_code=502, detail=detail)
+    if code == gj.ERR_WRITE:
+        raise HTTPException(status_code=502, detail=SYNC_WRITE_FAILED_DETAIL)
+    if code == gj.ERR_CREDS:
+        raise HTTPException(status_code=500, detail=gj._CREDS_MESSAGE)
+    if code == gj.ERR_CREDS_INCOMPLETE:
+        raise HTTPException(status_code=500, detail=gj._CREDS_INCOMPLETE_MESSAGE)
+    if code == gj.ERR_LINK_CHANGED:
+        raise HTTPException(status_code=400, detail=gj.NO_LINK_MESSAGE)
+    if code == gj.ERR_INTERNAL:
+        raise HTTPException(status_code=500, detail=gj._INTERNAL_MESSAGE)
+    raise HTTPException(status_code=502, detail=gj._FAILED_MESSAGE)
 
-    conn = None
-    try:
-        conn = _establish_connection(creds)
-        gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
-    except gradescope_service.GradescopeAuthError as e:
-        return _reauth_required(
-            user_id, creds, str(e), last_sync_error="auth_failed", last_attempt_at=_now_iso(),
-        )
-    except gradescope_service.GradescopeFetchError as e:
-        # An outage says nothing about the credentials: needs_reauth untouched.
-        _write_connection_state(user_id, {"last_sync_error": "fetch_failed", "last_attempt_at": _now_iso()})
-        raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        if conn is not None:
-            conn.session.close()
 
-    # Load existing assignments keyed by gradescope_assignment_id so we
-    # know whether each incoming one is an insert or an update.
-    existing = page_all(
-        table("assignments"),
-        "id,gradescope_assignment_id",
-        filters={"enrollment_id": f"eq.{enrollment_id}"},
-        order="id",
-    )
-    by_gs_id: dict[str, str] = {
-        r["gradescope_assignment_id"]: r["id"]
-        for r in existing
-        if r.get("gradescope_assignment_id")
-    }
+def pending_response(row: dict):
+    """202: the sync is still running; poll the status route."""
+    return JSONResponse(status_code=202, content={
+        "pending": True, "sync_id": str(row.get("id") or ""),
+        "stage": row.get("stage") or gradescope_jobs.QUEUED, "detail": gradescope_jobs.TIMEOUT_MESSAGE,
+    })
 
-    # Build a normalized category-name → id map for auto-matching new assignments.
-    # A new assignment whose title contains a category name (e.g. "Homework 3"
-    # contains "homework") is automatically categorized; otherwise category_id
-    # stays None and the user can link it manually.
-    # 0021 renamed course_categories -> gradebook_categories, enrollment-keyed.
-    cats = page_all(
-        table("gradebook_categories"),
-        "id,name",
-        filters={"enrollment_id": f"eq.{enrollment_id}"},
-        order="sort_order,id",
-    )
-    cats_by_name: dict[str, str] = {
-        c["name"].lower().strip(): c["id"]
-        for c in cats
-        if c.get("name", "").strip() and c.get("id")
-    }
 
-    def _infer_category_id(title: str) -> str | None:
-        t = title.lower()
-        for name, cat_id in cats_by_name.items():
-            if name in t:
-                return cat_id
-        return None
+def response_for(answer: gradescope_jobs.SyncOutcome | gradescope_jobs.Watch):
+    """The route's answer for an outcome, or for how a watch ended (pending:
+    202, timeout: 504)."""
+    if isinstance(answer, gradescope_jobs.SyncOutcome):
+        return response_for_outcome(answer)
+    if answer.kind == gradescope_jobs.PENDING:
+        return pending_response(answer.row or {})
+    raise HTTPException(status_code=504, detail=gradescope_jobs.TIMEOUT_MESSAGE)
 
-    inserted = updated = skipped = failed = 0
-    # A scrape can repeat an assignment id; the first occurrence wins and the
-    # rest are skipped rather than overwriting it as an "update".
-    seen: set[str] = set()
-    for a in gs_assignments:
-        gs_id = a.get("id")
-        if not gs_id or gs_id in seen:
-            skipped += 1
-            continue
-        seen.add(gs_id)
-        title = a.get("name") or "(untitled)"
-        due_date = _due_to_date_string(a.get("due_date"))
-        points_earned = a.get("points_earned")
-        points_possible = a.get("points_possible")
 
-        record_write: dict[str, Any] = {
-            "title": title,
-            "due_date": due_date,
-            "source": "gradescope",
-            "gradescope_assignment_id": gs_id,
-        }
-        # Only include grade fields when Gradescope returned a value —
-        # absent grades (None) must not overwrite previously synced data.
-        if points_earned is not None:
-            record_write["points_earned"] = encrypt_if_present(points_earned)
-        if points_possible is not None:
-            record_write["points_possible"] = encrypt_if_present(points_possible)
-        try:
-            if gs_id in by_gs_id:
-                table("assignments").update(
-                    record_write,
-                    filters={"id": f"eq.{by_gs_id[gs_id]}"},
-                )
-                updated += 1
-            else:
-                assignment_id = str(uuid.uuid4())
-                table("assignments").insert({
-                    "id": assignment_id,
-                    "enrollment_id": enrollment_id,
-                    "category_id": _infer_category_id(title),
-                    **record_write,
-                })
-                by_gs_id[gs_id] = assignment_id
-                inserted += 1
-        except Exception:
-            logger.exception("Failed to upsert Gradescope assignment %s", gs_id)
-            failed += 1
+def sync_via_queue(*, user_id: str, enrollment_id: str, link_id: str | None,
+                   gradescope_course_id: str):
+    """POST /sync through the queue (services/gradescope/jobs.py::queue_sync).
+    Returns what the route returns (or raises the HTTPException it would
+    raise), or None when staging failed and the caller must sync inline."""
+    answer = gradescope_jobs.queue_sync(
+        user_id=user_id, enrollment_id=enrollment_id, link_id=link_id,
+        gradescope_course_id=gradescope_course_id)
+    return None if answer is None else response_for(answer)
 
-    now_iso = _now_iso()
-    # The login worked, so whatever the write outcome the credentials are good.
-    outcome: dict[str, Any] = {"needs_reauth": False, "last_attempt_at": now_iso}
-    if failed and not (inserted or updated):
-        _write_connection_state(user_id, {**outcome, "last_sync_error": "write_failed"})
-        raise HTTPException(status_code=502, detail="No assignments could be saved. Please retry; if this continues, contact support.")
-    # last_synced_at represents a complete import, not a partial or failed one.
-    if failed:
-        _write_connection_state(user_id, {**outcome, "last_sync_error": "partial_write"})
-    else:
-        _write_connection_state(user_id, {**outcome, "last_sync_error": None, "last_synced_at": now_iso})
-        table("gradescope_course_links").update(
-            {"last_synced_at": now_iso}, filters={"id": f"eq.{link_rows[0]['id']}"},
-        )
 
-    return SyncResult(
-        inserted=inserted, updated=updated, skipped=skipped, failed=failed
-    ).model_dump()
+def status_response(row: dict | None):
+    """GET /sync/{course}/status's answer for the latest staged sync: as the
+    POST would have answered it, 202 while it runs, None when none (404)."""
+    answer = gradescope_jobs.status_outcome(row)
+    return None if answer is None else response_for(answer)
+
+
+_LINK_STATUS = {CourseNotFound: 404, NoCourseLink: 400, AmbiguousEnrollment: 409, AmbiguousLink: 409}
+
+
+def _link_http_error(e: GradescopeLinkError) -> HTTPException:
+    """The HTTPException a link error answered with before the split (#118)."""
+    return HTTPException(status_code=domain_status(e, _LINK_STATUS), detail=e.detail)

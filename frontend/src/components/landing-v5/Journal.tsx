@@ -50,7 +50,7 @@ export function Journal({
             laptop, it read as a stray caption floating off to the right */}
         <FadeIn className="ld-journal-head" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18, marginBottom: 56 }}>
           <div>
-            <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
+            <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
               The story of Sapling, <em style={{ color: '#445D22' }}>as it grows.</em>
             </h2>
           </div>
@@ -75,7 +75,7 @@ export function Journal({
                   <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.26em', color: '#445D22', textTransform: 'uppercase' }}>{p.tag}</span>
                   <span style={{ ...MONO, fontSize: 9.5, color: '#697062' }}>{p.date}</span>
                 </div>
-                <h3 style={{ margin: '12px 6px 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.22, letterSpacing: '-0.01em' }}>
+                <h3 style={{ margin: '12px 6px 0', fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.22, letterSpacing: '-0.01em' }}>
                   {p.title}
                 </h3>
                 <p style={{ margin: '12px 6px 18px', color: '#697062', fontSize: 13.5, lineHeight: 1.7, flex: 1 }}>{p.excerpt}</p>
@@ -104,7 +104,7 @@ export function Journal({
           }}
         >
           <div>
-            <h3 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', fontWeight: 600, letterSpacing: '-0.015em', color: '#191F13' }}>
+            <h3 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', fontWeight: 600, letterSpacing: '-0.015em', color: '#191F13' }}>
               Get the Journal, and a seat in the beta.
             </h3>
             <p style={{ margin: '10px 0 0', color: '#3B4233', fontSize: 14, lineHeight: 1.7, maxWidth: '52ch' }}>
@@ -115,7 +115,7 @@ export function Journal({
 
           {subscribed ? (
             <div style={{ textAlign: 'center', padding: '0 12px' }}>
-              <div style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 24, fontWeight: 600, color: '#191F13' }}>
+              <div style={{ fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 24, fontWeight: 600, color: '#191F13' }}>
                 You&rsquo;re on the <em style={{ color: '#445D22' }}>tree.</em>
               </div>
               <p style={{ margin: '6px 0 0', fontSize: 14, color: '#4b5563', fontStyle: 'italic' }}>

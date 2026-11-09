@@ -5,6 +5,7 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -20,13 +21,17 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering, term_id_for_label
+from services.academics import (
+    course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
+    term_id_for_label, user_offering_ids_for_course,
+)
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
     create_note,
     delete_note,
     get_note,
     link_concept,
+    link_prechecked_concepts,
     list_linked_concepts,
     list_notes,
     save_summary,
@@ -81,7 +86,7 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
         ) from e
 
 
-def _course_meta(offering_id: str | None, cache: dict) -> dict:
+async def _course_meta(offering_id: str | None, cache: dict) -> dict:
     """Resolve an offering to its abstract course id + human labels.
 
     Notes key on the OFFERING (a course taught in a term), but the notetaker
@@ -93,10 +98,10 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
     if not offering_id:
         return {"course_id": None, "course_code": None, "course_name": None}
     if offering_id not in cache:
-        course_id = offering_course_id(offering_id)
+        course_id = await asyncio.to_thread(offering_course_id, offering_id)
         course = {}
         if course_id:
-            rows = table("courses").select(
+            rows = await table("courses").aselect(
                 "id,course_code,course_name",
                 filters={"id": f"eq.{course_id}"}, limit=1,
             )
@@ -107,6 +112,14 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
             "course_name": course.get("course_name"),
         }
     return cache[offering_id]
+
+
+def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
+    """Every offering of ``course_id`` a note of the student's can sit in:
+    all of the course's offerings, or — if that read cannot tell — the ones
+    the student is enrolled in (#831 follow-up)."""
+    ids = course_offering_ids(course_id)
+    return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
 
 
 class CreateNoteBody(BaseModel):
@@ -133,30 +146,31 @@ async def list_user_notes(
     semester: str | None = None,
 ):
     await guard_off_loop(require_self, user_id, request)
-    # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering —
-    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
-    # an unknown label or a term with no offering of the course answers with
-    # the empty shape, never a silent fall-back to another term. `semester`
-    # without `course_id` is ignored (this is the course-filtered read; the
-    # notetaker UI itself carries no semester context — the param exists for
-    # API completeness).
-    offering_id = None
-    semester_missed = False
+    # The API speaks abstract course ids; notes key on the offering. A course
+    # filter covers EVERY offering of the course (#831 follow-up): a note is
+    # filed under the student's enrollment (any term, the #115 gate) and,
+    # before that gate, under the term it was written in, so the current
+    # term's offering alone hid notes from past terms. Rows stay the
+    # caller's own (`list_notes` filters on user_id). With a `semester` (term
+    # label, #141) it is STRICTLY that term's offering: an unknown label or a
+    # term with no offering of the course answers with the empty shape, never
+    # a silent fall-back to another term. `semester` without `course_id` is
+    # ignored (the notetaker UI itself carries no semester context — the
+    # param exists for API completeness).
+    offering_id: str | list[str] | None = None
     if course_id:
         if semester:
-            term_id = term_id_for_label(semester)
+            term_id = await asyncio.to_thread(term_id_for_label, semester)
             offering_id = (
-                resolve_offering(course_id, term_id, fallback=False)
+                await asyncio.to_thread(resolve_offering, course_id, term_id, fallback=False)
                 if term_id
                 else None
-            )
-            semester_missed = offering_id is None
+            ) or []
         else:
-            offering_id = resolve_offering(course_id)
+            offering_id = await asyncio.to_thread(_course_offering_ids, user_id, course_id)
     notes = (
         []
-        if semester_missed
+        if offering_id == []
         else await list_notes(user_id=user_id, offering_id=offering_id)
     )
     # Attach the abstract course id + labels resolved from each note's offering.
@@ -165,12 +179,12 @@ async def list_user_notes(
     # resolve the courses row once.
     meta_cache: dict = {}
     for n in notes:
-        n.update(_course_meta(n.get("offering_id"), meta_cache))
+        n.update(await _course_meta(n.get("offering_id"), meta_cache))
     # ETag from each note's (id, updated_at) — any create/edit/delete changes the
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
     etag = make_etag(
-        "notes", user_id, offering_id or "",
+        "notes", user_id, ",".join(offering_id) if isinstance(offering_id, list) else offering_id or "",
         *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
     )
     not_modified = conditional(request, etag)
@@ -182,11 +196,14 @@ async def list_user_notes(
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    # Abstract course id from the client → the current-term offering the note
-    # is stored against (create=True so a fresh note lands in the real term).
-    # CREATE path: deliberately NOT semester-scoped (#141) — new content
-    # belongs to the current term by design.
-    offering_id = resolve_offering(body.course_id, create=True)
+    # #115: only under a course the student is enrolled in (else 404). The
+    # gate returns the offering the note is stored against: the student's own
+    # enrollment in the abstract course — the current term's when they hold
+    # it, else their latest term's — so the check and the write agree.
+    # CREATE path: deliberately NOT semester-scoped (#141).
+    offering_id = await asyncio.to_thread(
+        require_course_enrollment, body.user_id, body.course_id,
+    )
     note = await create_note(
         user_id=body.user_id,
         offering_id=offering_id,
@@ -196,7 +213,7 @@ async def create(body: CreateNoteBody, request: Request):
     )
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
-    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    note.update(await _course_meta(note.get("offering_id") or offering_id, {}))
     # create_note (services/notes_service.py) inserts a single notes row per
     # call and this route calls it exactly once — award immediately after it
     # returns, keyed on the freshly-created note id so a client retry is an
@@ -228,7 +245,7 @@ async def read(note_id: str, request: Request, user_id: str):
         raise HTTPException(status_code=404, detail="Note not found.")
     # Same offering → course_id/label enrichment as the list route (F4), so a
     # single-note read returns a consistent shape.
-    note.update(_course_meta(note.get("offering_id"), {}))
+    note.update(await _course_meta(note.get("offering_id"), {}))
     return note
 
 
@@ -243,10 +260,12 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # RE-HOME path: moving a note onto another abstract course files it
-        # under that course's CURRENT-term offering — deliberately not
-        # semester-scoped (#141), like the create path above.
-        patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
+        # RE-HOME path: moving a note onto another abstract course passes the
+        # same #115 gate as create (404 unless enrolled) and files it under
+        # the offering the gate returns — not semester-scoped (#141).
+        patch_dict["offering_id"] = await asyncio.to_thread(
+            require_course_enrollment, body.user_id, body.course_id,
+        )
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
     updated = await update_note(
@@ -286,6 +305,8 @@ async def link_concept_route(
         user_id=body.user_id,
         concept_node_id=body.concept_node_id,
     )
+    # One 404 for an unowned note, an unowned node, and a node that does not
+    # exist or vanished mid-request (#115: no existence oracle).
     if not ok:
         raise HTTPException(status_code=404, detail="Note not found.")
     return {"linked": True}
@@ -407,12 +428,13 @@ async def extract_concepts(
     nodes = await _lookup_concept_nodes_by_name(
         user_id=body.user_id, course_id=course_id, names=names
     )
-    for n in nodes:
-        await link_concept(
-            note_id=note_id, user_id=body.user_id,
-            concept_node_id=n["id"],
-        )
-    return {"concepts": names, "linked": len(nodes)}
+    # Both sides are already proven the student's: get_note above is
+    # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
+    # idempotent write replaces link_concept's per-node re-checks.
+    linked = await link_prechecked_concepts(
+        note_id=note_id, node_ids=[n["id"] for n in nodes]
+    )
+    return {"concepts": names, "linked": linked}
 
 
 class NoteChatBody(BaseModel):

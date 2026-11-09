@@ -28,6 +28,9 @@ protects.
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -64,14 +67,56 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--user", default="rich-user-active", help="user id to check")
     parser.add_argument(
-        "--base-url", default="http://localhost:5000", help="local backend base URL"
+        "--base-url",
+        # The E2E slot's backend (scripts/lib/e2e-slot.sh exports it); 5000
+        # is the classic CI stack.
+        default=os.environ.get("E2E_BACKEND_URL", "").strip() or "http://localhost:5000",
+        help="local backend base URL (default: $E2E_BACKEND_URL)",
     )
     parser.add_argument("--log", default=str(_DEFAULT_LOG), help="backend log path for logscan")
     return parser.parse_args(argv)
 
 
+# Written by scripts/e2e-up.sh for the stack this checkout is running.
+_STACK_MANIFEST = Path(__file__).resolve().parents[2] / ".e2e" / "stack.json"
+
+
+def _adopt_e2e_stack(argv: list[str]) -> str | None:
+    """Point the oracles at the E2E stack, or say why there is none.
+
+    A cycle exports E2E_BACKEND_URL + SUPABASE_DB_URL for its slot. After a
+    bare `make e2e-up`, .e2e/stack.json names the slot — adopted here, before
+    backend/.env is loaded (load_dotenv never overrides, so the slot's DB URL
+    wins over .env's). With neither, outside CI, the only stack left is the DEV
+    one (:5000 / :54322): judging it would report on the wrong data, so refuse
+    unless --base-url was given explicitly.
+    """
+    if os.environ.get("E2E_BACKEND_URL", "").strip():
+        return None
+    try:
+        stack = json.loads(_STACK_MANIFEST.read_text())
+    except (OSError, ValueError):
+        stack = None
+    if stack and stack.get("backendUrl") and stack.get("dbUrl"):
+        os.environ["E2E_BACKEND_URL"] = stack["backendUrl"]
+        os.environ["SUPABASE_DB_URL"] = stack["dbUrl"]
+        return None
+    if os.environ.get("CI") == "true" or any(a.startswith("--base-url") for a in argv):
+        return None
+    return (
+        "no E2E stack to judge: E2E_BACKEND_URL is unset and there is no .e2e/stack.json. "
+        "Outside CI the classic :5000/:54322 is the dev stack. Boot a slot "
+        "(scripts/e2e-cycle.sh or make e2e-up), or `source .e2e/env.sh`."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     from dotenv import load_dotenv
+
+    problem = _adopt_e2e_stack(sys.argv[1:] if argv is None else argv)
+    if problem:
+        print(f"e2e_oracles: {problem}", file=sys.stderr)
+        return 2
 
     # Must run before any real check imports config/services: populates
     # SUPABASE_DB_URL / SESSION_SECRET / ENCRYPTION_KEY etc. from backend/.env

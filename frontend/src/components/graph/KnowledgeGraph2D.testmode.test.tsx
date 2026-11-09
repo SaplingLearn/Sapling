@@ -75,7 +75,10 @@ const at = (el: Element, name: string) => el.getAttribute(name) ?? "";
  * `fill` / `opacity` / `stroke-opacity` (and the label font/fill/truncation)
  * were added for #537: the node-style layer moved out to `lib/graph/nodeStyle`
  * and this snapshot is the proof that the extraction changed nothing the tree
- * paints. The committed fixture was captured from the pre-extraction renderer.
+ * paints. The committed fixture was captured from the pre-extraction renderer,
+ * then re-captured once for the course-centred radial layout: positions moved
+ * and the /api/graph course spoke became the course's inner-circle links; every
+ * paint attribute (fill, opacity, radius, stroke, label font) was diffed equal.
  * Missing attributes read as "" rather than "null" so the NaN/null/undefined
  * guard below stays meaningful.
  */
@@ -141,7 +144,7 @@ describe("KnowledgeGraph2D — test-mode determinism", () => {
     expect(centers.size).toBeGreaterThanOrEqual(NODES.length);
   });
 
-  it("paints byte-identically to the golden captured before the nodeStyle extraction (#537)", () => {
+  it("paints byte-identically to the committed golden (#537, re-captured for the radial layout)", () => {
     resetTestRng();
     const { container } = render(
       <KnowledgeGraph2D nodes={GOLDEN_NODES} edges={GOLDEN_EDGES} width={600} height={480} />,

@@ -28,6 +28,7 @@ from typing import NamedTuple
 import httpx
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.academics import offering_course_id
 from services.chunk_visibility import (
     decide_visibility,
@@ -35,8 +36,10 @@ from services.chunk_visibility import (
     withdraw_document_chunks,
 )
 from services.chunker import chunk_for_category
+from services import jobs
 from services.encryption import decrypt, decrypt_if_present
 from services.events_service import log_event
+from services.feature_flags import flag_on
 from services.rag_service import course_relevance, index_document_chunks_detailed
 
 logger = logging.getLogger(__name__)
@@ -84,6 +87,7 @@ class IndexOutcome(NamedTuple):
     error: str | None = None
 
 
+@runs_as_service  # #115: owns the documents.index_* lease columns and writes shared course_chunks
 def index_document(
     doc_id: str, *, force: bool = False, claimed: bool = False
 ) -> IndexOutcome:
@@ -182,6 +186,69 @@ def index_document(
     _report(row, outcome, was_recovery=was_recovery, tracking=tracking,
             claimed=claimed, force=force)
     return stored if tracking else outcome
+
+
+# ── the job queue (#116) ────────────────────────────────────────────────────
+
+#: Job type that runs `index_document` on the worker (`python -m worker`).
+DOCUMENT_INDEX_JOB = "document.index"
+
+
+def schedule_document_index(doc_id: str, user_id: str | None = None) -> None:
+    """The upload paths' first indexing attempt for a freshly stored document.
+
+    `jobs_queue` off for `user_id` (the uploader; the default): calls
+    ``index_document(doc_id)`` right here, exactly as the upload post-rolls
+    did before #116.
+
+    On: enqueues a ``document.index`` job (dedupe key per document) and
+    returns. The worker's handler calls the same ``index_document``, which
+    claims the row itself, so the job and the lifespan sweeper
+    (services/index_sweeper.py, which still drains every uploader's
+    unfinished rows) can never index one document twice: whichever claims
+    the row first runs, the other sees it held (``indexing``) or finished
+    and does nothing, and every attempt either one makes spends the same
+    INDEX_MAX_ATTEMPTS budget — an ``exhausted`` row stays exhausted. If the
+    enqueue fails (the jobs migration not applied, PostgREST down) the
+    attempt runs inline instead, so turning the flag on never skips one.
+    """
+    if flag_on(jobs.JOBS_QUEUE_FLAG, user_id):
+        try:
+            jobs.enqueue(
+                DOCUMENT_INDEX_JOB,
+                {"doc_id": doc_id},
+                dedupe_key=f"{DOCUMENT_INDEX_JOB}:{doc_id}",
+            )
+            return
+        except Exception:
+            logger.warning(
+                "[RAG] enqueue failed for doc %s; indexing inline", doc_id, exc_info=True,
+            )
+    index_document(doc_id)
+
+
+@jobs.job_handler(DOCUMENT_INDEX_JOB)
+def _run_document_index_job(payload: dict) -> None:
+    """Worker side of ``schedule_document_index``: the upload's FIRST attempt,
+    moved off the request. ``index_document`` claims the row through the same
+    compare-and-swap every non-sweeper caller uses (``claimed=False``: this job
+    did not go through ``claim_documents_for_indexing``, which hands out ANY
+    due row, not this one), and records the outcome on the row itself.
+
+    The job completes whatever that outcome is. A ``failed``/``partial`` row
+    is re-driven by the sweeper, exactly as after an inline first attempt: its
+    claim waits INDEX_LEASE_SECONDS between attempts, where a queue retry
+    (30 s, 60 s, ...) would spend the row's whole INDEX_MAX_ATTEMPTS budget on
+    one brief embedding outage. An ``indexing`` answer means another caller
+    (the sweeper, an admin force) holds the row and will record it. Only an
+    exception — the row unreadable, PostgREST down — fails the job, and the
+    queue retries that.
+    """
+    doc_id = (payload or {}).get("doc_id")
+    if not isinstance(doc_id, str) or not doc_id:
+        raise jobs.PermanentJobError("document.index: payload has no doc_id")
+    outcome = index_document(doc_id)
+    logger.info("[RAG] document.index job for doc %s: %s", doc_id, outcome.status)
 
 
 # ── reading the row ─────────────────────────────────────────────────────────

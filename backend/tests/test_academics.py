@@ -394,6 +394,23 @@ def test_user_course_ids_for_term_empty_args():
         assert ac.user_course_ids_for_term("u", "") == set()
 
 
+# ── user_enrolled_course_ids ─────────────────────────────────────────────────
+
+def test_user_enrolled_course_ids_spans_every_term():
+    rows = {
+        "enrollments": [{"offering_id": "off-1"}, {"offering_id": "off-2"}],
+        "course_offerings": [{"course_id": "bio-101"}, {"course_id": "cs-111"}],
+    }
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.user_enrolled_course_ids("user_andres") == {"bio-101", "cs-111"}
+
+
+def test_user_enrolled_course_ids_empty_without_enrollments_or_user():
+    with patch.object(ac, "table", side_effect=_factory({"enrollments": []})):
+        assert ac.user_enrolled_course_ids("user_andres") == set()
+        assert ac.user_enrolled_course_ids("") == set()
+
+
 # ── scoped_user_enrollments ──────────────────────────────────────────────────
 
 _ENROLLMENTS = [

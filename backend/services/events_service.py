@@ -84,6 +84,12 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 flag.changed                  audit     key, field, before, after
+account.seed                  audit     major, counts (admin account tools)
+account.wipe                  audit     counts
+account.copy_push             audit     direction, peer_env, outcome, counts
+account.copy_pull             audit     direction, peer_env, outcome, counts
+account.export                audit     outcome (internal, peer-initiated)
+account.import                audit     outcome, counts (internal, peer-initiated)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -119,9 +125,10 @@ import threading
 from typing import Any, Optional
 
 from db.connection import table
+from db.scope import runs_as_service
 from services import llm_pricing, posthog_client
 from services.fingerprint import fingerprint_text
-from services.request_context import current_request_id
+from services.request_context import current_acting_user, current_request_id
 
 logger = logging.getLogger("sapling.events")
 
@@ -209,6 +216,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "rag.visibility_resync_failed",
     # #620: admin feature-flag change (audit).
     "flag.changed",
+    # Admin account tools: seed by major / wipe / copy between environments
+    # (routes/admin_accounts.py, admin_account_sync.py, internal_account_sync.py).
+    "account.seed",
+    "account.wipe",
+    "account.copy_push",
+    "account.copy_pull",
+    "account.export",
+    "account.import",
     # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
     # backend that actually served them, and (in shadow mode) the second
     # backend's answers plus per-key agreement. category="system": the server
@@ -216,6 +231,26 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # must not count as the student's activity in the usage rollups. It is
     # the dataset the routing-accuracy and Jev-agreement reviews are run over.
     "decision.made",
+    # #115 (RLS step 2, db/scope.py): the user-scoped PostgREST client under
+    # the `db_user_scope` flag. category="system", ids/counts/table + route
+    # template only, never row content. They are the staging rollout's
+    # signals (docs/security/rls-step2-plan.md §6.2):
+    # - db.unscoped_query: shadow/enforce, a request with no session subject
+    #   reached the DB from a path not marked service (an unmarked public
+    #   route; enforce refuses it with a 500);
+    # - db.rls_shadow_divergence: shadow, a sampled read re-run as the
+    #   student returned a different row count / id set (or failed) than the
+    #   service-role read the student was actually served;
+    # - db.rls_denied: enforce, PostgREST refused a user-scoped call (403:
+    #   an RLS WITH CHECK or a missing grant); the request answers 404.
+    # Payload: table, route, mode, plus (since the shadow report, db/scope_report.py)
+    # kind (fewer_rows | more_rows | different_ids | error | write_other_user |
+    # no_subject | denied), method, op, status/code (PostgREST's code, never its
+    # message), service_count/scoped_count. Read back by
+    # GET /api/admin/analytics/db-scope (docs/security/db-user-scope-rollout.md).
+    "db.unscoped_query",
+    "db.rls_shadow_divergence",
+    "db.rls_denied",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one
@@ -367,6 +402,14 @@ def log_llm_usage(
     ``requests`` is how many model calls the row bills; omitted, it is read
     off ``usage.requests`` (Pydantic AI's RunUsage carries it). Writers whose
     usage shape has no such field (the Jev decision row) pass it.
+
+    ``user_id`` omitted (None) attributes the row to the ACTING user (#119):
+    the request's session user, or the student a job handler runs for
+    (``request_context.current_acting_user``). Without that, the upload
+    pipeline, concept scans and vision OCR wrote anonymous rows that neither
+    the per-user rollups nor the per-user LLM budget could count. The PostHog
+    mirror below gets the same id; its consent check (worker side) still
+    drops a student who opted out, and a request's DNT/GPC still drops it.
     """
     try:
         _warn_zero_token_usage(usage, requests, feature=feature, task=task, model=model)
@@ -376,6 +419,8 @@ def log_llm_usage(
         return
     if request_id is None:
         request_id = current_request_id()
+    if user_id is None:
+        user_id = current_acting_user()
     try:
         tokens = llm_pricing.normalize_usage(usage)
         cache_read, cache_write = llm_pricing.cache_usage(usage)
@@ -447,6 +492,7 @@ def _enqueue(table_name: str, row: dict) -> None:
         )
 
 
+@runs_as_service  # #115: same as _flush_batch
 def _insert_late(table_name: str, row: dict) -> None:
     """A row logged after shutdown() drained the queue. Off an event loop (a
     worker thread finishing after its loop was cancelled) it is inserted
@@ -479,6 +525,7 @@ def dropped_count() -> int:
 # ── Flush ───────────────────────────────────────────────────────────────────
 
 
+@runs_as_service  # #115: events/llm_usage are service-only; usually the worker thread, but flush_now/late inserts can run in a request
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
@@ -502,6 +549,7 @@ def _flush_batch(items: list[dict]) -> None:
             _flush_rows_individually(table_name, rows)
 
 
+@runs_as_service  # #115: same as _flush_batch
 def _flush_rows_individually(table_name: str, rows: list[dict]) -> None:
     """Per-row salvage after a failed bulk insert: only the rows that
     individually fail are dropped (logged per-row at debug, plus one warning

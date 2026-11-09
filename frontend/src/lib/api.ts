@@ -7,6 +7,8 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
+  AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -976,11 +978,19 @@ export interface GenerateFlashcardsResponse {
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
-// documents; omitted = current term. JSON.stringify drops it when unset.
-export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
+// documents; omitted = every term. `courseId` (#829) scopes the documents to
+// the selected course by id — without it the backend matches `topic` against
+// the student's enrolled courses. JSON.stringify drops either when unset.
+export const generateFlashcards = (
+  userId: string,
+  topic: string,
+  count = 5,
+  semester?: string,
+  courseId?: string,
+) =>
   fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count, semester }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
 
 // `semester` scopes the list to that term's offerings (term-less cards stay
@@ -1260,6 +1270,45 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
 // its historical `/unapprove` path; 409 on your own account.
 export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — account tools (backend routes/admin_accounts.py; spec
+// docs/superpowers/specs/2026-11-08-admin-account-tools-design.md). Each write
+// sends the action word as `confirm` — the backend 400s without it; the UI
+// first shows a review (summary / copy-preview: what will be deleted) and
+// makes the admin type the account's email before calling these.
+export const adminAccountsMeta = () =>
+  fetchJSON<AdminAccountsMeta>('/api/admin/accounts/meta');
+
+/** Read-only: what the account holds on this environment (the seed/wipe review). 404 unknown. */
+export const adminAccountSummary = (userId: string) =>
+  fetchJSON<AdminAccountSummary>(`/api/admin/accounts/${encodeURIComponent(userId)}/summary`);
+
+/** Read-only: both sides of a copy (the copy review). 503 unconfigured, 502 peer down. */
+export const adminCopyPreview = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyPreview>(
+    `/api/admin/accounts/${encodeURIComponent(userId)}/copy-preview?direction=${direction}`,
+  );
+
+/** Wipe-then-seed the account with `major`'s mock semester (replaces, never stacks). */
+export const adminSeedAccount = (userId: string, major: string) =>
+  fetchJSON<AdminSeedAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/seed`, {
+    method: 'POST',
+    body: JSON.stringify({ major, confirm: 'SEED' }),
+  });
+
+/** Remove the account's academic/study data; the account itself is kept. */
+export const adminWipeAccount = (userId: string) =>
+  fetchJSON<AdminWipeAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/wipe`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'WIPE' }),
+  });
+
+/** push = overwrite the peer env's copy with ours; pull = overwrite ours with the peer's. */
+export const adminCopyAccount = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ direction, confirm: 'COPY' }),
+  });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
 export type AdminFeedbackEntry = {
@@ -1929,11 +1978,82 @@ export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, 
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
-  fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
-    { method: 'POST' },
+/** A Gradescope sync still running on the job queue (#116, `jobs_queue` on):
+ *  POST /sync answers 202 with this once it outlasts the server's wait, and
+ *  so does GET /sync/{course}/status until the sync ends. */
+export interface GradescopeSyncPending {
+  pending: true;
+  sync_id: string;
+  stage: string;
+  detail?: string;
+}
+
+export const isGradescopeSyncPending = (value: unknown): value is GradescopeSyncPending =>
+  typeof value === 'object' && value !== null && (value as { pending?: unknown }).pending === true;
+
+const gradescopeSyncPath = (userId: string, saplingCourseId: string, semester?: string, suffix = '') =>
+  `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}${suffix}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`;
+
+/** The latest queued sync of a course: pending while it runs, then exactly
+ *  what the POST would have answered (the counts, or the same typed error). */
+export const getGradescopeSyncStatus = (userId: string, saplingCourseId: string, semester?: string) =>
+  fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+    gradescopeSyncPath(userId, saplingCourseId, semester, '/status'),
   );
+
+export const GRADESCOPE_SYNC_POLL_MS = 3000;
+/** ~10 minutes of polling before giving up with the "still running" error. */
+const GRADESCOPE_SYNC_MAX_POLLS = 200;
+
+export interface GradescopeSyncOptions {
+  /** Called once when the server says the sync is still running (a 202, or
+   *  its 504 "still running" answer); polling for the outcome follows. */
+  onPending?: () => void;
+  pollMs?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sync a linked course. Inline (flag off) this is one POST, unchanged. A
+ *  queued sync that outlasts the server's wait answers 202 (or 504); the sync
+ *  keeps running, so this polls the status route until it ends and resolves
+ *  or rejects exactly as the POST would have. */
+export async function syncGradescopeCourse(
+  userId: string,
+  saplingCourseId: string,
+  semester?: string,
+  options: GradescopeSyncOptions = {},
+): Promise<GradescopeSyncResult> {
+  let stillRunning: ApiError;
+  try {
+    const res = await fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+      gradescopeSyncPath(userId, saplingCourseId, semester),
+      { method: 'POST' },
+    );
+    if (!isGradescopeSyncPending(res)) return res;
+    const detail = res.detail || 'This Gradescope sync is taking longer than usual.';
+    stillRunning = new ApiError(JSON.stringify({ detail }), 504, { body: { detail } });
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 504) throw err;
+    stillRunning = err;
+  }
+  options.onPending?.();
+  const pollMs = options.pollMs ?? GRADESCOPE_SYNC_POLL_MS;
+  for (let i = 0; i < GRADESCOPE_SYNC_MAX_POLLS; i++) {
+    await sleep(pollMs);
+    let status: GradescopeSyncResult | GradescopeSyncPending;
+    try {
+      status = await getGradescopeSyncStatus(userId, saplingCourseId, semester);
+    } catch (err) {
+      if (!(err instanceof ApiError)) continue; // a network blip: poll again
+      // Nothing staged (a proxy timeout on the inline path): keep the 504.
+      if (err.status === 404) throw stillRunning;
+      throw err; // the sync's own outcome, answered as the POST would have
+    }
+    if (!isGradescopeSyncPending(status)) return status;
+  }
+  throw stillRunning;
+}
 
 // ── Notes ──────────────────────────────────────────────────────────────────
 

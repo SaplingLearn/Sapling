@@ -50,13 +50,18 @@ describe("ConceptNeighbourhood", () => {
     expect(svg).toHaveAttribute("data-testid", "quiz-neighbourhood");
   });
 
-  it("draws one edge per sibling, from the centre, at the tree's width and opacity", () => {
+  it("draws one edge per sibling, from the centre's rim, at the tree's width and opacity", () => {
     const { container } = renderHome();
     const edges = Array.from(container.querySelectorAll(".concept-neighbourhood__edge"));
     expect(edges).toHaveLength(3);
+    // Rim to rim (#848): the fills are translucent, so a line from the centre
+    // point showed through the disc. It starts at the centre mark's radius
+    // (radiusFor(0.29) * 2) plus the rim gap.
+    const cx = 320 / 2 + 8;
+    const cy = 204 / 2;
     for (const edge of edges) {
-      expect(num(edge, "x1")).toBe(320 / 2 + 8);
-      expect(num(edge, "y1")).toBe(204 / 2);
+      const fromCentre = Math.hypot(num(edge, "x1") - cx, num(edge, "y1") - cy);
+      expect(fromCentre).toBeCloseTo((8 + 0.29 * 12) * 2 + 0.75, 6);
       expect(num(edge, "stroke-opacity")).toBe(0.2);
     }
     expect(num(edges[0], "stroke-width")).toBeCloseTo(edgeWidthFor(0.9), 6);

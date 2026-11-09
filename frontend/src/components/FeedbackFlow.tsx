@@ -1,16 +1,25 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
 import { useToast } from "./ToastProvider";
 
-const DELAY_MS = 45_000;
-const COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How long a page is open before the pulse asks. */
+export const PULSE_DELAY_MS = 2 * 60_000;
+/** Between one pulse and the next, however it was closed. */
+export const PULSE_COOLDOWN_MS = 14 * DAY_MS;
+/** A new student isn't asked how it's going in their first days. */
+export const PULSE_GRACE_MS = 3 * DAY_MS;
 const STORAGE_KEY = "sapling_last_feedback";
+export const FIRST_SEEN_KEY = "sapling_feedback_first_seen";
+/** Never over a task in progress: the pulse waits for a later page instead
+ *  (nothing is recorded, so the chance isn't spent). */
+const NO_PULSE_PATHS = ["/quiz"];
 // Numeric scale (serif numeral) keeps the tone "quiet library,"
 // not mobile-game. Labels on hover for clarity.
 const RATINGS: { value: number; label: string }[] = [
@@ -32,7 +41,7 @@ const OPTIONS = [
 ];
 
 interface FeedbackFlowProps {
-  /** Passive mode: auto-opens after 45s + cooldown. */
+  /** Passive mode: auto-opens after PULSE_DELAY_MS, past the grace and cooldown. */
   passive?: boolean;
   /** Manual mode: caller controls open state. */
   open?: boolean;
@@ -44,6 +53,11 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   const toast = useToast();
   const searchParams = useSearchParams();
   const testOverride = searchParams.get("testFeedback") === "global";
+  const pathname = usePathname();
+  // Read when the timer fires, not when it was set: the student may have
+  // started a quiz in the meantime.
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   const [open, setOpen] = useState<boolean>(openProp ?? false);
   const [rating, setRating] = useState<number | null>(null);
@@ -57,15 +71,26 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     if (!passive) return;
     if (!isAuthenticated) return;
     let cancelled = false;
-    const last = Number(localStorage.getItem(STORAGE_KEY) ?? "0");
     const now = Date.now();
-    const cooledDown = testOverride || !last || now - last > COOLDOWN_MS;
-    if (!cooledDown) return;
+    let firstSeen = 0;
+    let last = 0;
+    try {
+      firstSeen = Number(localStorage.getItem(FIRST_SEEN_KEY) ?? "0");
+      if (!firstSeen) localStorage.setItem(FIRST_SEEN_KEY, String(now));
+      last = Number(localStorage.getItem(STORAGE_KEY) ?? "0");
+    } catch {
+      return; // no storage, no way to keep a cooldown: don't ask at all
+    }
+    const settledIn = firstSeen > 0 && now - firstSeen > PULSE_GRACE_MS;
+    const cooledDown = !last || now - last > PULSE_COOLDOWN_MS;
+    if (!testOverride && !(settledIn && cooledDown)) return;
     // The session prompt may already be on screen (#762) — then skip this
     // pulse rather than stack a second modal on it.
     const t = setTimeout(() => {
-      if (!cancelled && tryClaimFeedbackSlot("global")) setOpen(true);
-    }, DELAY_MS);
+      if (cancelled) return;
+      if (!testOverride && NO_PULSE_PATHS.some(p => pathnameRef.current?.startsWith(p))) return;
+      if (tryClaimFeedbackSlot("global")) setOpen(true);
+    }, testOverride ? 1_000 : PULSE_DELAY_MS); // the test hook shows it, not paces it
     return () => { cancelled = true; clearTimeout(t); };
   }, [passive, isAuthenticated, testOverride]);
 

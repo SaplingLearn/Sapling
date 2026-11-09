@@ -27,6 +27,7 @@ import type { UserSettings } from "@/lib/types";
 import { onboardingRedirect } from "@/lib/localSeed";
 import SignInModal from "@/components/marketing/SignInModal";
 import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { statusOf } from "@/lib/errorMessage";
 import { OnboardingGraph, type GraphPhase, type GraphZoom } from "@/components/onboarding/OnboardingGraph";
 import { setGraphStage } from "@/components/onboarding/chapterLayer";
@@ -753,17 +754,25 @@ function CourseStep({ year, courses, onYear, onCourses }: {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OnboardingCourse[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Latest query wins (#802/#769, as in ManageCoursesModal). The debounce only
+  // stops a search that hasn't been SENT: a student who pauses after "cs"
+  // fires that broad search, and if it lands after "cs 111" it replaces the
+  // right results with twenty unrelated courses.
+  const searchReq = useLatestRequest();
 
   useEffect(() => {
-    let cancelled = false;
+    const run = searchReq.begin();
     const t = setTimeout(() => {
       onboardingCoursesSearch(query.trim())
-        .then(r => { if (!cancelled) setResults(r.courses ?? []); })
-        .catch(() => { if (!cancelled) setResults([]); })
-        .finally(() => { if (!cancelled) setLoaded(true); });
+        .then(r => { if (run.isCurrent()) setResults(r.courses ?? []); })
+        .catch(() => { if (run.isCurrent()) setResults([]); })
+        .finally(() => { if (run.isCurrent()) setLoaded(true); });
     }, 200);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [query]);
+    return () => {
+      clearTimeout(t);
+      searchReq.cancel();
+    };
+  }, [query, searchReq]);
 
   const picked = new Set(courses.map(c => c.id));
   const toggle = (c: OnboardingCourse) =>

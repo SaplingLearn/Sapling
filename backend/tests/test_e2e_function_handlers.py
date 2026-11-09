@@ -36,6 +36,7 @@ from routes.quiz import (
     _agent_question_to_wire,
     _resolve_model_pref as _resolve_quiz_model_pref,
 )
+from tests.split_patches import patch_tutor
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +151,6 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
     E2E_TUTOR_REPLY (the constant frontend/e2e/tutor.spec.ts asserts), and
     the lazy PENDING_SESSIONS contract holds. /action dispatches the same
     task, so this one route-level proof covers the whole by-task claim."""
-    from unittest.mock import patch
 
     from fastapi.testclient import TestClient
 
@@ -167,8 +167,8 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
     try:
         with (
             socratic_agent.override(model=model_for("chat_tutor")),
-            patch("routes.learn._get_course_id_for_topic", return_value=""),
-            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+            patch_tutor("_get_course_id_for_topic", return_value=""),
+            patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         ):
             r = client.post("/api/learn/start-session", json={
                 "user_id": "e2e-user", "topic": "Recursion", "mode": "socratic",

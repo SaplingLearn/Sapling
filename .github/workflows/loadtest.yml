@@ -1,0 +1,98 @@
+name: loadtest (manual)
+
+# #117 (docs/design/async-db-client.md §1, "Measurement"): a locust run of the
+# fixed mix in loadtest/locustfile.py against a target YOU name.
+#
+# Manual only (the opt-in nightly run is loadtest-nightly.yml). Never on
+# push/PR, and there is no default target: an empty target_url fails the job
+# before anything is sent. Point it at a stack you own (a preview or a
+# throwaway environment in function mode); pointing it at staging or
+# production needs the owner's say-so, because the chat task writes tutor
+# messages and, in real model mode, spends money.
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Base URL of the backend to load (e.g. https://api.example.test). Required; no default."
+        required: true
+        default: ""
+        type: string
+      users:
+        description: "Concurrent simulated users"
+        required: false
+        default: "20"
+        type: string
+      spawn_rate:
+        description: "Users started per second"
+        required: false
+        default: "5"
+        type: string
+      duration:
+        description: "Run time (locust -t, e.g. 2m)"
+        required: false
+        default: "2m"
+        type: string
+      chat:
+        description: "Include the chat-stream TTFT task (writes messages; spends LLM budget outside function mode)"
+        required: false
+        default: false
+        type: boolean
+      user_ids:
+        description: "Comma list of seeded user ids to sign in as (ignored when the LOADTEST_SESSION_TOKEN secret is set: single-user mode)"
+        required: false
+        default: "rich-user-active"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loadtest
+  cancel-in-progress: false
+
+jobs:
+  loadtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Refuse to run without a target
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          if [ -z "${TARGET_URL// /}" ]; then
+            echo "::error::target_url is required; there is deliberately no default target."
+            exit 1
+          fi
+          case "$TARGET_URL" in
+            http://*|https://*) ;;
+            *) echo "::error::target_url must start with http:// or https://"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locust
+        run: pip install --require-hashes -r loadtest/requirements.lock
+      - name: Run
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+          LOADTEST_USER_IDS: ${{ inputs.user_ids }}
+          LOADTEST_CHAT: ${{ inputs.chat && '1' || '0' }}
+          # Optional: a pre-minted sapling_session for targets without
+          # /api/auth/test-login (APP_ENV other than local/test).
+          LOADTEST_SESSION_TOKEN: ${{ secrets.LOADTEST_SESSION_TOKEN }}
+          USERS: ${{ inputs.users }}
+          SPAWN_RATE: ${{ inputs.spawn_rate }}
+          DURATION: ${{ inputs.duration }}
+        run: |
+          mkdir -p loadtest/out
+          locust -f loadtest/locustfile.py --host "$TARGET_URL" --headless \
+            -u "$USERS" -r "$SPAWN_RATE" -t "$DURATION" \
+            --csv loadtest/out/run --html loadtest/out/report.html --only-summary
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-results
+          path: loadtest/out/
+          if-no-files-found: ignore

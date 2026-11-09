@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The two feedback prompts ShellFrame mounts side by side (#762): the passive
- * "What's clicking?" pulse (FeedbackFlow, 45s after load) and the
+ * "What's clicking?" pulse (FeedbackFlow, PULSE_DELAY_MS after load) and the
  * navigate-away-from-/learn "How was that session?" (SessionFeedbackGlobal).
  * Both are full-screen modals with their own scroll lock; nothing stopped them
  * opening on top of each other. And the last-session context the session
@@ -23,7 +23,7 @@ vi.mock("@/context/UserContext", () => ({
 }));
 vi.mock("@/lib/api", () => ({ submitFeedback: vi.fn(async () => ({})) }));
 
-import { FeedbackFlow } from "./FeedbackFlow";
+import { FeedbackFlow, FIRST_SEEN_KEY, PULSE_COOLDOWN_MS, PULSE_DELAY_MS, PULSE_GRACE_MS } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { ToastProvider } from "./ToastProvider";
 import { __resetScrollLocksForTests } from "@/lib/useScrollLock";
@@ -51,6 +51,8 @@ beforeEach(() => {
   nav.pathname = "/learn";
   nav.search = "";
   localStorage.clear();
+  // A settled student: past the new-student grace, so the pulse may ask.
+  localStorage.setItem(FIRST_SEEN_KEY, String(Date.now() - 30 * 24 * 60 * 60 * 1000));
   sessionStorage.clear();
   __resetFeedbackSlotForTests();
 });
@@ -64,7 +66,7 @@ afterEach(() => {
 describe("only one feedback prompt at a time", () => {
   it("leaving /learn while the passive prompt is open does not stack the session prompt on it", () => {
     const view = render(<Shell />);
-    act(() => { vi.advanceTimersByTime(45_000); });
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
     expect(screen.getByText(GLOBAL_TITLE)).toBeInTheDocument();
 
     navigate(view, "/dashboard");
@@ -79,13 +81,13 @@ describe("only one feedback prompt at a time", () => {
     navigate(view, "/dashboard");
     expect(screen.getByText(SESSION_TITLE)).toBeInTheDocument();
 
-    act(() => { vi.advanceTimersByTime(45_000); });
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
     expect(screen.queryByText(GLOBAL_TITLE)).toBeNull();
   });
 
   it("once a prompt closes, the other may open", () => {
     const view = render(<Shell />);
-    act(() => { vi.advanceTimersByTime(45_000); });
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(screen.queryByText(GLOBAL_TITLE)).toBeNull();
 
@@ -101,5 +103,32 @@ describe("last-session context", () => {
     navigate(view, "/dashboard");
     expect(screen.getByText("Recursion")).toBeInTheDocument();
     expect(sessionStorage.getItem("sapling_last_session_context")).toBeNull();
+  });
+});
+
+describe("how often the pulse asks", () => {
+  it("never asks a new student in their first days", () => {
+    localStorage.removeItem(FIRST_SEEN_KEY);
+    render(<Shell />);
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
+    expect(screen.queryByText(GLOBAL_TITLE)).toBeNull();
+    // ...and starts the clock for when it may.
+    expect(Number(localStorage.getItem(FIRST_SEEN_KEY))).toBeGreaterThan(0);
+    expect(PULSE_GRACE_MS).toBeGreaterThan(0);
+  });
+
+  it("waits out the cooldown after it last asked", () => {
+    localStorage.setItem("sapling_last_feedback", String(Date.now() - PULSE_COOLDOWN_MS + 60_000));
+    render(<Shell />);
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
+    expect(screen.queryByText(GLOBAL_TITLE)).toBeNull();
+  });
+
+  it("never opens over a quiz, and doesn't spend its chance there", () => {
+    nav.pathname = "/quiz";
+    render(<Shell />);
+    act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
+    expect(screen.queryByText(GLOBAL_TITLE)).toBeNull();
+    expect(localStorage.getItem("sapling_last_feedback")).toBeNull();
   });
 });

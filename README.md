@@ -58,7 +58,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 - **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
 - **Database** — Supabase (PostgreSQL) for all persistent data
 - **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
-- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (built by Cloudflare Workers Builds; production and staging environments configured in `frontend/wrangler.toml`). The backend is served at `https://api.saplinglearn.com` (staging: `https://api.staging.saplinglearn.com`); the backend is hosted on Railway (deploy settings are managed in the Railway project, not in this repo).
+- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (built by Cloudflare Workers Builds; production and staging environments configured in `frontend/wrangler.toml`). The backend is served at `https://api.saplinglearn.com` (staging: `https://api.staging.saplinglearn.com`); the backend is hosted on Railway. Most deploy settings still live in the Railway project; `.railway/railway.ts` is a partial config-as-code file that declares the job `worker` service and, once `MANAGE_API` is on, the API service's replica count (not yet applied; runbook in `docs/deploy/railway.md`).
 
 ## Architecture
 
@@ -116,6 +116,7 @@ python3 -m venv venv
 source venv/bin/activate      # fish: source venv/bin/activate.fish
                               # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -r requirements-worker.txt   # optional: Docling/torch OCR for scanned PDFs (worker image only)
 playwright install chromium   # only needed for Gradescope BU SSO sync
 cp .env.local.example .env    # Windows PowerShell: Copy-Item .env.local.example .env
 # fill in GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
@@ -224,7 +225,8 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `GET` `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
 - `POST` `/api/gradescope/link` — Create or update a course mapping
 - `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
-- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
+- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook (`202 {pending}` when a queued sync outlasts the wait)
+- `GET` `/api/gradescope/sync/{sapling_course_id}/status` — Poll a queued sync: 202 while it runs, then the POST's answer
 
 **Study Guide**
 
@@ -320,6 +322,9 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `POST` `/api/admin/allowlist/approve` · `/api/admin/allowlist/revoke` — Manage the email allowlist
 - `GET` `/api/admin/audit` — Paginated admin audit log (filter by action / target)
 - `GET` `/api/admin/analytics/overview` — Totals, 30-day series, and role counts
+- `GET` `/api/admin/jobs` — Job-queue overview per type and status (`jobs_overview()`)
+- `GET`/`PUT` `/api/admin/llm/budgets` (+ `DELETE /api/admin/llm/budgets/{scope}/{subject}`, `GET /api/admin/llm/budgets/status/{user_id}`) — Per-user daily LLM token budgets
+- `GET` `/api/admin/llm/drill` — State of the `llm_outage_drill` flag
 
 **Feedback**
 
@@ -380,13 +385,18 @@ Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
 
 ## Tests
 
-**Backend** — pytest, mocked Gemini + Supabase. ~660 tests.
+**Backend** — pytest, mocked LLM + Supabase. ~5,800 tests.
 
 ```
 cd backend
 python -m pytest tests/ -q --ignore=tests/evals
 ruff check .
+lint-imports        # import-boundary contracts (backend/.importlinter)
 ```
+
+The suite also holds two structural ratchets: no route file over 600 lines and no function over McCabe complexity 25 (`tests/test_code_size_ratchet.py` over an empty `backend/code_size_baseline.json`), and no sync DB call inside an `async def` handler (`tests/test_no_sync_db_in_async_handlers.py`).
+
+**End-to-end** — Playwright journeys plus deterministic oracles against a local stack. `make e2e` runs a whole cycle (boot → suite → oracles → teardown) in the first free numbered slot (frontend :310N, backend :510N, its own throwaway Supabase project), so it never touches the dev app on :3000/:5000. Guides: `docs/local-supabase.md`, `docs/e2e-exploration.md`.
 
 **Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
 
@@ -412,7 +422,7 @@ SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselin
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. Additional workflows cover end-to-end (Playwright), integration, agent evals, and staging migrations. The backend CI job installs from the hash-pinned `backend/requirements.lock` and skips the heavy OCR integration tests. The frontend is built and deployed by Cloudflare Workers Builds (see "Tech Stack" for the backend host).
+GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. The backend job also runs `lint-imports` (import-boundary contracts) after ruff. Additional workflows cover end-to-end (Playwright; pushes to `main` only, for cost; a PR runs it locally in a slot), integration, agent evals, staging migrations, and load tests (`loadtest.yml` on demand; `loadtest-nightly.yml` nightly, only when the `LOADTEST_TARGET_URL` repository variable is set, failing on p95 ≥ 300 ms for non-LLM routes or chat TTFT p95 ≥ 3 s). The backend CI job installs from the hash-pinned `backend/requirements.lock` and skips the heavy OCR integration tests. The frontend is built and deployed by Cloudflare Workers Builds (see "Tech Stack" for the backend host).
 
 ## Contributing
 
@@ -422,7 +432,7 @@ Branching strategy, PR review requirements, and the release process are in [CONT
 
 **Live architecture overview** — `docs/architecture.md`.
 
-**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Twenty-six ADRs as of this writing:
+**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Thirty ADRs as of this writing:
 
 - `0001` — Adopt Pydantic AI as the agent framework
 - `0002` — Markdown-based dev-context vault structure
@@ -450,6 +460,10 @@ Branching strategy, PR review requirements, and the release process are in [CONT
 - `0024` — Retire the legacy Gemini seam
 - `0025` — Encrypt RAG chunk text
 - `0026` — Newsletter email stays plaintext
+- `0027` — Typed decision seam, Jev as a backend, and an observe-only tutor router
+- `0028` — PostHog runs alongside the in-house analytics
+- `0029` — Feature flags: code registry + DB configuration, fail-closed
+- `0030` — Swap the agents' LLM provider from Gemini to Anthropic Claude
 
 **Things that didn't work** — `docs/attempts/` (each entry has a mandatory "What I'd try next" section).
 

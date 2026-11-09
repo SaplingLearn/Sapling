@@ -307,41 +307,180 @@ class TestGetGuide:
 
 # ── POST /api/study-guide/regenerate ─────────────────────────────────────────
 
+class _RegenGuideRows:
+    """In-memory study_guides that applies the eq./lt. filters the route
+    sends, so the regenerate tests check what actually SURVIVES, not just
+    which calls were made. ``calls`` records insert/delete order."""
+
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.calls = []
+        self.fail_delete = False
+
+    @staticmethod
+    def _matches(row, filters):
+        for col, expr in (filters or {}).items():
+            op, _, val = expr.partition(".")
+            have = str(row.get(col))
+            if op == "eq" and have != val:
+                return False
+            if op == "neq" and have == val:
+                return False
+            if op == "lt" and not have < val:
+                return False
+        return True
+
+    def insert(self, row):
+        self.calls.append(("insert", row["id"]))
+        self.rows.append(dict(row))
+        return [row]
+
+    def delete(self, filters=None):
+        self.calls.append(("delete", dict(filters or {})))
+        if self.fail_delete:
+            raise RuntimeError("PostgREST down")
+        self.rows = [r for r in self.rows if not self._matches(r, filters)]
+        return []
+
+
 class TestRegenerateGuide:
-    def test_deletes_cached_and_regenerates(self):
-        fresh_content = {"exam": "Midterm", "topics": []}
-        delete_called = {"n": 0}
+    _MIDTERM = [{"title": "Midterm", "due_date": "2026-04-01"}]
+    _OLD_ROW = {
+        "id": "old-guide", "user_id": USER_ID, "offering_id": "off1",
+        "exam_id": EXAM_ID, "generated_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    @staticmethod
+    def _guarded_stack(calls, assignments, store=None):
+        """table() side_effect backed by a _RegenGuideRows (``calls`` aliases its
+        insert/delete log)."""
+        store = store or _RegenGuideRows()
+        store.calls = calls
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "study_guides":
                 m.select.return_value = []
-                m.insert.return_value = [{}]
-                def _delete(filters=None):
-                    delete_called["n"] += 1
-                    return []
-                m.delete.side_effect = _delete
+                m.insert.side_effect = store.insert
+                m.delete.side_effect = store.delete
             elif name == "assignments":
-                m.select.return_value = [{"title": "Midterm", "due_date": "2026-04-01"}]
-            elif name == "documents":
-                m.select.return_value = []
+                m.select.return_value = assignments
             else:
                 m.select.return_value = []
             return m
+        return table_side_effect
 
+    @staticmethod
+    def _regenerate(table_side_effect, agent_run=None):
+        agent_run = agent_run or _agent_run_returning({"exam": "Midterm", "topics": []})
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
              patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
              patch("routes.study_guide.resolve_offering", return_value="off1"), \
-             patch("routes.study_guide.study_guide_agent.run", new=_agent_run_returning(fresh_content)):
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
+            return client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
+            )
+
+    def test_foreign_or_missing_exam_leaves_cached_guide_untouched(self):
+        """Regression: regenerate used to delete the cached guide BEFORE the
+        exam was validated, so a bad/foreign exam_id 404'd AND wiped the
+        student's guide. The exam lookup (scoped to the caller's enrollment)
+        finds nothing here → 404, and nothing is deleted or generated."""
+        calls = []
+        agent_run = _agent_run_returning({"exam": "X", "topics": []})
+        with patch("routes.study_guide.table", side_effect=self._guarded_stack(calls, [])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": "someone-elses-exam"},
+            )
+        assert r.status_code == 404
+        assert calls == []
+        agent_run.assert_not_called()
+
+    def test_not_enrolled_leaves_cached_guide_untouched(self):
+        calls = []
+        with patch("routes.study_guide.table", side_effect=self._guarded_stack(calls, [{"title": "M"}])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"):
             r = client.post(
                 "/api/study-guide/regenerate",
                 json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
             )
+        assert r.status_code == 404
+        assert calls == []
+
+    def test_generation_failure_leaves_cached_guide_untouched(self):
+        calls = []
+        failing = AsyncMock(side_effect=RuntimeError("provider down"))
+        r = self._regenerate(self._guarded_stack(calls, self._MIDTERM), agent_run=failing)
+        assert r.status_code == 502
+        assert calls == []
+
+    def test_old_guides_replaced_only_after_new_one_inserted(self):
+        calls = []
+        store = _RegenGuideRows([self._OLD_ROW])
+        r = self._regenerate(self._guarded_stack(calls, self._MIDTERM, store))
         assert r.status_code == 200
         body = r.json()
         assert body["success"] is True
         assert body["guide"]["exam"] == "Midterm"
-        assert delete_called["n"] == 1
+        assert [c[0] for c in calls] == ["insert", "delete"]
+        new_id = calls[0][1]
+        assert calls[1][1] == {
+            "user_id": f"eq.{USER_ID}",
+            "offering_id": "eq.off1",
+            "exam_id": f"eq.{EXAM_ID}",
+            "generated_at": f"lt.{body['generated_at']}",
+        }
+        assert [row["id"] for row in store.rows] == [new_id]
+
+    def test_concurrent_regenerates_never_leave_zero_guides(self):
+        """Two workers regenerating the same key (the per-key lock is
+        per-process): each drops rows OLDER than its own new row, so the
+        newest survives whatever order the cleanups run in. (The old
+        ``id=neq.<own id>`` filter made each delete the other's row.)"""
+        from routes.study_guide import _drop_older_guides
+
+        key = {"user_id": USER_ID, "offering_id": "off1", "exam_id": EXAM_ID}
+        t_a, t_b = "2026-11-08T10:00:00.000001+00:00", "2026-11-08T10:00:00.000002+00:00"
+        for order in ((t_a, t_b), (t_b, t_a)):
+            store = _RegenGuideRows([
+                self._OLD_ROW,
+                {**key, "id": "a", "generated_at": t_a},
+                {**key, "id": "b", "generated_at": t_b},
+            ])
+            with patch("routes.study_guide.table", side_effect=self._guarded_stack([], [], store)):
+                for ts in order:
+                    _drop_older_guides(USER_ID, "off1", EXAM_ID, ts)
+            assert [row["id"] for row in store.rows] == ["b"]
+
+    def test_cleanup_failure_still_returns_the_new_guide(self, caplog):
+        calls = []
+        store = _RegenGuideRows([self._OLD_ROW])
+        store.fail_delete = True
+        with caplog.at_level("WARNING", logger="routes.study_guide"):
+            r = self._regenerate(self._guarded_stack(calls, self._MIDTERM, store))
+        assert r.status_code == 200
+        assert r.json()["guide"]["exam"] == "Midterm"
+        assert "could not drop older guides" in caplog.text
+
+    def test_stale_material_drop_keeps_older_guides(self):
+        """#771: the documents changed mid-generation, so the new row is
+        taken back out. The older guide must then stay — deleting it too
+        would leave the student with no guide at all."""
+        calls = []
+        store = _RegenGuideRows([self._OLD_ROW])
+        with patch("routes.study_guide._material_fingerprint", side_effect=[("v1",), ("v2",)]):
+            r = self._regenerate(self._guarded_stack(calls, self._MIDTERM, store))
+        assert r.status_code == 200
+        assert r.json()["guide"]["exam"] == "Midterm"
+        new_id = calls[0][1]
+        assert calls == [("insert", new_id), ("delete", {"id": f"eq.{new_id}"})]
+        assert [row["id"] for row in store.rows] == ["old-guide"]
 
     def test_missing_fields_returns_400(self):
         r = client.post("/api/study-guide/regenerate", json={"user_id": USER_ID})
@@ -642,3 +781,154 @@ class TestGuideRaces:
         assert calls["n"] == 1
         assert len(store.guides) == 1
         assert sorted(r["cached"] for r in results) == [False, True, True]
+
+
+# ── 20261109023732: the (user, offering, exam) unique index, where it exists ──
+
+
+def _unique_violation(code="23505"):
+    import httpx
+
+    req = httpx.Request("POST", "http://x/rest/v1/study_guides")
+    resp = httpx.Response(409, json={"code": code, "message": "duplicate key"}, request=req)
+    return httpx.HTTPStatusError("409", request=req, response=resp)
+
+
+class _IndexedGuideStore(_GuideStore):
+    """study_guides WITH the unique key: a second insert for a key is a 409."""
+
+    def __init__(self, doc_ids_seq, existing=None):
+        super().__init__(doc_ids_seq)
+        self.guides = list(existing or [])
+        self.updates: list[tuple[dict, dict]] = []
+
+    def table(self, name):
+        m = super().table(name)
+        if name == "study_guides":
+            def _insert(row):
+                with self.lock:
+                    if any(g["exam_id"] == row["exam_id"] for g in self.guides):
+                        raise _unique_violation()
+                    self.guides.append(row)
+                return [row]
+
+            def _update(data, filters=None):
+                with self.lock:
+                    self.updates.append((data, filters))
+                    hit = [g for g in self.guides if g["exam_id"] == filters["exam_id"][3:]]
+                    for g in hit:
+                        g.update(data)
+                    return [dict(g) for g in hit]
+            def _delete(filters=None):
+                with self.lock:
+                    self.deleted.append(filters)
+                    if "id" in filters:
+                        self.guides = [g for g in self.guides if g["id"] != filters["id"][3:]]
+                    else:  # _drop_older_guides: generated_at=lt.<new stamp>
+                        cut = filters["generated_at"][3:]
+                        self.guides = [g for g in self.guides if not g["generated_at"] < cut]
+            m.insert.side_effect = _insert
+            m.update.side_effect = _update
+            m.delete.side_effect = _delete
+        return m
+
+
+class TestUniqueGuideKey:
+    OLD = {"id": "g-old", "user_id": USER_ID, "offering_id": "off1", "exam_id": EXAM_ID,
+           "generated_at": "2026-01-01T00:00:00+00:00", "content": "old-ciphertext"}
+
+    def test_regenerate_replaces_the_existing_row_in_place(self):
+        store = _IndexedGuideStore([["d1"]], existing=[dict(self.OLD)])
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})):
+            r = client.post("/api/study-guide/regenerate",
+                            json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID})
+        assert r.status_code == 200, r.text
+        assert r.json()["guide"]["exam"] == "Fresh"
+        (row,) = store.guides
+        assert row["id"] == "g-old"  # same row, new content + timestamp
+        assert row["content"] != "old-ciphertext"
+        assert row["generated_at"] == r.json()["generated_at"]
+        (data, filters), = store.updates
+        assert filters == {"user_id": f"eq.{USER_ID}", "offering_id": "eq.off1",
+                           "exam_id": f"eq.{EXAM_ID}"}
+        # _drop_older_guides keys on generated_at < the new stamp: the row stays.
+        assert all("generated_at" in (d or {}) for d in store.deleted)
+
+    def test_stale_material_keeps_the_in_place_replaced_guide(self):
+        """With the unique index a regenerate overwrites the key's ONLY row.
+        The #771 stale-material check used to delete that row by id, leaving
+        the student with no guide; it now keeps it (and does not cache-claim
+        it), as the index-free path keeps the older row."""
+        store = _IndexedGuideStore([["d1"], ["d1", "d2"]], existing=[dict(self.OLD)])
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})):
+            r = client.post("/api/study-guide/regenerate",
+                            json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID})
+        assert r.status_code == 200, r.text
+        assert r.json()["guide"]["exam"] == "Fresh"
+        (row,) = store.guides
+        assert row["id"] == "g-old" and row["content"] != "old-ciphertext"
+        assert store.deleted == [], "neither the stale delete nor the older-guide drop ran"
+
+    def test_stale_material_still_drops_a_freshly_inserted_guide(self):
+        """Index present but no existing row: the insert is a plain insert,
+        so the stale check takes it back out exactly as before."""
+        store = _IndexedGuideStore([["d1"], ["d1", "d2"]])
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})):
+            r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert r.status_code == 200 and r.json()["guide"]["exam"] == "Fresh"
+        assert store.guides == []
+        assert len(store.deleted) == 1 and "id" in store.deleted[0]
+
+    def test_a_foreign_key_409_is_not_swallowed(self):
+        store = _IndexedGuideStore([["d1"]])
+
+        def table(name):
+            m = store.table(name)
+            if name == "study_guides":
+                m.insert.side_effect = _unique_violation("23503")
+            return m
+
+        with _guide_patches(store, _agent_run_returning({"exam": "Fresh"})), \
+             patch("routes.study_guide.table", side_effect=table):
+            local = TestClient(app, raise_server_exceptions=False)
+            r = local.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert r.status_code == 500
+        assert store.updates == []
+
+    def test_insert_or_replace_retries_the_insert_when_the_row_vanished(self):
+        from routes import study_guide as sg
+
+        inserts = []
+
+        def table(name):
+            m = MagicMock()
+
+            def _insert(row):
+                inserts.append(row["id"])
+                if len(inserts) == 1:
+                    raise _unique_violation()
+                return [row]
+            m.insert.side_effect = _insert
+            m.update.return_value = []  # deleted by an invalidation meanwhile
+            return m
+
+        row = {"id": "g-new", "user_id": "u", "offering_id": "o", "exam_id": "e",
+               "content": "c", "generated_at": "t"}
+        with patch("routes.study_guide.table", side_effect=table):
+            assert sg._insert_or_replace(row) == ("g-new", False)
+        assert inserts == ["g-new", "g-new"]
+
+
+def test_a_budget_refusal_is_the_429_not_the_generic_502():
+    """#838: the daily LLM budget refused the generation. The student gets the
+    budget's own 429 (Retry-After, LLM_BUDGET_EXCEEDED), and nothing is cached."""
+    from services.llm_budget import ERROR_CODE, LLMBudgetExceeded, next_reset
+
+    store = _GuideStore([["d1"]])
+    refused = AsyncMock(side_effect=LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset()))
+    with _guide_patches(store, refused):
+        r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+    assert r.status_code == 429, r.text
+    assert int(r.headers["Retry-After"]) >= 1
+    assert r.json()["error"]["code"] == ERROR_CODE
+    assert store.guides == []

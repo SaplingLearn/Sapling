@@ -12,6 +12,9 @@ Flags:
                               smoke. This is the real way to re-check a
                               promotion without re-merging (see runner.Options).
     --yes                    answer the confirmation prompt automatically (CI)
+    --skip-backup            DANGEROUS: do not pg_dump production before
+                              migrating (it has no platform backups or PITR).
+                              Prints a loud warning; the default backs up.
 """
 from __future__ import annotations
 
@@ -26,7 +29,7 @@ from typing import Callable
 import psycopg
 
 from db import migrate as db_migrate
-from promotion import preflight, smoke, snapshot
+from promotion import backup, preflight, smoke, snapshot
 from promotion.runner import Options, Ports, run
 
 
@@ -109,7 +112,7 @@ class Git:
 
         True means `ref`'s own commits (those not on `other`), taken together,
         change nothing. That is the shape every promotion leaves behind:
-        stage 6's merge commit exists only on production, but its tree IS the
+        stage 7's merge commit exists only on production, but its tree IS the
         main commit it merged (#666). Merging `other` into `ref` is then a
         clean 3-way merge whose result is exactly `other`'s tree. A hotfix or
         revert that was never back-merged makes the trees differ, and that
@@ -263,6 +266,19 @@ def _preflight_data(conn) -> dict:
     }
 
 
+def _backup(conn, db_url: str) -> backup.BackupResult:
+    """The pre-migrate dump (Trov #114).
+
+    `conn` is the preflight connection, still open for the migrate stage. Its
+    preflight reads left a read-only transaction open; end it first so the
+    session does not sit idle-in-transaction (holding a snapshot and the
+    ledger's AccessShareLock) for the length of the dump. Rolling back a
+    read-only transaction discards nothing.
+    """
+    conn.rollback()
+    return backup.take_backup(db_url, "prod")
+
+
 def _confirm(prompt: str, auto_yes: bool) -> bool:
     """The interactive confirmation gate — a plain function, not a closure
     over `main()`'s locals, so it is directly testable.
@@ -300,6 +316,10 @@ def main() -> int:
         help="skip preflight/migrate/merge; just wait for the deploy and run smoke",
     )
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument(
+        "--skip-backup", action="store_true",
+        help="DANGEROUS: skip the pre-migrate pg_dump of production (no platform backups/PITR)",
+    )
     args = parser.parse_args()
 
     # --verify-only touches no database at all (see runner.Options.verify_only:
@@ -331,11 +351,13 @@ def main() -> int:
         confirm=confirm,
         out=print,
         sleep=time.sleep,
+        backup=lambda conn: _backup(conn, db_url),
     )
     options = Options(
         allow_destructive=args.allow_destructive,
         skip_staging_check=args.skip_staging_check,
         verify_only=args.verify_only,
+        skip_backup=args.skip_backup,
     )
     try:
         return run(ports, options)

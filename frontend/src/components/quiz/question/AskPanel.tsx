@@ -63,6 +63,9 @@ export interface AskSeed {
   correctLabel: string;
   correctText: string;
   explanation: string;
+  /** A typed answer (short answer / numeric / algebra): there are no option
+   *  letters, so it reads "You wrote 4" rather than "You chose A · …". */
+  written?: boolean;
 }
 
 export interface AskPanelProps {
@@ -98,8 +101,10 @@ export function composeAskMessage(seed: AskSeed): string {
     "I got this quiz question wrong and want to understand why.",
     "",
     `Question: ${seed.stem}`,
-    `I chose ${seed.chosenLabel}: ${seed.chosenText}`,
-    `The correct answer is ${seed.correctLabel}: ${seed.correctText}`,
+    seed.written ? `I wrote: ${seed.chosenText}` : `I chose ${seed.chosenLabel}: ${seed.chosenText}`,
+    seed.written
+      ? `The correct answer is: ${seed.correctText}`
+      : `The correct answer is ${seed.correctLabel}: ${seed.correctText}`,
     `Explanation given: ${seed.explanation}`,
     "",
     "Help me understand why.",
@@ -381,11 +386,15 @@ export function AskPanel({
         <div className="quiz-ask__seed" data-testid="quiz-ask-seed">
           <p className="quiz-ask__seed-stem h-serif">{seed.stem}</p>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--chosen">
-            <span className="quiz-ask__seed-label">You chose {seed.chosenLabel} ·</span>
+            <span className="quiz-ask__seed-label">
+              {seed.written ? "You wrote" : `You chose ${seed.chosenLabel} ·`}
+            </span>
             {seed.chosenText}
           </div>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--correct">
-            <span className="quiz-ask__seed-label">The answer is {seed.correctLabel} ·</span>
+            <span className="quiz-ask__seed-label">
+              {seed.written ? "The answer is" : `The answer is ${seed.correctLabel} ·`}
+            </span>
             {seed.correctText}
           </div>
           {seed.explanation && (

@@ -1,0 +1,81 @@
+name: loadtest (nightly)
+
+# #117: the fixed locust mix (loadtest/locustfile.py) every night against the
+# target named by the repository VARIABLE `LOADTEST_TARGET_URL`, failing the
+# run when the plan's targets are missed (loadtest/check_thresholds.py):
+#   * p95 of every non-LLM route under 300 ms,
+#   * chat time-to-first-token p95 under 3 s (when the chat task runs).
+#
+# Opt-in: with `LOADTEST_TARGET_URL` unset (the default) the job is skipped
+# and nothing is sent anywhere. Set it only to a stack whose owner agreed to
+# a nightly load (a preview or a function-mode environment): the chat task
+# writes tutor messages and, in real model mode, spends LLM budget. The
+# manual, parameterised run stays in loadtest.yml.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   LOADTEST_TARGET_URL  required to run at all, e.g. https://api.example.test
+#   LOADTEST_USERS       concurrent users (default 20)
+#   LOADTEST_SPAWN_RATE  users started per second (default 5)
+#   LOADTEST_DURATION    locust -t (default 3m)
+#   LOADTEST_CHAT        1 = include the chat TTFT task and require it (default 1)
+#   LOADTEST_USER_IDS    seeded user ids (default rich-user-active)
+# Secret (optional): LOADTEST_SESSION_TOKEN, as in loadtest.yml.
+on:
+  schedule:
+    - cron: "17 7 * * *"   # 07:17 UTC, off the hour
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loadtest
+  cancel-in-progress: false
+
+jobs:
+  loadtest:
+    if: ${{ vars.LOADTEST_TARGET_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_URL: ${{ vars.LOADTEST_TARGET_URL }}
+      USERS: ${{ vars.LOADTEST_USERS || '20' }}
+      SPAWN_RATE: ${{ vars.LOADTEST_SPAWN_RATE || '5' }}
+      DURATION: ${{ vars.LOADTEST_DURATION || '3m' }}
+      LOADTEST_CHAT: ${{ vars.LOADTEST_CHAT || '1' }}
+      LOADTEST_USER_IDS: ${{ vars.LOADTEST_USER_IDS || 'rich-user-active' }}
+      LOADTEST_SESSION_TOKEN: ${{ secrets.LOADTEST_SESSION_TOKEN }}
+    steps:
+      - name: Check the target
+        run: |
+          case "$TARGET_URL" in
+            http://*|https://*) ;;
+            *) echo "::error::vars.LOADTEST_TARGET_URL must start with http:// or https://"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locust
+        run: pip install --require-hashes -r loadtest/requirements.lock
+      - name: Run
+        run: |
+          mkdir -p loadtest/out
+          locust -f loadtest/locustfile.py --host "$TARGET_URL" --headless \
+            -u "$USERS" -r "$SPAWN_RATE" -t "$DURATION" \
+            --csv loadtest/out/run --html loadtest/out/report.html --only-summary \
+            --exit-code-on-error 0   # the next step judges failures (ratio > 1%)
+      - name: Check thresholds
+        shell: bash   # -o pipefail: the checker's exit code survives the tee
+        run: |
+          args=()
+          if [ "$LOADTEST_CHAT" = "1" ]; then args+=(--require-chat); fi
+          python loadtest/check_thresholds.py loadtest/out/run_stats.csv "${args[@]}" \
+            | tee loadtest/out/thresholds.txt
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-nightly-results
+          path: loadtest/out/
+          if-no-files-found: ignore

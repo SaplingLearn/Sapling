@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -108,10 +109,10 @@ class FakeDB:
 @pytest.fixture
 def db():
     fake = FakeDB()
-    with patch("routes.social.table", side_effect=fake.table), \
-         patch("routes.social.invalidate_summary"), \
+    with patch_social("table", side_effect=fake.table), \
+         patch_social("invalidate_summary"), \
          patch("services.achievement_service.check_achievements"), \
-         patch("routes.social.check_achievements"):
+         patch_social("check_achievements"):
         yield fake
 
 
@@ -239,8 +240,8 @@ class TestKickIsABan:
 class TestMatchRequiresMembership:
     def test_non_member_is_403_and_reads_no_graph(self, db):
         db.data.update(rooms=[_room()], room_members=[_member("u1", "2026-01-01")])
-        with patch("routes.social.get_graph") as graph, \
-             patch("routes.social.find_study_matches") as match:
+        with patch_social("get_graph") as graph, \
+             patch_social("find_study_matches") as match:
             r = client.post("/api/social/rooms/r1/match", json={"user_id": "u9"})
         assert r.status_code == 403
         graph.assert_not_called()
@@ -249,9 +250,9 @@ class TestMatchRequiresMembership:
     def test_member_matches(self, db):
         db.data.update(rooms=[_room()], room_members=[_member("u1", "2026-01-01"),
                                                      _member("u2", "2026-01-02")])
-        with patch("routes.social.get_graph", return_value={"nodes": [], "edges": []}), \
-             patch("routes.social.get_display_names", return_value={}), \
-             patch("routes.social.find_study_matches", return_value=[]):
+        with patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("find_study_matches", return_value=[]):
             r = client.post("/api/social/rooms/r1/match", json={"user_id": "u1"})
         assert r.status_code == 200
 
@@ -266,10 +267,12 @@ class TestSchoolMatchExcludesNonStudents:
             {"id": "u-pending", "email": "ct", "is_approved": False, "deleted_at": None},
             {"id": "u-deleted", "email": "ct", "is_approved": True, "deleted_at": "2026-01-01"},
         ])
-        with patch("routes.social.get_graph", return_value={"nodes": [], "edges": []}), \
-             patch("routes.social.get_display_names", return_value={}), \
-             patch("routes.social.get_display_name", return_value="Me"), \
-             patch("routes.social.find_study_matches", return_value=[]) as match:
+        peers = {"u1", "u-real", "u-stub", "u-pending", "u-deleted"}
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("get_display_name", return_value="Me"), \
+             patch_social("find_study_matches", return_value=[]) as match:
             r = client.post("/api/social/school-match", json={"user_id": "u1"})
         assert r.status_code == 200
         candidates = [m["user_id"] for m in match.call_args.args[1]]
@@ -285,8 +288,8 @@ class TestDirectoryExcludesNonStudents:
             {"id": "u-deleted", "email": "ct", "is_approved": True, "deleted_at": "2026-01-01"},
         ])
         peers = {"u-real", "u-stub", "u-pending", "u-deleted"}
-        with patch("routes.social.academics.school_peer_user_ids", return_value=peers), \
-             patch("routes.social.get_display_names", return_value={}):
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_display_names", return_value={}):
             r = client.get("/api/social/students")
         assert r.status_code == 200
         assert [s["user_id"] for s in r.json()["students"]] == ["u-real"]
@@ -369,7 +372,7 @@ class TestFriendRequestTransitions:
                     raise RuntimeError("db down")
                 t.upsert = boom
             return t
-        with patch("routes.social.table", side_effect=failing), \
+        with patch_social("table", side_effect=failing), \
              TestClient(app, raise_server_exceptions=False) as c:
             r = c.post("/api/social/friends/requests/fr1/accept?user_id=u2")
         assert r.status_code == 500
@@ -507,3 +510,255 @@ class TestMessageDeleteAndEdit:
         assert r.status_code == 200
         row = db.rows("room_messages")[0]
         assert row["text"] != "ciphertext" and row["edited_at"]
+
+
+# ── Cross-user boundaries (#115) ───────────────────────────────────────────
+#
+# Each class pins one leak the cross-user matrix (tests/cross_user_matrix.py)
+# reproduced, and the legitimate path next to it. The attacker is u9: a real
+# user, member of the shared room r1 at most, never of A's private room r2.
+
+M_SHARED = "11111111-1111-4111-8111-000000000001"
+M_SHARED_2 = "11111111-1111-4111-8111-000000000002"
+M_PRIVATE = "22222222-2222-4222-8222-000000000001"
+PRIVATE_TEXT = "only u1 can read this"
+
+
+def _two_rooms(db, *, u9_in_shared=True):
+    from services.encryption import encrypt_if_present
+
+    members = [_member("u1", "2026-01-01", room="r1"), _member("u1", "2026-01-01", room="r2")]
+    if u9_in_shared:
+        members.append(_member("u9", "2026-02-01", room="r1"))
+    db.data.update(
+        rooms=[_room(id="r1", owner="u1", code="SHARED"), _room(id="r2", owner="u1", code="PRIV")],
+        room_members=members,
+        room_messages=[
+            _msg(id=M_SHARED, room_id="r1", text=encrypt_if_present("hello room"),
+                 created_at="2026-03-01T00:00:00Z", reply_to_id=None),
+            _msg(id=M_PRIVATE, room_id="r2", text=encrypt_if_present(PRIVATE_TEXT),
+                 created_at="2026-03-01T00:00:00Z", reply_to_id=None),
+        ],
+    )
+
+
+class TestReplyToIsRoomScoped:
+    def _post(self, reply_to_id, *, user="u9", room="r1"):
+        return client.post(f"/api/social/rooms/{room}/messages", json={
+            "user_id": user, "user_name": "Nine", "text": "re", "reply_to_id": reply_to_id,
+        })
+
+    def test_reply_to_a_message_in_another_room_is_404_and_stores_nothing(self, db):
+        _two_rooms(db)
+        r = self._post(M_PRIVATE)
+        assert r.status_code == 404
+        assert PRIVATE_TEXT not in r.text
+        assert len(db.rows("room_messages")) == 2
+
+    def test_unknown_and_malformed_reply_ids_get_the_same_404(self, db):
+        _two_rooms(db)
+        for bad in ("33333333-3333-4333-8333-000000000009", "not-a-uuid", "eq.x"):
+            r = self._post(bad)
+            assert r.status_code == 404, bad
+            assert r.json()["detail"] == "Message not found"
+        assert len(db.rows("room_messages")) == 2
+
+    def test_non_member_is_still_403(self, db):
+        _two_rooms(db, u9_in_shared=False)
+        assert self._post(M_SHARED).status_code == 403
+
+    def test_reply_within_the_room_is_stored_and_renders_its_snippet(self, db):
+        _two_rooms(db)
+        r = self._post(M_SHARED)
+        assert r.status_code == 200
+        stored = [m for m in db.rows("room_messages") if m.get("reply_to_id")]
+        assert [m["reply_to_id"] for m in stored] == [M_SHARED]
+
+        # The fake assigns no id/created_at; the real table defaults both.
+        stored[0].update(id=M_SHARED_2, created_at="2026-03-02T00:00:00Z")
+        r = client.get("/api/social/rooms/r1/messages?user_id=u9")
+        assert r.status_code == 200
+        reply = next(m for m in r.json()["messages"] if m.get("reply_to_id"))
+        assert reply["reply_to"] == {"id": M_SHARED, "user_name": "A", "text": "hello room"}
+
+    def test_a_stored_cross_room_reply_renders_no_snippet(self, db):
+        """Rows written before the post-side check: the read must not resolve
+        them, and the row itself is left as it is (no data rewrite)."""
+        _two_rooms(db)
+        db.data["room_messages"].append(_msg(
+            id=M_SHARED_2, room_id="r1", user_id="u9", user_name="Nine", text=None,
+            image_url=None, created_at="2026-03-02T00:00:00Z", reply_to_id=M_PRIVATE,
+        ))
+        r = client.get("/api/social/rooms/r1/messages?user_id=u9")
+        assert r.status_code == 200
+        assert PRIVATE_TEXT not in r.text
+        row = next(m for m in r.json()["messages"] if m["id"] == M_SHARED_2)
+        assert row["reply_to"] is None
+        assert row["reply_to_id"] == M_PRIVATE  # untouched
+
+
+class TestReactionsRequireMembershipAndRoom:
+    def _react(self, room, message_id, *, user="u9", emoji="👍"):
+        return client.post(f"/api/social/rooms/{room}/messages/{message_id}/reactions",
+                           json={"user_id": user, "emoji": emoji})
+
+    def test_non_member_is_403_and_writes_nothing(self, db):
+        _two_rooms(db)
+        r = self._react("r2", M_PRIVATE)
+        assert r.status_code == 403
+        assert db.rows("room_reactions") == []
+
+    def test_member_reacting_to_another_rooms_message_is_404(self, db):
+        """u9 is in r1; naming r1 with r2's message id must not reach it."""
+        _two_rooms(db)
+        r = self._react("r1", M_PRIVATE)
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Message not found"
+        assert db.rows("room_reactions") == []
+
+    def test_unknown_message_gets_the_same_404(self, db):
+        _two_rooms(db)
+        for bad in ("33333333-3333-4333-8333-000000000009", "not-a-uuid"):
+            r = self._react("r1", bad)
+            assert r.status_code == 404
+            assert r.json()["detail"] == "Message not found"
+        assert db.rows("room_reactions") == []
+
+    def test_member_toggles_a_reaction_in_their_room(self, db):
+        _two_rooms(db)
+        r = self._react("r1", M_SHARED)
+        assert r.status_code == 200 and r.json() == {"added": True}
+        assert [(x["message_id"], x["user_id"]) for x in db.rows("room_reactions")] == [(M_SHARED, "u9")]
+        db.rows("room_reactions")[0]["id"] = "rx1"  # the real table defaults it
+        r = self._react("r1", M_SHARED)
+        assert r.json() == {"added": False}
+
+
+class TestLeaveRequiresMembership:
+    def test_non_member_is_403_with_no_side_effects(self, db):
+        db.data.update(
+            rooms=[_room(owner="u1")],
+            room_members=[_member("u1", "2026-01-01"), _member("u2", "2026-02-01")],
+        )
+        before_rooms = [dict(r) for r in db.rows("rooms")]
+        before_members = [dict(r) for r in db.rows("room_members")]
+        with patch_social("invalidate_summary") as inv:
+            r = client.post("/api/social/rooms/r1/leave", json={"user_id": "u9"})
+        assert r.status_code == 403
+        assert "owner_id" not in r.text
+        inv.assert_not_called()
+        assert db.rows("rooms") == before_rooms
+        assert db.rows("room_members") == before_members
+
+    def test_non_member_cannot_trigger_an_ownership_transfer(self, db):
+        """A room whose owner had already gone (pre-#764 orphan): only a
+        member's leave may heal it, never a stranger's."""
+        db.data.update(
+            rooms=[_room(owner="u1")],
+            room_members=[_member("u2", "2026-02-01"), _member("u3", "2026-03-01")],
+        )
+        r = client.post("/api/social/rooms/r1/leave", json={"user_id": "u9"})
+        assert r.status_code == 403
+        assert db.rows("rooms")[0]["owner_id"] == "u1"
+        assert db.rows("rooms")[0]["updated_at"] is None
+
+    def test_a_missing_room_is_the_same_403(self, db):
+        r = client.post("/api/social/rooms/nope/leave", json={"user_id": "u9"})
+        assert r.status_code == 403
+
+
+class TestSchoolMatchScope:
+    """school_match follows the /students directory's rules: same school,
+    private profiles opted out, listable accounts only."""
+
+    def _users(self, *ids):
+        return [{"id": i, "email": "ct", "is_approved": True, "deleted_at": None} for i in ids]
+
+    def _run(self, peers):
+        with patch("services.social.matching.academics.school_peer_user_ids", return_value=peers), \
+             patch_social("get_graph", return_value={"nodes": [], "edges": []}), \
+             patch_social("get_display_names", return_value={}), \
+             patch_social("get_display_name", return_value="Me"), \
+             patch_social("find_study_matches", return_value=[]) as match:
+            r = client.post("/api/social/school-match", json={"user_id": "u1"})
+        assert r.status_code == 200
+        return [m["user_id"] for m in match.call_args.args[1]]
+
+    def test_private_profiles_and_other_schools_are_not_candidates(self, db):
+        db.data.update(
+            users=self._users("u1", "u-public", "u-school", "u-private", "u-elsewhere"),
+            user_settings=[
+                {"user_id": "u-public", "profile_visibility": "public"},
+                {"user_id": "u-school", "profile_visibility": "school"},
+                {"user_id": "u-private", "profile_visibility": "private"},
+            ],
+        )
+        peers = {"u1", "u-public", "u-school", "u-private"}  # u-elsewhere: another school
+        assert self._run(peers) == ["u1", "u-public", "u-school"]
+
+    def test_room_mates_are_still_excluded(self, db):
+        db.data.update(
+            users=self._users("u1", "u-mate", "u-peer"),
+            room_members=[_member("u1", "2026-01-01"), _member("u-mate", "2026-01-02")],
+        )
+        assert self._run({"u1", "u-mate", "u-peer"}) == ["u1", "u-peer"]
+
+    def test_no_school_means_no_candidates(self, db):
+        db.data.update(users=self._users("u1", "u-anyone"))
+        assert self._run(set()) == ["u1"]
+
+
+# ── Wave-1 §10 / wave-2 §11 leftovers (wave 3) ─────────────────────────────
+
+
+class TestMessageRoomScope:
+    """edit/delete check the (room, message) PAIR the path names: a message id
+    from another room is a 404 and is never touched (author-gated before, so
+    not a leak, but the path lied about where the message lives)."""
+
+    def test_delete_through_another_room_is_404_and_untouched(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        r = client.delete("/api/social/rooms/r1/messages/m1?user_id=u1")
+        assert r.status_code == 404
+        row = db.rows("room_messages")[0]
+        assert row["is_deleted"] is False and row["text"] == "ciphertext"
+
+    def test_edit_through_another_room_is_404_and_untouched(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        r = client.patch("/api/social/rooms/r1/messages/m1",
+                         json={"user_id": "u1", "text": "moved"})
+        assert r.status_code == 404
+        row = db.rows("room_messages")[0]
+        assert row["text"] == "ciphertext" and row["edited_at"] is None
+
+    def test_the_right_room_still_works(self, db):
+        db.data.update(room_messages=[_msg(room_id="r2")])
+        assert client.patch("/api/social/rooms/r2/messages/m1",
+                            json={"user_id": "u1", "text": "ok"}).status_code == 200
+        assert client.delete("/api/social/rooms/r2/messages/m1?user_id=u1").status_code == 200
+        assert db.rows("room_messages")[0]["is_deleted"] is True
+
+
+class TestActivityHidesDeletedStudents:
+    """#832: room activity history named soft-deleted students (and fell back
+    to the raw user id); it now drops them like every other social list."""
+
+    def test_a_deleted_students_activity_is_dropped(self, db):
+        db.data.update(
+            room_members=[_member("u1", "2026-07-01T00:00:00Z")],
+            room_activity=[
+                {"id": "a1", "room_id": "r1", "user_id": "u1", "activity_type": "mastered",
+                 "concept_name": "Limits", "detail": "", "created_at": "2026-07-02T00:00:00Z"},
+                {"id": "a2", "room_id": "r1", "user_id": "gone", "activity_type": "mastered",
+                 "concept_name": "Series", "detail": "", "created_at": "2026-07-03T00:00:00Z"},
+            ],
+        )
+        with patch_social("live_user_ids", return_value={"u1"}) as live, \
+             patch_social("get_display_names", return_value={"u1": "Alice"}) as names:
+            r = client.get("/api/social/rooms/r1/activity?user_id=u1")
+        assert r.status_code == 200, r.text
+        acts = r.json()["activities"]
+        assert [a["id"] for a in acts] == ["a1"]
+        assert acts[0]["user_name"] == "Alice"
+        assert sorted(live.call_args.args[0]) == ["gone", "u1"]
+        names.assert_called_once_with(["u1"])  # the deleted id is never resolved

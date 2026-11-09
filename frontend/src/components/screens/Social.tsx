@@ -11,6 +11,12 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
+import {
+  recoverRealtimeAuth,
+  superviseChannel,
+  useRealtimeAuth,
+  type RealtimeAuthMode,
+} from "@/lib/realtimeAuth";
 import { humanizeError } from "@/lib/errorMessage";
 import {
   getUserRooms,
@@ -83,6 +89,37 @@ type RealtimeMsgAction =
   | { type: "ignore" }
   | { type: "refetch" }
   | { type: "applyOwnFlags"; id: string; is_deleted: boolean; edited_at: string | null };
+
+/** The Realtime client the token lifecycle drives (stable for the hook). */
+function realtimeClient() {
+  return supabaseClient()?.realtime ?? null;
+}
+
+/**
+ * RLS step 2e (#115): whether the study-room `room:<id>` channel (room_messages
+ * changes) may join right now. It only ever joins on the minted token:
+ * room_messages has RLS on and no anon SELECT, so the anon key would
+ * subscribe to nothing. (The presence/typing channel has its own rule: see
+ * RoomChat.)
+ *   - `token`: the minted token is applied; join, and re-join on loss.
+ *   - `wait`: join nothing. No token yet (first fetch, a transient failure,
+ *     or the last one expired), or none to be had (`unavailable`: the
+ *     endpoint refused, logged by realtimeAuth). The room works over REST
+ *     meanwhile: history on open, own sends, and a poll of the latest page
+ *     every REST_POLL_MS while the tab is visible.
+ */
+export type RoomRealtimePlan = "wait" | "token";
+
+export function planRoomRealtime(authMode: RealtimeAuthMode): RoomRealtimePlan {
+  return authMode === "token" ? "token" : "wait";
+}
+
+/** While the room is not live, re-fetch the latest page this often (only
+ * while the tab is visible), so classmates' messages still arrive. */
+export const REST_POLL_MS = 12_000;
+/** Show "Live updates paused" only once the room has been off the live
+ * channel this long: the first token fetch must not flash it. */
+export const PAUSED_NOTICE_DELAY_MS = 5_000;
 
 export function planMessageRealtimeAction(
   event: "INSERT" | "UPDATE",
@@ -522,7 +559,14 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
   }
 }
 
-function RoomChat({ roomId, members }: { roomId: string; members: { user_id: string; name: string }[] }) {
+function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
+  roomId: string;
+  members: { user_id: string; name: string }[];
+  /** RLS step 2e: owned by the Social screen, so room/tab switches keep the token. */
+  realtimePlan: RoomRealtimePlan;
+  /** Bumps each time a token is (re)applied after a gap: re-join then. */
+  realtimeEpoch: number;
+}) {
   const { userId, userName } = useUser();
   const toast = useToast();
   const [messages, setMessages] = React.useState<RoomMessageRow[]>([]);
@@ -565,12 +609,36 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
     }
   }, [roomId]);
 
-  // Realtime subscriptions.
+  // Not live (no token yet, a transient failure, or none to be had): poll the
+  // latest page so classmates' messages still arrive, paused while the tab is
+  // hidden and caught up at once when it comes back. The merge dedups.
+  const [pausedLong, setPausedLong] = React.useState(false);
   React.useEffect(() => {
+    if (realtimePlan === "token") return;
+    const visible = () => document.visibilityState === "visible";
+    const notice = setTimeout(() => setPausedLong(true), PAUSED_NOTICE_DELAY_MS);
+    const poll = setInterval(() => { if (visible()) void refreshLatest(); }, REST_POLL_MS);
+    const onVisibility = () => { if (visible()) void refreshLatest(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(notice);
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisibility);
+      setPausedLong(false);
+    };
+  }, [realtimePlan, refreshLatest]);
+  const livePaused = realtimePlan !== "token" && pausedLong;
+
+  // Realtime subscriptions. RLS step 2e (#115): `realtimePlan` (Social owns
+  // the token lifecycle) decides when: they join on the minted token only, and
+  // re-join whenever Realtime drops the channel (it closes it once the token
+  // expires).
+  React.useEffect(() => {
+    if (realtimePlan === "wait") return;
     const supa = supabaseClient();
     if (!supa) return;
 
-    const channel = supa
+    const build = () => supa
       .channel(`room:${roomId}`)
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
@@ -596,42 +664,70 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 : m,
             ));
           }
-        })
+        });
       // #231: the room_reactions realtime subscription was dead code — the
       // table is not in the supabase_realtime publication, so these handlers
       // never fired. Removed. Reactions still update on load/refresh via REST;
       // live reactions can be restored post-RLS by publishing room_reactions
       // with a membership-scoped policy (see
       // docs/security/realtime-jwt-bridge-design.md).
-      .subscribe();
 
-    return () => { supa.removeChannel(channel); };
-  }, [roomId, refreshLatest, userId]);
+    return superviseChannel({
+      topic: `room:${roomId}`,
+      create: build,
+      remove: (channel) => supa.removeChannel(channel),
+      // Every (re)join starts after messages may have been sent: catch up
+      // (the merge dedups).
+      onSubscribed: () => { void refreshLatest(); },
+      onLost: () => recoverRealtimeAuth(),
+    });
+  }, [roomId, refreshLatest, userId, realtimePlan, realtimeEpoch]);
 
-  // Presence / typing channel.
+  // Presence / typing channel. NOT gated on the minted token, on purpose:
+  // `presence:<id>` is a PUBLIC Realtime channel, which Realtime never checks
+  // against RLS (that needs a private channel and a realtime.messages
+  // policy). It reads no table, and anyone holding the public anon key can
+  // join it whether or not this client waits for a token, so waiting would
+  // protect nothing and only cost typing indicators whenever the token is
+  // missing. It therefore joins on whatever key the client holds (the anon
+  // key, or the minted token once `setAuth` applies it, which realtime-js
+  // pushes to joined channels); when Realtime closes it on that token's
+  // expiry, superviseChannel re-joins after a refresh.
   React.useEffect(() => {
     const supa = supabaseClient();
     if (!supa || !userId) return;
-    const ch = supa.channel(`presence:${roomId}`, { config: { presence: { key: userId } } });
-    ch
-      .on("presence", { event: "sync" }, () => {
-        const state = ch.presenceState();
-        const typers = new Set<string>();
-        Object.entries(state).forEach(([uid, arr]: [string, any]) => {
-          if (uid === userId) return;
-          const p = arr?.[0];
-          if (p?.typing && Date.now() - (p.last || 0) < 3000) typers.add(p.name || uid);
+    const build = () => {
+      const ch = supa.channel(`presence:${roomId}`, { config: { presence: { key: userId } } });
+      return ch
+        .on("presence", { event: "sync" }, () => {
+          const state = ch.presenceState();
+          const typers = new Set<string>();
+          Object.entries(state).forEach(([uid, arr]: [string, any]) => {
+            if (uid === userId) return;
+            const p = arr?.[0];
+            if (p?.typing && Date.now() - (p.last || 0) < 3000) typers.add(p.name || uid);
+          });
+          setTypingUsers(typers);
         });
-        setTypingUsers(typers);
-      })
-      .subscribe(async (status: string) => {
-        if (status === "SUBSCRIBED") {
-          await ch.track({ name: userName || "Anonymous", typing: false, last: Date.now() });
-        }
-      });
-    typingChannelRef.current = ch;
+    };
+    const track = (ch: ReturnType<typeof build>) =>
+      ch.track({ name: userName || "Anonymous", typing: false, last: Date.now() });
+
+    const stop = superviseChannel({
+      topic: `presence:${roomId}`,
+      create: build,
+      remove: (ch) => supa.removeChannel(ch),
+      onSubscribed: (ch) => {
+        typingChannelRef.current = ch;
+        void track(ch);
+      },
+      onLost: () => {
+        typingChannelRef.current = null;
+        return recoverRealtimeAuth();
+      },
+    });
     return () => {
-      ch.unsubscribe();
+      stop();
       typingChannelRef.current = null;
     };
   }, [roomId, userId, userName]);
@@ -837,8 +933,17 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
 
   return (
     <>
-      <div style={{ padding: "6px 20px 0", fontSize: 11, color: "var(--text-muted)", minHeight: 18 }}>
-        {typingUsers.size > 0 && `${Array.from(typingUsers).join(", ")} typing…`}
+      <div style={{ padding: "6px 20px 0", fontSize: 11, color: "var(--text-muted)", minHeight: 18, display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <span>{typingUsers.size > 0 && `${Array.from(typingUsers).join(", ")} typing…`}</span>
+        {livePaused && (
+          <span
+            data-testid="social-chat-live-paused"
+            role="status"
+            title="New messages are checked every few seconds until the live connection is back."
+          >
+            Live updates paused
+          </span>
+        )}
       </div>
       <div
         ref={scrollRef}
@@ -1456,6 +1561,13 @@ function SchoolDirectory() {
 export function Social() {
   const search = useSearchParams();
   const { userId, userReady } = useUser();
+  // RLS step 2e (#115): the Realtime token lifecycle lives here, not in the
+  // per-room RoomChat, so a room or tab switch neither drops the token nor
+  // re-mints. Only once the session is known (no request before it, and a
+  // sign-in as someone else starts a fresh lifecycle).
+  const realtimeAuth = useRealtimeAuth(realtimeClient, userReady ? userId : null);
+  const realtimePlan = planRoomRealtime(realtimeAuth.mode);
+  const realtimeEpoch = realtimePlan === "token" ? realtimeAuth.epoch : 0;
   const [rooms, setRooms] = React.useState<Room[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<Tab>("chat");
@@ -1524,7 +1636,15 @@ export function Social() {
             </div>
             {/* #764: keyed by room so replyTo, edit state, matches and any
                 in-flight load reset on a room switch instead of leaking. */}
-            {tab === "chat" && <RoomChat key={active.id} roomId={active.id} members={members} />}
+            {tab === "chat" && (
+              <RoomChat
+                key={active.id}
+                roomId={active.id}
+                members={members}
+                realtimePlan={realtimePlan}
+                realtimeEpoch={realtimeEpoch}
+              />
+            )}
             {tab === "overview" && <RoomOverview key={active.id} roomId={active.id} onChange={load} />}
             {tab === "match" && <StudyMatch key={active.id} roomId={active.id} />}
             {tab === "activity" && <RoomActivity key={active.id} roomId={active.id} />}

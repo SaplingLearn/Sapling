@@ -18,268 +18,69 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import rpc, table
+from services.admin.analytics import db_scope as admin_db_scope
+from services.admin.analytics import scan as _scan
+from services.admin.errors import Unprocessable
 from services.auth_guard import require_admin
-from services.events_service import SYSTEM_CATEGORY
 from services.llm_pricing import COST_SCALE
+
+# The response models, range scan and day bucketing moved to
+# services/admin/analytics/ (#118); re-exported so imports and patches of the
+# old names on this module keep working.
+from services.admin.analytics.models import (  # noqa: F401  (re-export, #118)
+    _NULL_COST,
+    Bucket,
+    CostDayPoint,
+    CostPerActiveUser,
+    CostRow,
+    CostTotals,
+    CostWeek,
+    DayCount,
+    DbScopeGroup,
+    DbScopeReport,
+    DbScopeWindow,
+    ErrorEvent,
+    ErrorsPage,
+    EventTypeCount,
+    GroupBy,
+    LLMCost,
+    Range,
+    UsageByUser,
+    UsageSummary,
+    UserUsage,
+)
+from services.admin.analytics.scan import (  # noqa: F401  (re-export, #118)
+    _NOT_SYSTEM,
+    _PAGE,
+    _SCAN_CAP,
+    _as_float,
+    _as_int,
+    _scan_range,
+)
+from services.admin.analytics.series import (  # noqa: F401  (re-export, #118)
+    _bucket_date,
+    _cost_series,
+    _count_series,
+)
 
 logger = logging.getLogger("sapling.admin_analytics")
 
 router = APIRouter()
 
-# Page size for range scans, and a hard ceiling so a pathological range can't
-# pull unbounded rows into memory. Hitting the cap is logged and surfaced via
-# the response's `truncated` flag, never silent.
-_PAGE = 1000
-_SCAN_CAP = 100_000
-
-GroupBy = Literal["user", "feature", "model"]
 _GROUP_COLUMN = {"user": "user_id", "feature": "feature", "model": "model"}
-
-# Day is the only bucket the dashboard needs (#121); the Literal keeps the
-# param 422-validated so a future "week"/"hour" is an explicit contract change.
-Bucket = Literal["day"]
-
-
-# ── Response models ──────────────────────────────────────────────────────────
-
-
-class Range(BaseModel):
-    # Serialized as "from" to match the query param — the reserved word only
-    # forces the underscore on the Python side, never on the wire.
-    from_: str = Field(serialization_alias="from")
-    to: str
-
-
-class EventTypeCount(BaseModel):
-    event_type: str
-    count: int
-
-
-class DayCount(BaseModel):
-    date: str  # YYYY-MM-DD, UTC
-    count: int
-
-
-class CostDayPoint(BaseModel):
-    date: str  # YYYY-MM-DD, UTC
-    calls: int
-    total_tokens: int
-    cost_usd: float
-
-
-class UsageSummary(BaseModel):
-    range: Range
-    total_events: int
-    distinct_active_users: int
-    by_event_type: list[EventTypeCount]
-    truncated: bool = False
-    # Present only when ?bucket=day. Sparse: days with no rows are omitted —
-    # the client zero-fills the axis from `range`.
-    series: list[DayCount] | None = None
-
-
-class UserUsage(BaseModel):
-    user_id: str
-    event_count: int
-    by_category: dict[str, int]
-    llm_cost_usd: float
-    total_tokens: int
-
-
-class UsageByUser(BaseModel):
-    range: Range
-    total_users: int
-    limit: int
-    offset: int
-    users: list[UserUsage]
-    truncated: bool = False
-
-
-class CostRow(BaseModel):
-    key: str
-    calls: int
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    cost_usd: float
-
-
-class CostTotals(BaseModel):
-    calls: int
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    cost_usd: float
-
-
-class LLMCost(BaseModel):
-    range: Range
-    group_by: GroupBy
-    rows: list[CostRow]
-    totals: CostTotals
-    truncated: bool = False
-    # Present only when ?bucket=day; sparse (see UsageSummary.series).
-    series: list[CostDayPoint] | None = None
-
-
-class ErrorEvent(BaseModel):
-    created_at: str | None
-    event_type: str
-    request_id: str | None
-    user_id: str | None
-    path: str | None
-    method: str | None
-    status_code: int | None
-    duration_ms: float | None
-
-
-class ErrorsPage(BaseModel):
-    range: Range
-    total: int
-    limit: int
-    offset: int
-    errors: list[ErrorEvent]
-    # `series` needs its own range scan (the feed is paginated server-side),
-    # so unlike the feed it can hit the scan cap — `truncated` refers to the
-    # series only and stays False when no bucket was requested.
-    truncated: bool = False
-    series: list[DayCount] | None = None
-
-
-# ── Date range helpers ───────────────────────────────────────────────────────
 
 
 def _resolve_range(from_: str | None, to: str | None) -> tuple[str, str]:
-    """Default to the last 30 days; echo caller-supplied ISO bounds otherwise.
-
-    Bounds are validated before use: each must parse as ISO 8601 (422 naming
-    the bad param otherwise) and `from` must not be after `to`. The strings are
-    returned as supplied — validation never reformats them.
-    """
-    now = datetime.now(timezone.utc)
-    to_iso = to or now.isoformat()
-    from_iso = from_ or (now - timedelta(days=30)).isoformat()
-
-    def _parse(param: str, value: str) -> datetime:
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Invalid {param!r} datetime: {value!r} is not ISO 8601",
-            )
-        # Treat naive bounds as UTC so mixed naive/aware bounds stay comparable.
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-
-    from_dt = _parse("from", from_iso)
-    to_dt = _parse("to", to_iso)
-    if from_dt > to_dt:
-        raise HTTPException(status_code=422, detail="'from' must not be after 'to'")
-    return from_iso, to_iso
-
-
-#: Usage rollups count what users DID. Server-emitted rows about their
-#: requests (category "system", e.g. decision.made per routed chat turn) are
-#: excluded, or every routed turn would count twice toward a user's activity.
-_NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
-
-
-def _scan_range(
-    table_name: str, columns: str, from_iso: str, to_iso: str,
-    extra_filters: dict | None = None,
-) -> tuple[list[dict], bool]:
-    """Fetch every row in [from, to] for a table, paging via select_with_count.
-
-    Aggregation endpoints need the full (date-bounded) set — PostgREST won't
-    GROUP BY for us — so we page to completion rather than relying on the
-    server's default row cap. Returns ``(rows, truncated)``: a range large
-    enough to hit _SCAN_CAP stops the scan early, logs a warning, and sets
-    ``truncated=True`` so callers can surface the partial aggregation.
-    """
-    out: list[dict] = []
-    offset = 0
-    truncated = False
-    while True:
-        filters: dict = {"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"]}
-        if extra_filters:
-            filters.update(extra_filters)
-        rows, total = table(table_name).select_with_count(
-            columns, filters=filters, order="created_at.asc", limit=_PAGE, offset=offset,
-        )
-        out.extend(rows)
-        if len(out) >= total or not rows:
-            break
-        if len(out) >= _SCAN_CAP:
-            truncated = True
-            logger.warning(
-                "admin_analytics scan hit cap %d on %r (total=%d); results truncated",
-                _SCAN_CAP, table_name, total,
-            )
-            break
-        offset += _PAGE
-    return out, truncated
-
-
-def _as_float(value) -> float:
+    """``services.admin.analytics.scan._resolve_range`` (default: the last 30
+    days), with a bad bound mapped to the 422 it always was."""
     try:
-        return float(value) if value is not None else 0.0
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _as_int(value) -> int:
-    try:
-        return int(value) if value is not None else 0
-    except (TypeError, ValueError):
-        return 0
-
-
-# ── Day bucketing (#121) ─────────────────────────────────────────────────────
-
-
-def _bucket_date(raw) -> str | None:
-    """UTC calendar day (YYYY-MM-DD) for a created_at value; None if unparseable."""
-    if not raw:
-        return None
-    try:
-        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if ts.tzinfo is None:
-        # Legacy naive rows are UTC by construction (pre-#248 writes).
-        ts = ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc).date().isoformat()
-
-
-def _count_series(rows: list[dict]) -> list[DayCount]:
-    counts: dict[str, int] = defaultdict(int)
-    for r in rows:
-        day = _bucket_date(r.get("created_at"))
-        if day:
-            counts[day] += 1
-    return [DayCount(date=d, count=c) for d, c in sorted(counts.items())]
-
-
-def _cost_series(rows: list[dict]) -> list[CostDayPoint]:
-    days: dict[str, dict] = defaultdict(lambda: {"calls": 0, "total_tokens": 0, "cost_usd": 0.0})
-    for r in rows:
-        day = _bucket_date(r.get("created_at"))
-        if not day:
-            continue
-        d = days[day]
-        d["calls"] += 1
-        d["total_tokens"] += _as_int(r.get("total_tokens"))
-        d["cost_usd"] += _as_float(r.get("cost_usd"))
-    return [
-        CostDayPoint(date=k, calls=v["calls"], total_tokens=v["total_tokens"], cost_usd=round(v["cost_usd"], COST_SCALE))
-        for k, v in sorted(days.items())
-    ]
+        return _scan._resolve_range(from_, to)
+    except Unprocessable as e:
+        raise HTTPException(status_code=422, detail=e.detail)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -443,6 +244,27 @@ def llm_cost(
     )
 
 
+@router.get("/llm/cost-per-active-user", response_model=CostPerActiveUser)
+def llm_cost_per_active_user(request: Request, response: Response) -> CostPerActiveUser:
+    """Weekly LLM cost per active user and the "2x jump" alert signal (#119).
+
+    One call to the SQL function `llm_cost_per_active_user_weekly()`
+    (migration 20261108213311) — the same definition Canopy's metrics should
+    read, so the two never disagree. Cost = priced `llm_usage` rows; active =
+    distinct non-system `events` users, as `distinct_active_users` above.
+    503 when the database can't answer: never a made-up zero."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    try:
+        payload = rpc("llm_cost_per_active_user_weekly", {})
+        if isinstance(payload, list):
+            payload = payload[0] if payload else None
+        return CostPerActiveUser.model_validate(payload)
+    except Exception as exc:
+        logger.warning("llm cost-per-active-user unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="LLM cost signal unavailable") from exc
+
+
 @router.get("/errors", response_model=ErrorsPage)
 def errors(
     request: Request,
@@ -492,4 +314,64 @@ def errors(
         range=Range(from_=from_iso, to=to_iso),
         total=total, limit=limit, offset=offset, errors=items,
         truncated=series_truncated, series=series,
+    )
+
+
+# ── db_user_scope rollout report (#115) ──────────────────────────────────────
+#
+# docs/security/db-user-scope-rollout.md: the "read the report" step of the
+# shadow -> enforce ladder. Two views of the same signal: `top` groups the
+# db.* events every worker wrote to the `events` table over the window (the
+# cross-worker, survives-a-deploy view), and `process` is THIS worker's
+# in-process tally since boot (db/scope_report.py), which also carries what
+# the events cannot: shadow-read coverage and the inventory of writes shadow
+# could not verify.
+
+_DB_SCOPE_EVENTS = ("db.rls_shadow_divergence", "db.unscoped_query", "db.rls_denied")
+
+#: One GROUP BY in Postgres (migration 20261109023455); grouping/merging in
+#: services/admin/analytics/db_scope.py. Until the migration is applied (or if the call
+#: fails) the report falls back to a capped scan grouped in Python: at most
+#: _DB_SCOPE_SCAN_CAP events (newest first), flagged `truncated`. The window
+#: is at most _DB_SCOPE_MAX_HOURS either way.
+DB_SCOPE_FN = "db_scope_divergences"
+_DB_SCOPE_SCAN_CAP = 20_000
+_DB_SCOPE_MAX_HOURS = 168
+
+
+@router.get("/db-scope", response_model=DbScopeReport)
+def db_scope_report(
+    request: Request,
+    response: Response,
+    hours: int = Query(24, ge=1, le=_DB_SCOPE_MAX_HOURS),
+    limit: int = Query(50, ge=1, le=500),
+) -> DbScopeReport:
+    """Top `db_user_scope` divergences by route + table over the last `hours`
+    (at most a week), plus this worker's in-process tally. Ids, counts and
+    codes only. One SQL GROUP BY; before its migration, a scan of at most
+    `_DB_SCOPE_SCAN_CAP` events, newest first."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    from db import scope_report
+    from db.connection import pg_quote_value
+
+    now = datetime.now(timezone.utc)
+    from_iso, to_iso = (now - timedelta(hours=hours)).isoformat(), now.isoformat()
+    try:
+        groups, total = admin_db_scope.group_rpc_rows(rpc(DB_SCOPE_FN, {
+            "p_from": from_iso, "p_to": to_iso, "p_events": list(_DB_SCOPE_EVENTS)}))
+        truncated = False
+    except Exception as exc:  # not migrated yet / PostgREST down: the capped scan
+        logger.info("%s() unavailable (%s); scanning", DB_SCOPE_FN, type(exc).__name__)
+        rows, truncated = _scan_range(
+            "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
+            extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
+            cap=_DB_SCOPE_SCAN_CAP, newest_first=True,
+        )
+        groups, total = admin_db_scope.group_rows(rows), len(rows)
+    return DbScopeReport(
+        window=DbScopeWindow(from_=from_iso, to=to_iso, hours=hours),
+        total=total, groups=len(groups), truncated=truncated,
+        top=[DbScopeGroup(**g) for g in admin_db_scope.ranked(groups, limit)],
+        scan_cap=_DB_SCOPE_SCAN_CAP, process=scope_report.snapshot(limit),
     )

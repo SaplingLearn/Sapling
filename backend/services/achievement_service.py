@@ -6,7 +6,8 @@ Called synchronously after events to grant achievements when thresholds are met.
 import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
-from services import gradebook_service
+from db.scope import runs_as_service
+from services.gradebook import grades
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
 
@@ -39,130 +40,138 @@ def _count_rows(table_name: str, filters: dict) -> int:
     return len(rows) if rows else 0
 
 
+@runs_as_service  # #115: achievement counters read rows beyond the student's own grants
 def get_user_stat(user_id: str, trigger_type: str) -> int:
     """Public wrapper around the internal stat lookup."""
     return _get_user_stat(user_id, trigger_type)
 
 
-def _get_user_stat(user_id: str, trigger_type: str) -> int:
-    """Evaluate the current value for a trigger type."""
-    if trigger_type == "login_streak":
-        # Deliberately the STORED count, not streak_service.effective_streak
-        # (#767). Readers that DISPLAY "your streak" must use the effective
-        # value, but a badge asks "did you ever reach N days", and a lapsed
-        # stored count is a streak that genuinely happened. login_streak is
-        # only dispatched at session end and sign-in, so a streak built from
-        # quizzes/uploads and then broken would otherwise never earn its badge.
-        user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-        if user:
-            return user[0].get("streak_count", 0) or 0
-        return 0
-
-    if trigger_type == "session_count":
-        return _count_rows("sessions", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "documents_uploaded":
-        return _count_rows("documents", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "quizzes_completed":
-        # #542 D3: really-finished attempts only. Two filters, because
-        # neither alone is sufficient: generate writes the attempt row
-        # BEFORE the student answers anything (so an unfiltered count let
-        # "generate and close the tab" advance quizzes_10), and submit's
-        # atomic claim stamps completed_at BEFORE grading (so a submit that
-        # dies between the claim and the score write would still count).
-        # A persisted score is the evidence a quiz was graded — the same
-        # signal agents/tools/quiz_history.py treats as completion.
-        return _count_rows("quiz_attempts", {
-            "user_id": f"eq.{user_id}",
-            "completed_at": "not.is.null",
-            "score": "not.is.null",
-        })
-
-    if trigger_type == "rooms_joined":
-        return _count_rows("room_members", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "flashcards_created":
-        return _count_rows("flashcards", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "post_count":
-        return _count_rows("room_messages", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "account_age_days":
-        user = table("users").select("created_at", filters={"id": f"eq.{user_id}"})
-        if user and user[0].get("created_at"):
-            created = datetime.fromisoformat(user[0]["created_at"].replace("Z", "+00:00"))
-            delta = datetime.now(timezone.utc) - created
-            return delta.days
-        return 0
-
-    if trigger_type == "manual_admin_grant":
-        return 0  # Handled directly by admin endpoint
-
-    if trigger_type == "flashcards_reviewed":
-        rows = table("flashcards").select(
-            "times_reviewed", filters={"user_id": f"eq.{user_id}"}
-        )
-        return sum(int(r.get("times_reviewed") or 0) for r in rows or [])
-
-    if trigger_type == "concepts_mastered":
-        return _count_rows("graph_nodes", {
-            "user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered",
-        })
-
-    if trigger_type == "courses_with_mastery":
-        rows = table("graph_nodes").select(
-            "course_id",
-            filters={"user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered"},
-        )
-        return len({r["course_id"] for r in rows or [] if r.get("course_id")})
-
-    if trigger_type == "graph_nodes_count":
-        return _count_rows("graph_nodes", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "friends_count":
-        return _count_rows("friendships", {"user_id": f"eq.{user_id}"})
-
-    if trigger_type == "level":
-        rows = table("users").select("level", filters={"id": f"eq.{user_id}"})
-        return int(rows[0].get("level") or 1) if rows else 1
-
-    if trigger_type in ("session_minutes", "session_before_hour", "session_after_midnight"):
-        return _session_stat(user_id, trigger_type)
-
-    if trigger_type == "xp_in_day":
-        return _best_day_xp(user_id)
-
-    if trigger_type == "goal_streak":
-        return _goal_streak(user_id)
-
-    if trigger_type == "owned_room_members":
-        rooms = table("rooms").select("id", filters={"created_by": f"eq.{user_id}"})
-        best = 0
-        for room in rooms or []:
-            best = max(best, _count_rows("room_members", {"room_id": f"eq.{room['id']}"}))
-        return best
-
-    if trigger_type == "rooms_active":
-        rows = table("room_messages").select(
-            "room_id", filters={"user_id": f"eq.{user_id}"}
-        )
-        return len({r["room_id"] for r in rows or [] if r.get("room_id")})
-
-    if trigger_type == "course_grade_a":
-        return _course_grade_a_count(user_id)
-
-    if trigger_type == "room_replies":
-        owned = {
-            r["id"] for r in
-            (table("rooms").select("id", filters={"created_by": f"eq.{user_id}"}) or [])
-        }
-        rows = table("room_messages").select(
-            "room_id", filters={"user_id": f"eq.{user_id}"}
-        )
-        return sum(1 for r in rows or [] if r.get("room_id") not in owned)
-
+def _stat_login_streak(user_id: str) -> int:
+    # Deliberately the STORED count, not streak_service.effective_streak
+    # (#767). Readers that DISPLAY "your streak" must use the effective
+    # value, but a badge asks "did you ever reach N days", and a lapsed
+    # stored count is a streak that genuinely happened. login_streak is
+    # only dispatched at session end and sign-in, so a streak built from
+    # quizzes/uploads and then broken would otherwise never earn its badge.
+    user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
+    if user:
+        return user[0].get("streak_count", 0) or 0
     return 0
+
+
+def _stat_quizzes_completed(user_id: str) -> int:
+    # #542 D3: really-finished attempts only. Two filters, because
+    # neither alone is sufficient: generate writes the attempt row
+    # BEFORE the student answers anything (so an unfiltered count let
+    # "generate and close the tab" advance quizzes_10), and submit's
+    # atomic claim stamps completed_at BEFORE grading (so a submit that
+    # dies between the claim and the score write would still count).
+    # A persisted score is the evidence a quiz was graded — the same
+    # signal agents/tools/quiz_history.py treats as completion.
+    return _count_rows("quiz_attempts", {
+        "user_id": f"eq.{user_id}",
+        "completed_at": "not.is.null",
+        "score": "not.is.null",
+    })
+
+
+def _stat_account_age_days(user_id: str) -> int:
+    user = table("users").select("created_at", filters={"id": f"eq.{user_id}"})
+    if user and user[0].get("created_at"):
+        created = datetime.fromisoformat(user[0]["created_at"].replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - created
+        return delta.days
+    return 0
+
+
+def _stat_flashcards_reviewed(user_id: str) -> int:
+    rows = table("flashcards").select(
+        "times_reviewed", filters={"user_id": f"eq.{user_id}"}
+    )
+    return sum(int(r.get("times_reviewed") or 0) for r in rows or [])
+
+
+def _stat_courses_with_mastery(user_id: str) -> int:
+    rows = table("graph_nodes").select(
+        "course_id",
+        filters={"user_id": f"eq.{user_id}", "mastery_tier": "eq.mastered"},
+    )
+    return len({r["course_id"] for r in rows or [] if r.get("course_id")})
+
+
+def _stat_level(user_id: str) -> int:
+    rows = table("users").select("level", filters={"id": f"eq.{user_id}"})
+    return int(rows[0].get("level") or 1) if rows else 1
+
+
+def _stat_owned_room_members(user_id: str) -> int:
+    rooms = table("rooms").select("id", filters={"created_by": f"eq.{user_id}"})
+    best = 0
+    for room in rooms or []:
+        best = max(best, _count_rows("room_members", {"room_id": f"eq.{room['id']}"}))
+    return best
+
+
+def _stat_rooms_active(user_id: str) -> int:
+    rows = table("room_messages").select(
+        "room_id", filters={"user_id": f"eq.{user_id}"}
+    )
+    return len({r["room_id"] for r in rows or [] if r.get("room_id")})
+
+
+def _stat_room_replies(user_id: str) -> int:
+    owned = {
+        r["id"] for r in
+        (table("rooms").select("id", filters={"created_by": f"eq.{user_id}"}) or [])
+    }
+    rows = table("room_messages").select(
+        "room_id", filters={"user_id": f"eq.{user_id}"}
+    )
+    return sum(1 for r in rows or [] if r.get("room_id") not in owned)
+
+
+def _count_own(table_name: str, **extra: str):
+    """A stat that is the count of the user's own rows in `table_name`."""
+    return lambda user_id: _count_rows(table_name, {"user_id": f"eq.{user_id}", **extra})
+
+
+# trigger_type -> reader(user_id). Every reader looks its helper up by name
+# when it runs, never at import: the `_stat_*` / `_session_stat` / ... helpers
+# below (some defined further down the module) through a lambda, and the
+# `_count_own` readers through `_count_rows`. So a
+# `patch.object(achievement_service, "<helper>", ...)` reaches the dispatch.
+_STAT_READERS = {
+    "login_streak": lambda user_id: _stat_login_streak(user_id),
+    "session_count": _count_own("sessions"),
+    "documents_uploaded": _count_own("documents"),
+    "quizzes_completed": lambda user_id: _stat_quizzes_completed(user_id),
+    "rooms_joined": _count_own("room_members"),
+    "flashcards_created": _count_own("flashcards"),
+    "post_count": _count_own("room_messages"),
+    "account_age_days": lambda user_id: _stat_account_age_days(user_id),
+    "manual_admin_grant": lambda user_id: 0,  # Handled directly by admin endpoint
+    "flashcards_reviewed": lambda user_id: _stat_flashcards_reviewed(user_id),
+    "concepts_mastered": _count_own("graph_nodes", mastery_tier="eq.mastered"),
+    "courses_with_mastery": lambda user_id: _stat_courses_with_mastery(user_id),
+    "graph_nodes_count": _count_own("graph_nodes"),
+    "friends_count": _count_own("friendships"),
+    "level": lambda user_id: _stat_level(user_id),
+    "session_minutes": lambda user_id: _session_stat(user_id, "session_minutes"),
+    "session_before_hour": lambda user_id: _session_stat(user_id, "session_before_hour"),
+    "session_after_midnight": lambda user_id: _session_stat(user_id, "session_after_midnight"),
+    "xp_in_day": lambda user_id: _best_day_xp(user_id),
+    "goal_streak": lambda user_id: _goal_streak(user_id),
+    "owned_room_members": lambda user_id: _stat_owned_room_members(user_id),
+    "rooms_active": lambda user_id: _stat_rooms_active(user_id),
+    "course_grade_a": lambda user_id: _course_grade_a_count(user_id),
+    "room_replies": lambda user_id: _stat_room_replies(user_id),
+}
+
+
+def _get_user_stat(user_id: str, trigger_type: str) -> int:
+    """Evaluate the current value for a trigger type (0 for an unknown one)."""
+    reader = _STAT_READERS.get(trigger_type)
+    return reader(user_id) if reader else 0
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -296,7 +305,7 @@ def _course_grade_a_count(user_id: str) -> int:
     """Count the user's gradebook courses (enrollments) whose currently
     computed letter grade is an A variant (A, A-, or A+ under a custom scale).
 
-    Reuses `gradebook_service.current_grade` / `letter_for` — the same pure
+    Reuses `services.gradebook.grades.current_grade` / `letter_for` — the same pure
     grade math `routes/gradebook.py` runs — rather than recomputing a percent
     here. `points_possible`/`points_earned` are encrypted at rest (see
     CLAUDE.md gotchas), so they're decrypted the same way `_load_assignments`
@@ -319,18 +328,19 @@ def _course_grade_a_count(user_id: str) -> int:
         for a in assignments:
             a["points_possible"] = decrypt_numeric(a.get("points_possible"))
             a["points_earned"] = decrypt_numeric(a.get("points_earned"))
-        percent = gradebook_service.current_grade(
+        percent = grades.current_grade(
             categories, assignments,
             curve_mode=enr.get("curve_mode") or "raw",
             curve_avg_target=enr.get("curve_avg_target"),
             curve_sd_delta=enr.get("curve_sd_delta"),
         )
-        letter = gradebook_service.letter_for(percent, enr.get("letter_scale"))
+        letter = grades.letter_for(percent, enr.get("letter_scale"))
         if letter and letter.startswith("A"):
             count += 1
     return count
 
 
+@runs_as_service  # #115: awards are server decisions (user_achievements/user_cosmetics writes are service-only)
 def check_achievements(user_id: str, event_type: str, event_data: dict = None) -> list:
     """
     Check and grant achievements for a user after an event.
@@ -464,18 +474,25 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 HEAL_WINDOW = timedelta(hours=24)
 
 
+def parse_utc(raw: str | None) -> datetime | None:
+    """A stored timestamp as an aware UTC datetime; None when missing or
+    unparseable. A naive value is taken as UTC. Shared with
+    scripts/backfill_achievement_xp.py so it reads grant times exactly as the
+    heal window does."""
+    try:
+        ts = _parse_ts(raw)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
 def _earned_since(raw: str | None, cutoff: datetime) -> bool:
     """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
     an unknown grant time is treated as old, so it is never healed."""
-    try:
-        ts = _parse_ts(raw)
-        if ts is None:
-            return False
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts > cutoff
-    except (TypeError, ValueError):
-        return False
+    ts = parse_utc(raw)
+    return ts is not None and ts > cutoff
 
 
 def _heal_grants(user_id: str, achievement_ids: set) -> None:
@@ -578,6 +595,7 @@ def _unlock_cosmetic(user_id: str, cosmetic_id: str) -> None:
     )
 
 
+@runs_as_service  # #115: cosmetic awards are service-only writes
 def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     """Unlock every cosmetic linked to `achievement_id` for `user_id`.
 

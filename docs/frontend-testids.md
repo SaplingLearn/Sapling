@@ -17,7 +17,9 @@ Topic Checklist uses the `topic-checklist` prefix in
 `topic-checklist-toggle`, `topic-checklist-semester`, `topic-checklist-filter`,
 `topic-checklist-refresh`, and repeated `topic-checklist-topic-{topicId}` /
 `topic-checklist-check-{topicId}`. Topic IDs are stable name hashes supplied by
-the API. Course selection on the map uses `graph-course-filter-{courseId}`.
+the API. The panel is not mounted anywhere right now (it was dropped from the
+Tree toolbar). Course selection on the map uses `graph-course-filter-{courseId}`:
+the course key's rows on the Tree, which double as its course filter.
 
 Kebab-case, `<surface>-<element>`:
 
@@ -96,6 +98,7 @@ renders the element.
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
+| Admin account tools | `admin-account` | `frontend/src/components/screens/admin/AccountToolsDialog.tsx` (the per-account dialog opened from Admin → Users: environment badge, seed-by-major, wipe, copy to/from the peer environment; each action opens a review of what will be deleted, with counts, behind a typed email confirmation) |
 | Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
 | Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
@@ -222,8 +225,8 @@ entry points the quiz wave added inside other surfaces' files.
 
 Three ids are **renamed** from the pre-#537 quiz — same role, clearer name:
 `quiz-exit` → `quiz-leave`, `quiz-retake` → `quiz-again`,
-`quiz-explain-concept` → `quiz-ask`. Eleven are **kept** verbatim so existing
-journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
+`quiz-explain-concept` → `quiz-ask`. Ten are **kept** verbatim so existing
+journeys keep anchoring: `quiz-panel`, `quiz-start`,
 `quiz-answer-options`, `quiz-answer-option-{label}`, `quiz-submit-answer`,
 `quiz-next`, `quiz-review-verdict`, `quiz-results-score`,
 `quiz-results-mastery`, `quiz-done`.
@@ -234,15 +237,14 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-resume-strip` | the "you left a quiz on X" banner (`ui/InlineBanner`) |
 | `quiz-resume` | "Resume" on that banner |
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
-| `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-proposal` | the primary proposal card (headed by the concept's name; no eyebrow since #849) |
 | `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
-| `quiz-pick-reset` | "← Back to the suggestion", beside the eyebrow once a concept has been picked off the list (the eyebrow then reads "Your pick") |
+| `quiz-pick-reset` | "← Back to the suggestion", above the card's name once a concept has been picked off the list |
 | `quiz-definition-pending` | the definition's placeholder while its sentence is fetched (nothing remembered for that concept yet) |
 | `quiz-start` | "Start" on that card |
-| `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
 | `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
 | `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
-| `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
+| `quiz-pick-list` | the topic list beside the proposal (accessible name "Choose a topic"; groups headed by the course name) — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list — clicking it makes that concept the card (no dialog); the row the old card's concept returns to carries `data-returned` for a moment |
 | `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
 | `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |
@@ -390,9 +392,10 @@ never collide in the DOM.
 
 | testid | element |
 | --- | --- |
-| `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
-| `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
-| `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-courses-key` | the always-open course key overlay on the graph panel (default sidebar layout; mounts once enrollments have loaded, absent when no course is in the graph) |
+| `dashboard-course-row` | a course row button inside the key (click: zoom to the course, again to zoom out); carries `data-course-id` |
+| `dashboard-course-code` | a course row's code/name label inside the key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+| `dashboard-courses-manage` | the "Manage →" link in the "Courses" header of the course list (right column's mastery card) that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | Today's plan session item — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 | `dashboard-today-column` / `dashboard-streak` / `dashboard-plan` / `dashboard-mastery` | the sidebar layout's right column and its three cards (`dashboard/TodayColumn.tsx`) |
 | `dashboard-plan-progress` | the plan's "N of M done today" line |
@@ -484,17 +487,64 @@ baselined backlog — every button/input in them is tagged.
 ### `admin-user`
 
 Added with the waitlist-approval-at-sign-in change (PR #741). Admin → Users
-lists only approved accounts; the one per-row action is "Remove access",
-which confirms in an in-page `Dialog` before calling `adminRemoveUserAccess`
+lists only approved accounts; the per-row actions are "Account tools" (opens
+the `admin-account` dialog below) and "Remove access", which confirms in an
+in-page `Dialog` before calling `adminRemoveUserAccess`
 (`PATCH /api/admin/users/{id}/unapprove`). Only these elements are tagged —
 `Admin.tsx` stays out of the lint `files` list (see Enforcement).
 
 | testid | element |
 | --- | --- |
 | `admin-users-summary` | the "N users" count line above the table |
+| `admin-user-account-tools-{userId}` | a row's "Account tools" button; opens the `admin-account` dialog, never calls the API directly |
 | `admin-user-remove-access-{userId}` | a row's "Remove access" button; opens the confirm dialog, never calls the API directly |
 | `admin-user-remove-body` | the confirm dialog's explanation (what removal does) |
 | `admin-user-remove-confirm` / `admin-user-remove-cancel` | the confirm dialog's buttons; confirm calls `adminRemoveUserAccess` then reloads the list |
+
+### `admin-account`
+
+Added with the admin account tools (spec
+`docs/superpowers/specs/2026-11-08-admin-account-tools-design.md`). The dialog
+lives in `admin/AccountToolsDialog.tsx` (in the lint `files` list, no
+baselined backlog) and is opened per row from Admin → Users. It reads
+`GET /api/admin/accounts/meta` on open. Two steps: the action list never
+runs anything — Seed / Wipe / Copy open a review (`admin-account-review-*`)
+that reads `GET /{id}/summary` (or `GET /{id}/copy-preview?direction=` for a
+copy) and shows what will be deleted with real counts and what replaces it.
+The final confirm stays disabled until the admin types the account's email
+(case-insensitive; the user id for an undecryptable row). Success toasts and
+closes; an error toasts, keeps the review open and re-reads the summary.
+
+| testid | element |
+| --- | --- |
+| `admin-account-tools` | dialog content root |
+| `admin-account-env` | the environment banner (`data-env` = the raw `env` from `/meta`; danger style on production) |
+| `admin-account-env-badge` | the upper-cased environment name inside it (`PRODUCTION` / `STAGING` / `LOCAL`) |
+| `admin-account-meta-loading` / `admin-account-meta-error` | `/meta` in flight / failed |
+| `admin-account-meta-retry` | the "Try again" button in the `/meta` error state |
+| `admin-account-major` | the major `<select>` (options from `/meta` `majors`) |
+| `admin-account-major-courses` | the selected major's course list (one `<li>` per catalog code) |
+| `admin-account-seed` | "Seed {major}…"; opens the seed review (never calls `adminSeedAccount` itself) |
+| `admin-account-wipe` | "Wipe data…"; opens the wipe review (never calls `adminWipeAccount` itself) |
+| `admin-account-copy-push` / `admin-account-copy-pull` | "Copy to/from {peer_env}…"; open the copy review for `push` / `pull`. Rendered only when `/meta` `sync.configured` |
+| `admin-account-review` | the review step's root (`data-action` = `seed` / `wipe` / `push` / `pull`); replaces the action list |
+| `admin-account-review-target` / `admin-account-review-target-badge` | the "Writes to" banner naming the environment whose data the action deletes (`data-env`; danger style on production) / its upper-cased name |
+| `admin-account-review-loading` / `admin-account-review-error` | the summary (or copy preview) in flight / failed |
+| `admin-account-review-retry` | the "Try again" button in the review's error state |
+| `admin-account-review-delete` | seed/wipe: the "Will delete from {ENV}" block (danger frame on production) |
+| `admin-account-review-destination` / `admin-account-review-source` | copy: "{DEST} currently has (will be deleted)" / "Replaced with, from {SOURCE}" |
+| `{block}-counts` | inside each block above: the non-zero counts in plain words ("4 courses, 31 assignments, …, 1,250 XP") |
+| `{block}-courses` | inside each block above: the account's current course codes (one `<li>` each) |
+| `{block}-empty` | inside each block above, instead of the counts: the account has no study data there |
+| `admin-account-review-missing` | copy: the blocking alert when the account doesn't exist on the destination (or source); the confirm input is hidden and the confirm disabled |
+| `admin-account-review-add` / `admin-account-review-add-courses` | seed: the "Will add" block / the chosen major's course list |
+| `admin-account-review-kept` | wipe: the reminder of what is kept |
+| `admin-account-confirm-input` | the typed-confirmation input (account email) inside the review; arms the final confirm |
+| `admin-account-review-confirm` | the final confirm, labelled with the action and its size ("Delete 138 items and seed Biology", "Wipe 138 items", "Overwrite production's 138 items with staging's data"); calls `adminSeedAccount` / `adminWipeAccount` / `adminCopyAccount` |
+| `admin-account-review-back` | "Back" to the action list (disabled while the action runs) |
+| `admin-account-copy-unconfigured` | the muted note shown instead of the copy buttons when sync isn't configured |
+| `admin-account-copy-unreachable` | shown (and both copy buttons disabled) when sync is configured but `peer_env` is null |
+| `admin-account-close` | the action list's footer "Close" button |
 
 ### `allowlist`
 

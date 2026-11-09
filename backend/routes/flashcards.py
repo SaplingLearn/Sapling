@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -11,26 +10,37 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import is_weak
 from db.connection import table
 from services import events_service
-from services.academics import resolve_offering, term_id_for_label
+from services.academics import resolve_offering
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.encryption import decrypt_if_present, encrypt_if_present
+from services.llm_budget import reraise_budget_refusal
 from services.tutor_sessions import session_owned_by
-from services.flashcard_import_service import (
+from services.flashcards import (
     dedup_against_existing,
     check_rate_limit,
+    library_doc_source_text,
+    list_flashcards,
     parse_xlsx,
     parse_anki_apkg,
     scrape_quizlet_url,
     extract_cards_from_image,
     QuizletBlocked,
+    QuizletURLRejected,
     gemini_generate_cards,
     gemini_cleanup_cards,
     gemini_cloze,
     generate_flashcards as _generate,
+)
+from services.flashcards.context import (  # noqa: F401  (re-export, #118)
+    _COURSE_DOC_COLS,
+    _COURSE_DOC_LIMIT,
+    _enrolled_course_by_name,
+    _get_course_documents,
+    _get_session_summary,
+    _get_weak_concepts,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +58,9 @@ class GenerateFlashcardsBody(BaseModel):
     # Optional term label (#141): grounds generation in the SELECTED term's
     # course documents instead of always the current term's.
     semester: str | None = None
+    # The selected course's abstract id (#829). When present it scopes the
+    # grounding documents directly; `topic` is then only the prompt's label.
+    course_id: str | None = None
 
 
 class FlashcardRatingBody(BaseModel):
@@ -95,121 +108,13 @@ class ImportClozeBody(BaseModel):
     paragraph: str
 
 
-# ── Context helpers ────────────────────────────────────────────────────────────
-
-def _get_session_summary(session_id: str) -> str:
-    try:
-        rows = table("sessions").select(
-            "summary_json", filters={"id": f"eq.{session_id}"}, limit=1
-        )
-        if not rows or not rows[0].get("summary_json"):
-            return ""
-        raw = rows[0]["summary_json"]
-        if isinstance(raw, str):
-            try:
-                return json.dumps(decrypt_json(raw))
-            except Exception:
-                return raw
-        return json.dumps(raw)
-    except Exception:
-        return ""
-
-
-def _get_course_documents(
-    user_id: str, course_name: str, semester: str | None = None
-) -> list[dict]:
-    """
-    Return the library documents grounding generation for `course_name`.
-
-    Documents key on the offering (0025): match the abstract course by name,
-    resolve it to the current-term offering — or, with a ``semester`` (#141),
-    STRICTLY to that term's offering — then read documents by offering.
-
-    Fallback rules (#475 F2): with a ``semester``, a term with no offering of
-    the course AND a course-name miss both contribute NO documents — an
-    explicit term gives the all-docs fallback nothing to anchor to. Without a
-    ``semester``, a course-name miss keeps the pre-existing fallback to all of
-    the user's documents, byte-identical.
-    """
-    try:
-        course_rows = table("courses").select(
-            "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
-        )
-        if course_rows:
-            if semester:
-                term_id = term_id_for_label(semester)
-                offering_id = (
-                    resolve_offering(course_rows[0]["id"], term_id, fallback=False)
-                    if term_id
-                    else None
-                )
-            else:
-                offering_id = resolve_offering(course_rows[0]["id"])
-            if offering_id is None:
-                docs = []
-            else:
-                docs = table("documents").select(
-                    "file_name,category,summary,concept_notes",
-                    filters={
-                        "user_id": f"eq.{user_id}",
-                        "offering_id": f"eq.{offering_id}",
-                        "deleted_at": "is.null",
-                    },
-                )
-        elif semester:
-            # Course-name miss + explicit term: nothing to scope the fallback
-            # to — no documents (#475 F2).
-            docs = []
-        else:
-            docs = table("documents").select(
-                "file_name,category,summary,concept_notes",
-                filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
-            )
-        docs = docs or []
-        for d in docs:
-            d["summary"] = decrypt_if_present(d.get("summary"))
-            notes_raw = d.get("concept_notes")
-            if isinstance(notes_raw, str):
-                d["concept_notes"] = decrypt_json(notes_raw)
-        return docs
-    except Exception:
-        return []
-
-
-def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
-    """
-    Return concept names the student is weak on — below the "learning" floor
-    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
-
-    Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
-    [0.4, 0.45) read as "struggling" on the Tree but were never offered for
-    practice here — the surface whose entire job is drilling weak concepts
-    silently skipped a slice of them.
-    """
-    try:
-        rows = table("graph_nodes").select(
-            "concept_name,mastery_score",
-            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
-        )
-        if not rows:
-            # Try without subject filter — return all low-mastery concepts
-            rows = table("graph_nodes").select(
-                "concept_name,mastery_score",
-                filters={"user_id": f"eq.{user_id}"},
-            )
-        weak = sorted(
-            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
-            key=lambda r: r.get("mastery_score") or 0,
-        )
-        # Weakest first, THEN cap. The cap used to truncate in PostgREST row
-        # order, which was survivable while the floor was 0.4 and is not now
-        # that #557 widened it to 0.45: the newly-admitted [0.4, 0.45)
-        # concepts could displace 0.0-0.1 ones purely on row order, leaving
-        # the surface whose job is drilling the weakest concepts drilling the
-        # least-weak of the weak.
-        return [r["concept_name"] for r in weak[:15]]
-    except Exception:
-        return []
+def llm_http_error(exc: BaseException) -> HTTPException:
+    """The HTTP error a flashcard route raises when a generation failed: the
+    routes' long-standing 502 — except that a budget refusal in `exc` is
+    re-raised as itself (`llm_budget.reraise_budget_refusal`), so main.py
+    answers it with the friendly 429 the tutor and uploads use (#838)."""
+    reraise_budget_refusal(exc)
+    return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -243,7 +148,9 @@ def generate(body: GenerateFlashcardsBody, request: Request):
 
     # 2. Library documents for this course (term-scoped when a semester is
     #    selected, #141)
-    documents = _get_course_documents(body.user_id, body.topic, semester=body.semester)
+    documents = _get_course_documents(
+        body.user_id, body.topic, semester=body.semester, course_id=body.course_id
+    )
 
     # 3. Concepts the student is weak on
     weak_concepts = _get_weak_concepts(body.user_id, body.topic)
@@ -258,7 +165,7 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             weak_concepts=weak_concepts,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
 
     now = datetime.now(timezone.utc).isoformat()
     rows_to_insert = [
@@ -336,37 +243,8 @@ def get_flashcards(
     if not user_id:
         return {"flashcards": []}
 
-    filters = {"user_id": f"eq.{user_id}"}
-    if topic:
-        filters["topic"] = f"eq.{topic}"
-
     try:
-        rows = table("flashcards").select(
-            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
-            filters=filters, order="created_at.desc"
-        ) or []
-        for r in rows:
-            r["front"] = decrypt_if_present(r.get("front"))
-            r["back"] = decrypt_if_present(r.get("back"))
-        if semester:
-            # Term scoping (#141). This route is user-wide (no course id), so
-            # the filter works on the cards' offering: cards from the selected
-            # term stay, other terms' cards are hidden, and term-LESS cards
-            # (offering_id NULL — e.g. AI-generated) stay visible under any
-            # selection so picking a term never strands them. An unknown label
-            # degrades to term-less cards only — never a 500.
-            term_id = term_id_for_label(semester)
-            allowed: set[str] = set()
-            if term_id:
-                offs = table("course_offerings").select(
-                    "id", filters={"term_id": f"eq.{term_id}"}
-                ) or []
-                allowed = {o["id"] for o in offs if o.get("id")}
-            rows = [
-                r for r in rows
-                if r.get("offering_id") is None or r["offering_id"] in allowed
-            ]
-        return {"flashcards": rows}
+        return {"flashcards": list_flashcards(user_id, topic, semester)}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
@@ -527,6 +405,8 @@ def import_parse(body: ImportParseBody, request: Request):
     if body.source == "url":
         try:
             cards = scrape_quizlet_url(body.payload)
+        except QuizletURLRejected as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except QuizletBlocked as e:
             raise HTTPException(status_code=422, detail=str(e))
         return {"cards": cards, "errors": []}
@@ -553,34 +433,14 @@ def import_generate(body: ImportGenerateBody, request: Request):
     else:  # library_doc
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
-        rows = table("documents").select(
-            "id,user_id,summary,concept_notes,file_name",
-            filters={
-                "id": f"eq.{body.document_id}",
-                "user_id": f"eq.{body.user_id}",
-                "deleted_at": "is.null",
-            },
-            limit=1,
-        )
-        if not rows:
+        source_text = library_doc_source_text(body.user_id, body.document_id)
+        if source_text is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        doc = rows[0]
-        doc_summary = decrypt_if_present(doc.get("summary")) or ""
-        notes_raw = doc.get("concept_notes")
-        if isinstance(notes_raw, str):
-            try:
-                doc_notes = decrypt_json(notes_raw)
-            except Exception:
-                doc_notes = notes_raw
-        else:
-            doc_notes = notes_raw or {}
-        parts = [doc_summary, str(doc_notes)]
-        source_text = "\n\n".join(p for p in parts if p)
 
     try:
         cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
     # generation (the cards come back for review; /import/commit only
@@ -619,7 +479,7 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
     try:
         out = gemini_cleanup_cards(cards)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     return {"cards": out}
 
 
@@ -638,5 +498,5 @@ def import_cloze(body: ImportClozeBody, request: Request):
     try:
         cards = gemini_cloze(body.paragraph)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+        raise llm_http_error(e) from e
     return {"cards": cards}

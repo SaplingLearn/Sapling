@@ -6,8 +6,11 @@
  *
  *   - counts — one rendered node per `graph_nodes` row plus one synthesized
  *     subject-root hub per distinct enrolled course, one rendered edge per
- *     `graph_edges` row (both endpoints present) plus one hub spoke per
- *     course-linked node (the shape `graph_service.get_graph` promises);
+ *     `graph_edges` row (both endpoints present) plus one course link per
+ *     inner-circle concept. The API still sends a hub spoke to every course
+ *     node, but the radial layout (lib/graph/radialLayout.ts) ignores those
+ *     and links each course only to its concepts that nothing leads into
+ *     (no incoming prerequisite / builds_on / part_of edge in the course);
  *   - mastery classification — each node's DB `mastery_score` maps through
  *     the canonical thresholds (backend/config.py::get_mastery_tier) to the
  *     class the UI renders: the 2D graph encodes the tier as the node
@@ -127,11 +130,11 @@ async function graphExpectations() {
   ).map((r) => ({ ...r, mastery_score: Number(r.mastery_score) }));
 
   const edges = (await queryRaw(
-    `SELECT source_node_id, target_node_id
+    `SELECT source_node_id, target_node_id, relationship_type
        FROM graph_edges
       WHERE user_id = $1`,
     [USER_ACTIVE],
-  )) as { source_node_id: string; target_node_id: string }[];
+  )) as { source_node_id: string; target_node_id: string; relationship_type: string }[];
 
   // DISTINCT abstract courses — a correct graph shows ONE subject-root hub
   // per course, however many offerings of it the user is enrolled in.
@@ -150,14 +153,29 @@ async function graphExpectations() {
   const drawableEdges = edges.filter(
     (e) => nodeIds.has(e.source_node_id) && nodeIds.has(e.target_node_id),
   );
-  // …and adds one hub→node spoke for every node of an enrolled course.
-  const spokes = nodes.filter((n) => n.course_id && enrolled.has(n.course_id));
+  // The UI then links each enrolled course to its inner circle: the course's
+  // concepts with no incoming directed edge from another concept of the same
+  // course (mirrors radialLayout.ts computeDepths → courseLinks).
+  const courseOf = new Map(nodes.map((n) => [n.id, n.course_id]));
+  const DIRECTED = new Set(["prerequisite", "builds_on", "part_of"]);
+  const ledInto = new Set(
+    drawableEdges
+      .filter(
+        (e) =>
+          DIRECTED.has(e.relationship_type) &&
+          courseOf.get(e.source_node_id) === courseOf.get(e.target_node_id),
+      )
+      .map((e) => e.target_node_id),
+  );
+  const courseLinks = nodes.filter(
+    (n) => n.course_id && enrolled.has(n.course_id) && !ledInto.has(n.id),
+  );
 
   return {
     nodes,
     courses,
     expectedNodeCount: nodes.length + courses.length,
-    expectedEdgeCount: drawableEdges.length + spokes.length,
+    expectedEdgeCount: drawableEdges.length + courseLinks.length,
   };
 }
 
@@ -184,7 +202,7 @@ function byNodeId(loc: Locator, id: string) {
 // correct payload would, so this ran as test.fixme. Promoted to a normal
 // test now that graph_service.get_graph dedupes subject roots by distinct
 // abstract course_id.
-test("renders exactly one node per DB graph node plus one subject root per enrolled course, and one edge per DB edge plus one hub spoke per course node", async ({ page }) => {
+test("renders exactly one node per DB graph node plus one subject root per enrolled course, and one edge per DB edge plus one course link per inner-circle concept", async ({ page }) => {
   const g = await graphExpectations();
   expect(g.nodes.length).toBeGreaterThan(0); // journey guard: seeded graph present
 
@@ -197,7 +215,7 @@ test("renders exactly one node per DB graph node plus one subject root per enrol
   await expect(svgNodes).toHaveCount(g.expectedNodeCount);
   await expect(items).toHaveCount(g.expectedNodeCount);
 
-  // Edge count: one graph-edge line per DB edge + per subject spoke.
+  // Edge count: one graph-edge line per DB edge + per course → inner-circle link.
   await expect(svgEdges).toHaveCount(g.expectedEdgeCount);
 
   // Each subject-root hub renders exactly once per distinct enrolled course
@@ -239,7 +257,7 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
     await expect(hub).toHaveText(rootLabel(c.course_code, c.course_name));
   }
 
-  // Edge floor: at least every DB edge + hub spoke is drawn (exact equality
+  // Edge floor: at least every DB edge + course link is drawn (exact equality
   // is asserted by the dedicated test above; this stays a floor check so a
   // MISSING edge still fails here even independent of hub-count coverage).
   expect(await svgEdges.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);

@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from config import SESSION_SECRET
 from db.connection import table
+from db.scope import service_scope
 from services import events_service
 from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_SESSION
 
@@ -131,9 +132,13 @@ def clear_account_state_cache(user_id: str | None = None) -> None:
 
 
 def _read_account_state(user_id: str) -> str:
-    rows = table("users").select(
-        "id,deleted_at,is_approved", filters={"id": f"eq.{user_id}"}
-    )
+    # Service role (#115): this read DECIDES whether the subject is a live
+    # account, so it cannot run as that subject. Every guarded request makes
+    # it; a scoped miss here would 500 every request under enforce.
+    with service_scope():
+        rows = table("users").select(
+            "id,deleted_at,is_approved", filters={"id": f"eq.{user_id}"}
+        )
     if not rows:
         return ACCOUNT_MISSING
     row = rows[0]
@@ -268,10 +273,11 @@ def require_self(user_id: str, request: Request, *, allow_unapproved: bool = Fal
 def require_admin(request: Request) -> None:
     """Verify the authenticated user has the admin role."""
     session_user = get_session_user_id(request)
-    roles = table("user_roles").select(
-        "role_id,roles!inner(slug)",
-        filters={"user_id": f"eq.{session_user}"},
-    )
+    with service_scope():  # #115: an authorization read, like the account read
+        roles = table("user_roles").select(
+            "role_id,roles!inner(slug)",
+            filters={"user_id": f"eq.{session_user}"},
+        )
     slugs = [r.get("roles", {}).get("slug", "") for r in roles] if roles else []
     if "admin" not in slugs:
         _log_permission_denied(session_user, request, "not_admin")
@@ -282,10 +288,11 @@ def require_role(role_slug: str):
     """Returns a callable that checks if the user has the given role."""
     def _checker(request: Request):
         session_user = get_session_user_id(request)
-        roles = table("user_roles").select(
-            "role_id,roles!inner(slug)",
-            filters={"user_id": f"eq.{session_user}"},
-        )
+        with service_scope():  # #115: an authorization read
+            roles = table("user_roles").select(
+                "role_id,roles!inner(slug)",
+                filters={"user_id": f"eq.{session_user}"},
+            )
         slugs = [r.get("roles", {}).get("slug", "") for r in roles] if roles else []
         if role_slug not in slugs:
             _log_permission_denied(session_user, request, f"missing_role:{role_slug}")

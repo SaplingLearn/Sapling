@@ -217,6 +217,13 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # always ciphertext" is one invariant, while "ciphertext unless
     # category='catalog'" is a rule this oracle could not express.
     ("course_chunks", "id", "chunk_text"),
+    # #116 queued uploads. `file_data` (raw file bytes, encrypt_bytes) is not
+    # listed: it is binary, so the text decrypt-and-compare judge cannot read
+    # it, and it is NULL once an upload finishes.
+    ("document_uploads", "id", "result"),
+    # #117 a pending tutor session's greeting (the messages.content format);
+    # NULL on a tombstone.
+    ("tutor_pending_sessions", "session_id", "assistant_reply"),
 )
 
 

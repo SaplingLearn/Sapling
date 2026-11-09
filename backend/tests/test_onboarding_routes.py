@@ -4,6 +4,8 @@ Unit tests for routes/onboarding.py
 Tests the POST /api/onboarding/profile and GET /api/onboarding/courses
 endpoints with DB mocked.
 """
+import re
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -63,36 +65,63 @@ class TestSearchCourses:
         assert res.status_code == 200
         return captured
 
-    def test_a_comma_in_the_query_cannot_break_the_logic_tree(self):
-        """#592 review C11. The query is user input interpolated into a
-        PostgREST `or=(…)` tree, where a bare value ends at the first comma or
-        paren — so searching for "Ethics, Law" built two broken operands and
-        returned nonsense (or a 400) rather than the course."""
-        clause = self._filters_for("Ethics, Law")["or"]
+    def test_every_token_must_match_the_code_or_the_name(self):
+        """Students type codes without the school prefix ("FE 223" for
+        "QST FE 223"), without spaces ("FE223"), and names out of order
+        ("corporate finance intro"). One substring over the whole query missed
+        all of those, so each letter/digit run is its own AND-ed clause."""
+        clause = self._filters_for("FE223")["and"]
 
         assert clause == (
-            '(course_name.ilike."%Ethics, Law%",'
-            'course_code.ilike."%Ethics, Law%")'
+            '(or(course_name.ilike."%fe%",course_code.ilike."%fe%"),'
+            'or(course_name.ilike."%223%",course_code.ilike."%223%"))'
         )
 
-    def test_like_metacharacters_in_the_query_are_not_wildcards(self):
-        """`_` is LIKE's any-single-character wildcard and `%` is any run of
-        them, so typing either turned the search into a pattern over the whole
-        catalog. Only the two `%` the route adds are live."""
-        clause = self._filters_for("CS_1 100%")["or"]
+    def test_punctuation_never_reaches_the_logic_tree(self):
+        """#592 review C11: a comma or paren in a bare value split the
+        PostgREST `or=(…)` tree, and `_`/`%` became live LIKE wildcards.
+        Tokens are letter/digit runs only, so none of those survive."""
+        clause = self._filters_for('Ethics, Law (CS_1) 100% "hi"')["and"]
 
-        # `\\_`, not `\_`: the LIKE escape runs first and the PostgREST quote
-        # then doubles its backslashes. The other order emits a bare `\%` that
-        # PostgREST unescapes straight back into a live wildcard.
-        assert clause == (
-            r'(course_name.ilike."%CS\\_1 100\\%%",'
-            r'course_code.ilike."%CS\\_1 100\\%%")'
-        )
+        needles = re.findall(r'ilike\."%([^"]*)%"', clause)
+        assert needles == [n for t in ["ethics", "law", "cs", "1", "100", "hi"] for n in (t, t)]
+        assert clause.count("or(") == 6
 
-    def test_a_quote_in_the_query_is_escaped_rather_than_closing_the_value(self):
-        clause = self._filters_for('say "hi"')["or"]
+    def test_stopwords_are_dropped_unless_they_are_the_whole_query(self):
+        assert '"%and%"' not in self._filters_for("Law and Society")["and"]
+        assert '"%the%"' in self._filters_for("the")["and"]
 
-        assert clause.startswith(r'(course_name.ilike."%say \"hi\"%"')
+    def test_a_punctuation_only_query_returns_nothing_without_a_query(self):
+        mock = MagicMock()
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses", params={"q": "%%"})
+        assert res.status_code == 200
+        assert res.json() == {"courses": []}
+        mock.select.assert_not_called()
+
+    def _ranked(self, q: str, rows: list[dict]) -> list[str]:
+        mock = MagicMock()
+        mock.select.return_value = rows
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses", params={"q": q})
+        assert res.status_code == 200
+        return [c["course_code"] for c in res.json()["courses"]]
+
+    @pytest.mark.parametrize("q", ["fe 223", "FE223", "fe-223", "qst fe 223", "QST FE223"])
+    def test_the_typed_code_ranks_first_with_or_without_the_school(self, q):
+        # Name-ordered, as the DB returns them: the exact code is not first.
+        rows = [
+            {"id": "1", "course_code": "QST BA 223", "course_name": "Business Life Analytics"},
+            {"id": "2", "course_code": "QST FE 223", "course_name": "Introduction to Corporate Finance"},
+        ]
+        assert self._ranked(q, rows)[0] == "QST FE 223"
+
+    def test_a_title_match_ranks_above_a_scattered_one(self):
+        rows = [
+            {"id": "1", "course_code": "LAW JD 985", "course_name": "Finance Law: Corporate Deals"},
+            {"id": "2", "course_code": "QST FE 223", "course_name": "Introduction to Corporate Finance"},
+        ]
+        assert self._ranked("intro to corporate finance", rows)[0] == "QST FE 223"
 
     def test_a_blank_query_adds_no_filter_at_all(self):
         assert "or" not in self._filters_for("   ")

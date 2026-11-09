@@ -45,6 +45,11 @@ def pytest_configure(config):
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
         "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
+        "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -56,8 +61,10 @@ def _clear_rate_limit_state():
     from services import request_limits
 
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
     yield
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +74,7 @@ def _clear_lru_caches():
     from agents._providers import _unfreeze_model_mode_for_tests, clear_override_model_cache
     from services import (
         academics, analytics_consent, auth_guard, course_context_service, feature_flags, growth,
+        llm_budget,
     )
     _unfreeze_model_mode_for_tests()  # #771: a lifespan run latches the mode
     clear_override_model_cache()
@@ -77,6 +85,7 @@ def _clear_lru_caches():
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
+    llm_budget.clear_llm_budget_cache()
     # #756: the OAuth callback honours each state nonce once per process, and
     # the callback harnesses reuse fixed nonces. Only if already imported.
     auth_routes = sys.modules.get("routes.auth")
@@ -92,9 +101,42 @@ def _clear_lru_caches():
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
+    llm_budget.clear_llm_budget_cache()
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
+
+
+@pytest.fixture(autouse=True)
+def _llm_budget_off(request, monkeypatch):
+    """#119: pin the `llm_budget` kill switch to "off" for the hermetic suite,
+    for the reason `_db_user_scope_off` gives: a real-model run inside a
+    request would otherwise resolve the flag from the fake store and warm the
+    process's flag snapshot. tests/test_llm_budget.py turns it on per test.
+    The `llm_outage_drill` flag (read on every real model request) likewise;
+    tests/test_llm_outage_drill.py arms it per test."""
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
+        return
+    monkeypatch.setenv("SAPLING_FLAG_LLM_BUDGET", "off")
+    monkeypatch.setenv("SAPLING_FLAG_LLM_OUTAGE_DRILL", "off")
+
+
+@pytest.fixture(autouse=True)
+def _db_user_scope_off(request, monkeypatch):
+    """#115: pin the `db_user_scope` kill switch to "off" for the hermetic
+    suite. Unpinned, the first DB call of every request resolves the flag from
+    the (fake, empty) store, which WARMS the process's flag snapshot during
+    the request; tests that rely on a cold snapshot after a request (the tutor
+    router's `router_backends_cached` -> None path) would then see a cached
+    "off" for every flag. Production is unaffected: warming earlier gives the
+    same answers. tests/test_db_user_scope.py deletes the override to exercise
+    the store path; the integration lane sets it per matrix mode."""
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
+        return
+    monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", "off")
+    # #117: likewise for `stateless_tutor_sessions`, read on every tutor
+    # session lookup; tests/test_tutor_sessions_store.py turns it on per test.
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -103,13 +145,17 @@ def _tutor_session_reads_follow_learn_table(monkeypatch):
     services/tutor_sessions.py so flashcards/feedback could share it. Dozens
     of learn tests drive the whole route through ONE `patch("routes.learn.
     table", side_effect=factory)`; this keeps the ownership read on that same
-    factory by resolving `routes.learn.table` at call time. A test of a
+    factory by resolving the tutor's `table` at call time. A test of a
     non-learn route that needs a different answer patches
-    `services.tutor_sessions.table` itself, which overrides this."""
-    import routes.learn as learn_routes
-    from services import tutor_sessions
+    `services.tutor_sessions.table` itself, which overrides this.
 
-    monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
+    #118: the learn code moved into services/tutor/, so those tests now use
+    `patch_tutor("table", ...)` (tests/split_patches.py), which puts ONE mock
+    on every tutor module; following any one of them follows that mock."""
+    from services import tutor_sessions
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(tutor_sessions, "table", lambda name: tutor_pending.table(name))
     # #761: discard tombstones are process-global, and test session ids are
     # reused ("s1"), so one test's delete would 404 the next test's turn.
     tutor_sessions._DISCARDED.clear()
@@ -338,6 +384,29 @@ def _hermetic_supabase_client(request, monkeypatch):
         getattr(fake_client, verb).side_effect = _empty_response
     monkeypatch.setattr(dbconn, "_client", fake_client)
 
+    # #117: the async twin's per-loop client gets the same net, so an `a*`
+    # call that escapes a test's `table` patch is caught exactly as a sync one.
+    from unittest.mock import AsyncMock
+
+    import db.async_connection as adb
+
+    fake_async = MagicMock(name="hermetic_supabase_async_client")
+    for verb in ("get", "post", "patch", "delete"):
+        setattr(fake_async, verb, AsyncMock(side_effect=_empty_response))
+    monkeypatch.setattr(adb, "_async_client", lambda: fake_async)
+
+
+@pytest.fixture
+def no_sync_db_on_loop(monkeypatch):
+    """Opt-in (#117, docs/design/async-db-client.md §4.2): a sync PostgREST
+    call made ON a running event loop raises `db.async_connection.SyncDbOnLoop`
+    instead of only logging `db.sync_on_loop`. A converted router's test
+    module uses it so a blocking call creeping back fails CI."""
+    import db.async_connection as adb
+
+    monkeypatch.setattr(adb, "RAISE_ON_SYNC_ON_LOOP", True)
+    yield
+
 
 class UnstubbedEmailEgress(RuntimeError):
     """Raised by `_hermetic_email_transport` when a test reaches Resend."""
@@ -477,6 +546,42 @@ def live_accounts(monkeypatch):
     monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
 
 
+#: The offering `_bypass_course_enrollment` hands a gated write when the
+#: test's fake table resolves none.
+BYPASS_OFFERING_ID = "off-bypass"
+
+
+@pytest.fixture(autouse=True)
+def _bypass_course_enrollment(request, monkeypatch):
+    """#115: course-keyed writes (upload, scan-concepts, notes create/move,
+    tutor start-session with a course_id) go through
+    `academics.require_course_enrollment`, which answers with ONE read:
+    `academics.enrolled_offering_for_course`. Tests that mock `table()` for
+    the route's own logic predate it and do not model enrollments, so — like
+    the auth guard below — that read is replaced by the pre-#115 resolution
+    (the current-term offering, `resolve_offering(create=True)`, or the
+    stand-in `BYPASS_OFFERING_ID` when the test's fake table models no
+    offering): the gate passes and the write lands where it used to. One
+    module-level patch covers every importer, because
+    `require_course_enrollment` looks the function up as a module global. A
+    test that pins the offering patches `routes.<module>.require_course_enrollment`.
+
+    Opt out with `@pytest.mark.real_course_enrollment`; tests against a real
+    DB (integration / e2e_staging) always run the real gate."""
+    if (request.node.get_closest_marker("real_course_enrollment")
+            or request.node.get_closest_marker("e2e_staging")
+            or request.node.get_closest_marker("integration")):
+        return
+    from services import academics
+
+    monkeypatch.setattr(
+        academics, "enrolled_offering_for_course",
+        lambda _user_id, course_id: (
+            academics.resolve_offering(course_id, create=True) or BYPASS_OFFERING_ID
+        ),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _bypass_session_auth(request, monkeypatch):
     """Stub the auth guard so tests don't need to mint session tokens.
@@ -531,7 +636,9 @@ def _bypass_session_auth(request, monkeypatch):
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        if not mod_name.startswith("routes."):
+        # services.quiz.* / services.tutor.*: the quiz and learn splits (#118)
+        # moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):

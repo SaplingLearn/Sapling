@@ -1,107 +1,79 @@
+"""
+Social routes — study rooms, room messages, matching, the student directory
+and friends.
+
+The handlers check the caller (``require_self`` / the session user) and call
+``services/social/`` (#118), which holds the reads, writes, agent call and
+achievement dispatch; ``_social_errors`` maps that package's domain errors to
+the status codes these routes always answered.
+"""
 import logging
-import uuid
-import random
-import string
-from datetime import datetime, timedelta, timezone
-from collections import defaultdict
+from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from agents._run import run_agent_sync
-from agents.deps import SaplingDeps
-from agents.social_summary import social_summary_agent
-from agents.usage import record_agent_usage
-from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
+from routes._errors import domain_status
 from services.auth_guard import require_self, get_session_user_id
-from services.achievement_service import check_achievements
-from services.encryption import encrypt_if_present, decrypt_if_present
-from services.profiles import get_display_name, get_display_names
-from services.graph_service import get_graph
-from services import academics
-from services.matching_service import find_study_matches
-from services.request_context import current_request_id
-from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
+from services.social import (
+    Conflict,
+    Forbidden,
+    InvalidRequest,
+    NotFound,
+    RateLimited,
+    SocialError,
+    UpstreamError,
+    directory,
+    friends,
+    matching,
+    messages,
+    overview,
+    rooms,
+)
+
+# Moved to services/social/ (#118); re-exported so imports and patches of the
+# old names on this module keep working.
+from services.social.directory import _LISTABLE_USER_FILTERS, _visible_profile_ids  # noqa: F401  (re-export, #118)
+from services.social.friends import (  # noqa: F401  (re-export, #118)
+    DECLINE_COOLDOWN,
+    _are_friends,
+    _decline_cooldown_ends,
+    _load_request,
+    _request_status,
+    _resolve_pending,
+)
+from services.social.messages import _message_in_room  # noqa: F401  (re-export, #118)
+from services.social.rooms import (  # noqa: F401  (re-export, #118)
+    _is_banned,
+    _live_members,
+    _require_member,
+    _touch_room,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
-def _touch_room(room_id: str) -> None:
-    """Bump rooms.updated_at on membership changes (#405 gave it a writer;
-    message traffic is deliberately left alone — the 0033 realtime publication
-    owns that flow)."""
-    table("rooms").update(
-        {"updated_at": datetime.now(timezone.utc).isoformat()},
-        {"id": f"eq.{room_id}"},
-    )
-
-
-def _is_banned(room_id: str, user_id: str) -> bool:
-    """A kick records a room_bans row (#764); both join paths refuse it."""
-    return bool(table("room_bans").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}"},
-    ))
-
-
-def _require_member(room_id: str, user_id: str) -> None:
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-
-
-#: Who counts as a real, listable student (#764). A stub is the bare
-#: {id, streak_count} row graph_service.ensure_user_exists inserts, and it has
-#: no email. (google_id is NOT the test: every seeded local/E2E/showcase user
-#: carries an email but no google_id, so keying on it would empty the
-#: directory on every seeded stack.) Pending and soft-deleted accounts are
-#: neither matchable nor browsable.
-_LISTABLE_USER_FILTERS = {
-    "email": "not.is.null",
-    "is_approved": "eq.true",
-    "deleted_at": "is.null",
+_ERROR_STATUS = {
+    InvalidRequest: 400, Forbidden: 403, NotFound: 404, Conflict: 409,
+    RateLimited: 429, UpstreamError: 502,
 }
+
+
+@contextmanager
+def _social_errors():
+    """Map a ``services.social`` domain error to its HTTP status, same detail."""
+    try:
+        yield
+    except SocialError as e:
+        raise HTTPException(status_code=domain_status(e, _ERROR_STATUS), detail=e.detail)
 
 
 @router.post("/rooms/create")
 def create_room(body: CreateRoomBody, request: Request):
     require_self(body.user_id, request)
-    invite_code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    room_id = str(uuid.uuid4())
-    table("rooms").insert({
-        "id": room_id,
-        "name": body.room_name,
-        "invite_code": invite_code,
-        "created_by": body.user_id,
-        # #405 semantics: owner_id is REAL ownership (transferable later),
-        # seeded to the creator; is_public gates the invite-less public join.
-        "owner_id": body.user_id,
-        "topic": body.topic,
-        "course": body.course,
-        "is_public": body.is_public,
-    })
-    table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
-    invalidate_summary(room_id)
-
-    # Creating a room seeds owned_room_members at 1. Below the shipped
-    # threshold of 5, but the stat is admin-configurable from the wiki, so the
-    # create path dispatches it too rather than only the join path.
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(body.user_id, "owned_room_members", {})
-    except Exception:
-        # Post-commit: the room already exists, so a failing badge check must
-        # not fail the create. Logged, never swallowed — a silent `pass` here
-        # is how the `friendships.id` 400 stayed invisible for a whole wave.
-        logger.exception(
-            "achievement dispatch failed after room create user=%s room=%s",
-            body.user_id, room_id,
-        )
-
-    return {"room_id": room_id, "invite_code": invite_code}
+    with _social_errors():
+        return rooms.create_room(body)
 
 
 @router.get("/public-rooms")
@@ -110,563 +82,116 @@ def list_public_rooms(request: Request, user_id: str = Query(...)):
     The select never includes invite_code, so the public listing cannot leak
     the private join path."""
     require_self(user_id, request)
-    rooms = table("rooms").select(
-        "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
-        filters={"is_public": "eq.true"},
-    ) or []
-    out = []
-    for room in rooms:
-        members = table("room_members").select(
-            "user_id", filters={"room_id": f"eq.{room['id']}"},
-        ) or []
-        # Explicit projection (never a row spread): the public payload cannot
-        # leak invite_code even if the row carries it.
-        out.append({
-            "id": room["id"],
-            "name": room.get("name"),
-            "topic": room.get("topic"),
-            "course": room.get("course"),
-            "owner_id": room.get("owner_id"),
-            "created_by": room.get("created_by"),
-            "created_at": room.get("created_at"),
-            "updated_at": room.get("updated_at"),
-            "is_public": True,
-            "member_count": len(members),
-        })
-    return {"rooms": out}
+    with _social_errors():
+        return rooms.list_public_rooms(user_id)
 
 
 @router.post("/public-rooms/{room_id}/join")
 def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
     require_self(body.user_id, request)
-    # created_by is selected because the achievement dispatch below needs it —
-    # owned_room_members is the OWNER's stat, not the joiner's.
-    rooms = table("rooms").select(
-        "id,is_public,created_by", filters={"id": f"eq.{room_id}"}
-    )
-    if not rooms:
-        raise HTTPException(status_code=404, detail="Room not found")
-    if not rooms[0].get("is_public"):
-        raise HTTPException(status_code=403, detail="This room is invite-only")
-    if _is_banned(room_id, body.user_id):
-        raise HTTPException(status_code=403, detail="You were removed from this room")
-    existing = table("room_members").select(
-        "room_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"},
-    )
-    if not existing:
-        # UPSERT, not insert: the pre-read is only a "did we actually add"
-        # signal, so a double-click racing itself must no-op on the
-        # room_members PK rather than surface a raw 500 (PR #485 review;
-        # same shape as #464's check-then-act finding).
-        table("room_members").upsert(
-            {"room_id": room_id, "user_id": body.user_id}, on_conflict="room_id,user_id",
-        )
-        _touch_room(room_id)
-        invalidate_summary(room_id)
-
-    # #405's public rooms are a SECOND way into a room, so they must dispatch
-    # exactly what the invite-code path (join_room) dispatches. Without this,
-    # `room-leader` (Grovekeeper: create a study room five people join) only
-    # advanced for owners whose members happened to arrive by invite code — the
-    # same badge, earnable or not depending on which join button the fifth
-    # member pressed. Fired unconditionally (not only on a fresh membership),
-    # mirroring join_room: a repeat join is a cheap re-evaluation, and the
-    # owner's badge must not depend on the joiner's click history.
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(body.user_id, "rooms_joined", {})
-        # The owner is rooms.created_by, NOT the joining user — dispatching for
-        # body.user_id would evaluate the wrong user's rooms.
-        owner = rooms[0].get("created_by")
-        if owner:
-            check_achievements(owner, "owned_room_members", {})
-    except Exception:
-        logger.exception(
-            "achievement dispatch failed after public room join user=%s room=%s",
-            body.user_id, room_id,
-        )
-
-    return {"joined": True, "room_id": room_id}
+    with _social_errors():
+        return rooms.join_public_room(room_id, body)
 
 
 @router.post("/rooms/join")
 def join_room(body: JoinRoomBody, request: Request):
     require_self(body.user_id, request)
-    room_rows = table("rooms").select(
-        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
-        filters={"invite_code": f"eq.{body.invite_code.strip().upper()}"},
-    )
-    if not room_rows:
-        raise HTTPException(status_code=404, detail="Room not found")
-    room = room_rows[0]
-    if _is_banned(room["id"], body.user_id):
-        raise HTTPException(status_code=403, detail="You were removed from this room")
-
-    existing = table("room_members").select(
-        "room_id",
-        filters={"room_id": f"eq.{room['id']}", "user_id": f"eq.{body.user_id}"},
-    )
-    if not existing:
-        table("room_members").upsert(
-            {"room_id": room["id"], "user_id": body.user_id}, on_conflict="room_id,user_id",
-        )
-        _touch_room(room["id"])
-        invalidate_summary(room["id"])
-
-    members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
-
-    # Check for achievements after room join
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(body.user_id, "rooms_joined", {})
-        # owned_room_members (`room-leader`/Grovekeeper: build a room five
-        # people join) is the ROOM CREATOR's stat, not the joiner's — a join
-        # advances someone else's badge. Dispatching it for body.user_id would
-        # evaluate the wrong user's rooms and the owner would never be granted.
-        owner = room.get("created_by")
-        if owner:
-            check_achievements(owner, "owned_room_members", {})
-    except Exception:
-        logger.exception(
-            "achievement dispatch failed after room join user=%s room=%s",
-            body.user_id, room["id"],
-        )
-
-    return {"room": {**room, "member_count": len(members)}}
+    with _social_errors():
+        return rooms.join_room(body)
 
 
 @router.get("/rooms/{user_id}")
 def get_user_rooms(user_id: str, request: Request):
     require_self(user_id, request)
-    memberships = table("room_members").select("room_id", filters={"user_id": f"eq.{user_id}"})
-    room_ids = [m["room_id"] for m in memberships]
-    if not room_ids:
-        return {"rooms": []}
-
-    rooms = table("rooms").select(
-        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
-        filters={"id": f"in.({','.join(room_ids)})"},
-    )
-    for room in rooms:
-        members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
-        room["member_count"] = len(members)
-    return {"rooms": rooms}
+    with _social_errors():
+        return rooms.get_user_rooms(user_id)
 
 
 @router.get("/rooms/{room_id}/overview")
 def room_overview(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-
-    room_rows = table("rooms").select(
-        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
-        filters={"id": f"eq.{room_id}"},
-    )
-    if not room_rows:
-        raise HTTPException(status_code=404, detail="Room not found")
-    room = room_rows[0]
-
-    member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
-
-    members = []
-    if member_ids:
-        # Names live on user_profiles (0024); resolve in bulk and decrypt.
-        name_map = get_display_names(member_ids)
-        for uid in member_ids:
-            members.append({
-                "user_id": uid,
-                "name": name_map.get(uid, ""),
-                "graph": get_graph(uid),
-            })
-
-    member_summaries = []
-    for m in members:
-        nodes = m["graph"]["nodes"]
-        mastered = [n["concept_name"] for n in nodes if n["mastery_tier"] == "mastered"]
-        struggling = [n["concept_name"] for n in nodes if n["mastery_tier"] == "struggling"]
-        member_summaries.append(f"{m['name']}: mastered {mastered}, struggling with {struggling}")
-
-    ai_summary = get_cached_summary(room_id, member_summaries)
-    if ai_summary is None:
-        try:
-            from db.connection import _client  # opaque pass-through for SaplingDeps
-            deps = SaplingDeps(
-                user_id=viewer_id,  # already resolved at the membership gate above
-                course_id=None,
-                supabase=_client,
-                request_id=current_request_id() or "",
-                session_id=room_id,
-            )
-            user_message = (
-                "Summarize this study group's collective knowledge:\n"
-                + "\n".join(member_summaries)
-            )
-            result = record_agent_usage(
-                run_agent_sync(social_summary_agent.run(user_message, deps=deps)),
-                feature="social", task="social_summary",
-            )
-            ai_summary = result.output.summary
-            save_summary(room_id, member_summaries, ai_summary)
-        except Exception as e:
-            print(f"Gemini summary failed: {e}")
-            ai_summary = "This study group has complementary strengths across multiple subjects."
-
-    return {"room": room, "members": members, "ai_summary": ai_summary}
+    with _social_errors():
+        return overview.room_overview(room_id, viewer_id)
 
 
 @router.get("/rooms/{room_id}/activity")
 def room_activity(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-
-    activity_rows = table("room_activity").select(
-        "id,room_id,user_id,activity_type,concept_name,detail,created_at",
-        filters={"room_id": f"eq.{room_id}"},
-        order="created_at.desc",
-        limit=20,
-    )
-
-    user_ids = list(set(a["user_id"] for a in activity_rows))
-    user_name_map = get_display_names(user_ids) if user_ids else {}
-
-    activities = [
-        {
-            "id": a["id"],
-            "user_name": user_name_map.get(a["user_id"], a["user_id"]),
-            "activity_type": a["activity_type"],
-            "concept_name": a.get("concept_name"),
-            "detail": a.get("detail", ""),
-            "created_at": a["created_at"],
-        }
-        for a in activity_rows
-    ]
-    return {"activities": activities}
+    with _social_errors():
+        return overview.room_activity(room_id, viewer_id)
 
 
 @router.post("/rooms/{room_id}/match")
 def match_partners(room_id: str, body: MatchBody, request: Request):
     require_self(body.user_id, request)
-    # Members' graphs are room-private (#764): the same gate as the overview.
-    _require_member(room_id, body.user_id)
-    member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
-
-    members_with_graphs = []
-    if member_ids:
-        # Names live on user_profiles (0024); resolve in bulk and decrypt.
-        name_map = get_display_names(member_ids)
-        members_with_graphs = [
-            {"user_id": uid, "name": name_map.get(uid, ""), "graph": get_graph(uid)}
-            for uid in member_ids
-        ]
-
-    try:
-        matches = find_study_matches(body.user_id, members_with_graphs)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
-    return {"matches": matches}
+    with _social_errors():
+        return matching.match_partners(room_id, body)
 
 
 @router.post("/school-match")
 def school_match(body: MatchBody, request: Request):
-    """
-    Match the requesting user against all users NOT in any of their study rooms.
+    """Match the requesting user against students at their school who share
+    none of their study rooms (room-mates are what /rooms/{id}/match is for).
+
+    Candidates follow the same visibility rules as the /students directory
+    (#115): same school only (``academics.school_peer_user_ids``; no school →
+    no matches, fail closed), ``profile_visibility='private'`` opts out, and
+    only listable accounts (no stubs, pending or soft-deleted users). The
+    payload carries per-concept mastery comparisons, so a looser scope here
+    would expose more than the directory itself does.
     """
     require_self(body.user_id, request)
-    user_room_rows = table("room_members").select(
-        "room_id", filters={"user_id": f"eq.{body.user_id}"}
-    )
-    user_room_ids = [r["room_id"] for r in user_room_rows]
-
-    excluded_ids = set()
-    if user_room_ids:
-        room_member_rows = table("room_members").select(
-            "user_id", filters={"room_id": f"in.({','.join(user_room_ids)})"}
-        )
-        excluded_ids = {r["user_id"] for r in room_member_rows}
-
-    excluded_ids.add(body.user_id)
-    excl_list = list(excluded_ids)
-
-    school_users = table("users").select(
-        "id",
-        filters={"id": f"not.in.({','.join(excl_list)})", **_LISTABLE_USER_FILTERS},
-    )
-
-    # Names live on user_profiles (0024); resolve in bulk and decrypt.
-    school_ids = [u["id"] for u in school_users]
-    name_map = get_display_names(school_ids)
-    members_with_graphs = [
-        {"user_id": uid, "name": name_map.get(uid, ""), "graph": get_graph(uid)}
-        for uid in school_ids
-    ]
-
-    requester_graph = get_graph(body.user_id)
-    requester_name = get_display_name(body.user_id) or body.user_id
-
-    all_members = [
-        {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}
-    ] + members_with_graphs
-
-    try:
-        matches = find_study_matches(body.user_id, all_members)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Matching error: {e}")
-
-    return {"matches": matches}
+    with _social_errors():
+        return matching.school_match(body)
 
 
 @router.post("/rooms/{room_id}/leave")
 def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     require_self(body.user_id, request)
-    table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
-    invalidate_summary(room_id)
-
-    # #764: a room is owned by a MEMBER, or it does not exist.
-    remaining = table("room_members").select(
-        "user_id,joined_at",
-        filters={"room_id": f"eq.{room_id}"},
-        order="joined_at.asc,user_id.asc",
-    ) or []
-    if not remaining:
-        # The last member left: delete the room, which kills its invite code.
-        # Its children (members, messages + reactions, activity, summary,
-        # bans) cascade (20261106055333_state_machines_audit.sql).
-        table("rooms").delete({"id": f"eq.{room_id}"})
-        return {"left": True, "room_deleted": True, "owner_id": None}
-
-    room_rows = table("rooms").select("owner_id", filters={"id": f"eq.{room_id}"}) or []
-    owner_id = room_rows[0].get("owner_id") if room_rows else None
-    member_ids = {m["user_id"] for m in remaining}
-    if room_rows and owner_id not in member_ids:
-        # The owner left (or, for a room orphaned before #764, had already
-        # gone): hand ownership to the earliest remaining member. Conditional
-        # on owner_id still being the stale value, so two concurrent leaves
-        # cannot both transfer and the later one cannot clobber the earlier.
-        new_owner = remaining[0]["user_id"]
-        moved = table("rooms").update(
-            {"owner_id": new_owner, "updated_at": datetime.now(timezone.utc).isoformat()},
-            {"id": f"eq.{room_id}", "owner_id": f"eq.{owner_id}"},
-        )
-        if moved:
-            return {"left": True, "room_deleted": False, "owner_id": new_owner}
-    _touch_room(room_id)
-    return {"left": True, "room_deleted": False, "owner_id": owner_id}
+    with _social_errors():
+        return rooms.leave_room(room_id, body)
 
 
 @router.delete("/rooms/{room_id}/members/{member_id}")
 def kick_member(room_id: str, member_id: str, request: Request, requester_id: str = Query(...)):
     require_self(requester_id, request)
-    room_rows = table("rooms").select(
-        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
-        filters={"id": f"eq.{room_id}"},
-    )
-    if not room_rows:
-        raise HTTPException(status_code=404, detail="Room not found")
-    # #405: authorization keys on owner_id (real, transferable ownership) —
-    # created_by stays the immutable creator record and no longer gates.
-    if room_rows[0]["owner_id"] != requester_id:
-        raise HTTPException(status_code=403, detail="Only the room owner can kick members")
-    if member_id == requester_id:
-        # Kicking yourself would leave the room owned by a non-member; leaving
-        # is the path that hands ownership on.
-        raise HTTPException(status_code=400, detail="Leave the room instead of kicking yourself")
-    # #764: a kick is a ban. Record it BEFORE removing the membership so a
-    # rejoin racing the kick is already refused by the join paths.
-    table("room_bans").upsert(
-        {"room_id": room_id, "user_id": member_id, "banned_by": requester_id},
-        on_conflict="room_id,user_id",
-        ignore_duplicates=True,
-    )
-    table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}"})
-    _touch_room(room_id)
-    invalidate_summary(room_id)
-    return {"kicked": True}
+    with _social_errors():
+        return rooms.kick_member(room_id, member_id, requester_id)
 
 
 @router.get("/rooms/{room_id}/messages")
 def get_room_messages(room_id: str, request: Request, before: str | None = None, limit: int = 50):
     viewer_id = get_session_user_id(request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-
-    from datetime import datetime
-    limit = max(1, min(200, limit))
-    filters = {"room_id": f"eq.{room_id}"}
-    if before:
-        # Validate as ISO 8601 so an attacker can't inject PostgREST operators
-        # (e.g. `null`, `is.null`, `gt.2026-01-01`) into the filter value.
-        try:
-            datetime.fromisoformat(before.replace("Z", "+00:00"))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="`before` must be an ISO 8601 timestamp")
-        filters["created_at"] = f"lt.{before}"
-    # Fetch newest-first so the slice covers the page we need, then reverse to ascending.
-    # Over-fetch one row so `has_more` is exact: if the DB returns more than
-    # `limit`, an extra page exists. (Using `len(rows) == limit` reports a
-    # phantom "load more" at exact page boundaries — issue #131.)
-    rows = table("room_messages").select(
-        "id,room_id,user_id,user_name,text,image_url,image_width,image_height,reply_to_id,is_deleted,edited_at,created_at",
-        filters=filters,
-        order="created_at.desc",
-        limit=limit + 1,
-    )
-    if not rows:
-        return {"messages": [], "has_more": False}
-    has_more = len(rows) > limit
-    rows = rows[:limit]  # drop the probe row before reversing
-    rows = list(reversed(rows))
-
-    msg_ids = [r["id"] for r in rows]
-
-    # Fetch reactions for all messages in one query
-    reaction_rows = table("room_reactions").select(
-        "id,message_id,user_id,emoji", filters={"message_id": f"in.({','.join(msg_ids)})"}
-    ) if msg_ids else []
-
-    reactions_by_msg: dict = {}
-    for r in reaction_rows:
-        mid = r["message_id"]
-        if mid not in reactions_by_msg:
-            reactions_by_msg[mid] = {}
-        if r["emoji"] not in reactions_by_msg[mid]:
-            reactions_by_msg[mid][r["emoji"]] = []
-        reactions_by_msg[mid][r["emoji"]].append(r["user_id"])
-
-    # Fetch reply_to snippets
-    reply_ids = list({r["reply_to_id"] for r in rows if r.get("reply_to_id")})
-    reply_map: dict = {}
-    if reply_ids:
-        reply_rows = table("room_messages").select(
-            "id,user_name,text,is_deleted",
-            filters={"id": f"in.({','.join(reply_ids)})"},
-        )
-        for rr in reply_rows:
-            reply_map[rr["id"]] = {
-                "id": rr["id"],
-                "user_name": rr["user_name"],
-                "text": None if rr.get("is_deleted") else decrypt_if_present(rr.get("text")),
-            }
-
-    enriched = []
-    for r in rows:
-        mid = r["id"]
-        emoji_map = reactions_by_msg.get(mid, {})
-        r["text"] = decrypt_if_present(r.get("text"))
-        r["reactions"] = [{"emoji": e, "user_ids": uids} for e, uids in emoji_map.items()]
-        r["reply_to"] = reply_map.get(r.get("reply_to_id")) if r.get("reply_to_id") else None
-        enriched.append(r)
-
-    return {"messages": enriched, "has_more": has_more}
+    with _social_errors():
+        return messages.get_room_messages(room_id, viewer_id, before, limit)
 
 
 @router.post("/rooms/{room_id}/messages")
 def send_room_message(room_id: str, body: SendMessageBody, request: Request):
     require_self(body.user_id, request)
-    membership = table("room_members").select(
-        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"}
-    )
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this room")
-
-    row = table("room_messages").insert({
-        "room_id": room_id,
-        "user_id": body.user_id,
-        "user_name": body.user_name,
-        "text": encrypt_if_present(body.text or None),
-        "image_url": body.image_url or None,
-        "image_width": body.image_width or None,
-        "image_height": body.image_height or None,
-        "reply_to_id": body.reply_to_id or None,
-    })
-
-    if row:
-        row[0]["text"] = decrypt_if_present(row[0].get("text"))
-
-    # Check for achievements after message send. Posting is the only thing
-    # that advances room_replies (`helping-hand`: answer in someone else's
-    # room) and rooms_active (`social-butterfly`: post in five different
-    # rooms), so this is their only possible dispatch point.
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(body.user_id, "post_count", {})
-        check_achievements(body.user_id, "room_replies", {})
-        check_achievements(body.user_id, "rooms_active", {})
-    except Exception:
-        logger.exception(
-            "achievement dispatch failed after room message user=%s room=%s",
-            body.user_id, room_id,
-        )
-
-    return {"message": row[0] if row else {}}
+    with _social_errors():
+        return messages.send_room_message(room_id, body)
 
 
 @router.delete("/rooms/{room_id}/messages/{message_id}")
 def delete_room_message(room_id: str, message_id: str, request: Request, user_id: str = Query(...)):
     require_self(user_id, request)
-    rows = table("room_messages").select("user_id", filters={"id": f"eq.{message_id}"})
-    if not rows:
-        raise HTTPException(status_code=404, detail="Message not found")
-    if rows[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Cannot delete another user's message")
-    # #764: a delete removes the content, not just hides it. Before this the
-    # ciphertext (and image link) stayed in the row behind the flag, so a
-    # "deleted" message was still recoverable by anyone holding the key.
-    table("room_messages").update(
-        {"is_deleted": True, "text": None, "image_url": None},
-        filters={"id": f"eq.{message_id}", "user_id": f"eq.{user_id}"},
-    )
-    return {"deleted": True}
+    with _social_errors():
+        return messages.delete_room_message(room_id, message_id, user_id)
 
 
 @router.patch("/rooms/{room_id}/messages/{message_id}")
 def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, request: Request):
     require_self(body.user_id, request)
-    rows = table("room_messages").select("user_id,is_deleted", filters={"id": f"eq.{message_id}"})
-    if not rows:
-        raise HTTPException(status_code=404, detail="Message not found")
-    if rows[0]["user_id"] != body.user_id:
-        raise HTTPException(status_code=403, detail="Cannot edit another user's message")
-    if rows[0].get("is_deleted"):
-        raise HTTPException(status_code=400, detail="Cannot edit a deleted message")
-    # #764: conditional on is_deleted=false, so an edit racing a delete cannot
-    # write fresh text onto the just-deleted (and just-cleared) message.
-    edited = table("room_messages").update(
-        {"text": encrypt_if_present(body.text), "edited_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "is_deleted": "eq.false"},
-    )
-    if not edited:
-        raise HTTPException(status_code=409, detail="Cannot edit a deleted message")
-    return {"edited": True}
+    with _social_errors():
+        return messages.edit_room_message(room_id, message_id, body)
 
 
 @router.post("/rooms/{room_id}/messages/{message_id}/reactions")
 def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, request: Request):
     require_self(body.user_id, request)
-    existing = table("room_reactions").select(
-        "id", filters={"message_id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "emoji": f"eq.{body.emoji}"}
-    )
-    if existing:
-        table("room_reactions").delete({"id": f"eq.{existing[0]['id']}"})
-        return {"added": False}
-    table("room_reactions").insert({
-        "message_id": message_id,
-        "user_id": body.user_id,
-        "emoji": body.emoji,
-    })
-    return {"added": True}
+    with _social_errors():
+        return messages.toggle_reaction(room_id, message_id, body)
 
 
 @router.get("/students")
@@ -692,277 +217,29 @@ def get_students(request: Request):
     profile_visibility), not in a browsable directory.
     """
     user_id = get_session_user_id(request)
-
-    peer_ids = academics.school_peer_user_ids(user_id)
-    if not peer_ids:
-        return {"students": []}
-    peer_list = sorted(peer_ids)
-
-    # Honor profile_visibility: drop 'private' users from the listing. Users with
-    # no settings row default to 'public' (the column default), so they stay.
-    settings_rows = table("user_settings").select(
-        "user_id,profile_visibility",
-        filters={"user_id": f"in.({','.join(peer_list)})"},
-    ) or []
-    hidden = {
-        s["user_id"] for s in settings_rows if s.get("profile_visibility") == "private"
-    }
-    visible_ids = [uid for uid in peer_list if uid not in hidden]
-    if not visible_ids:
-        return {"students": []}
-
-    # effective_streak, not the raw column: a lapsed streak still stores its
-    # old count until the next activity (#767).
-    from services.streak_service import effective_streak
-    users = table("users").select(
-        "id,streak_count,last_active_date",
-        filters={"id": f"in.({','.join(visible_ids)})", **_LISTABLE_USER_FILTERS},
-    ) or []
-    # Display names live on user_profiles (0024); resolve in bulk and decrypt.
-    name_map = get_display_names([u["id"] for u in users])
-
-    # A user's courses resolve through the enrollment chain
-    # (enrollments → course_offerings → courses); the abstract `courses` catalog
-    # no longer carries a per-user row. Read the offering's abstract course name
-    # via the embedded join and dedup, since one abstract course may have several
-    # offerings (per term/section) the user is enrolled in.
-    enrollment_rows = table("enrollments").select(
-        "user_id,course_offerings(courses(course_name))",
-        filters={"user_id": f"in.({','.join(visible_ids)})"},
-    ) or []
-    courses_by_user: dict = defaultdict(set)
-    for e in enrollment_rows:
-        offering = e.get("course_offerings") or {}
-        course = offering.get("courses") or {} if isinstance(offering, dict) else {}
-        course_name = course.get("course_name") if isinstance(course, dict) else None
-        if course_name:
-            courses_by_user[e["user_id"]].add(course_name)
-
-    students = [
-        {
-            "user_id": u["id"],
-            "name": name_map.get(u["id"], ""),
-            "streak": effective_streak(u),
-            "courses": sorted(courses_by_user[u["id"]]),
-        }
-        for u in users
-    ]
-    students.sort(key=lambda s: (s["name"] or ""))
-    return {"students": students}
-
-
-# ── Friends ──────────────────────────────────────────────────────────────────
-
-def _are_friends(user_id: str, other_id: str) -> bool:
-    rows = table("friendships").select(
-        "friend_id", filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{other_id}"}
-    )
-    return bool(rows)
-
-
-#: How long a declined request blocks the same sender from re-sending (#764).
-DECLINE_COOLDOWN = timedelta(days=7)
-
-
-def _decline_cooldown_ends(responded_at: str | None) -> datetime | None:
-    """When the decline cooldown lifts, or None if it already has (or the
-    decline carries no timestamp to measure from)."""
-    if not responded_at:
-        return None
-    try:
-        declined = datetime.fromisoformat(str(responded_at).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if declined.tzinfo is None:
-        declined = declined.replace(tzinfo=timezone.utc)
-    ends = declined + DECLINE_COOLDOWN
-    return ends if ends > datetime.now(timezone.utc) else None
-
-
-def _request_status(request_id: str) -> str | None:
-    """Re-read a request's status after losing a conditional write; None if
-    the row is gone (cancelled)."""
-    rows = table("friend_requests").select("status", filters={"id": f"eq.{request_id}"})
-    return rows[0].get("status") if rows else None
-
-
-def _resolve_pending(request_id: str, status: str) -> list:
-    """The one write every friend-request transition goes through (#764):
-    pending -> `status`, conditional on the row STILL being pending. Returns
-    the updated rows, so an empty list means another transition won."""
-    return table("friend_requests").update(
-        {"status": status, "responded_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{request_id}", "status": "eq.pending"},
-    )
+    with _social_errors():
+        return directory.get_students(user_id)
 
 
 @router.post("/friends/request")
 def send_friend_request(body: FriendRequestBody, request: Request):
     require_self(body.from_user_id, request)
-    if body.from_user_id == body.to_user_id:
-        raise HTTPException(status_code=400, detail="You can't friend yourself")
-    if _are_friends(body.from_user_id, body.to_user_id):
-        raise HTTPException(status_code=409, detail="Already friends")
-    # Deliberately only the exact (from, to) pair — a pending REVERSE request
-    # is left alone rather than auto-accepted or rejected. Mutual pending
-    # requests are legal and harmless now that accept_friend_request is
-    # idempotent: whichever is accepted first makes the other a no-op that
-    # still resolves its row. Auto-accepting here would silently create a
-    # friendship from a click that only meant "send a request".
-    existing = table("friend_requests").select(
-        "id,status,responded_at",
-        filters={
-            "from_user_id": f"eq.{body.from_user_id}",
-            "to_user_id": f"eq.{body.to_user_id}",
-        },
-    )
-    if existing:
-        status = existing[0].get("status")
-        if status == "pending":
-            raise HTTPException(status_code=409, detail="Request already pending")
-        if status == "declined":
-            # #764: a decline holds for DECLINE_COOLDOWN. Re-pending used to be
-            # unlimited, so a declined sender could put the request straight
-            # back in the recipient's inbox, forever.
-            until = _decline_cooldown_ends(existing[0].get("responded_at"))
-            if until is not None:
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"They declined recently. You can send another request after {until.date().isoformat()}.",
-                )
-        # A row for this (from_user_id, to_user_id) pair already exists —
-        # declined, or accepted-then-unfriended (remove_friend only deletes
-        # the symmetric friendships rows, it deliberately leaves the
-        # historical friend_requests row in place). UNIQUE(from_user_id,
-        # to_user_id) means a second insert here would 409/500 on the
-        # constraint, so reactivate the existing row instead of inserting
-        # a duplicate. created_at is re-stamped on purpose: it is the send time
-        # of the LIVE request the recipient sees, and the cooldown above (keyed
-        # on responded_at) is what bounds re-sends. Conditional on the status
-        # we read, so a concurrent transition is a 409 rather than a blind
-        # overwrite.
-        result = table("friend_requests").update(
-            {
-                "status": "pending",
-                "responded_at": None,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
-            filters={"id": f"eq.{existing[0]['id']}", "status": f"eq.{status}"},
-        )
-        if not result:
-            raise HTTPException(status_code=409, detail="That request just changed. Try again.")
-        return {"request": result[0]}
-    result = table("friend_requests").insert({
-        "from_user_id": body.from_user_id,
-        "to_user_id": body.to_user_id,
-        "status": "pending",
-    })
-    return {"request": result[0] if result else None}
-
-
-def _load_request(request_id: str, user_id: str) -> dict:
-    rows = table("friend_requests").select(
-        "id,from_user_id,to_user_id,status", filters={"id": f"eq.{request_id}"}
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Request not found")
-    req = rows[0]
-    if req["to_user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not your request to answer")
-    return req
+    with _social_errors():
+        return friends.send_friend_request(body)
 
 
 @router.post("/friends/requests/{request_id}/accept")
 def accept_friend_request(request_id: str, user_id: str, request: Request):
     require_self(user_id, request)
-    req = _load_request(request_id, user_id)
-    a, b = req["from_user_id"], req["to_user_id"]
-
-    # Accepting is idempotent. friendships is PRIMARY KEY (user_id, friend_id),
-    # so a second write of the same pair is a duplicate-key 500 — and since the
-    # request row would stay `pending`, it 500d on every retry, permanently.
-    # Two ways in, neither needing an adversary:
-    #   1. a plain double-click / retry on a request already accepted;
-    #   2. mutual requests — send_friend_request only checks the exact
-    #      (from, to) pair, never the reverse, so A->B and B->A can both sit
-    #      pending; accepting one makes the other's accept a duplicate.
-    # Case (1) is the status check, case (2) is the _are_friends check. Both
-    # still resolve the request row so a stale `pending` stops surfacing as an
-    # actionable incoming request forever.
-    #
-    # "Already friends" is the ONLY thing that makes this idempotent, though —
-    # NOT "not pending" on its own. Folding the two together
-    # (`status != "pending" or _are_friends(...)`) meant accepting a DECLINED
-    # request skipped the friendships upsert, still stamped the row
-    # `accepted`, and returned {"accepted": True}: a request recorded as
-    # accepted with no friendship behind it, and the sender left to work out
-    # that they have to send again. A resolved request that produced no
-    # friendship is not an accept to replay, it's a stale one to reject.
-    if _are_friends(a, b):
-        # Resolve a stale pending row, but only a PENDING one (#764): a blind
-        # write here could flip a declined row to accepted.
-        _resolve_pending(request_id, "accepted")
-        return {"accepted": True}
-    if req.get("status") != "pending":
-        raise HTTPException(status_code=409, detail="Request is no longer pending")
-
-    # #764: claim the transition FIRST, conditional on the row still being
-    # pending, and only the winner writes the friendship. The old order (write
-    # friendships, then blindly stamp `accepted`) let an accept racing a
-    # decline or a cancel create a friendship out of a request that was no
-    # longer there to accept.
-    if not _resolve_pending(request_id, "accepted"):
-        if _request_status(request_id) == "accepted":
-            # A double-click's twin won the claim and writes the friendship.
-            return {"accepted": True}
-        raise HTTPException(status_code=409, detail="Request is no longer pending")
-
-    try:
-        # Symmetric rows: "my friends" stays a plain equality filter. upsert,
-        # not insert, so a duplicate pair (mutual requests) cannot 500.
-        table("friendships").upsert([
-            {"user_id": a, "friend_id": b},
-            {"user_id": b, "friend_id": a},
-        ], on_conflict="user_id,friend_id")
-    except Exception:
-        # Hand the claim back so the request stays answerable, rather than
-        # recorded as accepted with no friendship behind it.
-        table("friend_requests").update(
-            {"status": "pending", "responded_at": None},
-            filters={"id": f"eq.{request_id}", "status": "eq.accepted"},
-        )
-        raise
-
-    # Guarded like every other dispatch site in this file (:64, :144, :185).
-    # The friendship rows and the request status are already committed above,
-    # so a failing badge check must not 500 a request that did succeed — that
-    # is exactly what happened while _count_rows selected a nonexistent `id`
-    # column off `friendships`.
-    try:
-        check_achievements(a, "friends_count")
-        check_achievements(b, "friends_count")
-    except Exception:
-        logger.exception(
-            "achievement dispatch failed after friend accept from=%s to=%s", a, b,
-        )
-    return {"accepted": True}
+    with _social_errors():
+        return friends.accept_friend_request(request_id, user_id)
 
 
 @router.post("/friends/requests/{request_id}/decline")
 def decline_friend_request(request_id: str, user_id: str, request: Request):
     require_self(user_id, request)
-    req = _load_request(request_id, user_id)
-    # #764: only a PENDING request can be declined. The old blind write could
-    # flip an `accepted` row to `declined` while the friendship stood.
-    status = req.get("status")
-    if status == "pending":
-        if _resolve_pending(request_id, "declined"):
-            return {"declined": True}
-        status = _request_status(request_id)
-    if status == "declined":
-        # Already declined (a double-click's twin won): the same outcome.
-        return {"declined": True}
-    raise HTTPException(status_code=409, detail="Request is no longer pending")
+    with _social_errors():
+        return friends.decline_friend_request(request_id, user_id)
 
 
 @router.delete("/friends/requests/{request_id}")
@@ -971,78 +248,26 @@ def cancel_friend_request(request_id: str, user_id: str, request: Request):
     the pair can be requested again later; a decline cannot be dodged this
     way because only pending rows are cancellable."""
     require_self(user_id, request)
-    rows = table("friend_requests").select(
-        "id,from_user_id,status", filters={"id": f"eq.{request_id}"}
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Request not found")
-    if rows[0]["from_user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not your request to cancel")
-    deleted = table("friend_requests").delete({
-        "id": f"eq.{request_id}",
-        "from_user_id": f"eq.{user_id}",
-        "status": "eq.pending",
-    })
-    if not deleted:
-        raise HTTPException(status_code=409, detail="Request is no longer pending")
-    return {"cancelled": True}
+    with _social_errors():
+        return friends.cancel_friend_request(request_id, user_id)
 
 
 @router.delete("/friends/{friend_id}")
 def remove_friend(friend_id: str, user_id: str, request: Request):
     require_self(user_id, request)
-    table("friendships").delete(
-        filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{friend_id}"}
-    )
-    table("friendships").delete(
-        filters={"user_id": f"eq.{friend_id}", "friend_id": f"eq.{user_id}"}
-    )
-    return {"removed": True}
+    with _social_errors():
+        return friends.remove_friend(friend_id, user_id)
 
 
 @router.get("/friends/requests")
 def list_friend_requests(user_id: str, request: Request):
     require_self(user_id, request)
-    incoming = table("friend_requests").select(
-        "id,from_user_id,created_at",
-        filters={"to_user_id": f"eq.{user_id}", "status": "eq.pending"},
-    ) or []
-    outgoing = table("friend_requests").select(
-        "id,to_user_id,created_at",
-        filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
-    ) or []
-    ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
-    names = get_display_names(ids) if ids else {}
-    return {
-        "incoming": [
-            {**r, "name": names.get(r["from_user_id"], "Someone")} for r in incoming
-        ],
-        "outgoing": [
-            {**r, "name": names.get(r["to_user_id"], "Someone")} for r in outgoing
-        ],
-    }
+    with _social_errors():
+        return friends.list_friend_requests(user_id)
 
 
 @router.get("/friends/{user_id}")
 def list_friends(user_id: str, request: Request):
-    # Self-only for now: a friends list is arguably shareable with other
-    # users later (product decision), but the safe default until that's
-    # decided is that only the account owner can list their own friends.
     require_self(user_id, request)
-    rows = table("friendships").select("friend_id", filters={"user_id": f"eq.{user_id}"})
-    ids = [r["friend_id"] for r in rows or []]
-    if not ids:
-        return {"friends": []}
-    users = table("users").select(
-        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
-    ) or []
-    names = get_display_names(ids)
-    return {"friends": [
-        {
-            "user_id": u["id"],
-            "name": names.get(u["id"], "Someone"),
-            "level": u.get("level") or 1,
-            "total_xp": u.get("total_xp") or 0,
-        }
-        for u in users
-    ]}
+    with _social_errors():
+        return friends.list_friends(user_id)

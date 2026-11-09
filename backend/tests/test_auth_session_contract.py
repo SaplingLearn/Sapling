@@ -171,6 +171,6 @@ def test_wellformed_redirect_ttl_override_is_parsed_and_clamped(raw, expected):
 
 def test_malformed_redirect_ttl_override_warns(caplog):
     import routes.auth as auth
-    with caplog.at_level("WARNING", logger=auth.logger.name):
+    with caplog.at_level("WARNING", logger="services.auth.oauth_state"):
         auth._parse_redirect_ttl("abc")
     assert "SAPLING_AUTH_REDIRECT_TOKEN_TTL" in caplog.text

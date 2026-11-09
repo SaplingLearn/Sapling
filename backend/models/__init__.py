@@ -2,7 +2,7 @@ import re
 from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
