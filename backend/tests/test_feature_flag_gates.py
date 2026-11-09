@@ -20,6 +20,7 @@ GATED = [
     ("hide_quiz", "/api/quiz/config", "/api/quiz/attempts?user_id=u1"),
     ("hide_study", "/api/flashcards/user/u1", None),
     ("hide_study", "/api/study-guide/u1/cached", None),
+    ("hide_study", "/api/study/u1/daily", None),
     ("hide_calendar", "/api/calendar/status/u1", "/api/calendar/upcoming/u1"),
     ("hide_social", "/api/social/public-rooms?user_id=u1", "/api/social/friends/u1"),
     ("hide_achievements", "/api/gamification/leaderboard?user_id=u1",

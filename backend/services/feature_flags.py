@@ -757,7 +757,8 @@ NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         # Tree shows the student's recent attempts.
         "/api/quiz": (("GET", r"/attempts"),),
     },
-    "hide_study": {"/api/flashcards": (), "/api/study-guide": ()},
+    # /api/study is the Study hub's own (daily goal + minutes).
+    "hide_study": {"/api/flashcards": (), "/api/study-guide": (), "/api/study": ()},
     "hide_calendar": {
         # The dashboard's upcoming-deadlines card.
         "/api/calendar": (("GET", r"/upcoming/[^/]+"),),

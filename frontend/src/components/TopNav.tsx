@@ -33,6 +33,7 @@ import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
+import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
 
 type NavGroup = NavSection;
 
@@ -40,7 +41,8 @@ export const TOP_NAV_HEIGHT = 56;
 
 function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
-  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
+  // The Study tools are pages of their own; Study stays lit while you're in one.
+  if (href === "/study" && STUDY_TOOL_PATHS.some(p => pathname === p || pathname.startsWith(p + "/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 
