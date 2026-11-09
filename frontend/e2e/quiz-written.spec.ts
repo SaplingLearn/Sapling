@@ -33,10 +33,11 @@ test("written quiz: equivalent answers survive reload and produce persisted resu
   await expect(page.getByTestId("quiz-written-readback")).toContainText("Reads as 0.5");
   await page.getByTestId("quiz-submit-answer").click();
   await expect(page.getByTestId("quiz-panel")).toContainText("E2E written question 3", { timeout: SUBMIT_TIMEOUT });
-  // The algebra keys insert at the cursor: "( )" leaves it between the brackets.
-  await written.fill("2");
-  await page.getByTestId("quiz-key-brackets").click();
-  await page.keyboard.type("x + 1");
+  await written.fill("2(");
+  await expect(page.getByTestId("quiz-submit-answer")).toBeDisabled();
+  await written.press("Enter");
+  await expect(page.getByTestId("quiz-panel")).toContainText("E2E written question 3");
+  await written.fill("2(x + 1)");
   await expect(written).toHaveValue("2(x + 1)");
   await expect(page.getByTestId("quiz-written-readback")).toContainText("2(x + 1)");
   // Enter submits from the written input, as it does from an answer row.

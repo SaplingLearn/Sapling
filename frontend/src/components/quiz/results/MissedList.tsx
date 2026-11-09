@@ -16,6 +16,7 @@
  * students won't open would cost more than the shift does.
  */
 
+import { QuizMath } from "../QuizMath";
 import React from "react";
 import { Button } from "@/components/ui";
 import type { QuizSession } from "@/lib/quiz/types";
@@ -33,6 +34,7 @@ export interface MissedItem {
   correctLabel: string;
   correctText: string;
   explanation: string;
+  written?: boolean;
 }
 
 /**
@@ -46,12 +48,12 @@ export interface MissedItem {
  * which is why the option texts are looked up here rather than read off the
  * result.
  */
-export function buildMissedItems(session: QuizSession): MissedItem[] {
+export function buildMissedItems(session: QuizSession, correct = false): MissedItem[] {
   const result = session.result;
   if (!result) return [];
 
   return result.results
-    .filter(r => !r.correct)
+    .filter(r => r.correct === correct)
     .map(r => {
       const question = session.items.find(
         item => String(item.question.id) === String(r.question_id),
@@ -68,6 +70,7 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
         correctLabel: written ? "Expected" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
+        written,
       };
     });
 }
@@ -83,9 +86,10 @@ export interface MissedListProps {
    *  screen can hold it as the panel's `returnFocusTo`. */
   onAsk: (item: MissedItem, trigger: HTMLElement) => void;
   testid?: string;
+  heading?: string;
 }
 
-export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: MissedListProps) {
+export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading }: MissedListProps) {
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
 
   if (items.length === 0) return null;
@@ -94,26 +98,31 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
   // one is not exposed as a landmark, which would leave "One to look at" as
   // loose text rather than the heading of the block it introduces.
   const headingId = `${testid}-heading`;
+  const rowIdPrefix = testid.replace(/-list$/, "");
 
   return (
     <section className="quiz-missed" data-testid={testid} aria-labelledby={headingId}>
       <div className="label-micro" id={headingId}>
-        {missedLabel(items.length)}
+        {heading ?? missedLabel(items.length)}
       </div>
       {items.map(item => {
         const open = expanded[item.questionId] === true;
-        const panelId = `quiz-missed-explanation-${item.questionId}`;
+        const panelId = `${rowIdPrefix}-explanation-${item.questionId}`;
+        const chosen = item.chosenText ? `${item.chosenLabel} (${item.chosenText})` : item.chosenLabel;
+        const expected = item.correctText ? `${item.correctLabel} (${item.correctText})` : item.correctLabel;
         return (
           <div
             key={item.questionId}
             className="quiz-missed__item"
-            data-testid={`quiz-missed-${item.questionId}`}
+            data-testid={`${rowIdPrefix}-${item.questionId}`}
           >
-            {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
+            {item.stem && <p className="h-serif quiz-missed__stem"><QuizMath text={item.stem} /></p>}
             <p className="quiz-missed__line">
-              {item.chosenLabel
-                ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
-                : `No answer · the answer is ${item.correctLabel}`}
+              <QuizMath text={item.written
+                ? `Your answer: ${item.chosenText || "No answer"} · Expected: ${item.correctText}`
+                : item.chosenLabel
+                  ? `You chose ${chosen} · the answer is ${expected}`
+                  : `No answer · the answer is ${expected}`} />
             </p>
             <div className="quiz-missed__actions">
               {item.explanation && (
@@ -149,7 +158,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
                 space, so the expand behaves exactly as before. */}
             {item.explanation && (
               <p id={panelId} hidden={!open} className="body-serif quiz-missed__explanation">
-                {item.explanation}
+                <QuizMath text={item.explanation} />
               </p>
             )}
           </div>

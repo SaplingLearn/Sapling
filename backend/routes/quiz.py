@@ -42,7 +42,14 @@ from services.request_limits import claim_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
-from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
+from services.quiz_grading import (
+    WRITTEN_TYPES,
+    expected_written_answer,
+    grade_written,
+    numeric_quantity,
+    numeric_value,
+    written_feedback,
+)
 from services.quiz_algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
@@ -441,8 +448,17 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
 # stored row from an older shape can hold the answer under any key at all
 # (the rich seed has {"q":..., "a":...}). Anything not listed here never
 # reaches a client that hasn't answered yet.
-_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context")
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context", "numeric_unit")
 _KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _choice_feedback(question: dict, selected_index: int | None) -> str:
+    options = question.get("options", [])
+    explanation = question.get("explanation", "")
+    if selected_index is None or not 0 <= selected_index < len(options):
+        return explanation
+    feedback = options[selected_index].get("feedback", "")
+    return f"{feedback} {explanation}".strip()
 
 
 def _written_response_text(row: dict) -> str:
@@ -605,6 +621,7 @@ def _validate_wire_question(wire: dict) -> bool:
             isinstance(answer, str) and bool(answer.strip())
             and len(answer) <= _MAX_ANSWER_CHARS and not wire.get("options")
             and (wire["type"] != "numeric" or numeric_value(answer) is not None)
+            and (not wire.get("numeric_unit") or numeric_quantity(expected_written_answer(wire)) is not None)
             and (wire["type"] != "symbolic" or equivalent_algebra(answer, answer))
         )
     options = wire.get("options") or []
@@ -674,9 +691,15 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         # A blank or unbounded alias is dropped on its own; it says nothing
         # about whether the rest of the item is sound.
         accepted = [a for a in q.accepted_answers if a.strip() and len(a) <= _MAX_ANSWER_CHARS]
+        answer = q.correct_answer
+        unit = ""
+        if q.type == "numeric" and numeric_quantity(answer) is not None:
+            answer, unit = answer.rsplit(maxsplit=1)
+            accepted = [a for a in accepted if numeric_quantity(a) is not None]
         wire = {
+            **({"numeric_unit": unit} if unit else {}),
             "id": qid, "type": q.type, "question": q.question, "options": [],
-            "correct_answer": q.correct_answer, "accepted_answers": accepted,
+            "correct_answer": answer, "accepted_answers": accepted,
             "explanation": q.explanation, "concept_tested": q.concept,
             "difficulty": q.difficulty,
             "question_hash": question_hash(q.question, [q.type]),
@@ -700,6 +723,10 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
             "text": text,
             "correct": is_correct,
         })
+        if not is_correct and len(q.accepted_answers) == len(q.options):
+            feedback = q.accepted_answers[i].strip()
+            if feedback:
+                options[-1]["feedback"] = feedback
     if not matched:
         # Generation drift: agent's correct_answer doesn't match any
         # option verbatim. Surface in logs (Logfire span carries the
@@ -1215,7 +1242,7 @@ _MCQ_TOPUP_RULE = (
 _WRITTEN_TOPUP_RULE = (
     "for short_answer, numeric and symbolic items options must be empty and "
     "correct_answer is the canonical answer (short_answer: a term or brief fact "
-    "of at most 8 words, never a sentence; numeric: a plain number or fraction; "
+    "of at most 8 words, never a sentence; numeric: a number or fraction with a compact unit when required; "
     "symbolic: an expression in the supported grammar, with single-letter "
     "variables only and no words or Greek-letter names)."
 )
@@ -1447,6 +1474,8 @@ async def _quiz_via_agent(
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
         f"read_recent_quiz_attempts."
     )
+    if course_row.name:
+        routing_msg += f" The course is '{course_row.name}'."
     if use_shared_context:
         routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
@@ -2490,17 +2519,20 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         if next_index < len(questions)
         else None
     )
+    answer_text = _written_response_text(response_row) if written else ""
     return {
         # Echo both addressing schemes so a client that mixed them up sees
         # it immediately rather than discovering it at submit time.
         "question_index": body.question_index,
         "question_id": question.get("id"),
-        "is_correct": _is_correct(response_row["selected_index"],
-                                  _written_response_text(response_row)),
-        "correct_answer": question.get("correct_answer") if written else None,
-        **({"answer_text": _written_response_text(response_row)} if written else {}),
+        "is_correct": _is_correct(response_row["selected_index"], answer_text),
+        "correct_answer": expected_written_answer(question) if written else None,
+        **({"answer_text": answer_text} if written else {}),
         "correct_index": correct_index,
-        "explanation": question.get("explanation", ""),
+        "explanation": (
+            written_feedback(question, answer_text)
+            if written else _choice_feedback(question, response_row["selected_index"])
+        ),
         "next_question": next_question,
         "recorded": recorded,
     }
@@ -2702,8 +2734,8 @@ def _grade_submission(
                 graded_answers.append({"question_id": q["id"], "answer_text": selected_text})
             score += int(is_correct)
             results.append({"question_id": qid, "selected": selected_text,
-                            "correct": is_correct, "correct_answer": q.get("correct_answer", ""),
-                            "explanation": q.get("explanation", "")})
+                            "correct": is_correct, "correct_answer": expected_written_answer(q),
+                            "explanation": written_feedback(q, selected_text)})
             continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
@@ -2733,7 +2765,9 @@ def _grade_submission(
             "selected": selected,
             "correct": is_correct,
             "correct_answer": correct_label,
-            "explanation": q.get("explanation", ""),
+            "explanation": _choice_feedback(
+                q, next((i for i, option in enumerate(q["options"]) if option["label"] == selected), None)
+            ),
         })
 
     return results, graded_answers, score

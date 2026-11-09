@@ -121,6 +121,7 @@ export function QuizResults({
 
   const missed = buildMissedItems(session);
   const isPerfect = missed.length === 0;
+  const correct = buildMissedItems(session, true);
 
   const queue = queueOf(session.scope);
   const hasNext = session.queueIndex + 1 < queue.length;
@@ -189,7 +190,7 @@ export function QuizResults({
 
       {isPerfect ? (
         <p className="quiz-results__perfect" data-testid="quiz-results-perfect">
-          Nothing to review — every answer was right. {concept.name} keeps growing on your tree.
+          Every answer was right. {concept.name} keeps growing on your tree.
         </p>
       ) : (
         <MissedList
@@ -199,6 +200,21 @@ export function QuizResults({
             setAsking(item);
           }}
         />
+      )}
+
+      {correct.length > 0 && (
+        <details>
+          <summary>Review correct answers</summary>
+          <MissedList
+            items={correct}
+            heading="Correct answers"
+            testid="quiz-correct-list"
+            onAsk={(item, trigger) => {
+              askTrigger.current = trigger;
+              setAsking(item);
+            }}
+          />
+        </details>
       )}
 
       <hr className="quiz-results__divider" />

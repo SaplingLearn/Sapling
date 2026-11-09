@@ -22,8 +22,10 @@
  * between "choose" and "submit" is how you mis-click an answer.
  */
 
+import { isWrittenAnswerFormatValid } from "@/lib/quiz/answerFormats";
+import { QuizMath } from "../QuizMath";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
+import { AnswerOption, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
@@ -128,7 +130,9 @@ export function QuizQuestion({
   const options = item?.question.options ?? [];
   const selectedIndex = item?.selectedIndex ?? null;
   const written = isWrittenType(item?.question.type);
-  const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
+  const hasAnswer = written
+    ? isWrittenAnswerFormatValid(item?.question.type, item?.answerText ?? "", item?.question.numeric_unit)
+    : selectedIndex !== null;
   const answeredCount = items.filter(i => i.verdict !== null).length;
   const isLast = cursor >= total - 1;
   // R-2: every answer is recorded server-side either way; the feedback mode
@@ -152,7 +156,6 @@ export function QuizQuestion({
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
-  const difficulty = (item?.question.difficulty ?? session.config.difficulty ?? "").toUpperCase();
   const railTotal = total || session.config.count;
 
   // ── Effects ──────────────────────────────────────────────────────────
@@ -298,8 +301,6 @@ export function QuizQuestion({
       <span className="quiz-question__concept">
         {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
       </span>
-      <span className="quiz-question__header-gap" />
-      {difficulty && <Badge bg="var(--bg-soft)">{difficulty}</Badge>}
     </div>
   );
 
@@ -390,15 +391,7 @@ export function QuizQuestion({
       <div className="quiz-question__col">
         {header}
 
-        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">{item?.question.question ?? ""}</h2>
-        {item?.question.material_context && (
-          <p className="label-micro" data-testid="quiz-material-context">
-            {item.question.material_context === "course_material" ? "Course material provided for this question"
-              : item.question.material_context === "catalog" ? "Course catalog context provided"
-                : "General concept practice · no matching course material retrieved"}
-          </p>
-        )}
-
+        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem"><QuizMath text={item?.question.question ?? ""} /></h2>
         {!written && (
           <p className="quiz-question__hint" id="quiz-keyboard-hint">
             Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
@@ -414,13 +407,16 @@ export function QuizQuestion({
                 screen-reader user does. */}
             <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
               {item?.question.type === "symbolic"
-                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
+                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Use whole-number powers from −8 to 8. Functions and equations are not supported."
                 : item?.question.type === "numeric"
-                  ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
+                  ? item.question.numeric_unit
+                    ? `Enter a number followed by a space and its unit, for example 2.5 ${item.question.numeric_unit}. Follow the rounding requested in the question.`
+                    : "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
                   : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
             </p>
             <WrittenAnswer
               type={(item?.question.type ?? "short_answer") as WrittenType}
+              numericUnit={item?.question.numeric_unit}
               value={item?.answerText ?? ""}
               disabled={!selectable}
               onChange={text => actions.write?.(text)}
@@ -445,6 +441,7 @@ export function QuizQuestion({
               key={option.label}
               letter={option.label}
               text={option.text}
+              formattedText={<QuizMath text={option.text} />}
               state={optionState(index)}
               disabled={!selectable}
               onSelect={() => actions.select(index)}
@@ -475,7 +472,7 @@ export function QuizQuestion({
                     : "Not quite."}
               </span>
               {verdict.explanation && (
-                <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+                <p className="quiz-question__explanation body-serif"><QuizMath text={verdict.explanation} /></p>
               )}
             </>
           )}

@@ -225,7 +225,7 @@ describe("QuizResults", () => {
     expect(list).toHaveTextContent("One to look at");
     expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent(STEMS[102]);
     expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent(
-      "You chose A · the answer is B",
+      "You chose A (It returns immediately) · the answer is B (It recurses forever and overflows the stack)",
     );
     expect(screen.queryByTestId("quiz-missed-101")).toBeNull();
     expect(screen.queryByTestId("quiz-missed-103")).toBeNull();
@@ -293,7 +293,7 @@ describe("QuizResults", () => {
   it("replaces the review section with the perfect-run line", () => {
     renderResults(PERFECT);
     expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(
-      "Nothing to review — every answer was right. Recursion keeps growing on your tree.",
+      "Every answer was right. Recursion keeps growing on your tree.",
     );
     expect(screen.queryByTestId("quiz-missed-list")).toBeNull();
     expect(screen.getByTestId("quiz-again")).toBeInTheDocument();

@@ -186,10 +186,26 @@ describe("QuizQuestion — the question", () => {
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["numeric", "1/0"],
+    ["symbolic", "x^"],
+  ] as const)("keeps Submit disabled for malformed %s answers", (type, answerText) => {
+    const actions = makeActions();
+    renderScreen(makeSession({ items: [item(0, {
+      question: { ...question(1), type, options: [], material_context: "general" },
+      answerText,
+    })] }), actions);
+    expect(screen.queryByTestId("quiz-material-context")).not.toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+  });
+
   it.each(["short_answer", "numeric", "symbolic"] as const)("supports %s without answer choices", type => {
     const actions = makeActions();
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
+    const validAnswer = type === "numeric" ? "3/4" : "2(x+1)";
     const input = screen.getByRole("textbox", { name: /^Your answer/ });
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
@@ -197,7 +213,7 @@ describe("QuizQuestion — the question", () => {
     expect(actions.write).toHaveBeenCalledWith("2(x+1)");
     fireEvent.keyDown(input, { key: "a" });
     expect(actions.select).not.toHaveBeenCalled();
-    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "2(x+1)" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: validAnswer }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
     fireEvent.click(screen.getByTestId("quiz-submit-answer"));
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
@@ -251,7 +267,7 @@ describe("QuizQuestion — the question", () => {
     }
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
     expect(screen.getByText("Recursion · CS101")).toBeInTheDocument();
-    expect(screen.getByText("MEDIUM")).toBeInTheDocument();
+    expect(screen.queryByText("MEDIUM")).not.toBeInTheDocument();
   });
 
   it("gives the radiogroup exactly one tab stop — the selection, else the first row", () => {
