@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -752,7 +753,7 @@ def test_quiz_generate_emits_quiz_started(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         # Patched through the signals module too, so the offering resolution
         # answers from the fixture rather than from whatever a real
         # (unreachable) Supabase does — this test asserts on the SCOPE the
@@ -844,7 +845,7 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
     from routes.quiz import CourseMaterial
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(
@@ -906,7 +907,7 @@ def test_ungrounded_generation_emits_rag_uncovered(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(course_chunks=0, bu_code="CAS CS 330"),
@@ -965,7 +966,7 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(course_chunks=42, bu_code="CAS CS 330"),
@@ -1020,7 +1021,7 @@ def test_rag_uncovered_calls_a_failed_retrieval_unknown_not_no_match(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         # Fail inside rag_service, the way a real outage does: retrieve_chunks
         # catches, emits rag.retrieval_failed, and hands back [].
         patch(
@@ -1074,7 +1075,7 @@ def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
         return mock
 
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch("routes.quiz.recent_question_identities", return_value=[]),
         patch(
             "routes.quiz.quiz_agent.run",
@@ -1136,7 +1137,7 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
         return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
     )
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch("routes.quiz.apply_graph_update"),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),

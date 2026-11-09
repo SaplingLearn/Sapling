@@ -334,6 +334,15 @@ def _load_owned_attempt(attempt_id: str, request: Request, columns: str = "*") -
     return attempt
 
 
+async def _aload_owned_attempt(attempt_id: str, request: Request, columns: str = "*") -> dict:
+    """`_load_owned_attempt` on the async seam (#117), for `async def` routes."""
+    rows = await table("quiz_attempts").aselect(columns, filters={"id": f"eq.{attempt_id}"})
+    if not rows:
+        raise _attempt_not_found()
+    await guard_off_loop(require_self, rows[0]["user_id"], request)
+    return rows[0]
+
+
 def _refuse_if_completed(attempt: dict) -> None:
     """409 on an attempt that has already been scored — the mirror of
     `_refuse_if_abandoned`, and the same shape everywhere it is used."""
@@ -1750,8 +1759,7 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
     """
     if not body.source_attempt_id:
         return None
-    rows = await run_in_threadpool(  # #117: on the loop otherwise
-        table("quiz_attempts").select,
+    rows = await table("quiz_attempts").aselect(
         # score/total are plaintext scalars (#521) and ride along for free:
         # they are the only evidence that a pre-#537 attempt with no recorded
         # responses missed anything at all (see _missed_something).
@@ -2019,10 +2027,8 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 "hard, or adaptive."
             ),
         )
-    # #117: this handler runs on the event loop, so every sync PostgREST call
-    # below hops off it (tests/test_no_sync_db_in_async_handlers.py).
-    node_rows = await run_in_threadpool(
-        table("graph_nodes").select,
+    # #117: on the event loop: reads are `a*` calls, sync helpers hop off it.
+    node_rows = await table("graph_nodes").aselect(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
@@ -2357,13 +2363,13 @@ async def list_attempts(
 
 
 @router.get("/attempts/{attempt_id}")
-def get_attempt(attempt_id: str, request: Request):
+async def get_attempt(attempt_id: str, request: Request):
     """#542 D2: resume state for one attempt — enough to rebuild an
     in-progress quiz client-side: questions WITHOUT the answer key, plus
     the responses already recorded through /answer."""
-    attempt = _load_owned_attempt(attempt_id, request)
+    attempt = await _aload_owned_attempt(attempt_id, request)
 
-    responses = table("quiz_responses").select(
+    responses = await table("quiz_responses").aselect(
         "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at",
         filters={"attempt_id": f"eq.{attempt_id}"},
         order="question_index.asc",
@@ -2378,8 +2384,8 @@ def get_attempt(attempt_id: str, request: Request):
     )
     status = _attempt_status(attempt, last_activity_at=last_activity)
     # Answering keeps an attempt alive, so exempt it from the sweep.
-    _sweep_abandoned(
-        attempt["user_id"],
+    await run_in_threadpool(
+        _sweep_abandoned, attempt["user_id"],
         active_attempt_ids={attempt_id} if status == "in_progress" else None,
     )
 
@@ -2419,14 +2425,14 @@ def get_attempt(attempt_id: str, request: Request):
 
 
 @router.post("/attempts/{attempt_id}/answer")
-def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
+async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     """#541 C1: grade one question server-side and record the response.
 
     Idempotent on (attempt_id, question_index): re-answering returns the
     FIRST recorded response (`recorded: false` marks the replay) rather
     than overwriting — no revision, decided for the #537 revamp flow.
     """
-    attempt = _load_owned_attempt(attempt_id, request)
+    attempt = await _aload_owned_attempt(attempt_id, request)
     _refuse_if_completed(attempt)
     _refuse_if_abandoned(attempt)
 
@@ -2473,13 +2479,11 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
 
     recorded = True
     response_row = None
-    existing = table("quiz_responses").select(
-        "*",
-        filters={
-            "attempt_id": f"eq.{attempt_id}",
-            "question_index": f"eq.{body.question_index}",
-        },
-    )
+    this_answer = {
+        "attempt_id": f"eq.{attempt_id}",
+        "question_index": f"eq.{body.question_index}",
+    }
+    existing = await table("quiz_responses").aselect("*", filters=this_answer)
     if existing:
         recorded = False
         response_row = existing[0]
@@ -2508,19 +2512,13 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         # needs a trigger or an RPC — i.e. a migration — which is what #597 is
         # for.
         try:
-            table("quiz_responses").insert(row)
+            await table("quiz_responses").ainsert(row)
             response_row = row
         except Exception:
             # Lost a race with a concurrent answer for the same index — the
             # UNIQUE arbitrates; return whatever won.
             recorded = False
-            raced = table("quiz_responses").select(
-                "*",
-                filters={
-                    "attempt_id": f"eq.{attempt_id}",
-                    "question_index": f"eq.{body.question_index}",
-                },
-            )
+            raced = await table("quiz_responses").aselect("*", filters=this_answer)
             if not raced:
                 raise
             response_row = raced[0]
@@ -2548,7 +2546,7 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
 
 
 @router.post("/attempts/{attempt_id}/abandon")
-def abandon_attempt(attempt_id: str, request: Request):
+async def abandon_attempt(attempt_id: str, request: Request):
     """#537 G4: close an unfinished attempt ON PURPOSE.
 
     Before this route, quiz home's "Discard" was a localStorage flag
@@ -2564,7 +2562,7 @@ def abandon_attempt(attempt_id: str, request: Request):
     instead — the score, mastery and XP are already paid out, and there is
     nothing here that could take them back.
     """
-    attempt = _load_owned_attempt(
+    attempt = await _aload_owned_attempt(
         attempt_id,
         request,
         # Not "*": the decision needs the owner and three timestamps, and
@@ -2593,7 +2591,7 @@ def abandon_attempt(attempt_id: str, request: Request):
         # status only asks whether it is set — and a consumer that wants "when
         # did this go quiet" wants `created_at` plus the last response, which
         # is what `_attempt_status` already computes.
-        claimed = table("quiz_attempts").update(
+        claimed = await table("quiz_attempts").aupdate(
             {"abandoned_at": now},
             filters={
                 "id": f"eq.{attempt_id}",
@@ -2610,7 +2608,7 @@ def abandon_attempt(attempt_id: str, request: Request):
             # moved between the read and the write. Re-read to find out which
             # way: a submit that got there first must 409 rather than be
             # reported back as a successful discard.
-            current_rows = table("quiz_attempts").select(
+            current_rows = await table("quiz_attempts").aselect(
                 "completed_at,abandoned_at",
                 filters={"id": f"eq.{attempt_id}"},
             )

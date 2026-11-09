@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from services.exam_proximity import days_until_next_exam, is_exam
+from tests.db_fakes import with_async_twins
 
 
 def _due(days_from_today: int) -> str:
@@ -178,7 +179,7 @@ class TestExamProximityReachesGeneration:
             return m
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.days_until_next_exam", return_value=days),
             patch("routes.quiz.recent_question_identities", return_value=[]),
             patch("routes.quiz.quiz_agent.run", new=agent_run),

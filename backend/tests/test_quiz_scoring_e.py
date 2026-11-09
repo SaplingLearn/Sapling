@@ -22,6 +22,10 @@ from fastapi.testclient import TestClient
 
 from main import app
 from agents.quiz import Quiz, QuizQuestion
+from tests.db_fakes import with_async_twins
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -122,7 +126,7 @@ class TestDeliveredCount:
     def test_response_reports_requested_and_delivered(self):
         good = Quiz(questions=[_q(f"Q{i}?") for i in range(3)])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=good))),
         ):
@@ -147,7 +151,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped_up),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -174,7 +178,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=also_drifted),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -192,7 +196,7 @@ class TestDeliveredCount:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=mostly_good))
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=5)
@@ -209,7 +213,7 @@ class TestDeliveredCount:
         short_but_clean = Quiz(questions=[_q("Q1?"), _q("Q2?"), _q("Q3?")])
         run = AsyncMock(return_value=SimpleNamespace(output=short_but_clean))
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=5)
@@ -234,7 +238,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -259,7 +263,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             _generate(num_questions=3)
@@ -285,7 +289,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=recovered),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=2)
@@ -299,7 +303,7 @@ class TestDeliveredCount:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=nothing_valid))
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=2)
@@ -319,7 +323,7 @@ class TestDeliveredCount:
             RuntimeError("top-up blew up"),
         ])
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             with caplog.at_level("WARNING", logger="routes.quiz"):
@@ -401,7 +405,7 @@ class TestWireValidation:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=dupes))
         with (
-            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
             patch("routes.quiz.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -477,7 +481,7 @@ class TestConcurrency:
             return mock
 
         payload = {"question_index": 0, "selected_index": 1}
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             first = client.post("/api/quiz/attempts/quiz1/answer", json=payload)
             second = client.post("/api/quiz/attempts/quiz1/answer", json=payload)
 
@@ -515,7 +519,7 @@ class TestConcurrency:
 
         good = Quiz(questions=[_q()])
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=good))),
         ):

@@ -17,6 +17,11 @@ from fastapi.testclient import TestClient
 
 from main import app
 from agents.quiz import Quiz, QuizQuestion
+from tests.db_fakes import fake_table, with_async_twins
+import pytest
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -143,7 +148,7 @@ class TestGenerateAdaptiveDifficulty:
             return mock
 
         with (
-            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.table", side_effect=with_async_twins(factory)),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = _generate({"difficulty": "adaptive"})
@@ -176,7 +181,7 @@ class TestGenerateAdaptiveDifficulty:
             return_value=SimpleNamespace(output=_quiz("easy", "medium", "medium"))
         )
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = _generate({"difficulty": "adaptive"})
@@ -194,7 +199,7 @@ class TestGenerateAdaptiveDifficulty:
             return_value=SimpleNamespace(output=_quiz("easy", "easy", "medium"))
         )
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=run_mock),
         ):
             r = _generate({"difficulty": "medium"})
@@ -237,7 +242,7 @@ class TestQuizErrorEnvelope:
     def test_invalid_difficulty_400(self):
         agent_run = AsyncMock()
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
         ):
             r = _generate({"difficulty": "impossible"})
@@ -250,12 +255,12 @@ class TestQuizErrorEnvelope:
             mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = _generate({"difficulty": "easy"})
         _assert_envelope(r, 404, "QUIZ_CONCEPT_NOT_FOUND")
 
     def test_attempt_not_found_404(self):
-        with patch("routes.quiz.table") as t:
+        with patch("routes.quiz.table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "missing", "answers": [],
@@ -278,7 +283,7 @@ class TestQuizErrorEnvelope:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1", "answers": [],
             })
@@ -292,7 +297,7 @@ class TestQuizErrorEnvelope:
 
     def test_generation_failure_502(self):
         with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.table", side_effect=with_async_twins(_generate_table_factory())),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(side_effect=RuntimeError("boom")),
@@ -361,7 +366,7 @@ class TestQuizErrorEnvelope:
             mock.select.side_effect = boom
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1", "answers": [],
             })
@@ -380,7 +385,7 @@ class TestQuizErrorEnvelope:
             mock.select.side_effect = boom
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1", "answers": [],
             })

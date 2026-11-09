@@ -25,6 +25,10 @@ from routes.quiz import CourseMaterial
 from services.encryption import decrypt_json_column, encrypt_json
 from services.quiz_identity import question_hash
 from services.quiz_reserve import missed_question_hashes, recover_questions
+from tests.db_fakes import with_async_twins
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -141,7 +145,7 @@ def _generate(
     )
     factory = _factory(captured, attempts=attempts, responses=responses)
     with (
-        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.table", side_effect=with_async_twins(factory)),
         patch("services.quiz_reserve.table", side_effect=factory),
         patch("routes.quiz.quiz_agent.run", new=agent_run),
         patch("routes.quiz._course_material", return_value=CourseMaterial()),

@@ -3,6 +3,10 @@ import pytest
 from models import AnswerQuestionBody
 from services.quiz_grading import grade_written
 from services.quiz_algebra import equivalent_algebra
+from tests.db_fakes import with_async_twins
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 @pytest.mark.parametrize("answer", ["0.5", "1/2", "2 / 4", "50%", "5e-1", "+.5", "０.５"])
@@ -194,7 +198,7 @@ def _topup_message(question_format, first):
         SimpleNamespace(output=Quiz.model_validate({"questions": [_item(question="Fresh?")]})),
     ])
     with (
-        patch("routes.quiz.table", side_effect=_generate_factory()),
+        patch("routes.quiz.table", side_effect=with_async_twins(_generate_factory())),
         patch("routes.quiz.quiz_agent.run", new=run),
     ):
         TestClient(app).post("/api/quiz/generate", json={
