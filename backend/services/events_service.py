@@ -243,6 +243,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     #   service-role read the student was actually served;
     # - db.rls_denied: enforce, PostgREST refused a user-scoped call (403:
     #   an RLS WITH CHECK or a missing grant); the request answers 404.
+    # Payload: table, route, mode, plus (since the shadow report, db/scope_report.py)
+    # kind (fewer_rows | more_rows | different_ids | error | write_other_user |
+    # no_subject | denied), method, op, status/code (PostgREST's code, never its
+    # message), service_count/scoped_count. Read back by
+    # GET /api/admin/analytics/db-scope (docs/security/db-user-scope-rollout.md).
     "db.unscoped_query",
     "db.rls_shadow_divergence",
     "db.rls_denied",

@@ -358,7 +358,7 @@ def test_shadow_without_a_subject_runs_as_service_and_reports(wire, keys, monkey
     (_, _, kwargs), = wire.for_table("notes")
     assert "headers" not in kwargs
     assert events[0][0] == "db.unscoped_query" and events[0][1]["table"] == "notes"
-    assert "unscoped query" in caplog.text
+    assert "db_user_scope.divergence event=db.unscoped_query kind=no_subject mode=shadow" in caplog.text
 
 
 def test_enforce_postgrest_403_is_scoped_access_denied_404(wire, real_guard, keys, monkeypatch, events):
@@ -425,7 +425,8 @@ def test_shadow_serves_the_service_answer_and_logs_divergence(
     assert "headers" not in service[2]
     assert scoped[2]["headers"]["apikey"] == ANON
     assert events == [("db.rls_shadow_divergence",
-                       {"table": "notes", "route": "/probe", "service_count": 2, "scoped_count": 1})]
+                       {"table": "notes", "route": "/probe", "kind": "fewer_rows", "method": "GET",
+                        "op": "select", "service_count": 2, "scoped_count": 1})]
     assert "db.rls_shadow_divergence" in caplog.text
 
 
@@ -441,7 +442,8 @@ def test_shadow_scoped_error_is_reported_not_raised(wire, real_guard, keys, monk
     wire.status = lambda verb, url, headers: 403 if headers and "Bearer ey" in str(headers) else 200
     r = _app(lambda: _read_notes()).get("/probe", cookies=_cookie("u1"))
     assert r.status_code == 200
-    assert events[0][1]["error"] == "403" and events[0][1]["scoped_count"] == -1
+    assert events[0][1]["status"] == 403 and events[0][1]["scoped_count"] == -1
+    assert "error" not in events[0][1]  # the redundant duplicate of status is gone
 
 
 def test_shadow_never_reruns_writes_or_rpc(wire, real_guard, keys, monkeypatch, inline_shadow):
