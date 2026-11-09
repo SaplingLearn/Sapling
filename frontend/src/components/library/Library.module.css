@@ -67,3 +67,19 @@
   height: 100%;
   min-height: 0;
 }
+
+/* The preview panel's body. The panel itself sizes to its content and never
+   scrolls; this only engages for a document long enough to fill the viewport,
+   and the Open button sits OUTSIDE it, so the button is always whole. */
+.previewBody {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(68, 93, 34, 0.35) transparent;
+}
+.previewBody::-webkit-scrollbar { width: 10px; }
+.previewBody::-webkit-scrollbar-track { background: transparent; }
+.previewBody::-webkit-scrollbar-thumb {
+  background-color: rgba(68, 93, 34, 0.35); border: 3px solid transparent;
+  background-clip: padding-box; border-radius: 6px;
+}

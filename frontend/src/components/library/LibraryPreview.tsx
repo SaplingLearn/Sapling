@@ -40,11 +40,15 @@ export function LibraryPreview({
     <aside
       aria-label="Selected material"
       data-testid="library-preview"
-      className={styles.scroll}
       style={{
-        position: "relative", gridColumn: 3, gridRow: 2, alignSelf: "start", maxHeight: "calc(100% - 28px)",
+        // Sizes to its content: no scrollbar, and nothing is cut off at the
+        // rounded edge. `maxHeight: 100%` (not `calc(100% - 28px)`, which
+        // cropped the last ~28px and sliced the Open button in half) only
+        // engages on a document long enough to fill the viewport, and then it
+        // is the content ABOVE the button that scrolls, never the button.
+        position: "relative", gridColumn: 3, gridRow: 2, alignSelf: "start", maxHeight: "100%",
         padding: "22px 24px 24px", background: "#E6EDDC", borderRadius: 16, display: "flex", flexDirection: "column",
-        minHeight: 0, overflowY: "auto", boxSizing: "border-box",
+        minHeight: 0, overflow: "hidden", boxSizing: "border-box",
       }}
     >
       {doc ? (() => {
@@ -109,6 +113,7 @@ export function LibraryPreview({
               )}
             </div>
 
+            <div className={styles.previewBody}>
             {renaming ? (
               <div style={{ marginRight: 40, display: "flex", flexDirection: "column", gap: 6 }}>
                 <input
@@ -185,6 +190,8 @@ export function LibraryPreview({
               </>
             )}
 
+            </div>
+
             <button
               type="button"
               data-testid="library-open"
@@ -210,6 +217,7 @@ export function LibraryPreview({
 }
 
 const chip: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 7, height: 28, padding: "0 11px", borderRadius: 14,
+  display: "inline-flex", alignItems: "center", gap: 7, minHeight: 28, padding: "4px 11px", borderRadius: 14,
   background: "#FDFCF9", border: "1px solid rgba(42,39,31,0.12)", fontSize: 13, fontWeight: 600,
-};
+  lineHeight: 1.35, textWrap: "pretty",
+} as React.CSSProperties;
