@@ -23,7 +23,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import rpc, table
 from services.auth_guard import require_admin
 from services.events_service import SYSTEM_CATEGORY
 from services.llm_pricing import COST_SCALE
@@ -152,6 +152,43 @@ class ErrorsPage(BaseModel):
     series: list[DayCount] | None = None
 
 
+#: The metrics contract's "absent, not zero" rule (#119): a NULL cost signal
+#: is never a $0 — it means the window had no active users OR no priced
+#: usage, so there is nothing honest to divide or compare.
+_NULL_COST = "NULL when the window had no active users or no priced usage (never a $0)."
+
+
+class CostWeek(BaseModel):
+    week: int  # 0 = the last 7 days, 1-4 = the trailing four weeks
+    from_: str = Field(validation_alias="from", serialization_alias="from")
+    to: str
+    usd: float | None = Field(
+        description="Priced llm_usage cost in the window. NULL when it had no priced usage.")
+    active_users: int
+    usd_per_active_user: float | None = Field(description=_NULL_COST)
+
+
+class CostPerActiveUser(BaseModel):
+    """#119 / plan Targets: weekly LLM cost per active user + the 2x jump.
+    Every cost field is NULL — absent, not zero — when its window had no
+    active users OR no priced usage."""
+    as_of: str
+    threshold: float
+    usd_per_active_user_7d: float | None = Field(description=_NULL_COST)
+    baseline_usd_per_active_user: float | None = Field(
+        description="Trailing 4-week average cost per active user. " + _NULL_COST)
+    baseline_weeks: int
+    ratio: float | None = Field(
+        description="This week over the baseline. NULL when either side is NULL.")
+    # True when this week's per-user cost is at least `threshold` times the
+    # trailing 4-week average; None when either side is NULL (no active users
+    # or no priced usage in that window).
+    jump: bool | None = Field(
+        description="ratio >= threshold. NULL when either side had no active "
+                    "users or no priced usage.")
+    weeks: list[CostWeek]
+
+
 # ── Date range helpers ───────────────────────────────────────────────────────
 
 
@@ -192,16 +229,20 @@ _NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
 
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
-    extra_filters: dict | None = None,
+    extra_filters: dict | None = None, *, cap: int | None = None, newest_first: bool = False,
 ) -> tuple[list[dict], bool]:
     """Fetch every row in [from, to] for a table, paging via select_with_count.
 
     Aggregation endpoints need the full (date-bounded) set — PostgREST won't
     GROUP BY for us — so we page to completion rather than relying on the
     server's default row cap. Returns ``(rows, truncated)``: a range large
-    enough to hit _SCAN_CAP stops the scan early, logs a warning, and sets
-    ``truncated=True`` so callers can surface the partial aggregation.
+    enough to hit ``cap`` (default _SCAN_CAP) stops the scan early, logs a
+    warning, and sets ``truncated=True`` so callers can surface the partial
+    aggregation. ``newest_first`` pages newest → oldest, so a truncated scan
+    keeps the most recent rows rather than the oldest.
     """
+    if cap is None:
+        cap = _SCAN_CAP  # read at call time (tests shrink it)
     out: list[dict] = []
     offset = 0
     truncated = False
@@ -210,16 +251,18 @@ def _scan_range(
         if extra_filters:
             filters.update(extra_filters)
         rows, total = table(table_name).select_with_count(
-            columns, filters=filters, order="created_at.asc", limit=_PAGE, offset=offset,
+            columns, filters=filters,
+            order="created_at.desc" if newest_first else "created_at.asc",
+            limit=_PAGE, offset=offset,
         )
         out.extend(rows)
         if len(out) >= total or not rows:
             break
-        if len(out) >= _SCAN_CAP:
+        if len(out) >= cap:
             truncated = True
             logger.warning(
                 "admin_analytics scan hit cap %d on %r (total=%d); results truncated",
-                _SCAN_CAP, table_name, total,
+                cap, table_name, total,
             )
             break
         offset += _PAGE
@@ -443,6 +486,27 @@ def llm_cost(
     )
 
 
+@router.get("/llm/cost-per-active-user", response_model=CostPerActiveUser)
+def llm_cost_per_active_user(request: Request, response: Response) -> CostPerActiveUser:
+    """Weekly LLM cost per active user and the "2x jump" alert signal (#119).
+
+    One call to the SQL function `llm_cost_per_active_user_weekly()`
+    (migration 20261108213311) — the same definition Canopy's metrics should
+    read, so the two never disagree. Cost = priced `llm_usage` rows; active =
+    distinct non-system `events` users, as `distinct_active_users` above.
+    503 when the database can't answer: never a made-up zero."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    try:
+        payload = rpc("llm_cost_per_active_user_weekly", {})
+        if isinstance(payload, list):
+            payload = payload[0] if payload else None
+        return CostPerActiveUser.model_validate(payload)
+    except Exception as exc:
+        logger.warning("llm cost-per-active-user unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="LLM cost signal unavailable") from exc
+
+
 @router.get("/errors", response_model=ErrorsPage)
 def errors(
     request: Request,
@@ -492,4 +556,141 @@ def errors(
         range=Range(from_=from_iso, to=to_iso),
         total=total, limit=limit, offset=offset, errors=items,
         truncated=series_truncated, series=series,
+    )
+
+
+# ── db_user_scope rollout report (#115) ──────────────────────────────────────
+#
+# docs/security/db-user-scope-rollout.md: the "read the report" step of the
+# shadow -> enforce ladder. Two views of the same signal: `top` groups the
+# db.* events every worker wrote to the `events` table over the window (the
+# cross-worker, survives-a-deploy view), and `process` is THIS worker's
+# in-process tally since boot (db/scope_report.py), which also carries what
+# the events cannot: shadow-read coverage and the inventory of writes shadow
+# could not verify.
+
+_DB_SCOPE_EVENTS = ("db.rls_shadow_divergence", "db.unscoped_query", "db.rls_denied")
+
+#: The db-scope report groups in Python (PostgREST has no GROUP BY), so it
+#: bounds its own scan: at most this many events (newest first) and a window
+#: of at most _DB_SCOPE_MAX_HOURS. A truncated answer says so (`truncated`,
+#: `scan_cap`). A SQL GROUP BY function would lift both limits (follow-up).
+_DB_SCOPE_SCAN_CAP = 20_000
+_DB_SCOPE_MAX_HOURS = 168
+
+
+class DbScopeWindow(BaseModel):
+    from_: str = Field(serialization_alias="from")
+    to: str
+    hours: int
+
+
+class DbScopeGroup(BaseModel):
+    event: str
+    kind: str
+    mode: str
+    method: str
+    route: str
+    target: str
+    op: str
+    status: str | None = None
+    code: str | None = None
+    count: int
+    users: int
+    first_seen: str | None = None
+    last_seen: str | None = None
+    sample_request_ids: list[str]
+
+
+class DbScopeReport(BaseModel):
+    window: DbScopeWindow
+    total: int
+    groups: int
+    top: list[DbScopeGroup]
+    truncated: bool = False
+    #: The most events one report groups (newest first); `truncated` is True
+    #: when the window held more, and then `top` covers only the newest.
+    scan_cap: int
+    process: dict
+
+
+def _db_scope_key(event_type: str, payload: dict) -> tuple:
+    """The grouping key for one db.* event row — `scope_report.key_of`, the
+    same key the in-process tally uses. Rows written before the report
+    existed carry no kind/method/op (and `error` where newer rows carry
+    `status`); derive what they imply."""
+    from db import scope_report
+
+    status = payload.get("status", payload.get("error"))
+    kind = payload.get("kind")
+    if not kind:
+        if event_type == "db.unscoped_query":
+            kind = "no_subject"
+        elif event_type == "db.rls_denied":
+            kind = "denied"
+        elif status is not None:
+            kind = "error"
+        else:
+            svc, scp = _as_int(payload.get("service_count")), _as_int(payload.get("scoped_count"))
+            kind = "fewer_rows" if scp < svc else "more_rows" if scp > svc else "different_ids"
+    mode = payload.get("mode") or {"db.rls_shadow_divergence": "shadow",
+                                   "db.rls_denied": "enforce"}.get(event_type, "?")
+    # Same defaults as scope_report.record: "?" for an unknown method/route/
+    # target/op, None for an absent status/code.
+    return scope_report.key_of({
+        "event": event_type, "kind": kind, "mode": mode,
+        "method": payload.get("method") or "?", "route": payload.get("route") or "?",
+        "target": payload.get("table") or "?", "op": payload.get("op") or "?",
+        "status": status, "code": payload.get("code"),
+    })
+
+
+@router.get("/db-scope", response_model=DbScopeReport)
+def db_scope_report(
+    request: Request,
+    response: Response,
+    hours: int = Query(24, ge=1, le=_DB_SCOPE_MAX_HOURS),
+    limit: int = Query(50, ge=1, le=500),
+) -> DbScopeReport:
+    """Top `db_user_scope` divergences by route + table over the last `hours`
+    (at most a week), plus this worker's in-process tally. Ids, counts and
+    codes only. Scans at most `_DB_SCOPE_SCAN_CAP` events, newest first."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    from db import scope_report
+    from db.connection import pg_quote_value
+
+    now = datetime.now(timezone.utc)
+    from_iso, to_iso = (now - timedelta(hours=hours)).isoformat(), now.isoformat()
+    rows, truncated = _scan_range(
+        "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
+        extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
+        cap=_DB_SCOPE_SCAN_CAP, newest_first=True,
+    )
+    groups: dict[tuple, dict] = {}
+    for r in rows:
+        payload = r.get("payload") if isinstance(r.get("payload"), dict) else {}
+        key = _db_scope_key(r.get("event_type") or "?", payload)
+        g = groups.setdefault(key, {"count": 0, "users": set(), "first": None, "last": None,
+                                    "rids": []})
+        g["count"] += 1
+        if r.get("user_id"):
+            g["users"].add(r["user_id"])
+        at = r.get("created_at")
+        if at:
+            g["first"] = at if g["first"] is None or at < g["first"] else g["first"]
+            g["last"] = at if g["last"] is None or at > g["last"] else g["last"]
+        rid = r.get("request_id")
+        if rid and len(g["rids"]) < 3 and rid not in g["rids"]:
+            g["rids"].append(rid)
+    ranked = sorted(groups.items(), key=lambda kv: (-kv[1]["count"], kv[0][4], kv[0][5]))
+    top = [
+        DbScopeGroup(**dict(zip(scope_report.KEY_FIELDS, key)), count=g["count"], users=len(g["users"]),
+                     first_seen=g["first"], last_seen=g["last"], sample_request_ids=g["rids"])
+        for key, g in ranked[:limit]
+    ]
+    return DbScopeReport(
+        window=DbScopeWindow(from_=from_iso, to=to_iso, hours=hours),
+        total=len(rows), groups=len(groups), top=top, truncated=truncated,
+        scan_cap=_DB_SCOPE_SCAN_CAP, process=scope_report.snapshot(limit),
     )

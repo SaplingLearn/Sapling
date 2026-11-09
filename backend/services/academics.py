@@ -23,6 +23,7 @@ from datetime import date
 from functools import lru_cache
 
 import httpx
+from fastapi import HTTPException
 
 from db.connection import table
 from db.scope import runs_as_service, service_scope
@@ -113,6 +114,27 @@ def user_course_ids_for_term(user_id: str, term_id: str) -> set[str]:
     offs = table("course_offerings").select(
         "course_id",
         filters={"id": f"in.({','.join(off_ids)})", "term_id": f"eq.{term_id}"},
+    ) or []
+    return {o["course_id"] for o in offs if o.get("course_id")}
+
+
+def user_enrolled_course_ids(user_id: str) -> set[str]:
+    """Every abstract ``course_id`` the user is enrolled in, across all terms.
+
+    The term-less sibling of :func:`user_course_ids_for_term`: two bounded
+    reads (enrollments, then their offerings' ``course_id``), never one read
+    per enrollment. Deliberately **not** cached — enrollments mutate.
+    """
+    if not user_id:
+        return set()
+    enr = table("enrollments").select(
+        "offering_id", filters={"user_id": f"eq.{user_id}"}
+    ) or []
+    off_ids = sorted({e["offering_id"] for e in enr if e.get("offering_id")})
+    if not off_ids:
+        return set()
+    offs = table("course_offerings").select(
+        "course_id", filters={"id": f"in.({','.join(off_ids)})"},
     ) or []
     return {o["course_id"] for o in offs if o.get("course_id")}
 
@@ -289,6 +311,107 @@ def user_offering_ids_for_course(user_id: str, course_id: str) -> list[str]:
         "offering_id", filters={"user_id": f"eq.{user_id}"}
     ) or []
     return [e["offering_id"] for e in enr if e.get("offering_id") in off_ids]
+
+
+#: The answer a course-keyed write gives a caller who is not enrolled. The
+#: same 404 for a course that does not exist, so it is no existence oracle.
+COURSE_NOT_ENROLLED_DETAIL = "Course not found."
+
+
+#: Cap on the gate's one enrollment read. The no-retake rule
+#: (``graph_service.add_course``) keeps a student at one enrollment per course
+#: in practice; the cap only bounds a pathological row set.
+_COURSE_ENROLLMENT_SCAN_LIMIT = 10
+
+
+def enrolled_offering_for_course(user_id: str, course_id: str) -> str | None:
+    """The offering of the abstract ``course_id`` that a course-keyed write by
+    ``user_id`` lands in, or ``None`` when the student holds no enrollment in
+    any offering (any term) of it (#115).
+
+    The gate and the write agree on ONE offering, and it is always one the
+    student is enrolled in: the current term's offering when they hold it,
+    else their latest-term one — the same pick
+    ``topic_checklist_service`` makes when it reads those documents back.
+
+    Any term, not just the current one, because the upload/notes pickers
+    list every course the student holds (``graph_service.get_courses``
+    collapses terms) and the no-retake rule refuses a re-add, so a past-term
+    course must stay writable: requiring the CURRENT-term offering would lock
+    every student out of their own courses at each rollover. Writing to the
+    current-term offering of a student who never enrolled in it (the old
+    ``resolve_offering(create=True)``) filed their rows into a class they are
+    not in, where the enrollment-keyed readers (topic checklist, study guide)
+    never look.
+
+    ONE bounded read: the caller's enrollments with their offering (and its
+    term's sort key) embedded via ``course_offerings!inner`` and filtered to
+    this course by PostgREST. ``current_term()`` is consulted only when more
+    than one enrollment matches. Not cached: enrollments mutate (add/drop
+    course), and a stale "no" right after the upload modal's inline
+    add-course would refuse a legitimate upload. A failed read raises (never
+    a silent "not enrolled").
+    """
+    if not user_id or not course_id:
+        return None
+    rows = table("enrollments").select(
+        "offering_id,course_offerings!inner(course_id,term_id,terms(sort_key))",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "course_offerings.course_id": f"eq.{course_id}",
+        },
+        order="enrolled_at.desc",
+        limit=_COURSE_ENROLLMENT_SCAN_LIMIT,
+    ) or []
+    # Re-check the embed: a non-`!inner` regression would return every
+    # enrollment with a null offering instead of filtering, and that must not
+    # read as "enrolled in this course".
+    mine = [
+        r for r in rows
+        if r.get("offering_id")
+        and isinstance(r.get("course_offerings"), dict)
+        and r["course_offerings"].get("course_id") == course_id
+    ]
+    if not mine:
+        return None
+    if len(mine) == 1:
+        return mine[0]["offering_id"]
+    cur = current_term()
+    cur_id = cur.get("id") if cur else None
+    for r in mine:
+        if cur_id and r["course_offerings"].get("term_id") == cur_id:
+            return r["offering_id"]
+
+    def _sort_key(r: dict) -> int:
+        term = r["course_offerings"].get("terms")
+        return (term.get("sort_key") if isinstance(term, dict) else None) or 0
+
+    return max(mine, key=_sort_key)["offering_id"]
+
+
+def is_enrolled_in_course(user_id: str, course_id: str) -> bool:
+    """Whether ``user_id`` holds an enrollment in ANY offering (any term) of
+    the abstract ``course_id`` (#115). See :func:`enrolled_offering_for_course`."""
+    return enrolled_offering_for_course(user_id, course_id) is not None
+
+
+def require_course_enrollment(user_id: str, course_id: str) -> str:
+    """Refuse a course-keyed write by a student not enrolled in the course
+    (#115): 404 ``COURSE_NOT_ENROLLED_DETAIL``, the codebase's "not yours"
+    answer. Without it a student could push documents into another class's
+    shared RAG pool, file notes under it, or spend model quota scanning it.
+
+    Returns the offering the write must use
+    (:func:`enrolled_offering_for_course`), so the gate and the write cannot
+    disagree on the term. A gated write uses it INSTEAD of
+    ``resolve_offering(course_id, create=True)``, so it never mints a catalog
+    offering either. Looks ``enrolled_offering_for_course`` up as a module
+    global, so the hermetic suite's one ``monkeypatch.setattr(academics, ...)``
+    covers every importer."""
+    offering_id = enrolled_offering_for_course(user_id, course_id)
+    if not offering_id:
+        raise HTTPException(status_code=404, detail=COURSE_NOT_ENROLLED_DETAIL)
+    return offering_id
 
 
 @lru_cache(maxsize=4096)

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app)
 
@@ -467,7 +468,7 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
         assert r.status_code == 200
         data = r.json()
@@ -513,7 +514,7 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             r = client.get("/api/quiz/attempts", params={
                 "user_id": "user_andres", "offset": 99999999999999999999,
             })
@@ -538,6 +539,6 @@ class TestAttemptHistory:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
         assert "id" in captured["order"]

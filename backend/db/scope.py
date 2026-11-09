@@ -16,7 +16,9 @@ Resolution, first match wins (plan §4.2):
 3. Inside a request, the ``db_user_scope`` flag's variant for the request's
    subject (resolved ONCE per request, as service, memoized on the state):
    ``off`` -> service; ``shadow`` -> service, plus a sampled user-scoped
-   re-run of reads that is compared and logged (``db/connection.py``);
+   re-run of reads that is compared and logged (``db/connection.py``) and
+   what can be known about writes without re-running them, all tallied for
+   the rollout report (``db/scope_report.py``);
    ``enforce`` -> the minted user JWT.
 4. ``shadow``/``enforce`` with no subject (no valid session) -> ``enforce``
    raises :class:`UnscopedQueryError` (500, fail closed); ``shadow`` logs
@@ -47,6 +49,8 @@ import contextvars
 import functools
 import inspect
 import logging
+import math
+import os
 import random
 import threading
 from contextlib import contextmanager
@@ -55,7 +59,7 @@ from typing import Any, Callable, Iterator, Optional, TypeVar
 import httpx
 from starlette.requests import Request
 
-from db import user_jwt
+from db import scope_report, user_jwt
 from services import request_context
 
 logger = logging.getLogger("sapling.db_scope")
@@ -69,8 +73,36 @@ SCOPE_KEY = "db_scope"
 MODE_KEY = "db_user_scope_mode"
 SERVICE = "service"
 
+SHADOW_SAMPLE_RATE_ENV = "DB_USER_SCOPE_SHADOW_SAMPLE_RATE"
+
+
+def _sample_rate_from_env(default: float = 0.1) -> float:
+    raw = (os.getenv(SHADOW_SAMPLE_RATE_ENV) or "").strip()
+    if not raw:
+        return default
+    try:
+        rate = float(raw)
+    except ValueError:
+        rate = math.nan
+    # float() accepts "nan"/"inf": NaN would make every `random() >= rate`
+    # comparison False (shadow EVERY read), so anything non-finite is refused.
+    if not math.isfinite(rate):
+        logger.warning("%s=%r is not a finite number; using %s",
+                       SHADOW_SAMPLE_RATE_ENV, raw, default)
+        return default
+    return min(max(rate, 0.0), 1.0)
+
+
 #: Fraction of service-role reads that also run user-scoped under ``shadow``.
-SHADOW_SAMPLE_RATE = 0.1
+#: 0.1 by default; staging's traffic is small enough to compare every read
+#: (``DB_USER_SCOPE_SHADOW_SAMPLE_RATE=1``; read at boot).
+#:
+#: A TUNING knob, not a feature gate (like ``JOBS_LEASE_SECONDS``): whether
+#: shadow runs at all is the ``db_user_scope`` flag, per student; this only
+#: sets how much of an already-on shadow is compared. It is an env var because
+#: flag variants are strings, not numbers. Clamped to [0, 1]; non-finite or
+#: unparseable values fall back to the default.
+SHADOW_SAMPLE_RATE = _sample_rate_from_env()
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -241,12 +273,12 @@ def admin_service_route(request: Request) -> None:
 # ── Header resolution (called by db/connection.py::_scope_headers) ──────────
 
 
-_warned: set[tuple[str, str]] = set()
+_warned: set[tuple] = set()
 _warned_lock = threading.Lock()
 _WARNED_MAX = 1_000
 
 
-def _first_time(key: tuple[str, str]) -> bool:
+def _first_time(key: tuple) -> bool:
     with _warned_lock:
         if key in _warned:
             return False
@@ -270,16 +302,27 @@ def _emit(event: str, *, user_id: Optional[str], payload: dict,
 
 
 def _report_unscoped(mode: str, target: Optional[str]) -> None:
+    """A request with no session subject reached PostgREST from a path not
+    marked service: refused under enforce, ran as service under shadow (and
+    would 500 under enforce).
+
+    Every occurrence is COUNTED (tally + event). The log line is not: under
+    shadow it is written once per (route, table) per process — an anonymous
+    page that reads five tables would otherwise write five WARNING lines per
+    hit. Under enforce each one is a refused request, logged every time."""
     route = request_context.current_route_template() or "?"
     tbl = target or "?"
-    if mode == ENFORCE:
-        logger.error("db_user_scope=enforce: unscoped query (no session subject) on %s "
-                     "from %s; refused", tbl, route)
-    elif _first_time((route, tbl)):
-        logger.warning("db_user_scope=%s: unscoped query (no session subject) on %s from %s; "
-                       "ran as service (would fail under enforce)", mode, tbl, route)
-    _emit("db.unscoped_query", user_id=None,
-          payload={"table": tbl, "route": route, "mode": mode})
+    method = request_context.current_method()
+    request_id = request_context.current_request_id()
+    scope_report.record(
+        event="db.unscoped_query", kind="no_subject", mode=mode, method=method,
+        route=route, target=tbl, op=None, request_id=request_id,
+        level=logging.ERROR if mode == ENFORCE else logging.WARNING,
+        log=mode == ENFORCE or _first_time(("unscoped", route, tbl)),
+    )
+    _emit("db.unscoped_query", user_id=None, request_id=request_id,
+          payload={"table": tbl, "route": route, "mode": mode, "kind": "no_subject",
+                   "method": method or "?"})
 
 
 def _user_headers(subject: str) -> dict:
@@ -324,16 +367,11 @@ def shadow_headers() -> Optional[dict]:
     """For a READ that just ran as service: user-scoped headers when this read
     should be re-run for comparison (``shadow``, a subject, sampled), else
     None. Never raises; a missing key is logged once and skips the shadow."""
-    if _SERVICE_SCOPE.get():
-        return None
-    state = current_state()
-    if state is None or _marked_service(state) or state.get(MODE_KEY) != SHADOW:
-        return None
-    subject = state.get(SUBJECT_KEY)
-    if not subject or random.random() >= SHADOW_SAMPLE_RATE:
+    state = _shadow_state()
+    if state is None or random.random() >= SHADOW_SAMPLE_RATE:
         return None
     try:
-        return _user_headers(subject)
+        return _user_headers(state[SUBJECT_KEY])
     except (user_jwt.SigningKeyError, ValueError) as exc:
         if _first_time(("shadow-key", str(exc))):
             logger.warning("db_user_scope=shadow: no user-scoped credential (%s); "
@@ -341,27 +379,177 @@ def shadow_headers() -> Optional[dict]:
         return None
 
 
+#: Shadow divergence kinds (the ``kind`` field of the line, the tally and the
+#: event payload): the student's read came back with FEWER/MORE rows, the same
+#: number of DIFFERENT ids, or an ERROR (``status`` + PostgREST ``code``:
+#: 401 = token rejected, 403/42501 = missing grant or policy); a WRITE (or
+#: write rpc) named another user in an owner column, filter or user parameter
+#: (known without re-running it: RLS's WITH CHECK or USING on an owner column
+#: refuses or silently skips it under enforce; see ``_other_user`` for what
+#: this heuristic cannot see).
+SHADOW_KINDS = ("fewer_rows", "more_rows", "different_ids", "error", "write_other_user")
+
+
 def report_shadow_divergence(*, table: str, route: Optional[str], subject: Optional[str],
-                             request_id: Optional[str], service_count: int,
-                             scoped_count: int, error: Optional[str] = None) -> None:
-    """A shadow read disagreed with the service read: the same query, run as
-    the student, would have returned a different row count / id set (or
-    failed). Table, route and counts only — never row content."""
-    logger.warning(
-        "db.rls_shadow_divergence table=%s route=%s service=%d scoped=%d%s",
-        table, route or "?", service_count, scoped_count, f" error={error}" if error else "",
+                             request_id: Optional[str], service_count: Optional[int],
+                             scoped_count: Optional[int], kind: str,
+                             method: Optional[str] = None, op: str = "select",
+                             status: Optional[int] = None, code: Optional[str] = None) -> None:
+    """A would-be denial seen in shadow: the same call, run as the student,
+    would have returned a different row count / id set, failed, or (writes)
+    targeted another user's row. Table, route template, counts and codes
+    only — never row content. One WARNING line + the tally + one event."""
+    scope_report.record(
+        event="db.rls_shadow_divergence", kind=kind, mode=SHADOW, method=method,
+        route=route, target=table, op=op, status=status, code=code,
+        service_rows=service_count, scoped_rows=scoped_count,
+        request_id=request_id, user=subject,
     )
-    payload = {"table": table, "route": route or "?",
+    payload = {"table": table, "route": route or "?", "kind": kind,
+               "method": method or "?", "op": op,
                "service_count": service_count, "scoped_count": scoped_count}
-    if error:
-        payload["error"] = error
+    # `status` only: rows written before this carried the same number again as
+    # `error`; the admin reader still accepts that (routes/admin_analytics.py).
+    if status is not None:
+        payload["status"] = status
+    if code:
+        payload["code"] = code
     _emit("db.rls_shadow_divergence", user_id=subject, request_id=request_id, payload=payload)
 
 
-def report_denied(target: str, status: int) -> None:
+def report_denied(target: str, status: int, *, code: Optional[str] = None,
+                  op: str = "?") -> None:
     """A user-scoped call PostgREST refused (enforce). Logged + counted; the
-    caller raises ScopedAccessDenied (-> 404)."""
+    caller raises ScopedAccessDenied (-> 404). ``op`` is the operation the
+    CALL SITE performed (db/connection.py passes it): the HTTP verb alone
+    cannot tell an upsert from an insert."""
     route = request_context.current_route_template() or "?"
-    logger.warning("db.rls_denied table=%s route=%s status=%d", target, route, status)
-    _emit("db.rls_denied", user_id=current_db_subject(),
-          payload={"table": target, "route": route, "status": status})
+    method = request_context.current_method()
+    request_id = request_context.current_request_id()
+    subject = current_db_subject()
+    scope_report.record(
+        event="db.rls_denied", kind="denied", mode=ENFORCE, method=method, route=route,
+        target=target, op=op, status=status, code=code, request_id=request_id, user=subject,
+    )
+    payload = {"table": target, "route": route, "status": status, "kind": "denied",
+               "method": method or "?", "op": op}
+    if code:
+        payload["code"] = code
+    _emit("db.rls_denied", user_id=subject, request_id=request_id, payload=payload)
+
+
+def _shadow_state() -> Optional[dict]:
+    """The request state when this call ran as service ONLY because of
+    ``shadow`` (a subject, not service-marked), else None. The cheap gate
+    every shadow hook passes first: two ContextVar reads and a dict lookup,
+    and under ``off`` it returns before anything else is computed."""
+    if _SERVICE_SCOPE.get():
+        return None
+    state = current_state()
+    if state is None or state.get(MODE_KEY) != SHADOW or _marked_service(state):
+        return None
+    return state if state.get(SUBJECT_KEY) else None
+
+
+#: The columns RLS keys a WRITE on, per table: a row or filter is the
+#: subject's own when ANY listed column names the subject (party tables list
+#: both sides). Unlisted tables key on ``user_id``. Mirrors the WITH CHECK /
+#: USING columns of 20261108094129_rls_policies.sql. ``None`` = ownership is
+#: not a column of the row (a room owner removing a member via owns_room), so
+#: the heuristic does not judge that table at all.
+_OWNER_COLUMNS: dict[str, Optional[tuple[str, ...]]] = {
+    "users": ("id",),
+    "rooms": ("owner_id",),
+    "room_bans": ("banned_by",),
+    "course_chunks": ("uploader_id",),
+    "friendships": ("user_id", "friend_id"),
+    "friend_requests": ("from_user_id", "to_user_id"),
+    "room_members": None,
+}
+_DEFAULT_OWNER_COLUMNS: tuple[str, ...] = ("user_id",)
+
+#: rpc parameters that name the user a function acts for (writes only: the
+#: read-only SHADOW_READ_RPCS are re-run and compared instead).
+_RPC_USER_PARAMS = ("p_user_id", "user_id", "p_owner_id", "p_uid")
+
+
+def _filter_reaches_others(value: Any, subject: str) -> Optional[bool]:
+    """One owner-column filter: True when it can match ANOTHER user's rows
+    (``eq.<other>``, an ``in.(...)`` naming anyone else, any ``neq.``/``not.``),
+    False when it pins the subject alone, None when it says nothing usable."""
+    if isinstance(value, (list, tuple)):
+        verdicts = [_filter_reaches_others(v, subject) for v in value]
+        if any(v is False for v in verdicts):
+            return False  # AND-ed: one pin to the subject bounds the rest
+        return True if any(v is True for v in verdicts) else None
+    if not isinstance(value, str):
+        return None
+    if value.startswith("eq."):
+        return value[3:] != subject
+    if value.startswith("in.(") and value.endswith(")"):
+        ids = [v.strip().strip('"') for v in value[4:-1].split(",") if v.strip()]
+        return any(i != subject for i in ids) if ids else None
+    if value.startswith(("neq.", "not.")):
+        return True
+    return None
+
+
+def _other_user(subject: str, target: str, op: str, data: Any,
+                filters: Optional[dict]) -> bool:
+    """Whether a write names a user other than the subject — a would-be
+    denial under enforce, known without running it.
+
+    A HEURISTIC, and a one-sided one: True is a real signal, False is not
+    proof. It sees owner COLUMNS only (``_OWNER_COLUMNS``), so it is blind to
+    writes keyed by a row id alone (``id=eq.<someone else's row>``), to tables
+    whose policy goes through a parent row (messages, note_concepts,
+    gradebook rows via enrollments), to room_members, and to rpc functions
+    that take the user any other way than ``_RPC_USER_PARAMS``. The cross-user
+    matrix under enforce is the gate for those
+    (docs/security/db-user-scope-rollout.md)."""
+    if op == "rpc":
+        params = data if isinstance(data, dict) else {}
+        return any(isinstance(params.get(k), str) and params[k] and params[k] != subject
+                   for k in _RPC_USER_PARAMS)
+    cols = _OWNER_COLUMNS.get(target, _DEFAULT_OWNER_COLUMNS)
+    if not cols:
+        return False
+    rows = data if isinstance(data, list) else [data]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        named = [row[c] for c in cols if isinstance(row.get(c), str) and row[c]]
+        if named and subject not in named:
+            return True
+    verdicts = [_filter_reaches_others(filters[c], subject)
+                for c in cols if filters and c in filters]
+    if any(v is False for v in verdicts):
+        return False  # pinned to the subject on (one side of) the owner
+    return any(v is True for v in verdicts)
+
+
+def note_shadow_write(target: str, op: str, data: Any = None,
+                      filters: Optional[dict] = None) -> None:
+    """A write or rpc that ran as service under ``shadow``. Never re-executed
+    (a mutation run twice is not an observation), so record only what is
+    known without running it: the (route, table, op) inventory enforce will
+    put under WITH CHECK, and — a would-be denial — a write or write rpc
+    that names another user (``_other_user``). Never raises."""
+    state = _shadow_state()
+    if state is None:
+        return
+    try:
+        subject = state[SUBJECT_KEY]
+        route = request_context.current_route_template()
+        method = request_context.current_method()
+        request_id = request_context.current_request_id()
+        scope_report.note_write(method=method, route=route, target=target, op=op,
+                                request_id=request_id)
+        if _other_user(subject, target, op, data, filters):
+            report_shadow_divergence(
+                table=target, route=route, subject=subject, request_id=request_id,
+                service_count=None, scoped_count=None, kind="write_other_user",
+                method=method, op=op,
+            )
+    except Exception:
+        logger.debug("shadow write on %s not recorded", target, exc_info=True)

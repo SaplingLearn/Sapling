@@ -5,6 +5,7 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -20,13 +21,16 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering, term_id_for_label
+from services.academics import (
+    offering_course_id, require_course_enrollment, resolve_offering, term_id_for_label,
+)
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
     create_note,
     delete_note,
     get_note,
     link_concept,
+    link_prechecked_concepts,
     list_linked_concepts,
     list_notes,
     save_summary,
@@ -182,11 +186,14 @@ async def list_user_notes(
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    # Abstract course id from the client → the current-term offering the note
-    # is stored against (create=True so a fresh note lands in the real term).
-    # CREATE path: deliberately NOT semester-scoped (#141) — new content
-    # belongs to the current term by design.
-    offering_id = resolve_offering(body.course_id, create=True)
+    # #115: only under a course the student is enrolled in (else 404). The
+    # gate returns the offering the note is stored against: the student's own
+    # enrollment in the abstract course — the current term's when they hold
+    # it, else their latest term's — so the check and the write agree.
+    # CREATE path: deliberately NOT semester-scoped (#141).
+    offering_id = await asyncio.to_thread(
+        require_course_enrollment, body.user_id, body.course_id,
+    )
     note = await create_note(
         user_id=body.user_id,
         offering_id=offering_id,
@@ -243,10 +250,12 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # RE-HOME path: moving a note onto another abstract course files it
-        # under that course's CURRENT-term offering — deliberately not
-        # semester-scoped (#141), like the create path above.
-        patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
+        # RE-HOME path: moving a note onto another abstract course passes the
+        # same #115 gate as create (404 unless enrolled) and files it under
+        # the offering the gate returns — not semester-scoped (#141).
+        patch_dict["offering_id"] = await asyncio.to_thread(
+            require_course_enrollment, body.user_id, body.course_id,
+        )
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
     updated = await update_note(
@@ -286,6 +295,8 @@ async def link_concept_route(
         user_id=body.user_id,
         concept_node_id=body.concept_node_id,
     )
+    # One 404 for an unowned note, an unowned node, and a node that does not
+    # exist or vanished mid-request (#115: no existence oracle).
     if not ok:
         raise HTTPException(status_code=404, detail="Note not found.")
     return {"linked": True}
@@ -407,12 +418,13 @@ async def extract_concepts(
     nodes = await _lookup_concept_nodes_by_name(
         user_id=body.user_id, course_id=course_id, names=names
     )
-    for n in nodes:
-        await link_concept(
-            note_id=note_id, user_id=body.user_id,
-            concept_node_id=n["id"],
-        )
-    return {"concepts": names, "linked": len(nodes)}
+    # Both sides are already proven the student's: get_note above is
+    # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
+    # idempotent write replaces link_concept's per-node re-checks.
+    linked = await link_prechecked_concepts(
+        note_id=note_id, node_ids=[n["id"] for n in nodes]
+    )
+    return {"concepts": names, "linked": linked}
 
 
 class NoteChatBody(BaseModel):

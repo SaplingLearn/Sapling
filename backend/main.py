@@ -29,6 +29,8 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_jobs import router as admin_jobs_router
+from routes.admin_llm import router as admin_llm_router
 from routes.admin_email import router as admin_email_router
 from routes.admin_accounts import router as admin_accounts_router
 from routes.admin_account_sync import router as admin_account_sync_router
@@ -39,6 +41,7 @@ from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from services import quiz_config, quiz_errors
 from services.feature_flags import nav_feature_gate
+from services.llm_budget import LLMBudgetExceeded
 from db.scope import (
     ScopeUnavailable,
     ScopedAccessDenied,
@@ -170,6 +173,11 @@ async def _start(stack: AsyncExitStack) -> None:
     # The decision seam's pooled Jev client (#642) for this loop: closed after
     # the tutor-router drain below, whose decisions still use it.
     stack.push_async_callback(typesafe_client.aclose_clients)
+    # #117: the async DB seam's per-loop httpx.AsyncClient (built lazily on
+    # first use, flag `async_db_client`); closed after every request-path
+    # producer below has drained.
+    from db import async_connection
+    stack.push_async_callback(async_connection.aclose_clients)
     # Let in-flight tutor-router decisions finish before the client and the
     # events worker close: each one emits a decision.made row (bounded by the
     # router's own backstop).
@@ -370,6 +378,24 @@ async def unscoped_query_handler(request: Request, exc: UnscopedQueryError):
     )
 
 
+# #119: a student past today's LLM token budget (services/llm_budget.py). The
+# exception IS a 429 HTTPException (so routes' `except HTTPException: raise`
+# pass it through); this only adds `error.reset_at` for clients that want to
+# say when it resets. Quiz routes convert it to their own coded 429 first.
+@app.exception_handler(LLMBudgetExceeded)
+async def llm_budget_exceeded_handler(request: Request, exc: LLMBudgetExceeded):
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path, exc.status_code, exc.detail, rid, code=exc.code,
+    )
+    if isinstance(content.get("error"), dict):
+        content["error"]["reset_at"] = exc.reset_at_iso
+    headers = dict(exc.headers or {})
+    if rid:
+        headers["X-Request-ID"] = rid
+    return JSONResponse(status_code=exc.status_code, content=content, headers=headers)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
@@ -436,6 +462,11 @@ app.include_router(flags_router,       prefix="/api/flags")
 # Mounted before the generic admin router so its /accounts paths win.
 app.include_router(admin_accounts_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
 app.include_router(admin_account_sync_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
+# #116: the job queue's depth and dead letters (`jobs` is service-only).
+# Mounted before the generic admin router so /jobs is never shadowed.
+app.include_router(admin_jobs_router,  prefix="/api/admin/jobs", dependencies=_ADMIN_SVC)
+# #119: per-user LLM budgets + the outage-drill state. Before admin_router.
+app.include_router(admin_llm_router,   prefix="/api/admin/llm", dependencies=_ADMIN_SVC)
 app.include_router(admin_router,       prefix="/api/admin", dependencies=_ADMIN_SVC)
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics", dependencies=_ADMIN_SVC)
 app.include_router(admin_documents_router, prefix="/api/admin/documents", dependencies=_ADMIN_SVC)

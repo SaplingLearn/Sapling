@@ -69,17 +69,87 @@ describe("WrittenAnswer", () => {
     expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("Functions like sin");
   });
 
-  it("inserts a key at the cursor, and brackets leave the cursor inside", async () => {
-    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+  it("inserts a key at the cursor, and brackets leave the cursor inside", () => {
     render(<Harness type="symbolic" initial="2+1" />);
     input().setSelectionRange(1, 1);
     fireEvent.click(screen.getByTestId("quiz-key-brackets"));
     expect(input().value).toBe("2()+1");
-    await act(async () => {
-      vi.runAllTimers();
-    });
     expect(input().selectionStart).toBe(2);
-    vi.useRealTimers();
+    expect(input().selectionEnd).toBe(2);
+  });
+
+  it("has the cursor inside the brackets before the next keystroke, with no frame in between", () => {
+    // The quiz-written E2E types straight after the click. The cursor used to
+    // move in a requestAnimationFrame, so "x" landed after ")" first: freeze
+    // frames and the move must already have happened when the click returns.
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    try {
+      render(<Harness type="symbolic" initial="2" />);
+      input().focus();
+      input().setSelectionRange(1, 1);
+      fireEvent.click(screen.getByTestId("quiz-key-brackets"));
+      const at = input().selectionStart ?? -1;
+      // What the browser does with the next typed character: insert at the cursor.
+      fireEvent.change(input(), { target: { value: input().value.slice(0, at) + "x" + input().value.slice(at) } });
+      expect(input().value).toBe("2(x)");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves the cursor once a parent that answers later writes the value", () => {
+    let release: (() => void) | undefined;
+    function LateHarness() {
+      const [value, setValue] = React.useState("2");
+      return (
+        <WrittenAnswer
+          type="symbolic"
+          value={value}
+          disabled={false}
+          onChange={text => {
+            release = () => setValue(text);
+          }}
+          onSubmit={vi.fn()}
+          describedBy="hint"
+        />
+      );
+    }
+    render(<LateHarness />);
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-brackets"));
+    expect(input().value).toBe("2");
+    act(() => release?.());
+    expect(input().value).toBe("2()");
+    expect(input().selectionStart).toBe(2);
+  });
+
+  it("drops a pending cursor move once the student types", () => {
+    let release: (() => void) | undefined;
+    function LateHarness() {
+      const [value, setValue] = React.useState("2");
+      return (
+        <WrittenAnswer
+          type="symbolic"
+          value={value}
+          disabled={false}
+          onChange={text => {
+            if (text === "2()") release = () => setValue(text);
+            else setValue(text);
+          }}
+          onSubmit={vi.fn()}
+          describedBy="hint"
+        />
+      );
+    }
+    render(<LateHarness />);
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-brackets"));
+    fireEvent.change(input(), { target: { value: "2x" } });
+    expect(input().value).toBe("2x");
+    act(() => release?.());
+    // The late "2()" still arrives, but the cursor stays where the browser put it.
+    expect(input().value).toBe("2()");
+    expect(input().selectionStart).toBe(3);
   });
 
   it("replaces a selection with the key", () => {

@@ -151,7 +151,7 @@ class TestCreateNote:
                     "created_at": "2026-05-11T00:00:00Z",
                     "updated_at": "2026-05-11T00:00:00Z"}
         with (
-            patch("routes.notes.resolve_offering", return_value="off1") as ro,
+            patch("routes.notes.require_course_enrollment", return_value="off1") as gate,
             patch("routes.notes.create_note", side_effect=fake_create),
         ):
             r = client.post(
@@ -162,8 +162,8 @@ class TestCreateNote:
         assert r.status_code == 200
         body = r.json()
         assert body["id"] == "n1"
-        # Abstract course id resolved to the current-term offering on create.
-        ro.assert_called_once_with("c1", create=True)
+        # #115: the enrollment gate names the offering the note is stored on.
+        gate.assert_called_once_with("u1", "c1")
         assert body["offering_id"] == "off1"
 
     def test_missing_course_id_returns_422(self, client):
@@ -290,6 +290,49 @@ class TestLinkConceptRoute:
         assert r.status_code == 200
         assert r.json() == {"linked": True}
 
+    @pytest.mark.parametrize("node_id,expect", [
+        ("g-own", 200),       # u1's own node
+        ("g-foreign", 404),   # another student's node
+        ("g-missing", 404),   # no such node at all
+    ])
+    def test_link_checks_node_ownership(self, client, node_id, expect):
+        """#115: the real service decides; a foreign node and a missing one
+        get the SAME 404 body (no existence oracle) and write nothing."""
+        graph = {"g-own": "u1", "g-foreign": "u-other"}
+        inserted: list[dict] = []
+
+        class _T:
+            def __init__(self, name):
+                self.name = name
+
+            def select(self, cols, filters=None, **kw):
+                filters = filters or {}
+                if self.name == "notes":
+                    return [{"id": "n1"}] if filters.get("user_id") == "eq.u1" else []
+                if self.name == "graph_nodes":
+                    nid = filters["id"].removeprefix("eq.")
+                    uid = filters["user_id"].removeprefix("eq.")
+                    return [{"id": nid}] if graph.get(nid) == uid else []
+                raise AssertionError(self.name)
+
+            def upsert(self, data, **kw):
+                assert self.name == "note_concepts"
+                inserted.extend(data)
+                return list(data)
+
+        with patch("services.notes_service.table", side_effect=_T):
+            r = client.post(
+                "/api/notes/n1/concepts",
+                json={"user_id": "u1", "concept_node_id": node_id},
+            )
+        assert r.status_code == expect
+        if expect == 200:
+            assert inserted == [{"note_id": "n1", "concept_node_id": "g-own"}]
+        else:
+            assert inserted == []
+            # Same answer as an unowned note (the handler appends a request id).
+            assert r.json()["detail"].startswith("Note not found.")
+
     def test_unlink(self, client):
         async def fake_unlink(note_id, user_id, concept_node_id):
             return True
@@ -412,16 +455,17 @@ class TestExtractConceptsRoute:
         async def fake_lookup(user_id, course_id, names):
             return [{"id": f"g_{n}", "concept_name": n} for n in names]
         linked: list[tuple[str, str]] = []
-        async def fake_link(note_id, user_id, concept_node_id):
-            linked.append((note_id, concept_node_id))
-            return True
+        async def fake_link(note_id, node_ids):
+            linked.extend((note_id, i) for i in node_ids)
+            return len(node_ids)
 
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
              patch("routes.notes.get_note", side_effect=fake_get_note()), \
              patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
              patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup), \
-             patch("routes.notes.link_concept", side_effect=fake_link):
+             patch("routes.notes.link_prechecked_concepts", side_effect=fake_link), \
+             patch("routes.notes.link_concept", side_effect=AssertionError("per-node path")):
             r = client.post(
                 "/api/notes/n1/extract-concepts",
                 json={"user_id": "u1"},
@@ -431,6 +475,7 @@ class TestExtractConceptsRoute:
         assert body["concepts"] == ["Photosynthesis", "Calvin Cycle"]
         assert merged == ["Photosynthesis", "Calvin Cycle"]
         assert {n[1] for n in linked} == {"g_Photosynthesis", "g_Calvin Cycle"}
+        assert body["linked"] == 2
 
     def test_agent_run_receives_worker_limits(self, client):
         """#329: the single-shot concepts worker must run under WORKER_LIMITS."""

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.db_fakes import with_async_twins
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -295,7 +296,7 @@ class TestHistoryStatusMatchesGetAttempt:
                 mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch("routes.quiz.table", side_effect=with_async_twins(factory)):
             listed = client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
             single = client.get("/api/quiz/attempts/old-live")
 

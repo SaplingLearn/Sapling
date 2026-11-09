@@ -61,8 +61,11 @@ def _upload_resume(file: UploadFile, content: bytes) -> str:
     return path
 
 
+# #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
+# spooled-file read (`file.file.read`), the Storage PUT and the insert never
+# block the event loop. The form is parsed before the handler runs.
 @router.post("/apply")
-async def apply(
+def apply(
     position: str = Form(...),
     full_name: str = Form(...),
     email: str = Form(...),

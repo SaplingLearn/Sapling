@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.db_fakes import with_async_twins
 
 # The attempt-row shape is the D-workstream's (#542) and is single-sourced
 # there: two byte-identical copies drifted apart the moment either route grew
@@ -315,7 +316,7 @@ class TestAbandonIsVisibleToTheReadPaths:
         strip filters on (`useQuizHome::discoverResumable`)."""
         attempts = _Attempts(_attempt_row())
 
-        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+        with patch("routes.quiz.table", side_effect=with_async_twins(_factory(attempts))):
             client.post("/api/quiz/attempts/quiz1/abandon")
             listing = client.get(
                 "/api/quiz/attempts", params={"user_id": "user_andres"}

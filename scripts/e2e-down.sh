@@ -60,6 +60,7 @@ stop_tracked() { # name pidfile
 
 stop_tracked "frontend (next start)" "$E2E_DIR/frontend.pid"
 stop_tracked "backend (uvicorn)" "$E2E_DIR/backend.pid"
+stop_tracked "job worker (opt-in)" "$E2E_DIR/worker.pid"
 
 [ "$APPS_ONLY" = "1" ] && exit 0
 

@@ -24,6 +24,8 @@ real (Anthropic or Google) model request:
   with :class:`CircuitOpenError` for `BREAKER_COOLDOWN_S`; then HALF-OPEN lets
   exactly one probe through — success closes, a retryable failure re-opens.
 * **The `llm_fallback` flag read** — see :func:`fallback_enabled`.
+* **The forced-outage drill** — the `llm_outage_drill` flag; see
+  :func:`forced_outage` and docs/ops/llm-outage-drill.md.
 
 Nothing here builds a client or touches the network, and none of it is
 reachable in function mode: only the real `_LoopSafe*` models carry the
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import threading
 import time
@@ -99,6 +102,133 @@ class CircuitOpenError(ModelHTTPError):
 
 class DeadlineExceeded(ModelAPIError):
     """Our own per-request deadline (not an SDK timeout) fired."""
+
+
+# ── Forced-outage drill (#119, docs/ops/llm-outage-drill.md) ───────────────
+#
+# The `llm_outage_drill` flag (off | anthropic | google | both) makes EVERY
+# attempt against the named provider(s) fail, before any network I/O, with a
+# retryable 503 (:class:`ForcedOutageError`). Raised INSIDE the retry loop, so
+# the drill exercises the real path: retries + backoff, the breaker opening
+# after BREAKER_FAILURE_THRESHOLD failures, then — with `llm_fallback` on — the
+# cross-provider fallback, and with it off the routes' mapped errors.
+#
+# A registered flag (CLAUDE.md: risky behaviour is flag-gated, never a new env
+# var), resolved GLOBALLY (user_id=None) like `llm_fallback`. A deploy arms it
+# with the flag store's own env override, SAPLING_FLAG_LLM_OUTAGE_DRILL=
+# anthropic, which needs no store read; /admin can set the stored default. A
+# flag-store outage resolves fail-closed to "off", so the store the drill may
+# be stressing can never arm it. Read once per model request off the event
+# loop (cached; a cold snapshot is one bounded read in a worker thread).
+#
+# SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION is NOT a feature gate: it is a
+# safety interlock. In production (APP_ENV=production, which is also APP_ENV's
+# default when unset) an armed drill is refused — logged at ERROR, ignored —
+# unless that env var is "yes", so neither a stray flag value nor one misclick
+# in /admin can take production's LLM features down on its own.
+
+DRILL_FLAG = "llm_outage_drill"
+FORCE_OUTAGE_PRODUCTION_ENV = "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION"
+OUTAGE_PROVIDERS = frozenset({"anthropic", "google"})
+#: The drill flag's variants -> the providers forced down.
+_DRILL_PROVIDERS = {
+    "off": frozenset(),
+    "anthropic": frozenset({"anthropic"}),
+    "google": frozenset({"google"}),
+    "both": OUTAGE_PROVIDERS,
+}
+#: The env var an earlier draft of the drill used. It does nothing now.
+_REMOVED_DRILL_ENV = "SAPLING_LLM_FORCE_OUTAGE"
+
+
+class ForcedOutageError(ModelHTTPError):
+    """The forced-outage drill failed this attempt (no request was sent). A
+    503, so it is retryable, counts toward the breaker, and is fallback
+    eligible exactly like a real provider outage."""
+
+    def __init__(self, provider: str, model_name: str):
+        self.provider = provider
+        super().__init__(
+            status_code=503,
+            model_name=model_name,
+            body={"error": "forced_outage", "provider": provider},
+        )
+
+    def __reduce__(self):
+        return self.__class__, (self.provider, self.model_name)
+
+
+def resolve_forced_outage(variant: str, env: Any) -> tuple[frozenset[str], str | None]:
+    """(providers forced down, why the drill was refused or None) for a
+    resolved `llm_outage_drill` variant. Pure, so the production interlock is
+    testable without a flag store."""
+    providers = _DRILL_PROVIDERS.get(variant, frozenset())
+    if not providers:
+        return frozenset(), None
+    app_env = (env.get("APP_ENV") or "production").strip().lower()
+    allowed = (env.get(FORCE_OUTAGE_PRODUCTION_ENV) or "").strip().lower() == "yes"
+    if app_env == "production" and not allowed:
+        return frozenset(), (
+            f"{DRILL_FLAG}={variant!r} is refused in production (APP_ENV={app_env!r}); "
+            f"set {FORCE_OUTAGE_PRODUCTION_ENV}=yes to really drill there"
+        )
+    return providers, None
+
+
+_drill_logged: set[tuple[str, str | None]] = set()
+
+
+def _log_drill_once(variant: str, providers: frozenset[str], refused: str | None) -> None:
+    key = (variant, refused)
+    if key in _drill_logged or not (providers or refused):
+        return
+    _drill_logged.add(key)
+    if refused:
+        logger.error("llm forced-outage drill NOT armed: %s", refused)
+    else:
+        logger.warning(
+            "LLM FORCED-OUTAGE DRILL ARMED: every request to %s fails with a "
+            "retryable 503 until the %s flag is off",
+            ", ".join(sorted(providers)), DRILL_FLAG,
+        )
+
+
+async def forced_outage() -> frozenset[str]:
+    """The providers the drill forces down right now (usually none). Never
+    raises: an unreadable flag reads as off."""
+    try:
+        from services import feature_flags
+
+        variant = (await feature_flags.explain_off_loop(DRILL_FLAG, None)).variant
+    except Exception:
+        logger.warning("%s flag unreadable; treating as off", DRILL_FLAG, exc_info=True)
+        return frozenset()
+    providers, refused = resolve_forced_outage(variant, os.environ)
+    _log_drill_once(variant, providers, refused)
+    return providers
+
+
+def forced_outage_status() -> dict:
+    """For the admin drill endpoint (a sync route: may read the flag store).
+    Process-local only in that the production interlock is this process's
+    env."""
+    from services import feature_flags
+
+    resolution = feature_flags.explain(DRILL_FLAG, None)
+    providers, refused = resolve_forced_outage(resolution.variant, os.environ)
+    return {
+        "variant": resolution.variant,
+        "source": resolution.step,
+        "providers": sorted(providers),
+        "refused": refused,
+    }
+
+
+if (os.getenv(_REMOVED_DRILL_ENV) or "").strip():
+    logger.warning(
+        "%s is set but no longer does anything: the outage drill is the %s flag "
+        "(SAPLING_FLAG_LLM_OUTAGE_DRILL=anthropic|google|both)", _REMOVED_DRILL_ENV, DRILL_FLAG,
+    )
 
 
 # ── Classification ───────────────────────────────────────────────────────
@@ -260,9 +390,16 @@ def breaker_for(provider: str) -> CircuitBreaker:
         return breaker
 
 
+def breaker_states() -> dict[str, str]:
+    """Each provider breaker's state in this process (admin drill view)."""
+    with _breakers_lock:
+        return {name: b.state for name, b in _breakers.items()}
+
+
 def reset_for_tests() -> None:
     with _breakers_lock:
         _breakers.clear()
+    _drill_logged.clear()
 
 
 # ── The retry loop ───────────────────────────────────────────────────────
@@ -291,11 +428,14 @@ async def call_with_retries(
     breaker refuses an attempt (including a retry: a breaker that opened
     mid-call stops it there)."""
     breaker = breaker_for(site.provider)
+    drilled = site.provider in await forced_outage()
     last_exc: Exception | None = None
     for index in range(RETRY_ATTEMPTS):
         if not breaker.allow():
             raise CircuitOpenError(site.provider, site.model_name) from last_exc
         try:
+            if drilled:
+                raise ForcedOutageError(site.provider, site.model_name)
             if deadline_s is None:
                 result = await attempt()
             else:
@@ -357,9 +497,7 @@ async def fallback_enabled() -> bool:
     try:
         from services import feature_flags
 
-        resolution = feature_flags.cached_explain(FALLBACK_FLAG, None)
-        if resolution is None:
-            resolution = await asyncio.to_thread(feature_flags.explain, FALLBACK_FLAG, None)
+        resolution = await feature_flags.explain_off_loop(FALLBACK_FLAG, None)
         return resolution.variant == "on"
     except Exception:
         logger.warning("llm_fallback flag unreadable; treating as off", exc_info=True)

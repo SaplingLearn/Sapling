@@ -16,7 +16,7 @@ from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, Send
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
-from services.profiles import get_display_name, get_display_names
+from services.profiles import LIVE_USER_FILTER, get_display_name, get_display_names, live_user_ids
 from services.graph_service import get_graph
 from services import academics
 from services.matching_service import find_study_matches
@@ -107,6 +107,14 @@ _LISTABLE_USER_FILTERS = {
     "is_approved": "eq.true",
     "deleted_at": "is.null",
 }
+
+
+def _live_members(member_rows) -> list[str]:
+    """Room member ids minus soft-deleted accounts (#115), in row order: a
+    deleted student's name and graph must not stay on the room's pages."""
+    ids = [r["user_id"] for r in member_rows or []]
+    live = live_user_ids(ids) if ids else set()
+    return [i for i in ids if i in live]
 
 
 @router.post("/rooms/create")
@@ -314,7 +322,7 @@ def room_overview(room_id: str, request: Request):
     room = room_rows[0]
 
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
+    member_ids = _live_members(member_id_rows)
 
     members = []
     if member_ids:
@@ -401,7 +409,7 @@ def match_partners(room_id: str, body: MatchBody, request: Request):
     # Members' graphs are room-private (#764): the same gate as the overview.
     _require_member(room_id, body.user_id)
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
-    member_ids = [m["user_id"] for m in member_id_rows]
+    member_ids = _live_members(member_id_rows)
 
     members_with_graphs = []
     if member_ids:
@@ -1086,6 +1094,12 @@ def list_friend_requests(user_id: str, request: Request):
         filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
     ) or []
     ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
+    # A pending request to or from a since-deleted account is not actionable
+    # and must not keep naming them (#115).
+    live = live_user_ids(ids) if ids else set()
+    incoming = [r for r in incoming if r["from_user_id"] in live]
+    outgoing = [r for r in outgoing if r["to_user_id"] in live]
+    ids = [i for i in ids if i in live]
     names = get_display_names(ids) if ids else {}
     return {
         "incoming": [
@@ -1108,9 +1122,9 @@ def list_friends(user_id: str, request: Request):
     if not ids:
         return {"friends": []}
     users = table("users").select(
-        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
+        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})", **LIVE_USER_FILTER}
     ) or []
-    names = get_display_names(ids)
+    names = get_display_names([u["id"] for u in users])
     return {"friends": [
         {
             "user_id": u["id"],

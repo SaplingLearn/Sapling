@@ -126,6 +126,10 @@ function GradescopeSyncDialog({
 
   // Sync result
   const [result, setResult] = React.useState<GradescopeSyncResult | null>(null);
+  // A queued sync (#116) that outlasted the server's wait: it keeps running
+  // and the dialog polls for its outcome. It may be closed meanwhile; the
+  // poll carries on and still refreshes the gradebook when the sync ends.
+  const [syncPending, setSyncPending] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const submitting = React.useRef(false);
   const active = React.useRef(true);
@@ -369,10 +373,23 @@ function GradescopeSyncDialog({
     if (!saplingCourseId || submitting.current) return;
     submitting.current = true;
     setError(null);
+    setSyncPending(false);
     setStage("syncing");
+    let wentPending = false;
     try {
-      const res = await syncGradescopeCourse(userId, saplingCourseId, semester);
-      if (!active.current) return;
+      const res = await syncGradescopeCourse(userId, saplingCourseId, semester, {
+        onPending: () => {
+          wentPending = true;
+          if (active.current) setSyncPending(true);
+        },
+      });
+      if (!active.current) {
+        // Closed while a queued sync was still running (the pending note
+        // allows that): it has finished now, so refresh the gradebook as the
+        // note promised. A sync that never went pending reports nothing.
+        if (wentPending) onSynced?.();
+        return;
+      }
       setResult(res);
       setStage("done");
       onSynced?.();
@@ -388,6 +405,7 @@ function GradescopeSyncDialog({
       else setStage("ready");
     } finally {
       submitting.current = false;
+      if (active.current) setSyncPending(false);
     }
   }
 
@@ -435,12 +453,12 @@ function GradescopeSyncDialog({
         padding: 16,
       }}
       onClick={() => {
-        if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+        if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
-          if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+          if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
         }
         if (event.key !== "Tab") return;
         const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
@@ -883,6 +901,15 @@ function GradescopeSyncDialog({
                   Last sync · {new Date(lastSyncedAt).toLocaleString()}
                 </p>
               )}
+              {stage === "syncing" && syncPending && (
+                <p
+                  role="status"
+                  style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}
+                >
+                  Still syncing — this one is taking longer than usual. We&apos;ll refresh
+                  your gradebook when it finishes.
+                </p>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <button
                   type="button"
@@ -905,7 +932,7 @@ function GradescopeSyncDialog({
                     type="button"
                     className="btn"
                     onClick={onClose}
-                    disabled={stage === "syncing" || saving}
+                    disabled={(stage === "syncing" && !syncPending) || saving}
                   >
                     Close
                   </button>

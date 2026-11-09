@@ -38,6 +38,8 @@ Keep: the single LLM chokepoint (`agents/_providers.py`) with function mode and 
 | 4. Domain modules | 7 to 10 | #118 | No route file over 600 lines; no function over complexity 25 |
 | 5. LLM resilience and cost | 9 to 12 | #119 | A forced provider outage in staging falls back with no user-facing errors |
 
+Phase 4's target layout, split order and the ratchet that holds both numbers until then: `docs/design/domain-modules.md`.
+
 ## What not to do
 
 - No microservices or Kubernetes.

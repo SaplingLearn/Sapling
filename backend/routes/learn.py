@@ -19,7 +19,7 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering
+from services.academics import offering_course_id, require_course_enrollment, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
@@ -819,6 +819,16 @@ async def _agent_turn_or_http_error(turn, *, what: str):
         raise HTTPException(status_code=502, detail=_MODEL_TROUBLE_DETAIL) from e
 
 
+def _session_offering(body: StartSessionBody, course_id: str) -> str:
+    """The offering a new session row keys on. A client-named
+    ``body.course_id`` passes the #115 enrollment gate (404 unless the student
+    is enrolled) and lands on the offering it returns; a topic-derived course
+    keeps the current-term resolution."""
+    if body.course_id:
+        return require_course_enrollment(body.user_id, body.course_id)
+    return resolve_offering(course_id, create=True) if course_id else ""
+
+
 async def _start_session_agent(
     body: StartSessionBody,
     session_id: str | None = None,
@@ -864,9 +874,9 @@ async def _start_session_agent(
 
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; the session row keys on the
-    # offering it resolves to (current term).
+    # offering `_session_offering` picks (a client-named course is gated, #115).
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
-    offering_id = resolve_offering(course_id, create=True) if course_id else ""
+    offering_id = _session_offering(body, course_id)
 
     user_message = (
         f"Student wants to learn about: {body.topic}\n\n"
@@ -1482,7 +1492,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     session_id = str(uuid.uuid4())
 
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
-    offering_id = resolve_offering(course_id, create=True) if course_id else ""
+    offering_id = _session_offering(body, course_id)
 
     user_message = (
         f"Student wants to learn about: {body.topic}\n\n"
