@@ -244,6 +244,9 @@ async def amaterialize_stored(session_id: str, user_id: str) -> bool:
         "p_user_id": user_id,
         "p_ttl_seconds": PENDING_TTL_SECONDS,
         "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
+        # The greeting's created_at, on the app clock the turn's own rows
+        # use (routes/learn.py::_message_row), so it always sorts first.
+        "p_created_at": datetime.now(timezone.utc).isoformat(),
     })
     row = rows[0] if isinstance(rows, list) and rows else {}
     outcome = row.get("outcome")

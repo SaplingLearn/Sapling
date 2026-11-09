@@ -154,7 +154,8 @@ class _FakeDB:
         self.rows["messages"].append({
             "id": f"m-{len(self.rows['messages'])}", "session_id": r["session_id"],
             "role": "assistant", "content": r["assistant_reply"],
-            "graph_update_json": r["graph_update"], "created_at": now.isoformat(),
+            "graph_update_json": r["graph_update"],
+            "created_at": p["p_created_at"] or now.isoformat(),
         })
         self.rows["tutor_pending_sessions"].remove(r)
         return [{"outcome": "materialized", "session_mode": r["mode"],
@@ -272,6 +273,17 @@ def test_a_discard_on_one_replica_stops_turns_on_the_other(db, reason, status):
         again = client.post("/api/learn/end-session", json={"session_id": sid, "user_id": USER})
         assert again.status_code == 200, "a repeat end is still answered"
     assert db.rows["sessions"] == [] and db.rows["messages"] == []
+
+
+def test_the_materialised_greeting_sorts_before_the_turns_user_row(db):
+    """The greeting is stamped on the app clock at the turn, before the turn's
+    own rows (finding: a DB-clock stamp could sort after a skewed user row)."""
+    sid = _start()
+    _replica_hop()
+    assert _chat(sid).status_code == 200
+    stamps = [(m["role"], datetime.fromisoformat(m["created_at"])) for m in db.rows["messages"]]
+    assert [r for r, _ in stamps] == ["assistant", "user", "assistant"]
+    assert stamps[0][1] <= stamps[1][1] <= stamps[2][1]
 
 
 def test_another_students_stored_session_is_404_and_left_intact(db):
