@@ -123,6 +123,12 @@ const TO_PLAIN: Record<WrittenType, (shown: string) => string> = {
   symbolic: shown => asciiExpression(shown),
 };
 
+/** A format's entry in one of the tables above. A type outside them
+ *  (QuizQuestion casts the wire's type) is plain text with no keys. */
+function formatEntry<T>(table: Record<WrittenType, T>, type: WrittenType, plain: T): T {
+  return Object.prototype.hasOwnProperty.call(table, type) ? table[type] : plain;
+}
+
 /** What the grader will make of the answer, when there is something to say. */
 interface Reading {
   ok: boolean;
@@ -191,8 +197,8 @@ function problemLine(verdict: "correct" | "incorrect" | null, reading: Reading |
 }
 
 function KeyRows({ type, disabled, onInsert }: { type: WrittenType; disabled: boolean; onInsert: (key: Key) => void }) {
-  const keys = KEYS[type];
-  const more = MORE_KEYS[type];
+  const keys = formatEntry(KEYS, type, []);
+  const more = formatEntry(MORE_KEYS, type, []);
   const [moreOpen, setMoreOpen] = React.useState(false);
 
   const keyButton = (key: Key) => (
@@ -254,8 +260,8 @@ export function WrittenAnswer({
   labelledBy,
 }: WrittenAnswerProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const toShown = TO_SHOWN[type];
-  const toPlain = TO_PLAIN[type];
+  const toShown = formatEntry(TO_SHOWN, type, asTyped);
+  const toPlain = formatEntry(TO_PLAIN, type, asTyped);
   const shown = toShown(value);
 
   // Typesetting changes the text's length (^2 is two characters, ² is one),
