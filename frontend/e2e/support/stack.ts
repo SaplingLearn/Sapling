@@ -1,12 +1,13 @@
 /**
  * The already-booted local E2E stack (#384) that this harness targets.
  *
- * Which stack, in order: the env (E2E_FRONTEND_URL / E2E_BACKEND_URL /
- * E2E_DB_URL — scripts/e2e-cycle.sh exports them for its slot), else the
- * manifest the last `make e2e-up` in this checkout wrote (.e2e/stack.json,
- * scripts/lib/e2e-slot.sh), else the classic slot-0 contract CI boots:
- * frontend :3000, backend :5000, Postgres 127.0.0.1:54322, PostgREST :54321.
- * Locally those classic ports are the dev app's; slots use :310N / :510N.
+ * Which stack, in order: the env (E2E_FRONTEND_URL / E2E_BACKEND_URL —
+ * scripts/e2e-cycle.sh exports them for its slot), else the manifest the last
+ * `make e2e-up` in this checkout wrote (.e2e/stack.json,
+ * scripts/lib/e2e-slot.sh), else — in CI only — the classic slot-0 contract:
+ * frontend :3000, backend :5000. Locally those classic ports are the DEV app,
+ * whose database the per-test reset truncates, so with no slot booted the
+ * harness refuses (requireStackUp) rather than fall back to them.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -29,22 +30,13 @@ function readManifest(): StackManifest {
 }
 
 const manifest = readManifest();
+const IN_CI = process.env.CI === "true";
 
 export const FRONTEND_URL =
-  process.env.E2E_FRONTEND_URL?.trim() || manifest.frontendUrl || "http://localhost:3000";
+  process.env.E2E_FRONTEND_URL?.trim() || manifest.frontendUrl || (IN_CI ? "http://localhost:3000" : "");
 
 export const BACKEND_URL =
-  process.env.E2E_BACKEND_URL?.trim() || manifest.backendUrl || "http://localhost:5000";
-
-/** The stack's Postgres — the only DB the harness may truncate or seed. */
-export const DB_URL =
-  process.env.E2E_DB_URL?.trim() ||
-  manifest.dbUrl ||
-  "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
-
-/** The stack's PostgREST, for the seeder (which reads SUPABASE_URL). */
-export const SUPABASE_URL =
-  manifest.supabaseUrl || process.env.SUPABASE_URL?.trim() || "http://127.0.0.1:54321";
+  process.env.E2E_BACKEND_URL?.trim() || manifest.backendUrl || (IN_CI ? "http://localhost:5000" : "");
 
 /** The primary seeded user (db/seed_local_rich.py); mirrors the #397 pytest
  * integration fixtures' USER_ACTIVE. */
@@ -83,6 +75,14 @@ async function isUp(url: string): Promise<boolean> {
  * mid-spec.
  */
 export async function requireStackUp(): Promise<void> {
+  if (!FRONTEND_URL || !BACKEND_URL) {
+    throw new Error(
+      "No E2E stack to target: E2E_FRONTEND_URL / E2E_BACKEND_URL are unset and there is " +
+        "no .e2e/stack.json. Outside CI the classic :3000/:5000 are the DEV app, whose " +
+        "database every test would truncate — refusing. Boot a slot first: " +
+        "`scripts/e2e-cycle.sh -- <command>`, or `make e2e-up` (docs/local-supabase.md).",
+    );
+  }
   const checks: Array<[name: string, url: string]> = [
     ["backend (uvicorn)", `${BACKEND_URL}/api/health`],
     ["frontend (next start)", `${FRONTEND_URL}/`],

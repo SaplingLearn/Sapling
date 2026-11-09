@@ -126,7 +126,14 @@ USAGE
 try_lock_holder() { # slot → 0 when OUR holder now owns that slot's lock
   LOCK_FILE="$(e2e_slot_lock_file "$1")"
   mkdir -p "$(dirname "$LOCK_FILE")" "$EXPLORE_DIR"
+  mkdir -p "$REPO_ROOT/.e2e"
+  # The holder takes the CHECKOUT's cycle lock (fd 8) as well as the slot's
+  # (fd 9), exactly like scripts/e2e-cycle.sh: .e2e/ and frontend/.next are per
+  # checkout, so an exploration and a cycle here would stop each other's
+  # servers. A busy checkout is exit 43, a busy slot 42.
   setsid bash -c "
+    exec 8>\"$REPO_ROOT/.e2e/cycle.lock\"
+    flock -n 8 || exit 43
     exec 9>\"$LOCK_FILE\"
     flock -n 9 || exit 42
     tmp=\"$EXPLORE_DIR/lock.ok.\$\$.tmp\"
@@ -155,12 +162,27 @@ try_lock_holder() { # slot → 0 when OUR holder now owns that slot's lock
 # Claim E2E_SLOT if set, else the first free slot; record it for `down`.
 start_lock_holder() {
   local n slots
-  if [ -n "${E2E_SLOT:-}" ]; then slots="$E2E_SLOT"; else slots="$(seq 1 "$E2E_SLOTS_MAX")"; fi
+  # Validate before taking any lock: a rejected slot (0 outside CI, past the
+  # max) must not leave a holder behind.
+  if [ -n "${E2E_SLOT:-}" ]; then
+    ( resolve_e2e_slot "$REPO_ROOT" ) || die "E2E_SLOT=$E2E_SLOT is not usable here"
+    slots="$E2E_SLOT"
+  else
+    slots="$(seq 1 "$E2E_SLOTS_MAX")"
+  fi
+  # A cycle already running in this checkout: say so, rather than trying every
+  # slot and reporting them all busy.
+  mkdir -p "$REPO_ROOT/.e2e"
+  ( flock -n 8 ) 8>"$REPO_ROOT/.e2e/cycle.lock" 2>/dev/null \
+    || die "an E2E cycle is running in this checkout — wait for it, or explore from another worktree"
   for n in $slots; do
     if try_lock_holder "$n"; then
       echo "$n" > "$EXPLORE_DIR/slot"
       export E2E_SLOT="$n" E2E_SLOT_LOCKED=1
-      resolve_e2e_slot "$REPO_ROOT" || die "E2E slot $n is not usable here"
+      if ! resolve_e2e_slot "$REPO_ROOT"; then
+        stop_lock_holder
+        die "E2E slot $n is not usable here"
+      fi
       export SUPABASE_DB_URL="$E2E_DB_URL"
       echo "  ✓ claimed E2E slot $n ($E2E_FRONTEND_URL)"
       return 0

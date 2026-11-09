@@ -184,13 +184,18 @@ if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ -f "$REPO_ROOT/.e2e/cycle.lock" ] \
   echo "✗ an E2E cycle is running in this checkout — wait for it, or boot from another worktree."
   exit 1
 fi
-# A slot's lock means a cycle (scripts/e2e-cycle.sh) is using it. That cycle
-# exports E2E_SLOT_LOCKED=1 for its own e2e-up; anyone else is refused rather
-# than booting over a running suite.
-if [ "$E2E_SLOT" != "0" ] && [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && ! e2e_slot_is_free "$E2E_SLOT"; then
-  echo "✗ E2E slot $E2E_SLOT is in use by a running cycle ($(e2e_slot_lock_file "$E2E_SLOT"))."
-  echo "  Pick another (E2E_SLOT=1..$E2E_SLOTS_MAX) or run scripts/e2e-cycle.sh, which takes a free one."
-  exit 1
+# A slot's lock means a run is using it. A cycle (or explore) holds the lock
+# itself and passes E2E_SLOT_LOCKED=1. A BARE `make e2e-up` takes it here,
+# through a detached holder that outlives this script (the stack stays up for
+# manual use) and that e2e-down stops — so a cycle never claims a slot a human
+# booted, and a stray e2e-down elsewhere can't take this one down.
+if [ "$E2E_SLOT" != "0" ] && [ "${E2E_SLOT_LOCKED:-0}" != "1" ]; then
+  if ! e2e_take_slot_lock_detached "$E2E_SLOT" "$REPO_ROOT/.e2e"; then
+    echo "✗ E2E slot $E2E_SLOT is in use by another run ($(e2e_slot_lock_file "$E2E_SLOT"))."
+    echo "  Pick another (E2E_SLOT=1..$E2E_SLOTS_MAX) or run scripts/e2e-cycle.sh, which takes a free one."
+    exit 1
+  fi
+  echo "  ✓ holding E2E slot $E2E_SLOT for this boot (released by make e2e-down)"
 fi
 # Same class of baked-in constant: the frontend's SESSION_SECRET lives in
 # package.json's start:test, the backend's in backend/.env — verify they agree
@@ -241,6 +246,9 @@ fi
 
 # ── Database stack ───────────────────────────────────────────────────────────
 echo "▶ Starting local Supabase (no-op if already running)…"
+# From here on this checkout owns a stack on the slot: what a cycle's teardown
+# (and e2e-down) may stop.
+echo "$E2E_SLOT" >"$E2E_DIR/booted"
 write_e2e_slot_supabase_config "$REPO_ROOT"
 EXCLUDE_ARGS=()
 [ -n "$E2E_SUPABASE_EXCLUDE" ] && EXCLUDE_ARGS=(-x "$E2E_SUPABASE_EXCLUDE")

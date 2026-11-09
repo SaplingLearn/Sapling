@@ -27,7 +27,11 @@ WANT_SLOT=""
 WAIT_S="${E2E_SLOT_WAIT_S:-3600}"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --slot) WANT_SLOT="${2:-}"; shift 2 ;;
+    --slot)
+      case "${2:-}" in
+        ''|*[!0-9]*) echo "✗ --slot needs a slot number (1..$E2E_SLOTS_MAX)"; exit 2 ;;
+      esac
+      WANT_SLOT="$2"; shift 2 ;;
     --) shift; break ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) break ;;
@@ -40,6 +44,14 @@ if [ $# -eq 0 ]; then
 fi
 
 mkdir -p "$E2E_LOCK_DIR" "$REPO_ROOT/.e2e"
+
+# The deterministic lane by default: function-mode agents replaying the E2E_*
+# handler constants (what e2e.yml and explore.sh run). A caller that exports
+# SAPLING_MODEL_MODE (e.g. =real, to look at a branch with live models) keeps it.
+export SAPLING_MODEL_MODE="${SAPLING_MODEL_MODE:-function}"
+if [ "$SAPLING_MODEL_MODE" = "function" ]; then
+  export SAPLING_FUNCTION_HANDLERS="${SAPLING_FUNCTION_HANDLERS:-agents.function_handlers_e2e}"
+fi
 
 # One cycle per CHECKOUT: .e2e/ (server PIDs, logs, manifest) and the
 # frontend's .next build are per checkout, so two cycles here would stop each
@@ -98,8 +110,17 @@ resolve_e2e_slot "$REPO_ROOT" || exit 3
 export SUPABASE_DB_URL="$E2E_DB_URL"
 echo "▶ E2E cycle in slot $E2E_SLOT ($E2E_FRONTEND_URL)"
 
+# Tear down only what this cycle booted. e2e-up writes .e2e/booted just
+# before it starts Supabase, so a boot refused at preflight (a port held by
+# someone else's server, say) never makes this cycle stop a project — and drop
+# a database — that isn't its own.
+rm -f "$REPO_ROOT/.e2e/booted"
 teardown() {
-  "$REPO_ROOT/scripts/e2e-down.sh" || true
+  if [ -f "$REPO_ROOT/.e2e/booted" ]; then
+    "$REPO_ROOT/scripts/e2e-down.sh" || true
+  else
+    echo "  (nothing booted by this cycle — no teardown)"
+  fi
 }
 trap teardown EXIT
 trap 'exit 130' INT TERM

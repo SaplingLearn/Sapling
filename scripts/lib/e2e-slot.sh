@@ -46,6 +46,44 @@ e2e_slot_is_free() { # slot → 0 free, 1 busy
   ( flock -n 9 ) 9>"$file"
 }
 
+# Take slot N's lock in a DETACHED holder (sleep infinity under setsid) that
+# outlives the caller, recording its pid in <e2e_dir>/lock.pid. For a bare
+# `make e2e-up`, whose stack stays up after the script exits; e2e-down stops
+# the holder. Returns 1 when the slot is busy.
+e2e_take_slot_lock_detached() { # slot e2e_dir → 0 held
+  local slot="$1" dir="$2" file holder _
+  file="$(e2e_slot_lock_file "$slot")"
+  mkdir -p "$E2E_LOCK_DIR" "$dir"
+  # Already ours (a re-run of e2e-up in this checkout)?
+  if [ -f "$dir/lock.pid" ] && kill -0 "$(cat "$dir/lock.pid" 2>/dev/null)" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$dir/lock.pid"
+  setsid bash -c "
+    exec 9>\"$file\"
+    flock -n 9 || exit 42
+    echo \$\$ > \"$dir/lock.pid.\$\$\"
+    mv -f \"$dir/lock.pid.\$\$\" \"$dir/lock.pid\"
+    exec sleep infinity
+  " 8>&- 9>&- >/dev/null 2>&1 &
+  holder=$!
+  for _ in $(seq 1 30); do
+    [ "$(cat "$dir/lock.pid" 2>/dev/null)" = "$holder" ] && return 0
+    kill -0 "$holder" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  kill "$holder" 2>/dev/null
+  return 1
+}
+
+# Stop the detached holder e2e_take_slot_lock_detached left in <e2e_dir>.
+e2e_release_detached_slot_lock() { # e2e_dir
+  local pid
+  pid="$(cat "$1/lock.pid" 2>/dev/null)" || true
+  [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true
+  rm -f "$1/lock.pid"
+}
+
 # Resolve E2E_SLOT (explicit env, else the slot this checkout last booted —
 # .e2e/slot, so `make e2e-down` finds the stack `make e2e-up` started — else 1)
 # and export everything that slot owns. Prints the reason and returns 1 when
@@ -81,7 +119,11 @@ resolve_e2e_slot() { # repo_root
     SUPABASE_PROJECT_ID="sapling"
     E2E_SUPABASE_EXCLUDE=""
   else
-    offset=$((100 * E2E_SLOT))
+    # E2E_SUPABASE_PORT_SHIFT moves every slot's Supabase band further up,
+    # for a machine that reserves the default one (Windows/WinNAT excludes
+    # TCP 54288-54788 on this project's dev box: E2E_SUPABASE_PORT_SHIFT=1000
+    # puts slots at 55421…).
+    offset=$((100 * E2E_SLOT + ${E2E_SUPABASE_PORT_SHIFT:-0}))
     FRONTEND_PORT=$((3100 + E2E_SLOT))
     BACKEND_PORT=$((5100 + E2E_SLOT))
     SUPABASE_API_PORT=$((54321 + offset))
