@@ -757,7 +757,11 @@ NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         # Tree shows the student's recent attempts.
         "/api/quiz": (("GET", r"/attempts"),),
     },
-    "hide_study": {"/api/flashcards": (), "/api/study-guide": ()},
+    # /api/study is the Study hub's own (daily goal + minutes).
+    "hide_study": {"/api/flashcards": (), "/api/study-guide": (), "/api/study": ()},
+    # Only the Library's own folders router: /api/documents stays open — it
+    # backs the shared upload modal (Calendar) and Study's document list.
+    "hide_library": {"/api/library": ()},
     "hide_calendar": {
         # The dashboard's upcoming-deadlines card.
         "/api/calendar": (("GET", r"/upcoming/[^/]+"),),
@@ -779,8 +783,6 @@ NAV_FEATURES_NOT_ENFORCED: dict[str, str] = {
     "hide_tutor": "the quiz Ask panel streams through the tutor's chat/session "
                   "endpoints and the dashboard/tree list sessions",
     "hide_tree": "/api/graph backs the course list every page loads",
-    "hide_library": "/api/documents backs the shared upload modal (Calendar) and "
-                    "Study's document list",
     "hide_course_planner": "the page is static; it calls no API",
 }
 

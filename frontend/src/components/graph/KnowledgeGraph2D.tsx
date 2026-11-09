@@ -97,6 +97,9 @@ type Props = {
   /** Legible: zoom to a course (null = back out to the whole graph); a new
    *  `seq` asks again for the same course. */
   zoomRequest?: { courseId: string | null; seq: number } | null;
+  /** Label under each course node (e.g. its course code). When set, course
+   *  labels show in legible mode too; when it returns null the name is used. */
+  rootLabel?: (n: GraphNode) => string | null;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -247,6 +250,7 @@ function KnowledgeGraph2DImpl({
   focusCourseId = null,
   onHoverCourse,
   zoomRequest = null,
+  rootLabel,
 }: Props) {
   const mastery = colorMode === "mastery";
   const legibleRef = React.useRef(legible);
@@ -1324,18 +1328,19 @@ function KnowledgeGraph2DImpl({
                       strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
                     />
                   )}
-                  {n.is_subject_root && !legible && (
+                  {n.is_subject_root && (rootLabel || !legible) && (
                     <text
+                      data-testid="graph-root-label"
                       x={0}
-                      y={r + 16}
+                      y={r + (rootLabel ? focusFont(17) : 16)}
                       textAnchor="middle"
                       fontFamily="var(--font-display)"
-                      fontSize={13}
+                      fontSize={rootLabel ? focusFont(15) : 13}
                       fontWeight={600}
                       fill={color}
                       pointerEvents="none"
                     >
-                      {n.name}
+                      {(rootLabel && rootLabel(n)) || n.name}
                     </text>
                   )}
                   {!n.is_subject_root && (

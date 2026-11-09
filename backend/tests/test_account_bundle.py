@@ -563,6 +563,40 @@ def test_soft_deleted_document_imports_skipped_not_pending(use, wipes):
     assert dst.data["documents"][0]["index_status"] == "skipped"
 
 
+def test_library_folders_move_before_the_documents_filed_in_them(use, wipes):
+    """documents.folder_id references library_folders: the folders travel too
+    (inserted first) with their abstract course remapped — including a course
+    only a folder names — or the documents insert would fail AFTER the wipe."""
+    src = source_db()
+    src.data["courses"].append(
+        {"id": "src-course-ma", "course_code": "CAS MA 123", "course_name": "Calculus",
+         "school_id": SRC_SCHOOL})
+    src.data["library_folders"] = [
+        {"id": "fold-1", "user_id": UID, "course_id": SRC_CS, "name": "Midterm prep"},
+        {"id": "fold-2", "user_id": UID, "course_id": "src-course-ma", "name": "Calc"},
+        {"id": "fold-3", "user_id": UID, "course_id": None, "name": "Loose"},
+    ]
+    src.data["documents"][0]["folder_id"] = "fold-1"
+    use(src, KEY_A, "staging")
+    bundle = json.loads(json.dumps(account_bundle.export_account(UID)))
+    assert {f["id"] for f in bundle["tables"]["library_folders"]} == {"fold-1", "fold-2", "fold-3"}
+    assert "src-course-ma" in bundle["catalog"]["courses"]
+
+    dst = target_db()
+    dst.data["courses"].append(
+        {"id": "dst-course-ma", "course_code": "CAS MA 123", "school_id": DST_SCHOOL})
+    use(dst, KEY_B, "production")
+
+    counts = account_bundle.import_account(UID, bundle)
+
+    folders = {f["id"]: f["course_id"] for f in dst.data["library_folders"]}
+    assert folders == {"fold-1": DST_CS, "fold-2": "dst-course-ma", "fold-3": None}
+    assert dst.data["documents"][0]["folder_id"] == "fold-1"
+    assert counts["library_folders"] == 3
+    order = [s.name for s in account_bundle.SPECS]
+    assert order.index("library_folders") < order.index("documents")
+
+
 # ── Import refusals: all BEFORE the wipe ────────────────────────────────────
 
 

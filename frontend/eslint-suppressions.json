@@ -72,14 +72,6 @@
       "count": 20
     }
   },
-  "src/components/screens/Dashboard.tsx": {
-    "no-restricted-syntax": {
-      "count": 13
-    },
-    "react/no-unescaped-entities": {
-      "count": 2
-    }
-  },
   "src/components/screens/Gradebook/Course.tsx": {
     "no-restricted-syntax": {
       "count": 9
@@ -91,11 +83,6 @@
     },
     "no-restricted-syntax": {
       "count": 17
-    }
-  },
-  "src/components/screens/Library.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
     }
   },
   "src/components/screens/Settings.tsx": {

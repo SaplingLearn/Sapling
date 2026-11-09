@@ -1,68 +1,55 @@
 // @vitest-environment jsdom
 /**
- * Library — load-error state and per-document concept scan (#769).
+ * Library: load-error state and overlapping reloads (#769).
  *
  *   1. A failed load is not an empty library: it renders an error state with
- *      a retry, never "Your library is quiet".
- *   2. The detail panel is reused when the selected document changes in place
- *      (reachable by keyboard behind the overlay), so a scan started on doc A
- *      must not mark doc B "done".
+ *      a retry, never the empty-library copy.
+ *   2. A failed folders load does not take the documents down with it.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
-vi.mock("@/context/UserContext", () => ({
-  useUser: () => ({ userId: "u1", userReady: true }),
+vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
+vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
+vi.mock("@/lib/useNavSections", () => ({ useVisibleNavSections: () => [] }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
-
-vi.mock("@/lib/useIsMobile", () => ({
-  useIsMobile: () => false,
-}));
-
-vi.mock("../DocumentUploadModal", () => ({
-  DocumentUploadModal: () => null,
-}));
-
+vi.mock("../DocumentUploadModal", () => ({ DocumentUploadModal: () => null }));
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   deleteDocument: vi.fn(),
   getCourses: vi.fn(async () => ({ courses: [] })),
-  scanDocumentConcepts: vi.fn(),
-  scanCourseConcepts: vi.fn(),
+  createNote: vi.fn(),
+}));
+vi.mock("@/lib/libraryApi", () => ({
+  getLibraryFolders: vi.fn(async () => ({ folders: [], placements: {} })),
+  createLibraryFolder: vi.fn(),
+  renameLibraryFolder: vi.fn(),
+  deleteLibraryFolder: vi.fn(),
+  moveDocumentsToFolder: vi.fn(),
+  renameLibraryDocument: vi.fn(),
 }));
 
 import { Library } from "./Library";
 import { ToastProvider } from "../ToastProvider";
-import { getDocuments, scanDocumentConcepts } from "@/lib/api";
+import { getDocuments } from "@/lib/api";
+import { getLibraryFolders } from "@/lib/libraryApi";
 
 const mockedDocs = vi.mocked(getDocuments);
-const mockedScan = vi.mocked(scanDocumentConcepts);
 
 const doc = (id: string, name: string) => ({
   id, user_id: "u1", course_id: null, file_name: name, category: "reading" as const,
   summary: null, concept_notes: null, created_at: "2026-04-01T00:00:00Z", processed_at: null,
 });
 
-function renderLibrary() {
-  return render(
-    <ToastProvider>
-      <Library />
-    </ToastProvider>,
-  );
-}
+const renderLibrary = () => render(<ToastProvider><Library /></ToastProvider>);
 
-beforeEach(() => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-});
-
-afterEach(() => {
-  cleanup();
-  document.body.innerHTML = "";
-  vi.restoreAllMocks();
-  vi.clearAllMocks();
-});
+beforeEach(() => { vi.spyOn(console, "error").mockImplementation(() => {}); });
+afterEach(() => { cleanup(); document.body.innerHTML = ""; vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 describe("Library load failure (#769)", () => {
   it("shows an error state with retry, not the empty-library copy", async () => {
@@ -70,7 +57,7 @@ describe("Library load failure (#769)", () => {
     renderLibrary();
 
     expect(await screen.findByTestId("library-load-error")).toBeTruthy();
-    expect(screen.queryByText(/Your library is quiet/i)).toBeNull();
+    expect(screen.queryByText(/Nothing Here Yet/i)).toBeNull();
 
     mockedDocs.mockResolvedValueOnce({ documents: [doc("a", "alpha.pdf")] } as never);
     fireEvent.click(screen.getByTestId("library-load-retry"));
@@ -82,27 +69,16 @@ describe("Library load failure (#769)", () => {
     mockedDocs.mockResolvedValueOnce({ documents: [] } as never);
     renderLibrary();
 
-    expect(await screen.findByText(/Your library is quiet/i)).toBeTruthy();
+    expect(await screen.findByText(/Nothing Here Yet/i)).toBeTruthy();
     expect(screen.queryByTestId("library-load-error")).toBeNull();
   });
-});
 
-describe("Library concept scan belongs to the document it ran on (#769)", () => {
-  it("a scan started on doc A doesn't mark doc B done", async () => {
-    mockedDocs.mockResolvedValue({ documents: [doc("a", "alpha.pdf"), doc("b", "beta.pdf")] } as never);
-    let resolveScan!: (v: { added: number; existing: number }) => void;
-    mockedScan.mockReturnValueOnce(new Promise(r => { resolveScan = r; }) as never);
+  it("a failed folders load still shows the documents", async () => {
+    vi.mocked(getLibraryFolders).mockRejectedValueOnce(new Error("500"));
+    mockedDocs.mockResolvedValueOnce({ documents: [doc("a", "alpha.pdf")] } as never);
     renderLibrary();
 
-    fireEvent.click(await screen.findByTestId("library-doc-a"));
-    fireEvent.click(screen.getByTestId("library-detail-scan"));
-    expect(screen.getByTestId("library-detail-scan")).toHaveTextContent("Scanning");
-
-    // Switch documents in place (the overlay doesn't stop keyboard focus).
-    fireEvent.click(screen.getByTestId("library-doc-b"));
-    expect(screen.getByRole("heading", { name: "beta.pdf" })).toBeTruthy();
-
-    await act(async () => { resolveScan({ added: 3, existing: 1 }); });
-    expect(screen.getByTestId("library-detail-scan")).toHaveTextContent(/^Scan$/);
+    expect(await screen.findByTestId("library-doc-a")).toBeTruthy();
+    expect(screen.queryByTestId("library-load-error")).toBeNull();
   });
 });
