@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   conceptsForCourse,
+  categoriesFromChecklist,
+  roadmapGroups,
+  OTHER_GROUP,
   classifyAssessment,
   readiness,
   studyQueue,
@@ -38,6 +41,91 @@ describe("conceptsForCourse", () => {
     ]);
     // "related" edges are not prerequisites.
     expect(cs[2].pre).toEqual(["b"]);
+  });
+
+  it("names roadmap columns from the checklist's categories when it covers the course", () => {
+    // "Core" parents a + b; "Extras" parents c. Both are real categories.
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "extras", name: "Extras", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "core", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "extras", node_id: "c" },
+    ]);
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW, cats);
+    expect(cs.map(c => [c.id, c.group])).toEqual([["a", "Core"], ["b", "Core"], ["c", "Extras"]]);
+    expect(roadmapGroups(cs)).toEqual(["Core", "Extras"]);
+  });
+
+  it("orders columns by prerequisite depth, not by name", () => {
+    // "Later" holds c (depth 2); "Early" holds a (depth 0). Alphabetically
+    // "Early" already wins, so flip the names to prove depth is what decides.
+    const cats = categoriesFromChecklist([
+      { id: "zz", name: "Zebra Unit", parent_id: null, node_id: null },
+      { id: "aa", name: "Alpha Unit", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "zz", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "zz", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "aa", node_id: "c" },
+    ]);
+    // Zebra = depths {0, 1} -> mean 0.5; Alpha = depth {2} -> mean 2.
+    expect(roadmapGroups(conceptsForCourse(nodes, edges, "c1", NOW, cats)))
+      .toEqual(["Zebra Unit", "Alpha Unit"]);
+  });
+
+  it("falls back to prerequisite layers when the checklist covers too little", () => {
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+    ]);
+    expect(cats.get("a")).toBe("Core");
+    // One concept of three placed: the outline does not speak for this course.
+    expect(conceptsForCourse(nodes, edges, "c1", NOW, cats).map(c => c.group))
+      .toEqual(["Foundations", "Core Methods", "Building On"]);
+  });
+
+  it("places a covered concept outside every category in Other, last", () => {
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "core", node_id: "b" },
+      // A root that parents nothing is not a category.
+      { id: "t-c", name: "C", parent_id: null, node_id: "c" },
+    ]);
+    expect(cats.has("c")).toBe(false);
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW, cats);
+    expect(cs.map(c => c.group)).toEqual(["Core", "Core", OTHER_GROUP]);
+    expect(roadmapGroups(cs)).toEqual(["Core", OTHER_GROUP]);
+  });
+
+  it("ignores a flat outline, which would give every concept its own column", () => {
+    const cats = categoriesFromChecklist([
+      { id: "t-a", name: "A", parent_id: null, node_id: "a" },
+      { id: "t-b", name: "B", parent_id: null, node_id: "b" },
+      { id: "t-c", name: "C", parent_id: null, node_id: "c" },
+    ]);
+    expect(cats.size).toBe(0);
+    expect(conceptsForCourse(nodes, edges, "c1", NOW, cats).map(c => c.group))
+      .toEqual(["Foundations", "Core Methods", "Building On"]);
+  });
+
+  it("takes the root ancestor, not the immediate parent", () => {
+    const cats = categoriesFromChecklist([
+      { id: "unit", name: "Unit One", parent_id: null, node_id: null },
+      { id: "sub", name: "Sub", parent_id: "unit", node_id: null },
+      { id: "t-a", name: "A", parent_id: "sub", node_id: "a" },
+    ]);
+    expect(cats.get("a")).toBe("Unit One");
+  });
+
+  it("survives a broken checklist hierarchy", () => {
+    // A parent that is not in the outline, and a cycle.
+    const cats = categoriesFromChecklist([
+      { id: "t-a", name: "A", parent_id: "missing", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "t-c", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "t-b", node_id: "c" },
+    ]);
+    expect(cats.has("a")).toBe(false);
+    expect(cats.size).toBeGreaterThanOrEqual(0);
   });
 
   it("warns when an unmastered concept rests on an unmastered prerequisite", () => {

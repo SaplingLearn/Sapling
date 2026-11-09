@@ -28,6 +28,10 @@ vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
 
+// StudyHub (the hub mode behind these screens) reads the course outline for
+// its roadmap columns; these specs cover the guide and flashcard modes, so
+// stub it rather than let a real fetch escape the test.
+vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn(async () => ({ topics: [] })) }));
 vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(async () => ({ courses: [] })),
   getStudyGuideExams: vi.fn(async () => ({ exams: [] })),

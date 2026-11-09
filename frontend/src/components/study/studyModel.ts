@@ -6,10 +6,15 @@
  *  - Concepts come from the course's knowledge graph (`getGraph`). Status is the
  *    node's `mastery_tier`; mastery % is `mastery_score * 100`.
  *  - Prerequisites are `prerequisite` / `builds_on` edges, source -> target.
- *  - The graph has no category field, so roadmap columns are prerequisite
- *    LAYERS: depth 0 (nothing needed first) is "Foundations", then
- *    "Core Methods", "Building On", "Advanced", and everything deeper is "Goal".
- *    These are the design's own fallback labels for a course without categories.
+ *  - Roadmap columns are the course's REAL categories: the topic checklist
+ *    (`/api/topic-checklist`) is an evidence-grounded outline of the course's
+ *    own materials, and its `node_id` links a topic to the graph node it
+ *    describes. A concept's category is the name of its topic's root ancestor.
+ *    The graph itself carries no category field, so when there is no usable
+ *    outline the columns fall back to prerequisite LAYERS — depth 0 (nothing
+ *    needed first) is "Foundations", then "Core Methods", "Building On",
+ *    "Advanced", and deeper is "Goal". Those are the design's own fallback
+ *    labels for a course without categories, never a claim about the course.
  *  - Readiness = mean mastery % of the exam's concepts (assessments carry no
  *    concept list, so an exam covers every concept of its course).
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
@@ -69,6 +74,73 @@ export const SC: Record<Status, string> = {
 export const STATUS_ORDER: Status[] = ["mastered", "progress", "review", "new"];
 const W: Record<Status, number> = { mastered: 1, progress: 0.6, review: 0.3, new: 0 };
 const STEP = ["Foundations", "Core Methods", "Building On", "Advanced", "Goal"];
+/** The column a concept falls into when the course has no usable outline. */
+const layerLabel = (step: number) => STEP[Math.min(step, STEP.length - 1)];
+/** Concepts the outline does not place. Always the last roadmap column. */
+export const OTHER_GROUP = "Other";
+
+/** The slice of a topic-checklist topic the roadmap needs. */
+export interface CategoryTopic {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  /** The graph node this topic describes, when the names matched. */
+  node_id: string | null;
+}
+
+/**
+ * Concept id -> category name, read off the course's topic checklist.
+ *
+ * A category is a topic's ROOT ancestor, and a root only counts when it
+ * actually groups — it must be the parent of at least one other topic. A flat
+ * outline (every topic a root) would otherwise put each concept in a column of
+ * its own, which is noisier than no categories at all. Topics the graph never
+ * matched (`node_id: null`) contribute nothing.
+ */
+export function categoriesFromChecklist(topics: CategoryTopic[]): Map<string, string> {
+  const byId = new Map(topics.map(t => [t.id, t]));
+  const groups = new Set(topics.map(t => t.parent_id).filter((p): p is string => !!p));
+  const out = new Map<string, string>();
+  for (const t of topics) {
+    if (!t.node_id) continue;
+    let root = t;
+    const seen = new Set([t.id]);
+    while (root.parent_id) {
+      const up = byId.get(root.parent_id);
+      // The server validates the hierarchy; a broken or cyclic one stops here
+      // rather than hanging.
+      if (!up || seen.has(up.id)) break;
+      seen.add(up.id);
+      root = up;
+    }
+    if (groups.has(root.id)) out.set(t.node_id, root.name);
+  }
+  return out;
+}
+
+/**
+ * Roadmap column labels, left to right: by how deep into the course's
+ * prerequisite chain the column's concepts sit (its mean depth), so a student
+ * reads it as an order of work. The catch-all column is always last.
+ *
+ * Under the layer fallback a column IS a depth, so this is the identity order.
+ */
+export const roadmapGroups = (topics: Concept[]): string[] => {
+  const depth = new Map<string, { sum: number; n: number }>();
+  for (const t of topics) {
+    const d = depth.get(t.group) || { sum: 0, n: 0 };
+    depth.set(t.group, { sum: d.sum + t.step, n: d.n + 1 });
+  }
+  const mean = (label: string) => {
+    const d = depth.get(label)!;
+    return d.n ? d.sum / d.n : 0;
+  };
+  return [...depth.keys()].sort((a, b) => {
+    if (a === OTHER_GROUP) return 1;
+    if (b === OTHER_GROUP) return -1;
+    return mean(a) - mean(b) || a.localeCompare(b);
+  });
+};
 const PREREQ_TYPES = new Set(["prerequisite", "builds_on"]);
 
 const TIER: Record<string, Status> = {
@@ -84,6 +156,7 @@ export function conceptsForCourse(
   edges: any[],
   courseId: string,
   now: Date = new Date(),
+  categories?: Map<string, string>,
 ): Concept[] {
   const own = nodes.filter(n => n && n.course_id === courseId && !n.is_subject_root && n.mastery_tier !== "subject_root");
   const ids = new Set(own.map(n => String(n.id)));
@@ -135,8 +208,14 @@ export function conceptsForCourse(
     } as Concept;
   });
   const byId = new Map(base.map(c => [c.id, c]));
+  // Real categories, but only when the outline speaks for this course: at
+  // least half its concepts have to land in one. A checklist that matched a
+  // handful of nodes would otherwise sweep the rest into one huge "Other"
+  // column, which says less than the prerequisite layers do.
+  const placed = categories ? base.filter(c => categories.has(c.id)).length : 0;
+  const useCategories = placed > 0 && placed * 2 >= base.length;
   for (const c of base) {
-    c.group = STEP[Math.min(c.step, STEP.length - 1)];
+    c.group = useCategories ? categories!.get(c.id) ?? OTHER_GROUP : layerLabel(c.step);
     const weak = c.pre.filter(p => byId.get(p)?.st !== "mastered").map(p => byId.get(p)!.name);
     if (c.st !== "mastered" && weak.length) {
       const one = weak.length === 1;

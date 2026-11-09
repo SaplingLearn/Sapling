@@ -11,6 +11,7 @@
  *   flashcards ......... getFlashcards
  *   study guides ....... getCachedStudyGuides
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
+ *   roadmap categories . getTopicChecklist (routes/topic_checklist.py)
  */
 import React from "react";
 import { useRouter } from "next/navigation";
@@ -34,9 +35,12 @@ import { listAttempts } from "@/lib/quiz/api";
 import { buildQuizHref } from "@/lib/quiz/source";
 import type { AttemptSummary } from "@/lib/quiz/types";
 import { getStudyDaily, setStudyDailyGoal, type StudyDaily } from "@/lib/studyApi";
+import { getTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi";
 import s from "./StudyHub.module.css";
 import {
   conceptsForCourse,
+  categoriesFromChecklist,
+  roadmapGroups,
   classifyAssessment,
   daysTo,
   fmtDow,
@@ -143,6 +147,9 @@ export function StudyHub({
   const [cards, setCards] = React.useState<FlashcardRow[]>([]);
   const [guides, setGuides] = React.useState<StudyGuideCacheEntry[]>([]);
   const [daily, setDaily] = React.useState<StudyDaily | null>(null);
+  /** The selected course's topic checklist, which names the roadmap columns.
+   *  `[]` means "asked, nothing usable" — the roadmap falls back to layers. */
+  const [outline, setOutline] = React.useState<ChecklistTopic[]>([]);
 
   const loadAssignments = React.useCallback(async () => {
     if (!userId) return;
@@ -243,9 +250,24 @@ export function StudyHub({
   };
 
   /* ── concepts ─────────────────────────────────────────────────────────── */
+  // The outline is per course, so it reloads with the course dropdown. A course
+  // with no enrollment or no generated checklist answers with nothing to place,
+  // which is not an error the student needs to see: the roadmap falls back to
+  // prerequisite layers and the rest of the page is unaffected.
+  React.useEffect(() => {
+    if (!userId || !cid || !semesterReady) { setOutline([]); return; }
+    let live = true;
+    setOutline([]);
+    getTopicChecklist(userId, cid, semester || undefined)
+      .then(r => { if (live) setOutline(r.topics || []); })
+      .catch(err => { if (live) console.error("study checklist load failed", err); });
+    return () => { live = false; };
+  }, [userId, cid, semester, semesterReady]);
+
+  const categories = React.useMemo(() => categoriesFromChecklist(outline), [outline]);
   const topics = React.useMemo(
-    () => (graph ? conceptsForCourse(graph.nodes, graph.edges, cid, today) : []),
-    [graph, cid, today],
+    () => (graph ? conceptsForCourse(graph.nodes, graph.edges, cid, today, categories) : []),
+    [graph, cid, today, categories],
   );
   const byId = React.useMemo(() => new Map(topics.map(t => [t.id, t])), [topics]);
   const queue = studyQueue(topics);
@@ -365,7 +387,7 @@ export function StudyHub({
   };
 
   /* ── roadmap columns ──────────────────────────────────────────────────── */
-  const groups = [...new Set(topics.map(t => t.group))];
+  const groups = roadmapGroups(topics);
   const LIM = 4;
   const columns = groups.map(label => {
     const ts = topics.filter(t => t.group === label);

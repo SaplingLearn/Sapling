@@ -27,12 +27,14 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn() }));
 vi.mock("@/lib/studyApi", () => ({ getStudyDaily: vi.fn(), setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })) }));
+vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn() }));
 
 import { StudyHub } from "./StudyHub";
 import { ToastProvider } from "../ToastProvider";
 import * as api from "@/lib/api";
 import { listAttempts } from "@/lib/quiz/api";
 import { getStudyDaily, setStudyDailyGoal } from "@/lib/studyApi";
+import { getTopicChecklist } from "@/lib/topicChecklistApi";
 import type { EnrolledCourse } from "@/lib/api";
 
 const TODAY = new Date(2026, 10, 8, 12);
@@ -43,6 +45,9 @@ const node = (id: string, name: string, tier: string, score: number) => ({ id, c
 beforeEach(() => {
   vi.clearAllMocks(); // call history only; each test's implementations are set below
   push.mockReset();
+  // No outline by default: the roadmap keeps its prerequisite-layer fallback,
+  // which is what these assertions were written against.
+  vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [] } as never);
   vi.mocked(api.getGraph).mockResolvedValue({
     nodes: [
       node("var", "Variables", "mastered", 0.96),
@@ -112,6 +117,31 @@ describe("StudyHub", () => {
     expect(screen.getAllByText("Recursion Quiz")).toHaveLength(2); // Last Quiz box + recent activity
     expect(screen.getByTitle("Mastery change from this quiz").textContent).toBe("Recursion+5%");
     expect(screen.getByText("1 card")).toBeTruthy();
+  });
+
+  it("names the roadmap columns from the course's checklist, not the fallback labels", async () => {
+    const topic = (id: string, name: string, parent_id: string | null, node_id: string | null) =>
+      ({ id, name, parent_id, node_id });
+    vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [
+      topic("fundamentals", "Programming Fundamentals", null, null),
+      topic("control-flow", "Control Flow", null, null),
+      topic("t-var", "Variables", "fundamentals", "var"),
+      topic("t-arr", "Arrays", "fundamentals", "arr"),
+      topic("t-loop", "Loops", "control-flow", "loop"),
+      topic("t-rec", "Recursion", "control-flow", "rec"),
+    ] } as never);
+    renderHub();
+    const roadmap = await screen.findByLabelText("Roadmap");
+    await waitFor(() => expect(within(roadmap).getByText("Programming Fundamentals")).toBeTruthy());
+    expect(within(roadmap).getByText("Control Flow")).toBeTruthy();
+    expect(within(roadmap).queryByText("Foundations")).toBeNull();
+    expect(within(roadmap).queryByText("Core Methods")).toBeNull();
+  });
+
+  it("keeps the fallback labels when the course has no checklist", async () => {
+    renderHub(); // beforeEach mocks an empty outline
+    const roadmap = await screen.findByLabelText("Roadmap");
+    await waitFor(() => expect(within(roadmap).getByText("Foundations")).toBeTruthy());
   });
 
   it("bell lists every deadline with a colored countdown", async () => {
