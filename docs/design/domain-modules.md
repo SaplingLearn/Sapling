@@ -41,13 +41,13 @@ These are the numbers in `code_size_baseline.json`, recorded with every wave-2 P
 | `routes/learn.py` | 2,011 | 11 | #751, #752, #673, #735, #801 | Tutor routes; streaming already lives in `services/chat_stream.py` |
 | `routes/documents.py` | 1,500 | 7 | #717, #752, #755, #673, #735, #801, wave-2 W4, W6a, W7 | Upload pipeline; indexing already lives in `services/document_indexing.py` |
 | `routes/auth.py` | 1,173 | 8 | #752, #801, wave-2 W5a | OAuth callback, pending/waitlist, test login, local seed |
-| `routes/social.py` | 1,122 | 24 | #752, #801 | Rooms, room messages, matching, friends |
+| `routes/social.py` | 1,136 | 24 | #752, #801 | Rooms, room messages, matching, friends |
 | `routes/admin.py` | 1,005 | 38 | #752, #801 | Roles, achievements, cosmetics, XP rules, users/allowlist, feedback, audit, analytics |
-| `routes/profile.py` | 932 | 15 | #673, #735, #752, #801, wave-2 W4 | Profile, settings, cosmetics, achievements, account delete/export |
+| `routes/profile.py` | 978 | 15 | #673, #735, #752, #801, wave-2 W4 | Profile, settings, cosmetics, achievements, account delete/export |
 | `routes/gradescope.py` | 868 | 9 | #752, #801, wave-2 W6c | Credentials, course links, sync |
-| `routes/admin_analytics.py` | 674 | 6 | #799, wave-2 W5b, W7 | Usage/cost rollups, errors, db-scope shadow report; was 495 before wave 2 |
+| `routes/admin_analytics.py` | 696 | 6 | #799, wave-2 W5b, W7 | Usage/cost rollups, errors, db-scope shadow report; was 495 before wave 2 |
 | `routes/gradebook.py` | 649 | 12 | none | Categories, assignments, scale/curve, GPA; `services/gradebook_service.py` exists |
-| `routes/flashcards.py` | 658 | 9 | #673, #735, #752, #801, wave-2 W4 | Generate/rate plus the import flow (`services/flashcard_import_service.py` exists) |
+| `routes/flashcards.py` | 701 | 9 | #673, #735, #752, #801, wave-2 W4 | Generate/rate plus the import flow (`services/flashcard_import_service.py` exists) |
 
 ### Functions over complexity 25 (ruff McCabe)
 
@@ -94,7 +94,7 @@ gh pr list --state open --json number,files --jq '.[] | select(any(.files[]; .pa
 2. **`routes/social.py` → `services/social/` (rooms, messages, friends, matching).** It has 24 endpoints in three clear groups. Today only #752 and #801 touch it. Split once those land.
 3. **`routes/admin.py` → `services/admin/` (roles, achievements, cosmetics, users and allowlist).** It has 38 endpoints, all thin CRUD, so it splits mechanically. It waits on #752 and #801.
 4. **`routes/gradescope.py` and `routes/flashcards.py`.** Both are just over the limit, and both have service modules already. They wait on #752, #801, wave-2 W6c (gradescope job) and W4 (flashcards).
-5. **`routes/admin_analytics.py` → `services/admin/analytics/`.** Wave 2 took it from 495 to 674 lines (W5b's db-scope shadow report, W7's cost per active user). Its six endpoints are read-only rollups, so the aggregation helpers (`_scan_range`, the series builders, `_db_scope_key`) move out mechanically. It waits on #799 and on wave 2 landing; it can share a PR with the `routes/admin.py` split.
+5. **`routes/admin_analytics.py` → `services/admin/analytics/`.** Wave 2 took it from 495 to 696 lines (W5b's db-scope shadow report, W7's cost per active user). Its six endpoints are read-only rollups, so the aggregation helpers (`_scan_range`, the series builders, `_db_scope_key`) move out mechanically. It waits on #799 and on wave 2 landing; it can share a PR with the `routes/admin.py` split.
 6. **`routes/profile.py`, then `routes/auth.py`.** Profile waits on #673, #735, #752, #801 and wave-2 W4. Auth waits on #752, #801 and wave-2 W5a. Keep `google_callback` (22) behaviour-pinned by the existing auth tests while splitting it.
 7. **`routes/documents.py` → `services/documents/`.** The upload pipeline and scan-concepts move out. It waits on #673, #717, #735, #752, #755, #801 and wave-2 W4, W6a and W7.
 8. **`routes/quiz.py` and `routes/learn.py`, last.** **These wait until #750, #751 and #752 and the learning-loop PRs (#673, #801, plus #735) have landed**, plus wave-2 W7 for quiz. They are the two largest files and the most actively edited, and each of those PRs edits one or both. Quiz becomes `services/quiz/` (absorbing the ten `services/quiz_*.py` modules). Learn becomes `services/tutor/` (next to `chat_stream.py`, `tutor_router.py` and `tutor_sessions.py`). Plan each as a series of PRs, one topic at a time, not one big move.
