@@ -12,13 +12,13 @@
 
 .quiz-question {
   /* ── Geometry the design pins ─────────────────────────────────────── */
-  --quiz-q-stem-fs: 24px;      /* the --fs-* ramp has no 24px step */
-  --quiz-q-stem-mw: 560px;     /* the reading measure of the stem */
-  --quiz-q-stem-my: 40px;      /* the air above and below it */
+  --quiz-q-stem-fs: 26px;      /* the question is the page's headline */
+  --quiz-q-stem-mw: 720px;     /* the reading measure of the stem (~60 characters) */
+  --quiz-q-stem-my: 44px;      /* the air above and below it */
   --quiz-q-stem-mh: 72px;      /* reserved, so a one-line stem doesn't jump */
   --quiz-q-feedback-mh: 20px;  /* reserved for the verdict line */
-  --quiz-q-feedback-mt: 20px;
-  --quiz-q-aside-mt: 10px;
+  --quiz-q-feedback-mt: 24px;
+  --quiz-q-aside-mt: 12px;
   --quiz-q-skeleton-row: 55px; /* one `AnswerOption` row, while generating */
   --quiz-q-skeleton-stem: 26px;
   --quiz-q-skeleton-line: 13px;
@@ -81,19 +81,28 @@
   flex: 1;
 }
 
-/* Progress: the dots and "2 of 5", together. */
+/* The question pager: ‹ 1 2 3 4 5 ›. */
 .quiz-question__progress {
   display: inline-flex;
   align-items: center;
-  gap: var(--pad-sm);
+  gap: 6px;
 }
 
-.quiz-question__count {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.quiz-question__step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
 }
+
+.quiz-question__step:hover:not(:disabled) { background: var(--bg-soft); color: var(--text); }
+.quiz-question__step:disabled { opacity: 0.35; cursor: default; }
+.quiz-question__step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-full); }
 
 /* What kind of answer this question wants. In a mixed quiz it changes from
    one question to the next, so it sits where the eye lands first. */
@@ -152,7 +161,7 @@
 .quiz-question__options {
   display: flex;
   flex-direction: column;
-  gap: var(--pad-sm);
+  gap: 12px;
 }
 
 /* ── Feedback ───────────────────────────────────────────────────────── */
@@ -248,12 +257,15 @@
   min-height: var(--pad-xl);
 }
 
+/* Leave on the left; the question pager and the primary button together on
+   the right, so "where am I" sits next to "go on". */
 .quiz-question__footer {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: var(--pad-sm);
+  gap: var(--pad-md);
 }
+
+.quiz-question__footer > :first-child { margin-right: auto; }
 
 /* ── Keyboard hint ──────────────────────────────────────────────────── */
 
@@ -692,9 +704,9 @@
     --quiz-q-stem-fs: 20px;
     --quiz-q-stem-my: 24px;
   }
-  /* Two rows: the concept, then progress (left) and the tags (right). */
   .quiz-question__header { flex-wrap: wrap; row-gap: var(--pad-sm); }
-  .quiz-question__header-gap { flex-basis: 100%; height: 0; }
-  .quiz-question__progress { margin-right: auto; }
+  /* The pager takes its own row above the buttons. */
+  .quiz-question__footer { flex-wrap: wrap; row-gap: var(--pad-md); }
+  .quiz-question__progress { order: -1; flex-basis: 100%; justify-content: center; }
   .quiz-question__aside { flex-wrap: wrap; gap: var(--pad-sm); }
 }

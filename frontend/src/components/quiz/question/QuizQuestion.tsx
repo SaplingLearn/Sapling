@@ -23,7 +23,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { Skeleton } from "@/components/Skeleton";
@@ -31,6 +31,7 @@ import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
+import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { AskPanel, type AskSeed } from "./AskPanel";
@@ -244,9 +245,14 @@ export function QuizQuestion({
         activate: () => {},
       };
     }
-    if (showVerdict) {
+    // "See results" once nothing is left to answer — not merely on the last
+    // question, since questions can now be answered out of order.
+    const allAnswered = items.every(i => !isUnanswered(i));
+    if (showVerdict || phase === "answered") {
+      // `answered` without a shown verdict is an at-end question the student
+      // came back to: its answer is recorded and locked, so the way on is Next.
       return {
-        label: isLast ? "See results" : "Next",
+        label: allAnswered ? "See results" : "Next",
         testid: "quiz-next",
         enabled: phase === "answered",
         activate: () => actions.next(),
@@ -258,7 +264,7 @@ export function QuizQuestion({
       enabled: phase === "active" && !busy && hasAnswer,
       activate: submit,
     };
-  }, [actions, busy, isLast, phase, hasAnswer, showVerdict, submit]);
+  }, [actions, busy, items, phase, hasAnswer, showVerdict, submit]);
 
   // ── Keyboard (§5 B2) ─────────────────────────────────────────────────
 
@@ -315,32 +321,57 @@ export function QuizQuestion({
 
   // ── Pieces shared by the generating and the live render ──────────────
 
-  // Where the student is in the quiz: one dot per question (green / red once
-  // marked, in as-you-go mode) and "2 of 5". It lives in the header, not in
-  // a rail beside the content, so nothing appears to line up with it.
+  // Where the student is in the quiz, and the way round it: a numbered button
+  // per question (green / red once marked, in as-you-go mode) between back and
+  // forward arrows, beside the footer's primary button. Any question can be
+  // opened — one already answered shows what was recorded (answers lock once
+  // the server has them), one ahead can be answered out of order.
   const position = Math.min(cursor + 1, quizLength);
+  const canNavigate = (phase === "active" || phase === "answered") && !busy && total > 0;
+  const goTo = (index: number) => {
+    if (canNavigate && index !== cursor && index >= 0 && index < total) actions.goTo?.(index);
+  };
   const progress = (
-    <span className="quiz-question__progress">
+    <nav className="quiz-question__progress" aria-label="Questions">
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-prev-question"
+        aria-label="Previous question"
+        disabled={!canNavigate || cursor <= 0}
+        onClick={() => goTo(cursor - 1)}
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
+      </button>
       <ProgressDots
         total={quizLength}
         // Nothing is "here" yet while the quiz is still being written.
         current={total === 0 ? -1 : cursor}
         answered={total === 0 ? 0 : answeredCount}
-        // As-you-go shows each verdict, so the dots keep the tally too. At-end
-        // holds every verdict back, and the dots must not leak them.
+        // Out of order once questions can be skipped: answered isn't a prefix.
+        done={items.map(i => !isUnanswered(i))}
+        // As-you-go shows each verdict, so the pager keeps the tally too.
+        // At-end holds every verdict back, and the pager must not leak them.
         outcomes={session.config.feedback === "as-you-go"
           ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
           : undefined}
         orientation="row"
+        onSelect={goTo}
+        disabled={!canNavigate}
         ariaLabel={`Question ${position} of ${quizLength}`}
         testid="quiz-progress"
       />
-      {total > 0 && (
-        <span className="quiz-question__count" aria-hidden="true">
-          {position} of {quizLength}
-        </span>
-      )}
-    </span>
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-next-question"
+        aria-label="Next question"
+        disabled={!canNavigate || cursor >= total - 1}
+        onClick={() => goTo(cursor + 1)}
+      >
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
   );
 
   const header = (
@@ -356,7 +387,6 @@ export function QuizQuestion({
         {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
       </span>
       <span className="quiz-question__header-gap" />
-      {progress}
       {phase !== "generating" && item && (
         <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
           <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
@@ -396,6 +426,7 @@ export function QuizQuestion({
             <Button data-testid="quiz-cancel-generate" onClick={() => actions.cancel()}>
               Cancel
             </Button>
+            {progress}
           </div>
         </div>
       </div>
@@ -599,6 +630,7 @@ export function QuizQuestion({
               Leave
             </Button>
           )}
+          {progress}
           <Button
             variant="primary"
             data-testid={primary.testid}

@@ -519,6 +519,11 @@ describe("QuizQuestion — the verdict", () => {
         }),
       ),
     );
+    // The last question, but two were skipped: Next goes back for them.
+    expect(screen.getByTestId("quiz-next")).toHaveTextContent("Next");
+
+    const done = { selectedIndex: 0, verdict: { isCorrect: true, correctIndex: 0, explanation: "" } };
+    rerender(props(makeSession({ phase: "answered", cursor: 2, items: [item(0, done), item(1, done), item(2, done)] })));
     expect(screen.getByTestId("quiz-next")).toHaveTextContent("See results");
 
     rerender(props(makeSession({ phase: "submitting" })));

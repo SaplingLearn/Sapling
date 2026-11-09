@@ -744,7 +744,7 @@ body { font-size: 14px; line-height: 1.5; }
   /* The answer row's body size. The --fs-* scale has no 15px step and is
      documented as derived-from-an-audit, not invented, so the design's own
      value is pinned here rather than bolted onto the global type ramp. */
-  --answer-text-fs: 15px;
+  --answer-text-fs: 16px;
   /* Gradebook's blank-semester screen, promoted verbatim with <EmptyState
      size="hero">. These four are the values that screen was drawn at; the
      hero rules below exist so the promotion renders it unchanged. */
@@ -837,7 +837,7 @@ body { font-size: 14px; line-height: 1.5; }
   width: 100%;
   gap: 14px;
   align-items: center;
-  padding: 13px var(--pad-md) 13px 13px;
+  padding: 16px 18px 16px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   background: var(--bg-panel);
@@ -1012,6 +1012,41 @@ body { font-size: 14px; line-height: 1.5; }
    so far, readable at a glance. */
 .progress-dots__dot[data-outcome="correct"] { background: var(--positive); border-color: var(--positive); }
 .progress-dots__dot[data-outcome="incorrect"] { background: var(--err); border-color: var(--err); }
+
+/* Steps: the navigable variant (`onSelect`). Each dot is a numbered button
+   big enough to aim at — the quiz's question pager. */
+.progress-dots--steps.progress-dots--row { gap: 6px; flex-wrap: wrap; justify-content: center; }
+.progress-dots__dot.progress-dots__dot--step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.progress-dots__dot--step.progress-dots__dot--done { background: var(--bg-soft); color: var(--text); }
+.progress-dots__dot--step.progress-dots__dot--current {
+  border: 2px solid var(--quiz-accent, var(--accent));
+  color: var(--text);
+}
+.progress-dots__dot--step[data-outcome="correct"] { background: var(--positive); border-color: var(--positive); color: #fff; }
+.progress-dots__dot--step[data-outcome="incorrect"] { background: var(--err); border-color: var(--err); color: #fff; }
+/* The current one keeps its outcome fill and gains a ring, so "here" and
+   "how it went" both read. */
+.progress-dots__dot--step.progress-dots__dot--current[data-outcome] {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--quiz-accent, var(--accent));
+}
+.progress-dots__dot--step:hover:not(:disabled) { border-color: var(--quiz-accent, var(--accent)); }
+.progress-dots__dot--step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-full); }
+.progress-dots__dot--step:disabled { cursor: default; }
 
 /* ── InlineBanner ────────────────────────────────────────────────────
    The tinted strip under a page header. No precedent existed anywhere. */
