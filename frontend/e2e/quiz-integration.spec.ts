@@ -456,14 +456,14 @@ test("a deep link outside the active semester toasts and falls back to the ordin
   await expect(proposal).toBeVisible();
   await expect(proposal).not.toContainText(NODE_BIO_DNA_NAME);
 
-  // The topic list beside it groups only the in-scope courses.
+  // The topic list beside it groups only the in-scope courses. Since #849 a
+  // group is headed by its course name alone (the code is on the filter pill).
   const list = page.getByTestId("quiz-pick-list");
   await expect(list).toBeVisible();
-  // Groups are headed by the course NAME (the code and colour live on the
-  // filter pills above the list since #849).
-  await expect(list).toContainText("Introduction to Computer Science");
-  await expect(list).toContainText("Linear Algebra");
+  await expect(list.getByRole("heading", { name: "Introduction to Computer Science" })).toBeVisible();
+  await expect(list.getByRole("heading", { name: "Linear Algebra" })).toBeVisible();
   await expect(list).not.toContainText("Cell Biology");
+  await expect(list).not.toContainText("BIO110");
   await expect(page.getByTestId(`quiz-pick-${NODE_BIO_DNA}`)).toHaveCount(0);
   // Recursion is in scope: it is a row in the list unless it is the concept
   // already on the card, which the list does not offer twice.
