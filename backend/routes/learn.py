@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, Request
 
 import services.tutor as tutor_service
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
+from routes._docs import same_doc
 
 # ── Re-exports: every name that moved out of this file (#118) ────────────────
 from services.tutor.course import (  # noqa: F401  (re-export, #118)
@@ -85,82 +86,67 @@ from services.tutor_sessions import (  # noqa: F401  (re-export, #118)
 router = APIRouter()
 
 
-def _same_doc(source):
-    """Give a wrapper its body's docstring BEFORE `router` registers it.
-
-    FastAPI publishes a handler's docstring as the OpenAPI description, so the
-    wrapper must carry it for /openapi.json to stay byte-identical across the
-    #118 split. Only the docstring: `functools.wraps` would also set
-    `__wrapped__`, and FastAPI would then read the body's parameter
-    annotations (starlette types) instead of this wrapper's.
-    """
-    def apply(fn):
-        fn.__doc__ = source.__doc__
-        return fn
-    return apply
-
-
 @router.post("/start-session")
-@_same_doc(tutor_service.start_session)
+@same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
     return await tutor_service.start_session(body, request)
 
 
 @router.post("/chat")
-@_same_doc(tutor_service.chat)
+@same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
     return await tutor_service.chat(body, request)
 
 
 @router.post("/chat/stream")
-@_same_doc(tutor_service.chat_stream)
+@same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
     return await tutor_service.chat_stream(body, request)
 
 
 @router.post("/start-session/stream")
-@_same_doc(tutor_service.start_session_stream)
+@same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
     return await tutor_service.start_session_stream(body, request)
 
 
 @router.post("/end-session")
-@_same_doc(tutor_service.end_session)
+@same_doc(tutor_service.end_session)
 def end_session(body: EndSessionBody, request: Request):
     return tutor_service.end_session(body, request)
 
 
 @router.get("/sessions/{user_id}")
-@_same_doc(tutor_service.list_sessions)
+@same_doc(tutor_service.list_sessions)
 async def list_sessions(user_id: str, request: Request, limit: int = 10):
     return await tutor_service.list_sessions(user_id, request, limit)
 
 
 @router.patch("/sessions/{session_id}")
-@_same_doc(tutor_service.rename_session)
+@same_doc(tutor_service.rename_session)
 def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     return tutor_service.rename_session(session_id, body, request)
 
 
 @router.delete("/sessions/{session_id}")
-@_same_doc(tutor_service.delete_session)
+@same_doc(tutor_service.delete_session)
 def delete_session(session_id: str, request: Request, user_id: str | None = Query(None)):
     return tutor_service.delete_session(session_id, request, user_id)
 
 
 @router.get("/sessions/{session_id}/resume")
-@_same_doc(tutor_service.resume_session)
+@same_doc(tutor_service.resume_session)
 async def resume_session(session_id: str, request: Request):
     return await tutor_service.resume_session(session_id, request)
 
 
 @router.post("/action")
-@_same_doc(tutor_service.action)
+@same_doc(tutor_service.action)
 async def action(body: ActionBody, request: Request):
     return await tutor_service.action(body, request)
 
 
 @router.post("/mode-switch")
-@_same_doc(tutor_service.mode_switch)
+@same_doc(tutor_service.mode_switch)
 async def mode_switch(body: ModeSwitchBody, request: Request):
     return await tutor_service.mode_switch(body, request)

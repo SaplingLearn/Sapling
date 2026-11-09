@@ -14,6 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 
 import services.quiz as quiz_service
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
+from routes._docs import same_doc
 from services.quiz.config import quiz_config_payload
 
 # ── Re-exports: every name that moved out of this file (#118) ────────────────
@@ -111,21 +112,6 @@ from services.quiz.wire import (  # noqa: F401  (re-export, #118)
 router = APIRouter()
 
 
-def _same_doc(source):
-    """Give a wrapper its body's docstring BEFORE `router` registers it.
-
-    FastAPI publishes a handler's docstring as the OpenAPI description, so the
-    wrapper must carry it for /openapi.json to stay byte-identical across the
-    #118 split. Only the docstring: `functools.wraps` would also set
-    `__wrapped__`, and FastAPI would then read the body's parameter
-    annotations (starlette types) instead of this wrapper's.
-    """
-    def apply(fn):
-        fn.__doc__ = source.__doc__
-        return fn
-    return apply
-
-
 # Request-side difficulties live in services/quiz/config.py (#540 A2):
 # the concrete trio matches the quiz_attempts.difficulty CHECK (0025,
 # extended with 'adaptive' by the #540 migration); 'adaptive' hands the
@@ -142,13 +128,13 @@ def quiz_config():
 
 
 @router.post("/generate")
-@_same_doc(quiz_service.generate_quiz)
+@same_doc(quiz_service.generate_quiz)
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     return await quiz_service.generate_quiz(body, request)
 
 
 @router.get("/attempts")
-@_same_doc(quiz_service.list_attempts)
+@same_doc(quiz_service.list_attempts)
 async def list_attempts(
     request: Request,
     user_id: str,
@@ -159,24 +145,24 @@ async def list_attempts(
 
 
 @router.get("/attempts/{attempt_id}")
-@_same_doc(quiz_service.get_attempt)
+@same_doc(quiz_service.get_attempt)
 async def get_attempt(attempt_id: str, request: Request):
     return await quiz_service.get_attempt(attempt_id, request)
 
 
 @router.post("/attempts/{attempt_id}/answer")
-@_same_doc(quiz_service.answer_question)
+@same_doc(quiz_service.answer_question)
 async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     return await quiz_service.answer_question(attempt_id, body, request)
 
 
 @router.post("/attempts/{attempt_id}/abandon")
-@_same_doc(quiz_service.abandon_attempt)
+@same_doc(quiz_service.abandon_attempt)
 async def abandon_attempt(attempt_id: str, request: Request):
     return await quiz_service.abandon_attempt(attempt_id, request)
 
 
 @router.post("/submit")
-@_same_doc(quiz_service.submit_quiz)
+@same_doc(quiz_service.submit_quiz)
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     return quiz_service.submit_quiz(body, background_tasks, request)
