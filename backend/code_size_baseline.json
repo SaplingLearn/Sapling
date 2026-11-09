@@ -6,15 +6,17 @@
   },
   "route_file_lines": {
     "routes/admin.py": 1005,
-    "routes/admin_analytics.py": 696,
+    "routes/admin_analytics.py": 1831,
     "routes/auth.py": 1173,
-    "routes/documents.py": 1500,
-    "routes/flashcards.py": 701,
+    "routes/documents.py": 1661,
+    "routes/flashcards.py": 855,
     "routes/gradebook.py": 649,
     "routes/gradescope.py": 868,
-    "routes/learn.py": 2011,
-    "routes/profile.py": 978,
-    "routes/quiz.py": 3150,
+    "routes/learn.py": 2188,
+    "routes/learn_loop.py": 9013,
+    "routes/notes.py": 620,
+    "routes/profile.py": 985,
+    "routes/quiz.py": 3683,
     "routes/social.py": 1136
   }
 }

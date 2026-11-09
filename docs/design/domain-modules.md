@@ -33,21 +33,25 @@ So the complexity half of Phase 4 is nearly met under the metric CI can enforce.
 
 These are the numbers in `code_size_baseline.json`, recorded with every wave-2 PR applied. Wave 2 grew several of these files, and moved `routes/admin_analytics.py` over the limit.
 
+The route-file ceilings were recorded again on 2026-11-09, at the learning loop's main sync (#673, merged with the quiz work in the learning system). The plan's order is the learning-loop PRs first and the splits after them (step 8 below), so the loop's growth is recorded now rather than split inside the loop PR: `routes/learn_loop.py` is new, `routes/notes.py` crossed 600, and six other files grew. The ceilings still stop any further growth. No complexity ceiling was raised: the loop's and the quiz's functions over 25 were split instead.
+
 ### Route files over 600 lines
 
 | File | Lines | Endpoints | Open work touching it | Notes |
 | --- | ---: | ---: | --- | --- |
-| `routes/quiz.py` | 3,150 | 7 | #750, #752, #673, #735, #801, wave-2 W7 | 48 top-level functions; `services/quiz_*.py` already holds 10 quiz modules |
-| `routes/learn.py` | 2,011 | 11 | #751, #752, #673, #735, #801 | Tutor routes; streaming already lives in `services/chat_stream.py` |
-| `routes/documents.py` | 1,500 | 7 | #717, #752, #755, #673, #735, #801, wave-2 W4, W6a, W7 | Upload pipeline; indexing already lives in `services/document_indexing.py` |
+| `routes/learn_loop.py` | 9,013 | 31 | #673 | The learning loop's router: session open, probe, plan, teach, check, grade, review, post-test, reports. New with the loop; the rules already live in the pure `learning/` package |
+| `routes/quiz.py` | 3,683 | 8 | #750, #752, #673, #735, #801, wave-2 W7 | 65 top-level functions; `services/quiz_*.py` already holds 12 quiz modules (the quiz's learning-system steps are in `quiz_learning.py`) |
+| `routes/learn.py` | 2,188 | 11 | #751, #752, #673, #735, #801 | Tutor routes; streaming already lives in `services/chat_stream.py` |
+| `routes/admin_analytics.py` | 1,831 | 7 | #673, #799, wave-2 W5b, W7 | Usage/cost rollups, errors, db-scope shadow report; was 495 before wave 2 and 696 after it. The learning loop's KPI section (`GET /learning-loop` and its report builders) took it to 1,831 |
+| `routes/documents.py` | 1,661 | 7 | #717, #752, #755, #673, #735, #801, wave-2 W4, W6a, W7 | Upload pipeline; indexing already lives in `services/document_indexing.py`, the loop's upload-time drafting job in `services/check_item_jobs.py` |
 | `routes/auth.py` | 1,173 | 8 | #752, #801, wave-2 W5a | OAuth callback, pending/waitlist, test login, local seed |
 | `routes/social.py` | 1,136 | 24 | #752, #801 | Rooms, room messages, matching, friends |
 | `routes/admin.py` | 1,005 | 38 | #752, #801 | Roles, achievements, cosmetics, XP rules, users/allowlist, feedback, audit, analytics |
-| `routes/profile.py` | 978 | 15 | #673, #735, #752, #801, wave-2 W4 | Profile, settings, cosmetics, achievements, account delete/export |
+| `routes/profile.py` | 985 | 15 | #673, #735, #752, #801, wave-2 W4 | Profile, settings, cosmetics, achievements, account delete/export |
 | `routes/gradescope.py` | 868 | 9 | #752, #801, wave-2 W6c | Credentials, course links, sync |
-| `routes/admin_analytics.py` | 696 | 6 | #799, wave-2 W5b, W7 | Usage/cost rollups, errors, db-scope shadow report; was 495 before wave 2 |
+| `routes/flashcards.py` | 855 | 9 | #673, #735, #752, #801, wave-2 W4 | Generate/rate plus the import flow (`services/flashcard_import_service.py` exists) |
 | `routes/gradebook.py` | 649 | 12 | none | Categories, assignments, scale/curve, GPA; `services/gradebook_service.py` exists |
-| `routes/flashcards.py` | 701 | 9 | #673, #735, #752, #801, wave-2 W4 | Generate/rate plus the import flow (`services/flashcard_import_service.py` exists) |
+| `routes/notes.py` | 620 | 13 | #673, #752, #850 | Notetaker CRUD, concept links and agent actions; the loop's integrity guard on the notes agents took it over 600 (`services/notes_service.py` exists) |
 
 ### Functions over complexity 25 (ruff McCabe)
 
@@ -58,7 +62,7 @@ These are the numbers in `code_size_baseline.json`, recorded with every wave-2 P
 
 This PR took `scripts/migration_drift_report.py::main` from 29 to 12 by moving its ALREADY EXISTS and DATA BLOCKERS sections into their own functions. Byte-exact characterization tests in `tests/test_migration_drift_report.py` pin the output.
 
-The next-highest functions, all between 20 and 25, are on the watch list. They pass today but have little room: `promotion/runner.py::run` (24), `services/gradescope_service.py::login_via_bu_sso`, `services/course_context_service.py::update_course_context`, `services/account_bundle.py::import_account` and `routes/quiz.py::_quiz_via_agent` (23 each), `routes/auth.py::google_callback` and `services/chat_stream.py::stream_agent_turn` (22 each), `services/email_service.py::send_email` and `routes/documents.py::upload_document` (21 each), and `routes/quiz.py::submit_quiz` (20).
+The next-highest functions, all between 20 and 25, are on the watch list. They pass today but have little room. At the learning loop's main sync (2026-11-09): `routes/documents.py::upload_document` and `routes/learn_loop.py::probe_next` (25 each, at the limit), `promotion/runner.py::run`, `services/course_context_service.py::update_course_context` and `routes/quiz.py::_quiz_via_agent` (24 each), `services/gradescope_service.py::login_via_bu_sso`, `services/account_bundle.py::import_account`, `services/check_item_service.py::generate_for_concepts` and `::_store_screened`, `routes/learn_loop.py::_stream_turn` and `agents/grader.py::grade` (23 each), then `routes/auth.py::google_callback`, `services/chat_stream.py::stream_agent_turn` and eleven more at 20 to 22.
 
 ## Target layout
 
@@ -93,11 +97,11 @@ gh pr list --state open --json number,files --jq '.[] | select(any(.files[]; .pa
 1. **`routes/gradebook.py` → `services/gradebook/`.** No open PR touches it. It is just over the limit (649), and `services/gradebook_service.py` already holds the grade math. Move the enrollment and ownership loaders (`_resolve_enrollment`, `_load_*`, `_owned_*`, `_enrollment_grade`) and the syllabus apply into the package. Good first split to prove the pattern and the patch-target migration.
 2. **`routes/social.py` → `services/social/` (rooms, messages, friends, matching).** It has 24 endpoints in three clear groups. Today only #752 and #801 touch it. Split once those land.
 3. **`routes/admin.py` → `services/admin/` (roles, achievements, cosmetics, users and allowlist).** It has 38 endpoints, all thin CRUD, so it splits mechanically. It waits on #752 and #801.
-4. **`routes/gradescope.py` and `routes/flashcards.py`.** Both are just over the limit, and both have service modules already. They wait on #752, #801, wave-2 W6c (gradescope job) and W4 (flashcards).
-5. **`routes/admin_analytics.py` → `services/admin/analytics/`.** Wave 2 took it from 495 to 696 lines (W5b's db-scope shadow report, W7's cost per active user). Its six endpoints are read-only rollups, so the aggregation helpers (`_scan_range`, the series builders, `_db_scope_key`) move out mechanically. It waits on #799 and on wave 2 landing; it can share a PR with the `routes/admin.py` split.
+4. **`routes/gradescope.py`, `routes/flashcards.py` and `routes/notes.py`.** All three have service modules already. They wait on #752, #801, wave-2 W6c (gradescope job) and W4 (flashcards); flashcards and notes also on #673, and notes on #850.
+5. **`routes/admin_analytics.py` → `services/admin/analytics/`.** Wave 2 took it from 495 to 696 lines (W5b's db-scope shadow report, W7's cost per active user), and the learning loop's KPI section (`GET /learning-loop` and the report builders behind it, #673) took it to 1,831. Its seven endpoints are read-only rollups, so the aggregation helpers (`_scan_range`, the series builders, `_db_scope_key`, the loop's report builders) move out mechanically. It waits on #673, #799 and on wave 2 landing; it can share a PR with the `routes/admin.py` split.
 6. **`routes/profile.py`, then `routes/auth.py`.** Profile waits on #673, #735, #752, #801 and wave-2 W4. Auth waits on #752, #801 and wave-2 W5a. Keep `google_callback` (22) behaviour-pinned by the existing auth tests while splitting it.
 7. **`routes/documents.py` → `services/documents/`.** The upload pipeline and scan-concepts move out. It waits on #673, #717, #735, #752, #755, #801 and wave-2 W4, W6a and W7.
-8. **`routes/quiz.py` and `routes/learn.py`, last.** **These wait until #750, #751 and #752 and the learning-loop PRs (#673, #801, plus #735) have landed**, plus wave-2 W7 for quiz. They are the two largest files and the most actively edited, and each of those PRs edits one or both. Quiz becomes `services/quiz/` (absorbing the ten `services/quiz_*.py` modules). Learn becomes `services/tutor/` (next to `chat_stream.py`, `tutor_router.py` and `tutor_sessions.py`). Plan each as a series of PRs, one topic at a time, not one big move.
+8. **`routes/quiz.py`, `routes/learn.py` and `routes/learn_loop.py`, last.** **These wait until #750, #751 and #752 and the learning-loop PRs (#673, #801, plus #735) have landed**, plus wave-2 W7 for quiz. They are the three largest files and the most actively edited, and each of those PRs edits one or more of them. Quiz becomes `services/quiz/` (absorbing the twelve `services/quiz_*.py` modules). Learn becomes `services/tutor/` (next to `chat_stream.py`, `tutor_router.py` and `tutor_sessions.py`). `routes/learn_loop.py` becomes a domain package after the loop lands, as its own series of topic-sized PRs (session open, probe and plan, teach and check, grading, review, post-test, reports), with thin handlers left in the route; the pure `learning/` package already holds the rules, so the package takes the orchestration and data access the handlers do today. Plan each as a series of PRs, one topic at a time, not one big move.
 
 The two over-25 functions sit in `services/graph_service.py` and `services/achievement_service.py`. Four open PRs (#673, #735, #752, #801) touch both files, so leave them until those land. `apply_graph_update` is the graph-mutation chokepoint, so split it only with its full test file green and the E2E graph oracle run.
 
