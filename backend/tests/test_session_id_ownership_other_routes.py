@@ -52,7 +52,8 @@ def pending_for_owner():
 # ── POST /api/flashcards/generate ────────────────────────────────────────────
 
 def _flash_tables():
-    """`routes.flashcards.table` stand-in; records summary reads."""
+    """`routes.flashcards.table` + `services.flashcards.context.table` stand-in;
+    records summary reads."""
     mocks: dict[str, MagicMock] = {}
 
     def factory(name):
@@ -80,11 +81,12 @@ def _generate(uid, sid):
 def flash():
     flash_tables = _flash_tables()
     with patch("routes.flashcards.table", side_effect=flash_tables), \
+         patch("services.flashcards.context.table", side_effect=flash_tables), \
          patch("routes.flashcards._get_course_documents", return_value=[]), \
          patch("routes.flashcards._get_weak_concepts", return_value=[]), \
          patch("routes.flashcards._generate",
                return_value=[{"front": "q", "back": "a"}]) as gen, \
-         patch("routes.flashcards.decrypt_json") as dec, \
+         patch("services.flashcards.context.decrypt_json") as dec, \
          patch("services.achievement_service.check_achievements"):
         yield {"tables": flash_tables, "generate": gen, "decrypt_json": dec}
 

@@ -17,6 +17,7 @@ from tests.split_patches import ADMIN_MODULES, patch_admin, setattr_in
 from routes import admin_email
 from services import email_service
 from services.encryption import encrypt
+from tests.route_patches import set_auth_table
 
 client = TestClient(app)
 
@@ -161,7 +162,7 @@ def test_single_approve_enqueues_youre_in(monkeypatch, sent):
     made_rows = factory("newsletter_emails")
     made_rows.select.return_value = [stored]
     setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
+    set_auth_table(monkeypatch, factory)
     with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.co"})
     assert r.status_code == 200
@@ -179,7 +180,7 @@ def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(monkeypatc
         {"id": "w1", "email": "a@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
     ]
     setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
+    set_auth_table(monkeypatch, factory)
     with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
     assert r.status_code == 200

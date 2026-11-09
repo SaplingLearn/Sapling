@@ -435,7 +435,7 @@ class TestUnapproveUser:
             return tables[name]
 
         with _mock_admin(), patch_admin("table", side_effect=by_name), \
-             patch("routes.auth.table", side_effect=by_name), \
+             patch("services.auth.waitlist.table", side_effect=by_name), \
              patch("routes.admin.get_session_user_id", return_value="admin1"), \
              patch_admin("log_admin_action"):
             r = client.patch("/api/admin/users/u1/unapprove")
@@ -462,7 +462,7 @@ class TestUnapproveUser:
             return tables[name]
 
         with _mock_admin(), patch_admin("table", side_effect=by_name), \
-             patch("routes.auth.table", side_effect=by_name), \
+             patch("services.auth.waitlist.table", side_effect=by_name), \
              patch("routes.admin.get_session_user_id", return_value="admin1"), \
              patch_admin("log_admin_action"):
             client.patch("/api/admin/users/u1/unapprove")
@@ -902,7 +902,7 @@ def _waitlist_tables(waitlist=None, *, users_update=None):
 
 def _allowlist_call(factory, path, json, actor="admin1"):
     with _mock_admin(), patch_admin("table", side_effect=factory), \
-         patch("routes.auth.table", side_effect=factory), \
+         patch("services.auth.waitlist.table", side_effect=factory), \
          patch("routes.admin.get_session_user_id", return_value=actor), \
          patch("services.admin.allowlist.email_service.queue_waitlist_approved") as queued, \
          patch_admin("log_admin_action") as audit:

@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
+from tests.route_patches import set_auth_session_secret
 
 # Build a minimal app that mounts ONLY the auth router so these tests don't
 # pull in main.py (which imports logfire and the full router stack).
@@ -30,14 +31,14 @@ client = TestClient(_app)
 
 class TestOAuthCookieRoundTrip:
     def test_round_trip_returns_same_payload(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         payload = {"n": "abc123", "cv": "verifier", "popup_id": "popup-1"}
         cookie = auth_module._encode_oauth_cookie(payload)
         decoded = auth_module._decode_oauth_cookie(cookie)
         assert decoded == payload
 
     def test_tampered_mac_rejected(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         cookie = auth_module._encode_oauth_cookie(
             {"n": "abc123", "cv": "verifier", "popup_id": None}
         )
@@ -48,7 +49,7 @@ class TestOAuthCookieRoundTrip:
         assert auth_module._decode_oauth_cookie(tampered) is None
 
     def test_tampered_payload_rejected(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         cookie = auth_module._encode_oauth_cookie(
             {"n": "abc123", "cv": "verifier", "popup_id": None}
         )
@@ -60,12 +61,12 @@ class TestOAuthCookieRoundTrip:
         assert auth_module._decode_oauth_cookie(tampered) is None
 
     def test_missing_cookie_returns_none(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         assert auth_module._decode_oauth_cookie(None) is None
         assert auth_module._decode_oauth_cookie("") is None
 
     def test_malformed_cookie_returns_none(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         assert auth_module._decode_oauth_cookie("not-a-valid-cookie") is None
         assert auth_module._decode_oauth_cookie("only_payload_no_dot") is None
 
@@ -73,8 +74,8 @@ class TestOAuthCookieRoundTrip:
         # Without SESSION_SECRET, encode stashes the payload in an in-memory
         # dict keyed by nonce. Decode retrieves it. #174: this unsigned
         # fallback is local-dev only, so the test must declare local mode.
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_module, "IS_LOCAL", True)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", True)
         auth_module._OAUTH_FALLBACK_STORE.clear()
         payload = {"n": "fallback-nonce", "cv": "verifier", "popup_id": "p"}
         cookie = auth_module._encode_oauth_cookie(payload)
@@ -82,8 +83,8 @@ class TestOAuthCookieRoundTrip:
         assert decoded == payload
 
     def test_fallback_unknown_nonce_returns_none(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_module, "IS_LOCAL", True)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", True)
         auth_module._OAUTH_FALLBACK_STORE.clear()
         # Build a cookie payload whose nonce was never registered
         bogus = base64.urlsafe_b64encode(
@@ -146,7 +147,7 @@ class TestDecodeState:
 
 class TestCallbackStateValidation:
     def test_missing_cookie_redirects_with_invalid_state(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
         state_param = auth_module._encode_state({"action": "signin", "n": "any"})
         r = client.get(
@@ -157,7 +158,7 @@ class TestCallbackStateValidation:
         assert "error=invalid_state" in r.headers["location"]
 
     def test_nonce_mismatch_redirects_with_invalid_state(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
         cookie = auth_module._encode_oauth_cookie(
             {"n": "cookie-nonce", "cv": "verifier", "popup_id": None}
@@ -178,7 +179,7 @@ class TestCallbackStateValidation:
         # When cookie is missing, popup_id is unknown so failure goes through
         # the non-popup branch (the landing, `/?error=` — #756; the frontend
         # has no /auth page) and doesn't include popup_id.
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
         state_param = auth_module._encode_state({"action": "signin", "n": "any"})
         r = client.get(
@@ -189,7 +190,7 @@ class TestCallbackStateValidation:
         assert r.headers["location"].endswith("/?error=invalid_state")
 
     def test_tampered_cookie_redirects_with_invalid_state(self, monkeypatch):
-        monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+        set_auth_session_secret(monkeypatch, "test-secret-key")
         monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
         state_param = auth_module._encode_state({"action": "signin", "n": "n1"})
         c = TestClient(_app)
@@ -218,7 +219,7 @@ class TestLastSignInStamp:
     def test_stamp_seam_writes_last_sign_in_at(self):
         from routes import auth as auth_routes
 
-        with patch.object(auth_routes, "table") as t:
+        with patch("services.auth.accounts.table") as t:
             users_table = MagicMock()
             users_table.update = MagicMock(return_value=[{}])
             t.return_value = users_table
