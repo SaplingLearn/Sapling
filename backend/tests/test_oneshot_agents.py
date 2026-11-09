@@ -95,3 +95,24 @@ class TestStudyGuideOutputShape:
             "importance": "Foundational.",
             "concepts": ["a", "b", "c"],
         }
+
+
+def test_a_budget_refusal_says_so_instead_of_the_generic_summary():
+    """#838: the student's daily LLM budget refused the summary. The overview
+    still loads (members, room); the summary line says why, and is not cached."""
+    from services.llm_budget import LLMBudgetExceeded, next_reset
+
+    refused = AsyncMock(side_effect=LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset()))
+    save = MagicMock()
+    with patch("routes.social.table", side_effect=_social_table_side_effect), \
+         patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
+         patch("routes.social.get_graph", return_value=_GRAPH), \
+         patch("routes.social.get_cached_summary", return_value=None), \
+         patch("routes.social.social_summary_agent.run", new=refused), \
+         patch("routes.social.live_user_ids", return_value={"u1"}), \
+         patch("routes.social.save_summary", new=save):
+        r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
+    assert r.status_code == 200
+    assert "today's limit for AI features" in r.json()["ai_summary"]
+    assert r.json()["members"][0]["name"] == "Alice"
+    save.assert_not_called()

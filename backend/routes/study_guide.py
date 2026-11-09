@@ -8,8 +8,10 @@ import logging
 import threading
 import uuid
 import weakref
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from agents._run import run_agent_sync
@@ -34,7 +36,9 @@ from services.encryption import (
     decrypt_json_column,
     encrypt_json,
 )
+from services import pg_lease
 from services.http_cache import cached_json, conditional, make_etag
+from services.llm_budget import reraise_budget_refusal
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -109,15 +113,41 @@ _key_locks_guard = threading.Lock()
 def _guide_lock(user_id: str, offering_id: str | None, exam_id: str) -> _KeyLock:
     """Single-flight per guide (#771): concurrent cache misses for the same
     guide used to generate (and insert) it twice. The caller holds the
-    returned object for as long as it needs the lock. Per process — a second
-    worker can still race; the insert-time doc check below keeps either
-    result consistent with the documents."""
+    returned object for as long as it needs the lock. Per process: across
+    replicas, :func:`_single_flight` adds a Postgres lease (`stateless_locks`);
+    the insert-time doc check below keeps either result consistent with the
+    documents."""
     key = (user_id, offering_id or "", exam_id)
     with _key_locks_guard:
         kl = _key_locks.get(key)
         if kl is None:
             kl = _key_locks[key] = _KeyLock()
         return kl
+
+
+#: The cross-replica lease on one guide's generation (#117): held for this
+#: long and renewed while the generation runs, so a crashed replica's lease
+#: frees itself within a minute.
+GUIDE_LEASE_TTL_S = 60
+#: How long a request waits for ANOTHER replica's generation of the same guide
+#: before generating anyway (what a second replica did before the lease). An
+#: in-process waiter blocks on the thread lock without a bound, as before.
+GUIDE_LEASE_WAIT_S = 150.0
+GUIDE_LEASE_POLL_S = 1.0
+
+
+@contextmanager
+def _single_flight(user_id: str, offering_id: str | None, exam_id: str):
+    """The in-process lock first, then (flag `stateless_locks`) the Postgres
+    lease, so a concurrent miss on another replica waits for this generation
+    and then reads its cached row, as an in-process waiter always has. If the
+    other replica takes longer than GUIDE_LEASE_WAIT_S this one proceeds
+    (the pre-lease behaviour); the store being off or down is a no-op."""
+    flight = _guide_lock(user_id, offering_id, exam_id)
+    key = pg_lease.hashed_key("study_guide", user_id, offering_id or "", exam_id)
+    with flight.lock, pg_lease.lease(key, GUIDE_LEASE_TTL_S, wait_s=GUIDE_LEASE_WAIT_S,
+                                     poll_s=GUIDE_LEASE_POLL_S):
+        yield
 
 
 def _material_fingerprint(user_id: str, offering_id: str) -> tuple[str, ...]:
@@ -253,6 +283,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
             feature="study_guide", task="study_guide", user_id=user_id,
         )
     except Exception as e:  # generation/transport failure → 502, not a raw 500
+        reraise_budget_refusal(e)  # the daily LLM budget refused it: its 429 (#838)
         raise HTTPException(
             status_code=502, detail="Study guide generation failed."
         ) from e
@@ -268,7 +299,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "generated_at": now,
         "content": encrypt_json(content),
     }
-    table("study_guides").insert(row)
+    row["id"] = _insert_or_replace(row)
     # #771: if the material changed while this guide was generating, its
     # invalidation may already have run — take the stale row back out so the
     # next request regenerates from the current documents. The student still
@@ -283,6 +314,43 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         cached = False
 
     return {"id": row["id"], "content": content, "generated_at": now, "cached": cached}
+
+
+def _is_unique_violation(exc: httpx.HTTPStatusError) -> bool:
+    """PostgREST's 409 for a UNIQUE collision (23505), not an FK one (23503)."""
+    if exc.response is None or exc.response.status_code != 409:
+        return False
+    try:
+        return (exc.response.json() or {}).get("code") == "23505"
+    except ValueError:
+        return False
+
+
+def _insert_or_replace(row: dict) -> str:
+    """Insert the guide row and return its id. Where the
+    `study_guides_user_offering_exam_key` unique index exists (built by hand
+    with `SELECT ensure_study_guides_unique_key()` after this code deploys,
+    migration 20261109023732; only on a table with no duplicates) a second row
+    for the key is refused, so a regenerate — or a cross-replica race the
+    lease did not serialise — replaces the key's row IN PLACE instead (new
+    content and generated_at, same id). Without the index this is the plain
+    insert it always was."""
+    key = {"user_id": f"eq.{row['user_id']}", "offering_id": f"eq.{row['offering_id']}",
+           "exam_id": f"eq.{row['exam_id']}"}
+    for _attempt in range(2):
+        try:
+            table("study_guides").insert(row)
+            return row["id"]
+        except httpx.HTTPStatusError as exc:
+            if not _is_unique_violation(exc):
+                raise
+        replaced = table("study_guides").update(
+            {"content": row["content"], "generated_at": row["generated_at"]}, filters=key,
+        ) or []
+        if replaced:
+            return replaced[0].get("id") or row["id"]
+        # The row went between the two calls (an invalidation): insert again.
+    raise HTTPException(status_code=409, detail="Study guide is being updated; try again.")
 
 
 def _drop_older_guides(user_id: str, offering_id: str, exam_id: str, newer_than: str) -> None:
@@ -449,8 +517,7 @@ def get_guide(
     hit = _cached()
     if hit:
         return hit
-    flight = _guide_lock(user_id, offering_id, exam_id)
-    with flight.lock:
+    with _single_flight(user_id, offering_id, exam_id):
         # A concurrent miss may have generated it while this one waited.
         hit = _cached()
         if hit:
@@ -477,8 +544,7 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
             status_code=404,
             detail="No offering of this course in that semester.",
         )
-    flight = _guide_lock(user_id, offering_id, exam_id)
-    with flight.lock:
+    with _single_flight(user_id, offering_id, exam_id):
         # Generate FIRST, replace after: _generate_and_insert validates the exam
         # (404 for a missing/foreign one) and raises 502 on a failed generation,
         # and either must leave the student's existing guide in place. Only once
