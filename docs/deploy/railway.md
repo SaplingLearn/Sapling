@@ -184,7 +184,7 @@ today is not the case:
    and the other three callers must either move to jobs too or accept
    text-layer-only extraction.
 2. **Chromium.** Gradescope's BU SSO (`POST /api/gradescope/...` →
-   `gradescope_service.login_via_bu_sso`) launches Chromium on the request
+   `services/gradescope/client.py::login_via_bu_sso`) launches Chromium on the request
    path. On the `api` image the launch fails and the route answers 500 "BU
    sign-in is unavailable. Please retry or connect using session cookies."
    (the other Gradescope sign-in modes keep working). It has to become a
@@ -253,11 +253,11 @@ request (swept 2026-11-09):
 | rate-limit windows | `services/request_limits.py` `_rate_state` | **made safe**: `stateless_rate_limit` (flag 1) |
 | study-guide single-flight | `routes/study_guide.py` key locks | **made safe**: `stateless_locks` (flag 2), a lease per guide key |
 | admin account-operation slot | `services/account_ops_lock.py` `_running` | **made safe**: `stateless_locks` (flag 2) |
-| consumed OAuth nonces | `routes/auth.py` `_CONSUMED_OAUTH_NONCES` | **made safe**: `stateless_locks` (flag 2), a never-released lease on the nonce's hash |
+| consumed OAuth nonces | `services/auth/oauth_state.py` `_CONSUMED_OAUTH_NONCES` | **made safe**: `stateless_locks` (flag 2), a never-released lease on the nonce's hash |
 | pending tutor sessions + tombstones | `services/tutor_sessions.py` `PENDING_SESSIONS`, `_DISCARDED`, `_MATERIALIZATION_LOCKS` | **made safe**: `stateless_tutor_sessions` (flag 3); first-turn materialisation is one SQL transaction |
 | flag snapshot | `services/feature_flags.py` | **safe**: version check (`feature_flags_version`) |
 | encryption key canary first seed | `services/encryption_canary.py` | **safe**: two boots at once both insert with DO NOTHING, both re-read the one stored canary; same key passes, a different key refuses to boot (`tests/test_encryption_canary.py` runs the race) |
-| queued uploads / Gradescope syncs | `services/document_jobs.py`, `services/gradescope_jobs.py` (`services/staged_jobs.py`) | **safe**: rows in Postgres, every write a CAS on stage + owner token; a watcher on either replica sees the same row |
+| queued uploads / Gradescope syncs | `services/document_jobs.py`, `services/gradescope/jobs.py` (`services/staged_jobs.py`) | **safe**: rows in Postgres, every write a CAS on stage + owner token; a watcher on either replica sees the same row |
 | index sweeper | `services/index_sweeper.py` (one per replica) | **safe**: rows are claimed by `claim_documents_for_indexing` with a per-row lease, so two sweepers split the work |
 | account-state cache | `services/auth_guard.py` (30 s TTL) | acceptable: a removed/deleted account is refused on the other replica within 30 s |
 | roles cache | `services/feature_flags.py` `_roles` (60 s TTL) | acceptable: a role change reaches both within 60 s |
@@ -267,13 +267,13 @@ request (swept 2026-11-09):
 | email notification opt-outs | `services/email_service.py` `_opt_out_cache` (60 s) | acceptable: the send dedupe (`email_sends`) and suppressions are in Postgres |
 | Resend request spacing | `services/email_service.py` `_next_slot` | per replica: two replicas sending at once can exceed Resend's 2 req/s; a 429 is retried once after its Retry-After. Broadcasts are admin-initiated and run on one replica |
 | immutable lookups | `services/academics.py` (`offering_course_id`, `term_for_offering`), `services/growth.py` (`growth_stages`) | harmless: reference data that does not change at runtime |
-| in-flight background tasks | `routes/documents.py` `_POST_ROLL_TASKS`, `services/tutor_router.py` `_inflight` | harmless: per-process work, drained at shutdown; a lost post-roll index is re-driven by the sweeper |
+| in-flight background tasks | `services/documents/post_roll.py` `_POST_ROLL_TASKS`, `services/tutor_router.py` `_inflight` | harmless: per-process work, drained at shutdown; a lost post-roll index is re-driven by the sweeper |
 | event / PostHog queues | `services/events_service.py`, `services/posthog_client.py` | harmless: per-process buffers drained by their worker thread and at shutdown |
 | circuit breakers, outage drill log | `agents/_resilience.py` | harmless: each replica learns a provider outage on its own |
 | HTTP clients, minted user JWTs, Redis client, OCR models | `db/async_connection.py`, `services/typesafe_client.py`, `db/user_jwt.py`, `services/cache.py`, extraction backends | harmless: connection/compute caches, no shared truth |
 | db_user_scope tally | `db/scope_report.py` | harmless: the admin report reads the `events` table (`db_scope_divergences()`); the in-memory tally is this process's view only |
 | log-dedupe sets | `services/decisions.py`, `services/llm_pricing.py`, `db/scope.py`, `agents/_providers.py` | harmless |
-| OAuth fallback state store | `routes/auth.py` `_OAUTH_FALLBACK_STORE` | unused when `SESSION_SECRET` is set (the state is a signed cookie, valid on any replica with the same secret); outside local dev `validate_config` refuses to boot without one |
+| OAuth fallback state store | `services/auth/oauth_state.py` `_OAUTH_FALLBACK_STORE` | unused when `SESSION_SECRET` is set (the state is a signed cookie, valid on any replica with the same secret); outside local dev `validate_config` refuses to boot without one |
 
 ### Verification (staging, after the flags and before production)
 

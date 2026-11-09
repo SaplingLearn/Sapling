@@ -369,7 +369,9 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
   hit, and `source .e2e/env.sh` sets up a shell for the oracles.
   `scripts/e2e-up.sh` / `e2e-down.sh` refuse to run outside a cycle (or CI).
   If a held cycle is killed without its teardown (SIGKILL, OOM), `make e2e-down`
-  still stops the stack it left behind (`.e2e/booted` names the slot).
+  (or that checkout's next cycle) stops the stack it left behind
+  (`.e2e/booted` names the slot); until then, cycles from other worktrees skip
+  that slot, whose lock is free but whose ports are still taken.
 - A foreground cycle's command keeps your terminal: `scripts/e2e-cycle.sh -- bash`
   gives you a shell inside a slot, torn down when you exit it.
 - Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on pushes to main only

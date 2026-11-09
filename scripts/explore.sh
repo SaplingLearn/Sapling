@@ -57,6 +57,8 @@ EXPLORE_DIR="$REPO_ROOT/.explore"
 # Explore runs in an E2E SLOT like every other lane (scripts/lib/e2e-slot.sh).
 # E2E_SLOT picks one; otherwise the cycle takes the first free slot.
 CYCLE="$REPO_ROOT/scripts/e2e-cycle.sh"
+# The ownership test (e2e_held_cycle_pid) and manifest reader (e2e_manifest_slot).
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 
 # @playwright/mcp version pin (determinism beats freshness). Checked via
 # `npm view @playwright/mcp version` on 2026-07-28 — see task-5-report.md.
@@ -87,20 +89,10 @@ USAGE
 }
 
 # ── Stack ownership ─────────────────────────────────────────────────────────
-# The held cycle's pid, if this checkout has one running — the same test as
-# e2e-cycle.sh's held_pid: the checkout lock is held AND .e2e/cycle.pid names
-# a live e2e-cycle.sh (a stale pid, since reused, never counts).
+# The held cycle's pid, if this checkout has one running — the shared
+# ownership test (scripts/lib/e2e-slot.sh), same as e2e-cycle.sh's.
 EXPLORE_CYCLE_PID=""
-held_cycle_pid() {
-  local pid
-  pid="$(cat "$REPO_ROOT/.e2e/cycle.pid" 2>/dev/null)" || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
-  flock -n "$REPO_ROOT/.e2e/cycle.lock" true 2>/dev/null && return 1
-  if [ -r "/proc/$pid/cmdline" ]; then
-    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'e2e-cycle\.sh' || return 1
-  fi
-  echo "$pid"
-}
+held_cycle_pid() { e2e_held_cycle_pid "$REPO_ROOT"; }
 
 # ── Storage-state mint ────────────────────────────────────────────────────────
 # POST through the frontend origin (also proves the /api/:path* proxy), then
@@ -350,7 +342,10 @@ do_up() {
   # --new: a hold this checkout already runs (someone else's, started since
   # the check above) is a failure here, never adopted as ours.
   "$CYCLE" --new --background || die "the E2E stack did not come up — see .e2e/cycle.log"
-  EXPLORE_CYCLE_PID="$(held_cycle_pid)" || die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  if ! EXPLORE_CYCLE_PID="$(held_cycle_pid)"; then
+    "$CYCLE" --stop >/dev/null 2>&1 || true   # never leave a stack nobody tracks
+    die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  fi
 
   # The stack is ours: NOW arm do_down as the boot-failure safety net (it
   # stops EXPLORE_CYCLE_PID even if .explore/ can't be written), so a failure
@@ -380,7 +375,9 @@ do_up() {
 
   cat <<DONE
 
-✅ Explore stack is up (E2E slot $E2E_SLOT, $E2E_FRONTEND_URL).
+✅ Explore stack is up (E2E slot $(e2e_manifest_slot "$REPO_ROOT"), $E2E_FRONTEND_URL).
+   in your own browser: http://127.0.0.1:${E2E_FRONTEND_URL##*:} (a localhost
+   cookie would sign you out of the dev app on localhost:3000)
    storage state:  $EXPLORE_DIR/storageState.json
    mcp config:     $EXPLORE_DIR/mcp.json
 
@@ -408,9 +405,17 @@ do_down() {
   mine="${EXPLORE_CYCLE_PID:-}"
   [ -n "$mine" ] || mine="$(cat "$EXPLORE_DIR/cycle.pid" 2>/dev/null)" || true
   held="$(held_cycle_pid)" || true
-  if [ -z "${mine:-}" ] || [ "${held:-}" != "$mine" ]; then
-    if [ -n "${held:-}" ]; then
-      echo "✗ this checkout's held E2E stack (cycle pid $held) was not started by explore — leaving it (make e2e-down stops it)." >&2
+  if [ -n "${held:-}" ] && [ "$held" != "${mine:-}" ]; then
+    echo "✗ this checkout's held E2E stack (cycle pid $held) was not started by explore — leaving it (make e2e-down stops it)." >&2
+    rm -f "$EXPLORE_DIR/cycle.pid" || true
+    return 0
+  fi
+  if [ -z "${held:-}" ]; then
+    if [ -n "${mine:-}" ]; then
+      # Explore's hold died without its teardown (SIGKILL, OOM): --stop
+      # recovers the stack it left (.e2e/booted names the slot).
+      echo "▶ explore's E2E cycle (pid $mine) is gone — cleaning up after it…"
+      "$CYCLE" --stop || true
     else
       echo "✓ no explore stack is running — nothing to stop."
     fi
