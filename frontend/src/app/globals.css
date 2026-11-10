@@ -1788,7 +1788,7 @@ input[type="reset"]:disabled {
    solid warm paper, same hairlines, same mono micro-labels, no glass anywhere.
 
    Everything is scoped to `.landing-page` and ADDS classes only — no token is
-   defined or redefined (docs/frontend-rhythm-audit.md).
+   defined or redefined (docs/audits/frontend-rhythm-audit.md).
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* This surface's chrome carries a longer status than the bento's ("MA 242 · 19
@@ -2028,7 +2028,7 @@ input[type="reset"]:disabled {
    token is defined or redefined below this line. The pre-auth page and the
    app shell share token NAMES with different values, and leaking a
    redefinition outward is the documented cause of the "get-started/beta feels
-   off" bug class (docs/frontend-rhythm-audit.md).
+   off" bug class (docs/audits/frontend-rhythm-audit.md).
 
    Two brand constraints shape the whole block:
 

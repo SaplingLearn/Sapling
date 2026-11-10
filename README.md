@@ -1,499 +1,363 @@
 # Sapling
 
-An AI-powered study companion that builds a live knowledge graph as you learn.
+An AI study companion that builds a live knowledge graph of what you know as you learn.
 
-[![preview](landingpage.png)](landingpage.png)
-
+[![CI](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=fff)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=fff)
-![Google Gemini](https://img.shields.io/badge/Gemini-8E75B2?logo=google&logoColor=white)
-![D3.js](https://img.shields.io/badge/D3.js-F9A03C?logo=d3dotjs&logoColor=white)
-![Git](https://img.shields.io/badge/-Git-F05032?style=flat-square&logo=git&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-D97757?logo=anthropic&logoColor=white)
 
-## Overview
+**Live site:** [saplinglearn.com](https://saplinglearn.com) · **Design:** [Figma file](https://www.figma.com/design/ToiUnUgkl5xMYvaLAqzXfr) with every desktop screen and state as clickable frames ([inventory](docs/figma/inventory/README.md))
 
-Sapling is a study tool that adapts to how you learn. Chat with an AI tutor across three teaching modes, take adaptive quizzes, track assignments from your syllabus, and compare progress with classmates in study rooms. As you learn, a live knowledge graph maps your mastery in real time.
+[![Sapling landing page](docs/assets/landing.png)](docs/assets/landing.png)
 
-## Product Scope & Planning
+## Contents
 
-- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): https://drive.google.com/file/d/1sjQgW3obct6FgNlhzF1RXxDxDOU2VpNg/view?usp=sharing
-- **Notion backlog** (user stories, acceptance criteria, priorities, Sprint 1 tasks): https://app.notion.com/p/Sapling-3cd780cd9453802db54fe5a04ccf27a8
-- **Canopy ticket tracker** (our team's own ticket system, connected to the Notion backlog so stories can be followed to their tickets): https://canopy.saplinglearn.com/#tickets. Canopy signs in with GitHub, so access is limited to people attached to the Sapling GitHub repository (team members, mentors, and course staff added as collaborators).
-- **GitHub Issues** (code-level tasks and pull requests): https://github.com/SaplingLearn/Sapling/issues
+- [What Sapling does](#what-sapling-does)
+- [Using Sapling](#using-sapling)
+- [Features](#features)
+- [Tech stack and architecture](#tech-stack-and-architecture)
+- [Getting started](#getting-started)
+- [Environment variables](#environment-variables)
+- [Tests and CI](#tests-and-ci)
+- [Repository layout](#repository-layout)
+- [Contributing](#contributing)
+- [Project docs](#project-docs)
+- [Team](#team)
+- [License](#license)
+
+## What Sapling does
+
+Students upload their course material (syllabi, lecture slides, notes, past exams). Sapling reads it, extracts the concepts, and grounds everything else in it: an AI tutor with three teaching modes, adaptive quizzes, flashcards, exam study guides, and a gradebook. Every session and quiz updates a per-student knowledge graph, so you can see what you have mastered and what still needs work.
+
+Material uploaded by one student grounds the tutor and quizzes for everyone enrolled in the same course, so a class builds a shared, course-specific corpus instead of getting generic AI answers.
+
+**Planning and tracking**
+
+- Product scope (problem statement, MVP scope, success criteria): [Google Drive](https://drive.google.com/file/d/1sjQgW3obct6FgNlhzF1RXxDxDOU2VpNg/view?usp=sharing)
+- Backlog with user stories and acceptance criteria: [Notion](https://app.notion.com/p/Sapling-3cd780cd9453802db54fe5a04ccf27a8)
+- Ticket tracker, linked to the Notion backlog: [Canopy](https://canopy.saplinglearn.com/#tickets) (GitHub sign-in; open to repo collaborators)
+- Code-level tasks: [GitHub Issues](https://github.com/SaplingLearn/Sapling/issues)
+
+## Using Sapling
+
+A typical first session, with screenshots from the app running on seeded demo data:
+
+1. **Sign in and onboard.** Sign in with Google, then pick your school, major, year, and courses.
+2. **Upload your course material.** In the **Library**, upload a syllabus or lecture PDF. Sapling streams its progress live ("Classifying...", "Extracting summary, concepts, and syllabus...", "Saved."), pulls assignments and deadlines into your calendar, and adds the concepts to your knowledge graph.
+3. **Learn with the tutor.** Open **Tutor**, choose a concept, and pick a mode: *Socratic* (guided questions), *Expository* (direct explanation), or *Teach-back* (you explain, Sapling corrects). The side panel shows where the concept sits in your graph.
+4. **Check yourself.** Take a **Quiz** that leans on your weakest concepts, or review **Flashcards** and rate each card Easy, Hard, or Forgot.
+5. **Watch the graph grow.** The **Tree** view shows every concept across your courses. Nodes move up from Unexplored through Struggling and Learning to Mastered as you study; the **Mastery colors** toggle colors them by tier instead of by course.
+6. **Prepare for exams.** Generate a **Study guide** for an upcoming exam from your uploaded material, and track your grade in **Grades**.
+
+| Tutor | Quiz |
+| --- | --- |
+| ![AI tutor in Socratic mode with the concept graph beside the chat](frontend/public/gallery/shot-learn.png) | ![Adaptive quiz](frontend/public/gallery/shot-quiz.png) |
+| **Knowledge graph** | **Library** |
+| ![Knowledge graph tree view](frontend/public/gallery/shot-tree.png) | ![Document library](frontend/public/gallery/shot-library.png) |
+| **Study guide** | **Gradebook** |
+| ![Exam study guide](frontend/public/gallery/shot-guide.png) | ![Gradebook](frontend/public/gallery/shot-gradebook.png) |
+| **Notetaker** | **Study rooms** |
+| ![Notetaker](frontend/public/gallery/shot-notetaker.png) | ![Study rooms](frontend/public/gallery/shot-social.png) |
+
+More screens (calendar, planner, achievements, study hub) are in [`frontend/public/gallery/`](frontend/public/gallery/). To regenerate them from a local stack, run `make gallery-shots`.
 
 ## Features
 
-- **Live Knowledge Graph** — Your understanding is visualized as a growing node graph, with a 2D (D3/SVG, default) or 3D (WebGL) view toggle. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
-- **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects). Chat supports inline math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
-- **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
-- **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
-- **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
-- **Gradescope Sync** — Link a Sapling course to a Gradescope course and pull assignment grades in automatically. Sign in with a Gradescope email/password or, for BU accounts, a live SSO + Duo 2FA flow; credentials are stored encrypted and re-authenticated fresh on each sync.
-- **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
-- **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
-- **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
-- **Document Library** — Upload PDFs and notes (up to 100 MB each); Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Uploads use a streaming SSE pipeline so the UI shows live per-phase progress (*"Classifying..." → "Extracting summary, concepts, and syllabus..." → "Saved."*). Concept notes can be re-scanned manually per doc or per course.
-- **Notetaker** — Write typed notes per course with debounced autosave and tags. Per note, Sapling can AI-summarize, extract concepts (merged into your knowledge graph and linked back to the note), answer questions in a note-grounded AI chat, send the note to the tutor, or generate a quiz targeting the note's weakest linked concept.
-- **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
-- **Room Chat** — Real-time text chat with avatars inside each study room.
-- **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
-- **Achievements & Cosmetics** — Unlock achievements by hitting milestones (sessions, quizzes, streaks). Equip cosmetic rewards like avatar frames, name colors, and title flairs.
-- **Roles & Admin Panel** — Role-based access control with an admin panel for user approval, role assignment, and content management.
-- **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
-- **Newsletter** — Beta-list signup directly from the landing page.
-- **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app.
+- **Dashboard:** a Today's plan built from your sessions, weak concepts, and upcoming deadlines, which ticks items off as you do them.
+- **Live knowledge graph:** a 2D force-directed graph (d3-force) of every concept you've touched, colored by course and shaded by mastery, with a "Mastery colors" mode that colors nodes by tier. Updates after every session and quiz.
+- **AI tutor:** Socratic, Expository, and Teach-back modes, grounded in your course's uploaded material (retrieval-augmented). Renders math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
+- **Adaptive quizzes:** questions aimed at your weakest concepts and at common class misconceptions, in multiple-choice, short-answer, numeric, symbolic, or mixed format (each with its own answer input), at Easy, Medium, Hard, or Adaptive difficulty. A clickable question pager jumps between questions, and the generator is told which questions you've recently seen so it avoids repeating them.
+- **Flashcards:** generate a deck from your weakest concepts, or import from pasted text, a file (CSV, TSV, TXT, JSON, Excel, or Anki `.apkg`), a URL, an AI prompt, or a photo. Rate cards Easy / Hard / Forgot (ratings are recorded; there is no review schedule yet).
+- **Document library:** upload PDF, DOCX, or PPTX files up to 100 MB. Sapling extracts summaries, concept notes, and syllabus data, with OCR for scanned pages.
+- **Study guides:** exam guides generated from your course material, cached per exam and regenerable.
+- **Gradebook and Gradescope sync:** categories, weights, letter scales, and a current-grade calculation. Syllabus upload fills in categories and assignments. Optional Gradescope import, including BU SSO + Duo sign-in.
+- **Calendar:** assignments and deadlines extracted from your syllabus.
+- **Notetaker:** typed notes per course with autosave. Per note: AI summary, concept extraction into your graph, a note-grounded chat, send-to-tutor, and a quiz on the note's weakest concept.
+- **Study rooms:** join by invite or browse public rooms, chat with replies and reactions, see the room's mastery on the concepts you share, and get matched with partners who are strong where you are weak.
+- **Class intelligence:** an anonymized, per-class rollup of common misconceptions. It has no screen of its own; quiz generation uses it to write the wrong answers.
+- **Profiles, achievements, and cosmetics:** milestones, avatar frames, name colors, and title flairs.
+- **XP and leaderboard:** levels from XP, plus a weekly leaderboard (everyone, friends, or school) on the Achievements page.
+- **Course planner:** a placeholder page today ("Coming soon"); semester planning is not built yet.
+- **Waitlist and email:** students outside the allowlist can join a waitlist from the pending page; welcome and approval emails go out through Resend, with one-click unsubscribe.
+- **Admin panel:** role-based access, user approval, feature flags (global or per student), usage analytics, and the job queue.
+- **Admin tools:** seed, wipe, or copy a test account's study data; per-user daily LLM token budgets; and email broadcasts with preview and test sends.
 
-## Tech Stack
+## Tech stack and architecture
 
-- **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (SVG + d3-force). Vitest with jsdom + React Testing Library for unit + component tests.
-- **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents — every LLM call in the backend goes through these agents; the legacy structured-prompt helper (`services/gemini_service.py`) was retired in ADR 0024.
-- **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
-- **Auth** — Google OAuth sign-in with stateless HMAC-signed session cookies (`SESSION_SECRET`), role-based access control, and an email-domain allowlist (default `bu.edu`).
-- **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
-- **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
-- **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
-- **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
-- **Database** — Supabase (PostgreSQL) for all persistent data
-- **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
-- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (built by Cloudflare Workers Builds; production and staging environments configured in `frontend/wrangler.toml`). The backend is served at `https://api.saplinglearn.com` (staging: `https://api.staging.saplinglearn.com`); the backend is hosted on Railway. Most deploy settings still live in the Railway project; `.railway/railway.ts` is a partial config-as-code file that declares the job `worker` service and, once `MANAGE_API` is on, the API service's replica count (not yet applied; runbook in `docs/deploy/railway.md`).
-
-## Architecture
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 16 (App Router, TypeScript), D3.js for the graph, Vitest + React Testing Library |
+| Backend | FastAPI (Python 3.13), Pydantic AI agents for every LLM call. A Postgres-backed job queue (`python -m worker`) runs uploads, indexing, and Gradescope sync off the request path when the `jobs_queue` flag is on. |
+| AI | Anthropic Claude for all agents by default (`claude-haiku-5-5` for extraction/quiz/notes, `claude-sonnet-5-5` for the tutor; [ADR 0030](docs/decisions/0030-swap-the-agents-llm-provider-from-gemini-to-anthropic-claude.md)). Google Gemini serves RAG embeddings, and any agent can be pointed back at a `gemini-*` model per task via `SAPLING_MODEL_<TASK>`. |
+| Database | Supabase (PostgreSQL + pgvector), accessed through PostgREST with the service role. Row Level Security locks the public anon key out of the tables. |
+| Security | Google OAuth, HMAC-signed session cookies, AES-256-GCM column encryption for PII and student content. See [SECURITY.md](SECURITY.md). |
+| Streaming | Server-Sent Events (`sse-starlette`) for upload progress and the streaming tutor |
+| OCR | Docling, with GOT-OCR 2.0 and Tesseract fallbacks |
+| Observability | Logfire traces (with a scrubber that strips student content before export), optional PostHog analytics ([ADR 0028](docs/decisions/0028-posthog-alongside-in-house-analytics.md)), feature flags ([ADR 0029](docs/decisions/0029-feature-flags.md)) |
+| Deploy | Frontend on Cloudflare Workers (`@opennextjs/cloudflare`). Backend API and job worker on Railway. Separate staging and production environments. |
 
 ```mermaid
 flowchart LR
     U[Browser] --> FE["Next.js frontend<br/>(Cloudflare Workers)"]
-    FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(Railway<br/>api.saplinglearn.com)"]
+    FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(Railway)"]
     U -->|"realtime room chat"| SB
     BE -->|PostgREST| SB[("Supabase Postgres")]
+    BE -->|"enqueue jobs"| SB
+    WK["Job worker<br/>(python -m worker)"] -->|"claim jobs"| SB
     BE --> AG["Pydantic AI agents"]
-    AG --> GE["Google Gemini API"]
+    AG --> CL["Anthropic Claude"]
+    AG --> GE["Gemini embeddings"]
     BE --> GO["Google OAuth"]
-    BE --> GS["Gradescope"]
+    BE -.optional.-> GS["Gradescope"]
     BE -.optional.-> LF["Logfire"]
     BE -.optional.-> RD[("Redis cache")]
 ```
 
-Backend request paths, data model, and known sharp edges: [`docs/architecture.md`](docs/architecture.md).
+Request paths, the data model, and known sharp edges are in [`docs/architecture.md`](docs/architecture.md). The full route list is in [`docs/api.md`](docs/api.md), and the running backend serves interactive OpenAPI docs at `http://localhost:5000/docs`.
 
-## External Services & Required Accounts
+## Getting started
 
-| Service | Used for | Needed to run locally? |
+### Prerequisites
+
+- **Python 3.13** (what CI, the Dockerfile, and `requirements.lock` use)
+- **Node.js 22** with npm 10.9.x. The frontend enforces the npm version with `engine-strict` (see `frontend/.nvmrc` and `frontend/.npmrc`); on a newer npm run `npm install -g npm@10.9.2`.
+- **API keys:** an [Anthropic API key](https://console.anthropic.com/) and a [Gemini API key](https://aistudio.google.com/apikey). The backend refuses to start without both.
+- **Google OAuth client** (Google sign-in is the only login path). Add `http://localhost:5000/api/auth/google/callback` as an authorized redirect URI.
+- **A database:** either a local Supabase stack via the Supabase CLI and Docker or Podman (Option A), or your own hosted Supabase project (Option B).
+
+| Service | Used for | Needed locally? |
 | --- | --- | --- |
-| Supabase project | Postgres database, realtime room chat | Yes |
-| Google Gemini API key | Tutor, quizzes, extraction, study guides | Yes |
-| Google Cloud OAuth client | Sign-in and Calendar | For sign-in |
-| Railway account | Backend hosting | No (deploy only) |
-| Cloudflare account | Frontend hosting | No (deploy only) |
-| Logfire | Tracing and cost telemetry | Optional |
-| Redis | Cross-worker extraction cache | Optional |
-| Gradescope (unofficial client) | Grade sync | Optional |
+| Anthropic API | Tutor, quizzes, document extraction, notes | Yes |
+| Google Gemini API | RAG embeddings | Yes |
+| Supabase | Postgres database, realtime room chat | Yes (local stack or hosted) |
+| Google Cloud OAuth client | Sign-in, Calendar | Yes, to sign in |
+| Logfire, PostHog, Redis, Gradescope | Tracing, analytics, cache, grade sync | Optional |
+| Railway, Cloudflare | Hosting | No (deploy only) |
 
-## Technical Risks
+### 1. Clone
 
-| Risk | Mitigation |
-| --- | --- |
-| Gemini cost or rate limits grow with usage | Per-task model routing (cheaper models by default), per-call usage limits, quiz-generation rate limiting, capped vision OCR, cost telemetry in Logfire |
-| Gradescope sync breaks (unofficial API, SSO/Duo changes) | Isolated behind its own service and endpoints; optional, so core features don't depend on it |
-| Student data exposure (an earlier Supabase anon-access gap was found and locked down) | Row Level Security enabled on all tables, AES-256-GCM column encryption, log scrubbing, ownership checks on every route |
-| Backend deploy settings live in Railway, not in this repo | Host is documented in this README; keep `backend/Dockerfile` as the build definition and move deploy config into the repo over time |
-
-## Local Setup
-
-**Prerequisites:** Python 3.12+ (CI runs 3.13), Node.js 22 with npm 10.9.x (the repo enforces this via `engine-strict`; see `frontend/.nvmrc`), a Gemini API key, and a Google OAuth client (Google sign-in is the only local login path). For the database you need either a local Supabase stack (Option A) or your own hosted Supabase project (Option B).
-
-### Option A — local Supabase (turnkey)
-
-The `*.env.local.example` templates are preconfigured for a local Supabase stack and are safe to commit (local demo keys only). Start the local Supabase stack and apply migrations by following [`docs/local-supabase.md`](docs/local-supabase.md).
-
-**Backend**
-
+```bash
+git clone https://github.com/SaplingLearn/Sapling.git
+cd Sapling
 ```
+
+### 2. Start a database
+
+**Option A: local Supabase (recommended).** Follow [`docs/local-supabase.md`](docs/local-supabase.md) to start the stack (`supabase start`) and apply migrations. Its scripts run through `backend/venv`, so do the venv and `pip install` from step 3 first. The `*.env.local.example` templates are already wired to it.
+
+**Option B: your own Supabase project.** Use the `.env.example` templates instead. In `backend/.env` set `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, `SUPABASE_DB_URL` (the session-mode pooler URI), and either `APP_ENV=local` or a 32+ byte `SESSION_SECRET` (the template defaults to `APP_ENV=production`, which refuses to start without one). Then create the schema with `python -m db.migrate` from `backend/` once step 3's install is done.
+
+### 3. Run the backend
+
+```bash
 cd backend
-python3 -m venv venv
-source venv/bin/activate      # fish: source venv/bin/activate.fish
-                              # Windows PowerShell: venv\Scripts\Activate.ps1
+python -m venv venv
+source venv/bin/activate              # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-pip install -r requirements-worker.txt   # optional: Docling/torch OCR for scanned PDFs (worker image only)
-playwright install chromium   # only needed for Gradescope BU SSO sync
-cp .env.local.example .env    # Windows PowerShell: Copy-Item .env.local.example .env
-# fill in GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-python3 main.py               # Windows: python main.py  → http://localhost:5000
+cp .env.local.example .env            # Option B: cp .env.example .env
+# Fill in ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+python main.py                        # http://localhost:5000  (API docs at /docs)
 ```
 
-Add `http://localhost:5000/api/auth/google/callback` to your Google OAuth client's authorized redirect URIs.
+Optional extras: `pip install -r requirements-worker.txt` for Docling/torch OCR of scanned PDFs, and `playwright install chromium` for Gradescope BU SSO sync.
 
-**Frontend**
+**Job worker:** the `jobs_queue` feature flag (off by default) moves uploads, document indexing, and Gradescope sync onto a Postgres job queue. If you turn it on, also run `python -m worker` from `backend/` (same venv and `.env`) in a second terminal. Without a worker, uploads and syncs fall back to running inline after a short wait, and other queued work waits.
 
-```
+### 4. Run the frontend
+
+```bash
 cd frontend
-npm install
-cp .env.local.example .env.local    # Windows PowerShell: Copy-Item .env.local.example .env.local
-npm run dev                         # → http://localhost:3000
+npm ci
+cp .env.local.example .env.local      # Option B: cp .env.example .env.local
+npm run dev                           # http://localhost:3000
 ```
 
-### Option B — your own hosted Supabase project
-
-```
-cd backend
-cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
-# fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY,
-# SUPABASE_DB_URL (session-pooler URI), and Google OAuth values
-python -m db.migrate          # create the schema in your Supabase project
-python3 main.py
-
-cd ../frontend
-cp .env.example .env.local    # Windows PowerShell: Copy-Item .env.example .env.local
-# set SESSION_SECRET (same value as the backend; the backend also needs it when APP_ENV is not "local")
-# and NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
-npm run dev
-```
+Open http://localhost:3000 and sign in with Google.
 
 ### Or run everything with Docker
 
-Needs `backend/.env` filled in and `ENCRYPTION_KEY` in your shell environment:
+Docker Compose works with a hosted Supabase project (Option B) only: inside a container, `127.0.0.1` is the container itself, so it cannot reach a local Supabase stack. Fill in `backend/.env`, put the frontend variables in `frontend/.env` (Compose reads that file, not `.env.local`), export `ENCRYPTION_KEY` in your shell (Compose passes it through and would otherwise blank it), then:
 
+```bash
+docker compose up
 ```
-docker-compose up
-```
 
-Setup verified from a fresh clone by: Jack He, 10/6/2026
+### Troubleshooting
 
-## API Endpoints
+- **`RuntimeError: Missing required configuration`** on backend start: a required key in `backend/.env` is empty. The message names it.
+- **401 after Google sign-in succeeds:** `SESSION_SECRET` differs between `backend/.env` and `frontend/.env.local`. They must match.
+- **`npm ci` fails with `EBADENGINE`:** you're not on npm 10.9. Run `nvm use` in `frontend/`, then `npm install -g npm@10.9.2`.
+- **Backend tests fail in `test_extraction_backends`, `test_docling_integration`, or `test_ocr_pipeline`:** those need the OCR stack (`requirements-worker.txt`) and network access. Use the command under [Tests and CI](#tests-and-ci), which skips them like CI does.
 
-**Learn**
+Setup last verified from a fresh clone on 2026-11-09 (Python 3.13, Node 22, npm 10.9): backend install, boot, and test suite; frontend `npm ci`, typecheck, lint, and `npm run build`. Docker Compose and the local Supabase stack were not re-run that day.
 
-- `POST` `/api/learn/start-session` — Start a tutoring session
-- `POST` `/api/learn/chat` — Send a chat message
-- `POST` `/api/learn/action` — Send a structured action (e.g. quiz, recap)
-- `POST` `/api/learn/end-session` — End a session
-- `GET` `/api/learn/sessions/{user_id}` — List past sessions
+## Environment variables
 
-**Graph**
-
-- `GET` `/api/graph/{user_id}` — Fetch the user's knowledge graph
-- `GET` `/api/graph/{user_id}/recommendations` — Get next-concept recommendations
-- `GET` `/api/graph/{user_id}/courses` — List courses
-
-**Quiz**
-
-- `POST` `/api/quiz/generate` — Generate an adaptive quiz
-- `POST` `/api/quiz/submit` — Submit answers and update mastery
-
-**Flashcards**
-
-- `POST` `/api/flashcards/generate` — Generate flashcards for a topic
-- `POST` `/api/flashcards/import/parse` — Parse cards from paste, file, URL, or photo (no save)
-- `POST` `/api/flashcards/import/generate` — AI-generate cards from a topic / prompt
-- `POST` `/api/flashcards/import/cleanup` — Clean up parsed cards before commit
-- `POST` `/api/flashcards/import/cloze` — Convert sentences into cloze-deletion cards
-- `POST` `/api/flashcards/import/commit` — Commit parsed cards to the user's deck
-- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
-- `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
-- `DELETE` `/api/flashcards/{card_id}` — Delete a card
-
-**Gradebook**
-
-- `GET` `/api/gradebook/summary` — Per-course grade summary across the user's courses (filter by `semester`)
-- `GET` `/api/gradebook/courses/{course_id}` — Full gradebook for a course (categories, assignments, current grade)
-- `POST` `/api/gradebook/courses/{course_id}/categories` — Create a category
-- `PATCH` `/api/gradebook/courses/{course_id}/categories` — Bulk-update categories (weights, names)
-- `DELETE` `/api/gradebook/categories/{category_id}` — Delete a category
-- `POST` `/api/gradebook/assignments` — Create an assignment
-- `PATCH` `/api/gradebook/assignments/{assignment_id}` — Update an assignment (grade, weight, due date)
-- `DELETE` `/api/gradebook/assignments/{assignment_id}` — Delete an assignment
-- `PATCH` `/api/gradebook/courses/{course_id}/scale` — Override the per-course letter-grade scale
-- `POST` `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
-
-**Gradescope**
-
-The backend runs on Railway; the frontend uses the existing Cloudflare
-same-origin `/api` proxy. `backend/Dockerfile` installs Chromium and its Linux
-dependencies for BU SSO. The browser runs on the backend, never in the frontend
-worker. Saved credentials are verified when opening Gradescope setup; expired
-sessions prompt reconnection. Course linking, link listing, unlinking, and sync
-accept an optional `semester` term label so retakes import into the selected
-gradebook. Failed imports do not advance the last-successful-sync timestamp.
-
-- `POST` `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
-- `POST` `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
-- `DELETE` `/api/gradescope/credentials` — Remove stored credentials
-- `GET` `/api/gradescope/status` — Whether credentials are saved and when the user last synced
-- `GET` `/api/gradescope/courses` — List the user's Gradescope student courses (live)
-- `GET` `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
-- `POST` `/api/gradescope/link` — Create or update a course mapping
-- `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
-- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook (`202 {pending}` when a queued sync outlasts the wait)
-- `GET` `/api/gradescope/sync/{sapling_course_id}/status` — Poll a queued sync: 202 while it runs, then the POST's answer
-
-**Study Guide**
-
-- `GET` `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
-- `GET` `/api/study-guide/{user_id}/cached` — List all cached study guides
-- `GET` `/api/study-guide/{user_id}/courses` — List courses for guide generation
-- `GET` `/api/study-guide/{user_id}/exams` — List exam-type assignments
-- `POST` `/api/study-guide/regenerate` — Invalidate cache and regenerate a guide
-
-**Calendar**
-
-- `POST` `/api/calendar/extract` — Extract assignments from a syllabus
-- `GET` `/api/calendar/upcoming/{user_id}` — Fetch upcoming assignments
-- `POST` `/api/calendar/save` — Save extracted assignments
-
-**Documents**
-
-- `POST` `/api/documents/upload` — **Streaming SSE upload.** Runs the agentic pipeline (classifier → parallel summary/concepts/syllabus → graph merge) and emits typed SSE events the client renders as live progress: `status:start`, `progress:classify`, `progress:classified`, `progress:extract`, `progress:extracted`, `progress:graph_update`, `progress:graph_updated`, `result:finalize`, `status:done`. Errors emit `error:failed` (terminal). Idempotent on `X-Request-ID` — a retry with the same ID returns the previously persisted document without re-running the pipeline.
-- `POST` `/api/documents/upload/sync` — Non-streaming JSON upload. Same orchestrator under the hood, returns the persisted document as a single JSON response. Used by callers that don't need progress events.
-- `GET` `/api/documents/user/{user_id}` — List a user's documents
-- `DELETE` `/api/documents/doc/{doc_id}` — Delete a document
-- `POST` `/api/documents/doc/{doc_id}/scan-concepts` — Re-extract concepts from a stored document into the course graph
-- `POST` `/api/documents/course/{course_id}/scan-concepts` — Extend a course's concept graph from its label alone
-
-**Notes**
-
-- `GET` `/api/notes/user/{user_id}` — List a user's notes (filter by `course_id`)
-- `POST` `/api/notes` — Create a note
-- `GET` `/api/notes/{note_id}` — Fetch a single note
-- `PATCH` `/api/notes/{note_id}` — Update a note (title, body, tags, course)
-- `DELETE` `/api/notes/{note_id}` — Delete a note
-- `GET` `/api/notes/{note_id}/concepts` — List concepts linked to a note
-- `POST` `/api/notes/{note_id}/concepts` — Link a graph concept to a note
-- `DELETE` `/api/notes/{note_id}/concepts/{concept_node_id}` — Unlink a concept
-- `POST` `/api/notes/{note_id}/summarize` — AI-summarize the note (agent-backed)
-- `POST` `/api/notes/{note_id}/extract-concepts` — Extract concepts, merge into the graph, link back to the note
-- `POST` `/api/notes/{note_id}/chat` — Ask a question grounded in the note (agent-backed)
-- `POST` `/api/notes/{note_id}/send-to-tutor` — Build a tutor handoff (topic + preface) from the note
-- `POST` `/api/notes/{note_id}/generate-quiz` — Pick the note's weakest linked concept to quiz on
-
-**Social**
-
-- `POST` `/api/social/rooms/create` — Create a study room
-- `POST` `/api/social/rooms/join` — Join a study room by invite code
-- `GET` `/api/social/rooms/{user_id}` — List a user's rooms
-- `GET` `/api/social/rooms/{room_id}/overview` — Room overview with AI-generated group summary
-- `GET` `/api/social/rooms/{room_id}/activity` — Recent activity feed for a room
-- `POST` `/api/social/rooms/{room_id}/match` — Find study partners within a room
-- `POST` `/api/social/rooms/{room_id}/leave` — Leave a room
-- `DELETE` `/api/social/rooms/{room_id}/members/{member_id}` — Kick a member (room leader only)
-- `GET` `/api/social/rooms/{room_id}/messages` — Fetch room chat messages
-- `POST` `/api/social/rooms/{room_id}/messages` — Send a chat message
-- `POST` `/api/social/school-match` — Find study partners school-wide
-- `GET` `/api/social/students` — List all students with mastery stats
-
-**Auth**
-
-- `GET` `/api/auth/google` — Redirect to Google OAuth consent screen
-- `GET` `/api/auth/google/callback` — OAuth callback, issues session token
-- `GET` `/api/auth/me` — Get current user from session token
-
-**Onboarding**
-
-- `GET` `/api/onboarding/courses` — Search courses by name or code
-- `POST` `/api/onboarding/profile` — Save onboarding profile data
-
-**Profile**
-
-- `GET` `/api/profile/{user_id}` — Public profile with roles, achievements, cosmetics
-- `PUT` `/api/profile/{user_id}` — Update profile fields (bio, major, links, etc.)
-- `PUT` `/api/profile/{user_id}/settings` — Update user settings
-- `POST` `/api/profile/{user_id}/avatar` — Upload a profile avatar
-- `POST` `/api/profile/{user_id}/equip` — Equip or unequip a cosmetic item
-- `PUT` `/api/profile/{user_id}/featured-role` — Set featured role on profile
-- `PUT` `/api/profile/{user_id}/featured-achievements` — Set featured achievements
-- `DELETE` `/api/profile/{user_id}` — Delete account
-
-**Admin**
-
-- `GET`/`POST` `/api/admin/roles` — List / create roles
-- `PATCH`/`DELETE` `/api/admin/roles/{role_id}` — Update / delete a role
-- `POST`/`DELETE` `/api/admin/roles/assign` · `/api/admin/roles/revoke` — Assign / revoke a role
-- `GET`/`POST`/`DELETE` `/api/admin/roles/cosmetics` (+ `/api/admin/roles/{role_id}/cosmetics`) — Link cosmetics to roles
-- `GET`/`POST` `/api/admin/achievements` — List / create achievements
-- `PATCH`/`DELETE` `/api/admin/achievements/{achievement_id}` — Update / delete an achievement
-- `POST` `/api/admin/achievements/grant` — Manually grant an achievement
-- `GET`/`POST`/`PATCH`/`DELETE` achievement triggers (`/api/admin/achievements/{achievement_id}/triggers`, `/api/admin/achievements/triggers`, `/api/admin/achievements/triggers/{trigger_id}`)
-- `GET`/`POST`/`DELETE` `/api/admin/achievements/cosmetics` (+ `/api/admin/achievements/{achievement_id}/cosmetics`) — Link cosmetics to achievements
-- `GET`/`POST` `/api/admin/cosmetics` — List / create cosmetic items
-- `PATCH`/`DELETE` `/api/admin/cosmetics/{cosmetic_id}` — Update / delete a cosmetic
-- `GET` `/api/admin/users` — Paginated, searchable user list
-- `PATCH` `/api/admin/users/{user_id}/approve` · `/unapprove` — Approve / unapprove a user
-- `POST` `/api/admin/allowlist/approve` · `/api/admin/allowlist/revoke` — Manage the email allowlist
-- `GET` `/api/admin/audit` — Paginated admin audit log (filter by action / target)
-- `GET` `/api/admin/analytics/overview` — Totals, 30-day series, and role counts
-- `GET` `/api/admin/jobs` — Job-queue overview per type and status (`jobs_overview()`)
-- `GET`/`PUT` `/api/admin/llm/budgets` (+ `DELETE /api/admin/llm/budgets/{scope}/{subject}`, `GET /api/admin/llm/budgets/status/{user_id}`) — Per-user daily LLM token budgets
-- `GET` `/api/admin/llm/drill` — State of the `llm_outage_drill` flag
-
-**Feedback**
-
-- `POST` `/api/feedback/feedback` — Submit session or general feedback
-- `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
-
-**Newsletter**
-
-- `POST` `/api/newsletter/subscribe` — Add an email to the beta / newsletter list
-
-## Environment Variables
-
-Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
+Copy the example files as described above. The job worker (`python -m worker`, from `backend/`) reads the same `backend/.env`. Never commit real `.env` files; only the `*.example` templates are tracked. Each template documents its variables inline. These are the ones you will touch most:
 
 **`backend/.env`**
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | ✅ | Google Gemini API key |
-| `SUPABASE_URL` | ✅ | Your Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
-| `ENCRYPTION_KEY` | ✅ | AES-256-GCM key for column-level encryption (32 bytes as 64 hex chars; generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
-| `PORT` | — | Backend port (default `5000`) |
-| `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
-| `APP_ENV` | — | Deployment environment (default `production`, fail-closed checks). Set `local` for local dev (relaxes `SESSION_SECRET`); set `staging` on the staging deploy (adds a noindex header, still fail-closed). |
-| `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
-| `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
-| `GOOGLE_AUTH_REDIRECT_URI` | — | Sign-in OAuth callback (locally `http://localhost:5000/api/auth/google/callback`; must be listed in your Google OAuth client) |
-| `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes). Required outside `APP_ENV=local`; must match the frontend value. |
-| `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
-| `SUPABASE_DB_URL` | — | Supabase **session-mode pooler** URI (port 5432, user `postgres.<ref>`) — used only by the `db.migrate` migration runner, never at app runtime. Not the direct `db.<ref>` host (IPv6-only, unreachable from most networks); not port 6543 (transaction mode, breaks DDL) |
-| `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
-| `REDIS_URL` | — | Optional cross-worker cache for OCR/extraction results. Unset = disabled. |
-| `OCR_ENGINE` | — | `docling` (default), `auto` (Docling + GOT-OCR fallback for math), or `tesseract` (legacy) |
-| `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
-| `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
-| `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
-| `SAPLING_MODEL_TOPIC_CHECKLIST` | — | Override Topic Checklist generation model (default `gemini-2.5-flash`) |
-| `SAPLING_MODEL_SYLLABUS` | — | Override syllabus-extraction-agent model (default `gemini-2.5-flash`) |
-| `SAPLING_MODEL_QUIZ` | — | Override quiz-generation-agent model (default `gemini-2.5-flash-lite`) |
-| `SAPLING_MODEL_CHAT_TUTOR` | — | Override chat-tutor-agent model (default `gemini-2.5-pro`) |
-| `SAPLING_MODEL_NOTE_SUMMARY` | — | Override note-summary-agent model (default `gemini-2.5-flash-lite`) |
-| `SAPLING_MODEL_NOTE_CONCEPTS` | — | Override note-concepts-agent model (default `gemini-2.5-flash-lite`) |
-| `SAPLING_MODEL_NOTE_CHAT` | — | Override note-chat-agent model (default `gemini-2.5-flash`) |
-| `OCR_ASYNC_ENABLED` | — | When `true`, the streaming `/upload` route runs OCR off the request critical path with a `progress:extracting_text` SSE event. Default `false`. |
-| `DBOS_ENABLED` | — | When `true` AND `dbos` is installed AND `DBOS_DATABASE_URL` is set, `process_document` runs as a checkpointed DBOS workflow with per-step resume on crash. Default `false` (decorators are no-op passthroughs). See `docs/decisions/0011-durable-execution-dbos.md`. |
-| `DBOS_DATABASE_URL` | — | Postgres connection string for DBOS metadata (separate from Supabase). Required only when `DBOS_ENABLED=true`. |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic key. Every agent runs on Claude by default. |
+| `GEMINI_API_KEY` | Yes | Gemini key. Used for RAG embeddings and any agent slot pointed at a `gemini-*` model. |
+| `SUPABASE_URL` | Yes | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | Yes | Supabase service role key |
+| `ENCRYPTION_KEY` | Yes | AES-256-GCM key, 64 hex chars. Generate with `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `SESSION_SECRET` | Outside local dev | HMAC secret for session tokens (32+ bytes). Must match the frontend. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | To sign in | Google OAuth client |
+| `GOOGLE_AUTH_REDIRECT_URI` | | Sign-in callback (default `http://localhost:5000/api/auth/google/callback`) |
+| `GOOGLE_REDIRECT_URI` | | Calendar callback (default `http://localhost:5000/api/calendar/callback`) |
+| `APP_ENV` | | `local` for development (relaxes `SESSION_SECRET`), `staging`, or `production` (default, fail-closed) |
+| `PORT` / `FRONTEND_URL` | | Backend port (default `5000`) and allowed CORS origin (default `http://localhost:3000`) |
+| `ALLOWED_EMAIL_DOMAINS` | | Comma-separated sign-in allowlist (default `bu.edu`; empty allows any domain) |
+| `SUPABASE_DB_URL` | For migrations | Session-mode pooler URI (port 5432). Used only by `python -m db.migrate`. |
+| `SAPLING_MODEL_<TASK>` | | Per-agent model override, e.g. `SAPLING_MODEL_CHAT_TUTOR=claude-sonnet-5-5`. One per agent task (`CLASSIFIER`, `SUMMARY`, `QUIZ`, `CHAT_TUTOR`, `STUDY_GUIDE`, `FLASHCARD`, ...); the full list and defaults are `_DEFAULTS` in `backend/agents/_providers.py`. |
+| `OCR_ENGINE` | | `docling` (default), `auto` (adds GOT-OCR for math), or `tesseract` |
+| `GOT_OCR_ENABLED`, `GEMINI_VISION_OCR_ENABLED`, `GEMINI_VISION_OCR_MAX_PAGES` | | OCR fallbacks for handwriting/math and scanned pages |
+| `LOGFIRE_TOKEN`, `POSTHOG_PROJECT_TOKEN`, `REDIS_URL` | | Optional tracing, analytics, and cross-worker cache. Unset means off. |
+| `RESEND_API_KEY` | | Optional. Sends welcome, waitlist-approval, and broadcast email through Resend. Unset records the email as skipped and sends nothing. |
 
 **`frontend/.env.local`**
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `BACKEND_URL` | ✅ | Backend origin for the Next.js `/api/*` rewrite (locally `http://localhost:5000`) |
-| `SESSION_SECRET` | ✅ | Same HMAC secret as the backend (min 32 bytes; used by middleware token verification) |
-| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase project URL (realtime chat in study rooms) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase anon key (realtime chat in study rooms) |
-| `NEXT_PUBLIC_API_URL` | — | Leave empty in production so calls resolve as same-origin `/api/...`. Only set if the frontend runs on a different origin than the proxy and CORS is configured on the backend. |
+| `BACKEND_URL` | Yes | Backend origin for the `/api/*` rewrite (locally `http://localhost:5000`) |
+| `SESSION_SECRET` | Yes | Same value as the backend |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase realtime for study-room chat |
+| `NEXT_PUBLIC_API_URL` | | Leave empty so API calls stay same-origin |
+| `NEXT_PUBLIC_POSTHOG_KEY` | | Optional product analytics |
 
-## Tests
+## Tests and CI
 
-**Backend** — pytest, mocked LLM + Supabase. ~5,800 tests.
+**Backend:** pytest with mocked Supabase and LLM calls, plus ruff.
 
-```
+```bash
 cd backend
-python -m pytest tests/ -q --ignore=tests/evals
+python -m pytest tests/ -q --ignore=tests/evals \
+  --ignore=tests/test_docling_integration.py \
+  --ignore=tests/test_ocr_pipeline.py \
+  --ignore=tests/test_extraction_backends.py
 ruff check .
-lint-imports        # import-boundary contracts (backend/.importlinter)
+lint-imports                          # import-boundary contracts (backend/.importlinter)
 ```
 
-The suite also holds two structural ratchets: no route file over 600 lines and no function over McCabe complexity 25 (`tests/test_code_size_ratchet.py` over an empty `backend/code_size_baseline.json`), and no sync DB call inside an `async def` handler (`tests/test_no_sync_db_in_async_handlers.py`).
+The three ignored files need the heavy OCR stack and network access; CI skips them too.
 
-**End-to-end** — Playwright journeys plus deterministic oracles against a local stack. `make e2e` runs a whole cycle (boot → suite → oracles → teardown) in the first free numbered slot (frontend :310N, backend :510N, its own throwaway Supabase project), so it never touches the dev app on :3000/:5000. Guides: `docs/local-supabase.md`, `docs/e2e-exploration.md`.
+**Frontend:** Vitest. Logic tests run in node; component tests use jsdom + React Testing Library.
 
-**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
-
-```
+```bash
 cd frontend
-npm install
 npm run lint
 npm run typecheck
-npm test            # vitest run
-npm run test:watch  # vitest watch
+npm test
 ```
 
-**Evals** — extraction-accuracy harness for the migrated agents. Five offline datasets (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`, `quiz_generation`) run in replay mode against committed cassettes — no network, fully deterministic. Each task reports a per-evaluator accuracy score; a task fails only when it regresses below the committed baseline in `tests/evals/baselines.json` or a cassette is missing. One command runs them all:
+**Agent evals:** accuracy checks for the LLM agents, replayed offline from recorded cassettes and gated against committed baselines. See [`backend/tests/evals/README.md`](backend/tests/evals/README.md).
 
-```
+```bash
 cd backend
-python tests/evals/run_all.py                                  # replay (default), gate on baselines
-SAPLING_EVAL_MODE=record python tests/evals/run_all.py         # refresh cassettes (live Gemini)
-SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselines from current scores
+python tests/evals/run_all.py
 ```
 
-`.github/workflows/evals.yml` runs `run_all.py` in replay mode on every PR that touches `backend/agents/**` or the harness. The `chat_tutor` dataset is excluded from the offline harness because its retrieval tool reads a live Supabase (tracked under #149). See `backend/tests/evals/README.md` for the record/refresh workflow.
+**CI/CD** (GitHub Actions, `.github/workflows/`):
 
-## CI/CD
+| Workflow | Runs | What it checks |
+| --- | --- | --- |
+| `CI` | Every PR and push to `main` | Backend pytest + ruff (from the hash-pinned `requirements.lock`, including a code-size ratchet test), frontend eslint + typecheck + vitest |
+| `PR hygiene` | Every PR | A type (Conventional Commits title or `type/` branch) and filled-in acceptance criteria; warns on a `feat`/`fix` PR with no user story; adds a type label |
+| `integration (local supabase)` | PRs and pushes to `main` | Backend against a real local Supabase stack |
+| `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
+| `Evals` | PRs touching agents | Offline agent eval harness |
+| `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
+| `CodeQL` (GitHub code scanning) | PRs and pushes to `main` | Static security analysis of the Python and JavaScript/TypeScript code |
+| `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
 
-GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. The backend job also runs `lint-imports` (import-boundary contracts) after ruff. Additional workflows cover end-to-end (Playwright; pushes to `main` only, for cost; a PR runs it locally in a slot), integration, agent evals, staging migrations, and load tests (`loadtest.yml` on demand; `loadtest-nightly.yml` nightly, only when the `LOADTEST_TARGET_URL` repository variable is set, failing on p95 ≥ 300 ms for non-LLM routes or chat TTFT p95 ≥ 3 s). The backend CI job installs from the hash-pinned `backend/requirements.lock` and skips the heavy OCR integration tests. The frontend is built and deployed by Cloudflare Workers Builds (see "Tech Stack" for the backend host).
+Deploys: the frontend is built and deployed by Cloudflare Workers Builds on push. Production releases go through `make promote` (preflight, backup, migrate, merge `main` into `production`, verify). See [`backend/promotion/README.md`](backend/promotion/README.md).
+
+## Repository layout
+
+```
+Sapling/
+├── backend/                FastAPI app
+│   ├── main.py             App setup and router mounts
+│   ├── routes/             HTTP endpoints, one module per area (learn, quiz, documents, ...)
+│   ├── services/           Business logic (graph, RAG, encryption, academics, ...)
+│   ├── agents/             Pydantic AI agents; model routing in _providers.py
+│   ├── db/                 connection.py (the only Supabase entry point), migrations/, migrate.py
+│   ├── worker/             Background job worker (uploads, indexing, Gradescope sync)
+│   └── tests/              pytest suite, fixtures in conftest.py, evals/
+├── frontend/               Next.js app
+│   └── src/
+│       ├── app/            Routes (App Router)
+│       ├── components/     UI, grouped by responsibility
+│       └── lib/            API client, SSE consumer, shared types
+├── supabase/               Local Supabase stack config
+├── docs/                   Architecture, ADRs, API reference, runbooks
+│   ├── assets/             Images used by this README
+│   ├── audits/             Point-in-time frontend and backend audits
+│   └── design/             Design docs for cross-cutting changes
+├── specs/                  Feature specs referenced by code and CI
+├── scripts/                Local stack, E2E, and screenshot scripts
+├── loadtest/               Locust load tests
+├── .github/                CI workflows, PR and issue templates
+├── Makefile                E2E, screenshot, promotion, and backup shortcuts
+└── docker-compose.yml      Backend + frontend containers
+```
 
 ## Contributing
 
-Branching strategy, PR review requirements, and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. In short:
 
-## Architecture & Dev Context
+- One branch per issue, named `<type>/<short-name>` (`feat/quiz-pager`, `fix/graph-links`).
+- Conventional Commit messages and PR titles: `type(scope): subject`.
+- Every ready PR fills in acceptance criteria; `feat` and `fix` PRs add a user story, and UI changes add screenshots (the PR template has the sections).
+- A teammate approves every PR and CI passes before it merges (merge commit or squash).
 
-**Live architecture overview** — `docs/architecture.md`.
+Conventions that keep the codebase consistent:
 
-**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Thirty ADRs as of this writing:
+- All Supabase access goes through `backend/db/connection.py::table()`.
+- Schema changes are new migrations in `backend/db/migrations/` (UTC timestamp prefix). Never edit an applied one or run DDL in the dashboard. See [`backend/db/migrations/README.md`](backend/db/migrations/README.md).
+- Every LLM call is a Pydantic AI agent under `backend/agents/`.
+- Sensitive columns are encrypted. Use the helpers in `backend/services/encryption.py` at read and write boundaries.
 
-- `0001` — Adopt Pydantic AI as the agent framework
-- `0002` — Markdown-based dev-context vault structure
-- `0003` — Per-call `usage_limits=` and inline system prompts
-- `0004` — `graph_service` as the next agent-tool surface
-- `0005` — Quiz generation as the next agentic refactor
-- `0006` — SSE protocol choice (`sse-starlette` + custom mapper, not `VercelAIAdapter`)
-- `0007` — Drop the document orchestrator agent (saves a Gemini Pro call per upload)
-- `0008` — Per-task model routing
-- `0009` — Request correlation IDs (`X-Request-ID`)
-- `0010` — OCR async / two-phase upload (partial — feature flag shipped, full design deferred)
-- `0011` — Durable execution via DBOS (partial — optional shim shipped, real DBOS opt-in)
-- `0012` — Concept-by-concept streaming (deferred — needs eval data on Gemini's emission ordering first)
-- `0013` — Refactor #2 (quiz generation) shipped as `quiz_agent`
-- `0014` — Adaptive quiz iteration (spaced repetition + history + difficulty)
-- `0015` — Refactor #3 (chat tutor) shipped as `chat_tutor_agent`
-- `0016` — Refactor #4 (syllabus extraction) unified onto the agent
-- `0017` — Notetaker dynamic implementation (CRUD + four agent-backed actions)
-- `0018` — Session token lifecycle
-- `0019` — `SAPLING_MODEL_MODE` FunctionModel test seam
-- `0020` — Streaming tutor interrupt/retry
-- `0021` — Agent eval harness baselines
-- `0022` — Deploy environment single source of truth
-- `0023` — Tutor graph retrieval seam
-- `0024` — Retire the legacy Gemini seam
-- `0025` — Encrypt RAG chunk text
-- `0026` — Newsletter email stays plaintext
-- `0027` — Typed decision seam, Jev as a backend, and an observe-only tutor router
-- `0028` — PostHog runs alongside the in-house analytics
-- `0029` — Feature flags: code registry + DB configuration, fail-closed
-- `0030` — Swap the agents' LLM provider from Gemini to Anthropic Claude
+## Project docs
 
-**Things that didn't work** — `docs/attempts/` (each entry has a mandatory "What I'd try next" section).
-
-**Slash commands for Claude Code sessions** — `.claude/commands/log-decision.md`, `log-attempt.md`, `recall.md`, `sync-context.md`. Run `/sync-context` at session start to load the most relevant ADRs as a digest.
-
-**Read-only context curator subagent** — `.claude/agents/context-curator.md` keeps the main session's context window lean by forking off vault searches into a separate subagent.
-
-## Migrations
-
-Schema lives as ordered SQL files in `backend/db/migrations/`, applied in filename order. New migrations use a UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`); the legacy `NNNN_` files are frozen and must never be renamed, since the ledger keys on basename and a rename re-runs the migration. See `backend/db/migrations/README.md`. A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects with `psycopg` over the **session-mode pooler** URI (`SUPABASE_DB_URL`, port 5432, user `postgres.<ref>`); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
-
-```
-cd backend
-SUPABASE_DB_URL=postgresql://... python -m db.migrate            # apply pending
-SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as applied without running (adopting an existing DB)
-```
-
-Migrations `0019`–`0028` are the **modular schema redesign**: courses split into an abstract `courses` table plus `course_offerings` and `terms`, `user_courses` became `enrollments`, identity split into `users` + `user_profiles`, the gradebook re-keyed onto `enrollment_id`, analytics re-keyed onto offerings, and the graph gained append-only `node_mastery_events`. The public API boundary still keys on the abstract `course_id`.
-
-For staging, after applying migrations you can lay down a self-contained fake demo dataset (graph + gradebook + courses-with-term) with `python -m db.seed_staging` — idempotent and **staging-only**, never run it against production. See `docs/staging/setup-checklist.md` for the full staging bring-up.
+- [`docs/architecture.md`](docs/architecture.md): current system overview
+- [`docs/api.md`](docs/api.md): the main backend routes, plus a complete route index
+- [`docs/decisions/`](docs/decisions/): Architectural Decision Records (30 so far), append-only
+- [`docs/attempts/`](docs/attempts/): things that didn't work, and what to try next
+- [`docs/local-supabase.md`](docs/local-supabase.md): local database setup
+- [`docs/e2e-exploration.md`](docs/e2e-exploration.md): the Playwright E2E lane and its oracles
+- [`docs/program.md`](docs/program.md): state of the cleanup-and-hardening program
+- [`docs/design/`](docs/design/) and [`docs/audits/`](docs/audits/): design docs and point-in-time audits
+- [`docs/staging/`](docs/staging/), [`docs/deploy/`](docs/deploy/), [`docs/releases/`](docs/releases/): environments, deploys, and release plans
+- [`docs/security/`](docs/security/) and [SECURITY.md](SECURITY.md): security controls and how to report a vulnerability
+- [`docs/README.md`](docs/README.md): index of everything else in `docs/`
 
 ## Team
 
-- Andres Lopez
-- Jack He
-- Luke Cooper
-- Jose Gael Cruz-Lopez
-- Azaria Gonzales
-- Aerim Lee
+Built in Boston University's XC 475 Spark! Innovation Program (Fall 2026).
+
+| Name | Role | GitHub |
+| --- | --- | --- |
+| Andres Lopez | CEO, engineering | [@AndresL230](https://github.com/AndresL230) |
+| Jack He | Engineering | [@Darkest-Teddy](https://github.com/Darkest-Teddy) |
+| Luke Cooper | Engineering | [@lpcooper-arch](https://github.com/lpcooper-arch) |
+| Jose Gael Cruz-Lopez | Engineering | [@Jose-Gael-Cruz-Lopez](https://github.com/Jose-Gael-Cruz-Lopez) |
+| Azaria Gonzales | Design | [@azariagonzales89](https://github.com/azariagonzales89) |
+| Aerim Lee | Design | [@alee7-7](https://github.com/alee7-7) |
+| Brady | Mentor | |
+| Ziba Cranmer | Instructor | |
+| James Grady | Instructor | |
 
 ## License
 
-Copyright (c) 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+[MIT](LICENSE) © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+
+The MIT license covers the code in this repository. It does not cover the Gummi heading font (`frontend/src/app/fonts/Gummi-*`), which is a commercially licensed third-party font that may not be redistributed; its terms are in [`frontend/src/app/fonts/Gummi-LICENSE.md`](frontend/src/app/fonts/Gummi-LICENSE.md).
