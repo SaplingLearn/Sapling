@@ -11,6 +11,8 @@ An AI study companion that builds a live knowledge graph of what you know as you
 ![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=fff)
 ![Claude](https://img.shields.io/badge/Claude-D97757?logo=anthropic&logoColor=white)
 
+**Live site:** [saplinglearn.com](https://saplinglearn.com) · **Design:** [Figma file](https://www.figma.com/design/ToiUnUgkl5xMYvaLAqzXfr) with every desktop screen and state as clickable frames ([inventory](docs/figma/inventory/README.md))
+
 [![Sapling landing page](docs/assets/landing.png)](docs/assets/landing.png)
 
 ## Contents
@@ -66,9 +68,10 @@ More screens (calendar, planner, achievements, study hub) are in [`frontend/publ
 
 ## Features
 
+- **Dashboard:** a Today's plan built from your sessions, weak concepts, and upcoming deadlines, which ticks items off as you do them.
 - **Live knowledge graph:** a 2D force-directed graph (d3-force) of every concept you've touched, colored by course and shaded by mastery, with a "Mastery colors" mode that colors nodes by tier. Updates after every session and quiz.
 - **AI tutor:** Socratic, Expository, and Teach-back modes, grounded in your course's uploaded material (retrieval-augmented). Renders math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
-- **Adaptive quizzes:** multiple-choice questions aimed at your weakest concepts and at common class misconceptions, with Easy, Medium, Hard, or Adaptive difficulty. The generator is told which questions you've recently seen so it avoids repeating them.
+- **Adaptive quizzes:** questions aimed at your weakest concepts and at common class misconceptions, in multiple-choice, short-answer, numeric, symbolic, or mixed format (each with its own answer input), at Easy, Medium, Hard, or Adaptive difficulty. A clickable question pager jumps between questions, and the generator is told which questions you've recently seen so it avoids repeating them.
 - **Flashcards:** generate a deck from your weakest concepts, or import from pasted text, a file (CSV, TSV, TXT, JSON, Excel, or Anki `.apkg`), a URL, an AI prompt, or a photo. Rate cards Easy / Hard / Forgot (ratings are recorded; there is no review schedule yet).
 - **Document library:** upload PDF, DOCX, or PPTX files up to 100 MB. Sapling extracts summaries, concept notes, and syllabus data, with OCR for scanned pages.
 - **Study guides:** exam guides generated from your course material, cached per exam and regenerable.
@@ -78,7 +81,11 @@ More screens (calendar, planner, achievements, study hub) are in [`frontend/publ
 - **Study rooms:** join by invite or browse public rooms, chat with replies and reactions, see the room's mastery on the concepts you share, and get matched with partners who are strong where you are weak.
 - **Class intelligence:** an anonymized, per-class rollup of common misconceptions. It has no screen of its own; quiz generation uses it to write the wrong answers.
 - **Profiles, achievements, and cosmetics:** milestones, avatar frames, name colors, and title flairs.
+- **XP and leaderboard:** levels from XP, plus a weekly leaderboard (everyone, friends, or school) on the Achievements page.
+- **Course planner:** a placeholder page today ("Coming soon"); semester planning is not built yet.
+- **Waitlist and email:** students outside the allowlist can join a waitlist from the pending page; welcome and approval emails go out through Resend, with one-click unsubscribe.
 - **Admin panel:** role-based access, user approval, feature flags (global or per student), usage analytics, and the job queue.
+- **Admin tools:** seed, wipe, or copy a test account's study data; per-user daily LLM token budgets; and email broadcasts with preview and test sends.
 
 ## Tech stack and architecture
 
@@ -159,6 +166,8 @@ python main.py                        # http://localhost:5000  (API docs at /doc
 
 Optional extras: `pip install -r requirements-worker.txt` for Docling/torch OCR of scanned PDFs, and `playwright install chromium` for Gradescope BU SSO sync.
 
+**Job worker:** the `jobs_queue` feature flag (off by default) moves uploads, document indexing, and Gradescope sync onto a Postgres job queue. If you turn it on, also run `python -m worker` from `backend/` (same venv and `.env`) in a second terminal. Without a worker, uploads and syncs fall back to running inline after a short wait, and other queued work waits.
+
 ### 4. Run the frontend
 
 ```bash
@@ -189,7 +198,7 @@ Setup last verified from a fresh clone on 2026-11-09 (Python 3.13, Node 22, npm 
 
 ## Environment variables
 
-Copy the example files as described above. Never commit real `.env` files; only the `*.example` templates are tracked. Each template documents its variables inline. These are the ones you will touch most:
+Copy the example files as described above. The job worker (`python -m worker`, from `backend/`) reads the same `backend/.env`. Never commit real `.env` files; only the `*.example` templates are tracked. Each template documents its variables inline. These are the ones you will touch most:
 
 **`backend/.env`**
 
@@ -212,6 +221,7 @@ Copy the example files as described above. Never commit real `.env` files; only 
 | `OCR_ENGINE` | | `docling` (default), `auto` (adds GOT-OCR for math), or `tesseract` |
 | `GOT_OCR_ENABLED`, `GEMINI_VISION_OCR_ENABLED`, `GEMINI_VISION_OCR_MAX_PAGES` | | OCR fallbacks for handwriting/math and scanned pages |
 | `LOGFIRE_TOKEN`, `POSTHOG_PROJECT_TOKEN`, `REDIS_URL` | | Optional tracing, analytics, and cross-worker cache. Unset means off. |
+| `RESEND_API_KEY` | | Optional. Sends welcome, waitlist-approval, and broadcast email through Resend. Unset records the email as skipped and sends nothing. |
 
 **`frontend/.env.local`**
 
@@ -265,7 +275,7 @@ python tests/evals/run_all.py
 | `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
 | `Evals` | PRs touching agents | Offline agent eval harness |
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
-| `Claude Code Review` | PRs | Automated review comments |
+| `CodeQL` (GitHub code scanning) | PRs and pushes to `main` | Static security analysis of the Python and JavaScript/TypeScript code |
 | `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
 
 Deploys: the frontend is built and deployed by Cloudflare Workers Builds on push. Production releases go through `make promote` (preflight, backup, migrate, merge `main` into `production`, verify). See [`backend/promotion/README.md`](backend/promotion/README.md).
@@ -319,7 +329,7 @@ Conventions that keep the codebase consistent:
 ## Project docs
 
 - [`docs/architecture.md`](docs/architecture.md): current system overview
-- [`docs/api.md`](docs/api.md): every backend route
+- [`docs/api.md`](docs/api.md): the main backend routes, plus a complete route index
 - [`docs/decisions/`](docs/decisions/): Architectural Decision Records (30 so far), append-only
 - [`docs/attempts/`](docs/attempts/): things that didn't work, and what to try next
 - [`docs/local-supabase.md`](docs/local-supabase.md): local database setup
@@ -332,14 +342,19 @@ Conventions that keep the codebase consistent:
 
 ## Team
 
-| Name | GitHub |
-| --- | --- |
-| Andres Lopez | [@AndresL230](https://github.com/AndresL230) |
-| Jack He | [@Darkest-Teddy](https://github.com/Darkest-Teddy) |
-| Luke Cooper | [@lpcooper-arch](https://github.com/lpcooper-arch) |
-| Jose Gael Cruz-Lopez | [@Jose-Gael-Cruz-Lopez](https://github.com/Jose-Gael-Cruz-Lopez) |
-| Azaria Gonzales | [@azariagonzales89](https://github.com/azariagonzales89) |
-| Aerim Lee | [@alee7-7](https://github.com/alee7-7) |
+Built in Boston University's XC 475 Spark! Innovation Program (Fall 2026).
+
+| Name | Role | GitHub |
+| --- | --- | --- |
+| Andres Lopez | CEO, engineering | [@AndresL230](https://github.com/AndresL230) |
+| Jack He | Engineering | [@Darkest-Teddy](https://github.com/Darkest-Teddy) |
+| Luke Cooper | Engineering | [@lpcooper-arch](https://github.com/lpcooper-arch) |
+| Jose Gael Cruz-Lopez | Engineering | [@Jose-Gael-Cruz-Lopez](https://github.com/Jose-Gael-Cruz-Lopez) |
+| Azaria Gonzales | Design | [@azariagonzales89](https://github.com/azariagonzales89) |
+| Aerim Lee | Design | [@alee7-7](https://github.com/alee7-7) |
+| Brady | Mentor | |
+| Ziba Cranmer | Instructor | |
+| James Grady | Instructor | |
 
 ## License
 
