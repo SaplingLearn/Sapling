@@ -1,6 +1,6 @@
 # Sapling API reference
 
-Every route is mounted under `/api/<name>` in `backend/main.py`. Unless noted, routes require a signed-in session cookie and act only on the caller's own data. FastAPI also serves interactive docs at `http://localhost:5000/docs` when the backend runs locally.
+Every route is mounted under `/api/<name>` in `backend/main.py`. Unless noted, routes require a signed-in session cookie and act only on the caller's own data. The grouped sections below describe the main routes. The [complete route index](#complete-route-index) at the end lists every route in the OpenAPI schema, and FastAPI serves the same list interactively at `http://localhost:5000/docs` when the backend runs locally. Server-to-server and test-only routes (`/api/internal/*`, `/api/auth/test-login`, `/api/auth/local-seed`) are left out of the schema on purpose.
 
 **Learn**
 
@@ -167,9 +167,384 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 
 **Feedback**
 
-- `POST` `/api/feedback/feedback` — Submit session or general feedback
-- `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
+- `POST` `/api/feedback` — Submit session or general feedback
+- `POST` `/api/issue-reports` — Submit a bug/issue report (+ `POST /api/issue-reports/screenshot`)
 
 **Newsletter**
 
 - `POST` `/api/newsletter/subscribe` — Add an email to the beta / newsletter list
+
+## Complete route index
+
+Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09: 236 operations. Regenerate it from the running backend's `/openapi.json` when routers change.
+
+<details><summary><code>/api/admin</code> (71)</summary>
+
+- `GET /api/admin/accounts/meta`
+- `POST /api/admin/accounts/{user_id}/copy`
+- `GET /api/admin/accounts/{user_id}/copy-preview`
+- `POST /api/admin/accounts/{user_id}/seed`
+- `GET /api/admin/accounts/{user_id}/summary`
+- `POST /api/admin/accounts/{user_id}/wipe`
+- `GET /api/admin/achievements`
+- `POST /api/admin/achievements`
+- `POST /api/admin/achievements/cosmetics`
+- `DELETE /api/admin/achievements/cosmetics`
+- `POST /api/admin/achievements/grant`
+- `POST /api/admin/achievements/triggers`
+- `PATCH /api/admin/achievements/triggers/{trigger_id}`
+- `DELETE /api/admin/achievements/triggers/{trigger_id}`
+- `PATCH /api/admin/achievements/{achievement_id}`
+- `DELETE /api/admin/achievements/{achievement_id}`
+- `GET /api/admin/achievements/{achievement_id}/cosmetics`
+- `POST /api/admin/achievements/{achievement_id}/icon`
+- `GET /api/admin/achievements/{achievement_id}/triggers`
+- `GET /api/admin/allowlist`
+- `POST /api/admin/allowlist/approve`
+- `POST /api/admin/allowlist/approve-bulk`
+- `POST /api/admin/allowlist/revoke`
+- `GET /api/admin/analytics/db-scope`
+- `GET /api/admin/analytics/errors`
+- `GET /api/admin/analytics/llm/cost`
+- `GET /api/admin/analytics/llm/cost-per-active-user`
+- `GET /api/admin/analytics/overview`
+- `GET /api/admin/analytics/usage/by-user`
+- `GET /api/admin/analytics/usage/summary`
+- `GET /api/admin/audit`
+- `GET /api/admin/cosmetics`
+- `POST /api/admin/cosmetics`
+- `PATCH /api/admin/cosmetics/{cosmetic_id}`
+- `DELETE /api/admin/cosmetics/{cosmetic_id}`
+- `GET /api/admin/documents/unindexed`
+- `POST /api/admin/documents/{document_id}/reindex`
+- `GET /api/admin/email/audiences`
+- `GET /api/admin/email/broadcasts`
+- `POST /api/admin/email/broadcasts`
+- `POST /api/admin/email/broadcasts/preview`
+- `POST /api/admin/email/broadcasts/test`
+- `POST /api/admin/email/broadcasts/{broadcast_id}/resume`
+- `GET /api/admin/email/status`
+- `POST /api/admin/email/suppressions/remove`
+- `GET /api/admin/feedback`
+- `GET /api/admin/flags`
+- `PATCH /api/admin/flags/{key}`
+- `GET /api/admin/flags/{key}/explain`
+- `PUT /api/admin/flags/{key}/targets`
+- `DELETE /api/admin/flags/{key}/targets/{target_type}/{target_id}`
+- `GET /api/admin/issue-reports`
+- `GET /api/admin/jobs`
+- `GET /api/admin/llm/budgets`
+- `PUT /api/admin/llm/budgets`
+- `GET /api/admin/llm/budgets/status/{user_id}`
+- `DELETE /api/admin/llm/budgets/{scope}/{subject}`
+- `GET /api/admin/llm/drill`
+- `GET /api/admin/roles`
+- `POST /api/admin/roles`
+- `POST /api/admin/roles/assign`
+- `POST /api/admin/roles/cosmetics`
+- `DELETE /api/admin/roles/cosmetics`
+- `DELETE /api/admin/roles/revoke`
+- `PATCH /api/admin/roles/{role_id}`
+- `DELETE /api/admin/roles/{role_id}`
+- `GET /api/admin/roles/{role_id}/cosmetics`
+- `GET /api/admin/users`
+- `PATCH /api/admin/users/{user_id}/unapprove`
+- `GET /api/admin/xp-rules`
+- `PATCH /api/admin/xp-rules/{key}`
+
+</details>
+
+<details><summary><code>/api/auth</code> (6)</summary>
+
+- `GET /api/auth/google`
+- `GET /api/auth/google/callback`
+- `GET /api/auth/me`
+- `POST /api/auth/pending/join`
+- `POST /api/auth/pending/status`
+- `GET /api/auth/realtime-token`
+
+</details>
+
+<details><summary><code>/api/calendar</code> (14)</summary>
+
+- `GET /api/calendar/all/{user_id}`
+- `PATCH /api/calendar/assignments/{assignment_id}`
+- `DELETE /api/calendar/assignments/{assignment_id}`
+- `GET /api/calendar/auth-url`
+- `GET /api/calendar/callback`
+- `DELETE /api/calendar/disconnect/{user_id}`
+- `POST /api/calendar/export`
+- `POST /api/calendar/extract`
+- `GET /api/calendar/import/{user_id}`
+- `POST /api/calendar/save`
+- `GET /api/calendar/status/{user_id}`
+- `POST /api/calendar/suggest-study-blocks`
+- `POST /api/calendar/sync`
+- `GET /api/calendar/upcoming/{user_id}`
+
+</details>
+
+<details><summary><code>/api/careers</code> (1)</summary>
+
+- `POST /api/careers/apply`
+
+</details>
+
+<details><summary><code>/api/documents</code> (7)</summary>
+
+- `POST /api/documents/course/{course_id}/scan-concepts`
+- `DELETE /api/documents/doc/{document_id}`
+- `PATCH /api/documents/doc/{document_id}`
+- `POST /api/documents/doc/{document_id}/scan-concepts`
+- `POST /api/documents/upload`
+- `POST /api/documents/upload/sync`
+- `GET /api/documents/user/{user_id}`
+
+</details>
+
+<details><summary><code>/api/email</code> (2)</summary>
+
+- `GET /api/email/unsubscribe`
+- `POST /api/email/unsubscribe`
+
+</details>
+
+<details><summary><code>/api/extract</code> (3)</summary>
+
+- `GET /api/extract/health`
+- `POST /api/extract/image`
+- `POST /api/extract/pdf`
+
+</details>
+
+<details><summary><code>/api/feedback</code> (1)</summary>
+
+- `POST /api/feedback`
+
+</details>
+
+<details><summary><code>/api/flags</code> (1)</summary>
+
+- `GET /api/flags`
+
+</details>
+
+<details><summary><code>/api/flashcards</code> (9)</summary>
+
+- `POST /api/flashcards/generate`
+- `POST /api/flashcards/import/cleanup`
+- `POST /api/flashcards/import/cloze`
+- `POST /api/flashcards/import/commit`
+- `POST /api/flashcards/import/generate`
+- `POST /api/flashcards/import/parse`
+- `POST /api/flashcards/rate`
+- `GET /api/flashcards/user/{user_id}`
+- `DELETE /api/flashcards/{card_id}`
+
+</details>
+
+<details><summary><code>/api/gamification</code> (3)</summary>
+
+- `GET /api/gamification/activity`
+- `GET /api/gamification/leaderboard`
+- `GET /api/gamification/me`
+
+</details>
+
+<details><summary><code>/api/gemini-test</code> (1)</summary>
+
+- `GET /api/gemini-test`
+
+</details>
+
+<details><summary><code>/api/gradebook</code> (12)</summary>
+
+- `POST /api/gradebook/assignments`
+- `PATCH /api/gradebook/assignments/{assignment_id}`
+- `DELETE /api/gradebook/assignments/{assignment_id}`
+- `DELETE /api/gradebook/categories/{category_id}`
+- `GET /api/gradebook/courses/{course_id}`
+- `POST /api/gradebook/courses/{course_id}/categories`
+- `PATCH /api/gradebook/courses/{course_id}/categories`
+- `PATCH /api/gradebook/courses/{course_id}/curve`
+- `PATCH /api/gradebook/courses/{course_id}/scale`
+- `GET /api/gradebook/gpa`
+- `GET /api/gradebook/summary`
+- `POST /api/gradebook/syllabus/apply`
+
+</details>
+
+<details><summary><code>/api/gradescope</code> (10)</summary>
+
+- `GET /api/gradescope/courses`
+- `POST /api/gradescope/credentials`
+- `DELETE /api/gradescope/credentials`
+- `POST /api/gradescope/credentials/bu-sso`
+- `POST /api/gradescope/link`
+- `DELETE /api/gradescope/link/{sapling_course_id}`
+- `GET /api/gradescope/links`
+- `GET /api/gradescope/status`
+- `POST /api/gradescope/sync/{sapling_course_id}`
+- `GET /api/gradescope/sync/{sapling_course_id}/status`
+
+</details>
+
+<details><summary><code>/api/graph</code> (10)</summary>
+
+- `GET /api/graph/{user_id}`
+- `POST /api/graph/{user_id}/concept-description`
+- `GET /api/graph/{user_id}/courses`
+- `POST /api/graph/{user_id}/courses`
+- `DELETE /api/graph/{user_id}/courses/{course_id}`
+- `PATCH /api/graph/{user_id}/courses/{course_id}/color`
+- `POST /api/graph/{user_id}/nodes`
+- `DELETE /api/graph/{user_id}/nodes/{node_id}`
+- `PATCH /api/graph/{user_id}/nodes/{node_id}/color`
+- `GET /api/graph/{user_id}/recommendations`
+
+</details>
+
+<details><summary><code>/api/health</code> (1)</summary>
+
+- `GET /api/health`
+
+</details>
+
+<details><summary><code>/api/issue-reports</code> (2)</summary>
+
+- `POST /api/issue-reports`
+- `POST /api/issue-reports/screenshot`
+
+</details>
+
+<details><summary><code>/api/learn</code> (11)</summary>
+
+- `POST /api/learn/action`
+- `POST /api/learn/chat`
+- `POST /api/learn/chat/stream`
+- `POST /api/learn/end-session`
+- `POST /api/learn/mode-switch`
+- `PATCH /api/learn/sessions/{session_id}`
+- `DELETE /api/learn/sessions/{session_id}`
+- `GET /api/learn/sessions/{session_id}/resume`
+- `GET /api/learn/sessions/{user_id}`
+- `POST /api/learn/start-session`
+- `POST /api/learn/start-session/stream`
+
+</details>
+
+<details><summary><code>/api/newsletter</code> (1)</summary>
+
+- `POST /api/newsletter/subscribe`
+
+</details>
+
+<details><summary><code>/api/notes</code> (13)</summary>
+
+- `POST /api/notes`
+- `GET /api/notes/user/{user_id}`
+- `GET /api/notes/{note_id}`
+- `PATCH /api/notes/{note_id}`
+- `DELETE /api/notes/{note_id}`
+- `POST /api/notes/{note_id}/chat`
+- `GET /api/notes/{note_id}/concepts`
+- `POST /api/notes/{note_id}/concepts`
+- `DELETE /api/notes/{note_id}/concepts/{concept_node_id}`
+- `POST /api/notes/{note_id}/extract-concepts`
+- `POST /api/notes/{note_id}/generate-quiz`
+- `POST /api/notes/{note_id}/send-to-tutor`
+- `POST /api/notes/{note_id}/summarize`
+
+</details>
+
+<details><summary><code>/api/onboarding</code> (2)</summary>
+
+- `GET /api/onboarding/courses`
+- `POST /api/onboarding/profile`
+
+</details>
+
+<details><summary><code>/api/profile</code> (15)</summary>
+
+- `GET /api/profile/username/check`
+- `GET /api/profile/{user_id}`
+- `PATCH /api/profile/{user_id}`
+- `DELETE /api/profile/{user_id}/account`
+- `GET /api/profile/{user_id}/achievements`
+- `POST /api/profile/{user_id}/avatar`
+- `GET /api/profile/{user_id}/cosmetics`
+- `GET /api/profile/{user_id}/cosmetics/catalog`
+- `POST /api/profile/{user_id}/equip`
+- `POST /api/profile/{user_id}/export`
+- `POST /api/profile/{user_id}/featured-achievements`
+- `POST /api/profile/{user_id}/featured-role`
+- `GET /api/profile/{user_id}/roles`
+- `GET /api/profile/{user_id}/settings`
+- `PATCH /api/profile/{user_id}/settings`
+
+</details>
+
+<details><summary><code>/api/quiz</code> (7)</summary>
+
+- `GET /api/quiz/attempts`
+- `GET /api/quiz/attempts/{attempt_id}`
+- `POST /api/quiz/attempts/{attempt_id}/abandon`
+- `POST /api/quiz/attempts/{attempt_id}/answer`
+- `GET /api/quiz/config`
+- `POST /api/quiz/generate`
+- `POST /api/quiz/submit`
+
+</details>
+
+<details><summary><code>/api/semesters</code> (1)</summary>
+
+- `GET /api/semesters`
+
+</details>
+
+<details><summary><code>/api/social</code> (24)</summary>
+
+- `POST /api/social/friends/request`
+- `GET /api/social/friends/requests`
+- `DELETE /api/social/friends/requests/{request_id}`
+- `POST /api/social/friends/requests/{request_id}/accept`
+- `POST /api/social/friends/requests/{request_id}/decline`
+- `DELETE /api/social/friends/{friend_id}`
+- `GET /api/social/friends/{user_id}`
+- `GET /api/social/public-rooms`
+- `POST /api/social/public-rooms/{room_id}/join`
+- `POST /api/social/rooms/create`
+- `POST /api/social/rooms/join`
+- `GET /api/social/rooms/{room_id}/activity`
+- `POST /api/social/rooms/{room_id}/leave`
+- `POST /api/social/rooms/{room_id}/match`
+- `DELETE /api/social/rooms/{room_id}/members/{member_id}`
+- `GET /api/social/rooms/{room_id}/messages`
+- `POST /api/social/rooms/{room_id}/messages`
+- `DELETE /api/social/rooms/{room_id}/messages/{message_id}`
+- `PATCH /api/social/rooms/{room_id}/messages/{message_id}`
+- `POST /api/social/rooms/{room_id}/messages/{message_id}/reactions`
+- `GET /api/social/rooms/{room_id}/overview`
+- `GET /api/social/rooms/{user_id}`
+- `POST /api/social/school-match`
+- `GET /api/social/students`
+
+</details>
+
+<details><summary><code>/api/study-guide</code> (5)</summary>
+
+- `POST /api/study-guide/regenerate`
+- `GET /api/study-guide/{user_id}/cached`
+- `GET /api/study-guide/{user_id}/courses`
+- `GET /api/study-guide/{user_id}/exams`
+- `GET /api/study-guide/{user_id}/guide`
+
+</details>
+
+<details><summary><code>/api/topic-checklist</code> (3)</summary>
+
+- `GET /api/topic-checklist/{user_id}/courses/{course_id}`
+- `POST /api/topic-checklist/{user_id}/courses/{course_id}/refresh`
+- `PATCH /api/topic-checklist/{user_id}/courses/{course_id}/topics/{topic_id}`
+
+</details>
