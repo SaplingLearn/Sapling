@@ -41,7 +41,7 @@ Wave 2 is closed.
 ## Wave 3 — security hardening
 
 Backend/data security, driven by the contract/security audit
-(`docs/backend-contract-bug-audit.md`). Eleven scoped PRs (each with a negative
+(`docs/audits/backend-contract-bug-audit.md`). Eleven scoped PRs (each with a negative
 test that fails on pre-fix code) plus a production database lockdown that was
 applied out of band and lives in no merged PR — recorded below because it's the
 most important part.
