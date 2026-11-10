@@ -48,8 +48,8 @@ A typical first session, with screenshots from the app running on seeded demo da
 1. **Sign in and onboard.** Sign in with Google, then pick your school, major, year, and courses.
 2. **Upload your course material.** In the **Library**, upload a syllabus or lecture PDF. Sapling streams its progress live ("Classifying...", "Extracting summary, concepts, and syllabus...", "Saved."), pulls assignments and deadlines into your calendar, and adds the concepts to your knowledge graph.
 3. **Learn with the tutor.** Open **Tutor**, choose a concept, and pick a mode: *Socratic* (guided questions), *Expository* (direct explanation), or *Teach-back* (you explain, Sapling corrects). The side panel shows where the concept sits in your graph.
-4. **Check yourself.** Take a **Quiz** that targets your weakest concepts, or study **Flashcards** with spaced repetition.
-5. **Watch the graph grow.** The **Tree** view shows mastery across courses. Nodes shift from "not started" to "mastered" as you study.
+4. **Check yourself.** Take a **Quiz** that leans on your weakest concepts, or review **Flashcards** and rate each card Easy, Hard, or Forgot.
+5. **Watch the graph grow.** The **Tree** view shows every concept across your courses. Nodes move up from Unexplored through Struggling and Learning to Mastered as you study; the **Mastery colors** toggle colors them by tier instead of by course.
 6. **Prepare for exams.** Generate a **Study guide** for an upcoming exam from your uploaded material, and track your grade in **Grades**.
 
 | Tutor | Quiz |
@@ -66,32 +66,32 @@ More screens (calendar, planner, achievements, study hub) are in [`frontend/publ
 
 ## Features
 
-- **Live knowledge graph:** a D3 force graph of every concept you've touched, colored by course and shaded by mastery. Updates after every session and quiz.
+- **Live knowledge graph:** a 2D force-directed graph (d3-force) of every concept you've touched, colored by course and shaded by mastery, with a "Mastery colors" mode that colors nodes by tier. Updates after every session and quiz.
 - **AI tutor:** Socratic, Expository, and Teach-back modes, grounded in your course's uploaded material (retrieval-augmented). Renders math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
-- **Adaptive quizzes:** questions aimed at your weakest concepts, with difficulty that scales to your performance and spaced repetition that brings back what you missed.
-- **Flashcards:** generate per course, or import from paste, CSV/Markdown/Anki files, a URL, an AI prompt, or a photo. Rate cards Easy / Hard / Forgot.
-- **Document library:** upload PDFs and notes up to 100 MB. Sapling extracts summaries, concept notes, and syllabus data, with OCR for scanned pages.
+- **Adaptive quizzes:** multiple-choice questions aimed at your weakest concepts and at common class misconceptions, with Easy, Medium, Hard, or Adaptive difficulty. The generator is told which questions you've recently seen so it avoids repeating them.
+- **Flashcards:** generate a deck from your weakest concepts, or import from pasted text, a file (CSV, TSV, TXT, JSON, Excel, or Anki `.apkg`), a URL, an AI prompt, or a photo. Rate cards Easy / Hard / Forgot (ratings are recorded; there is no review schedule yet).
+- **Document library:** upload PDF, DOCX, or PPTX files up to 100 MB. Sapling extracts summaries, concept notes, and syllabus data, with OCR for scanned pages.
 - **Study guides:** exam guides generated from your course material, cached per exam and regenerable.
 - **Gradebook and Gradescope sync:** categories, weights, letter scales, and a current-grade calculation. Syllabus upload fills in categories and assignments. Optional Gradescope import, including BU SSO + Duo sign-in.
 - **Calendar:** assignments and deadlines extracted from your syllabus.
 - **Notetaker:** typed notes per course with autosave. Per note: AI summary, concept extraction into your graph, a note-grounded chat, send-to-tutor, and a quiz on the note's weakest concept.
-- **Study rooms:** invite classmates, compare graphs, and chat in real time.
-- **Class intelligence:** anonymized class-wide patterns that surface common misconceptions.
+- **Study rooms:** join by invite or browse public rooms, chat with replies and reactions, see the room's mastery on the concepts you share, and get matched with partners who are strong where you are weak.
+- **Class intelligence:** an anonymized, per-class rollup of common misconceptions. It has no screen of its own; quiz generation uses it to write the wrong answers.
 - **Profiles, achievements, and cosmetics:** milestones, avatar frames, name colors, and title flairs.
-- **Admin panel:** role-based access, user approval, and per-student feature flags.
+- **Admin panel:** role-based access, user approval, feature flags (global or per student), usage analytics, and the job queue.
 
 ## Tech stack and architecture
 
 | Layer | Technology |
 | --- | --- |
 | Frontend | Next.js 16 (App Router, TypeScript), D3.js for the graph, Vitest + React Testing Library |
-| Backend | FastAPI (Python 3.12+), Pydantic AI agents for every LLM call |
+| Backend | FastAPI (Python 3.13), Pydantic AI agents for every LLM call. A Postgres-backed job queue (`python -m worker`) runs uploads, indexing, and Gradescope sync off the request path when the `jobs_queue` flag is on. |
 | AI | Anthropic Claude for all agents by default (`claude-haiku-5-5` for extraction/quiz/notes, `claude-sonnet-5-5` for the tutor; [ADR 0030](docs/decisions/0030-swap-the-agents-llm-provider-from-gemini-to-anthropic-claude.md)). Google Gemini serves RAG embeddings, and any agent can be pointed back at a `gemini-*` model per task via `SAPLING_MODEL_<TASK>`. |
-| Database | Supabase (PostgreSQL + pgvector), accessed through PostgREST. Row Level Security on all tables. |
+| Database | Supabase (PostgreSQL + pgvector), accessed through PostgREST with the service role. Row Level Security locks the public anon key out of the tables. |
 | Security | Google OAuth, HMAC-signed session cookies, AES-256-GCM column encryption for PII and student content. See [SECURITY.md](SECURITY.md). |
 | Streaming | Server-Sent Events (`sse-starlette`) for upload progress and the streaming tutor |
 | OCR | Docling, with GOT-OCR 2.0 and Tesseract fallbacks |
-| Observability | Logfire traces (with a scrubber that strips student content before export), optional PostHog analytics |
+| Observability | Logfire traces (with a scrubber that strips student content before export), optional PostHog analytics ([ADR 0028](docs/decisions/0028-posthog-alongside-in-house-analytics.md)), feature flags ([ADR 0029](docs/decisions/0029-feature-flags.md)) |
 | Deploy | Frontend on Cloudflare Workers (`@opennextjs/cloudflare`). Backend API and job worker on Railway. Separate staging and production environments. |
 
 ```mermaid
@@ -100,6 +100,8 @@ flowchart LR
     FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(Railway)"]
     U -->|"realtime room chat"| SB
     BE -->|PostgREST| SB[("Supabase Postgres")]
+    BE -->|"enqueue jobs"| SB
+    WK["Job worker<br/>(python -m worker)"] -->|"claim jobs"| SB
     BE --> AG["Pydantic AI agents"]
     AG --> CL["Anthropic Claude"]
     AG --> GE["Gemini embeddings"]
@@ -115,8 +117,8 @@ Request paths, the data model, and known sharp edges are in [`docs/architecture.
 
 ### Prerequisites
 
-- **Python 3.12+** (CI uses 3.13)
-- **Node.js 22** with npm 10.9.x. The frontend enforces this with `engine-strict` (see `frontend/.nvmrc`).
+- **Python 3.13** (what CI, the Dockerfile, and `requirements.lock` use)
+- **Node.js 22** with npm 10.9.x. The frontend enforces the npm version with `engine-strict` (see `frontend/.nvmrc` and `frontend/.npmrc`); on a newer npm run `npm install -g npm@10.9.2`.
 - **API keys:** an [Anthropic API key](https://console.anthropic.com/) and a [Gemini API key](https://aistudio.google.com/apikey). The backend refuses to start without both.
 - **Google OAuth client** (Google sign-in is the only login path). Add `http://localhost:5000/api/auth/google/callback` as an authorized redirect URI.
 - **A database:** either a local Supabase stack via the Supabase CLI and Docker or Podman (Option A), or your own hosted Supabase project (Option B).
@@ -139,9 +141,9 @@ cd Sapling
 
 ### 2. Start a database
 
-**Option A: local Supabase (recommended).** Follow [`docs/local-supabase.md`](docs/local-supabase.md) to start the stack and apply migrations. The `*.env.local.example` templates are already wired to it.
+**Option A: local Supabase (recommended).** Follow [`docs/local-supabase.md`](docs/local-supabase.md) to start the stack (`supabase start`) and apply migrations. Its scripts run through `backend/venv`, so do the venv and `pip install` from step 3 first. The `*.env.local.example` templates are already wired to it.
 
-**Option B: your own Supabase project.** Use the `.env.example` templates instead, set `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, and `SUPABASE_DB_URL` (the session-mode pooler URI), then create the schema with `python -m db.migrate` from `backend/`.
+**Option B: your own Supabase project.** Use the `.env.example` templates instead. In `backend/.env` set `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, `SUPABASE_DB_URL` (the session-mode pooler URI), and either `APP_ENV=local` or a 32+ byte `SESSION_SECRET` (the template defaults to `APP_ENV=production`, which refuses to start without one). Then create the schema with `python -m db.migrate` from `backend/` once step 3's install is done.
 
 ### 3. Run the backend
 
@@ -161,7 +163,7 @@ Optional extras: `pip install -r requirements-worker.txt` for Docling/torch OCR 
 
 ```bash
 cd frontend
-npm install
+npm ci
 cp .env.local.example .env.local      # Option B: cp .env.example .env.local
 npm run dev                           # http://localhost:3000
 ```
@@ -170,19 +172,20 @@ Open http://localhost:3000 and sign in with Google.
 
 ### Or run everything with Docker
 
-With `backend/.env` filled in and `ENCRYPTION_KEY` exported in your shell:
+Docker Compose works with a hosted Supabase project (Option B) only: inside a container, `127.0.0.1` is the container itself, so it cannot reach a local Supabase stack. Fill in `backend/.env`, put the frontend variables in `frontend/.env` (Compose reads that file, not `.env.local`), export `ENCRYPTION_KEY` in your shell (Compose passes it through and would otherwise blank it), then:
 
 ```bash
-docker-compose up
+docker compose up
 ```
 
 ### Troubleshooting
 
 - **`RuntimeError: Missing required configuration`** on backend start: a required key in `backend/.env` is empty. The message names it.
 - **401 after Google sign-in succeeds:** `SESSION_SECRET` differs between `backend/.env` and `frontend/.env.local`. They must match.
-- **`npm install` fails with an engine error:** you're not on Node 22 / npm 10.9. Run `nvm use` in `frontend/`.
+- **`npm ci` fails with `EBADENGINE`:** you're not on npm 10.9. Run `nvm use` in `frontend/`, then `npm install -g npm@10.9.2`.
+- **Backend tests fail in `test_extraction_backends`, `test_docling_integration`, or `test_ocr_pipeline`:** those need the OCR stack (`requirements-worker.txt`) and network access. Use the command under [Tests and CI](#tests-and-ci), which skips them like CI does.
 
-Setup last verified from a fresh clone by Jack He, 10/6/2026.
+Setup last verified from a fresh clone on 2026-11-09 (Python 3.13, Node 22, npm 10.9): backend install, boot, and test suite; frontend `npm ci`, typecheck, lint, and `npm run build`. Docker Compose and the local Supabase stack were not re-run that day.
 
 ## Environment variables
 
@@ -205,7 +208,7 @@ Copy the example files as described above. Never commit real `.env` files; only 
 | `PORT` / `FRONTEND_URL` | | Backend port (default `5000`) and allowed CORS origin (default `http://localhost:3000`) |
 | `ALLOWED_EMAIL_DOMAINS` | | Comma-separated sign-in allowlist (default `bu.edu`; empty allows any domain) |
 | `SUPABASE_DB_URL` | For migrations | Session-mode pooler URI (port 5432). Used only by `python -m db.migrate`. |
-| `SAPLING_MODEL_<TASK>` | | Per-agent model override, e.g. `SAPLING_MODEL_CHAT_TUTOR=claude-sonnet-5-5`. Tasks: `CLASSIFIER`, `SUMMARY`, `CONCEPTS`, `TOPIC_CHECKLIST`, `SYLLABUS`, `QUIZ`, `CHAT_TUTOR`, `NOTE_SUMMARY`, `NOTE_CONCEPTS`, `NOTE_CHAT`. Defaults live in `backend/agents/_providers.py`. |
+| `SAPLING_MODEL_<TASK>` | | Per-agent model override, e.g. `SAPLING_MODEL_CHAT_TUTOR=claude-sonnet-5-5`. One per agent task (`CLASSIFIER`, `SUMMARY`, `QUIZ`, `CHAT_TUTOR`, `STUDY_GUIDE`, `FLASHCARD`, ...); the full list and defaults are `_DEFAULTS` in `backend/agents/_providers.py`. |
 | `OCR_ENGINE` | | `docling` (default), `auto` (adds GOT-OCR for math), or `tesseract` |
 | `GOT_OCR_ENABLED`, `GEMINI_VISION_OCR_ENABLED`, `GEMINI_VISION_OCR_MAX_PAGES` | | OCR fallbacks for handwriting/math and scanned pages |
 | `LOGFIRE_TOKEN`, `POSTHOG_PROJECT_TOKEN`, `REDIS_URL` | | Optional tracing, analytics, and cross-worker cache. Unset means off. |
@@ -226,9 +229,15 @@ Copy the example files as described above. Never commit real `.env` files; only 
 
 ```bash
 cd backend
-python -m pytest tests/ -q --ignore=tests/evals
+python -m pytest tests/ -q --ignore=tests/evals \
+  --ignore=tests/test_docling_integration.py \
+  --ignore=tests/test_ocr_pipeline.py \
+  --ignore=tests/test_extraction_backends.py
 ruff check .
+lint-imports                          # import-boundary contracts (backend/.importlinter)
 ```
+
+The three ignored files need the heavy OCR stack and network access; CI skips them too.
 
 **Frontend:** Vitest. Logic tests run in node; component tests use jsdom + React Testing Library.
 
@@ -251,12 +260,13 @@ python tests/evals/run_all.py
 | Workflow | Runs | What it checks |
 | --- | --- | --- |
 | `CI` | Every PR and push to `main` | Backend pytest + ruff (from the hash-pinned `requirements.lock`, including a code-size ratchet test), frontend eslint + typecheck + vitest |
-| `PR hygiene` | Every PR | Conventional PR title, user story + acceptance criteria on `feat`/`fix` PRs, auto type label |
+| `PR hygiene` | Every PR | A type (Conventional Commits title or `type/` branch) and filled-in acceptance criteria; warns on a `feat`/`fix` PR with no user story; adds a type label |
 | `integration (local supabase)` | PRs and pushes to `main` | Backend against a real local Supabase stack |
 | `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
 | `Evals` | PRs touching agents | Offline agent eval harness |
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
 | `Claude Code Review` | PRs | Automated review comments |
+| `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
 
 Deploys: the frontend is built and deployed by Cloudflare Workers Builds on push. Production releases go through `make promote` (preflight, backup, migrate, merge `main` into `production`, verify). See [`backend/promotion/README.md`](backend/promotion/README.md).
 
@@ -278,11 +288,16 @@ Sapling/
 │       ├── components/     UI, grouped by responsibility
 │       └── lib/            API client, SSE consumer, shared types
 ├── supabase/               Local Supabase stack config
-├── docs/                   Architecture, ADRs, API reference, runbooks, audits
+├── docs/                   Architecture, ADRs, API reference, runbooks
+│   ├── assets/             Images used by this README
+│   ├── audits/             Point-in-time frontend and backend audits
+│   └── design/             Design docs for cross-cutting changes
 ├── specs/                  Feature specs referenced by code and CI
 ├── scripts/                Local stack, E2E, and screenshot scripts
 ├── loadtest/               Locust load tests
-└── .github/                CI workflows, PR and issue templates
+├── .github/                CI workflows, PR and issue templates
+├── Makefile                E2E, screenshot, promotion, and backup shortcuts
+└── docker-compose.yml      Backend + frontend containers
 ```
 
 ## Contributing
@@ -291,8 +306,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. In short:
 
 - One branch per issue, named `<type>/<short-name>` (`feat/quiz-pager`, `fix/graph-links`).
 - Conventional Commit messages and PR titles: `type(scope): subject`.
-- `feat` and `fix` PRs carry a user story, acceptance criteria, and screenshots for UI changes (the PR template has the sections).
-- A teammate reviews and approves every PR, CI passes, then squash and merge.
+- Every ready PR fills in acceptance criteria; `feat` and `fix` PRs add a user story, and UI changes add screenshots (the PR template has the sections).
+- A teammate approves every PR and CI passes before it merges (merge commit or squash).
 
 Conventions that keep the codebase consistent:
 
@@ -308,6 +323,9 @@ Conventions that keep the codebase consistent:
 - [`docs/decisions/`](docs/decisions/): Architectural Decision Records (30 so far), append-only
 - [`docs/attempts/`](docs/attempts/): things that didn't work, and what to try next
 - [`docs/local-supabase.md`](docs/local-supabase.md): local database setup
+- [`docs/e2e-exploration.md`](docs/e2e-exploration.md): the Playwright E2E lane and its oracles
+- [`docs/program.md`](docs/program.md): state of the cleanup-and-hardening program
+- [`docs/design/`](docs/design/) and [`docs/audits/`](docs/audits/): design docs and point-in-time audits
 - [`docs/staging/`](docs/staging/), [`docs/deploy/`](docs/deploy/), [`docs/releases/`](docs/releases/): environments, deploys, and release plans
 - [`docs/security/`](docs/security/) and [SECURITY.md](SECURITY.md): security controls and how to report a vulnerability
 - [`docs/README.md`](docs/README.md): index of everything else in `docs/`
@@ -326,3 +344,5 @@ Conventions that keep the codebase consistent:
 ## License
 
 [MIT](LICENSE) © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+
+The MIT license covers the code in this repository. It does not cover the Gummi heading font (`frontend/src/app/fonts/Gummi-*`), which is a commercially licensed third-party font that may not be redistributed; its terms are in [`frontend/src/app/fonts/Gummi-LICENSE.md`](frontend/src/app/fonts/Gummi-LICENSE.md).
