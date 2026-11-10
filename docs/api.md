@@ -64,7 +64,8 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `GET` `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
 - `POST` `/api/gradescope/link` — Create or update a course mapping
 - `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
-- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
+- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook (`202 {pending}` when a queued sync outlasts the wait)
+- `GET` `/api/gradescope/sync/{sapling_course_id}/status` — Poll a queued sync: 202 while it runs, then the POST's answer
 
 **Study Guide**
 
@@ -160,6 +161,9 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `POST` `/api/admin/allowlist/approve` · `/api/admin/allowlist/revoke` — Manage the email allowlist
 - `GET` `/api/admin/audit` — Paginated admin audit log (filter by action / target)
 - `GET` `/api/admin/analytics/overview` — Totals, 30-day series, and role counts
+- `GET` `/api/admin/jobs` — Job-queue overview per type and status (`jobs_overview()`)
+- `GET`/`PUT` `/api/admin/llm/budgets` (+ `DELETE /api/admin/llm/budgets/{scope}/{subject}`, `GET /api/admin/llm/budgets/status/{user_id}`) — Per-user daily LLM token budgets
+- `GET` `/api/admin/llm/drill` — State of the `llm_outage_drill` flag
 
 **Feedback**
 
