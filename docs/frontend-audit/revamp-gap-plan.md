@@ -305,7 +305,7 @@ For every phase check:
 
 ---
 
-## 5 · Open decisions (from `QUESTIONS.md`)
+## 5 · Open decisions (from `questions.md`)
 
 These need a call before the relevant phase starts:
 

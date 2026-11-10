@@ -141,7 +141,7 @@ Source: `src/components/SessionFeedbackGlobal.tsx` (mounted in root layout).
   - If both pass: clear the had-session flag, stamp the last-shown timestamp, `queueMicrotask` → `setVisible(true)` → render the same `SessionFeedbackFlow` component (but without topic/sessionId since the user already left).
   - This is separate from the every-5-sessions trigger described in §2.7.
 
-**Discrepancy with `CLAUDE.md`**: `CLAUDE.md` says "2-day cooldown on navigate-away" — actual value is 3 days. See `QUESTIONS.md` Q15.
+**Discrepancy with `CLAUDE.md`**: `CLAUDE.md` says "2-day cooldown on navigate-away" — actual value is 3 days. See `questions.md` Q15.
 
 ### 2.10 Flow: AI-disclaimer first-view + chip
 
