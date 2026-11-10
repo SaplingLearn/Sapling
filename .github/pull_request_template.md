@@ -1,7 +1,7 @@
 <!--
 PR title must follow Conventional Commits, e.g. `feat(quiz): add a question pager`.
 Allowed types: feat, fix, docs, refactor, perf, test, ci, chore, build, revert.
-The `PR hygiene` check enforces the title and adds a matching label.
+The `PR hygiene` check needs a type (title or `type/` branch) and, once the PR is ready, a filled-in Acceptance criteria (or How to test) section. It adds a matching label.
 -->
 
 ## Summary
@@ -18,7 +18,7 @@ As a **<type of student/user>**, I want **<goal>** so that **<benefit>**.
 
 ## Acceptance criteria
 
-<!-- Required for feat and fix PRs: concrete, checkable outcomes. -->
+<!-- Required for every PR that is ready for review: concrete, checkable outcomes. -->
 
 - [ ] 
 - [ ] 

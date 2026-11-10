@@ -1,7 +1,20 @@
-# PR hygiene: every PR title follows Conventional Commits, gets a type label,
-# and feat/fix PRs carry the spec (user story + acceptance criteria) from the
-# PR template. Squash merges use the PR title as the commit message, so this
-# check is also what keeps `main`'s history conventional.
+# PR hygiene: every PR states its type and carries checkable acceptance
+# criteria, and gets a type label.
+#
+# Fails (with a message saying what to fix) when:
+#   - no type can be found: the title is not `type(scope): subject` AND the
+#     branch is not `type/...`;
+#   - a non-draft PR has no filled-in acceptance-criteria section (the PR
+#     template's "Acceptance criteria", or an equivalent "Test plan" /
+#     "How to test" / "Verification" / "Evidence" section with real content).
+# Only warns (annotation, never fails) when:
+#   - the type came from the branch name rather than the title;
+#   - a non-draft feat/fix PR has no user story;
+#   - the type label could not be added (PRs from forks get a read-only token).
+#
+# Needs no secrets, checks nothing out, and runs no PR code, so it is safe on
+# forks. Drafts get only the type check; bot PRs (e.g. Dependabot) are not
+# failed.
 name: PR hygiene
 
 on:
@@ -9,64 +22,121 @@ on:
     types: [opened, edited, reopened, synchronize, ready_for_review]
 
 permissions:
+  contents: read
   pull-requests: write
   issues: write
+
+concurrency:
+  group: pr-hygiene-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/github-script@v7
         with:
           script: |
             const pr = context.payload.pull_request;
-            const title = pr.title.trim();
-            const body = pr.body || "";
+            const title = (pr.title || "").trim();
+            const body = (pr.body || "").replace(/\r\n/g, "\n");
+            const branch = pr.head.ref || "";
+            const isBot = pr.user && pr.user.type === "Bot";
+            const TYPES = ["feat", "fix", "docs", "refactor", "perf", "test", "ci", "chore", "build", "revert"];
+            const problems = [];
 
-            // 1. Conventional title: type(scope)!: subject
-            const m = title.match(/^(feat|fix|docs|refactor|perf|test|ci|chore|build|revert)(\([\w\-\/.,# ]+\))?!?: \S.*/);
-            if (!m) {
-              core.setFailed(
-                `PR title "${title}" is not a Conventional Commit. ` +
-                "Use `type(scope): subject`, e.g. `fix(quiz): keep the selected exam`. " +
-                "Types: feat, fix, docs, refactor, perf, test, ci, chore, build, revert."
-              );
-              return;
-            }
-            const type = m[1];
-
-            // 2. Label by type, mapped onto the repo's existing labels.
-            const labelFor = {
-              feat: "enhancement", fix: "bug", docs: "documentation",
-              refactor: "tech-debt", perf: "performance", test: "test-infra",
-              ci: "ci", build: "dependencies", chore: "tech-debt", revert: "bug",
-            };
-            const label = labelFor[type];
-            if (!pr.labels.some(l => l.name === label)) {
-              await github.rest.issues.addLabels({
-                ...context.repo, issue_number: pr.number, labels: [label],
-              });
-            }
-
-            // 3. feat/fix PRs must carry a spec. Draft PRs get a pass until ready.
-            if (["feat", "fix"].includes(type) && !pr.draft) {
-              const section = (name) => {
-                const re = new RegExp(`##\\s*${name}[^\\n]*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i");
-                const hit = body.match(re);
-                // Strip HTML comments, empty checkboxes, and the template placeholder.
-                return hit ? hit[1].replace(/<!--[\s\S]*?-->/g, "")
-                                   .replace(/^\s*-\s*\[ \]\s*$/gm, "")
-                                   .replace(/<type of student\/user>|<goal>|<benefit>/g, "")
-                                   .trim() : "";
-              };
-              const missing = [];
-              const story = section("User story");
-              if (!story || /^As a \*\*\*\*, I want \*\*\*\* so that \*\*\*\*\.?$/.test(story)) missing.push("User story");
-              if (!section("Acceptance criteria")) missing.push("Acceptance criteria");
-              if (missing.length) {
-                core.setFailed(
-                  `${type} PRs need a filled-in ${missing.join(" and ")} section ` +
-                  "(see .github/pull_request_template.md). A linked issue's criteria can be copied in."
+            // 1. Type: Conventional Commit title, else the branch prefix.
+            let type = null;
+            const m = title.match(/^(\w+)(\([^)]*\))?!?: \S/);
+            if (m && TYPES.includes(m[1])) type = m[1];
+            else if (/^Revert "/.test(title)) type = "revert";
+            if (!type) {
+              const prefix = branch.split("/")[0].toLowerCase();
+              const alias = { feature: "feat", bugfix: "fix", hotfix: "fix", tests: "test", doc: "docs" };
+              const fromBranch = TYPES.includes(prefix) ? prefix : alias[prefix];
+              if (fromBranch) {
+                type = fromBranch;
+                core.warning(
+                  `Type "${type}" was taken from the branch name "${branch}". ` +
+                  `Please retitle the PR as \`${type}(scope): subject\` (Conventional Commits).`
                 );
               }
             }
+            if (!type && !isBot) {
+              problems.push(
+                `No PR type. Title "${title}" is not \`type(scope): subject\` and branch "${branch}" ` +
+                `has no type prefix. Use one of: ${TYPES.join(", ")} ` +
+                "(e.g. `fix(quiz): keep the selected exam`)."
+              );
+            }
+
+            // 2. Label by type, mapped onto the repo's existing labels.
+            //    Best effort: fork PRs get a read-only token.
+            const labelFor = {
+              feat: "enhancement", fix: "bug", docs: "documentation", refactor: "tech-debt",
+              perf: "performance", test: "test-infra", ci: "ci", build: "dependencies",
+              chore: "tech-debt", revert: "bug",
+            };
+            if (type && !pr.labels.some(l => l.name === labelFor[type])) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo, issue_number: pr.number, labels: [labelFor[type]],
+                });
+              } catch (e) {
+                core.warning(`Could not add the "${labelFor[type]}" label (${e.status || e.message}). Add it by hand.`);
+              }
+            }
+
+            // 3. Spec sections. Drafts and bots are exempt until ready.
+            //    A section is "filled in" when something is left after removing
+            //    HTML comments, empty checkboxes/bullets/steps, and placeholders.
+            const sectionText = (names) => {
+              const heads = [];
+              const re = /^(#{2,4})\s*(.+?)\s*$/gm;
+              let h;
+              while ((h = re.exec(body)) !== null) {
+                heads.push({ level: h[1].length, name: h[2].toLowerCase(), start: h.index, end: re.lastIndex });
+              }
+              const out = [];
+              heads.forEach((hd, i) => {
+                if (!names.some(n => hd.name.startsWith(n))) return;
+                // The section runs to the next heading at the same or a higher level.
+                const next = heads.slice(i + 1).find(x => x.level <= hd.level);
+                const text = body.slice(hd.end, next ? next.start : body.length)
+                  .replace(/<!--[\s\S]*?-->/g, "")
+                  .replace(/^\s*(?:[-*]|\d+\.)\s*(?:\[[ xX]\])?\s*$/gm, "")
+                  .replace(/<type of student\/user>|<goal>|<benefit>/g, "")
+                  .trim();
+                if (text) out.push(text);
+              });
+              return out.join("\n");
+            };
+
+            if (type && !pr.draft && !isBot) {
+              const criteria = sectionText([
+                "acceptance criteria", "acceptance", "spec", "definition of done", "requirements",
+                "test plan", "how to test", "testing", "tests", "verification", "evidence",
+              ]);
+              if (!criteria) {
+                problems.push(
+                  "No filled-in **Acceptance criteria** section. Add `## Acceptance criteria` with checkable " +
+                  "outcomes (see .github/pull_request_template.md; a linked issue's criteria can be copied in). " +
+                  "A filled-in `## Test plan`, `## How to test` or `## Verification` section also counts. " +
+                  "Draft PRs are exempt until marked ready."
+                );
+              }
+              if (["feat", "fix"].includes(type)) {
+                const story = sectionText(["user story"]);
+                if (!story || /^As a \*\*\s*\*\*, I want \*\*\s*\*\* so that \*\*\s*\*\*\.?$/.test(story)) {
+                  core.warning(`${type} PRs should include a filled-in "User story" section (As a ..., I want ... so that ...).`);
+                }
+              }
+            }
+
+            await core.summary
+              .addHeading("PR hygiene", 3)
+              .addRaw(`Type: ${type || "none"}${pr.draft ? " (draft)" : ""}\n\n`)
+              .addRaw(problems.length ? problems.map(p => `- ${p}`).join("\n") : "All checks passed.")
+              .write();
+            if (problems.length) core.setFailed(problems.join("\n"));
