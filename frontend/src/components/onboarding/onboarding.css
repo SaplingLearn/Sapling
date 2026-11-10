@@ -2,8 +2,6 @@
  * Paper theme). Everything is scoped under .ob-root and uses --ob-* tokens so
  * it never leaks into the app's own design system. */
 
-@font-face { font-family: 'Gummi'; font-weight: 500; font-display: swap; src: url('/onboarding/fonts/Gummi-Medium.otf') format('opentype'); }
-@font-face { font-family: 'Gummi'; font-weight: 600; font-display: swap; src: url('/onboarding/fonts/Gummi-SemiBold.otf') format('opentype'); }
 @font-face { font-family: 'Momo Trust Sans'; font-weight: 400; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-Regular.ttf') format('truetype'); }
 @font-face { font-family: 'Momo Trust Sans'; font-weight: 500; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-Medium.ttf') format('truetype'); }
 @font-face { font-family: 'Momo Trust Sans'; font-weight: 600; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-SemiBold.ttf') format('truetype'); }
@@ -118,7 +116,7 @@
 .ob-screen--roomy { gap: 26px; }
 .ob-screen--legal { flex: 1 1 0; min-height: 0; }
 .ob-h1 {
-  font: 500 clamp(26px, 2.4vw, 36px)/1.15 'Gummi', sans-serif; letter-spacing: -0.015em;
+  font: 500 clamp(26px, 2.4vw, 36px)/1.15 var(--font-gummi), sans-serif; letter-spacing: -0.015em; -webkit-text-stroke-width: var(--medium-stroke);
   margin: 0; flex-shrink: 0; width: 100%; text-align: center; text-shadow: var(--ob-tsh); text-wrap: balance;
 }
 .ob-sub {
@@ -377,7 +375,7 @@ button.ob-school:hover { transform: translateY(-2px); }
   display: flex; flex-direction: column; gap: 14px; animation: obSheet 420ms var(--ob-ease) both;
 }
 .ob-sheet-grip { width: 40px; height: 4px; border-radius: 99px; background: var(--ob-line); align-self: center; }
-.ob-sheet-title { margin: 0; font: 500 26px/1.2 'Gummi', sans-serif; }
+.ob-sheet-title { margin: 0; font: 500 26px/1.2 var(--font-gummi), sans-serif; -webkit-text-stroke-width: var(--medium-stroke); }
 .ob-sheet-rows { display: flex; flex-direction: column; gap: 10px; font: 400 14.5px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
 .ob-sheet-row { display: flex; gap: 10px; }
 .ob-sheet-row b { font: 500 10.5px/1.9 'Momo Trust Sans', sans-serif; letter-spacing: .12em; color: var(--ob-acc); min-width: 62px; }
@@ -404,10 +402,10 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-moment--outro .ob-moment-glow { width: 780px; height: 280px; }
 .ob-intro-text {
   position: relative; margin: 0; text-align: center; color: var(--ob-fg); text-shadow: var(--ob-tsh);
-  font: 600 clamp(26px, 4vw, 50px)/1.2 'Gummi', sans-serif; letter-spacing: -0.02em;
+  font: 600 clamp(26px, 4vw, 50px)/1.2 var(--font-gummi), sans-serif; letter-spacing: -0.02em;
 }
 .ob-welcome { position: relative; margin: 0; display: flex; flex-direction: column; align-items: center; gap: clamp(6px, 1.4vw, 18px); }
-.ob-welcome span { white-space: nowrap; font: 600 clamp(22px, 3.2vw, 44px)/1 'Gummi', sans-serif; letter-spacing: -0.01em; text-shadow: var(--ob-tsh); }
+.ob-welcome span { white-space: nowrap; font: 600 clamp(22px, 3.2vw, 44px)/1 var(--font-gummi), sans-serif; letter-spacing: -0.01em; text-shadow: var(--ob-tsh); }
 .ob-welcome img { height: clamp(80px, 12vw, 170px); width: auto; max-width: 90vw; display: block; }
 .ob-whiteout { position: absolute; inset: 0; z-index: 92; background: #FFFFFF; transition: opacity 900ms cubic-bezier(0.4, 0, 0.2, 1); }
 
