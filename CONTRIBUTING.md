@@ -12,18 +12,26 @@
 1. Open an issue (or pick one from the Notion backlog / GitHub project board) before starting work.
 2. Branch from `main`, make small, scoped commits (one logical change per commit).
 3. Open a PR into `main` with a [Conventional Commits](https://www.conventionalcommits.org/) title: `type(scope): subject`, e.g. `fix(quiz): keep the selected exam on reopen`. Fill in the PR template (`.github/pull_request_template.md`) and link the issue with `Closes #<number>`.
-   - `feat` and `fix` PRs must include a **user story** and **acceptance criteria** (copy them from the issue). UI changes include before/after screenshots.
-   - The `PR hygiene` workflow checks the title and the spec sections and adds a type label (`enhancement`, `bug`, `documentation`, `tech-debt`, ...).
+   - Every ready PR needs filled-in **acceptance criteria** (copy them from the issue). `feat` and `fix` PRs also include a **user story**. UI changes include before/after screenshots.
+   - The `PR hygiene` workflow (`.github/workflows/pr-hygiene.yml`) fails a PR with no type (neither a Conventional Commits title nor a `type/` branch) or, once it is ready for review, no filled-in acceptance criteria / test plan section. It warns when a `feat`/`fix` PR has no user story, and adds a type label (`enhancement`, `bug`, `documentation`, `tech-debt`, ...).
    - Open the PR as a **draft** while it is in progress; mark it ready when it meets its acceptance criteria.
 4. **Request a review from at least one teammate, and wait for their approval** before merging. Do not merge your own unreviewed PR. Reviewers check the acceptance criteria, not just the diff.
 5. **CI must pass** before merge (backend pytest + ruff, frontend eslint + typecheck + vitest, PR hygiene, plus any E2E/eval workflows that apply to your change).
-6. **Squash and merge** (the PR title becomes the commit on `main`), then delete the branch.
+6. Merge with a merge commit or squash, then delete the branch. A merge commit keeps every branch commit on `main`, so branch commits must follow the commit-message format below too; a squash uses the PR title.
 
-The repository is private on GitHub's free plan, which does not offer branch protection, so these rules are a team agreement rather than something GitHub enforces. Reviewers and authors are both responsible for holding to them.
+`main` is covered by a GitHub ruleset ("Require PR review before merge"): no direct pushes, no force-pushes, no deletion, and one approving review before a PR can merge. Organization admins can bypass it; don't, except to recover from an emergency, and say so in the PR.
 
 ### Commit messages
 
-Commits follow Conventional Commits too: `type(scope): imperative summary` under ~72 characters, with a body explaining *why* when it isn't obvious. Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `ci`, `chore`, `build`, `revert`. Scopes are the area touched (`quiz`, `graph`, `rag`, `db`, `frontend`, ...).
+Commits follow Conventional Commits too: `type(scope): imperative summary` under ~72 characters, with a body explaining *why* when it isn't obvious. Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `ci`, `chore`, `build`, `revert`. Scopes are the area touched (`quiz`, `graph`, `rag`, `db`, `frontend`, ...). Add `!` after the scope for a breaking change. Examples from `main`:
+
+```
+fix(quiz): a written type outside the known formats is plain text again
+refactor(frontend): share courseSelectOptions between flashcard import and study guide pickers
+docs(complexity): Onboarding (51) from main stays baselined as a follow-up
+```
+
+Git's own merge commits (`Merge origin/main into ...`, `Merge pull request #N ...`) are fine as they are. Nothing lints commit messages automatically; reviewers check them, and the `PR hygiene` check covers the PR title.
 
 ### Issues
 
