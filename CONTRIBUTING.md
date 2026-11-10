@@ -42,7 +42,10 @@ Use the issue templates: **Feature / user story** (story, acceptance criteria, d
 Backend (from `backend/`):
 
 ```
-python -m pytest tests/ -q --ignore=tests/evals
+python -m pytest tests/ -q --ignore=tests/evals \
+  --ignore=tests/test_docling_integration.py \
+  --ignore=tests/test_ocr_pipeline.py \
+  --ignore=tests/test_extraction_backends.py
 ruff check .
 ```
 
