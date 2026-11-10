@@ -360,4 +360,4 @@ Built in Boston University's XC 475 Spark! Innovation Program (Fall 2026).
 
 [MIT](LICENSE) © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
 
-The MIT license covers the code in this repository. It does not cover the Gummi heading font (`frontend/src/app/fonts/Gummi-*`), which is a commercially licensed third-party font that may not be redistributed; its terms are in [`frontend/src/app/fonts/Gummi-LICENSE.md`](frontend/src/app/fonts/Gummi-LICENSE.md).
+The MIT license covers the code in this repository. The Gummi heading font is a commercially licensed third-party font and is not in this repository: it is served from `fonts.saplinglearn.com` to licensed hosts only, and every other host renders headings in Aleo. See [`docs/licensed-fonts.md`](docs/licensed-fonts.md).

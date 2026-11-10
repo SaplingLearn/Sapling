@@ -101,7 +101,7 @@ export function ActTutor({
                 that follow are driven by the engine's own opacity writes, so
                 a second animation on them would fight the scrub. */}
             <FadeIn>
-              <h2 className="ld-tutor-h2" style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
+              <h2 className="ld-tutor-h2" style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
                 Three ways to learn this. Your <em style={{ color: '#445D22' }}>pick.</em>
               </h2>
             </FadeIn>
@@ -194,7 +194,7 @@ export function ActTutor({
                     <path d="M12 6.5v13.4" />
                   </svg>
                 </div>
-                <h3 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 18, fontWeight: 600, color: '#191F13' }}>AVL rotations, plainly.</h3>
+                <h3 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 18, fontWeight: 600, color: '#191F13' }}>AVL rotations, plainly.</h3>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: '#3B4233' }}>
                   Every node&rsquo;s <span style={{ background: '#EAF1E4', borderRadius: 4, padding: '0 3px', color: '#445D22', fontWeight: 600 }}>balance factor</span> stays in {'{−1, 0, +1}'}. When an insert breaks that, one of four <span style={{ background: '#EAF1E4', borderRadius: 4, padding: '0 3px', color: '#445D22', fontWeight: 600 }}>rotations</span> restores it in O(1).
                 </p>

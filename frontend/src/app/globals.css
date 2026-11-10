@@ -19,10 +19,16 @@
      'Aleo' matches nothing and silently renders Times — see
      lib/landing/fonts.ts. The human names stay behind the variable as a
      courtesy to anyone who has the font installed. */
-  --font-display: var(--font-gummi), 'Gummi', georgia, serif;
+  --font-display: var(--font-gummi), georgia, serif;
+  /* Gummi is licensed for saplinglearn.com only, so it is not loaded here:
+     lib/licensedFonts.ts's boot script overrides both of these (html:root) on
+     a licensed host, and every other host — a workers.dev preview, an E2E
+     slot — keeps Aleo and never requests the font. */
+  --font-gummi: var(--font-aleo);
   /* Gummi ships no medium (500): a medium heading renders Regular, thickened by
-     this outline stroke. One knob — raise it for heavier, lower for lighter. */
-  --medium-stroke: 0.6px;
+     this outline stroke (0.6px under Gummi; 0 on the Aleo fallback, which has a
+     real 500). */
+  --medium-stroke: 0px;
   --font-serif: var(--font-aleo), 'Aleo', georgia, serif;
   --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-plex-mono), 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
@@ -1628,7 +1634,7 @@ input[type="reset"]:disabled {
 
 /* Typography helpers main uses on the landing. */
 .landing-page .font-aleo      { font-family: var(--font-aleo), 'Aleo', serif; }
-.landing-page .font-gummi     { font-family: var(--font-gummi), 'Gummi', Georgia, serif; }
+.landing-page .font-gummi     { font-family: var(--font-gummi), Georgia, serif; }
 .landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
 .landing-page .font-plex-mono { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; }
 .landing-page .font-suse      { font-family: var(--font-suse), 'SUSE', sans-serif; }
@@ -2086,7 +2092,7 @@ input[type="reset"]:disabled {
 
 .landing-page .landing-band-headline {
   margin-top: 1.05rem;
-  font-family: var(--font-gummi), 'Gummi', Georgia, serif;
+  font-family: var(--font-gummi), Georgia, serif;
   font-size: clamp(1.95rem, 3.4vw, 3.1rem);
   font-weight: 600;
   line-height: 1.06;
@@ -2698,7 +2704,7 @@ input[type="reset"]:disabled {
      --font-serif. Both are Aleo now; the two names are kept so a landing
      section can still split them. */
   --ld-font-sans:    var(--font-suse), 'SUSE', system-ui, sans-serif;
-  --ld-font-display: var(--font-gummi), 'Gummi', georgia, serif;
+  --ld-font-display: var(--font-gummi), georgia, serif;
   --ld-font-serif:   var(--font-aleo), 'Aleo', georgia, serif;
   --ld-font-mono:    var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
 
