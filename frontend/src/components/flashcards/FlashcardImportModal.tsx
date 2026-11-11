@@ -4,14 +4,19 @@ import Dialog from "../Dialog";
 import { CustomSelect } from "../CustomSelect";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { importCommit, type EnrolledCourse } from "@/lib/api";
-import { isValid, type ParsedCard } from "@/lib/flashcardParsers";
+import { importCommit, type EnrolledCourse, type ImportCard } from "@/lib/api";
+import { courseSelectOptions } from "@/lib/courseSelectOptions";
+import type { ParsedCard } from "@/lib/flashcardParsers";
 import { ParsedCardsTable } from "./ParsedCardsTable";
 import { PasteTab } from "./tabs/PasteTab";
 import { UploadTab } from "./tabs/UploadTab";
 import { UrlTab } from "./tabs/UrlTab";
 import { AiTab } from "./tabs/AiTab";
 import { PhotoTab } from "./tabs/PhotoTab";
+import {
+  buildFinalCards, commitBlocker, commitLabel, importedMessage,
+  initialCourseId, isCommitDisabled, tabButtonStyle, validCardsOf,
+} from "./importModalModel";
 
 type TabKey = "paste" | "upload" | "url" | "ai" | "photo";
 
@@ -35,17 +40,18 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "photo", label: "Photo" },
 ];
 
-export function FlashcardImportModal({
-  open, onClose, courses, defaultCourseId, defaultTopic, documents, onImported,
-}: Props) {
-  const toast = useToast();
-  const { userId } = useUser();
+/** Tab, deck, reverse, course and topic state for one open of the modal. */
+function useImportSession(
+  open: boolean,
+  courses: EnrolledCourse[],
+  defaultCourseId: string | undefined,
+  defaultTopic: string | undefined,
+) {
   const [tab, setTab] = React.useState<TabKey>("paste");
   const [cards, setCards] = React.useState<ParsedCard[]>([]);
   const [reverse, setReverse] = React.useState(false);
-  const [courseId, setCourseId] = React.useState<string>(defaultCourseId ?? courses[0]?.course_id ?? "");
+  const [courseId, setCourseId] = React.useState<string>(initialCourseId(defaultCourseId, courses));
   const [topic, setTopic] = React.useState<string>(defaultTopic ?? "");
-  const [committing, setCommitting] = React.useState(false);
 
   // Request scope (#769). Every tab switch and every open starts a new scope;
   // a tab's async import (URL fetch, AI generate, OCR, cloze…) writes the
@@ -77,35 +83,46 @@ export function FlashcardImportModal({
       setCards([]);
       setReverse(false);
       setTab("paste");
-      setCourseId(defaultCourseId ?? courses[0]?.course_id ?? "");
+      setCourseId(initialCourseId(defaultCourseId, courses));
       setTopic(defaultTopic ?? "");
       setScope(s => s + 1);
     }
   }
   // Courses that arrive AFTER opening still fill an empty pick — filling a
   // blank never touches the deck, unlike the old full reset.
-  const fallbackCourseId = defaultCourseId ?? courses[0]?.course_id ?? "";
+  const fallbackCourseId = initialCourseId(defaultCourseId, courses);
   if (open && !courseId && fallbackCourseId) setCourseId(fallbackCourseId);
 
-  const validCards = cards.filter(isValid);
-  const finalCards = React.useMemo(() => {
-    const base = validCards.map(c => ({ front: c.front, back: c.back }));
-    if (!reverse) return base;
-    return base.flatMap(c => [c, { front: c.back, back: c.front }]);
-  }, [validCards, reverse]);
+  return {
+    tab, selectTab, cards, setCards, onTabCards, reverse, setReverse,
+    courseId, setCourseId, topic, setTopic,
+  };
+}
+
+function useFinalCards(cards: ParsedCard[], reverse: boolean): ImportCard[] {
+  const validCards = validCardsOf(cards);
+  return React.useMemo(() => buildFinalCards(validCards, reverse), [validCards, reverse]);
+}
+
+function useCommit(
+  courseId: string,
+  topic: string,
+  finalCards: ImportCard[],
+  onImported: (count: number) => void,
+  onClose: () => void,
+) {
+  const toast = useToast();
+  const { userId } = useUser();
+  const [committing, setCommitting] = React.useState(false);
 
   const commit = async () => {
     if (!userId) return;
-    if (!courseId) { toast.warn("Pick a course first."); return; }
-    if (!topic.trim()) { toast.warn("Add a topic name."); return; }
-    if (finalCards.length === 0) { toast.warn("No valid cards to import."); return; }
+    const blocker = commitBlocker(courseId, topic, finalCards.length);
+    if (blocker) { toast.warn(blocker); return; }
     setCommitting(true);
     try {
       const res = await importCommit(userId, courseId, topic.trim(), finalCards, true);
-      const skipNote = res.skipped_duplicates > 0
-        ? ` ${res.skipped_duplicates} skipped (duplicates).`
-        : "";
-      toast.success(`Imported ${res.inserted} card${res.inserted === 1 ? "" : "s"}.${skipNote}`);
+      toast.success(importedMessage(res));
       onImported(res.inserted);
       onClose();
     } catch (err) {
@@ -114,6 +131,19 @@ export function FlashcardImportModal({
       setCommitting(false);
     }
   };
+
+  return { committing, commit };
+}
+
+export function FlashcardImportModal({
+  open, onClose, courses, defaultCourseId, defaultTopic, documents, onImported,
+}: Props) {
+  const {
+    tab, selectTab, cards, setCards, onTabCards, reverse, setReverse,
+    courseId, setCourseId, topic, setTopic,
+  } = useImportSession(open, courses, defaultCourseId, defaultTopic);
+  const finalCards = useFinalCards(cards, reverse);
+  const { committing, commit } = useCommit(courseId, topic, finalCards, onImported, onClose);
 
   return (
     <Dialog open={open} onClose={onClose} title="Import flashcards" size="xl">
@@ -126,11 +156,7 @@ export function FlashcardImportModal({
               value={courseId}
               onChange={setCourseId}
               placeholder="Pick a course…"
-              options={courses.map(c => ({
-                value: c.course_id,
-                label: c.course_code || c.course_name,
-                description: c.course_code ? c.course_name : undefined,
-              }))}
+              options={courseSelectOptions(courses)}
             />
           </div>
           <div style={{ minWidth: 220, flex: 1 }}>
@@ -149,12 +175,7 @@ export function FlashcardImportModal({
             <button
               key={t.key}
               onClick={() => selectTab(t.key)}
-              style={{
-                padding: "8px 14px", fontSize: 13, fontWeight: tab === t.key ? 600 : 500,
-                color: tab === t.key ? "var(--accent)" : "var(--text-dim)",
-                background: "transparent",
-                borderBottom: tab === t.key ? "2px solid var(--accent)" : "2px solid transparent",
-              }}
+              style={tabButtonStyle(tab === t.key)}
             >{t.label}</button>
           ))}
         </div>
@@ -177,9 +198,9 @@ export function FlashcardImportModal({
           <button
             className="btn btn--sm btn--primary"
             onClick={commit}
-            disabled={committing || finalCards.length === 0 || !courseId || !topic.trim()}
+            disabled={isCommitDisabled(committing, finalCards.length, courseId, topic)}
           >
-            {committing ? "Importing…" : `Import ${finalCards.length} card${finalCards.length === 1 ? "" : "s"}`}
+            {commitLabel(committing, finalCards.length)}
           </button>
         </div>
       </div>

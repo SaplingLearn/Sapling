@@ -3,7 +3,7 @@
  *
  * These three stacks were declared verbatim in seven page files. They are the
  * paper-palette counterpart to the app shell's warm tokens — see
- * docs/frontend-rhythm-audit.md on why the two systems stay separate — and
+ * docs/audits/frontend-rhythm-audit.md on why the two systems stay separate — and
  * having seven copies is how a system drifts without anyone editing it.
  *
  * It also owns the page box. `PAGE_MAX` is the outer border-box every
@@ -17,7 +17,7 @@
 
 export const MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
 export const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
-export const DISPLAY = "var(--font-gummi), 'Gummi', Georgia, serif";
+export const DISPLAY = "var(--font-gummi), Georgia, serif";
 
 /** Ink on the paper palette. */
 export const INK = '#1a1814';

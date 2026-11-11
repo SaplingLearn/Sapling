@@ -44,6 +44,7 @@ import { withheldNotice } from "@/lib/integrityNotice";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
+import { courseSelectOptions } from "@/lib/courseSelectOptions";
 import {
   getCourses,
   getStudyGuideExams,
@@ -64,6 +65,7 @@ import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 import { DueQueue } from "../learn/DueQueue";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
+import { examPickerPlaceholder, isOpenGuide, stepNumberColor } from "./studyGuideView";
 
 type Mode = "guide" | "cards";
 
@@ -388,209 +390,358 @@ function GuideMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "24px 32px" }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "flex-end",
-            marginBottom: 20,
-          }}
-        >
-          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  color: courseId ? "var(--accent)" : "var(--text-muted)",
-                  transition: "color var(--dur) var(--ease)",
-                }}
-              >
-                01
-              </span>
-              <span className="label-micro">Course</span>
-            </div>
-            <CustomSelect
-              ariaLabel="Course"
-              value={courseId}
-              onChange={selectCourse}
-              placeholder="Pick a course…"
-              options={courses.map(c => ({
-                value: c.course_id,
-                label: c.course_code || c.course_name,
-                description: c.course_code ? c.course_name : undefined,
-              }))}
-            />
-          </div>
-          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  color: examId ? "var(--accent)" : courseId ? "var(--text-dim)" : "var(--text-muted)",
-                  transition: "color var(--dur) var(--ease)",
-                }}
-              >
-                02
-              </span>
-              <span className="label-micro">Exam</span>
-            </div>
-            <CustomSelect
-              ariaLabel="Exam"
-              value={examId}
-              onChange={v => setExamId(v)}
-              placeholder={loadingExams ? "Loading…" : (courseId ? "Pick an exam…" : "Select a course first")}
-              disabled={!courseId || loadingExams}
-              options={exams.map(e => ({
-                value: e.id,
-                label: e.title,
-                description: e.due_date ? `Due ${e.due_date}` : undefined,
-              }))}
-            />
-          </div>
-          {guide && (
-            <button
-              className="btn btn--sm"
-              onClick={regenerate}
-              disabled={regenerating || loadingGuide || !examId}
-            >
-              <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
-            </button>
-          )}
-        </div>
-
-        {!courseId && (
-          <EmptyHint
-            title="Pick a course to get started"
-            body="Your generated study guides live here — grouped by exam and built from the documents in your library."
-          />
-        )}
-        {courseId && !examId && !guideProblem && !loadingExams && exams.length === 0 && (
-          <EmptyHint
-            title="No exams for this course yet"
-            body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
-          />
-        )}
-        {courseId && !examId && !guideProblem && exams.length > 0 && (
-          <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
-        )}
-        {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
-          guideProblem.message ? (
-            // #475 F4: the server said something more specific than "exam
-            // deleted" (e.g. no offering in the requested term) — show it.
-            <EmptyHint title="That guide isn't available" body={guideProblem.message} />
-          ) : (
-            <EmptyHint
-              title="That exam isn't around anymore"
-              body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
-            />
-          )
-        )}
-        {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
-          <EmptyHint
-            title="That guide didn't come through"
-            body={guideProblem.message}
-            action={
-              <button
-                className="btn btn--sm btn--primary"
-                // Replays the exact load that failed — ids AND term (#475 F1).
-                onClick={() =>
-                  loadGuide(guideProblem.courseId, guideProblem.examId, guideProblem.semester)
-                }
-                disabled={loadingGuide}
-              >
-                Try again
-              </button>
-            }
-          />
-        )}
+        <GuidePickers
+          courses={courses}
+          courseId={courseId}
+          examId={examId}
+          exams={exams}
+          loadingExams={loadingExams}
+          onSelectCourse={selectCourse}
+          onSelectExam={setExamId}
+          hasGuide={Boolean(guide)}
+          regenerating={regenerating}
+          loadingGuide={loadingGuide}
+          onRegenerate={regenerate}
+        />
+        <GuideSelectionHint
+          courseId={courseId}
+          examId={examId}
+          hasProblem={Boolean(guideProblem)}
+          loadingExams={loadingExams}
+          examCount={exams.length}
+        />
+        <GuideProblemHint
+          problem={guideProblem}
+          loadingGuide={loadingGuide}
+          regenerating={regenerating}
+          onRetry={loadGuide}
+        />
 
         {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
 
         {!loadingGuide && guide && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card" style={{ padding: "var(--pad-lg)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{guide.exam}</div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {guide.due_date && <span className="chip">Due {guide.due_date}</span>}
-                  {/* Secondary by colour, not opacity: a 70% chip was 3.9:1 (spec §13 A135). */}
-                  <span className="chip" style={{ color: "var(--text-muted)" }}>
-                    {cached ? "Cached" : "Fresh"} · {generatedAt ? new Date(generatedAt).toLocaleString() : ""}
-                  </span>
-                </div>
-              </div>
-              {guide.overview && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
-                  <MarkdownChat>{guide.overview}</MarkdownChat>
-                </div>
-              )}
-            </div>
-
-            {(guide.topics || []).map((t, i) => (
-              <div key={`${t.name}-${i}`} className="card" style={{ padding: "var(--pad-lg)" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <span className="label-micro">Topic {i + 1}</span>
-                  <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>{t.name}</div>
-                </div>
-                {t.importance && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                    <MarkdownChat>{t.importance}</MarkdownChat>
-                  </div>
-                )}
-                {(t.concepts || []).length > 0 && (
-                  <ul style={{ margin: "10px 0 0 18px", padding: 0 }}>
-                    {(t.concepts || []).map((c, j) => (
-                      <li key={j} style={{ fontSize: 13, color: "var(--text)", marginBottom: 4, lineHeight: 1.5 }}>
-                        <MarkdownChat>{c}</MarkdownChat>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
+          <GuideContent guide={guide} cached={cached} generatedAt={generatedAt} />
         )}
       </div>
       {!isMobile && (
-        <aside style={{
-          width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
-          padding: 16, overflowY: "auto", flexShrink: 0,
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Recent guides</div>
-          {recent.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No generated guides yet.</div>
-          )}
-          {recent.slice(0, 20).map(r => (
-            <button
-              key={r.id}
-              onClick={() => openRecent(r)}
-              style={{
-                width: "100%", textAlign: "left", padding: "10px 12px",
-                borderRadius: "var(--r-sm)", marginBottom: 6,
-                background: r.course_id === courseId && r.exam_id === examId ? "var(--bg-panel)" : "transparent",
-                border: r.course_id === courseId && r.exam_id === examId ? "1px solid var(--border)" : "1px solid transparent",
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.exam_title || "Untitled exam"}
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-                {r.course_name} · {new Date(r.generated_at).toLocaleDateString()}
-              </div>
-            </button>
-          ))}
-        </aside>
+        <RecentGuidesRail recent={recent} courseId={courseId} examId={examId} onOpen={openRecent} />
       )}
     </div>
   );
 }
 
+// The course + exam pickers, and Regenerate once a guide is on screen.
+function GuidePickers({
+  courses,
+  courseId,
+  examId,
+  exams,
+  loadingExams,
+  onSelectCourse,
+  onSelectExam,
+  hasGuide,
+  regenerating,
+  loadingGuide,
+  onRegenerate,
+}: {
+  courses: EnrolledCourse[];
+  courseId: string;
+  examId: string;
+  exams: StudyGuideExam[];
+  loadingExams: boolean;
+  onSelectCourse: (next: string) => void;
+  onSelectExam: (next: string) => void;
+  hasGuide: boolean;
+  regenerating: boolean;
+  loadingGuide: boolean;
+  onRegenerate: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 16,
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        marginBottom: 20,
+      }}
+    >
+      <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: stepNumberColor(courseId, ""),
+              transition: "color var(--dur) var(--ease)",
+            }}
+          >
+            01
+          </span>
+          <span className="label-micro">Course</span>
+        </div>
+        <CustomSelect
+          ariaLabel="Course"
+          value={courseId}
+          onChange={onSelectCourse}
+          placeholder="Pick a course…"
+          options={courseSelectOptions(courses)}
+        />
+      </div>
+      <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: stepNumberColor(examId, courseId),
+              transition: "color var(--dur) var(--ease)",
+            }}
+          >
+            02
+          </span>
+          <span className="label-micro">Exam</span>
+        </div>
+        <CustomSelect
+          ariaLabel="Exam"
+          value={examId}
+          onChange={v => onSelectExam(v)}
+          placeholder={examPickerPlaceholder(loadingExams, courseId)}
+          disabled={!courseId || loadingExams}
+          options={exams.map(e => ({
+            value: e.id,
+            label: e.title,
+            description: e.due_date ? `Due ${e.due_date}` : undefined,
+          }))}
+        />
+      </div>
+      {hasGuide && (
+        <button
+          className="btn btn--sm"
+          onClick={onRegenerate}
+          disabled={regenerating || loadingGuide || !examId}
+        >
+          <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// What to do next when no exam is selected yet (no course / no exams / pick one).
+function GuideSelectionHint({
+  courseId,
+  examId,
+  hasProblem,
+  loadingExams,
+  examCount,
+}: {
+  courseId: string;
+  examId: string;
+  hasProblem: boolean;
+  loadingExams: boolean;
+  examCount: number;
+}) {
+  return (
+    <>
+      {!courseId && (
+        <EmptyHint
+          title="Pick a course to get started"
+          body="Your generated study guides live here — grouped by exam and built from the documents in your library."
+        />
+      )}
+      {courseId && !examId && !hasProblem && !loadingExams && examCount === 0 && (
+        <EmptyHint
+          title="No exams for this course yet"
+          body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
+        />
+      )}
+      {courseId && !examId && !hasProblem && examCount > 0 && (
+        <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
+      )}
+    </>
+  );
+}
+
+// A guide load that didn't produce a guide (see GuideProblem); hidden while a
+// load or regenerate is in flight.
+function GuideProblemHint({
+  problem,
+  loadingGuide,
+  regenerating,
+  onRetry,
+}: {
+  problem: GuideProblem | null;
+  loadingGuide: boolean;
+  regenerating: boolean;
+  onRetry: (cid: string, eid: string, termOverride?: string) => void;
+}) {
+  if (loadingGuide || regenerating || !problem) return null;
+  if (problem.kind === "missing") {
+    return problem.message ? (
+      // #475 F4: the server said something more specific than "exam
+      // deleted" (e.g. no offering in the requested term) — show it.
+      <EmptyHint title="That guide isn't available" body={problem.message} />
+    ) : (
+      <EmptyHint
+        title="That exam isn't around anymore"
+        body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
+      />
+    );
+  }
+  return (
+    <EmptyHint
+      title="That guide didn't come through"
+      body={problem.message}
+      action={
+        <button
+          className="btn btn--sm btn--primary"
+          // Replays the exact load that failed — ids AND term (#475 F1).
+          onClick={() =>
+            onRetry(problem.courseId, problem.examId, problem.semester)
+          }
+          disabled={loadingGuide}
+        >
+          Try again
+        </button>
+      }
+    />
+  );
+}
+
+// The rendered guide: header card (title, due date, cache stamp, overview)
+// followed by one card per topic.
+function GuideContent({
+  guide,
+  cached,
+  generatedAt,
+}: {
+  guide: StudyGuideContent;
+  cached: boolean;
+  generatedAt: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{guide.exam}</div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {guide.due_date && <span className="chip">Due {guide.due_date}</span>}
+            {/* Secondary by colour, not opacity: a 70% chip was 3.9:1 (spec §13 A135). */}
+            <span className="chip" style={{ color: "var(--text-muted)" }}>
+              {cached ? "Cached" : "Fresh"} · {generatedAt ? new Date(generatedAt).toLocaleString() : ""}
+            </span>
+          </div>
+        </div>
+        {guide.overview && (
+          <div style={{ marginTop: 10, fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
+            <MarkdownChat>{guide.overview}</MarkdownChat>
+          </div>
+        )}
+      </div>
+
+      {(guide.topics || []).map((t, i) => (
+        <div key={`${t.name}-${i}`} className="card" style={{ padding: "var(--pad-lg)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span className="label-micro">Topic {i + 1}</span>
+            <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>{t.name}</div>
+          </div>
+          {t.importance && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+              <MarkdownChat>{t.importance}</MarkdownChat>
+            </div>
+          )}
+          {(t.concepts || []).length > 0 && (
+            <ul style={{ margin: "10px 0 0 18px", padding: 0 }}>
+              {(t.concepts || []).map((c, j) => (
+                <li key={j} style={{ fontSize: 13, color: "var(--text)", marginBottom: 4, lineHeight: 1.5 }}>
+                  <MarkdownChat>{c}</MarkdownChat>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The desktop "Recent guides" side rail; the open guide's entry is highlighted.
+function RecentGuidesRail({
+  recent,
+  courseId,
+  examId,
+  onOpen,
+}: {
+  recent: StudyGuideCacheEntry[];
+  courseId: string;
+  examId: string;
+  onOpen: (entry: StudyGuideCacheEntry) => void;
+}) {
+  return (
+    <aside style={{
+      width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
+      padding: 16, overflowY: "auto", flexShrink: 0,
+    }}>
+      <div className="label-micro" style={{ marginBottom: 10 }}>Recent guides</div>
+      {recent.length === 0 && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No generated guides yet.</div>
+      )}
+      {recent.slice(0, 20).map(r => (
+        <button
+          key={r.id}
+          onClick={() => onOpen(r)}
+          style={{
+            width: "100%", textAlign: "left", padding: "10px 12px",
+            borderRadius: "var(--r-sm)", marginBottom: 6,
+            background: isOpenGuide(r, courseId, examId) ? "var(--bg-panel)" : "transparent",
+            border: isOpenGuide(r, courseId, examId) ? "1px solid var(--border)" : "1px solid transparent",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.exam_title || "Untitled exam"}
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+            {r.course_name} · {new Date(r.generated_at).toLocaleDateString()}
+          </div>
+        </button>
+      ))}
+    </aside>
+  );
+}
+
 // ── Flashcards mode ──────────────────────────────────────────────────────────
+
+/**
+ * The learning loop's reviews above the flashcards: the due queue and the
+ * retention check while the loop is on for the student. A failed status read
+ * is not an inactive learning loop: the legacy flashcards stay, with a retry
+ * so the student can still reach due reviews.
+ */
+function LoopReviews({ courseId, courses }: { courseId: string; courses: EnrolledCourse[] }) {
+  const retentionCourse = useSearchParams().get("retention-course") ?? "";
+  const { userId, userReady } = useUser();
+  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
+  if (loopActive === "error") {
+    return (
+      <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
+        <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
+        <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+          Retry due reviews
+        </button>
+      </div>
+    );
+  }
+  if (loopActive !== true) return null;
+  return (
+    <>
+      <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />
+      <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
+    </>
+  );
+}
 
 function FlashcardsMode({
   courses,
@@ -606,8 +757,7 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
-  const retentionCourse = useSearchParams().get("retention-course") ?? "";
-  const { userId, userReady } = useUser();
+  const { userId } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
@@ -618,9 +768,6 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
-  // A failed status read is not an inactive learning loop: retain the legacy
-  // flashcards and offer a retry so the student can still reach due reviews.
-  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
   // Review-session state (#769). `rating` is the in-flight guard: one rating
   // per card, however many times the button/key fires while it's saving
   // (the ref closes the same-tick gap before the state re-renders). `done`
@@ -805,16 +952,7 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
-        {loopActive === true && <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />}
-        {loopActive === "error" && (
-          <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
-            <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
-            <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
-              Retry due reviews
-            </button>
-          </div>
-        )}
+        <LoopReviews courseId={courseId} courses={courses} />
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[
