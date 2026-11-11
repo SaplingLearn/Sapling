@@ -242,7 +242,7 @@ The file is organised in banner-commented sections (`# ── … ──`). In o
 | Learner state, band, ceiling | `_learner_view`, `_band_for`, `_ceiling_for`, `_genuine` |
 | Context and run assembly | `_context_blocks`, `_prepare_loop_run`, failed-retrieval notices (A128), the tool-less continuation |
 | The served text | `served_model_text`, `served_template`, `loop_leak_rung` — what the student actually receives (A48) |
-| Served reveals of open, posed items | `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93); the scan set itself, `posed_items`, lives in `backend/services/loop_posed.py::posed_items` (A149: the integrity guard reads it too) |
+| Served reveals of open, posed items | `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93); the scan set itself, `posed_items`, lives in `backend/services/loop/posed.py::posed_items` (A149: the integrity guard reads it too) |
 | The served session close | `served_close`, `close_states_answer` |
 | The turn | `_LoopTurn` (one turn, JSON and streamed), the misconception confrontation line |
 | Item activation and the current concept | `_activate_next_item`, `_advance_cursor`, `_isomorph_after_unknown` (A27); the multi-concept pick and the familiarity order (A140, A141) |

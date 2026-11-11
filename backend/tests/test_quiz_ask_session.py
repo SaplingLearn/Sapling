@@ -26,6 +26,7 @@ from tests.agent_run_fakes import run_result
 from tests.test_learn_loop_routes import client
 from tests.split_patches import patch_tutor
 from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -169,11 +170,11 @@ def _opener(path: str, *, agent=None, stream=None, record=None):
     ]
     if agent is not None:
         patches += [
-            patch("routes.learn_loop.loop_tutor_agent", agent),
-            patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+            patch_loop("loop_tutor_agent", agent),
+            patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         ]
     if stream is not None:
-        patches.append(patch("routes.learn_loop.stream_structured_turn", stream))
+        patches.append(patch_loop("stream_structured_turn", stream))
     from contextlib import ExitStack
 
     with ExitStack() as stack:
@@ -183,7 +184,8 @@ def _opener(path: str, *, agent=None, stream=None, record=None):
 
 
 def test_the_loop_quiz_ask_session_starts_in_teach_on_the_quiz_concept(gate_on, seams):
-    from routes.learn_loop import PENDING_SESSIONS, quiz_ask_state
+    from services.tutor_sessions import PENDING_SESSIONS
+    from routes.learn_loop import quiz_ask_state
 
     order: list = []
     agent, seen = _routes._json_agent("Key idea: the base case. Which input stops it?")
@@ -217,7 +219,7 @@ def test_the_quiz_ask_opener_is_the_one_model_opener(gate_on, seams):
     greeting cue and the topic inside the student envelope (review round 3, C1)."""
     import re
 
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
 
     agent, seen = _routes._json_agent("Key idea: the base case. Which input stops it?")
     r, _ = _opener("/api/learn/loop/start-session", agent=agent)
@@ -239,7 +241,8 @@ def test_a_quiz_ask_template_opener_leaves_no_open_question(gate_on, seams):
     the quiz-ask session's own template: a quiz-ask session has no check-in, so
     it never gets the probe opener's "quick check-in" promise."""
     from learning.turn_shape import LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
-    from routes.learn_loop import PENDING_SESSIONS, quiz_ask_state
+    from services.tutor_sessions import PENDING_SESSIONS
+    from routes.learn_loop import quiz_ask_state
 
     seams.ai_budget.check.return_value = _routes.HARD
     agent = MagicMock()
@@ -254,7 +257,7 @@ def test_a_quiz_ask_template_opener_leaves_no_open_question(gate_on, seams):
 
 
 def test_the_loop_quiz_ask_stream_records_help_before_the_first_token(gate_on, seams):
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
 
     order: list = []
     fake = _routes._fake_stream("Key idea: the base case. Ready?")
@@ -288,13 +291,13 @@ def test_a_failed_help_write_is_a_503_and_no_model_runs(gate_on, seams):
 
 
 def test_a_plain_loop_session_still_probes_first(gate_on, seams):
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
 
     agent, _ = _routes._json_agent("Welcome.")
     topic_p, offering_p, graph_p = _routes._opener_patches()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         patch("services.quiz_ask.record_help") as record,
         topic_p,
         offering_p,
@@ -312,7 +315,8 @@ def test_the_materialised_quiz_ask_row_carries_its_teach_doc_so_chat_is_open():
     document with no phase (probe). The pending loop_state is inserted with the
     row, and a teach document passes the teaching check."""
     from routes.learn import PENDING_SESSIONS, _consume_pending
-    from routes.learn_loop import _require_teaching, quiz_ask_state
+    from services.loop.state import _require_teaching
+    from routes.learn_loop import quiz_ask_state
 
     PENDING_SESSIONS["s-q"] = {
         "user_id": "u1",
@@ -433,7 +437,7 @@ def test_the_loop_opener_never_falls_back_to_the_clients_course(gate_on, seams):
         topic_p,
         offering_p,
         graph_p,
-        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch_loop("loop_tutor_agent", agent),
         patch("services.quiz_ask.table", side_effect=_tables(node_course=None)),
         patch("services.quiz_ask.record_help") as record,
     ):

@@ -33,6 +33,8 @@ from learning.ladder import Rung
 from learning.turn_shape import LoopTurnOut, LoopTurnOutV2, turn_limits
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import _json_agent, _plan_state, client
+from tests.split_patches import patch_loop, setattr_loop
+import services.loop.flags
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -291,7 +293,7 @@ def test_every_default_served_text_keeps_its_recorded_judgements(monkeypatch):
 def test_the_flag_is_server_side_off_first_and_names_its_recording():
     from services.feature_flags import REGISTRY
 
-    from routes.learn_loop import TUTOR_V2_FLAG
+    from services.loop.flags import TUTOR_V2_FLAG
 
     fd = REGISTRY[TUTOR_V2_FLAG]
     assert TUTOR_V2_FLAG == "loop_tutor_v2"
@@ -301,23 +303,21 @@ def test_the_flag_is_server_side_off_first_and_names_its_recording():
 
 
 def test_the_flag_is_resolved_for_the_student_and_never_without_one(monkeypatch):
-    from routes import learn_loop
 
     asked = []
-    monkeypatch.setattr(learn_loop, "flag_on", lambda key, user: asked.append((key, user)) or True)
-    assert learn_loop._tutor_v2_on("u1") is True
-    assert learn_loop._tutor_v2_on(None) is False and learn_loop._tutor_v2_on("") is False
+    setattr_loop(monkeypatch, "flag_on", lambda key, user: asked.append((key, user)) or True)
+    assert services.loop.flags._tutor_v2_on("u1") is True
+    assert services.loop.flags._tutor_v2_on(None) is False and services.loop.flags._tutor_v2_on("") is False
     assert asked == [("loop_tutor_v2", "u1")]
 
 
 def test_a_turn_resolves_the_flag_once_and_off_sends_no_variant_args(gate_on, seams):
     seams.store["doc"] = _plan_state(open_question=True)
     agent, seen = _json_agent({**_TURN})
-    from unittest.mock import patch
 
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "x"})
     assert r.status_code == 200, r.text
@@ -327,8 +327,8 @@ def test_a_turn_resolves_the_flag_once_and_off_sends_no_variant_args(gate_on, se
     seams.v2.reset_mock(return_value=True)
     seams.v2.return_value = True
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "x"})
     assert r.status_code == 200, r.text
@@ -339,7 +339,7 @@ def test_a_turn_resolves_the_flag_once_and_off_sends_no_variant_args(gate_on, se
 
 
 def test_a_continuation_finishes_the_turn_in_its_variant():
-    from routes.learn_loop import continuation_plan
+    from services.loop.continuation import continuation_plan
 
     on = {"deps": object(), "model": "m", "model_settings": {"tool_choice": "none"}, **lt.variant_run_args(True)}
     plan = continuation_plan(assembled="A", run_kwargs=on, messages=[])

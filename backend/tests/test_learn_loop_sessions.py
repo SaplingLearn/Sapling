@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import routes.learn_loop as ll
 from main import app
 from services import ai_budget
+from tests.split_patches import patch_loop
 
 client = TestClient(app)
 
@@ -129,10 +130,8 @@ def gate_on():
     """The loop gate on, and the student ENROLLED only in the earlier term — so a
     route that looked sessions up by enrollment would find none of them."""
     with (
-        patch("routes.learn_loop.learning_loop_for_request", return_value=True) as g,
-        patch(
-            "routes.learn_loop.user_offering_ids_for_course", return_value=[OFF_ENROLLED]
-        ) as enrolled,
+        patch_loop("learning_loop_for_request", return_value=True) as g,
+        patch_loop("user_offering_ids_for_course", return_value=[OFF_ENROLLED]) as enrolled,
     ):
         yield g, enrolled
 
@@ -140,13 +139,13 @@ def gate_on():
 def _get(db):
     import services.academics as academics
 
-    with patch("routes.learn_loop.table", db), patch.object(academics, "table", db):
+    with patch_loop("table", db), patch.object(academics, "table", db):
         return client.get(URL)
 
 
 def test_404_when_gate_false_and_no_read():
     db = _Db([_row("s1")])
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=False):
+    with patch_loop("learning_loop_for_request", return_value=False):
         r = _get(db)
     assert r.status_code == 404 and r.json()["detail"] == "learning loop not enabled"
     assert db.calls == []
@@ -184,8 +183,8 @@ def test_another_students_sessions_are_refused_before_any_read():
 
     db = _Db([_row("s1")])
     with (
-        patch("routes.learn_loop.require_self", _refuse),
-        patch("routes.learn_loop.learning_loop_for_request") as gate,
+        patch_loop("require_self", _refuse),
+        patch_loop("learning_loop_for_request") as gate,
     ):
         r = _get(db)
     assert r.status_code == 403
@@ -269,7 +268,7 @@ def test_phase_is_the_status_routes_phase_for_the_document(gate_on, state, phase
 
 
 def test_course_id_is_required():
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=True):
+    with patch_loop("learning_loop_for_request", return_value=True):
         assert client.get(f"{LOOP}/sessions?user_id={UID}").status_code == 422
 
 
@@ -304,7 +303,7 @@ def test_never_rate_limited(gate_on):
 def _get_resume(db, sid):
     import services.academics as academics
 
-    with patch("routes.learn_loop.table", db), patch.object(academics, "table", db):
+    with patch_loop("table", db), patch.object(academics, "table", db):
         return client.get(f"{URL}&resume={sid}")
 
 

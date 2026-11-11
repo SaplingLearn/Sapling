@@ -24,6 +24,8 @@ package: ``services/chat_stream.py`` (``stream_agent_turn``),
 
 The names below resolve lazily, so importing this package (the quiz does, for
 ``_get_catalog_chunk``) does not pull in the agents the turn modules import.
+The learning loop (``services/loop/``) reaches the helpers it reuses through
+this map too (the ``domains`` import contract).
 """
 from __future__ import annotations
 
@@ -31,6 +33,16 @@ import importlib
 
 _PUBLIC = {
     "_get_catalog_chunk": "course",
+    # the learning loop's reuse of the tutor's helpers (services/loop/, #118)
+    "_CONTINUATION_NUDGE": "run",
+    "_CONTINUATION_RUN_KEYS": "run",
+    "_agent_turn_or_http_error": "turns",
+    "_consume_pending": "pending",
+    "_consume_pending_off_loop": "pending",
+    "_get_course_id_for_topic_sync": "course",
+    "_get_course_info": "course",
+    "_load_message_history_sync": "messages",
+    "_observe_persisted_turn": "run",
     "MODE_DISPLAY_NAMES": "sessions",
     "SESSION_LIST_MAX": "sessions",
     "action": "turns",

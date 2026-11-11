@@ -38,6 +38,7 @@ from tests.test_learn_loop_routes import ITEM, _opener_patches, _plan_state, _ss
 from tests.test_learning_outside_integrity import posed, records  # noqa: F401  (fixtures)
 from tests.test_learning_turn_template import CHAT, _chat
 from tests.test_notes_routes import fake_get_note
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -117,8 +118,8 @@ def _start(path: str, topic: str) -> tuple[str, dict]:
     agent.run = AsyncMock(side_effect=AssertionError("the opener ran the model"))
     topic_p, offering_p, graph_p = _opener_patches()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.stream_structured_turn", MagicMock(side_effect=AssertionError)),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("stream_structured_turn", MagicMock(side_effect=AssertionError)),
         topic_p,
         offering_p,
         graph_p,
@@ -137,7 +138,7 @@ def _start(path: str, topic: str) -> tuple[str, dict]:
 def test_a_crisis_start_gets_the_card_never_the_template_opener(
     path, crisis_flag, gate_on, seams
 ):
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
 
     pending = dict(PENDING_SESSIONS)
     reply, body = _start(path, CRISIS)
@@ -166,7 +167,7 @@ def test_a_crisis_chat_turn_runs_no_activation_trial_and_poses_no_check(
     seams.list_items.return_value = [ITEM]
     before = copy.deepcopy(seams.store["doc"])
     trial = MagicMock(side_effect=learn_loop._activate_next_item)
-    with patch("routes.learn_loop._activate_next_item", trial):
+    with patch_loop("_activate_next_item", trial):
         r = client.post("/api/learn/loop/chat", json={**CHAT, "message": CRISIS})
         assert r.status_code == 200, r.text
         assert r.json()["crisis_support"] and not r.json().get("check")
@@ -197,7 +198,7 @@ def test_with_the_breaker_open_a_crisis_turn_gets_the_card_and_retrieves_nothing
         rag_service._BREAKER.failed(RuntimeError("embeddings down"))
     assert rag_service.embedding_blocked()
     retrieval = MagicMock(side_effect=AssertionError("a retrieval ran on a crisis turn"))
-    with patch("routes.learn_loop.retrieve_chunks_detailed", retrieval):
+    with patch_loop("retrieve_chunks_detailed", retrieval):
         r = client.post("/api/learn/loop/chat", json={**CHAT, "message": CRISIS})
         assert r.status_code == 200, r.text
         assert r.json()["crisis_support"] and "materials_unavailable" not in r.json()

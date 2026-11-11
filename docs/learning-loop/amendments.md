@@ -88,7 +88,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A | Area | Change | Main code |
 |---|---|---|---|
 | A47 | evals | The eval-side rung judge is the authority on ceiling compliance | `backend/tests/evals/_rung_judge.py` |
-| A48 | evals | Tier routability is judged on the served text, not the raw model text | `backend/routes/learn_loop.py::served_model_text` |
+| A48 | evals | Tier routability is judged on the served text, not the raw model text | `backend/services/loop/served.py::served_model_text` |
 | A49 | evals | A tier routes only after three fresh recordings all pass | `backend/agents/loop_tutor.py::LOOP_ROUTABLE_TIERS` |
 | A79 | metrics | The evaluation ladder as built: nightly metrics, within-student arms, `write_metrics` | `backend/scripts/derive_zpd_metrics.py` |
 | A82 | metrics | `zpd.step` carries the session id, so cost is reported per session | `backend/learning/zpd_events.py::emit_zpd_step` |
@@ -141,7 +141,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A40 | bands | Tuning decisions: eval floors are min-of-3, "harder" needs four attempts, "no idea" is I-don't-know | `backend/learning/policy.py::band_control` |
 | A46 | tutor turn | The tutor's turn is structured: key idea, body, question (question last) | `backend/learning/turn_shape.py::render_turn` |
 | A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/routes/learn_loop.py::step_attempt` |
-| A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/routes/learn_loop.py::_served_fields` |
+| A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/services/loop/served.py::_served_fields` |
 | A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/routes/learn_loop.py::probe_next` |
 | A60 | close | The session close as built: one close per session, by claim | `backend/routes/learn_loop.py::close_session` |
 | A70 | review queue | Review answers are claims; the open review item is stable across reloads | `backend/learning/review.py::claim_item` |
@@ -234,7 +234,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A136 | schema | Every float the backend reads through PostgREST is exact | `backend/db/migrations/20261108162223_learning_exact_floats.sql` |
 | A142 | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) | `backend/db/migrations/20261108193927_learning_report_course_key.sql` |
 | A148 | main sync | The loop on main's hardening architecture: its tables' RLS posture, service scope, the upload job queue, the LLM budget and resilience | `backend/db/migrations/20261109032302_learning_loop_rls.sql` |
-| A149 | main port | The learning system on main's Phase 3/4 layout: the quiz, tutor, documents, flashcards and analytics changes in main's domain packages, the async turn entry, the import contracts kept with no new exception | `backend/services/loop_posed.py::posed_items` |
+| A149 | main port | The learning system on main's Phase 3/4 layout: the quiz, tutor, documents, flashcards and analytics changes in main's domain packages, the async turn entry, the import contracts kept with no new exception | `backend/services/loop/posed.py::posed_items` |
 
 ## In A-number order
 

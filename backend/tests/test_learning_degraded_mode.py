@@ -40,6 +40,7 @@ from tests.test_learn_loop_routes import (
     _sse_events,
     client,
 )
+from tests.split_patches import patch_loop
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -428,19 +429,19 @@ def test_the_sweeper_drives_the_queue_once_the_breaker_closes(sweeper, monkeypat
 
 def test_context_blocks_tell_a_failed_retrieval_from_an_empty_one():
     from learning import policy
-    from routes.learn_loop import _context_blocks
+    from services.loop.context import _context_blocks
     from services.rag_service import Retrieval
 
     teach = policy.ContextPolicy(3, False, 0, False, "none")
     kw = dict(user_id="u1", course_id="c1", user_message="hi", item=None, context=teach)
-    with patch("routes.learn_loop._get_course_info", return_value={"course_code": "CS111"}):
+    with patch_loop("_get_course_info", return_value={"course_code": "CS111"}):
         for got, want in (
             (Retrieval(chunks=[], failed=True), {"retrieval": "failed"}),
             (Retrieval(chunks=[]), {}),
             (Retrieval(chunks=[{"chunk_text": "r", "similarity": 0.9}]), {}),
         ):
             out: dict = {}
-            with patch("routes.learn_loop.retrieve_chunks_detailed", return_value=got):
+            with patch_loop("retrieve_chunks_detailed", return_value=got):
                 blocks = _context_blocks(**kw, out=out)
             assert out == want
             assert bool(blocks) is bool(got.chunks), "a failure never blocks the turn"
@@ -455,8 +456,8 @@ def _failing_retrieval(**kw):
 def _teach_json_turn(message="hi"):
     agent, _ = _json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         return client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": message}
@@ -489,7 +490,7 @@ def test_a_clean_or_empty_retrieval_serves_no_note(gate_on, seams):
 def test_the_streamed_turn_carries_the_note_on_done(gate_on, seams):
     seams.store["doc"] = {"phase": "teach", "concept": "node-1"}
     seams.blocks.side_effect = _failing_retrieval
-    with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
+    with patch_loop("stream_structured_turn", _fake_stream()):
         r = client.post(
             "/api/learn/loop/chat/stream",
             json={"session_id": "s1", "user_id": "u1", "message": "hi"},
@@ -535,7 +536,7 @@ def test_the_activation_after_clean_teaching_carries_no_tag(gate_on, seams):
 @pytest.mark.parametrize("tag,want", [("failed", "failed"), (None, None)])
 def test_zpd_step_carries_the_step_retrieval_tag(gate_on, seams, tag, want):
     seams.store["doc"] = _graded("not_yet", **({"retrieval": tag} if tag else {}))
-    with patch("routes.learn_loop.stream_structured_turn", _fake_stream("Not yet. Try again?")):
+    with patch_loop("stream_structured_turn", _fake_stream("Not yet. Try again?")):
         client.post(
             "/api/learn/loop/chat/stream",
             json={"session_id": "s1", "user_id": "u1", "message": "ok"},
@@ -569,7 +570,7 @@ def test_the_opener_carries_the_note_into_the_lazy_session(gate_on, seams):
     the lazy session. A121's probe-phase opener is a template: it runs no
     model and assembles no context, so it never retrieves and never serves
     the note."""
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
     from tests.test_quiz_ask_session import _opener
 
     seams.blocks.side_effect = _failing_retrieval
@@ -874,8 +875,8 @@ def test_drafting_pending_fails_to_not_preparing(monkeypatch):
 def test_probe_next_says_preparing_while_the_upload_is_drafted(gate_on, seams, pending, want):
     seams.store["doc"] = {}
     with (
-        patch("routes.learn_loop.course_has_items", return_value=False),
-        patch("routes.learn_loop.drafting_pending", return_value=pending) as read,
+        patch_loop("course_has_items", return_value=False),
+        patch_loop("drafting_pending", return_value=pending) as read,
     ):
         r = client.post("/api/learn/loop/probe/next", json={"session_id": "s1", "user_id": "u1"})
     body = r.json()
@@ -889,8 +890,8 @@ def test_check_next_says_preparing_only_when_the_course_has_no_item(gate_on, sea
                           "current": None, "steps": {}}
     for has_items, want in ((False, True), (True, None)):
         with (
-            patch("routes.learn_loop.course_has_items", return_value=has_items),
-            patch("routes.learn_loop.drafting_pending", return_value=True),
+            patch_loop("course_has_items", return_value=has_items),
+            patch_loop("drafting_pending", return_value=True),
         ):
             r = client.post(
                 "/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}
@@ -902,7 +903,7 @@ def test_check_next_says_preparing_only_when_the_course_has_no_item(gate_on, sea
 def test_an_unreadable_preparing_state_is_the_pre_a128_answer(gate_on, seams):
     seams.store["doc"] = {**PLAN_STATE, "plan": dict(PLAN_STATE["plan"]), "phase": "teach",
                           "current": None, "steps": {}}
-    with patch("routes.learn_loop.course_has_items", side_effect=RuntimeError("down")):
+    with patch_loop("course_has_items", side_effect=RuntimeError("down")):
         r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
     assert r.status_code == 200 and "preparing" not in r.json()
 

@@ -255,7 +255,7 @@ def test_random_texts_cut_clean_on_the_served_stream_in_both_modes():
     removed stripper's "one pass leaves nothing" property (spec §13 A142):
     the cut is what a student can see stream before the final text."""
     from learning.leak import leak_spans
-    from routes.learn_loop import _cut_before_leak
+    from services.loop.guard import _cut_before_leak
 
     pieces = [
         "option", "opt.", "choice", "answer", "answer is", "correct:", "it's", "It is",

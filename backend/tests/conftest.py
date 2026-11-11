@@ -922,9 +922,9 @@ def _bypass_session_auth(request, monkeypatch):
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        # services.quiz.* / services.tutor.*: the quiz and learn splits (#118)
-        # moved guarded handler bodies there.
-        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.")):
+        # services.quiz.* / services.tutor.* / services.loop.*: the quiz, learn
+        # and learn_loop splits (#118) moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.", "services.loop.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):

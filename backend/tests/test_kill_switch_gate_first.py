@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import config
 from routes import learn_loop
 from services import ai_budget
+import services.loop.constants
 
 RATE_LIMITED_POSTS = sorted(
     r.path
@@ -56,4 +57,4 @@ def test_gate_on_is_not_404d_by_the_kill_switch_dependency(monkeypatch):
         "/api/learn/loop/chat",
         json={"user_id": "u-1", "session_id": "s-1", "message": "hi"},
     )
-    assert res.json().get("detail") != learn_loop._NOT_ENABLED, res.text
+    assert res.json().get("detail") != services.loop.constants._NOT_ENABLED, res.text

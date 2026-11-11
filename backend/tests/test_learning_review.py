@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from learning import params
+from tests.split_patches import patch_loop, setattr_loop
+import learning.policy
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
 USER = "user_andres"
@@ -1781,19 +1783,16 @@ def client(monkeypatch):
     # below the hard level. test_rate_limit_applies_to_check_answers_only and the
     # summary test cover the two seams themselves.
     monkeypatch.setattr("services.ai_budget.enforce_rate_limit_for", lambda user_id: None)
-    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: False)
-    monkeypatch.setattr(
-        "routes.learn_loop.user_offering_ids_for_course",
-        lambda uid, cid: ["off-1"] if cid == COURSE else [],
-    )
+    setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda uid, cid: ["off-1"] if cid == COURSE else [])
     return TestClient(app)
 
 
 @contextmanager
 def _loop(on=True):
     with (
-        patch("routes.learn_loop.require_self", return_value=None),
-        patch("routes.learn_loop.learning_loop_for_request", return_value=on),
+        patch_loop("require_self", return_value=None),
+        patch_loop("learning_loop_for_request", return_value=on),
     ):
         yield
 
@@ -1829,10 +1828,7 @@ def _session(monkeypatch, loop_state=None):
     if loop_state is not None:
         store.state.extra = copy.deepcopy(loop_state)
     # the student is enrolled in COURSE (the routes 404 any other course)
-    monkeypatch.setattr(
-        "routes.learn_loop.user_offering_ids_for_course",
-        lambda uid, cid: ["off-1"] if cid == COURSE else [],
-    )
+    setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda uid, cid: ["off-1"] if cid == COURSE else [])
     monkeypatch.setattr(
         review, "_read_session", lambda sid, user_id: [_stored_row(store, sid, user_id)]
     )
@@ -1894,9 +1890,7 @@ def test_review_next_serves_first_item_with_budget_and_events(client, monkeypatc
 
     monkeypatch.setattr(review, "due_queue_with_stats", fake_queue)
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
-    monkeypatch.setattr(
-        "routes.learn_loop.get_check_item", lambda item_id: _check_item("n-due", "qh-1")
-    )
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item("n-due", "qh-1"))
     events = []
     monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append((et, kw["payload"])))
     with _loop():
@@ -1935,7 +1929,7 @@ def test_review_next_passes_the_tutor_hard_level(client, monkeypatch):
         lambda u, c, now, **kw: seen_kw.update(kw) or ([], {"unservable": 0, "paused": 1}),
     )
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
-    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: True)  # A20
+    setattr_loop(monkeypatch, "_pause_novice", lambda user_id: True)  # A20
     with _loop():
         r = client.get(f"{REVIEW}/next?user_id={USER}")
     assert r.status_code == 200 and seen_kw["pause_novice"]() is True
@@ -1965,7 +1959,7 @@ def test_review_next_skips_an_item_that_no_longer_loads(client, monkeypatch, sto
     monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: ([gone, card], {}))
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
-    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: None)
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: None)
     monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
     monkeypatch.setattr(review, "decrypt_if_present", lambda v: v)
     with _loop():
@@ -2040,11 +2034,9 @@ def _opened(store, key, item_id):
 def _check_answer_seams(monkeypatch, item, *, node_id="n-due", deps="DEPS"):
     from learning import review
 
-    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: item)
-    monkeypatch.setattr("routes.learn_loop._node_for_item", lambda user_id, it: node_id)
-    monkeypatch.setattr(
-        "routes.learn_loop._review_deps", lambda *a, **k: deps() if callable(deps) else deps
-    )
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: item)
+    setattr_loop(monkeypatch, "_node_for_item", lambda user_id, it: node_id)
+    setattr_loop(monkeypatch, "_review_deps", lambda *a, **k: deps() if callable(deps) else deps)
     factory, handles = _tables({"learner_state": []})
     monkeypatch.setattr(review, "table", factory)
     return handles
@@ -2255,7 +2247,7 @@ def test_review_answer_concurrent_double_submit_writes_once(monkeypatch, store):
             return_exceptions=True,
         )
 
-    with patch("routes.learn_loop.require_self", return_value=None):
+    with patch_loop("require_self", return_value=None):
         results = asyncio.run(both())
     ok = [r for r in results if isinstance(r, dict)]
     refused = [r for r in results if isinstance(r, HTTPException)]
@@ -2363,12 +2355,7 @@ def test_rate_limit_applies_to_check_answers_only(client, monkeypatch, store):
     for r in learn_loop.router.routes:
         if r.path.startswith("/review/"):
             assert ai_budget.enforce_rate_limit not in {d.call for d in r.dependant.dependencies}
-    src = (pathlib.Path(__file__).resolve().parents[1] / "routes" / "learn_loop.py").read_text()
-    handler = next(
-        n
-        for n in ast.walk(ast.parse(src))
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "review_answer"
-    )
+    handler = _loop_handler_defs()["review_answer"]
     assert "enforce_rate_limit_for" in ast.unparse(handler)
 
     def limited(user_id):
@@ -2402,18 +2389,20 @@ def test_rate_limit_applies_to_check_answers_only(client, monkeypatch, store):
 
 def test_grade_review_called_only_from_review_answer():
     """Invariant 26 (extended): a review's one evidence write happens inside
-    review.grade_review, so every reference to it in routes/learn_loop.py sits in
-    the /review/answer handler — an explicit submission, never a chat turn."""
+    review.grade_review, so every reference to it in the loop's code (the route
+    and its bodies in services/loop/, #118) sits in the /review/answer handler —
+    an explicit submission, never a chat turn."""
     import ast
 
-    src = pathlib.Path(__file__).resolve().parents[1] / "routes" / "learn_loop.py"
-    tree = ast.parse(src.read_text())
+    root = pathlib.Path(__file__).resolve().parents[1]
     owners = set()
-    for fn in ast.walk(tree):
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            for node in ast.walk(fn):
-                if isinstance(node, ast.Attribute) and node.attr == "grade_review":
-                    owners.add(getattr(fn, "name", "<lambda>"))
+    for src in (root / "routes" / "learn_loop.py", *sorted((root / "services" / "loop").glob("*.py"))):
+        tree = ast.parse(src.read_text())
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                for node in ast.walk(fn):
+                    if isinstance(node, ast.Attribute) and node.attr == "grade_review":
+                        owners.add(getattr(fn, "name", "<lambda>"))
     assert owners == {"review_answer"}, owners
 
 
@@ -2434,7 +2423,7 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
 
     monkeypatch.setattr(review, "due_queue_with_stats", fake_queue)
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_LARGE_SET)
-    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: True)  # A20
+    setattr_loop(monkeypatch, "_pause_novice", lambda user_id: True)  # A20
     with _loop(), patch.object(review, "load_or_create_review_session", side_effect=AssertionError):
         r = client.get(f"{REVIEW}/summary?user_id={USER}&course_id={COURSE}")
     assert r.status_code == 200, r.text
@@ -2489,9 +2478,7 @@ def test_refreshing_review_next_reserves_the_same_item_and_writes_once(client, m
     monkeypatch.setattr(review, "table", table)
     pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2", "q3")]
     monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
-    monkeypatch.setattr(
-        "routes.learn_loop.get_check_item", lambda item_id: next(i for i in pool if i.id == item_id)
-    )
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: next(i for i in pool if i.id == item_id))
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     events = []
     monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
@@ -2541,7 +2528,7 @@ def _answer_through_the_real_loader(client, monkeypatch, store, *, floor_reads=N
         return ReviewOutcome(correct=True, rating=3, sr={})
 
     monkeypatch.setattr(review, "grade_review", fake_grade)
-    monkeypatch.setattr("routes.learn_loop._ledger", lambda *a, **kw: None)
+    setattr_loop(monkeypatch, "_ledger", lambda *a, **kw: None)
     with _loop():
         r = client.post(
             f"{REVIEW}/answer",
@@ -2569,7 +2556,7 @@ def test_review_answer_reads_the_real_served_at(client, monkeypatch, store):
         posed.append(posed_at)
         return 0
 
-    monkeypatch.setattr("routes.learn_loop._reveal_floor", floor)
+    setattr_loop(monkeypatch, "_reveal_floor", floor)
     _answer_through_the_real_loader(client, monkeypatch, store)
     assert posed == [_SERVED_AT, _SERVED_AT]
 
@@ -2592,13 +2579,10 @@ def test_the_unscanned_marker_floors_only_from_the_serve_on(
     pose (the ledger's posed row was lost: the DB-down rule), no recorded help.
     `unscanned_since` keeps its contract (a marker at or after the anchor; None =
     any), pinned on its own in test_learning_teach_reveal."""
-    monkeypatch.setattr("routes.learn_loop.max_help", lambda u, h: 0)
-    monkeypatch.setattr("routes.learn_loop.revealed_hashes", lambda u: set())
-    monkeypatch.setattr("routes.learn_loop.earliest_open_pose", lambda u, h: None)
-    monkeypatch.setattr(
-        "routes.learn_loop.unscanned_since",
-        lambda u, anchor: anchor is None or marker_at >= anchor,
-    )
+    setattr_loop(monkeypatch, "max_help", lambda u, h: 0)
+    setattr_loop(monkeypatch, "revealed_hashes", lambda u: set())
+    setattr_loop(monkeypatch, "earliest_open_pose", lambda u, h: None)
+    setattr_loop(monkeypatch, "unscanned_since", lambda u, anchor: anchor is None or marker_at >= anchor)
     seen = _answer_through_the_real_loader(client, monkeypatch, store)
     assert seen["max_rung"] == expected and seen["refloored"] == expected
     assert seen["evidence"]["max_rung"] == expected
@@ -2609,10 +2593,10 @@ def test_help_recorded_before_the_serve_still_floors_the_grade(client, monkeypat
     (student, item) — a hint given in a tutor session before today's serve still
     floors the review grade. Only the unscanned-marker rule is anchored on the
     serve time."""
-    monkeypatch.setattr("routes.learn_loop.max_help", lambda u, h: 2)
-    monkeypatch.setattr("routes.learn_loop.revealed_hashes", lambda u: set())
-    monkeypatch.setattr("routes.learn_loop.earliest_open_pose", lambda u, h: None)
-    monkeypatch.setattr("routes.learn_loop.unscanned_since", lambda u, anchor: False)
+    setattr_loop(monkeypatch, "max_help", lambda u, h: 2)
+    setattr_loop(monkeypatch, "revealed_hashes", lambda u: set())
+    setattr_loop(monkeypatch, "earliest_open_pose", lambda u, h: None)
+    setattr_loop(monkeypatch, "unscanned_since", lambda u, anchor: False)
     seen = _answer_through_the_real_loader(client, monkeypatch, store)
     assert seen["max_rung"] == 2 and seen["refloored"] == 2
 
@@ -2638,7 +2622,7 @@ def test_review_served_follows_a_successful_serve_only(client, monkeypatch, stor
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     events = []
     monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
-    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: None)
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: None)
     with _loop():
         r = client.get(f"{REVIEW}/next?user_id={USER}")
     assert r.json()["item"] is None and events == []
@@ -2708,8 +2692,8 @@ def test_review_active_still_refuses_another_student(client):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     with (
-        patch("routes.learn_loop.require_self", _refuse),
-        patch("routes.learn_loop.learning_loop_for_request") as gate,
+        patch_loop("require_self", _refuse),
+        patch_loop("learning_loop_for_request") as gate,
     ):
         r = client.get(f"{REVIEW}/active?user_id={USER}")
     assert r.status_code == 403 and gate.call_count == 0
@@ -2959,19 +2943,19 @@ def review_report(monkeypatch):
     app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
     item = _check_item("n-due", "qh-1")
     ns = SimpleNamespace(item=item, calls=[], events=MagicMock())
-    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: ns.item if item_id == item.id else None)
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: ns.item if item_id == item.id else None)
     # today's review session served qh-1, and the route reads it through the
     # REAL loader (peek_review_session → _session_view) over the CAS store's
     # document — "open" included (spec §13 A115), never a hand-built view
     _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "served_hashes": ["qh-1"]}})
-    monkeypatch.setattr("routes.learn_loop.flag_on", lambda key, uid: True)
-    monkeypatch.setattr("routes.learn_loop.events_service", ns.events)
+    setattr_loop(monkeypatch, "flag_on", lambda key, uid: True)
+    setattr_loop(monkeypatch, "events_service", ns.events)
 
     def record(user_id, course_id, question_hash, *, reason, surface):
         ns.calls.append((user_id, course_id, question_hash, reason, surface))
         return item_reports.ReportOutcome(first=True, reporters=1, quarantine=False)
 
-    monkeypatch.setattr("routes.learn_loop.item_reports.record_report", record)
+    monkeypatch.setattr('learning.item_reports.record_report', record)
     yield ns
     app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
 
@@ -3041,9 +3025,7 @@ def test_review_next_moves_past_a_reported_open_item_through_the_real_loader(
     monkeypatch.setattr(review, "table", table)
     pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2")]
     monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
-    monkeypatch.setattr(
-        "routes.learn_loop.get_check_item", lambda item_id: next(i for i in pool if i.id == item_id)
-    )
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: next(i for i in pool if i.id == item_id))
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     monkeypatch.setattr(review, "log_event", lambda et, **kw: None)
     reported: set[str] = set()
@@ -3070,14 +3052,13 @@ def test_band_control_ceilings_never_reach_review(client, monkeypatch, store):
     it grades at the help floor (no hints before the attempt)."""
     from learning import review
     from learning.review import ReviewOutcome
-    import routes.learn_loop as loop_routes
 
     def never(*a, **k):
         raise AssertionError("review read a ceiling")
 
-    monkeypatch.setattr(loop_routes, "_band_ceiling_delta", never)
-    monkeypatch.setattr(loop_routes, "_ceiling_for", never)
-    monkeypatch.setattr(loop_routes.policy, "ceiling_with_reason", never)
+    setattr_loop(monkeypatch, "_band_ceiling_delta", never)
+    setattr_loop(monkeypatch, "_ceiling_for", never)
+    monkeypatch.setattr(learning.policy, "ceiling_with_reason", never)
     _session(
         monkeypatch,
         {"sr": {}, "review": {"spent_s": 45, "retention": 0.93}, "band_ceiling": {"n-due": 1}},
@@ -3293,3 +3274,19 @@ def test_a127_a_review_answer_closes_nothing_unless_it_qualifies(monkeypatch, st
     _a127_grade(store, **kw)
     assert len(applied) == 1  # graded and written either way
     assert fake.rows[0]["resolved_at"] is None and fake.updates == [] and events == []
+
+
+def _loop_handler_defs() -> dict:
+    """Every def of the loop's code by name, a handler's BODY over its route
+    wrapper (#118: the bodies live in services/loop/, the route wraps them)."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    defs = {}
+    paths = [*sorted((root / "services" / "loop").glob("*.py")), root / "routes" / "learn_loop.py"]
+    for path in paths:
+        for n in ast.walk(ast.parse(path.read_text())):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defs.setdefault(n.name, n)
+    return defs

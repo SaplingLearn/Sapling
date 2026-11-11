@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import dataclasses
 import hashlib
 import hmac
 import logging
@@ -53,49 +52,48 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from typing import NamedTuple, get_args
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic_ai import capture_run_messages
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
 from pydantic_ai.usage import RunUsage
 from sse_starlette.sse import EventSourceResponse
-
 import config
-from agents import CONTINUATION_LIMITS, LOOP_LIMITS
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.session_close import run_session_close, shape_close
 from agents.loop_tutor import (
-    ITEM_WITHHELD,
     LOOP_TIER_SLOTS,
-    assemble_turn_message,
     item_visible,
-    loop_tutor_agent,
     new_nonce,
     phase_prefix,
     plan_focus_block,
     prequestion_answer_block,
     prequestion_item_block,
     routable_tier,
-    student_envelope,
-    tier_run_kwargs,
-    variant_run_args,
 )
-from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
+from agents.tools.check import (
+    CHANNEL_FOR_FORMAT,
+    CheckAnswer,
+    GradeOutcome,
+    grade_answer,
+    grader_answer_text,
+)
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, pg_quote_value, table
-from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
+from learning import (
+    answer_guard,
+    arms,
+    gates,
+    ladder,
+    planner,
+    policy,
+    review,
+    turn_activity,
+    zpd_events,
+)
 from learning import grade_checkpoint, item_reports
 from learning import prequestion as prequestion_rules
 from learning import self_explain
@@ -119,10 +117,13 @@ from learning.checks import (
     serve_quality,
 )
 from learning.checks import unsourced as item_unsourced
-from learning.multi_concept import STEP_KEY as MULTI_CONCEPT_STEP_KEY  # spec §13 A141
-from learning.multi_concept import evidence_key, is_multi_concept
+from learning.multi_concept import STEP_KEY as MULTI_CONCEPT_STEP_KEY
+from learning.multi_concept import is_multi_concept
 from learning.evidence import (
-    PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
+    PREREQ_RELATIONSHIP_TYPE,
+    PlanningObservation,
+    PlanningPersistenceUnavailable,
+    flush_pending,
 )
 from learning.evidence_transaction import (
     EvidenceItemRetired,
@@ -132,17 +133,22 @@ from learning.evidence_transaction import (
 from learning.void_store import voided_by_node, voided_event_ids
 from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
-from learning.gate import learning_loop_active, learning_loop_for_request
+from learning.gate import learning_loop_active
 from learning.goals import (
-    encode_goal, public_goal, goal_version, attempted_nodes, planning_observations,
-    scope_signature, progress as goal_progress,
+    encode_goal,
+    public_goal,
+    goal_version,
+    attempted_nodes,
+    planning_observations,
+    scope_signature,
+    progress as goal_progress,
 )
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.served_scan import ScanSet
 from learning.learning_gain import answer_latency_s, clamp_visibility, window_at
 from learning.posttest_store import posttest_anchors
-from learning.learner_brief import course_concept_names, store_brief
+from learning.learner_brief import store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.misconceptions import (
     attempts_for_node,
@@ -159,47 +165,30 @@ from learning.misconceptions import (
 )
 from learning.loop_state_store import (
     LoopStateConflict,
-    LoopSessionClosed,
     evidence_spans,
-    load_loop_state,
     opportunity_window,
     recent_evidence,
     reported_hashes,
     revealed_hashes,
     seen_hashes,
-    update_loop_state,
 )
-from learning.reveal_store import record_reveals, record_unscanned, unscanned_since
-# spec §13 A149: the A93/A101 scan set lives in services/ (the integrity guard
-# outside the loop reads it too, and a service must not import a route).
-from services.loop_posed import _ts, posed_items
-from learning.help_ledger import (
-    earliest_open_pose,
-    mark_graded,
-    max_help,
-    record_help,
-    record_posed,
-)
+from learning.reveal_store import record_reveals, record_unscanned
+from services.loop.posed import _ts, posed_items
+from learning.help_ledger import mark_graded, record_help, record_posed
 from learning.params import (
-    BAND_CONTROL_CEILING_STEP,
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
     SURFACE_FAMILIARITY_UNKNOWN,
-    CHECK_ITEM_DIFFICULTIES,  # A122's band difficulty targets (A126 dropped its own use)
+    CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
-    CLOSE_PHASES,
     CLOSE_RUN_TIMEOUT_S,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     HELP_NOVELTY_DIGESTS_MAX,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
-    LEARNER_BRIEF_CANDIDATE_NODES,
-    LEARNER_BRIEF_RETRY_AFTER_S,
-    LEARNER_BRIEF_TOP_STATES,
-    LOOP_HISTORY_TRIM_BLOCK,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
@@ -217,7 +206,7 @@ from learning.params import (
     RUNG_NO_CREDIT_MIN,
     ZPD_RATING_EVERY_N_CHECKS,
 )
-from learning.policy import LearnerView, LoopState, StepState
+from learning.policy import StepState
 from learning.session_close import (
     CLOSE_FALLBACK_DETAILS,
     CloseRecord,
@@ -231,11 +220,7 @@ from learning.turn_shape import (
     LOOP_PLAN_OPENER,
     LOOP_PROBE_OPENER,
     LOOP_QUIZ_ASK_OPENER,
-    TurnTemplate,
     clamp_model_ceiling,
-    labels_new_content,
-    render_partial,
-    render_turn,
     turn_limits,
 )
 from models import (
@@ -261,21 +246,10 @@ from models import (
     SelfExplainBody,
     StartSessionBody,
 )
-# The legacy tutor's helpers, reused verbatim — never copied — from their
-# home since the #118 split (services/tutor/). The loop's turn assembly and
-# opener are sync code, so they take the sync twins of the three helpers
-# #117 made async, under the names this module always used (spec §13 A149).
-from services.tutor.course import (
-    _get_catalog_chunk,
-    _get_course_id_for_topic_sync as _get_course_id_for_topic,
-    _get_course_info,
-)
-from services.tutor.messages import (
-    _load_message_history_sync as _load_message_history,
-    save_message_sync as save_message,
-)
+from services.tutor.course import _get_course_id_for_topic_sync as _get_course_id_for_topic
+from services.tutor.messages import save_message_sync as save_message
 from services.tutor.pending import _consume_pending, _consume_pending_off_loop
-from services.tutor.run import _CONTINUATION_NUDGE, _CONTINUATION_RUN_KEYS, _observe_persisted_turn
+from services.tutor.run import _observe_persisted_turn
 from services.tutor.turns import _agent_turn_or_http_error
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, get_pending, stash_pending
 from services import ai_budget, crisis_support, events_service
@@ -288,7 +262,7 @@ from services.academics import (
 )
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
-from services.auth_guard import get_session_user_id, guard_off_loop, require_self
+from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
@@ -299,21 +273,132 @@ from services.check_item_service import (
     list_items,
 )
 from services.feature_flags import flag_on
-from services import varied_practice  # spec §13 A140, A141
-from services.graph_context import build_graph_context_block
-from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
+from services import varied_practice
+from services.graph_service import _normalize_concept, get_graph
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
-from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks_detailed
+from services.rag_service import chunks_for_ids
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 from services.request_limits import check_rate_limit
+from services.loop.constants import (
+    _ALREADY_GRADED,
+    _ANSWER_REFUSED_REPLY,
+    _DETERMINISTIC_RUNGS,
+    _GRADE_UNAVAILABLE_REPLY,
+    _IDK_RENDERED,
+    _LOOP_OPENER_TEMPLATE,
+    _NOT_ENABLED,
+    _SUBMISSION_KINDS,
+    _WITHDRAWN_FEEDBACK,
+    _WITHDRAWN_ITEM,
+)
+from services.loop.flags import (
+    _ACTION_PROMPTS,
+    _ANSWER_CLAIM,
+    _GUESS_IN_FLIGHT,
+    _help_gate_strict_on,
+    _NO_OPEN_PREQUESTION,
+    _NO_OPEN_SELF_EXPLAIN,
+    OPEN_QUESTION_KEY,
+    _PREQUESTION_CUE,
+    _prequestion_on,
+    PREQUESTION_SOURCE,
+    _self_explain_on,
+    _tutor_v2_on,
+)
+from services.loop.state import (
+    _arm_for,
+    _budget_data,
+    _budget_event,
+    _BudgetPaused,
+    _CLOSE_IN_PROGRESS,
+    _close_phase,
+    _CLOSE_STORE_FAILED,
+    _closing,
+    _gate,
+    _gate_value,
+    _GRADING_IN_FLIGHT,
+    _grading_in_flight,
+    _item_like,
+    _live,
+    _load_loop_state,
+    _loop_phase,
+    _ms,
+    _now_s,
+    _pending_grade,
+    _phase_for,
+    _refuse_while_closing,
+    _request_id,
+    _require_no_pending_feedback,
+    _require_open,
+    _require_teaching,
+    _SESSION_CLOSED,
+    _session_scope,
+    _StateConflict,
+    _step_state,
+    _steps,
+    _teaching_open,
+    _turn_phase,
+    _update_loop_state,
+)
+from services.loop.history import _brief_message, _load_loop_history
+from services.loop.learner import (
+    _BAND_CEILING,
+    _band_ceiling_delta,
+    _band_for,
+    _band_of,
+    _ceiling_for,
+    _concept_key_for_node,
+    _failed_on_concept,
+    _genuine,
+    _learner_state,
+    _learner_view,
+    _node_for_item,
+    _prereq_proficient,
+    _prerequisites,
+    _seconds_since,
+)
+from services.loop.context import (
+    _materials_notice,
+    _note_retrieval_failure,
+    _prepare_loop_run,
+    _RETRIEVAL_FAILED_VALUE,
+    _RETRIEVAL_KEY,
+    _take_retrieval_mark,
+)
+from services.loop.continuation import _loop_continuation_text, _requests_of, _template_feedback
+from services.loop.served import (
+    _item_check_kwargs,
+    loop_leak_rung,
+    _POSES,
+    served_lead,
+    served_model_text,
+    served_partial,
+    served_render,
+)
+from services.loop.reveals import (
+    _ledger,
+    _mark_revealed,
+    _persist_reveals,
+    _refloor,
+    _reveal_floor,
+    _tag_planning_evidence,
+)
+from services.loop.guard import (
+    confront_line_for,
+    CONFRONT_TIERS,
+    _confrontation_text,
+    _cut_before_leak,
+    _guard_history,
+    _LeakGuard,
+    option_text,
+    _visible_text,
+    with_confrontation,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-_NOT_ENABLED = "learning loop not enabled"
-_BUDGET_DETAIL = "ai budget reached"  # spec §3.5 hard-level body (A20)
 
 
 def _kill_switch_first(request: Request) -> None:
@@ -341,1283 +426,6 @@ def _screened(surface: str, *fields: str, respond) -> list:
         crisis_support.screened(surface, *fields, respond=respond),
         Depends(enforce_rate_limit),
     ]
-#: The legacy catalog header (routes/learn.py::_prepare_chat_run), verbatim.
-_CATALOG_HEADER = "COURSE CATALOG INFO (official BU course data):\n\n"
-_SOURCE_HEADER = "CHECK ITEM SOURCE PASSAGES (the course text this item was written from):\n"
-_SOURCE_LABEL = "student-document chunks"
-
-_FEEDBACK_VERDICT_LINES = {
-    "correct": "Correct.",
-    "not_yet": "Not yet.",
-    "idk": "No problem — here is the answer.",
-}
-_FEEDBACK_ANSWER_LEAD = "The answer: "
-_FEEDBACK_NEXT_STEP = "When you're ready, try the next check."
-
-_GRADE_UNAVAILABLE_REPLY = (
-    "I couldn't check that answer just now, so nothing was recorded. "
-    "Please submit it again in a moment."
-)
-#: A33: the guard refused the answer (it addressed the grader). Not an outage,
-#: never a skip: the student is asked again; the CHECK_REFUSALS_AS_IDK-th
-#: refusal of the same item is recorded as idk instead.
-_ANSWER_REFUSED_REPLY = (
-    "I can only check an answer written in your own words, so nothing was recorded. "
-    "Please answer the question itself and submit again."
-)
-_IDK_RENDERED = "I don't know"
-_SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable", "refused")
-#: A38 06(q): the 409 detail when the loop-state compare-and-set is exhausted.
-_STATE_CONFLICT = "loop state changed, retry"
-#: C2 (review round 3): the 409 detail for a submission on an item that is
-#: graded, or being graded under another request's claim.
-_ALREADY_GRADED = "already graded"
-_FEEDBACK_PENDING = "feedback pending; retry feedback before another check"
-_WITHDRAWN_FEEDBACK = (
-    "This check has been withdrawn. {result} The question and solution are no longer "
-    "available. You can continue with another check or end this session."
-)
-_DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
-#: The session opener served without a model (A27, A121): ALWAYS while the new
-#: session is in the probe phase — a neutral welcome and the check-in's intro,
-#: no teaching and no question (the check-in is a pretest; teaching first skews
-#: it, and a question would compete with its first item) — and at the hard
-#: budget level, so a capped student can still start a session and reach the
-#: probe (§3.5).
-_LOOP_OPENER_TEMPLATE = LOOP_PROBE_OPENER
-#: Spec §13 A121: loop_state key — True when the last SERVED turn ended with the
-#: tutor's own open question (a model teach or feedback turn that rendered its
-#: question; never a hint, a pose, a template or a turn that posed a check).
-#: With the v2 variant on, the next teach-phase chat message is
-#: then the student's reply to it, and that turn opens with the verdict
-#: (`_LoopTurn._answer_check_due`). Kept with the flag off too, so a student
-#: turned on mid-session is judged from the right turn. A flag only: the
-#: question's text lives in the (encrypted) message history, never here.
-OPEN_QUESTION_KEY = "open_question"
-#: Spec §13 A121: the v2 tutor variant's flag (services/feature_flags.py) —
-#: every tutor-prompt change that needs a live eval re-record sits behind it.
-TUTOR_V2_FLAG = "loop_tutor_v2"
-
-
-def _tutor_v2_on(user_id: str | None) -> bool:
-    """The `loop_tutor_v2` flag for this student (spec §13 A121),
-    resolved ONCE per turn by `_LoopTurn._derive` and carried on the turn: it
-    picks the prompt and schema variant (`variant_run_args`), the answer check,
-    the verdict lines, the label rules and the plan focus, so one turn never
-    sees two answers. No student means off; the resolver fails closed
-    (feature_flags)."""
-    return bool(user_id) and flag_on(TUTOR_V2_FLAG, user_id)
-
-
-#: Spec §13 A134: the strict genuine-attempt rule's flag (services/feature_flags.py).
-HELP_GATE_STRICT_FLAG = "help_gate_strict"
-
-
-def _help_gate_strict_on(user_id: str | None) -> bool:
-    """The `help_gate_strict` flag for this student (spec §13 A134), read once
-    per request where it matters: POST /step/attempt counts an attempt by the
-    strict rule when on, and POST /hint words its time-alone denial by it. No
-    student means off; the resolver fails closed (feature_flags)."""
-    return bool(user_id) and flag_on(HELP_GATE_STRICT_FLAG, user_id)
-
-
-#: Spec §13 A138: the segment prequestion's flag (services/feature_flags.py).
-PREQUESTION_FLAG = "segment_prequestion"
-#: Spec §13 A139: the self-explanation prompts' flag.
-SELF_EXPLAIN_FLAG = "self_explanation_prompts"
-
-
-def _prequestion_on(user_id: str | None) -> bool:
-    """The `segment_prequestion` flag for this student (spec §13 A138), read
-    once per request where a segment can start or a prequestion be answered.
-    Off: nothing is posed, explained or written. Two reads stay (review item 9):
-    A76's release rule and `revealed_hashes` read `learning_prequestions`
-    whatever the flag says, because a prequestion answered while it was on
-    stays a release and a reveal after it goes off. No student means off; the
-    resolver fails closed (feature_flags)."""
-    return bool(user_id) and flag_on(PREQUESTION_FLAG, user_id)
-
-
-def _self_explain_on(user_id: str | None) -> bool:
-    """The `self_explanation_prompts` flag for this student (spec §13 A139),
-    read once per turn. Off: no juncture is ever a prompt and no
-    acknowledgement line is sent."""
-    return bool(user_id) and flag_on(SELF_EXPLAIN_FLAG, user_id)
-
-
-#: Spec §13 A138: the server cue of the turn that explains an answered
-#: prequestion (trusted route text, like an [ACTION: …] turn's).
-_PREQUESTION_CUE = "[ACTION: The student has just answered the prequestion; explain its answer now.]"
-_NO_OPEN_PREQUESTION = "no open prequestion"
-_NO_OPEN_SELF_EXPLAIN = "no open self-explanation prompt"
-_GUESS_IN_FLIGHT = "your guess is being saved; try again in a moment"
-#: Spec §13 A138: the help ledger's / learning_reveals' `source` for a
-#: prequestion's pose and reveal (learning.help_ledger.SOURCES)
-PREQUESTION_SOURCE = "prequestion"
-#: Spec §13 A138 (review fix): the answer claim's keys on the card's record
-_ANSWER_CLAIM = "answer_claim"
-
-#: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
-#: (:1406–1411), where they are a local dict.
-_ACTION_PROMPTS = {
-    "hint": "The student asked for a hint. Give a small scaffold or clue without giving away the answer.",
-    "confused": "The student said they are confused. Identify the likely point of confusion and re-explain with a different analogy.",
-    "skip": "The student wants to skip this concept. Acknowledge and transition to the next recommended concept.",
-}
-
-
-def _gate(user_id: str, request: Request) -> bool:
-    """require_self, then the learning-loop gate, read ONCE per request (A38 00):
-    a delegating legacy route has already read it and carries the result on
-    `request.state.learning_loop` (routes/learn.py), so a delegated request
-    costs one `user_settings` read, not two. Returns the gate for
-    `SaplingDeps.learning_loop`; False is the spec §7 404."""
-    loop_on = _gate_value(user_id, request)
-    if not loop_on:
-        raise HTTPException(status_code=404, detail=_NOT_ENABLED)
-    return loop_on
-
-
-def _gate_value(user_id: str, request: Request) -> bool:
-    """require_self, then the gate's value (read once per request, A38 00)."""
-    require_self(user_id, request)
-    carried = getattr(request.state, "learning_loop", None)
-    return carried if isinstance(carried, bool) else learning_loop_for_request(user_id)
-
-
-def _now_s() -> float:
-    return datetime.now(timezone.utc).timestamp()
-
-
-def _loop_arm(user_id: str) -> str | None:
-    """The student's within-student arm label (`user_settings.loop_arm`, PKG-14;
-    set by the series owner in SQL, in no settings API field — A31's reason).
-    Only a non-empty string is an arm; a missing row, a non-string value or a
-    read error is no arm (variant A everywhere, no budget exemption), so the
-    plumbing can never turn a student into an arm session by accident."""
-    try:
-        rows = table("user_settings").select("loop_arm", filters={"user_id": f"eq.{user_id}"})
-    except Exception as exc:  # the arm is plumbing: a failed read is "no experiment"
-        logger.warning("loop_arm read failed for %s: %s", user_id, type(exc).__name__)
-        return None
-    raw = rows[0].get("loop_arm") if rows and isinstance(rows[0], dict) else None
-    return raw if isinstance(raw, str) and raw else None
-
-
-def _arm_for(user_id: str, request: Request) -> str | None:
-    """`_loop_arm`, read ONCE per request (carried on `request.state`)."""
-    cache = getattr(request.state, "loop_arm", None)
-    if isinstance(cache, tuple) and len(cache) == 2 and cache[0] == user_id:
-        return cache[1]
-    arm = _loop_arm(user_id)
-    request.state.loop_arm = (user_id, arm)
-    return arm
-
-
-def _request_id(request: Request) -> str:
-    return getattr(request.state, "request_id", None) or current_request_id() or str(uuid.uuid4())
-
-
-def _session_scope(session_id: str, user_id: str) -> tuple[str, str]:
-    """(offering_id, abstract course_id) of a materialised session the requesting
-    student owns. The loop-state store keys on the session id alone, so this
-    ownership check is the route's (HANDOFF-06 Known gaps): 404 when no row
-    exists, 403 when it is another student's. One `sessions` read. A daily
-    review session (mode 'review', PKG-12) is never a loop session: its
-    phase-less document would read as probing (`_loop_phase`), so it is a 404
-    here and every probe/plan/teach/check route refuses it (A73)."""
-    rows = table("sessions").select(
-        "user_id,offering_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=404, detail="Session not found")
-    offering_id = rows[0].get("offering_id") or ""
-    return offering_id, (offering_course_id(offering_id) if offering_id else "")
-
-
-class _BudgetPaused(HTTPException):
-    """Hard budget level with nothing deterministic to serve. An HTTPException
-    so routes.learn._agent_turn_or_http_error (which maps any other Exception
-    to 502) passes it through; the route re-raises it as PKG-06b's
-    AIBudgetExceeded, whose registered handler renders the spec §3.5 429."""
-
-    def __init__(self, decision) -> None:
-        super().__init__(status_code=429, detail=_BUDGET_DETAIL)
-        self.decision = decision
-
-
-def _budget_data(decision) -> dict:
-    """The pause notice (JSON `budget`, SSE `budget` data): level and reset, plus
-    the binding scope and `session_capped` for PKG-13's banner (A39, 06b(j)) —
-    the same keys the 429 body carries."""
-    reset = decision.reset_at
-    return {
-        "level": decision.level,
-        "reset_at": reset.isoformat() if reset else None,
-        "scope": decision.scope,
-        "session_capped": bool(decision.session_capped),
-    }
-
-
-def _budget_event(decision) -> SaplingEvent:
-    return SaplingEvent(
-        type="budget", step="loop", message="Tutor chat paused.", data=_budget_data(decision)
-    )
-
-
-def _item_like(item):
-    """PKG-05's grade_answer takes a learning.checks.CheckItem and PKG-06's
-    deterministic_content an ItemLike (attribute access); the check-item
-    service hands back decrypted CheckItem models. A dict is validated into
-    CheckItem."""
-    return CheckItem.model_validate(item) if isinstance(item, dict) else item
-
-
-# ── Loop state: PKG-06's JSON document ─────────────────────────────────────
-
-
-class _StateConflict(HTTPException):
-    """update_loop_state lost the compare-and-set on every retry (A38 06(q)): a
-    409 on a JSON route; inside a stream it is a terminal `error` event (the
-    on_complete guard, or the deterministic path's). An HTTPException so
-    routes.learn._agent_turn_or_http_error passes it through."""
-
-    def __init__(self) -> None:
-        super().__init__(status_code=409, detail=_STATE_CONFLICT)
-
-
-def _load_loop_state(session_id: str) -> dict:
-    """The session's loop state as PKG-06's JSON document (`LoopState.to_json()`).
-    For reading only: every write is `_update_loop_state`."""
-    return load_loop_state(session_id).state.to_json()
-
-
-def _update_loop_state(session_id: str, mutate: Callable[[dict], None], *, require_open: bool = False, require_existing: bool = False) -> dict:
-    """The ONE loop-state write (A38 06(q)): `update_loop_state` with `mutate`
-    applied to the FRESH document (on a conflict it runs again on the newer
-    one), re-validated by PKG-06's typed parser — a malformed PKG-06 field
-    raises ValueError here instead of reaching the database. `mutate` changes
-    the document in place and must have no side effects. Returns the document
-    as mutated (saved, or — no sessions row, A11 — logged and not saved)."""
-    last: dict = {}
-
-    def apply(state: LoopState) -> LoopState:
-        doc = state.to_json()
-        mutate(doc)
-        last["doc"] = doc
-        return LoopState.from_json(doc)
-
-    try:
-        extra = {"require_open": True} if require_open else {}
-        saved = update_loop_state(session_id, apply, **extra)
-    except LoopSessionClosed as exc:
-        raise HTTPException(status_code=409, detail=_SESSION_CLOSED) from exc
-    except LoopStateConflict as exc:
-        logger.warning("loop state for %s: compare-and-set exhausted", session_id)
-        raise _StateConflict() from exc
-    if saved is None:
-        if require_existing:
-            raise HTTPException(status_code=409, detail="Session unavailable; reload before retrying")
-        logger.warning("loop state for %s not saved: no sessions row", session_id)
-        return last.get("doc", {})
-    return saved.state.to_json()
-
-
-def _steps(state: dict) -> dict:
-    return state.setdefault("steps", {})
-
-
-def _step_state(state: dict, question_hash: str | None) -> StepState:
-    """PKG-06's typed view of one per-item entry (a fresh step when absent)."""
-    entry = (state.get("steps") or {}).get(question_hash) if question_hash else None
-    if not isinstance(entry, dict):
-        return StepState(question_hash=question_hash or "")
-    return LoopState.from_json({"steps": {question_hash: entry}}).steps[question_hash]
-
-
-def _phase_for(state: dict) -> str:
-    active = state.get("current")
-    entry = (state.get("steps") or {}).get(active) if active else None
-    if not isinstance(entry, dict):
-        return "teach"
-    if entry.get("graded_at") is not None:
-        return "teach" if entry.get("feedback_given") is True else "feedback"
-    return "check"
-
-
-def _pending_grade(state: dict) -> dict | None:
-    """Public recovery identity only; encrypted answer/outcome never leaves storage."""
-    if _loop_phase(state) == "probe":
-        current = (state.get("probe") or {}).get("current")
-        if isinstance(current, dict) and grade_checkpoint.KEY in current:
-            return {"kind": "probe", "question_hash": current["question_hash"]}
-    active = state.get("current")
-    entry = (state.get("steps") or {}).get(active) if active else None
-    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
-        return {"kind": "check", "question_hash": active}
-    return None
-
-
-def _require_no_pending_feedback(state: dict) -> None:
-    """A committed grade stays current until its feedback is actually served.
-
-    Ordinary chat retries that feedback from its saved verdict; activating a
-    new check must not abandon it or count it as delivered. Ending the session
-    remains a separate, explicit early end.
-    """
-    active = state.get("current")
-    entry = (state.get("steps") or {}).get(active) if active else None
-    if (
-        isinstance(entry, dict)
-        and entry.get("graded_at") is not None
-        and entry.get("feedback_given") is not True
-    ):
-        raise HTTPException(status_code=409, detail=_FEEDBACK_PENDING)
-
-
-def _loop_phase(doc: dict) -> str:
-    """The session's loop phase (PKG-08's top-level `phase`: probe → plan →
-    teach). A document without the key is probing, unless its plan is already
-    approved (a document /plan/approve wrote before the key existed)."""
-    phase = doc.get("phase")
-    if isinstance(phase, str) and phase:
-        return phase
-    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
-    return "teach" if plan.get("approved") else "probe"
-
-
-_SESSION_CLOSED = "this session is closed"
-#: PKG-08 reopen: the teaching routes' 409 while the probe or the plan is open.
-#: A posed probe item lives under `probe.current`, not PKG-07's `current`, so a
-#: teach turn then would run with no guarded item (it could hand out the answer).
-_TEACHING_CLOSED = {
-    "probe": "finish the probe first",
-    "plan": "finish the plan first",
-    # PKG-09 (spec §9): close is the last phase — no turn after the stored close.
-    "close": _SESSION_CLOSED,
-}
-
-
-def _require_open(state: dict) -> None:
-    """PKG-09: the answer routes (/check/answer, /step/attempt) of a closed or
-    closing session — its close is stored (or being written); evidence after it
-    would sit outside it."""
-    _refuse_while_closing(state, _now_s())
-
-
-def _require_teaching(state: dict) -> None:
-    detail = _TEACHING_CLOSED.get(_loop_phase(state))
-    if detail:
-        raise HTTPException(status_code=409, detail=detail)
-    _refuse_while_closing(state, _now_s())  # PKG-09: nor while a close is being written
-
-
-def _teaching_open(session_id: str, user_id: str) -> None:
-    """Ownership, then the phase: a teaching route runs only once the plan is
-    approved (spec §9: probe → plan → teach). Reads only; writes nothing."""
-    _session_scope(session_id, user_id)
-    state = _load_loop_state(session_id)
-    _require_teaching(state)
-    if _pending_grade(state):
-        raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
-
-
-def _turn_phase(kind: str, state_phase: str) -> str:
-    """The phase a turn of `kind` runs in, given the document's phase."""
-    if kind == "feedback":
-        return "feedback"
-    if kind == "hint_request" or (kind == "action" and state_phase == "check"):
-        return "hint"
-    if kind in ("unavailable", "refused"):
-        return "check"
-    if kind == "opener":
-        return "teach"
-    return state_phase
-
-
-@dataclass(repr=False)
-class _BriefRequest(ModelRequest):
-    """The learner brief as the loop history's synthetic first message (spec §13
-    A19). A type, not a text marker: a student row can never pose as the brief.
-    It is server-assembled with its own untrusted envelope (tags neutralised at
-    build), so `_guard_history` never re-wraps it as the student's words — whose
-    per-call nonce would change the stable prefix every turn."""
-
-
-def _brief_message(brief: str) -> _BriefRequest:
-    return _BriefRequest(parts=[UserPromptPart(content=brief)])
-
-
-def _history_window(n: int) -> int:
-    """How many of the last `n` history messages a loop turn keeps (spec §13 A19):
-    all of them below LOOP_HISTORY_TRIM_BLOCK, else the block plus the remainder
-    (10–19), so the window start moves only in whole blocks and consecutive
-    turns share their prefix."""
-    if n < LOOP_HISTORY_TRIM_BLOCK:
-        return n
-    return LOOP_HISTORY_TRIM_BLOCK + n % LOOP_HISTORY_TRIM_BLOCK
-
-
-def _brief_node_ids(loop_state: dict, user_id: str, course_id: str | None) -> list[str]:
-    """The concepts a brief built on a loop turn covers: the approved plan
-    (PKG-08, A27) when there is one, else the course's weakest nodes. Runs only
-    when a brief is being built — once per session."""
-    plan = loop_state.get("plan") if isinstance(loop_state.get("plan"), dict) else {}
-    approved = [n for n in plan.get("approved") or [] if isinstance(n, str) and n]
-    if approved:
-        return approved
-    if not course_id:
-        return []
-    # Review round 2: only nodes that map to a course concept (a student-created
-    # node at mastery 0 would otherwise rank first and carry its own name in)
-    rows = table("graph_nodes").select(
-        "id,concept_name",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        order="mastery_score.asc",
-        limit=LEARNER_BRIEF_CANDIDATE_NODES,
-    )
-    names = {r["id"]: r.get("concept_name") or "" for r in rows or [] if r.get("id")}
-    course = course_concept_names(course_id, names)
-    return [n for n in names if n in course][:LEARNER_BRIEF_TOP_STATES]
-
-
-#: Review M1: session id → when its brief build last failed (per process; a
-#: failure is retried after LEARNER_BRIEF_RETRY_AFTER_S, not on every turn).
-_BRIEF_FAILED: dict[str, float] = {}
-
-
-def _load_loop_history(
-    session_id: str,
-    *,
-    user_id: str | None = None,
-    course_id: str | None = None,
-    loop_state: dict | None = None,
-) -> list:
-    """The loop history (spec §13 A19): the session's learner brief as a
-    synthetic first message, then a block-trimmed window of the legacy history
-    (`_history_window`; ≤ LOOP_HISTORY_MAX_MESSAGES in all). The brief is read
-    from `sessions.loop_brief` — never rebuilt once stored; when it is not
-    built yet and `user_id` is given (a loop turn), it is built and stored here
-    (a failure logs and the turn runs without it; the next turn retries). No
-    row yet (a lazy session), or `user_id=None`, reads only. Leading assistant
-    messages are kept: dropping them would move the window every turn."""
-    rows = table("sessions").select(
-        "id,loop_brief", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
-    )
-    brief = ""
-    if rows:
-        stored = rows[0].get("loop_brief")
-        if stored is not None:
-            brief = decrypt_if_present(stored) or ""
-        elif user_id and _now_s() - _BRIEF_FAILED.get(session_id, float("-inf")) > (
-            LEARNER_BRIEF_RETRY_AFTER_S
-        ):
-            try:
-                brief = store_brief(
-                    session_id,
-                    user_id,
-                    course_id or None,
-                    _brief_node_ids(loop_state or {}, user_id, course_id),
-                )
-                _BRIEF_FAILED.pop(session_id, None)
-            except Exception as exc:
-                now = _now_s()
-                for stale in [
-                    k for k, at in _BRIEF_FAILED.items() if now - at > LEARNER_BRIEF_RETRY_AFTER_S
-                ]:
-                    _BRIEF_FAILED.pop(stale, None)  # bounded: only live windows are kept
-                _BRIEF_FAILED[session_id] = now
-                logger.warning(
-                    "learner brief not built for this turn (%s); retried after %ss",
-                    type(exc).__name__,
-                    LEARNER_BRIEF_RETRY_AFTER_S,
-                )
-                brief = ""
-    msgs = _load_message_history(session_id)
-    window = msgs[len(msgs) - _history_window(len(msgs)) :]
-    return ([_brief_message(brief)] if brief else []) + window
-
-
-# ── Learner state, band, ceiling ───────────────────────────────────────────
-
-
-def _node_for_item(user_id: str, item) -> str | None:
-    """The student's graph node for a course-asset item (A2): the user's
-    `graph_nodes` row in the item's course whose normalised concept name is the
-    item's `concept_key` — for a multi-concept item (spec §13 A141) its APEX
-    concept's, where its evidence goes. None when the student has never met
-    the concept."""
-    key = evidence_key(item)
-    rows = (
-        table("graph_nodes").select(
-            "id,concept_name",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{item.course_id}"},
-        )
-        or []
-    )
-    for row in rows:
-        if _normalize_concept(row.get("concept_name") or "") == key:
-            return row.get("id")
-    return None
-
-
-def _learner_state(user_id: str, node_id: str | None) -> LearnerState | None:
-    if not node_id:
-        return None
-    return read_states(user_id, [node_id]).get(node_id)
-
-
-def _band_of(state: LearnerState | None) -> tuple[str, float]:
-    p = state.p_known if state is not None else BKT_L0
-    return bkt_band(p), p
-
-
-def _band_for(user_id: str, node_id: str | None) -> tuple[str, float]:
-    """(band, p_known) of a node — BKT_L0 when there is no node or no row."""
-    return _band_of(_learner_state(user_id, node_id))
-
-
-def _prerequisites(user_id: str, node_id: str) -> list[policy.Prerequisite]:
-    """The node's prerequisite parents with their decayed p_known (BKT_L0 for a
-    parent with no learner_state row); [] when it has none. Parents come from
-    the read helper PKG-03's propagation uses (graph_service._prerequisite_edges),
-    with the same EDGE_PREREQ_SOURCE_IS_PREREQ direction."""
-    parents: list[str] = []
-    for src, tgt in _prerequisite_edges(user_id, node_id):
-        prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
-        if dependent == node_id and prereq != node_id and prereq not in parents:
-            parents.append(prereq)
-    if not parents:
-        return []
-    states = read_states(user_id, parents)
-    return [
-        policy.Prerequisite(p, states[p].p_known if p in states else BKT_L0) for p in parents
-    ]
-
-
-def _prereq_proficient(user_id: str, node_id: str) -> bool:
-    """The ceiling's prerequisite input (spec §3.3): True only when the status is
-    PROFICIENT — every prerequisite parent in the profic band (p_known ≥
-    BAND_DEVELOP_MAX). A node with NO prerequisite edge is UNKNOWN, never
-    proficient (spec §13 A122): it takes the "prerequisite not known" row, so a
-    novice there gets the worked example first."""
-    status = policy.prerequisite_status(_prerequisites(user_id, node_id))
-    return status is policy.PrerequisiteStatus.PROFICIENT
-
-
-def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: bool) -> LearnerView:
-    """PKG-06's typed learner input; LearnerState's own defaults stand in for a
-    node with no row (the BKT prior, no opportunities)."""
-    st = state or LearnerState(user_id="", node_id="")
-    return LearnerView(
-        p_known=st.p_known,
-        band=band,
-        prereq_proficient=prereq_proficient,
-        unassisted_next=st.unassisted_next,
-        opps=st.opps,
-        streak_unassisted=st.streak_unassisted,
-        n_strong_unassisted=st.n_strong_unassisted,
-    )
-
-
-def _genuine(text: str, independent_s: float, band: str, variant: str = "A") -> bool:
-    """Spec §3.3 genuine attempt, for hint unlocking and the shown-work floor
-    only (never a grading gate, A16). `matched_non_attempt` is
-    `vetoes_attempt` — never `matches_non_attempt` (HANDOFF-06; spec §13 A120:
-    a phrase or plea vetoes only a message with nothing else in it)."""
-    return gates.is_genuine_attempt(
-        len((text or "").strip()),
-        False,
-        gates.vetoes_attempt(text or ""),
-        independent_s,
-        band,
-        time_scale=config.LEARNING_GATE_TIME_SCALE,
-        variant=variant,  # PKG-14: the concept's within-student arm (learning.arms.variant_for)
-    )
-
-
-def _ceiling_for(
-    *,
-    step: StepState,
-    learner: LearnerView,
-    message: str,
-    independent_s: float,
-    variant: str = "A",
-    teach_attempt: bool = False,
-    band_delta: int = 0,
-) -> tuple[Rung, policy.CeilingReason]:
-    """policy.ceiling_with_reason on typed state only (invariant 4). The shown-work
-    floor applies when the step already records shown work or this message is a
-    genuine attempt; exam mode is the step's own flag (False until PKG-08).
-    `band_delta`: band control's ceiling clause for the concept (spec §13 A122,
-    `_band_ceiling_delta`)."""
-    showed = step.showed_work or _genuine(message, independent_s, learner.band, variant)
-    raise_ = {"teach_attempt": True} if teach_attempt else {}  # A85; typed state only
-    if band_delta:
-        raise_["band_delta"] = band_delta
-    return policy.ceiling_with_reason(learner, dataclasses.replace(step, showed_work=showed), **raise_)
-
-
-#: loop_state key (spec §13 A122): node id → band control's ceiling delta for
-#: that concept this session (−1 after HARDER, +1 after EASIER_CHECK_PREREQS;
-#: set when a verdict's feedback turn is served, held through HOLD)
-_BAND_CEILING = "band_ceiling"
-
-
-def _band_ceiling_delta(state: dict, node_id: str | None) -> int:
-    """The concept's band-control ceiling delta in this session (0 when none,
-    or for a malformed stored value: no adjustment is ever invented)."""
-    deltas = state.get(_BAND_CEILING) if node_id else None
-    delta = deltas.get(node_id) if isinstance(deltas, dict) else None
-    if type(delta) is int and delta in (
-        -BAND_CONTROL_CEILING_STEP,
-        BAND_CONTROL_CEILING_STEP,
-    ):
-        return delta
-    return 0
-
-
-def _failed_on_concept(state: dict, node_id: str | None) -> int:
-    """Failed genuine attempts this session on the concept's items (PKG-06's
-    per-step `attempts`), summed across its isomorphs."""
-    if not node_id:
-        return 0
-    return sum(
-        int(entry.get("attempts") or 0)
-        for entry in (state.get("steps") or {}).values()
-        if isinstance(entry, dict) and entry.get("node_id") == node_id
-    )
-
-
-def _seconds_since(t: float | None, now: float) -> float:
-    return max(0.0, now - t) if t else 0.0
-
-
-# ── Context and run assembly ───────────────────────────────────────────────
-
-
-def _context_blocks(
-    *, user_id: str, course_id: str, user_message: str, context, item, out: dict | None = None
-) -> list[str]:
-    """Only the blocks `context` (policy.context_policy) asks for, in the legacy
-    order, with the legacy builders (routes/learn.py::_prepare_chat_run).
-
-    Spec §13 A128: the course-material retrieval tells a FAILURE from an empty
-    result (`retrieve_chunks_detailed`); a failed one sets `out["retrieval"] =
-    "failed"` for the turn, and the turn still runs (with no RAG block, as an
-    empty result would) — the outage is reported, never blocking."""
-    blocks: list[str] = []
-    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
-    if context.catalog and bu_code:
-        catalog = _get_catalog_chunk(bu_code)
-        if catalog:
-            blocks.append(_CATALOG_HEADER + catalog)
-    if context.rag_k and bu_code:
-        got = retrieve_chunks_detailed(
-            user_message, course_id=bu_code, k=context.rag_k, user_id=user_id
-        )
-        if got.failed and out is not None:
-            out["retrieval"] = "failed"
-        rag = format_rag_context(got.chunks)
-        if rag:
-            blocks.append(rag)
-    if context.source_chunks and item is not None:
-        ids = list(item.source_chunk_ids or [])[: context.source_chunks]
-        rows = chunks_for_ids(ids, user_id=user_id) if ids else []
-        text = "\n\n".join(r["chunk_text"] for r in rows if r.get("chunk_text"))
-        wrapped = wrap_untrusted(text, source=_SOURCE_LABEL)
-        if wrapped:
-            blocks.append(_SOURCE_HEADER + wrapped)
-    if context.graph_block and course_id:
-        graph = build_graph_context_block(user_id, course_id, user_message)
-        if graph:
-            blocks.append(graph)
-    return blocks
-
-
-# ── A failed course-material retrieval (spec §13 A128) ─────────────────────
-#
-# Two loop_state keys. `materials_notice`: the session's ONE calm note that
-# its course materials are unavailable has been served (`materials_unavailable`
-# in the turn's response; the UI renders it — never a prompt change).
-# `retrieval_failed`: the concept nodes whose teach turns ran with a failed
-# retrieval since their last check activation; `_activate_next_item` moves a
-# concept's mark onto the step it opens (`retrieval: "failed"`), so that
-# step's zpd.step says its teaching lacked the course's material.
-_MATERIALS_NOTICE = "materials_notice"
-_RETRIEVAL_FAILED = "retrieval_failed"
-#: The step entry's key (and zpd.step's payload value) for such a step.
-_RETRIEVAL_KEY, _RETRIEVAL_FAILED_VALUE = "retrieval", "failed"
-
-
-def _note_retrieval_failure(state: dict, concept_node: str | None) -> bool:
-    """Record a turn whose course-material retrieval failed, on the loop
-    document (a compare-and-set mutate's business: no side effects): the
-    concept's mark, and the session's note. True when THIS turn serves the
-    note — the first failure of the session, never again after it."""
-    if concept_node:
-        marked = [n for n in state.get(_RETRIEVAL_FAILED) or [] if isinstance(n, str)]
-        if concept_node not in marked:
-            state[_RETRIEVAL_FAILED] = [*marked, concept_node]
-    if state.get(_MATERIALS_NOTICE) is True:
-        return False
-    state[_MATERIALS_NOTICE] = True
-    return True
-
-
-def _materials_notice(out: dict) -> dict:
-    """The turn response's A128 key: `materials_unavailable: true` on the ONE
-    turn that serves the session's note, absent on every other (never false)."""
-    return {"materials_unavailable": True} if out.get("materials_notice") else {}
-
-
-def _take_retrieval_mark(state: dict, concept_node: str) -> bool:
-    """Whether the concept's teaching since its last check ran with a failed
-    retrieval — the mark is consumed, so the NEXT check of the concept starts
-    clean (its own teach turns decide it)."""
-    marked = [n for n in state.get(_RETRIEVAL_FAILED) or [] if isinstance(n, str)]
-    if concept_node not in marked:
-        return False
-    rest = [n for n in marked if n != concept_node]
-    if rest:
-        state[_RETRIEVAL_FAILED] = rest
-    else:
-        state.pop(_RETRIEVAL_FAILED, None)
-    return True
-
-
-def _prepare_loop_run(
-    *,
-    user_id: str,
-    session_id: str,
-    course_id: str,
-    user_message: str,
-    message_history: list,
-    request_id: str,
-    prefix: str,
-    state: dict,
-    tier: str,
-    context,
-    item,
-    learning_loop: bool,
-    loop_turn,
-    trusted: bool = False,
-    instruction: str | None = None,
-    nonce: str | None = None,
-    v2: bool = False,
-    focus_block: str | None = None,
-    extra_blocks: list[str] | None = None,
-    out: dict | None = None,
-) -> tuple:
-    """One loop run's agent, user message, run kwargs and deps. `user_message`
-    is the retrieval query and — unless `trusted` (server text: an [ACTION: ...]
-    line) — the student's words, which reach the model only inside the nonce
-    envelope (review round 3, C1(a)); `instruction` is server text placed
-    verbatim before it. The history's user rows are the student's words too
-    (enveloped by the caller, `_guard_history`). `v2` adds the
-    v2 variant's run arguments (spec §13 A121, `variant_run_args`):
-    none when off. `focus_block` (v2 teach turns only) is the plan concept's
-    untrusted block (`plan_focus_block`), first among the context blocks.
-    `extra_blocks` (spec §13 A138: the prequestion's answer block) follow the
-    context blocks. `out` receives what the context assembly found (A128:
-    `retrieval: "failed"`)."""
-    deps = SaplingDeps(
-        user_id=user_id,
-        course_id=course_id or None,
-        supabase=None,
-        request_id=request_id,
-        session_id=session_id,
-        feature="loop_tutor",
-        learning_loop=learning_loop,
-        loop_state=state,
-        loop_turn=loop_turn,
-    )
-    blocks = _context_blocks(
-        user_id=user_id,
-        course_id=course_id,
-        user_message=user_message,
-        context=context,
-        item=item,
-        out=out,
-    )
-    if focus_block:
-        blocks = [focus_block, *blocks]
-    if extra_blocks:
-        # spec §13 A138: the prequestion's answer, as data, after the context
-        blocks = [*blocks, *extra_blocks]
-    assembled = assemble_turn_message(
-        prefix=prefix,
-        blocks=blocks,
-        nonce=nonce or new_nonce(),
-        student_text=None if trusted else user_message,
-        instruction=user_message if trusted else instruction,
-    )
-    run_kwargs = {
-        "deps": deps,
-        "message_history": message_history,
-        "usage_limits": LOOP_LIMITS,
-        **tier_run_kwargs(tier, tool_choice=context.tool_choice),
-        **variant_run_args(v2),
-    }
-    return loop_tutor_agent, assembled, run_kwargs, deps
-
-
-def _template_feedback(verdict: str, reference: str | None) -> str:
-    """The hard-level feedback turn (no model): the verdict line, the stored
-    reference when the answer is released (H6 content, legal after a wrong
-    attempt, spec §3.3), and the fixed next-step line."""
-    parts = [_FEEDBACK_VERDICT_LINES[verdict]]
-    if reference:
-        parts.append(_FEEDBACK_ANSWER_LEAD + reference)
-    parts.append(_FEEDBACK_NEXT_STEP)
-    return " ".join(parts)
-
-
-def _continuation_history(messages: list) -> list | None:
-    """The failed tool run's messages up to and including its last tool
-    results (#646: what follows them is the model's empty answer and any
-    output-retry prompts). None when no tool ran — there is nothing to
-    continue from, so the turn is re-run tool-less instead."""
-    for i in range(len(messages) - 1, -1, -1):
-        m = messages[i]
-        if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts):
-            return list(messages[: i + 1])
-    return None
-
-
-#: Spec §13 A121: the v2 variant's run arguments
-#: (`variant_run_args`) — a continuation finishes the turn in the same variant.
-#: A flag-off run carries none of them.
-_VARIANT_RUN_KEYS = ("output_type", "instructions", "metadata")
-
-
-@dataclass(frozen=True)
-class ContinuationPlan:
-    """What the tool-less continuation run is: its prompt, its `agent.run`
-    kwargs (tools are removed by the caller's override) and its usage feature."""
-
-    prompt: str
-    run_kwargs: dict
-    feature: str
-
-
-def continuation_plan(*, assembled: str, run_kwargs: dict, messages: list) -> ContinuationPlan:
-    """The #646 continuation of a loop run that ended without a structured turn,
-    as data (the route runs it; tests/evals/loop_tutor.py replays through it).
-    It continues from the failed run's last tool results with the nudge under
-    CONTINUATION_LIMITS, or — no tool ran — re-runs the turn itself under the
-    turn's own limits. Same slot, same settings, minus `tool_choice` (no tools,
-    so a tool_config would have nothing to choose)."""
-    carried = {
-        k: run_kwargs[k]
-        for k in (*_CONTINUATION_RUN_KEYS, *_VARIANT_RUN_KEYS)
-        if k in run_kwargs
-    }
-    carried["model_settings"] = {
-        k: v for k, v in (carried.get("model_settings") or {}).items() if k != "tool_choice"
-    }
-    history = _continuation_history(messages)
-    if history is None:
-        carried["message_history"] = list(run_kwargs.get("message_history") or [])
-        carried["usage_limits"] = run_kwargs.get("usage_limits")
-        return ContinuationPlan(prompt=assembled, run_kwargs=carried, feature="loop_tutor")
-    carried["message_history"] = history
-    carried["usage_limits"] = CONTINUATION_LIMITS
-    return ContinuationPlan(
-        prompt=_CONTINUATION_NUDGE, run_kwargs=carried, feature="loop_tutor_continuation"
-    )
-
-
-async def _loop_continuation_text(turn, messages: list) -> str | None:
-    """The #646 twin of routes.learn._continuation_text for the STRUCTURED loop
-    turn. Lane B's live finding: after a tool call gemini flash-lite answered
-    with empty responses and never wrote the LoopTurnOut — Gemini only takes
-    the structured (JSON) turn with no tools declared (the agent now declares
-    no tools after a tool round, so this is the rescue for what is left). So: a
-    budget check FIRST (invariant 23; None at the hard level or when the
-    existing slot exceeds the refreshed tier ceiling), one counted
-    tutor call (A39), then `continuation_plan` run on the SAME slot with every
-    tool removed — the safety property, `override(tools=[], toolsets=[])`
-    (pinned). Returns the rendered turn (the output validator still judges it
-    against deps.loop_turn)."""
-    decision = ai_budget.check(
-        turn.user_id, "tutor", turn.band, **turn.budget_counters(include_current_run=True)
-    )
-    if decision.level == "hard" or (turn.tier == "deep" and decision.tier_ceiling != "deep"):
-        # Never rescue on the old deep slot after the known primary work has
-        # lowered its allowance. Replanning/rerouting would be a different turn.
-        return None
-    plan = continuation_plan(
-        assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
-    )
-    ai_budget.count_tutor_call(turn.user_id)
-    usage = RunUsage()
-    result = None
-    try:
-        with turn.agent.override(tools=[], toolsets=[]):
-            result = await turn.agent.run(plan.prompt, usage=usage, **plan.run_kwargs)
-    finally:
-        # A failed continuation still consumed its bounded model requests.
-        # Keep an incomplete bill explicitly partial; never invent missing tokens.
-        if result is None:
-            logger.warning(
-                "Loop continuation ended without final output; usage is incomplete "
-                "(known model requests=%s); in-flight token usage may be missing",
-                usage.requests,
-            )
-        if result is not None or usage.requests:
-            billed = result if result is not None else UnfinishedRun(usage)
-            turn.run_requests += _requests_of(billed)
-            try:
-                record_agent_usage(
-                    billed,
-                    feature=plan.feature,
-                    task=turn.slot,
-                    user_id=turn.user_id,
-                    session_id=turn.session_id,
-                )
-            except Exception as exc:
-                # The canonical helper never raises. Keep instrumentation from
-                # replacing a provider error or cancellation if that changes.
-                logger.warning("Usage accounting hook failed (stage=loop_continuation_usage, error_type=%s)", type(exc).__name__)
-    return turn.render(result.output)
-
-
-# ── The served text (route + tests/evals/loop_tutor.py) ────────────────────
-
-
-def loop_leak_rung(*, phase: str, rung: Rung, ceiling: Rung, answer_released: bool) -> Rung:
-    """The rung model text is served at: H6 once the answer is released, the
-    hint rung on a hint turn, else the ceiling — clamped below H6 while the
-    answer is unreleased (clamp_model_ceiling: model text never writes H6)."""
-    at = rung if phase == "hint" else ceiling
-    if answer_released:
-        at = Rung.H6
-    return Rung(clamp_model_ceiling(at, answer_released))
-
-
-def released_lead(reference: str) -> str:
-    """m1 (review round 3): the stored reference, served FROM CODE above the
-    model's released feedback turn — the model is never asked to state or
-    compute it, and the turn still ends on its question."""
-    return _FEEDBACK_ANSWER_LEAD + (reference or "").strip() + FIELD_JOIN
-
-
-#: Fix round 2 (N1): what a turn whose model text still leaks after its one
-#: retry is served — a fixed, student-facing line per rung (never the
-#: model's text with the answer masked in place: the mask's position is itself
-#: the signal). Rung by rung it adds no content above the rung's intent.
-LADDER_FALLBACK_LINES: dict[int, str] = {
-    0: "What will you do next on this item?",
-    1: "What is the first thing you need to figure out here?",
-    2: "What does your course material say about the idea behind this item?",
-    3: "What is the very next step you would take on this item?",
-    4: "Which step of the item would you try next?",
-    5: "Which part of the item would you fill in next?",
-}
-
-
-#: Fix round 2: the served key idea of an item turn at H0/H1 — those rungs add
-#: no content (RUNG_INTENT), so the key idea is the verdict (feedback) or the
-#: focus of a hint, from code; recorded model key ideas there stated a
-#: definition (judged H2). Spec §13 A121, v2 variant on: a
-#: correct-verdict feedback turn serves NO key idea there — the grader's
-#: verdict line, served first, says it.
-LOW_RUNG_KEY_IDEAS: dict[str, str] = {
-    "feedback_correct": "Your answer was graded correct.",
-    "hint": "Start by pinning down what the item asks you to find.",
-}
-
-
-def _served_fields(
-    out, *, phase: str, rung: Rung, verdict: str | None = None, v2: bool = False
-):
-    """The structured turn as served (fix round 2). The ladder fixes what the
-    lowest rungs may say, so code serves those fields: at an H2 hint the
-    question is the ladder's (H2 is a concept pointer: reread the definition —
-    recorded model questions named the item's own objects, judged H3); at
-    H0/H1 the key idea of a hint or a correct-verdict feedback turn is
-    LOW_RUNG_KEY_IDEAS' — or, the v2 variant on (A121), the
-    feedback turn's is left out: its verdict line leads the turn. The model
-    writes everything else."""
-    at = int(rung)
-    served = dict(out)
-    if phase == "hint" and at == int(Rung.H2) and "question" in out:
-        served["question"] = LADDER_FALLBACK_LINES[at]
-    if at <= int(Rung.H1) and "key_idea" in out:
-        if phase == "hint":
-            served["key_idea"] = LOW_RUNG_KEY_IDEAS["hint"]
-        elif phase == "feedback" and verdict == "correct":
-            served["key_idea"] = "" if v2 else LOW_RUNG_KEY_IDEAS["feedback_correct"]
-    return served
-
-
-def served_template(
-    *,
-    phase: str,
-    rung: Rung,
-    poses_check: bool = False,
-    answer_check: bool = False,
-    v2: bool = False,
-    question_text: str | None = None,
-) -> TurnTemplate:
-    """Spec §13 A121: how this turn is served. Always: no question of its own
-    when it poses a check (the card is the one open prompt). With the
-    v2 variant on: the "Key idea:" label only on a turn with new
-    content (`labels_new_content`: teach or hint at H2+, never feedback), and
-    the verdict line first when it answers the reply to the tutor's own
-    question. Off, the label is on every turn, exactly as at 7fa9cd0e — the
-    rendering every recorded rung judgement was made of. Spec §13 A139:
-    `question_text`, a self-explanation prompt code serves in place of the
-    model's question (None: the model's, as before)."""
-    return TurnTemplate(
-        label=labels_new_content(phase, int(rung)) if v2 else True,
-        question=not poses_check,
-        answer_check=answer_check,
-        question_text=question_text,
-    )
-
-
-def served_render(
-    out,
-    *,
-    phase: str,
-    rung: Rung,
-    verdict: str | None = None,
-    poses_check: bool = False,
-    answer_check: bool = False,
-    v2: bool = False,
-    question_text: str | None = None,
-) -> str:
-    """`render_turn` of the turn as served (`_served_fields`, `served_template`)."""
-    return render_turn(
-        _served_fields(out, phase=phase, rung=rung, verdict=verdict, v2=v2),
-        served_template(
-            phase=phase,
-            rung=rung,
-            poses_check=poses_check,
-            answer_check=answer_check,
-            v2=v2,
-            question_text=question_text,
-        ),
-    )
-
-
-def served_partial(
-    partial,
-    *,
-    phase: str,
-    rung: Rung,
-    verdict: str | None = None,
-    poses_check: bool = False,
-    answer_check: bool = False,
-    v2: bool = False,
-    question_text: str | None = None,
-) -> str:
-    """`render_partial` of a streamed partial as served — the same fields and
-    template as `served_render`, so the stream is a prefix of the final text."""
-    return render_partial(
-        _served_fields(partial, phase=phase, rung=rung, verdict=verdict, v2=v2),
-        served_template(
-            phase=phase,
-            rung=rung,
-            poses_check=poses_check,
-            answer_check=answer_check,
-            v2=v2,
-            question_text=question_text,
-        ),
-    )
-
-
-def served_lead(*, reference: str, answer_released: bool, verdict: str | None = None) -> str:
-    """What code serves ABOVE an item turn's model text: with the answer-verdict
-    variant on, a feedback turn's grader verdict as a plain line first (spec
-    §13 A121: the turn opens with whether the answer was right, before
-    anything else — the hard-level template's own words,
-    `_FEEDBACK_VERDICT_LINES`; callers pass `verdict` only then), then the
-    released answer (m1, `released_lead`)."""
-    lead = _FEEDBACK_VERDICT_LINES[verdict] + FIELD_JOIN if verdict else ""
-    return lead + (released_lead(reference) if answer_released else "")
-
-
-def _item_check_kwargs(
-    *,
-    reference: str,
-    final_answer: str,
-    canonical_answer: str | None,
-    correct_option: str | None,
-    option_text: str | None,
-) -> dict:
-    return {
-        "reference": reference,
-        "final_answer": final_answer,
-        "canonical_answer": canonical_answer,
-        "correct_option": correct_option,
-        "option_text": option_text,
-        "strict": True,
-    }
-
-
-def served_model_text(
-    reply: str,
-    *,
-    leak_rung: Rung,
-    reference: str,
-    final_answer: str,
-    canonical_answer: str | None = None,
-    correct_option: str | None = None,
-    option_text: str | None = None,
-    answer_released: bool = False,
-    given: str = "",
-    verdict: str | None = None,
-):
-    """What the student is served for model-written `reply` against the active
-    item. The check is STRICT and in SERVED MODE (`detect_leak(given=…)`,
-    fix round 2): a copy of text the model was `given` this turn is no leak,
-    and number words / standalone letters count only in answer position. A
-    reply that still leaks is NEVER masked in place (N1): it is replaced by the
-    rung's LADDER_FALLBACK_LINES line (the model already had its one leak
-    retry, `deps.loop_leak`). Code's lead goes in front (`served_lead`): a
-    feedback turn's `verdict` line (A121), then the released answer (m1).
-    Returns (text, LeakVerdict)."""
-    item = _item_check_kwargs(
-        reference=reference,
-        final_answer=final_answer,
-        canonical_answer=canonical_answer,
-        correct_option=correct_option,
-        option_text=option_text,
-    )
-    leak_verdict = detect_leak(emitted=reply, rung=leak_rung, given=given, **item)
-    text = LADDER_FALLBACK_LINES[int(Rung(leak_rung))] if leak_verdict.leaked else reply
-    lead = served_lead(reference=reference, answer_released=answer_released, verdict=verdict)
-    return lead + text, leak_verdict
-
-
-_POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened
-
-
-# ── Served reveals of OPEN, POSED items (PKG-14, spec §13 A88; A86's scope) ──
-# A served tutor turn is never withheld on account of item answers. Its served
-# text is scanned (strict served mode) against the items the student has SEEN
-# the prompt of and that are still OPEN — the active check item of any open
-# loop session, an open review item, an open post-test pose (an item turn's own
-# active item excluded: its leak check is the item turn's). Each stated item is
-# recorded in learning_reveals (keyed by the student, durable the moment it is
-# served — the opener has no session row), so it is never selected again and
-# grades with no unassisted credit (`_reveal_floor`). Open items that cannot be
-# read leave an 'unscanned' marker: every item posed at or before it grades as
-# assisted. A failed write falls back to the session's loop_state.
-
-def stated_items(text: str, items, *, rung: Rung, given: str) -> list[str]:
-    """The sorted question hashes of the servable `items` whose answer `text`
-    states (strict served mode). An item the check raises on counts as stated
-    (fail closed on the evidence side); a non-servable one is skipped. One
-    compiled scan (learning.served_scan, spec §13 A101); nothing is a leak at H6."""
-    if Rung(rung) >= Rung.H6:
-        return []
-    return ScanSet.build(items, given=given).stated(text)
-
-
-def _mark_revealed(state: dict, hashes, mark: dict | None) -> None:
-    """The loop_state fallback of a failed learning_reveals write: hashes join
-    loop_state["revealed"] (A23); a marker joins loop_state["reveal_unscanned"]."""
-    if hashes:
-        revealed = list(state.get("revealed") or [])
-        state["revealed"] = revealed + [h for h in hashes if h not in revealed]
-    if mark is not None:
-        state["reveal_unscanned"] = [*(state.get("reveal_unscanned") or []), mark]
-
-
-def _persist_reveals(
-    user_id: str, session_id: str | None, hashes, *, unscanned: bool, source: str, at: datetime
-) -> bool:
-    """Record the reveals (or the marker) in learning_reveals; on a failed write
-    fall back to the session's loop_state; if that fails too, log an ERROR.
-    True when either store holds them (A138 second review: a caller that would
-    stop scanning the items once revealed must know when they were not)."""
-    try:
-        if unscanned:
-            record_unscanned(user_id, session_id=session_id, source=source, at=at)
-        elif hashes:
-            record_reveals(user_id, hashes, session_id=session_id, source=source)
-        return True
-    except Exception:
-        logger.warning("learning_reveals write failed; falling back to loop_state", exc_info=True)
-    mark = {"at": at.timestamp(), "source": source} if unscanned else None
-    try:
-        if not session_id:
-            raise RuntimeError("no session row to fall back to")
-        _update_loop_state(session_id, lambda st: _mark_revealed(st, hashes, mark))
-        return True
-    except Exception:
-        logger.error("served reveals of %s LOST (both stores failed)", user_id, exc_info=True)
-        return False
-
-
-def _reveal_floor(user_id: str, item, posed_at: datetime | None = None) -> int:
-    """The lowest rung a grade of `item` may claim — A93's help floor (owner
-    decision 1): the MAX help ever recorded for (student, item) in the help
-    ledger, across every session and surface (a served reveal counts as
-    RUNG_NO_CREDIT_MIN); RUNG_NO_CREDIT_MIN when the item is revealed by the
-    evidence journal or a session's revealed list (A23); RUNG_ASSISTED_MIN while
-    an 'unscanned' marker lands at or after the item's FIRST ungraded pose (or
-    `posed_at`; None: any marker). A failed read is RUNG_NO_CREDIT_MIN (fail
-    closed, minor 8)."""
-    try:
-        floor = max_help(user_id, item.question_hash)
-        if item.question_hash in revealed_hashes(user_id):
-            floor = max(floor, RUNG_NO_CREDIT_MIN)
-        first = earliest_open_pose(user_id, item.question_hash)
-        anchor = min((t for t in (first, posed_at) if t is not None), default=None)
-        if floor < RUNG_ASSISTED_MIN and unscanned_since(user_id, anchor):
-            floor = RUNG_ASSISTED_MIN
-    except Exception:
-        logger.warning("help ledger reads failed; the grade carries no credit", exc_info=True)
-        return RUNG_NO_CREDIT_MIN
-    return floor
-
-
-def _refloor(evidence: list, user_id: str, item, posed_at: datetime | None, used: int) -> int:
-    """A93: the help floor re-read INSIDE the grading claim, right before the one
-    evidence write — so help served while the grade ran (a hint in another
-    session, a reveal streaming meanwhile) is seen. Raises the pending Evidence
-    rows of `item` to the new floor (apply_graph_update re-derives the weight);
-    returns the rung the grade carries."""
-    floor = _reveal_floor(user_id, item, posed_at)
-    if floor > int(used):
-        for row in evidence:
-            if row.get("question_hash") == item.question_hash and int(row.get("max_rung") or 0) < floor:
-                row["max_rung"] = floor
-                if floor >= RUNG_ASSISTED_MIN:
-                    row["assisted"] = True
-    return max(floor, int(used))
-
-
-def _tag_planning_evidence(pending: list, item, *, synthetic_idk: bool, previously_seen: bool,
-                           operation_id: str | None = None, observed_at: float | None = None) -> None:
-    """Actual probe/check grades, goal or not; never answers or inferred history."""
-    provenance = PlanningProvenance(
-        check_item_id=item.id, difficulty=item.difficulty,
-        synthetic_idk=synthetic_idk, previously_seen=previously_seen,
-    ).model_dump()
-    for row in pending:
-        if row.get("question_hash") == item.question_hash and row.get("check_item_id") == item.id:
-            row["planning_provenance"] = provenance
-            if operation_id is not None:
-                row["operation_id"] = operation_id
-                row["observed_at"] = datetime.fromtimestamp(observed_at, tz=timezone.utc).isoformat()
-
-
-def _ledger(write, *args, **kwargs) -> None:
-    """A help-ledger write under the accepted DB-down rule: the session-local
-    record (the step's rung, loop_state["revealed"]) stands and an ERROR is
-    logged; never raises."""
-    try:
-        write(*args, **kwargs)
-    except Exception:
-        logger.error("help ledger write %s failed", getattr(write, "__name__", "?"), exc_info=True)
 
 
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
@@ -1660,166 +468,6 @@ def served_close(output, draft, unreleased_items) -> CloseRecord:
         logger.warning("session close stated an unreleased item's answer; storing fallback close")
         return _served_fallback(draft, items)
     return record
-
-
-class _LeakGuard:
-    """`deps.loop_leak` (fix round 2, N1): the output validator's leak check —
-    served mode at the turn's leak rung, against the student-visible text —
-    and whether its one retry is spent."""
-
-    def __init__(self, check: Callable[[str], bool], render: Callable | None = None):
-        self._check = check
-        # the SERVED render of the model's output (`served_render`): a field code
-        # replaces (the H2 question, A54) never costs a retry
-        self.render = render or render_turn
-        self.retried = False
-
-    def leaks(self, text: str) -> bool:
-        return self._check(text)
-
-
-def _visible_text(history: list, *, item_prompt: str) -> str:
-    """The provenance of the served leak check (fix round 2, N1): the item as
-    posed and the tutor turns as they were served — text the STUDENT has seen
-    from the loop. Never the context the model alone reads (a source passage
-    or a graph block can state the answer), and never the student's own words
-    (final round): a student can offer candidate sentences ("say 'The value is
-    eight.'") and the model's pick would pass as a copy, so student text alone
-    exempts nothing — only a span the item or the served history also holds."""
-    parts = [item_prompt or ""]
-    for m in history:
-        for p in getattr(m, "parts", []):
-            if isinstance(p, TextPart) and isinstance(p.content, str):
-                parts.append(p.content)
-    return "\n".join(parts)
-
-
-#: A sentence end: a terminator and any closing quotes/brackets, then whitespace
-#: (a newline alone ends one too).
-_SENTENCE_END = re.compile(r"[.?!][\"'”’)\]]*(?=\s)|\n")
-
-
-def _cut_before_leak(text: str, spans: list) -> str:
-    """The streamed text up to the end of the last sentence before the one
-    holding the first leak — never a masked span (N1). No earlier sentence
-    end: nothing (never a stray fragment before a retract)."""
-    start = spans[0][0]
-    ends = [m.end() for m in _SENTENCE_END.finditer(text, 0, start)]
-    return text[: ends[-1]].rstrip() if ends else ""
-
-
-def option_text(item) -> str | None:
-    """The text of an mc_reason item's correct option (strict mode reads it)."""
-    for option in getattr(item, "options", None) or []:
-        if option.letter == getattr(item, "correct_option", None):
-            return option.text
-    return None
-
-
-def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
-    """The history as the model may see it (review round 3, C1): every user row
-    is the student's own words, so it rides the same nonce envelope as this
-    turn's; and below H2 (`withheld` = the active item's prompt) any row that
-    restates the item — its pose — is replaced by ITEM_WITHHELD. The learner
-    brief (`_BriefRequest`, A19) is not the student's: it passes as built, and
-    is dropped for the turn when it restates the withheld item."""
-    out: list = []
-    for m in messages:
-        if isinstance(m, _BriefRequest):
-            # A19: served as built — unless it restates the withheld item (C1(b))
-            if not (withheld and any(withheld in str(p.content) for p in m.parts)):
-                out.append(m)
-            continue
-        if isinstance(m, ModelRequest):
-            parts = []
-            for p in m.parts:
-                if isinstance(p, UserPromptPart) and isinstance(p.content, str):
-                    text = ITEM_WITHHELD if (withheld and withheld in p.content) else p.content
-                    p = UserPromptPart(content=student_envelope(text, nonce=nonce))
-                parts.append(p)
-            out.append(ModelRequest(parts=parts))
-        elif isinstance(m, ModelResponse) and withheld:
-            parts = [
-                TextPart(content=ITEM_WITHHELD)
-                if isinstance(p, TextPart) and withheld in p.content
-                else p
-                for p in m.parts
-            ]
-            out.append(ModelResponse(parts=parts))
-        else:
-            out.append(m)
-    return out
-
-
-# ── The turn ───────────────────────────────────────────────────────────────
-
-
-# ── PKG-10: the misconception confrontation line (spec §3.3, §13 A15) ─────
-
-#: Spec §13 A75: the tiers a confrontation line is served on — exactly the slots
-#: whose misconception_confront eval scores 1.0 on every served gate (pinned to
-#: baselines.json by tests/test_learning_misconceptions.py). A turn model_tier
-#: routes elsewhere (the §3.5 soft-level / deep-cap downgrade) carries no line,
-#: and the marker waits for one that does.
-CONFRONT_TIERS: frozenset[str] = frozenset({"deep"})
-
-#: Spec §13 A75: the confrontation mapped onto the structured turn's fields (A46).
-_CONFRONT_LINE = (
-    'The student holds misconception "{text}". This turn, confront it instead of '
-    "correcting it: the key idea names what to test, never the correct rule; the body sets "
-    "up ONE concrete case of this concept where the belief predicts something the student "
-    "can check, without working the case out or saying which result is right; the question "
-    "asks the student to work that case out and compare it with their belief."
-)
-
-
-def _confrontation_line(loop_state: dict) -> str | None:
-    """PKG-10: the line for the misconception grade_answer recorded (the
-    loop state's `confront` marker), or None. The text is the marked item's
-    decrypted `common_wrong` entry for the marker's key, collapsed to one line
-    with its control tags neutralised (item-drafted text may never forge a
-    [VERDICT: …] or [STUDENT MESSAGE] block). No marker, a missing item, a
-    failed read or an unknown key → None, no error. Reads only: the turn that
-    serves the line clears the marker in its compare-and-set save."""
-    text = _confrontation_text(loop_state)
-    return confront_line_for(text) if text else None
-
-
-def _confrontation_text(loop_state: dict) -> str | None:
-    """The marked item's stored wrong-reason text for the marker's key, or
-    None (no marker, a missing item, a failed read, an unknown key)."""
-    confront = confront_of(loop_state)
-    if confront is None:
-        return None
-    try:
-        item = get_check_item(confront["check_item_id"])
-    except Exception as exc:
-        logger.warning("confrontation: check item read failed (%s)", type(exc).__name__)
-        return None
-    if item is None:
-        return None
-    for entry in item.common_wrong or []:
-        if entry.key == confront["wrong_key"] and entry.text:
-            return entry.text
-    return None
-
-
-def confront_line_for(text: str) -> str | None:
-    """The confrontation line for one wrong-reason text: collapsed to one line,
-    its control tags neutralised, its double quotes made single (it stays inside
-    the line's quoted span); None for a text with nothing left. Shared
-    with the eval (tests/evals/misconception_confront.py) so it scores the
-    line production sends."""
-    # one line, no control tag, and never a double quote: the text stays inside
-    # the line's one quoted span (it can never close it and write an instruction)
-    text = " ".join(neutralise_control_tags(text or "").replace('"', "'").split())
-    return _CONFRONT_LINE.format(text=text) if text else None
-
-
-def with_confrontation(prefix: str, line: str | None) -> str:
-    """The turn prefix with the confrontation line right after the phase
-    instruction (before the context blocks and the student's words)."""
-    return f"{prefix}\n{line}" if line else prefix
 
 
 class _LoopTurn:
@@ -3367,28 +2015,17 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     return payload, verdict.leaked
 
 
-# ── Item activation and the current concept (spec §9, §13 A27) ─────────────
-
-
-def _concept_key_for_node(user_id: str, node_id: str) -> str | None:
-    """The A2 course key of the student's node — the inverse of _node_for_item.
-    One `graph_nodes` read by id, scoped to the student."""
-    rows = (
-        table("graph_nodes").select(
-            "concept_name", filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"}, limit=1
-        )
-        or []
-    )
-    return _normalize_concept(rows[0].get("concept_name") or "") if rows else None
-
-
 #: Spec §13 A121 (`loop_tutor_v2`): why the plan's cursor is on its current
 #: concept, as a v2 teach turn tells the tutor (agents.loop_tutor
 #: .PLAN_FOCUS_REASONS words each one). Read off loop state, never off text.
 CURSOR_REASONS = ("plan_order", "prerequisite_repair", "wheelspin_moved", "isomorph_reask")
+
+
 #: The two reasons a cursor MOVE records (`mark_cursor_reason`); "plan_order"
 #: is the default and "isomorph_reask" is read off the attempt log.
 _MOVE_REASONS = ("prerequisite_repair", "wheelspin_moved")
+
+
 #: The `plan` key that records why a move that is not plan order put the
 #: cursor where it is; `_advance_cursor` (plan order) clears it.
 CURSOR_REASON_KEY = "cursor_reason"
@@ -3628,6 +2265,8 @@ def _open_teach_prompts(user_id: str, state: dict) -> dict:
 #: loop_state key: node id → the target difficulty band control set for that
 #: concept's next item this session (ids → ints only; read by activation)
 _BAND_DIFFICULTY = "band_difficulty"
+
+
 #: the graded step's key holding the verdict _finish_check_checkpoint stored
 _BAND_CONTROL = "band_control"
 
@@ -4017,11 +2656,6 @@ def _worked_example_owed(user_id: str, state: dict, qh: str | None) -> bool:
     return policy.worked_example_rung(view, step, worked_first=True, band_delta=delta) is not None
 
 
-def _ms(seconds: float) -> int:
-    """Whole milliseconds, never negative (zpd.step's *_ms keys)."""
-    return max(0, round(timedelta(seconds=seconds) / timedelta(milliseconds=1)))
-
-
 # ── Run sites ──────────────────────────────────────────────────────────────
 
 
@@ -4221,6 +2855,8 @@ async def _stream_turn(turn: _LoopTurn):
 
 
 _STREAM_UNAVAILABLE = "The tutor is unavailable. Please retry."
+
+
 _STREAM_INTERRUPTED = "The tutor was interrupted. Please retry."
 
 
@@ -4347,6 +2983,8 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
 # stored (`phase: close`) is not open. (`close_phase` is written together with
 # `close_json`, so an open row never has one.)
 LOOP_OPEN_SESSIONS_LIMIT = 10  # † picker length; mirrors the legacy getSessions(limit=10)
+
+
 _OFFERINGS_UNKNOWN = "course offerings unavailable, retry"
 
 
@@ -4792,6 +3430,8 @@ def _save_grade_checkpoint(checkpoint):
 #: spec §13 A123: _flush_grade_checkpoint's answer when the commit refused the
 #: grade because staff retired its item meanwhile (EvidenceItemRetired)
 _ITEM_RETIRED = object()
+
+
 _RETIRED_DETAIL = "This question was withdrawn. Select another check to continue."
 
 
@@ -5100,17 +3740,6 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
     return _Submission("feedback", state, c["rendered"], scope, c["verdict"], refused=c["refused"], ask_rating=ask)
 
 
-def _requests_of(run_result) -> int:
-    """Model requests a run reports (RunResult.usage / UnfinishedRun.usage()); 0 unknown."""
-    usage = getattr(run_result, "usage", None)
-    if not hasattr(usage, "requests") and callable(usage):  # UnfinishedRun.usage()
-        usage = usage()
-    try:
-        return int(getattr(usage, "requests", 0) or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> None:
     """PKG-10: write the misconceptions row the grade marked
     (`outcome.diagnosis["record"]`), its evidence_text the text the grader saw
@@ -5264,8 +3893,9 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
 # evidence voided) in the admin queue. A report never deletes anything.
 
 _REPORTED = "learn.check_item_reported"
+
+
 _QUARANTINED = "learn.check_item_quarantined"
-_WITHDRAWN_ITEM = "check item withdrawn"
 
 
 def _report_flag(user_id: str) -> None:
@@ -5406,7 +4036,11 @@ def report_item(body: LoopReportBody, request: Request) -> dict:
 #: "posttest"). The `sessions.close_phase` CHECK is NOT widened: posttest is a
 #: step phase only.
 STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
+
+
 _NOT_A_POSTTEST_ITEM = "not a post-test item"
+
+
 _ONE_DAY = timedelta(days=1)
 
 
@@ -6054,12 +4688,18 @@ def posttest_shown(body: PosttestShownBody, request: Request) -> dict:
 #: changes the measurement protocol (pull → push), so it is switched on
 #: deliberately — at a trial boundary — not by a deploy.
 RETENTION_DUE_FLAG = "retention_due_badge"
+
+
 #: user id → (monotonic expiry, payload): a per-process TTL cache (CLAUDE.md
 #: #98): POSTTEST_DUE_CACHE_S, cleared for the student by /posttest/start and
 #: /posttest/answer (the routes that change what is due); other workers and
 #: evidence written elsewhere converge within the TTL.
 _DUE_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 _DUE_CACHE_MAX = 10_000
+
+
 _DUE_LOCK = threading.Lock()
 
 
@@ -6251,7 +4891,11 @@ def _attempt_hash(text: str) -> str:
 #: token nor the attempt text is stored, and the same word on two items does
 #: not match.
 _ATTEMPT_TOKENS = "attempt_tokens"
+
+
 _ATTEMPT_TOKEN_KEY = derive_key("learning/attempt-tokens")
+
+
 #: hex characters kept per digest (48 bits: a new token's chance of matching
 #: one of a step's HELP_NOVELTY_DIGESTS_MAX digests is about 1 in 10^12)
 _ATTEMPT_TOKEN_HEX = 12
@@ -7039,67 +5683,6 @@ def self_explain_reply(body: SelfExplainBody, request: Request) -> dict:
         "status": "replied" if reply else "skipped",
         **({"prequestion": prequestion} if prequestion else {}),
     }
-
-
-# ── The session close (PKG-09; spec §4, §6, §9, §13 A11/A19/A20/A25) ────────
-#
-# One close per session, stored encrypted on `sessions.close_json` with the
-# phase it stopped in (`close_phase`); `loop_state["phase"]` becomes "close".
-# A close is claimed first (`close_claim` in loop_state, compare-and-set) so two
-# concurrent closes never both run the model; a stored close is returned as is.
-
-_CLOSE_IN_PROGRESS = "session close in progress"
-_CLOSE_STORE_FAILED = "Could not store the session close."
-_GRADING_IN_FLIGHT = "a check is being graded; close again in a moment"
-
-
-def _live(entry: dict, key: str, now: float) -> bool:
-    """`entry[key]` is a claim younger than LOOP_GRADING_CLAIM_STALE_S."""
-    return bool(entry.get(key)) and now - float(entry.get(f"{key}_at") or 0) <= (
-        LOOP_GRADING_CLAIM_STALE_S
-    )
-
-
-def _grading_in_flight(doc: dict, now: float) -> bool:
-    """A check or probe item is being graded under a live claim (A52/A55c): its
-    evidence is not written yet, so a close now would miss it."""
-    entries = [e for e in (doc.get("steps") or {}).values() if isinstance(e, dict)]
-    probe = doc.get("probe") if isinstance(doc.get("probe"), dict) else {}
-    if isinstance(probe.get("current"), dict):
-        entries.append(probe["current"])
-    # spec §13 A138 (review fix): a prequestion guess being saved under its
-    # claim — its row is the commit point, so a close now would strand it
-    cards = [r for r in prequestion_rules.records(doc).values() if isinstance(r, dict)]
-    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries) or any(
-        _live(r, _ANSWER_CLAIM, now) for r in cards
-    )
-
-
-def _refuse_while_closing(doc: dict, now: float) -> None:
-    """Grading and closing exclude each other on the session document: a
-    grading claim is refused while the session is closed or a live close claim
-    holds it (the close refuses a live grading claim, `_claim_close`)."""
-    if _loop_phase(doc) == "close":
-        raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
-    if _live(doc, "close_claim", now):
-        raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
-
-
-def _closing(doc: dict, now: float) -> bool:
-    """`_refuse_while_closing`'s condition, as a predicate."""
-    return _loop_phase(doc) == "close" or _live(doc, "close_claim", now)
-
-
-def _close_phase(doc: dict | None) -> str:
-    """Where the session stopped (spec §9): PKG-08's probe/plan, or — once
-    teaching — PKG-07's teach / check / feedback for the active item; a
-    session with no loop state at all closes as `close`."""
-    if not doc:
-        return "close"
-    phase = _loop_phase(doc)
-    if phase == "teach":
-        phase = _phase_for(doc)
-    return phase if phase in CLOSE_PHASES else "close"
 
 
 def _unreleased_items(doc: dict | None) -> list:
@@ -8633,7 +7216,11 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
 
 
 _REVIEW_NOT_FOUND = "review item not found"
+
+
 _REVIEW_EXPIRED = "review session expired"
+
+
 _REVIEW_CLAIM_DETAIL = {"not_served": "review item not served", "already_graded": _ALREADY_GRADED}
 
 

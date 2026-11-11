@@ -62,7 +62,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/learn.py", "delegate", "service_route"):  # _loop_delegate's closure
         "spec §13 A148: a /api/learn request the loop gate hands to a loop handler runs as the "
         "loop router does",
-    ("services/loop_posed.py", "posed_items", "runs_as_service"):
+    ("services/loop/posed.py", "posed_items", "runs_as_service"):
         "A93/A101 scan set over service-only loop tables; called by the loop and the notes/flashcards guard",
     ("services/quiz/submission.py", "_claim_quiz_evidence", "runs_as_service"):
         "quiz_evidence_claims is a service-only loop table (A148)",

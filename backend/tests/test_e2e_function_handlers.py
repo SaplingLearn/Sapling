@@ -1476,7 +1476,7 @@ def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_run
     the two fields that reach the student verbatim."""
     import agents.function_handlers_e2e as m
     from learning.ladder import Rung
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     for phase, turn, body, question, verdict in (
         ("hint", m.E2E_LOOP_HINT_TURN, m.E2E_LOOP_HINT_BODY, m.E2E_LOOP_HINT_QUESTION, None),

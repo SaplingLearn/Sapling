@@ -29,6 +29,7 @@ from learning.multi_concept import SEP, STEP_KEY, combo_key
 from learning.surface import Surface
 from tests.test_learn_loop_routes import ITEM, NOW, _iso, _plan_state, _unknown_attempt
 from tests.test_learn_loop_routes import seams as seams  # the loop routes' fixture
+from tests.split_patches import setattr_loop
 
 T = "2026-11-01T00:00:00+00:00"
 
@@ -624,7 +625,7 @@ def test_planning_reads_a_combination_as_the_apexs_observation_never_a_prerequis
     from learning.evidence import Evidence, planning_observation
     from learning.planner import planning_states
     from learning.planning_history import project_planning_history
-    from routes.learn_loop import _tag_planning_evidence
+    from services.loop.reveals import _tag_planning_evidence
 
     monkeypatch.setattr(check_tool, "apply_misconception_rule", _no_rule)
 
@@ -667,7 +668,7 @@ def test_planning_reads_a_combination_as_the_apexs_observation_never_a_prerequis
 
 
 def test_a_combinations_node_is_its_apex(monkeypatch):
-    from routes.learn_loop import _node_for_item
+    from services.loop.learner import _node_for_item
 
     rows = [
         {"id": "n-pre", "concept_name": "Gradient  Descent"},
@@ -675,7 +676,7 @@ def test_a_combinations_node_is_its_apex(monkeypatch):
     ]
     table = MagicMock()
     table.return_value.select.return_value = rows
-    monkeypatch.setattr("routes.learn_loop.table", table)
+    setattr_loop(monkeypatch, "table", table)
     assert _node_for_item("u1", _combo("q")) == "n-apex"
     assert _node_for_item("u1", _item("q", concept="gradient descent")) == "n-pre"
     assert SEP not in _item("q", concept="gradient descent").concept_key

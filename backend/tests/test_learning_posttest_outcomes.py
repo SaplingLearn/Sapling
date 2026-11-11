@@ -31,6 +31,7 @@ from learning.checks import (
     posttest_skip_reason,
     pretest_match,
 )
+from tests.split_patches import patch_loop
 
 FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
 MIGRATION = next(
@@ -281,8 +282,8 @@ def test_in_session_practice_excludes_both_reserves():
 
     grid = _grid()
     with (
-        patch("routes.learn_loop._concept_key_for_node", return_value="k1"),
-        patch("routes.learn_loop.list_items", return_value=grid),
+        patch_loop("_concept_key_for_node", return_value="k1"),
+        patch_loop("list_items", return_value=grid),
     ):
         items, exclude = learn_loop._practice_pool("u1", "c1", "node-1", {"seen"})
     assert items == grid and exclude == {"seen", "f2", "m2"}
@@ -297,8 +298,8 @@ def test_an_h4_sibling_is_never_a_reserve():
     grid = _grid(m2b=_item("m2b", "mc_reason", 2))
     active = _by(grid, "m2b")
     assert posttest_reserve_hashes(grid) == ("f2", "m2")
-    with patch("routes.learn_loop.list_items", return_value=grid), patch(
-        "routes.learn_loop.ladder.deterministic_content", return_value=None
+    with patch_loop("list_items", return_value=grid), patch(
+        'learning.ladder.deterministic_content', return_value=None
     ) as content:
         learn_loop._leak_checked_payload(user_id="u1", item=active, rung=Rung.H4, reference="r")
     assert content.call_args.kwargs["exclude_hashes"] == frozenset({"f2", "m2"})

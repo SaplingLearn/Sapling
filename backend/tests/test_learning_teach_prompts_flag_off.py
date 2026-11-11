@@ -34,6 +34,7 @@ import pytest
 
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import ITEM, _graded, _json_agent, _plan_state, _state, client
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -82,10 +83,10 @@ def _run_kwargs(kw: dict) -> dict:
 def _capture(seams, run) -> dict:
     agent, seen = _json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
-        patch("routes.learn_loop.new_nonce", return_value=_NONCE),
-        patch("routes.learn_loop.uuid.uuid4", return_value=_UUID),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("new_nonce", return_value=_NONCE),
+        patch('uuid.uuid4', return_value=_UUID),
     ):
         r = run()
     return {
@@ -134,7 +135,7 @@ def _scenario(name: str, seams) -> dict:
             "phase": "plan",
             "plan": {"proposed": ["node-1", "node-2"], "proposed_kinds": {"node-1": "new", "node-2": "new"}},
         }
-        with patch("routes.learn_loop.store_brief"):
+        with patch_loop("store_brief"):
             return _capture(seams, _post("/plan/approve", {**_CHAT, "concept_ids": ["node-1", "node-2"]}))
     if name == "status":
         seams.store["doc"] = _plan_state()

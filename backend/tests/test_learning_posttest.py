@@ -20,6 +20,8 @@ from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.loop_state_store import EvidenceSpan
 from main import app
 from services import ai_budget
+from tests.split_patches import patch_loop, setattr_loop
+import learning.policy
 
 client = TestClient(app)
 
@@ -87,13 +89,13 @@ def no_rate_limit():
 
 @pytest.fixture
 def gate_on():
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=True) as g:
+    with patch_loop("learning_loop_for_request", return_value=True) as g:
         yield g
 
 
 @pytest.fixture
 def gate_off():
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=False) as g:
+    with patch_loop("learning_loop_for_request", return_value=False) as g:
         yield g
 
 
@@ -186,22 +188,19 @@ def tables():
                 p["claim"] = None
 
     with (
-        patch("routes.learn_loop.evidence_spans", side_effect=_spans),
-        patch("routes.learn_loop.items_for_concepts", side_effect=_items),
-        patch("routes.learn_loop.table", side_effect=_table),
-        patch("routes.learn_loop.read_states", return_value={}),
-        patch("routes.learn_loop._course_nodes", side_effect=_nodes),
-        patch("routes.learn_loop._read_poses", side_effect=_read),
-        patch("routes.learn_loop._record_poses", side_effect=_record),
-        patch("routes.learn_loop._record_skips", side_effect=lambda rows: t["skips"].extend(rows)),
-        patch("routes.learn_loop._claim_pose", side_effect=_claim),
-        patch("routes.learn_loop._answer_pose", side_effect=_answer_pose),
-        patch("routes.learn_loop._release_pose", side_effect=_release),
-        patch(
-            "routes.learn_loop.recent_evidence",
-            side_effect=lambda u, n, *, since: list(t["evidence_since"]),
-        ),
-        patch("routes.learn_loop.unscanned_since", return_value=False),
+        patch_loop("evidence_spans", side_effect=_spans),
+        patch_loop("items_for_concepts", side_effect=_items),
+        patch_loop("table", side_effect=_table),
+        patch_loop("read_states", return_value={}),
+        patch_loop("_course_nodes", side_effect=_nodes),
+        patch_loop("_read_poses", side_effect=_read),
+        patch_loop("_record_poses", side_effect=_record),
+        patch_loop("_record_skips", side_effect=lambda rows: t["skips"].extend(rows)),
+        patch_loop("_claim_pose", side_effect=_claim),
+        patch_loop("_answer_pose", side_effect=_answer_pose),
+        patch_loop("_release_pose", side_effect=_release),
+        patch_loop("recent_evidence", side_effect=lambda u, n, *, since: list(t["evidence_since"])),
+        patch_loop("unscanned_since", return_value=False),
     ):
         yield t
 
@@ -230,7 +229,7 @@ def freeze_now():
     patches = []
 
     def _freeze(now):
-        p = patch("routes.learn_loop._posttest_now", return_value=now)
+        p = patch_loop("_posttest_now", return_value=now)
         p.start()
         patches.append(p)
 
@@ -243,8 +242,8 @@ def freeze_now():
 def seen_revealed():
     state = {"seen": set(), "revealed": set()}
     with (
-        patch("routes.learn_loop.seen_hashes", side_effect=lambda u: set(state["seen"])),
-        patch("routes.learn_loop.revealed_hashes", side_effect=lambda u: set(state["revealed"])),
+        patch_loop("seen_hashes", side_effect=lambda u: set(state["seen"])),
+        patch_loop("revealed_hashes", side_effect=lambda u: set(state["revealed"])),
     ):
 
         def _set(seen=None, revealed=None):
@@ -470,9 +469,9 @@ def test_start_runs_no_model_writes_no_evidence_and_records_the_pose(
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1")]
     with (
-        patch("routes.learn_loop.grade_answer") as grade,
-        patch("routes.learn_loop.retrieve_chunks_detailed") as rag,
-        patch("routes.learn_loop.store_brief") as brief,
+        patch_loop("grade_answer") as grade,
+        patch_loop("retrieve_chunks_detailed") as rag,
+        patch_loop("store_brief") as brief,
     ):
         assert client.post(START, json={"course_id": "c", "user_id": "u"}).status_code == 200
     grade.assert_not_called()
@@ -779,7 +778,6 @@ def test_answer_refused_asks_again_and_records_nothing(
 ):
     """Spec §13 A33 (CodeRabbit PR #673 round 3): a refusal records nothing and is never an
     idk here — no session counts refusals, and a post-test item may be left unanswered."""
-    import routes.learn_loop as ll
     from types import SimpleNamespace
 
     async def _refused(*a, **kw):
@@ -792,7 +790,7 @@ def test_answer_refused_asks_again_and_records_nothing(
             grader_backend=None,
         )
 
-    monkeypatch.setattr(ll, "grade_answer", _refused)
+    setattr_loop(monkeypatch, "grade_answer", _refused)
     for _ in range(3):  # asked again every time; never turned into an idk
         r = client.post(ANSWER, json=_answer(answer="a loop"))
         assert r.status_code == 200 and r.json() == {"graded": False, "refused": True}
@@ -842,7 +840,7 @@ def test_an_open_pose_revealed_or_worked_since_grades_with_no_unassisted_credit(
     grader_says(correct=True, confidence=0.9)
     one_item["evidence_since"] = since
     seen_revealed(revealed=revealed)
-    with patch("routes.learn_loop.revealed_hashes", side_effect=lambda u: set(revealed)):
+    with patch_loop("revealed_hashes", side_effect=lambda u: set(revealed)):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 200
     (ev,) = applied[0]["graph_update"]["evidence"]
@@ -871,7 +869,7 @@ def test_p_known_after_is_read_when_the_flush_does_not_say(
     grader_says(correct=True, confidence=0.9)
     with (
         patch("services.graph_service.apply_graph_update", return_value=[]),
-        patch("routes.learn_loop._learner_state", return_value=SimpleNamespace(p_known=0.93)),
+        patch_loop("_learner_state", return_value=SimpleNamespace(p_known=0.93)),
     ):
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
     (step,) = [e for e in captured_events if e["event_type"] == "zpd.step"]
@@ -888,8 +886,8 @@ def test_no_step_when_p_known_after_is_not_known(
     kw = {"side_effect": state} if isinstance(state, Exception) else {"return_value": state}
     with (
         patch("services.graph_service.apply_graph_update", return_value=[]),
-        patch("routes.learn_loop._learner_state", **kw),
-        patch("routes.learn_loop._band_for", return_value=("develop", 0.35)),
+        patch_loop("_learner_state", **kw),
+        patch_loop("_band_for", return_value=("develop", 0.35)),
     ):
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
     assert not [e for e in captured_events if e["event_type"] == "zpd.step"]
@@ -925,7 +923,7 @@ def test_a_taken_over_claim_writes_nothing(gate_on, one_item, grader_says, appli
     """m1/m2: the claim is re-validated (and the pose closed) BEFORE the flush;
     a claim taken over mid-grade (stale takeover) writes no evidence."""
     grader_says(correct=True, confidence=0.9)
-    with patch("routes.learn_loop._answer_pose", return_value=False):
+    with patch_loop("_answer_pose", return_value=False):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 409 and applied == []
 
@@ -935,7 +933,7 @@ def test_a_failed_flush_never_reopens_the_answered_pose(gate_on, one_item, grade
     answered (fail closed: never graded twice), not released."""
     grader_says(correct=True, confidence=0.9)
     with (
-        patch("routes.learn_loop.flush_pending", side_effect=RuntimeError("down")),
+        patch_loop("flush_pending", side_effect=RuntimeError("down")),
         pytest.raises(RuntimeError),
     ):
         client.post(ANSWER, json=_answer(answer="its lexical scope"))
@@ -946,7 +944,7 @@ def test_an_unreadable_evidence_journal_grades_assisted(
     gate_on, one_item, grader_says, applied
 ):
     grader_says(correct=True, confidence=0.9)
-    with patch("routes.learn_loop.recent_evidence", return_value=None):
+    with patch_loop("recent_evidence", return_value=None):
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
     (ev,) = applied[0]["graph_update"]["evidence"]
     assert ev["max_rung"] >= params.RUNG_ASSISTED_MIN and ev["assisted"] is True
@@ -954,7 +952,7 @@ def test_an_unreadable_evidence_journal_grades_assisted(
 
 def test_the_floor_reads_the_journal_from_posed_at(gate_on, one_item, grader_says, applied):
     grader_says(correct=True, confidence=0.9)
-    with patch("routes.learn_loop.recent_evidence", return_value=[]) as journal:
+    with patch_loop("recent_evidence", return_value=[]) as journal:
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
     posed = datetime.fromisoformat(one_item["poses"][("u", "n1", W1)]["posed_at"])
     assert journal.call_args.kwargs["since"] == learn_loop_iso_z(posed)
@@ -994,7 +992,7 @@ def test_claim_pose_is_one_conditional_update():
     handle = MagicMock()
     handle.select.return_value = [{"window_days": W1, "posed_at": NOW.isoformat()}]
     handle.update.return_value = [{"node_id": "n1", "posed_at": NOW.isoformat()}]
-    with patch("routes.learn_loop.table", return_value=handle) as tbl:
+    with patch_loop("table", return_value=handle) as tbl:
         assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) == handle.update.return_value[0]
     tbl.assert_called_with("posttest_poses")
     handle.update.assert_called_once()
@@ -1014,7 +1012,7 @@ def test_claim_pose_is_one_conditional_update():
         k: filters[k] for k in ("question_hash", "answered_at", "posed_at")
     }
     handle.update.return_value = []
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
 
 
@@ -1032,12 +1030,12 @@ def test_a_claim_names_one_window_and_none_without_an_open_pose():
         {"window_days": W1, "posed_at": (NOW - timedelta(minutes=2)).isoformat()},
     ]
     handle.update.return_value = [{"node_id": "n1"}]
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW)
     assert handle.update.call_args.kwargs["filters"]["window_days"] == f"eq.{W1}"
     handle.reset_mock()
     handle.select.return_value = []
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
     handle.update.assert_not_called()
 
@@ -1049,7 +1047,7 @@ def test_answer_release_and_record_poses():
 
     handle = MagicMock()
     handle.update.return_value = [{"node_id": "n1"}]
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=True, max_rung=0) is True
         answered = handle.update.call_args
         learn_loop._release_pose("u", "n1", "c-1")
@@ -1075,7 +1073,7 @@ def test_answer_release_and_record_poses():
         [{"user_id": "u", "node_id": "n1"}], on_conflict="user_id,node_id,window_days"
     )
     handle.update.return_value = []
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=False, max_rung=4) is False
 
 
@@ -1089,7 +1087,7 @@ def test_read_poses_keys_each_node_by_window():
         {"node_id": "n1", "window_days": W1, "question_hash": "q1"},
         {"node_id": "n1", "window_days": W2, "question_hash": "q2"},
     ]
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         poses = learn_loop._read_poses("u", "c")
     assert {w: p["question_hash"] for w, p in poses["n1"].items()} == {W1: "q1", W2: "q2"}
     assert "window_days" in handle.select.call_args.args[0].split(",")
@@ -1102,7 +1100,7 @@ def test_course_nodes_are_paged():
 
     handle = MagicMock()
     handle.select_with_count.return_value = ([{"id": "n1", "concept_name": "Recursion"}], 1)
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._course_nodes("u", "c") == {"n1": "recursion"}
     assert handle.select_with_count.call_args.kwargs["order"] == "id"
 
@@ -1168,7 +1166,7 @@ def test_answer_decides_the_recheck_through_the_one_helper(gate_on, one_item, gr
     """A76: every grading caller passes recheck_after_release's decision to
     grade_answer as same_session_recheck — the post-test with no session log."""
     grader_says(correct=True, confidence=0.9)
-    with patch("routes.learn_loop.recheck_after_release", return_value=True) as rc:
+    with patch_loop("recheck_after_release", return_value=True) as rc:
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 200
     args, kw = rc.call_args
@@ -1183,7 +1181,7 @@ def test_answer_decides_the_recheck_through_the_one_helper(gate_on, one_item, gr
 @pytest.fixture
 def reported():
     state: set[str] = set()
-    with patch("routes.learn_loop.reported_hashes", side_effect=lambda u: set(state)) as reads:
+    with patch_loop("reported_hashes", side_effect=lambda u: set(state)) as reads:
         yield SimpleNamespace(hashes=state, reads=reads)
 
 
@@ -1369,7 +1367,7 @@ def test_an_open_pose_whose_item_was_reported_since_is_not_answerable(
 def test_an_unreadable_reported_set_refuses_the_answer(gate_on, one_item, applied):
     """Fail closed: whether the item was reported cannot be told, so nothing is
     claimed or graded (503, retry)."""
-    with patch("routes.learn_loop.reported_hashes", side_effect=RuntimeError("down")):
+    with patch_loop("reported_hashes", side_effect=RuntimeError("down")):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 503 and one_item["claims"] == [] and applied == []
 
@@ -1380,14 +1378,13 @@ def test_band_control_ceilings_never_reach_the_posttest(
     """Spec §13 A122: band control's ceiling clause moves an in-session band
     ceiling only. The tool-removed post-test stays at H0 (spec §10 rung 3): it
     reads no band ceiling and no table ceiling at all."""
-    import routes.learn_loop as loop_routes
 
     def never(*a, **k):
         raise AssertionError("the post-test read a ceiling")
 
-    monkeypatch.setattr(loop_routes, "_band_ceiling_delta", never)
-    monkeypatch.setattr(loop_routes, "_ceiling_for", never)
-    monkeypatch.setattr(loop_routes.policy, "ceiling_with_reason", never)
+    setattr_loop(monkeypatch, "_band_ceiling_delta", never)
+    setattr_loop(monkeypatch, "_ceiling_for", never)
+    monkeypatch.setattr(learning.policy, "ceiling_with_reason", never)
     grader_says(correct=True, confidence=0.9)
     r = client.post(ANSWER, json=_answer(answer="a function with its lexical scope"))
     assert r.status_code == 200, r.text
@@ -1498,9 +1495,9 @@ def test_the_skip_write_never_fails_the_start():
         def upsert(self, *_a, **_kw):
             raise RuntimeError("db down")
 
-    with patch("routes.learn_loop.table", return_value=_Down()):
+    with patch_loop("table", return_value=_Down()):
         learn_loop._record_skips([{"user_id": "u"}])  # logged, not raised
-    with patch("routes.learn_loop.table") as tbl:
+    with patch_loop("table") as tbl:
         learn_loop._record_skips([])
     tbl.assert_not_called()
 
@@ -1585,7 +1582,7 @@ def test_shown_stamps_the_first_display_once():
 
     handle = MagicMock()
     handle.update.return_value = [{"node_id": "n1"}]
-    with patch("routes.learn_loop.table", return_value=handle) as tbl:
+    with patch_loop("table", return_value=handle) as tbl:
         assert learn_loop._stamp_served("u", "n1", "q1", NOW) is True
     tbl.assert_called_with("posttest_poses")
     data = handle.update.call_args.args[0]
@@ -1596,18 +1593,18 @@ def test_shown_stamps_the_first_display_once():
     ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
     assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"
     handle.update.return_value = []
-    with patch("routes.learn_loop.table", return_value=handle):
+    with patch_loop("table", return_value=handle):
         assert learn_loop._stamp_served("u", "n1", "q1", NOW) is False
 
 
 def test_the_shown_route_stamps_and_never_fails_the_student(gate_on, freeze_now):
     freeze_now(NOW)
     body = {"user_id": "u", "node_id": "n1", "question_hash": "q1"}
-    with patch("routes.learn_loop._stamp_served", return_value=True) as stamp:
+    with patch_loop("_stamp_served", return_value=True) as stamp:
         r = client.post("/api/learn/loop/posttest/shown", json=body)
     assert r.status_code == 200 and r.json() == {"served": True}
     stamp.assert_called_once_with("u", "n1", "q1", NOW)
-    with patch("routes.learn_loop._stamp_served", side_effect=RuntimeError("down")):
+    with patch_loop("_stamp_served", side_effect=RuntimeError("down")):
         r = client.post("/api/learn/loop/posttest/shown", json=body)
     assert r.status_code == 200 and r.json() == {"served": False}
     r = client.post("/api/learn/loop/posttest/shown", json={**body, "extra": 1})
@@ -1656,9 +1653,9 @@ def due_reads(tables):
         return out
 
     with (
-        patch("routes.learn_loop.flag_on", return_value=True) as flag,
-        patch("routes.learn_loop.posttest_anchors", side_effect=_anchors),
-        patch("routes.learn_loop._read_student_poses", side_effect=_poses),
+        patch_loop("flag_on", return_value=True) as flag,
+        patch_loop("posttest_anchors", side_effect=_anchors),
+        patch_loop("_read_student_poses", side_effect=_poses),
     ):
         yield SimpleNamespace(calls=calls, flag=flag)
 
@@ -1686,7 +1683,7 @@ def test_nothing_due_reads_no_items(gate_on, tables, freeze_now, seen_revealed, 
     freeze_now(NOW)
     _one_concept(tables, item("k1", "q1"))
     tables["spans"] = _due("n1", first=FRESH)  # the first window has not opened
-    with patch("routes.learn_loop.items_for_concepts") as items:
+    with patch_loop("items_for_concepts") as items:
         assert client.get(DUE).json() == {"due": False, "course_ids": []}
     items.assert_not_called()  # the cheap path: anchors + poses only
 
@@ -1721,10 +1718,8 @@ def test_due_is_cached_and_the_post_test_routes_clear_it(
 
 def test_an_unreadable_due_state_is_a_503_never_a_cached_no(gate_on, tables, freeze_now, due_reads):
     freeze_now(NOW)
-    with patch("routes.learn_loop.posttest_anchors", side_effect=RuntimeError("no function")):
+    with patch_loop("posttest_anchors", side_effect=RuntimeError("no function")):
         assert client.get(DUE).status_code == 503
     _one_concept(tables, item("k1", "q1"))
-    with patch("routes.learn_loop.seen_hashes", return_value=set()), patch(
-        "routes.learn_loop.revealed_hashes", return_value=set()
-    ):
+    with patch_loop("seen_hashes", return_value=set()), patch_loop("revealed_hashes", return_value=set()):
         assert client.get(DUE).json()["due"] is True  # nothing was cached by the failure

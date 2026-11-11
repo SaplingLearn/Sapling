@@ -25,7 +25,6 @@ import pathlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, get_args
-from unittest.mock import patch
 
 import pytest
 
@@ -40,6 +39,7 @@ from learning.params import (
 from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _planner
 from tests.test_learn_loop_routes import ITEM, _answer, _feedback_agent, _state, client
+from tests.split_patches import patch_loop
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MIGRATION = BACKEND / "db" / "migrations" / "20261108092032_learning_student_confidence.sql"
@@ -759,8 +759,8 @@ def real_check(gate_on, seams, grader, store):
     seams.store["doc"] = _state(rung=0)
     grader["result"] = _grade_result(correct=True)
     with (
-        patch("routes.learn_loop.grade_answer", grade_answer),
-        patch("routes.learn_loop.record") as rec,
+        patch_loop("grade_answer", grade_answer),
+        patch_loop("record") as rec,
     ):
         seams.record = rec
         yield seams
@@ -835,7 +835,7 @@ def real_probe(probe, grader, store):
     probe.grade.side_effect = grade_answer
     grader["result"] = _grade_result(correct=True)
     _planner._probing(probe, current=None)
-    with patch("routes.learn_loop.record"):
+    with patch_loop("record"):
         yield probe
 
 

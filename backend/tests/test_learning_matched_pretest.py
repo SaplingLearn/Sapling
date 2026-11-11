@@ -34,6 +34,8 @@ from learning.checks import (
     pretest_match,
 )
 from tests.test_learning_probe_planner import LOOP, NEXT, client, probe  # noqa: F401  (fixture)
+from tests.split_patches import patch_loop, setattr_loop
+import learning.probe
 
 FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
 
@@ -260,14 +262,13 @@ def one_strand(probe):  # noqa: F811
 def test_flag_off_is_byte_identical(one_strand, monkeypatch):
     """Off: no anchors read, no form computed, the probe called exactly as
     before A130 — and the item and the saved document are the heuristic's."""
-    import routes.learn_loop as rl
 
     anchors = MagicMock(side_effect=AssertionError("the anchors are never read with the flag off"))
     form = MagicMock(side_effect=AssertionError("no pretest form with the flag off"))
-    monkeypatch.setattr(rl, "posttest_anchors", anchors)
-    monkeypatch.setattr(rl, "pretest_form", form)
-    monkeypatch.setattr(rl, "flag_on", _flag(False))
-    with patch.object(rl.probe_policy, "next_probe_item", wraps=rl.probe_policy.next_probe_item) as nxt:
+    setattr_loop(monkeypatch, "posttest_anchors", anchors)
+    setattr_loop(monkeypatch, "pretest_form", form)
+    setattr_loop(monkeypatch, "flag_on", _flag(False))
+    with patch.object(learning.probe, "next_probe_item", wraps=learning.probe.next_probe_item) as nxt:
         body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
     assert "pretest_forms" not in nxt.call_args.kwargs
     assert body["question_hash"] == "t1"  # the band heuristic's first item for a new student
@@ -276,11 +277,10 @@ def test_flag_off_is_byte_identical(one_strand, monkeypatch):
 
 
 def test_flag_on_asks_the_pretest_form_first(one_strand, monkeypatch):
-    import routes.learn_loop as rl
 
     anchors = MagicMock(return_value=([], False))
-    monkeypatch.setattr(rl, "posttest_anchors", anchors)
-    monkeypatch.setattr(rl, "flag_on", _flag(True))
+    setattr_loop(monkeypatch, "posttest_anchors", anchors)
+    setattr_loop(monkeypatch, "flag_on", _flag(True))
     body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
     assert body["question_hash"] == "t2"  # parallel (same difficulty) to both reserves
     anchors.assert_called_once_with(user_id="u1")
@@ -291,7 +291,7 @@ def test_flag_on_asks_the_pretest_form_first(one_strand, monkeypatch):
     pr["history"].append({**pr["current"], "correct": True, "idk": False, "p_after": 0.5})
     pr["current"] = None
     anchors.reset_mock()
-    with patch.object(rl.probe_policy, "next_probe_item", wraps=rl.probe_policy.next_probe_item) as nxt:
+    with patch.object(learning.probe, "next_probe_item", wraps=learning.probe.next_probe_item) as nxt:
         client.post(f"{LOOP}/probe/next", json=NEXT)
     anchors.assert_not_called()
     assert "pretest_forms" not in nxt.call_args.kwargs
@@ -300,18 +300,16 @@ def test_flag_on_asks_the_pretest_form_first(one_strand, monkeypatch):
 def test_an_anchored_concept_is_not_steered(one_strand, monkeypatch):
     """Evidence from before this probe (an earlier session, a quiz) already
     anchors the concept: its pretest is fixed, so the heuristic stands."""
-    import routes.learn_loop as rl
 
-    monkeypatch.setattr(rl, "posttest_anchors", MagicMock(return_value=([{"node_id": "A"}], False)))
-    monkeypatch.setattr(rl, "flag_on", _flag(True))
+    setattr_loop(monkeypatch, "posttest_anchors", MagicMock(return_value=([{"node_id": "A"}], False)))
+    setattr_loop(monkeypatch, "flag_on", _flag(True))
     assert client.post(f"{LOOP}/probe/next", json=NEXT).json()["question_hash"] == "t1"
 
 
 def test_an_unread_anchor_steers_nothing(one_strand, monkeypatch, caplog):
-    import routes.learn_loop as rl
 
-    monkeypatch.setattr(rl, "posttest_anchors", MagicMock(side_effect=RuntimeError("db down")))
-    monkeypatch.setattr(rl, "flag_on", _flag(True))
+    setattr_loop(monkeypatch, "posttest_anchors", MagicMock(side_effect=RuntimeError("db down")))
+    setattr_loop(monkeypatch, "flag_on", _flag(True))
     with caplog.at_level("WARNING"):
         assert client.post(f"{LOOP}/probe/next", json=NEXT).json()["question_hash"] == "t1"
     assert any("no matched pretest" in r.getMessage() for r in caplog.records)
@@ -320,10 +318,9 @@ def test_an_unread_anchor_steers_nothing(one_strand, monkeypatch, caplog):
 def test_teaching_keeps_the_form_when_it_is_the_only_fresh_item(one_strand, monkeypatch):
     """The practice reserve predates the flag: with nothing but the form fresh,
     teaching keeps it and the probe falls back to what is left."""
-    import routes.learn_loop as rl
 
-    monkeypatch.setattr(rl, "posttest_anchors", MagicMock(return_value=([], False)))
-    monkeypatch.setattr(rl, "flag_on", _flag(True))
+    setattr_loop(monkeypatch, "posttest_anchors", MagicMock(return_value=([], False)))
+    setattr_loop(monkeypatch, "flag_on", _flag(True))
     others = {"f1", "f3", "t1", "t3", "m1", "m3"}
     one_strand.seen.return_value = others  # seen elsewhere: the probe's second pass only
     body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
@@ -372,12 +369,9 @@ def _seed_bank():
 def _first_items(probe_ns, on: bool) -> dict:  # noqa: F811
     """A new student's first probe item on every seeded concept (each strand
     in the probe at once, every answer correct)."""
-    import routes.learn_loop as rl
 
     first: dict[str, object] = {}
-    with patch.object(rl, "flag_on", _flag(on)), patch.object(
-        rl, "posttest_anchors", MagicMock(return_value=([], False))
-    ):
+    with patch_loop("flag_on", _flag(on)), patch_loop("posttest_anchors", MagicMock(return_value=([], False))):
         for _ in range(params.PROBE_SESSION_CAP):
             body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
             if body["done"]:

@@ -40,7 +40,7 @@ _ITEM = {
 
 
 def test_loop_leak_rung_is_the_routes_clamp():
-    from routes.learn_loop import loop_leak_rung
+    from services.loop.served import loop_leak_rung
 
     # hint turns are served at the hint rung, others at the ceiling
     assert (
@@ -65,7 +65,7 @@ def test_loop_leak_rung_is_the_routes_clamp():
 def test_served_model_text_serves_the_ladder_line_for_a_leak_and_passes_clean_text():
     """Fix round 2 (N1): a leak is never masked in place — the rung's ladder
     line is served instead; a copy of the text the model was given is none."""
-    from routes.learn_loop import LADDER_FALLBACK_LINES, served_model_text
+    from services.loop.served import LADDER_FALLBACK_LINES, served_model_text
 
     clean = "Key idea: A base case stops recursion.\n\nWhich input ends it?"
     text, verdict = served_model_text(clean, leak_rung=Rung.H3, **_ITEM)
@@ -85,7 +85,7 @@ def test_served_model_text_serves_the_ladder_line_for_a_leak_and_passes_clean_te
 
 
 def test_served_model_text_takes_the_correct_option():
-    from routes.learn_loop import LADDER_FALLBACK_LINES, served_model_text
+    from services.loop.served import LADDER_FALLBACK_LINES, served_model_text
 
     reply = "Key idea: Look again at option B.\n\nWhat does option B claim?"
     item = {**_ITEM, "correct_option": "B"}
@@ -97,7 +97,8 @@ def test_served_model_text_takes_the_correct_option():
 
 
 def test_continuation_plan_continues_from_the_last_tool_results():
-    from routes.learn_loop import _CONTINUATION_NUDGE, continuation_plan
+    from services.tutor.run import _CONTINUATION_NUDGE
+    from services.loop.continuation import continuation_plan
 
     tool_round = [
         ModelRequest(parts=[UserPromptPart("hi")]),

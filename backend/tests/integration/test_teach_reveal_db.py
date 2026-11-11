@@ -14,6 +14,7 @@ import psycopg
 import pytest
 
 from learning.params import POSTTEST_WINDOWS_DAYS
+import services.loop.posed
 
 pytestmark = pytest.mark.integration
 
@@ -150,18 +151,18 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     with (
         # A101: the scan set batches its item reads (items_by_ids), never one
         # get_check_item per id; the fixture ids are not real check_items rows.
-        # spec §13 A149: the scan set lives in services/loop_posed.py, so its
+        # spec §13 A149: the scan set lives in services/loop/posed.py, so its
         # batched reads are patched there (a get_check_item patch on the route
         # module intercepted nothing since A101 and is gone)
         patch(
-            "services.loop_posed.items_by_ids",
+            "services.loop.posed.items_by_ids",
             side_effect=lambda ids: [loaded[i] for i in ids if i in loaded],
         ),
         patch(
-            "services.loop_posed.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
+            "services.loop.posed.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
         ) as by_hash,
     ):
-        got = learn_loop.posed_items(USER, now=now)
+        got = services.loop.posed.posed_items(USER, now=now)
     assert got is not None
     items, overflow = got
     assert sorted(i.question_hash for i, _ in items) == ["qh-a", "qh-old", "qh-p", "qh-r", "qh-x"]

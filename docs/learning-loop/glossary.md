@@ -123,8 +123,8 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Spec term | Plain words | Code |
 |---|---|---|
 | Leak | Tutor text that states an item's answer: a run of reference tokens, the final answer, or the item's stem. | `backend/learning/leak.py::detect_leak` |
-| Leak cut, `retract` | How a served turn avoids a leak: the stream stops before the sentence that would state the answer and a `retract` event tells the client to discard what it showed; a final text that still leaks is replaced by the ladder's fallback line. Nothing is masked in place (A51); the unused stripper was removed (A142). | `backend/routes/learn_loop.py::served_model_text` |
-| Served text | The text the student actually receives, after the code-side template and the strip. Evals score this, not raw model output, A48. | `backend/routes/learn_loop.py::served_model_text` |
+| Leak cut, `retract` | How a served turn avoids a leak: the stream stops before the sentence that would state the answer and a `retract` event tells the client to discard what it showed; a final text that still leaks is replaced by the ladder's fallback line. Nothing is masked in place (A51); the unused stripper was removed (A142). | `backend/services/loop/served.py::served_model_text` |
+| Served text | The text the student actually receives, after the code-side template and the strip. Evals score this, not raw model output, A48. | `backend/services/loop/served.py::served_model_text` |
 | Served scan, reveal | Every served tutor text is scanned against the student's open posed items; an item it states is recorded as revealed, at serve time, A88. | `backend/learning/served_scan.py::ScanSet` |
 | Unscanned marker | When a turn's open items cannot be read or scanned, an `unscanned` row is written instead, and every item posed before it is then graded as assisted (fail closed). | `backend/learning/reveal_store.py::record_unscanned` |
 | Answer guard | Deterministic screen of the student's answer before grading: text addressed to the grader is refused, A33. | `backend/learning/answer_guard.py::screen` |

@@ -3775,7 +3775,7 @@ _PKG06_SANCTIONED_IMPORTS = {
 # proves boot loads none of it; tests/test_learning_outside_integrity.py proves an
 # inactive guard does not either. learning/stem_match.py is reached only from there.
 #
-# Spec §13 A149: services/loop_posed.py is the A93/A101 scan set (`posed_items`,
+# Spec §13 A149: services/loop/posed.py is the A93/A101 scan set (`posed_items`,
 # moved out of routes/learn_loop.py so the guard reads it without importing a
 # route). It reads the loop_state store's `seen_hashes`; only the loop route
 # (at import) and an ACTIVE guard (inside `_posed`) import it.
@@ -3785,10 +3785,14 @@ _PKG06_SANCTIONED_IMPORTERS = frozenset(
         "learning/review.py",
         "learning/served_scan.py",
         "services/integrity_guard.py",
-        "services/loop_posed.py",
         "learning/stem_match.py",
     }
 )
+#: PKG-07: the loop wires the whole layer. Its handler bodies and their helpers
+#: moved from routes/learn_loop.py into the services/loop/ package (#118), and
+#: every module there may import any PKG-06 module (posed.py, the A93/A101 scan
+#: set, among them).
+_PKG06_SANCTIONED_PACKAGES = ("services/loop/",)
 
 # What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
 # above brings learning.policy, and policy imports learning.ladder's Rung. Nothing else.
@@ -3922,7 +3926,7 @@ def _inertness_offenders(root) -> list[str]:
         if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
             continue
         package, name = ".".join(rel[:-1]), "/".join(rel)
-        if name in _PKG06_SANCTIONED_IMPORTERS:
+        if name in _PKG06_SANCTIONED_IMPORTERS or name.startswith(_PKG06_SANCTIONED_PACKAGES):
             continue
         text = path.read_text(errors="ignore")
         if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
@@ -4038,11 +4042,13 @@ def test_importing_the_app_loads_no_pkg06_module():
     ai_budget, through policy or ladder themselves (the ast scan exempts the
     PKG-06 modules from each other), or through any other loader — fails.
 
-    PKG-07: main.py mounts routes/learn_loop.py, the loop route that wires the
-    whole layer (sanctioned in the ast scan), and it is the one loader of
+    PKG-07: main.py mounts routes/learn_loop.py, the loop route, whose bodies
+    in services/loop/ (#118) wire the whole layer (sanctioned in the ast scan);
+    it is the one boot-time loader of that package and so of
     agents/loop_tutor.py. The probe stubs exactly that module before
-    `import main`, so it still proves that NOTHING ELSE loads a PKG-06 module:
-    the loaded set with the loop route stubbed stays the ai_budget pair. The
+    `import main`, so it still proves that NOTHING ELSE loads a PKG-06 module
+    or a services/loop/ module: the loaded set with the loop route stubbed
+    stays the ai_budget pair. The
     loop route itself is dark behind the gate (every endpoint 404s unless
     learning_loop_active; tests/test_learn_loop_routes.py)."""
     import os
@@ -4071,6 +4077,7 @@ def test_importing_the_app_loads_no_pkg06_module():
         "import main\n"
         "assert sys.modules['routes.learn_loop'] is stub\n"
         "assert 'agents.loop_tutor' not in sys.modules, 'agents.loop_tutor loaded outside the loop route'\n"
+        "assert not [m for m in sys.modules if m.startswith('services.loop.')], 'services/loop/ loaded outside the loop route'\n"
         f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
         "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
         "print('PKG06_LOADED=' + ','.join(loaded))\n"

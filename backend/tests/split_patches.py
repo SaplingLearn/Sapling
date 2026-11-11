@@ -239,3 +239,74 @@ def patch_tutor(name, new=DEFAULT, **kwargs):
 def setattr_tutor(monkeypatch, name, value):
     """``monkeypatch.setattr(routes.learn, name, value)`` across the split."""
     setattr_in(monkeypatch, TUTOR_MODULES, name, value)
+
+
+# ── learning loop ─────────────────────────────────────────────────────────────
+
+# services/loop/posed.py (the A93/A101 scan set, formerly services/loop_posed.py)
+# existed before the split and is deliberately absent: see the module docstring.
+# So are ``errors`` (the package's one fastapi import) and the package
+# ``__init__`` (its lazy exports read the modules below at call time).
+LOOP_MODULES = (
+    "routes.learn_loop",
+    "services.loop.constants",
+    "services.loop.flags",
+    "services.loop.state",
+    "services.loop.history",
+    "services.loop.learner",
+    "services.loop.context",
+    "services.loop.continuation",
+    "services.loop.served",
+    "services.loop.reveals",
+    "services.loop.guard",
+)
+
+
+class _LoopPatch:
+    """What ``patch_loop`` returns: like ``mock.patch``'s patcher, it can be
+    entered again (a fresh patch each time) and started / stopped."""
+
+    def __init__(self, factory):
+        self._factory, self._active = factory, []
+
+    def __enter__(self):
+        cm = self._factory()
+        value = cm.__enter__()
+        self._active.append(cm)
+        return value
+
+    def __exit__(self, *exc):
+        return self._active.pop().__exit__(*exc)
+
+    def start(self):
+        return self.__enter__()
+
+    def stop(self):
+        return self.__exit__(None, None, None)
+
+
+def _loop_patch(name, new, kwargs):
+    head, dot, rest = name.partition(".")
+    if not dot:
+        return patch_in(LOOP_MODULES, name, new, **kwargs)
+    mods = [importlib.import_module(m) for m in LOOP_MODULES]
+    owner = next((getattr(m, head) for m in mods if hasattr(m, head)), None)
+    if owner is None:
+        raise AttributeError(f"none of {LOOP_MODULES} has {head!r}")
+    *path, attr = rest.split(".")
+    for part in path:
+        owner = getattr(owner, part)
+    return patch.object(owner, attr, new, **kwargs)
+
+
+def patch_loop(name, new=DEFAULT, **kwargs):
+    """``patch("routes.learn_loop.<name>", ...)`` across routes/learn_loop.py
+    and the services/loop/ modules split out of it. A dotted name
+    (``"policy.model_tier"``) patches the attribute of the object the loop
+    names (there: ``learning.policy``), as the dotted route path did."""
+    return _LoopPatch(lambda: _loop_patch(name, new, kwargs))
+
+
+def setattr_loop(monkeypatch, name, value):
+    """``monkeypatch.setattr(routes.learn_loop, name, value)`` across the split."""
+    setattr_in(monkeypatch, LOOP_MODULES, name, value)

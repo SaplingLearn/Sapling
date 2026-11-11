@@ -16,6 +16,8 @@ import pytest
 from learning import params
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import _answer, _feedback_agent, client
+from tests.split_patches import patch_loop
+import services.loop.state
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -117,24 +119,22 @@ def test_loop_arm_is_in_no_settings_api_field():
 def test_loop_arm_read_takes_only_a_string(raw, expected):
     """The arm is a label: anything but a non-empty string is no arm (variant A,
     no exemption) — never a truthy non-string turned into an arm session."""
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select.return_value = [{"loop_arm": raw}]
-    with patch("routes.learn_loop.table", return_value=handle) as tbl:
-        assert learn_loop._loop_arm("u1") == expected
+    with patch_loop("table", return_value=handle) as tbl:
+        assert services.loop.state._loop_arm("u1") == expected
     tbl.assert_called_once_with("user_settings")
     assert handle.select.call_args.args[0] == "loop_arm"
     assert handle.select.call_args.kwargs["filters"] == {"user_id": "eq.u1"}
 
 
 def test_loop_arm_read_error_is_no_arm():
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select.side_effect = RuntimeError("postgrest down")
-    with patch("routes.learn_loop.table", return_value=handle):
-        assert learn_loop._loop_arm("u1") is None
+    with patch_loop("table", return_value=handle):
+        assert services.loop.state._loop_arm("u1") is None
 
 
 # ── the route: arm_session and variant ───────────────────────────────────────
@@ -163,7 +163,7 @@ def arm_reads(settings_row):
             handle.select.return_value = []
         return handle
 
-    with patch("routes.learn_loop.table", side_effect=_table):
+    with patch_loop("table", side_effect=_table):
         yield reads
 
 

@@ -14,7 +14,6 @@ contradicts."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import patch
 
 import pytest
 
@@ -30,6 +29,7 @@ from learning.checks import (
     select_item,
     serve_quality,
 )
+from tests.split_patches import patch_loop
 
 T = "2026-11-01T00:00:00+00:00"
 
@@ -322,7 +322,7 @@ def test_the_h4_worked_example_is_the_best_isomorph(best):
     verified = _item("sib-c", "teachback", 1, verified=True, lint=["negative_stem"], stepwise=True)
     bank = _grid_without("t1") + [active, flagged, clean] + ([verified] if best == "verified" else [])
     assert posttest_reserve_hashes(bank) == ("f2", "m2")
-    with patch("routes.learn_loop.list_items", return_value=bank):
+    with patch_loop("list_items", return_value=bank):
         payload, leaked = learn_loop._leak_checked_payload(
             user_id="u1", item=active, rung=Rung.H4, reference=active.reference_answer
         )
@@ -346,7 +346,7 @@ def test_the_h4_worked_example_is_never_a_reserve_whatever_its_quality():
     flagged = _item("t2c", "teachback", 2, lint=["negative_stem"], stepwise=True)
     bank += [active, flagged]
     assert posttest_reserve_hashes(bank) == ("f2", "t2")
-    with patch("routes.learn_loop.list_items", return_value=bank):
+    with patch_loop("list_items", return_value=bank):
         payload, _ = learn_loop._leak_checked_payload(
             user_id="u1", item=active, rung=Rung.H4, reference=active.reference_answer
         )

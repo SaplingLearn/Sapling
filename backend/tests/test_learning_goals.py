@@ -23,6 +23,9 @@ from test_learning_probe_planner import (  # reuse the real CAS/evidence route h
 )
 
 import routes.learn_loop as rl
+from tests.split_patches import patch_loop
+import services.loop.state
+import services.tutor_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +86,7 @@ def test_foreign_session_cannot_read_or_change_goal(probe):
         {"phase": "teach"},
         {"phase": "close"},
         {"phase": "probe", "probe": {"current": {"grading_claim": "active"}}},
-        {"phase": "plan", "close_claim": "active", "close_claim_at": rl._now_s()},
+        {"phase": "plan", "close_claim": "active", "close_claim_at": services.loop.state._now_s()},
     ],
 )
 def test_goal_edits_cannot_race_grading_closing_or_teaching(probe, doc):
@@ -177,7 +180,7 @@ def test_plan_follows_prerequisites_and_observed_failure_over_old_posterior(prob
         f"{LOOP}/plan/approve", json={**NEXT, "concept_ids": ["A"], "goal_version": 0}
     )
     assert bad.status_code == 409
-    with patch.object(rl, "store_brief"):
+    with patch_loop("store_brief"):
         good = client.post(
             f"{LOOP}/plan/approve",
             json={**NEXT, "concept_ids": ["A"], "goal_version": plan["goal_version"]},
@@ -238,8 +241,8 @@ def test_unavailable_items_are_never_false_failures_and_presentations_are_bounde
 def test_help_arriving_during_grading_cannot_establish_independent_floor(probe):
     _answer_doc(probe)
     with (
-        patch.object(rl, "_reveal_floor", side_effect=[0, 2]),
-        patch.object(rl, "recheck_after_release", return_value=False),
+        patch_loop("_reveal_floor", side_effect=[0, 2]),
+        patch_loop("recheck_after_release", return_value=False),
     ):
         response = client.post(f"{LOOP}/probe/answer", json=_answer(answer="correct"))
     assert response.status_code == 200
@@ -300,10 +303,10 @@ def test_rejected_lazy_goal_does_not_materialize_session(probe, invalid):
         "course_id": "c1",
         "loop_state": {"phase": "teach"} if invalid == "quiz_ask" else {},
     }
-    with patch.dict(rl.PENDING_SESSIONS, {"s1": pending}, clear=True):
+    with patch.dict(services.tutor_sessions.PENDING_SESSIONS, {"s1": pending}, clear=True):
         result = set_goal(("foreign",) if invalid == "foreign_target" else ("A",))
         assert result.status_code == (422 if invalid == "foreign_target" else 409)
-        assert rl.PENDING_SESSIONS["s1"] == pending
+        assert services.tutor_sessions.PENDING_SESSIONS["s1"] == pending
     probe.consume.assert_not_called()
 
 

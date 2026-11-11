@@ -14,7 +14,7 @@ learner state patched at the route seam. No DB, no model.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +23,8 @@ from learning.learner_state import LearnerState
 from learning.ladder import Rung
 from learning.policy import BandAction, CursorMove, Opportunity, Prerequisite
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
+import services.loop.learner
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 
@@ -267,10 +269,10 @@ def _answer(seams, window, *, correct=True, edges=()):
     seams.grade.return_value = routes.CORRECT if correct else routes.WRONG
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=window) as read_window,
-        patch("routes.learn_loop._prerequisite_edges", return_value=list(edges)),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("opportunity_window", return_value=window) as read_window,
+        patch_loop("_prerequisite_edges", return_value=list(edges)),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = routes.client.post(
             "/api/learn/loop/check/answer",
@@ -454,13 +456,13 @@ def test_a_failed_window_read_applies_no_verdict_and_the_grade_stands(loop):
 def test_a_failed_read_yields_no_verdict_rather_than_an_invented_one(failing):
     from routes.learn_loop import _band_verdict
 
-    reads = {"learner": "routes.learn_loop.read_states", "prerequisites": "routes.learn_loop._prerequisite_edges"}
+    reads = {"learner": "read_states", "prerequisites": "_prerequisite_edges"}
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.4, opps=2, exists=True)}
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=[MISS]),
-        patch("routes.learn_loop.read_states", return_value=state),
-        patch("routes.learn_loop._prerequisite_edges", return_value=[]),
-        patch(reads[failing], side_effect=RuntimeError("store down")),
+        patch_loop("opportunity_window", return_value=[MISS]),
+        patch_loop("read_states", return_value=state),
+        patch_loop("_prerequisite_edges", return_value=[]),
+        patch_loop(reads[failing], side_effect=RuntimeError("store down")),
     ):
         assert _band_verdict("u1", "node-1", 2) is None
 
@@ -470,9 +472,9 @@ def test_band_verdict_reads_prerequisites_only_when_the_verdict_checks_them():
 
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.6, opps=4, exists=True)}
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=[HIT] * 4),
-        patch("routes.learn_loop.read_states", return_value=state),
-        patch("routes.learn_loop._prerequisite_edges") as edges,
+        patch_loop("opportunity_window", return_value=[HIT] * 4),
+        patch_loop("read_states", return_value=state),
+        patch_loop("_prerequisite_edges") as edges,
     ):
         got = _band_verdict("u1", "node-1", 2)
     edges.assert_not_called()  # HARDER checks no prerequisite
@@ -585,9 +587,9 @@ def test_band_control_reads_happen_after_the_flush(loop):
     window = MagicMock(side_effect=lambda *a: order.append("window") or [HIT] * 4)
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.opportunity_window", window),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("opportunity_window", window),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         routes.client.post(
             "/api/learn/loop/check/answer",
@@ -647,7 +649,6 @@ def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
     edges decide the prerequisite status A122 reads (proficient, or a weak
     parent to repair), where a concept with no edge at all is UNKNOWN."""
     from learning.evidence import PREREQ_RELATIONSHIP_TYPE
-    from routes import learn_loop
     from services.concept_prereqs import edge_payload
 
     payload = edge_payload("node-0", "node-1")
@@ -660,23 +661,23 @@ def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
         }
 
     with (
-        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
-        patch("routes.learn_loop.read_states", side_effect=states(0.95)),
+        patch_loop("_prerequisite_edges", return_value=[stored]),
+        patch_loop("read_states", side_effect=states(0.95)),
     ):
-        prereqs = learn_loop._prerequisites("u1", "node-1")
+        prereqs = services.loop.learner._prerequisites("u1", "node-1")
         assert [p.node_id for p in prereqs] == ["node-0"]
         assert policy.prerequisite_status(prereqs) is policy.PrerequisiteStatus.PROFICIENT
-        assert learn_loop._prereq_proficient("u1", "node-1") is True
-        assert learn_loop._prerequisites("u1", "node-0") == []  # the dependent is never a parent
+        assert services.loop.learner._prereq_proficient("u1", "node-1") is True
+        assert services.loop.learner._prerequisites("u1", "node-0") == []  # the dependent is never a parent
     with (
-        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
-        patch("routes.learn_loop.read_states", side_effect=states(0.2)),
+        patch_loop("_prerequisite_edges", return_value=[stored]),
+        patch_loop("read_states", side_effect=states(0.2)),
     ):
-        weak = learn_loop._prerequisites("u1", "node-1")
+        weak = services.loop.learner._prerequisites("u1", "node-1")
         assert policy.repair_target(weak).node_id == "node-0"
-        assert learn_loop._prereq_proficient("u1", "node-1") is False
-    with patch("routes.learn_loop._prerequisite_edges", return_value=[]):
-        none = learn_loop._prerequisites("u1", "node-1")
+        assert services.loop.learner._prereq_proficient("u1", "node-1") is False
+    with patch_loop("_prerequisite_edges", return_value=[]):
+        none = services.loop.learner._prerequisites("u1", "node-1")
         assert policy.prerequisite_status(none) is policy.PrerequisiteStatus.UNKNOWN
 
 

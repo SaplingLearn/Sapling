@@ -2,7 +2,6 @@
 
 import asyncio
 from copy import deepcopy
-from unittest.mock import patch
 
 import pytest
 from starlette.requests import Request
@@ -15,6 +14,8 @@ from models import LoopCheckAnswerBody, LoopGoal
 from test_learn_loop_routes import ITEM, seams as seams
 import routes.learn_loop as rl
 from test_learning_probe_planner import _grader
+from tests.split_patches import patch_loop
+import learning.params
 
 
 @pytest.mark.parametrize(
@@ -40,8 +41,8 @@ def test_actual_grade_carries_final_help_exposure_and_recheck_provenance(
         {"type": "http", "method": "POST", "path": "/api/learn/loop/check/answer", "headers": []}
     )
     with (
-        patch.object(rl, "recheck_after_release", return_value=recheck),
-        patch.object(rl, "_reveal_floor", side_effect=[rung, late_floor]),
+        patch_loop("recheck_after_release", return_value=recheck),
+        patch_loop("_reveal_floor", side_effect=[rung, late_floor]),
     ):
         submission = asyncio.run(rl._grade_submission(body, request, loop_on=True))
     assert submission.kind == "feedback"
@@ -64,7 +65,7 @@ def test_actual_check_tags_durable_provenance_in_goal_and_coursewide_sessions(
     if goal:
         seams.store["doc"]["goal"] = encode_goal(LoopGoal(target_node_ids=["node-1"]))
     if synthetic:
-        seams.store["doc"]["steps"]["qh-1"]["refusals"] = rl.CHECK_REFUSALS_AS_IDK - 1
+        seams.store["doc"]["steps"]["qh-1"]["refusals"] = learning.params.CHECK_REFUSALS_AS_IDK - 1
     seams.grade.side_effect = _grader(
         correct=False, refused="grading_directive" if synthetic else None
     )
@@ -74,7 +75,7 @@ def test_actual_check_tags_durable_provenance_in_goal_and_coursewide_sessions(
         session_id="s1", user_id="u1", question_hash="qh-1", answer="A real attempt"
     )
     request = Request({"type": "http", "method": "POST", "path": "/check/answer", "headers": []})
-    with patch.object(rl, "_reveal_floor", return_value=0):
+    with patch_loop("_reveal_floor", return_value=0):
         submission = asyncio.run(rl._grade_submission(body, request, loop_on=True))
     assert submission.kind == "feedback"
     assert len(captured) == 1
@@ -92,7 +93,7 @@ def test_strict_check_write_failure_retains_saved_grade_and_retries_one_operatio
         session_id="s1", user_id="u1", question_hash="qh-1", answer="A real attempt"
     )
     request = Request({"type": "http", "method": "POST", "path": "/check/answer", "headers": []})
-    with patch.object(rl, "_reveal_floor", return_value=0):
+    with patch_loop("_reveal_floor", return_value=0):
         with pytest.raises(HTTPException) as failure:
             asyncio.run(rl._grade_submission(body, request, loop_on=True))
     assert failure.value.status_code == 503

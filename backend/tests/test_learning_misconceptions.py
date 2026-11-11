@@ -1241,7 +1241,7 @@ def test_confront_tiers_match_the_eval_baselines():
     import json
 
     from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
-    from routes.learn_loop import CONFRONT_TIERS
+    from services.loop.guard import CONFRONT_TIERS
 
     mod = _confront_eval()
     baselines = json.loads((BACKEND / "tests" / "evals" / "baselines.json").read_text())
@@ -1266,7 +1266,7 @@ def test_confront_tiers_match_the_eval_baselines():
 def test_the_eval_assembles_the_route_s_confronting_message():
     """The eval's message is the route's: the prefix, then the line built by
     routes.learn_loop.confront_line_for, placed by with_confrontation."""
-    from routes.learn_loop import confront_line_for
+    from services.loop.guard import confront_line_for
 
     mod = _confront_eval()
     for case in mod.CASES:

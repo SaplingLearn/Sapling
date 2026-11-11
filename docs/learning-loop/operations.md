@@ -65,10 +65,10 @@ percentage rollout → stored default. Reads come from a 30-second snapshot
 | `decision_router` | Main's observe-only tutor router (ADR 0027). Not part of the loop; acts on nothing. | no | — |
 
 A flag is resolved once per request, turn or upload and the answer carried
-down (`backend/routes/learn_loop.py::_tutor_v2_on`,
-`backend/routes/learn_loop.py::_help_gate_strict_on`,
-`backend/routes/learn_loop.py::_prequestion_on`,
-`backend/routes/learn_loop.py::_self_explain_on`;
+down (`backend/services/loop/flags.py::_tutor_v2_on`,
+`backend/services/loop/flags.py::_help_gate_strict_on`,
+`backend/services/loop/flags.py::_prequestion_on`,
+`backend/services/loop/flags.py::_self_explain_on`;
 `backend/services/check_item_service.py::drafting_flags` reads the two
 drafting flags once per run for the uploader, and the backfill, which has no
 student, always drafts plain). All four wave-4 flags are off by default and,

@@ -30,6 +30,7 @@ from services import crisis_support_copy as crisis_copy
 from services.feature_flags import REGISTRY
 from services.tutor_sessions import PENDING_SESSIONS
 from tests.split_patches import patch_tutor
+from tests.split_patches import setattr_loop
 
 client = TestClient(app)
 
@@ -375,7 +376,7 @@ def real_limiters(monkeypatch):
         return 30 if state["limited"] else None
 
     monkeypatch.setattr(ai_budget, "_rate_limit_decision", rate_limit_decision)
-    monkeypatch.setattr("routes.learn_loop.check_rate_limit", probe_plan_window)
+    setattr_loop(monkeypatch, "check_rate_limit", probe_plan_window)
     return state
 
 
@@ -604,6 +605,10 @@ def test_an_inline_screen_precedes_every_inline_limiter(path, screen_call, limit
         import services.tutor as tutor  # #118: the thin wrapper's body (spec §13 A149)
 
         endpoint = getattr(tutor, route.endpoint.__name__)
+    else:
+        import services.loop as loop  # #118: the thin wrapper's body
+
+        endpoint = getattr(loop, route.endpoint.__name__, endpoint)
     source = inspect.getsource(endpoint)
     for limiter in limiters:
         assert limiter in source, (path, limiter)

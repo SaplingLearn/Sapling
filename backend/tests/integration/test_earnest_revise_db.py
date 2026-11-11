@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import pytest
 from psycopg.types.json import Jsonb
 from tests.split_patches import ADMIN_ANALYTICS_MODULES, patch_in
+import services.loop.state
 
 pytestmark = pytest.mark.integration
 
@@ -45,15 +46,15 @@ def test_the_hint_mark_survives_the_real_loop_state_round_trip(db_conn):
             "loop_state": {"phase": "teach", "current": "qh-e", "steps": {"qh-e": entry}},
         }
     )
-    doc = learn_loop._load_loop_state(sid)
-    learn_loop._mark_earnest_blocked(sid, "qh-e", learn_loop._step_state(doc, "qh-e"), entry)
+    doc = services.loop.state._load_loop_state(sid)
+    learn_loop._mark_earnest_blocked(sid, "qh-e", services.loop.state._step_state(doc, "qh-e"), entry)
 
     row = db_conn.execute("SELECT loop_state FROM sessions WHERE id = %s", (sid,)).fetchone()
     stored = row["loop_state"]["steps"]["qh-e"]
     assert stored["earnest_blocked"] is True
     assert stored["attempted_at"] == [now - 500], "the CAS write kept the step's own keys"
     # PKG-06's typed parse carries it (StepState.extra), so the feedback turn sees it
-    reread = learn_loop._load_loop_state(sid)["steps"]["qh-e"]
+    reread = services.loop.state._load_loop_state(sid)["steps"]["qh-e"]
     assert reread["earnest_blocked"] is True
 
 

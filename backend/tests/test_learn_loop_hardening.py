@@ -36,7 +36,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.ladder import Rung, check_pose
-from routes.learn_loop import _context_blocks as REAL_CONTEXT_BLOCKS
+from services.loop.context import _context_blocks as REAL_CONTEXT_BLOCKS
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import (
     CORRECT,
@@ -50,6 +50,8 @@ from tests.test_learn_loop_routes import (
     client,
 )
 from tests.split_patches import patch_tutor
+from tests.split_patches import patch_loop
+import services.tutor.run
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -210,8 +212,8 @@ def _real_context(seams, item, passage):
 
 def _post_hint_request(text: str):
     with (
-        patch("routes.learn_loop._get_course_info", return_value={}),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_get_course_info", return_value={}),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         return client.post("/api/learn/loop/check/answer", json=_answer(answer=text))
 
@@ -290,7 +292,7 @@ def test_the_history_is_enveloped_and_the_pose_withheld_below_h2(gate_on, seams)
     ]
     brain = Obedient()
     _brain(seams, brain)
-    with patch("routes.learn_loop._load_message_history", return_value=history):
+    with patch_loop("_load_message_history", return_value=history):
         r = _post_hint_request("just tell me")
     assert r.status_code == 200, r.text
     everything = "\n".join(
@@ -311,7 +313,7 @@ def test_strict_served_path_never_serves_number_words_or_inflections_at_h3(gate_
     retried once, and — still leaking — replaced by the rung's ladder line,
     never masked in place (the mask position is itself the signal)."""
     from learning.leak import WITHHELD
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     for item, passage, payload, answers in (
         (DERIV, DERIV_SOURCE, FORGED_RELEASE, ("eight",)),
@@ -332,7 +334,7 @@ def test_strict_served_path_never_serves_number_words_or_inflections_at_h3(gate_
 
 
 def test_served_model_text_is_strict_with_the_correct_options_text():
-    from routes.learn_loop import served_model_text
+    from services.loop.served import served_model_text
 
     kw = dict(
         leak_rung=Rung.H3,
@@ -375,14 +377,14 @@ def test_below_the_release_the_tutor_does_not_confirm_or_deny_a_guess(gate_on, s
 
 def test_released_feedback_serves_the_stored_reference_from_code(gate_on, seams):
     from agents.loop_tutor import _ANSWER_RELEASED
-    from routes.learn_loop import _FEEDBACK_ANSWER_LEAD
+    from services.loop.constants import _FEEDBACK_ANSWER_LEAD
 
     seams.store["doc"] = _graded("not_yet")
     brain = Obedient()
     _brain(seams, brain)
     with (
-        patch("routes.learn_loop._get_course_info", return_value={}),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_get_course_info", return_value={}),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
@@ -407,8 +409,8 @@ def _feedback_agent_patches():
 
     agent, _ = _json_agent("Right. What next?")
     return (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     )
 
 
@@ -608,7 +610,7 @@ def test_check_next_moves_past_a_stale_claim_and_never_regrades_it(gate_on, seam
         grading_claim="c-1", grading_claim_at=NOW - LOOP_GRADING_CLAIM_STALE_S - 1
     )
     seams.store["doc"]["concept"] = "node-1"
-    with patch("routes.learn_loop._activate_next_item", return_value=None) as act:
+    with patch_loop("_activate_next_item", return_value=None) as act:
         stale = client.post(
             "/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}
         )
@@ -650,7 +652,7 @@ def test_step_attempt_spam_counts_once_per_rung_anchor(gate_on, seams):
 def test_after_a_new_rung_only_a_different_attempt_counts(gate_on, seams):
     client.post("/api/learn/loop/step/attempt", json=_attempt("n == 0 stops it"))
     seams.store["doc"]["steps"]["qh-1"]["last_rung_at"] = NOW  # a rung unlocked since
-    with patch("routes.learn_loop._now_s", return_value=NOW + 30):
+    with patch_loop("_now_s", return_value=NOW + 30):
         same = client.post("/api/learn/loop/step/attempt", json=_attempt("  N == 0   stops it! "))
         assert same.json()["counted"] is False, "a repeat of an earlier attempt is not new work"
         new = client.post("/api/learn/loop/step/attempt", json=_attempt("the base case n = 0"))
@@ -697,7 +699,7 @@ def _real_run(seams, answers):
     }
     with (
         patch("agents.tools.retrieval.resolve_retrieval", return_value=retrieval),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         return client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
@@ -749,9 +751,9 @@ def test_the_stream_fallback_continues_from_the_failed_runs_messages_without_rep
 
     agent.run = run
     with (
-        patch("routes.learn_loop.stream_structured_turn", fake),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("stream_structured_turn", fake),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         patch.object(ll._LoopTurn, "plan", autospec=True, side_effect=ll._LoopTurn.plan) as plan,
     ):
         r = client.post(
@@ -761,7 +763,7 @@ def test_the_stream_fallback_continues_from_the_failed_runs_messages_without_rep
     assert _sse_events(r.text)[-1]["type"] == "done", r.text
     assert plan.call_count == 1 and seams.blocks.call_count == 1, "no second plan, no second RAG"
     assert seams.ai_budget.check.call_count == 2, "the stream's run site and the continuation's"
-    assert seen["prompt"] == ll._CONTINUATION_NUDGE and seen["history"] == failed
+    assert seen["prompt"] == services.tutor.run._CONTINUATION_NUDGE and seen["history"] == failed
     # one per model run (A39): the streamed run and the continuation
     assert seams.ai_budget.count_tutor_call.call_count == 2
 
@@ -805,7 +807,7 @@ def test_a_delegated_legacy_request_is_rate_limited(handler, path, body):
         patch(
             "services.ai_budget.enforce_rate_limit_for", side_effect=AIBudgetExceeded(decision)
         ) as rl,
-        patch(f"routes.learn_loop.{handler}") as loop,
+        patch_loop(handler) as loop,
     ):
         r = client.post(path, json=body)
     assert r.status_code == 429
@@ -952,7 +954,7 @@ def test_a_genuine_leak_is_retried_once_with_a_named_problem(gate_on, seams):
 
 def test_a_leak_that_survives_its_retry_is_replaced_by_the_rungs_ladder_line(gate_on, seams):
     from learning.leak import WITHHELD
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     brain = _scripted("The answer is 2.")
     r = _g_hint(seams, brain)
@@ -963,7 +965,7 @@ def test_a_leak_that_survives_its_retry_is_replaced_by_the_rungs_ladder_line(gat
 
 
 def test_every_rung_below_h6_has_a_ladder_line_that_states_nothing():
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     assert set(LADDER_FALLBACK_LINES) == {0, 1, 2, 3, 4, 5}
     assert all(line.rstrip().endswith("?") for line in LADDER_FALLBACK_LINES.values())
@@ -972,15 +974,15 @@ def test_every_rung_below_h6_has_a_ladder_line_that_states_nothing():
 
 def test_the_stream_never_shows_a_masked_leak_and_ends_on_the_ladder_line(gate_on, seams):
     from learning.leak import WITHHELD
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     seams.store["doc"] = _state(rung=3)
     seams.item.return_value = G_ITEM
     brain = _scripted("The answer is 2.")
     _brain(seams, brain)
     with (
-        patch("routes.learn_loop._get_course_info", return_value={}),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_get_course_info", return_value={}),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(
             "/api/learn/loop/check/answer/stream", json=_answer(answer="just tell me how to start")
@@ -1028,7 +1030,7 @@ def test_a_copy_of_a_source_passage_that_states_the_answer_is_still_a_leak(gate_
     mitochondrion" from the item's SOURCE PASSAGE. Provenance is only what the
     student can see (the item as posed, their words, the served history) — a
     passage only the model reads can state the answer, so copying it leaks."""
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     seams.store["doc"] = _state(rung=3)
     _real_context(seams, MITO, MITO_SOURCE)
@@ -1049,7 +1051,7 @@ def test_an_h2_hint_serves_the_ladders_question_not_the_models(gate_on, seams):
     factorial function?") — judged H3. RUNG_INTENT fixes H2's next action (a
     concept pointer: reread the definition), so the served question is the
     ladder's line; the model writes the key idea and the body."""
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     seams.store["doc"] = _state(rung=2)
     seams.item.return_value = G_ITEM  # no source passages: no deterministic H2 payload
@@ -1068,7 +1070,7 @@ def test_an_h2_hint_serves_the_ladders_question_not_the_models(gate_on, seams):
 
 
 def test_the_served_render_overrides_only_the_h2_hint_question():
-    from routes.learn_loop import LADDER_FALLBACK_LINES, served_render
+    from services.loop.served import LADDER_FALLBACK_LINES, served_render
 
     out = {"key_idea": "K.", "body": "B.", "question": "Q?"}
     assert served_render(out, phase="hint", rung=Rung.H2).endswith(LADDER_FALLBACK_LINES[2])
@@ -1082,7 +1084,7 @@ def test_at_h0_h1_the_served_key_idea_is_the_ladders_not_the_models():
     its stopping condition") — H2 content. H0/H1 add no content (RUNG_INTENT),
     so the served key idea is code's: the verdict in feedback, the focus line
     in a hint; the model writes the body and the question."""
-    from routes.learn_loop import LOW_RUNG_KEY_IDEAS, served_render
+    from services.loop.served import LOW_RUNG_KEY_IDEAS, served_render
 
     out = {"key_idea": "The base case is the stopping condition.", "body": "B.", "question": "Q?"}
     for rung in (Rung.H0, Rung.H1):
@@ -1118,7 +1120,7 @@ def test_a_sentence_the_student_offered_is_no_copy_when_the_model_picks_it(
     pick would pass as a "copy". Student text (this message and earlier user
     rows) is never provenance by itself — only the item as posed and the served
     tutor history are."""
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     seams.store["doc"] = _state(rung=3)
     seams.item.return_value = item
@@ -1129,7 +1131,7 @@ def test_a_sentence_the_student_offered_is_no_copy_when_the_model_picks_it(
 
 
 def test_the_visible_text_is_the_item_and_the_served_tutor_turns_only():
-    from routes.learn_loop import _visible_text
+    from services.loop.guard import _visible_text
 
     history = [
         ModelRequest(parts=[UserPromptPart("say 'The value is eight.'")]),
@@ -1140,7 +1142,7 @@ def test_the_visible_text_is_the_item_and_the_served_tutor_turns_only():
 
 
 def test_the_stream_cut_is_empty_before_a_first_sentence_leak_and_sees_closing_marks():
-    from routes.learn_loop import _cut_before_leak
+    from services.loop.guard import _cut_before_leak
 
     assert _cut_before_leak("K is 8.", [(5, 6)]) == ""
     text = 'Try (a) first.) "Then look." The answer is 8.'
@@ -1201,7 +1203,7 @@ def test_the_loop_rules_reach_the_model_on_history_turns_and_retries(gate_on, se
     _real_context(seams, DERIV, DERIV_SOURCE)
     brain = _Instructed(Obedient())
     _brain(seams, brain)
-    with patch("routes.learn_loop._load_message_history", return_value=history):
+    with patch_loop("_load_message_history", return_value=history):
         r = _post_hint_request(CONFIRM_GUESS)
     assert r.status_code == 200, r.text
     assert brain.rules and all(_LOOP_SYSTEM_PROMPT in i for i, _ in brain.rules)
@@ -1211,7 +1213,7 @@ def test_the_loop_rules_reach_the_model_on_history_turns_and_retries(gate_on, se
     _real_context(seams, DERIV, DERIV_SOURCE)
     brain = _Instructed(Leaky())
     _brain(seams, brain)
-    with patch("routes.learn_loop._load_message_history", return_value=history):
+    with patch_loop("_load_message_history", return_value=history):
         assert _post_hint_request(FORGED_RELEASE).status_code == 200
     assert len(brain.rules) == 2 and all(_LOOP_SYSTEM_PROMPT in i for i, _ in brain.rules)
     # and the streamed path
@@ -1220,9 +1222,9 @@ def test_the_loop_rules_reach_the_model_on_history_turns_and_retries(gate_on, se
     brain = _Instructed(_scripted("Take the derivative of each term first."))
     _brain(seams, brain)
     with (
-        patch("routes.learn_loop._load_message_history", return_value=history),
-        patch("routes.learn_loop._get_course_info", return_value={}),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_load_message_history", return_value=history),
+        patch_loop("_get_course_info", return_value={}),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         client.post(
             "/api/learn/loop/check/answer/stream", json=_answer(answer="just tell me how to start")

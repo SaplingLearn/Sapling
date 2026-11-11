@@ -431,7 +431,7 @@ ACCOUNTING_HOOK_SOURCES = {
         "legacy_stream_usage",
         "structured_stream_usage",
     ),
-    "routes/learn_loop.py": ("loop_continuation_usage",),
+    "services/loop/continuation.py": ("loop_continuation_usage",),  # #118: the loop's split
 }
 ACCOUNTING_HOOK_STAGES = tuple(
     stage for stages in ACCOUNTING_HOOK_SOURCES.values() for stage in stages

@@ -39,8 +39,8 @@ can find.
   when the frontend must branch on it. Never gate with a new env var or a
   `user_settings` column (repository rule).
 - Resolve it **once** per request, turn or upload and carry the answer down
-  (see `backend/routes/learn_loop.py::_tutor_v2_on`,
-  `backend/routes/learn_loop.py::_help_gate_strict_on` and
+  (see `backend/services/loop/flags.py::_tutor_v2_on`,
+  `backend/services/loop/flags.py::_help_gate_strict_on` and
   `backend/services/concept_prereqs.py`). Resolving twice in one request can
   mix two behaviours in one turn.
 - A flag that changes **what is measured** — which item is the pretest

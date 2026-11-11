@@ -16,6 +16,8 @@ from learning.evidence import (
 )
 from test_learning_probe_planner import LOOP, PLAN_Q, client, probe as probe
 import routes.learn_loop as rl
+from tests.split_patches import patch_loop
+import learning.params
 
 
 def event(key, *, node="A", owner="u1", course="c1", **changes):
@@ -70,12 +72,12 @@ def test_fresh_goal_cannot_forget_failed_practice_and_only_independent_recovery_
         row = event(f"old-{index}", max_rung=2, same_session_recheck=recheck, confidence=0.9)
         p = bkt.update(p, row["channel"], row["correct"], weight=row["weight"])
         rows.append(row)
-    assert p >= rl.BKT_PROFICIENT
+    assert p >= learning.params.BKT_PROFICIENT
     probe.states.return_value = {"A": p, "T": 0.35}
     probe.edges.return_value = [("A", "T")]
     probe.due.return_value = ["A"]
     fresh = {"phase": "plan", "goal": {"target_node_ids": ["T"]}}
-    with patch.object(rl, "read_planning_history", side_effect=lambda *a: read(rows)[0]):
+    with patch_loop("read_planning_history", side_effect=lambda *a: read(rows)[0]):
         before = rl._current_plan(fresh, "u1", "c1")
         assert "T" not in before.ready
         assert [c.node_id for c in before.proposal.concepts] == ["A"]
@@ -103,12 +105,10 @@ def test_current_legacy_snapshots_neither_upgrade_unknown_nor_reblock_newer_reco
         },
         "probe": {"history": [recovery["planning_observation"]]},
     }
-    with patch.object(
-        rl, "read_planning_history", side_effect=lambda *a: read([miss, recovery])[0]
-    ):
+    with patch_loop("read_planning_history", side_effect=lambda *a: read([miss, recovery])[0]):
         assert "T" in rl._current_plan(state, "u1", "c1").ready
     unknown = {**recovery, "planning_observation": None}
-    with patch.object(rl, "read_planning_history", side_effect=lambda *a: read([miss, unknown])[0]):
+    with patch_loop("read_planning_history", side_effect=lambda *a: read([miss, unknown])[0]):
         assert "T" not in rl._current_plan(state, "u1", "c1").ready
 
 
@@ -117,7 +117,7 @@ def test_global_first_hash_includes_unknown_and_other_course_but_not_other_user(
     recovery = event("shared", correct=True)
     for early in (event("shared", course="other"), {**recovery, "planning_observation": None}):
         history, _ = read([early, miss, recovery])
-        assert planner.planning_states({"A": 0.999}, history)["A"] < rl.BKT_PROFICIENT
+        assert planner.planning_states({"A": 0.999}, history)["A"] < learning.params.BKT_PROFICIENT
     history, _ = read([event("shared", owner="another-user"), miss, recovery])
     assert planner.planning_states({"A": 0.999}, history)["A"] == 0.999
 
@@ -126,7 +126,7 @@ def test_all_owned_pages_are_read_before_course_projection_with_total_journal_or
     rows = [event(f"other-{i}", course="other") for i in range(1105)]
     rows += [event("late-miss", max_rung=2)]
     history, pages = read(rows)
-    assert planner.planning_states({"A": 0.999}, history)["A"] < rl.BKT_PROFICIENT
+    assert planner.planning_states({"A": 0.999}, history)["A"] < learning.params.BKT_PROFICIENT
     assert len(pages.calls) >= 2
     for columns, kwargs in pages.calls:
         assert kwargs["order"] == "created_at.asc,evidence_seq.asc.nullslast,id.asc"
@@ -153,7 +153,7 @@ def test_invalid_or_mismatched_envelope_cannot_repair_or_create_need(change):
     row = event("invalid", correct=True)
     row["planning_observation"].update(change)
     history, _ = read([event("miss", max_rung=2), row])
-    assert planner.planning_states({"A": 0.999}, history)["A"] < rl.BKT_PROFICIENT
+    assert planner.planning_states({"A": 0.999}, history)["A"] < learning.params.BKT_PROFICIENT
     history, _ = read([row])
     assert planner.planning_states({"A": 0.999}, history)["A"] == 0.999
 
@@ -177,9 +177,7 @@ def test_explicit_goal_read_outage_is_503_without_state_or_mastery_changes(probe
     probe.edges.return_value = [("A", "T")]
     probe.store["doc"] = {"phase": "plan", "goal": {"target_node_ids": ["T"]}}
     before = deepcopy(probe.store["doc"])
-    with patch.object(
-        rl, "read_planning_history", side_effect=PlanningPersistenceUnavailable("down")
-    ):
+    with patch_loop("read_planning_history", side_effect=PlanningPersistenceUnavailable("down")):
         result = client.get(f"{LOOP}/plan", params=PLAN_Q)
     assert result.status_code == 503
     assert probe.store["doc"] == before

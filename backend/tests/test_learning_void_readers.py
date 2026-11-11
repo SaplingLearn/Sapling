@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.split_patches import patch_loop
 
 T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
@@ -172,8 +173,8 @@ def test_a_close_leaves_out_every_concept_a_void_row_touched_in_the_session():
         return _paged(evidence if name == "node_mastery_events" else [])
 
     with (
-        patch("routes.learn_loop.table", side_effect=table),
-        patch("routes.learn_loop.voided_event_ids", return_value={"e1"}) as voids,
+        patch_loop("table", side_effect=table),
+        patch_loop("voided_event_ids", return_value={"e1"}) as voids,
     ):
         _transcript, kept = learn_loop._session_record("s1")
     voids.assert_called_once_with(session_id="s1")

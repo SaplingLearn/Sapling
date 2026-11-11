@@ -34,6 +34,7 @@ from learning.session_close import (
     move,
     session_probe_hashes,
 )
+from tests.split_patches import setattr_loop
 
 SID = "s1"
 NAMES = {
@@ -436,7 +437,7 @@ def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(
             {"node_id": "n-quiz", "session_id": SID},
         ]
     )
-    monkeypatch.setattr(loop, "table", journal)
+    setattr_loop(monkeypatch, "table", journal)
     evidence = [{"node_id": n} for n in ("n-hf", "n-quiz", "n-later", "n-oa", "n-cr", "n-cr")]
     assert loop._measured_before("u1", SID, evidence) == {"n-hf", "n-quiz"}
     # one owner-scoped, journal-ordered limit-1 read per distinct node
@@ -472,13 +473,13 @@ def test_a_void_earlier_row_does_not_measure_a_node_before_the_session(monkeypat
         reads.append(user_id)
         return {"n-void": {"e-void"}}
 
-    monkeypatch.setattr(loop, "table", journal)
-    monkeypatch.setattr(loop, "voided_by_node", voided_by_node)
+    setattr_loop(monkeypatch, "table", journal)
+    setattr_loop(monkeypatch, "voided_by_node", voided_by_node)
     evidence = [{"node_id": "n-void"}, {"node_id": "n-old"}]
     assert loop._measured_before("u1", SID, evidence) == {"n-old"}
     assert reads == ["u1"]
     assert [c[1].get("id") for c in journal.calls] == ['not.in.("e-void")', None]
-    monkeypatch.setattr(loop, "voided_by_node", lambda user_id: {})
+    setattr_loop(monkeypatch, "voided_by_node", lambda user_id: {})
     assert loop._measured_before("u1", SID, evidence) == {"n-old", "n-void"}  # nothing void
 
 
@@ -487,15 +488,11 @@ def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch
     from learning.probe import PLANNING_BOUND_FIELDS
 
     journal = _Journal([])
-    monkeypatch.setattr(
-        loop,
-        "table",
-        lambda name: (
+    setattr_loop(monkeypatch, "table", lambda name: (
             journal(name)
             if name == "node_mastery_events"
             else SimpleNamespace(select=lambda *a, **k: [])
-        ),
-    )
+        ))
     loop._session_record(SID)
     [(cols, filters, _, _)] = journal.calls
     assert filters == {"session_id": f"eq.{SID}", "event_type": "eq.evidence"}
@@ -517,7 +514,6 @@ def _wire_walkthrough(monkeypatch, *, rows=WALKTHROUGH, earlier=(), loop_state=L
     the journal answering the session read and the per-node first-evidence reads
     (`earlier`: rows journaled before this session)."""
     import learning.session_close as sc
-    import routes.learn_loop as loop
     from tests.test_learning_close_brief import _wire_close
 
     names = [{"id": n, "concept_name": v} for n, v in NAMES.items()]
@@ -529,18 +525,17 @@ def _wire_walkthrough(monkeypatch, *, rows=WALKTHROUGH, earlier=(), loop_state=L
     def routed(name):
         return journal(name) if name == "node_mastery_events" else tables(name)
 
-    monkeypatch.setattr(loop, "table", routed)
+    setattr_loop(monkeypatch, "table", routed)
     monkeypatch.setattr(sc, "table", routed)
     return tables, events
 
 
 def test_the_close_route_gives_the_agent_honest_baselines_and_split_counts(monkeypatch):
-    import routes.learn_loop as loop
     from tests.test_learning_close_brief import UID, _close_out, _fake_run, client
 
     _wire_walkthrough(monkeypatch)
     runs: list = []
-    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), runs))
+    setattr_loop(monkeypatch, "run_session_close", _fake_run(_close_out(), runs))
     r = client.post("/api/learn/loop/close", json={"session_id": SID, "user_id": UID})
     assert r.status_code == 200, r.text
     [(draft, _)] = runs
@@ -566,7 +561,6 @@ def test_probe_answers_in_the_attempt_log_are_never_counted_twice(monkeypatch):
     alone, split by the one probe rule (`learning/probe.py::is_probe_row`), so a
     log holding every check-in and teaching answer leaves the split counts
     exactly as the journal says: one count per graded answer."""
-    import routes.learn_loop as loop
     from tests.test_learning_close_brief import UID, _close_out, _fake_run, client
 
     attempts = [
@@ -582,7 +576,7 @@ def test_probe_answers_in_the_attempt_log_are_never_counted_twice(monkeypatch):
     ]
     _wire_walkthrough(monkeypatch, loop_state={**LOOP_STATE, "attempts": attempts})
     runs: list = []
-    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), runs))
+    setattr_loop(monkeypatch, "run_session_close", _fake_run(_close_out(), runs))
     r = client.post("/api/learn/loop/close", json={"session_id": SID, "user_id": UID})
     assert r.status_code == 200, r.text
     [(draft, _)] = runs
@@ -591,11 +585,10 @@ def test_probe_answers_in_the_attempt_log_are_never_counted_twice(monkeypatch):
 
 
 def test_the_deterministic_close_over_the_route_never_states_the_prior(monkeypatch):
-    import routes.learn_loop as loop
     from tests.test_learning_close_brief import UID, _fake_run, client
 
     _wire_walkthrough(monkeypatch)
-    monkeypatch.setattr(loop, "run_session_close", _fake_run(None))  # the agent unavailable
+    setattr_loop(monkeypatch, "run_session_close", _fake_run(None))  # the agent unavailable
     r = client.post("/api/learn/loop/close", json={"session_id": SID, "user_id": UID})
     assert r.status_code == 200, r.text
     close = r.json()["close"]
@@ -614,7 +607,6 @@ def test_the_route_reports_a_concept_measured_in_an_earlier_session_from_its_est
     """Collision Resolution has a row from session s0: this session opened on its
     decayed estimate 0.42, so the change runs 0.42 → 0.32 (down) — the
     `_measured_before` read is what tells the two cases apart."""
-    import routes.learn_loop as loop
     from tests.test_learning_close_brief import UID, _fake_run, client
 
     rows = [
@@ -623,7 +615,7 @@ def test_the_route_reports_a_concept_measured_in_an_earlier_session_from_its_est
         _row("n-cr", "qh-cr-teach", 0.24, 0.32, correct=True, channel="teachback_llm"),
     ]
     _wire_walkthrough(monkeypatch, rows=rows, earlier=[{"node_id": "n-cr", "session_id": "s0"}])
-    monkeypatch.setattr(loop, "run_session_close", _fake_run(None))
+    setattr_loop(monkeypatch, "run_session_close", _fake_run(None))
     r = client.post("/api/learn/loop/close", json={"session_id": SID, "user_id": UID})
     assert r.status_code == 200, r.text
     close = r.json()["close"]

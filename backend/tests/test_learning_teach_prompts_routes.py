@@ -12,7 +12,6 @@ misconception, no band verdict."""
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -31,6 +30,7 @@ from tests.test_learn_loop_routes import (
     _state,
     client,
 )
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -93,14 +93,14 @@ def on(seams):
         return None
 
     with (
-        patch("routes.learn_loop.store_prequestion_answer") as store,
-        patch("routes.learn_loop.stored_prequestion_answer", side_effect=stored) as read_back,
-        patch("routes.learn_loop.record_self_explain_prompt") as se_record,
-        patch("routes.learn_loop.close_self_explain_prompt", return_value="won") as se_close,
-        patch("routes.learn_loop.record_help") as help_rows,
-        patch("routes.learn_loop.record_posed") as posed_rows,
-        patch("routes.learn_loop.mark_graded") as closed_rows,
-        patch("routes.learn_loop.store_brief"),
+        patch_loop("store_prequestion_answer") as store,
+        patch_loop("stored_prequestion_answer", side_effect=stored) as read_back,
+        patch_loop("record_self_explain_prompt") as se_record,
+        patch_loop("close_self_explain_prompt", return_value="won") as se_close,
+        patch_loop("record_help") as help_rows,
+        patch_loop("record_posed") as posed_rows,
+        patch_loop("mark_graded") as closed_rows,
+        patch_loop("store_brief"),
     ):
         seams.pq_store, seams.se_record, seams.se_close, seams.help_rows = store, se_record, se_close, help_rows
         seams.pq_read_back, seams.posed_rows, seams.closed_rows = read_back, posed_rows, closed_rows
@@ -118,8 +118,8 @@ def _saved(seams) -> list[tuple[str, str]]:
 def _run(seams, path: str, body: dict, *, reply=None):
     agent, seen = _json_agent(reply) if reply is not None else _json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(f"/api/learn/loop{path}", json=body)
     return r, seen
@@ -224,7 +224,7 @@ def _answer(**fields):
 
 def test_a_guess_is_stored_revealed_and_explained_never_graded(gate_on, on):
     on.store["doc"] = _posed()
-    with patch("routes.learn_loop.phase_prefix", wraps=__import__("agents.loop_tutor", fromlist=["x"]).phase_prefix):
+    with patch_loop("phase_prefix", wraps=__import__("agents.loop_tutor", fromlist=["x"]).phase_prefix):
         r, seen = _run(on, "/prequestion/answer", _answer(option="A", reason="it chains"))
     assert r.status_code == 200, r.text
     body = r.json()
@@ -385,10 +385,10 @@ def test_the_posed_row_stays_open_when_the_reveal_was_lost(gate_on, on):
     # second review, item 4: with no reveal recorded, the item stays in A88's scan
     from routes.learn_loop import _spend_prequestion_item
 
-    with patch("routes.learn_loop._persist_reveals", return_value=False):
+    with patch_loop("_persist_reveals", return_value=False):
         _spend_prequestion_item("u1", "s1", "qh-pq", at=NOW)
     on.closed_rows.assert_not_called()
-    with patch("routes.learn_loop._persist_reveals", return_value=True):
+    with patch_loop("_persist_reveals", return_value=True):
         _spend_prequestion_item("u1", "s1", "qh-pq", at=NOW)
     on.closed_rows.assert_called_once_with("u1", "qh-pq")
 
@@ -488,7 +488,7 @@ def test_a_guess_being_saved_holds_the_card(gate_on, on):
     assert r.status_code == 409 and "being saved" in r.json()["detail"]
     r, _ = _run(on, "/chat", {**_CHAT, "message": "What is hashing?"})
     assert r.status_code == 200 and on.store["doc"]["prequestion"]["node-1"]["status"] == "posed"
-    from routes.learn_loop import _grading_in_flight
+    from services.loop.state import _grading_in_flight
 
     assert _grading_in_flight(on.store["doc"], NOW) is True  # a close waits for it
 
@@ -651,7 +651,7 @@ def test_a_confrontation_keeps_its_question(gate_on, on):
     on.item.side_effect = None
     on.item.return_value = ITEM
     on.store["doc"] = st
-    with patch("routes.learn_loop.CONFRONT_TIERS", frozenset({"standard", "lite", "deep"})):
+    with patch_loop("CONFRONT_TIERS", frozenset({"standard", "lite", "deep"})):
         r, seen = _run(on, "/chat", {**_CHAT, "message": "ok"})
     assert "confront it" in seen["msg"]
     assert "self_explain" not in r.json() and "prompted" not in (on.store["doc"].get("self_explain") or {})
@@ -757,7 +757,7 @@ def test_a_committed_reply_stands_when_a_turn_closed_the_prompt_meanwhile(gate_o
     on.store["doc"] = _open_prompt()
     pre = json.loads(json.dumps(on.store["doc"]))
     se.close_open(on.store["doc"])  # a turn closed it between the read and the write
-    with patch("routes.learn_loop._load_loop_state", return_value=pre):
+    with patch_loop("_load_loop_state", return_value=pre):
         r = client.post("/api/learn/loop/self-explain", json={**_CHAT, "prompt_id": "p1", "reply": "because"})
     assert r.status_code == 200 and r.json()["status"] == "replied", r.text
     assert ("user", "because") in _saved(on)
@@ -772,7 +772,7 @@ def test_a_reply_committed_twice_is_written_to_the_transcript_once(gate_on, on):
     on.store["doc"] = _open_prompt()
     pre = json.loads(json.dumps(on.store["doc"]))
     body = {**_CHAT, "prompt_id": "p1", "reply": "because"}
-    with patch("routes.learn_loop._load_loop_state", return_value=pre):  # both read the open prompt
+    with patch_loop("_load_loop_state", return_value=pre):  # both read the open prompt
         on.se_close.return_value = "same"  # the retry's write lands first and closes the prompt
         assert client.post("/api/learn/loop/self-explain", json=body).status_code == 200
         on.se_close.return_value = "won"  # then the slow winner's: the prompt is already closed

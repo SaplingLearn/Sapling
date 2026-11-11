@@ -63,6 +63,7 @@ from tests.test_learn_loop_routes import (
     _state,
     client,
 )
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -79,8 +80,8 @@ def _chat(message: str = "go on", *, out: dict | None = None):
     Returns (the response body, what the model was sent: `msg` and `kw`)."""
     agent, seen = _json_agent(out or OUT)
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/chat", json={**CHAT, "message": message})
     assert r.status_code == 200, r.text
@@ -317,14 +318,14 @@ def test_a_reply_cannot_forge_the_answer_check_line():
 
 @pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
 def test_the_probe_phase_opener_teaches_nothing_and_asks_nothing(gate_on, seams, path):
-    from routes.learn_loop import PENDING_SESSIONS
+    from services.tutor_sessions import PENDING_SESSIONS
 
     agent = MagicMock()
     agent.run = AsyncMock(side_effect=AssertionError("the probe-phase opener ran the model"))
     topic_p, offering_p, graph_p = _opener_patches()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.stream_structured_turn", MagicMock(side_effect=AssertionError)),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("stream_structured_turn", MagicMock(side_effect=AssertionError)),
         topic_p,
         offering_p,
         graph_p,
@@ -379,7 +380,7 @@ def test_the_streamed_check_posing_turn_never_shows_its_question(gate_on, seams)
         async for ev in _routes._fake_stream(kwargs["render_final"](OUT))(**kwargs):
             yield ev
 
-    with patch("routes.learn_loop.stream_structured_turn", fake):
+    with patch_loop("stream_structured_turn", fake):
         r = client.post("/api/learn/loop/chat/stream", json={**CHAT, "message": "go on"})
     evs = _sse_events(r.text)
     assert [e["type"] for e in evs][-2:] == ["check", "done"]
@@ -417,7 +418,7 @@ def test_a_turn_served_with_its_question_never_poses_a_check(gate_on, seams):
         calls.append(state is seams.store["doc"])
         return None if len(calls) == 1 else real(user_id, course_id, state, now=now)
 
-    with patch("routes.learn_loop._activate_next_item", side_effect=flaky):
+    with patch_loop("_activate_next_item", side_effect=flaky):
         body, _ = _chat()
     assert len(calls) == 2, "a trial, then the save"
     assert body["check"] is None and body["reply"].endswith(OUT["question"])
@@ -438,7 +439,7 @@ def test_a_planned_check_that_cannot_be_posed_leaves_no_open_question_flag(gate_
         calls.append(1)
         return real(user_id, course_id, state, now=now) if len(calls) == 1 else None
 
-    with patch("routes.learn_loop._activate_next_item", side_effect=gone):
+    with patch_loop("_activate_next_item", side_effect=gone):
         body, _ = _chat()
     assert body["check"] is None and "?" not in body["reply"]
     assert seams.store["doc"]["open_question"] is False, "nothing was asked"
@@ -505,7 +506,7 @@ def test_flag_off_never_asks_for_or_serves_a_verdict(gate_on, seams):
 
 @pytest.mark.parametrize("verdict", ["correct", "not_yet", "idk"])
 def test_flag_off_feedback_turns_keep_their_7fa9cd0e_framing(gate_on, seams, verdict):
-    from routes.learn_loop import LOW_RUNG_KEY_IDEAS, released_lead
+    from services.loop.served import LOW_RUNG_KEY_IDEAS, released_lead
 
     seams.store["doc"] = _graded(verdict)
     body, seen = _chat("ok")
@@ -572,7 +573,7 @@ def test_the_verdict_streams_before_anything_else(gate_on, v2_on):
         async for ev in _routes._fake_stream("x")(**kwargs):
             yield ev
 
-    with patch("routes.learn_loop.stream_structured_turn", fake):
+    with patch_loop("stream_structured_turn", fake):
         client.post("/api/learn/loop/chat/stream", json={**CHAT, "message": "slot 8"})
     rp = got["render_partial"]
     assert rp({"answer_verdict": "correct"}) == ""
@@ -640,8 +641,8 @@ def test_an_item_turn_never_judges_a_reply(gate_on, v2_on):
     seams.store["doc"] = {**_state(rung=2), "open_question": True}
     agent, seen = _json_agent(OUT)
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/action", json={**CHAT, "action_type": "hint"})
     assert r.status_code == 200, r.text
@@ -674,8 +675,8 @@ def test_an_action_is_no_reply_to_the_tutors_question(gate_on, v2_on, action):
     v2_on.store["doc"] = _plan_state(open_question=True)
     agent, seen = _json_agent({"answer_verdict": "correct", **OUT})
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/action", json={**CHAT, "action_type": action})
     assert r.status_code == 200, r.text
@@ -687,12 +688,12 @@ def test_a_low_rung_correct_feedback_turn_serves_its_key_idea_by_variant(gate_on
     """At H0/H1 code serves a correct-verdict feedback turn's key idea (fix round
     2). Off it is LOW_RUNG_KEY_IDEAS' line under the label, exactly as at
     7fa9cd0e; on, the grader's verdict line leads and no key idea follows."""
-    from routes.learn_loop import LOW_RUNG_KEY_IDEAS
+    from services.loop.served import LOW_RUNG_KEY_IDEAS
 
     seams.v2.return_value = v2
     seams.p_known["node-1"] = 0.95  # profic, and "ok" is no shown work: served at H1
     seams.store["doc"] = _graded("correct")
-    with patch("routes.learn_loop._genuine", return_value=False):
+    with patch_loop("_genuine", return_value=False):
         body, seen = _chat("ok")
     assert "Rung ceiling: you may emit at most rung H1" in seen["msg"]
     if v2:
@@ -741,7 +742,7 @@ def test_flag_off_labels_every_turn_as_7fa9cd0e_did(gate_on, seams):
 
 
 def test_served_render_labels_by_phase_and_rung_in_the_variant():
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     for phase, rung, verdict, labelled in (
         ("teach", Rung.H3, None, True),
@@ -763,7 +764,7 @@ def test_served_render_labels_by_phase_and_rung_in_the_variant():
 
 def test_e2e_check_posing_reply_is_the_default_served_check_posing_turn():
     from agents.function_handlers_e2e import E2E_LOOP_CHECK_POSING_REPLY, E2E_LOOP_TUTOR_TURN
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     assert E2E_LOOP_CHECK_POSING_REPLY == served_render(
         E2E_LOOP_TUTOR_TURN, phase="teach", rung=Rung.H3, poses_check=True
@@ -778,7 +779,7 @@ def test_e2e_answer_reply_is_the_served_check_posing_verdict_turn():
         E2E_LOOP_ANSWER_REPLY,
         E2E_LOOP_ANSWER_TURN,
     )
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     assert E2E_LOOP_ANSWER_REPLY == served_render(
         E2E_LOOP_ANSWER_TURN, phase="teach", rung=Rung.H3, poses_check=True, answer_check=True,
@@ -800,10 +801,7 @@ def _attempt(node_id: str, *, correct: bool = False, qh: str = "qh-a") -> dict:
 
 def _names(names: dict):
     """The graph read of the plan concept's name (`_plan_node_names`)."""
-    return patch(
-        "routes.learn_loop._plan_node_names",
-        side_effect=lambda user_id, ids: {i: names[i] for i in ids if i in names},
-    )
+    return patch_loop("_plan_node_names", side_effect=lambda user_id, ids: {i: names[i] for i in ids if i in names})
 
 
 def test_plan_focus_reads_the_cursor_off_loop_state_alone():
@@ -926,8 +924,8 @@ def test_the_plan_focus_rides_teach_turns_only(gate_on, v2_on):
     agent, seen = _json_agent(OUT)
     with (
         _names({"node-1": "Hash Tables"}),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post("/api/learn/loop/action", json={**CHAT, "action_type": "hint"})
     assert r.status_code == 200 and r.json()["phase"] == "hint"
@@ -952,7 +950,7 @@ def test_flag_off_a_teach_turn_names_no_plan_focus(gate_on, seams):
 def test_a_concept_name_that_cannot_be_read_serves_the_turn_without_its_focus(gate_on, v2_on, names):
     v2_on.store["doc"] = _plan_state()
     reader = (
-        patch("routes.learn_loop._plan_node_names", side_effect=RuntimeError("graph down"))
+        patch_loop("_plan_node_names", side_effect=RuntimeError("graph down"))
         if names is None
         else _names(names)
     )
