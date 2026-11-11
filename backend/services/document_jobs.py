@@ -1014,11 +1014,13 @@ def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str,
     saved. Each step best-effort, as there. With the learning loop on, the
     indexing is the loop's ordered index-then-draft chain (PKG-04,
     `_index_then_check_items`: its own `check_items.document` job), as in the
-    route."""
-    import config
+    route: the UPLOADER's gate (the env kill switch, then their
+    `learning_loop` flag), read once here, on the worker's thread. Off is the
+    pre-loop upload: indexing alone, no drafting call."""
+    from learning.gate import learning_loop_for_uploader
     from services.document_indexing import schedule_document_index
 
-    if config.LEARNING_LOOP_ENABLED:
+    if learning_loop_for_uploader(user_id):
         index_step = ("index_then_check_items", docs._index_then_check_items,
                       (doc_id, user_id, course_id, concept_names))
     else:

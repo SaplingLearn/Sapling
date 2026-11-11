@@ -139,7 +139,7 @@ flowchart LR
   QUEUE --> RETIRE
   RETIRE --> WRITER
 
-  KILL{{"LEARNING_LOOP_ENABLED=false<br/>→ legacy tutor, loop routes 404"}} -.-> Session
+  KILL{{"learning_loop flag off for the student (the default),<br/>or LEARNING_LOOP_ENABLED=false for everyone<br/>→ legacy tutor, loop routes 404"}} -.-> Session
 ```
 
 Every model call in the picture runs on a named slot in

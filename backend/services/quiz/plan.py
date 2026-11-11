@@ -12,7 +12,6 @@ from starlette.requests import Request
 
 from services import quiz_learning
 from services.auth_guard import require_self
-from services.feature_flags import flag_on
 # fastapi's HTTPException, through the package's one fastapi seam (errors.py).
 from services.quiz.errors import HTTPException
 
@@ -26,10 +25,11 @@ def quiz_plan(request: Request, user_id: str, course_id: str | None = None):
     learner model's order — due reviews first, then concepts with an open
     misconception, then concepts the student is ready to learn — each with
     its reason, decayed p_known and band (learning/quiz_plan.py). 404 while
-    `quiz_concept_plan` is off for the student; 503 when the student's state
+    `quiz_concept_plan` (or the learning loop) is off for the student; 503 when the student's state
     could not be read (the home then keeps its own ranking). Reads only."""
     require_self(user_id, request)
-    if not flag_on(quiz_learning.CONCEPT_PLAN_FLAG, user_id):
+    (plan_on,) = quiz_learning.quiz_flags(user_id, quiz_learning.CONCEPT_PLAN_FLAG)
+    if not plan_on:
         raise HTTPException(status_code=404, detail="quiz plan not enabled")
     try:
         concepts = quiz_learning.concept_plan(user_id, course_id)

@@ -32,7 +32,12 @@ RATING = "/api/learn/loop/rating"
 
 @pytest.fixture
 def gate_off():
-    with patch_loop("learning_loop_for_request", return_value=False) as g:
+    # The rating route is rate-limited: `_kill_switch_first` resolves the gate
+    # for the session student (through learning.gate) before the handler does.
+    with (
+        patch_loop("learning_loop_for_request", return_value=False) as g,
+        patch("learning.gate.learning_loop_for_request", g),
+    ):
         yield g
 
 
@@ -102,11 +107,17 @@ def test_rating_emits_event_and_resets_counter(gate_on, session_row, seams):
     assert _doc(session_row)["steps"] == _state()["steps"]
 
 
-def test_rating_user_comes_from_the_session_when_absent(gate_on, session_row, seams):
+def test_rating_user_comes_from_the_session_when_absent(session_row, seams):
     _doc(session_row)["checks_since_rating"] = N
-    r = client.post(RATING, json={"session_id": "s1", "rating": "appropriate"})
+    with (
+        patch_loop("learning_loop_for_request", return_value=True) as gate,
+        patch("learning.gate.learning_loop_for_request", gate),
+    ):
+        r = client.post(RATING, json={"session_id": "s1", "rating": "appropriate"})
     assert r.status_code == 200
-    gate_on.assert_called_once_with("user_andres")  # tests/conftest.py's session stub
+    # read once, by `_kill_switch_first`, for the session student
+    # (tests/conftest.py's session stub); the handler uses the carried answer
+    gate.assert_called_once_with("user_andres")
     assert seams.zpd.emit_zpd_rating.call_args.kwargs["user_id"] == "user_andres"
 
 

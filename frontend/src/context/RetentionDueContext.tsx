@@ -4,9 +4,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
 import { fetchRetentionDue } from "@/lib/api";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 
 /** Spec §13 A126: the "retention check due" badge (Study nav entry, Dashboard)
- *  is behind this client-visible flag. Off — the default — fetches nothing. */
+ *  is behind this client-visible flag, and behind the student's
+ *  `learning_loop` flag too (the badge reads a loop endpoint). Either off — the
+ *  default — fetches nothing. */
 export const RETENTION_DUE_FLAG = "retention_due_badge";
 /** How often an open, visible tab asks again. The server caches each student's
  *  answer for POSTTEST_DUE_CACHE_S (300 s) and clears it when they open or
@@ -33,7 +36,8 @@ const RetentionDueContext = createContext<RetentionDueState>({ ...NOTHING_DUE, r
  */
 export function RetentionDueProvider({ children }: { children: React.ReactNode }) {
   const { userId, isAuthenticated } = useUser();
-  const enabled = useFlag(RETENTION_DUE_FLAG) === "on" && isAuthenticated && !!userId;
+  const loopOn = useFlag(LEARNING_LOOP_FLAG) === "on";
+  const enabled = useFlag(RETENTION_DUE_FLAG) === "on" && loopOn && isAuthenticated && !!userId;
   const [answer, setAnswer] = useState<{ who: string; due: boolean; courseIds: string[] } | null>(null);
   const [tick, setTick] = useState(0);
 

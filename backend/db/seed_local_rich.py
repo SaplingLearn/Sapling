@@ -89,11 +89,12 @@ ENR_SECOND_HIST_F25 = "rich-enr-second-hist200-f25"
 COURSE_CS_CODE = "CS101"
 
 # Learning loop (PKG-13): the loop users — a prerequisite chain, shared check
-# items and (for the capped user) today's spend. After PKG-14b (spec §7, §11.2)
-# the loop is EVERY student's default and the gate reads no per-user row: the
-# `learning_loop_beta` writes below are a retired build-phase staff/QA toggle —
-# inert fixture data nothing reads after PKG-14b. The E2E lane is chosen by
-# LEARNING_LOOP_ENABLED in the shell (unset = default lane; false = kill switch).
+# items and (for the capped user) today's spend. The gate is the env kill switch
+# and the per-student `learning_loop` feature flag (the E2E stack turns it on
+# for every student), never a settings row: the `learning_loop_beta` writes
+# below are a retired build-phase staff/QA toggle — inert fixture data nothing
+# reads after PKG-14b. The E2E lane is chosen by LEARNING_LOOP_ENABLED in the
+# shell (unset = default lane; false = kill switch).
 USER_LOOP = "rich-user-loop"
 USER_CAPPED = "rich-user-capped"
 LOOP_USERS = (USER_LOOP, USER_CAPPED)

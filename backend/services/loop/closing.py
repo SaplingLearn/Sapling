@@ -40,7 +40,7 @@ from services.loop.state import (
     _CLOSE_IN_PROGRESS,
     _close_phase,
     _CLOSE_STORE_FAILED,
-    _gate,
+    _agate,
     _GRADING_IN_FLIGHT,
     _grading_in_flight,
     _live,
@@ -440,7 +440,7 @@ async def close(body: CloseBody, request: Request) -> dict:
     gets the 404 and a zero-evidence close always works."""
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
-    await guard_off_loop(_gate, body.user_id, request)
+    await _agate(body.user_id, request)
     return await close_session(
         body.session_id, body.user_id, request_id=_request_id(request), rate_limit="raise"
     )

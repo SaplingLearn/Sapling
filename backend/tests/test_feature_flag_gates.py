@@ -71,7 +71,10 @@ def test_admin_and_auth_routes_are_never_gated(monkeypatch):
 # ── /api/flags degraded marker ──────────────────────────────────────────────
 
 
-def test_flags_route_says_when_the_store_is_unreadable():
+def test_flags_route_says_when_the_store_is_unreadable(monkeypatch):
+    # the suite turns the learning_loop flag on by env override (conftest); this
+    # test reads every flag off the (down) store
+    monkeypatch.delenv("SAPLING_FLAG_LEARNING_LOOP", raising=False)
     with patch("services.feature_flags.read_config", side_effect=httpx.ConnectError("down")):
         r = client.get("/api/flags")
     assert r.status_code == 200

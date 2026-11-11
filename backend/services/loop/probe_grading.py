@@ -23,12 +23,11 @@ from models import ProbeAnswerBody
 from services.tutor import _consume_pending_off_loop
 from services.tutor import _agent_turn_or_http_error
 from services import ai_budget, crisis_support
-from services.auth_guard import guard_off_loop
 from services.check_item_service import get_check_item
 
 from services.loop.constants import _ALREADY_GRADED
 from services.loop.state import (
-    _gate,
+    _agate,
     _item_like,
     _load_loop_state,
     _now_s,
@@ -347,7 +346,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     (A20); the rate limit is the one model-cost guard here (spec §9), checked
     inline AFTER the gate (PKG-12's pattern) so a gate-off student gets the
     404, never a 429."""
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     # crisis support: before the rate limit; the probe item stays posed, ungraded
     if crisis := await crisis_support.screen_async(
         body.user_id, "loop_probe_answer", body.answer, body.reason

@@ -465,6 +465,23 @@ def test_the_kill_switch_turns_the_guard_off(posed, records):
     records.help.assert_not_called()
 
 
+@pytest.mark.parametrize("loop_off", ["kill_switch", "flag_off"])
+def test_the_real_gate_turns_the_guard_off_both_ways(posed, records, monkeypatch, loop_off):
+    """The real gate, not a patched one: the env kill switch, or the student's
+    `learning_loop` flag off under an open switch — either way no posed-item
+    scan, nothing refused or withheld, no help row."""
+    import config
+
+    if loop_off == "kill_switch":
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    else:
+        monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
+    r, run = _note_chat(PASTE, reply=LEAKING_REPLY)
+    assert r.json() == {"reply": LEAKING_REPLY, "degraded": False}
+    posed.assert_not_called()
+    records.help.assert_not_called()
+
+
 def test_the_agent_reads_the_screened_note_snapshot(posed, records):
     """The route hands the agent the note it screened (deps.note), and
     read_active_note serves it without reading the note again — an edit landing

@@ -312,7 +312,8 @@ def update_settings(
         background_tasks.add_task(resync_user_chunk_visibility, user_id)
         # Learning loop PKG-04 (A23): items drafted from this student's shared
         # documents leave the class pool too. Deleted, so turning the toggle
-        # back on restores nothing; never gated on LEARNING_LOOP_ENABLED.
+        # back on restores nothing; never gated on the loop (the kill switch
+        # or the student's learning_loop flag).
         if updates["share_class_context"] is False:
             background_tasks.add_task(retire_items_for_uploader, user_id)
 

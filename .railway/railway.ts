@@ -108,8 +108,8 @@ const HANDLER_VARIABLES = [
   // config.py (read on import; the worker does not configure Logfire yet)
   "LOGFIRE_TOKEN",
   // config.py, the learning loop: its kill switch (document.process picks the
-  // loop's index-then-draft post-roll by it; check_items.document drafts only
-  // with it on), its gate clock, and the per-student AI caps
+  // loop's index-then-draft post-roll by it and the uploader's learning_loop
+  // flag; check_items.document drafts only with it on), its gate clock, and the per-student AI caps
   // (services/ai_budget.py) that check-item generation is held to
   "LEARNING_LOOP_ENABLED",
   "LEARNING_GATE_TIME_SCALE",
@@ -151,7 +151,9 @@ const FLAG_KILL_SWITCHES = [
   "stateless_tutor_sessions",
   // the learning loop's server flags (the upload's prerequisite edges and the
   // drafting flags are read on the worker's document.process and
-  // check_items.document paths)
+  // check_items.document paths; learning_loop, the uploader's, picks the
+  // document.process post-roll's index-then-draft chain)
+  "learning_loop",
   "item_reports",
   "retention_due_badge",
   "probe_matched_pretest",

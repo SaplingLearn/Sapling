@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFlag } from "@/context/FlagsContext";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import { courseInTerm } from "@/lib/useActiveSemester";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 import { abandonAttempt, getAttempt, getQuizPlan, listAttempts } from "./api";
@@ -183,6 +184,15 @@ const EMPTY_LOAD = {
   plan: null as QuizPlan | null,
 };
 
+/** `quiz_concept_plan` for this student. Like every quiz learning flag it needs
+ *  the student's `learning_loop` flag on as well (the server 404s the plan
+ *  otherwise), so a flag-off student never asks for it. */
+function useQuizPlanFlag(): boolean {
+  const planFlag = useFlag("quiz_concept_plan");
+  const loopFlag = useFlag(LEARNING_LOOP_FLAG);
+  return planFlag === "on" && loopFlag === "on";
+}
+
 /**
  * @param userId  the signed-in student.
  * @param semester the active semester label, or `null` while it is still
@@ -206,7 +216,7 @@ export function useQuizHome(
   // Spec §13 A143: the learner model's plan replaces the tier ranking. Read
   // once per load; while the flags are still loading this is "off", and the
   // load re-runs when it turns on.
-  const planOn = useFlag("quiz_concept_plan") === "on";
+  const planOn = useQuizPlanFlag();
 
   const refresh = useCallback(() => setNonce(n => n + 1), []);
 

@@ -105,7 +105,13 @@ def test_gate_reference_detector(source, expected):
 #: route-entry helper. `_gate_value` is that helper (require_self, then the ONE
 #: read), called first thing in a handler body, so it is still the route entry;
 #: nothing else in the package may name the gate.
-ROUTE_ENTRY_HELPERS = {"services/loop/state.py": "_gate_value"}
+#: The quiz learning flags each need the loop on (services/quiz_learning.py
+#: ::quiz_flags): the quiz routes' bodies call that helper first thing, once
+#: per request, so it is their route entry too.
+ROUTE_ENTRY_HELPERS = {
+    "services/loop/state.py": "_gate_value",
+    "services/quiz_learning.py": "quiz_flags",
+}
 
 
 def _route_entry_lines(source: str, helper: str) -> set[int]:

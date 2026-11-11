@@ -42,7 +42,6 @@ from services.quiz.config import (
 )
 from services.request_limits import aclaim_rate_limit
 from services import quiz_learning
-from services.feature_flags import flag_on
 from services.quiz_learning import GenerationPlan
 from learning import quiz_evidence, quiz_gates
 # fastapi's HTTPException, through the package's one fastapi seam (errors.py:
@@ -1025,13 +1024,14 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # column nothing reads back on the request path, is the trade not taken.
     exam_days_away = None
     # Learning-loop spec §13 A144/A145: each flag resolved ONCE for this
-    # request, for the student, and its answer carried down. Off (the
+    # request, for the student, and its answer carried down; each needs the
+    # learning loop on for the student too (quiz_learning.quiz_flags). Off (the
     # default), nothing below changes.
     planned_on, gates_on = await run_in_threadpool(
-        lambda: (
-            flag_on(quiz_learning.PLANNED_QUESTIONS_FLAG, body.user_id),
-            flag_on(quiz_learning.ITEM_GATES_FLAG, body.user_id),
-        )
+        quiz_learning.quiz_flags,
+        body.user_id,
+        quiz_learning.PLANNED_QUESTIONS_FLAG,
+        quiz_learning.ITEM_GATES_FLAG,
     )
     if missing > 0:
         plan = (

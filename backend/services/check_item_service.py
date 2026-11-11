@@ -1508,8 +1508,9 @@ def source_chunks(doc_row: dict) -> list[dict]:
 
 # ── withdrawal (A23): consent stays answerable for items ──────────────────
 #
-# NOT gated on LEARNING_LOOP_ENABLED: withdrawal must hold under the kill
-# switch too, and with no items it is one cheap no-op delete.
+# NOT gated on the loop (the LEARNING_LOOP_ENABLED kill switch, or the
+# uploader's learning_loop flag): withdrawal must hold with the loop off too,
+# and with no items it is one cheap no-op delete.
 
 #: Document ids per `ov.{…}` filter. The filter rides in the query string, so
 #: an unbounded list is an unbounded URL; the same bound and rationale as
@@ -3303,7 +3304,9 @@ def generate_for_document(
     flex: bool,
     flags: DraftingFlags = DraftingFlags(),
 ) -> GenerationOutcome:
-    """The upload hook's generation: the document's source passages (A23 —
+    """The upload hook's generation (scheduled only when the loop is on for the
+    uploader, `learning.gate.learning_loop_for_uploader`; the kill-switch check
+    below is the belt to that brace): the document's source passages (A23 —
     shared course material only), then at most CHECK_ITEM_MAX_CONCEPTS_PER_DOC
     of its concepts. Usage is attributed to the uploader. `flags` are the
     uploader's (drafting_flags, resolved once by the hook): A140's varied

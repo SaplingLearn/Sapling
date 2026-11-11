@@ -9,6 +9,10 @@ request, served question, recorded response, evidence row and stored row is
 byte-identical to 50e9ded8, so the recorded `quiz_generation` eval cassettes
 still replay.
 
+"Off" is each quiz flag off, or the learning loop off for the student (their
+`learning_loop` flag, or the LEARNING_LOOP_ENABLED kill switch) with every
+quiz flag on: each quiz flag needs the loop (`flags_off`).
+
 Pinned here two ways:
 - the generation request: the quiz agent run in function mode on fixed
   inputs, its system prompt, user message, function tools, output tool and
@@ -438,12 +442,26 @@ def _flow_digest(flow: dict) -> dict:
     return {part: _sha(flow[part]) for part in ("generate", "answers", "submit", "written", "evidence", "events")}
 
 
-@pytest.fixture
-def flags_off(monkeypatch):
-    """Every quiz learning flag resolves off (the env override, the resolver's
-    first step), so the test does not depend on the flag store."""
+@pytest.fixture(params=["quiz_flags_off", "learning_loop_flag_off", "kill_switch"])
+def flags_off(request, monkeypatch):
+    """The quiz learning features off, three ways (env overrides, the
+    resolver's first step, so the test does not depend on the flag store):
+    every quiz learning flag off; every one ON but the student's
+    `learning_loop` flag off; every one ON under the LEARNING_LOOP_ENABLED
+    kill switch. Each quiz flag needs the loop (services/quiz_learning.py::
+    quiz_flags), so all three are the quiz of 50e9ded8."""
+    import config
+
+    if request.param == "quiz_flags_off":
+        for key in QUIZ_FLAGS:
+            monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "off")
+        return
     for key in QUIZ_FLAGS:
-        monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "off")
+        monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "on")
+    if request.param == "learning_loop_flag_off":
+        monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
+    else:
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
 
 
 @pytest.mark.parametrize("variant", sorted(REQUEST_VARIANTS))

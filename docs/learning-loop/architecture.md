@@ -110,7 +110,8 @@ Two tests police imports, and they are the reason the layout above holds:
   imports). The scans are `test_zpd_layer_is_inert_nothing_imports_it` and
   `test_importing_the_app_loads_no_pkg06_module` in
   `backend/tests/test_learning_zpd_policy.py`. Why: the loop router answers
-  404 before anything else when the kill switch is off, so with the layer
+  404 before anything else when the loop is off (the kill switch, or the
+  student's `learning_loop` flag), so with the layer
   reachable only through it, nothing of the tutoring policy runs anywhere.
 
 Some modules are pure by construction but are not in `PURE_MODULES`: the
@@ -167,7 +168,7 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/learner_brief.py` | IO | Builds and stores the bounded learner brief. |
 | `backend/learning/session_close.py` | IO | Close draft, deterministic fallback, normalisation, encrypted store; the insert-if-missing session helper. |
 | `backend/learning/review.py` | IO | The daily review queue: due items, budget, interleaving, claims, grading. |
-| `backend/learning/gate.py` | config | The kill switch: `learning_loop_active`, `learning_loop_for_request`. |
+| `backend/learning/gate.py` | config, feature flags | The gate: the kill switch, then the student's `learning_loop` flag — `learning_loop_active`, `learning_loop_for_request`, `learning_loop_for_uploader`. |
 | `backend/learning/prequestion.py` | pure (listed) | The segment prequestion (A138): when a segment opens, the skip rules, the item choice with its pool rule, the pose and the answer lead. |
 | `backend/learning/prequestion_store.py` | IO (encryption) | `learning_prequestions`: one row per answered prequestion, the guess encrypted; also the release read A76's re-check rule makes. |
 | `backend/learning/self_explain.py` | pure (listed) | Self-explanation prompts (A139): the junctures decided in code, the four prompts, the once-per-concept cap. |
@@ -408,9 +409,10 @@ Two non-agent helpers matter as much as the agents:
 
 ## How the pieces connect
 
-- **Gate.** Every request reads the gate once at entry. Off: the legacy tutor
+- **Gate.** Every request reads the gate once at entry: the kill switch, then
+  the student's `learning_loop` flag (default off). Off: the legacy tutor
   runs, `/api/learn/loop/*` answers 404, and the frontend renders the legacy
-  Learn screen. See [flows.md](flows.md#7-the-kill-switch).
+  Learn screen. See [flows.md](flows.md#7-the-kill-switch-and-the-learning_loop-flag).
 - **State.** A session's state is `sessions.loop_state` (JSON, versioned by
   `loop_state_rev`); a student's knowledge is `learner_state` plus the
   `node_mastery_events` journal. The first is per session and saved by

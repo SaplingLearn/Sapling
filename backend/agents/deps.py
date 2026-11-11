@@ -59,11 +59,12 @@ class SaplingDeps:
             registered on quiz_agent unconditionally and the prompt tells the
             model to call it every run. Defaults True to match the column
             default; an explicit False is the only thing that suppresses.
-        learning_loop: Result of `learning.gate.learning_loop_for_request`,
+        learning_loop: Result of `learning.gate.learning_loop_for_request`
+            (the env kill switch, then the student's `learning_loop` flag),
             computed ONCE by the route at request entry (owner decision 00)
-            and carried here, so nothing below the route re-reads
-            `user_settings` per call; the gate fails closed, so an unset
-            kill switch or a failed read lands here as False. Selects the
+            and carried here, so nothing below the route re-reads it per
+            call; the gate fails closed, so a thrown kill switch, a flag that
+            is off or an unreadable flag store lands here as False. Selects the
             loop tool set and routes. Defaults False —
             the legacy path.
         loop_state: The session's typed loop state (PKG-06); None on the
