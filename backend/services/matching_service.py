@@ -59,7 +59,10 @@ def find_study_matches(
         they_can_teach = []
         shared_struggles = []
 
-        for concept in common_concepts:
+        # Sorted, not set order: str hashing is randomized per process, so set
+        # order decided which struggles survived the [:5] cut and which concept
+        # the summary named, differently on each worker.
+        for concept in sorted(common_concepts):
             my_m = normalize(my_nodes[concept].get("mastery_score", 0))
             their_m = normalize(their_nodes[concept].get("mastery_score", 0))
 
@@ -85,6 +88,8 @@ def find_study_matches(
         # Sort by gap size descending
         you_can_teach.sort(key=lambda t: t["your_mastery"] - t["their_mastery"], reverse=True)
         they_can_teach.sort(key=lambda t: t["their_mastery"] - t["your_mastery"], reverse=True)
+        # Weakest shared concepts first (combined mastery), ties by name.
+        shared_struggles.sort(key=lambda t: t["your_mastery"] + t["their_mastery"])
 
         # ── Subject overlap: Jaccard ratio (0–1) ──────────────────────────
         all_subjects = my_subjects | their_subjects
