@@ -11,8 +11,10 @@ import {
   startSession,
   startSessionStream,
   streamChat,
+  type QuizAskOrigin,
   type StreamChatHandlers,
 } from "@/lib/api";
+import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 /** The tutor mode a "why was I wrong" question wants. */
 export const TUTOR_MODE = "socratic";
@@ -28,18 +30,52 @@ export interface TurnProgress {
   partial: string;
 }
 
+/** The quiz question the panel asks about, as the `quiz_ask` origin the
+ *  session start sends (spec §13 A99), or `undefined` without an attempt. */
+export function quizAskOrigin(
+  attemptId: string | undefined,
+  questionIndex: number | undefined,
+): QuizAskOrigin | undefined {
+  return attemptId != null && questionIndex != null ? { attemptId, questionIndex } : undefined;
+}
+
+/** A session start the crisis screen answered (docs/safety/crisis-support.md):
+ *  the card instead of a session — none was opened. */
+export interface CrisisStart {
+  crisisSupport: CrisisSupport;
+  text: string;
+}
+
+export function isCrisisStart(opened: string | null | CrisisStart): opened is CrisisStart {
+  return opened !== null && typeof opened === "object";
+}
+
+/** The start's crisis card, else its session id. */
+function startedAs(
+  started: { session_id?: string | null },
+  greeting: string | undefined,
+): string | null | CrisisStart {
+  const crisisSupport = crisisSupportIn(started);
+  if (crisisSupport) return { crisisSupport, text: greeting || "" };
+  return started.session_id ?? null;
+}
+
 /**
  * Open the tutor session on the concept. A stream that falls over retries on
  * the JSON route — the greeting is thrown away either way, so there is no
- * partial text to lose. Resolves the (possibly missing) session id, or
- * `ABORTED` when the turn was cancelled while the stream was opening.
+ * partial text to lose. `origin` names the quiz question (spec §13 A99): the
+ * server records the help on it and, on the loop path, opens the session
+ * teaching the quiz's concept. Resolves the (possibly missing) session id, the
+ * crisis card when the crisis screen answered instead, or `ABORTED` when the
+ * turn was cancelled while the stream was opening.
  */
 export async function openTutorSession(
   userId: string,
   conceptName: string,
   courseId: string | null,
   signal: AbortSignal,
-): Promise<string | null | typeof ABORTED> {
+  origin?: QuizAskOrigin,
+): Promise<string | null | CrisisStart | typeof ABORTED> {
   try {
     const started = await startSessionStream(
       userId,
@@ -49,8 +85,9 @@ export async function openTutorSession(
       courseId ?? undefined,
       undefined,
       { signal },
+      origin,
     );
-    return started.session_id ?? null;
+    return startedAs(started, started.reply);
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (!shouldFallBackToJson(err)) throw err;
@@ -60,8 +97,10 @@ export async function openTutorSession(
       TUTOR_MODE,
       courseId ?? undefined,
       true,
+      undefined,
+      origin,
     );
-    return started.session_id;
+    return startedAs(started, started.initial_message);
   }
 }
 
@@ -72,6 +111,16 @@ export interface ChatLeg {
   turnId: string;
   signal: AbortSignal;
   progress: TurnProgress;
+}
+
+/** The tutor's answer to one turn: its text, or the crisis card in its place. */
+export interface AskReply {
+  text: string;
+  crisisSupport: CrisisSupport | null;
+}
+
+function replyOf(res: { reply?: string | null }): AskReply {
+  return { text: res.reply || "", crisisSupport: crisisSupportIn(res) };
 }
 
 /**
@@ -85,7 +134,7 @@ export async function chatWithFallback(
   { sid, userId, message, turnId, signal, progress }: ChatLeg,
   { onToken, onProgress }: Pick<StreamChatHandlers, "onToken" | "onProgress">,
   beforeFallback: () => void,
-): Promise<string | typeof ABORTED> {
+): Promise<AskReply | typeof ABORTED> {
   try {
     // `graph_update` events are deliberately unhandled: this panel is a
     // read of the student's own mistake, not a study turn that should
@@ -95,13 +144,13 @@ export async function chatWithFallback(
       onProgress,
       signal,
     }, turnId);
-    return res.reply || "";
+    return replyOf(res);
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (progress.sawToken || !shouldFallBackToJson(err)) throw err;
     beforeFallback();
     const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
-    return res.reply || "";
+    return replyOf(res);
   }
 }
 

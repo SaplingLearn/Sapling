@@ -10,6 +10,10 @@ import { test as base, expect } from "@playwright/test";
 
 import { resetDb } from "./db";
 
+// The one lane parse (spec §11.4) lives in ./lane.ts — no Playwright import, so
+// global-setup.ts can read it too — and is re-exported here for the specs.
+export { killSwitchLane } from "./lane";
+
 export const test = base.extend<{ dbReset: void }>({
   dbReset: [
     async ({}, use) => {

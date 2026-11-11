@@ -24,6 +24,11 @@ from agents._providers import clear_function_handlers, model_for
 from agents.chat_tutor import socratic_agent
 from agents.classifier import classifier_agent
 from agents.concept_describe import build_message, concept_describe_agent
+from agents.concept_extraction import (
+    BaseConceptList,
+    concept_extraction_agent,
+    extraction_run_args,
+)
 from agents.concept_scan import concept_scan_agent
 from agents.deps import SaplingDeps
 from agents.note_chat import note_chat_agent
@@ -143,6 +148,8 @@ def test_explicit_registration_wins_over_env_module(monkeypatch):
     assert result.output == "explicit wins"
 
 
+# Spec §11.5 (PKG-14b): the legacy JSON /start-session route is the kill-switch path.
+@pytest.mark.kill_switch
 def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypatch):
     """#151a: the JSON /start-session route now runs chat_tutor_agent (task
     "chat_tutor") — so in function mode the SAME env-registered chat_tutor
@@ -271,6 +278,119 @@ def test_quiz_handler_supports_written_format_browser_journeys(monkeypatch, form
         assert _agent_question_to_wire(question, i + 1) is not None
 
 
+_PLANNED_PROMPT = (
+    "[WRITE QUIZ]\nCONCEPT: Gradient Descent\nFORMAT: {fmt}\n"
+    "QUESTION 1: difficulty medium. TARGET: rate_is_loss_value\n"
+    "QUESTION 2: difficulty medium.\nQUESTION 3: difficulty medium.\nQUESTION 4: difficulty medium.\n"
+    "MISCONCEPTIONS (keys a wrong option may be tagged with):\n"
+    "- rate_is_loss_value: Treats the learning rate as the loss.\n"
+    "- rate_is_iteration_count: Confuses the rate with iterations.\n"
+)
+
+
+def test_the_planned_quiz_handler_writes_one_item_per_plan_line(monkeypatch):
+    """Spec §13 A144: the planned agent rides the quiz slot, told apart by its
+    schema; one item per QUESTION line, the correct option at E2E_QUIZ_CORRECT
+    _LABELS' position (cycling), its stem carrying the concept marker the quiz
+    checks read, distractors tagged only with listed keys — and every item
+    lints clean (A132), so its answers can be evidence."""
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER, E2E_QUIZ_CORRECT_LABELS
+    from agents.quiz_planned import quiz_planned_agent
+    from learning import quiz_evidence
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        result = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="multiple_choice"), deps=_deps())
+    items = result.output.questions
+    assert [q.slot for q in items] == [1, 2, 3, 4]
+    labels = [*E2E_QUIZ_CORRECT_LABELS, E2E_QUIZ_CORRECT_LABELS[0]]
+    for q, label in zip(items, labels):
+        assert q.options["ABCD".index(label)] == E2E_CHECK_ITEM_FINAL_ANSWER == q.correct_answer
+        assert "[e2e-function-model][Gradient Descent]" in q.question
+        tags = [t for t in q.option_misconceptions if t]
+        assert set(tags) == {"rate_is_iteration_count", "rate_is_loss_value"}
+        assert q.option_misconceptions["ABCD".index(label)] == ""
+        wire = _agent_question_to_wire(
+            quiz_planned_to_plain(q), 1
+        )
+        assert wire is not None and quiz_evidence.lint_question(wire) == []
+
+
+def quiz_planned_to_plain(q):
+    from agents.quiz import QuizQuestion
+
+    return QuizQuestion(
+        question=q.question, type=q.type, difficulty="medium", options=q.options,
+        accepted_answers=q.accepted_answers, correct_answer=q.correct_answer,
+        explanation=q.explanation, concept="Gradient Descent",
+    )
+
+
+def test_the_planned_quiz_handler_puts_an_unknown_target_on_the_first_distractor(monkeypatch):
+    """The seeded loop course's key (`wrong_token`) is no E2E option's: a
+    TARGET on it tags the first distractor, option A of slot 1 — the option
+    frontend/e2e/quiz-learning.spec.ts picks with "Sure"."""
+    from agents.quiz_planned import quiz_planned_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    prompt = (
+        "[WRITE QUIZ]\nCONCEPT: Binary\nFORMAT: multiple_choice\n"
+        "QUESTION 1: difficulty medium. TARGET: wrong_token\nQUESTION 2: difficulty medium.\n"
+        "MISCONCEPTIONS (keys):\n- wrong_token: Gives a different answer.\n"
+    )
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        first, second = quiz_planned_agent.run_sync(prompt, deps=_deps()).output.questions
+    assert first.option_misconceptions == ["wrong_token", "", "", ""]
+    assert first.options.index(first.correct_answer) == 1
+    assert second.option_misconceptions == ["", "", "", ""]
+
+
+def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(monkeypatch):
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
+    from agents.quiz_planned import quiz_planned_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        mixed = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="mixed"), deps=_deps()).output.questions
+    assert [q.type for q in mixed] == ["multiple_choice", "short_answer", "multiple_choice", "short_answer"]
+    written = mixed[1]
+    assert written.options == [] and written.option_misconceptions == []
+    assert written.correct_answer == E2E_CHECK_ITEM_FINAL_ANSWER
+    assert _agent_question_to_wire(quiz_planned_to_plain(written), 1) is not None
+
+
+def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_question(monkeypatch):
+    """Spec §13 A145: one handler for the quiz_check slot — the concept check
+    (a marked question tests its marker's concept, an unmarked one the first
+    listed: the quizzed concept) and the blind solve."""
+    from agents.check_items_solve import SolveItem, build_solve_prompt, check_items_solve_agent
+    from agents.check_items_verify import VerifyItem, build_verify_prompt, check_items_verify_agent
+    from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    items = [
+        VerifyItem("q1", "mc_reason", "Plain question?", "x", ("y", "z", "w"), ()),
+        VerifyItem("q2", "mc_reason", "[e2e-function-model][Loops] Marked?", "x", ("y",), ()),
+    ]
+    out = check_items_verify_agent.run_sync(
+        build_verify_prompt(["Recursion", "Loops"], items), deps=_deps(), model=model_for("quiz_check")
+    ).output
+    assert {(c.item, c.concept) for c in out.concepts} == {("q1", "Recursion"), ("q2", "Loops")}
+    solve = check_items_solve_agent.run_sync(
+        build_solve_prompt(
+            [],
+            [SolveItem("q1", "mc_reason", "Q?", (("A", "other"), ("B", E2E_CHECK_ITEM_FINAL_ANSWER)), "free")],
+        ),
+        deps=_deps(),
+        model=model_for("quiz_check"),
+    ).output
+    assert [(s.item, s.solvable, s.answer) for s in solve.solutions] == [("q1", True, "B")]
+
+
 def test_quiz_resolve_model_pref_returns_none_in_function_mode(monkeypatch):
     """The quiz half of the same bypass fixed in routes/learn.py: a fast/smart
     pref must not produce a live GoogleModel override in any non-real mode.
@@ -338,6 +458,45 @@ def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
     assert result.output.headline == E2E_DOC_HEADLINE
     assert result.output.abstract == E2E_DOC_ABSTRACT
     assert 3 <= len(result.output.key_points) <= 8
+
+
+def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatch):
+    """Spec §13 A118: one scripted concepts payload serves both extraction
+    variants. Flag off, the pre-A118 schema reads the concepts and ignores the
+    relations. Flag on, the relations come through the REAL ConceptList schema
+    and every one resolves against the scripted concepts with zero drops — so
+    the lane's flag-on upload writes exactly E2E_DOC_PREREQUISITES
+    (frontend/e2e/upload.spec.ts asserts that edge, and none with the flag off)
+    and logs no drop warning."""
+    from services.concept_prereqs import resolve_prerequisites
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with concept_extraction_agent.override(model=model_for("concepts")):
+        off = concept_extraction_agent.run_sync(
+            **extraction_run_args("some document text", prerequisites=False), deps=_deps(),
+        )
+        result = concept_extraction_agent.run_sync(
+            **extraction_run_args("some document text", prerequisites=True), deps=_deps(),
+        )
+
+    from agents.function_handlers_e2e import E2E_DOC_CONCEPTS, E2E_DOC_PREREQUISITES
+
+    assert type(off.output) is BaseConceptList
+    assert [c.name for c in off.output.concepts] == [n for n, _, _ in E2E_DOC_CONCEPTS]
+    assert [c.name for c in result.output.concepts] == [n for n, _, _ in E2E_DOC_CONCEPTS]
+    relations = [(r.prerequisite, r.dependent) for r in result.output.prerequisites]
+    assert relations == E2E_DOC_PREREQUISITES
+    resolved = resolve_prerequisites(
+        relations,
+        document_concepts=[(c.name, c.importance) for c in result.output.concepts],
+        course_concepts=[n for n, _, _ in E2E_DOC_CONCEPTS],
+    )
+    assert resolved.dropped == ()
+    assert list(resolved.edges) == E2E_DOC_PREREQUISITES
 
 
 # ── Concept description (#446) ────────────────────────────────────────────
@@ -591,6 +750,802 @@ def test_env_module_import_sets_stream_pacing(monkeypatch):
 
     assert function_stream_delay_ms() == 150
 
+
+# ── Check items (learning loop PKG-04) ────────────────────────────────────
+
+
+def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
+    """PKG-04: the check_items generator is a REQUEST-PATH agent in function
+    mode (the upload hook runs it synchronously there), so it must have a
+    handler that passes the real flat output schema and code validation —
+    one free and one teachback item for each function-mode upload concept,
+    and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items, so a function-mode pass
+    leaves no concept below the A37 floor and makes no top-up call."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from learning.checks import validate_draft
+    from learning.params import CHECK_ITEM_FORMATS
+    with check_items_agent.override(model=model_for("check_items")):
+        result = check_items_agent.run_sync("Concepts: Gradient Descent; Learning Rate", deps=_deps())
+
+    from agents.function_handlers_e2e import (
+        E2E_CHECK_ITEM_FINAL_ANSWER,
+        E2E_CHECK_ITEM_MC_WRONG_KEYS,
+        E2E_CHECK_ITEM_MC_WRONG_TEXTS,
+        E2E_CHECK_ITEM_OPTIONS,
+        E2E_CHECK_ITEM_REFERENCE,
+        E2E_CHECK_ITEM_WRONG_KEY,
+        E2E_CHECK_ITEM_WRONG_TEXT,
+        E2E_DOC_CONCEPTS,
+    )
+    from learning.checks import WrongReason, common_wrong, lettered_options, repair_draft
+    from learning.params import (
+        CHECK_ITEM_DIFFICULTIES,
+        CHECK_ITEM_MC_MIN_PER_CONCEPT,
+        CHECK_ITEM_MC_OPTIONS,
+    )
+
+    items = result.output.items
+    first = CHECK_ITEM_DIFFICULTIES[0]
+    mc_levels = CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+    assert [(i.concept, i.format, i.difficulty) for i in items] == [
+        pair
+        for name, _, _ in E2E_DOC_CONCEPTS
+        for pair in [
+            *((name, fmt, first) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+            *((name, "mc_reason", level) for level in mc_levels),
+        ]
+    ]
+    for name, _, _ in E2E_DOC_CONCEPTS:
+        mc = [i for i in items if i.concept == name and i.format == "mc_reason"]
+        assert len(mc) == CHECK_ITEM_MC_MIN_PER_CONCEPT, "a function-mode pass needs no top-up"
+    assert len({i.prompt for i in items}) == len(items), "prompts must differ so hashes differ"
+    for i in items:
+        assert i.reference_answer == E2E_CHECK_ITEM_REFERENCE
+        assert i.answer_kind == "free" and i.stepwise is False
+        # A34: every item states its final answer (validate_draft checks it occurs
+        # in the reference, not in the prompt, and is the correct option's text)
+        assert i.final_answer == E2E_CHECK_ITEM_FINAL_ANSWER
+        assert validate_draft(i) == [], validate_draft(i)
+        assert repair_draft(i) == (i, []), "the constants need no repair"
+    for i in (i for i in items if i.format == "mc_reason"):
+        # A37: option objects, no letters — code letters them and places the key
+        assert [o.model_dump() for o in i.options] == E2E_CHECK_ITEM_OPTIONS
+        assert len(i.options) == CHECK_ITEM_MC_OPTIONS
+        (correct,) = [o for o in i.options if o.is_correct]
+        assert correct.text == E2E_CHECK_ITEM_FINAL_ANSWER
+        assert (correct.misconception_key, correct.misconception_text) == (None, None)
+        distractors = [o for o in i.options if not o.is_correct]
+        assert [o.misconception_key for o in distractors] == E2E_CHECK_ITEM_MC_WRONG_KEYS
+        assert [o.misconception_text for o in distractors] == E2E_CHECK_ITEM_MC_WRONG_TEXTS
+        # A37 round 4: each distractor states its own misconception, the item
+        # lists none, and code takes its common wrong reasons from the options
+        assert i.wrong_keys == [] and i.wrong_texts == []
+        assert common_wrong(i) == [
+            WrongReason(key=k, text=t)
+            for k, t in zip(E2E_CHECK_ITEM_MC_WRONG_KEYS, E2E_CHECK_ITEM_MC_WRONG_TEXTS)
+        ]
+        stored, letter = lettered_options(i, slot_key=b"any server secret")
+        assert [o.letter for o in stored if o.wrong_key is None] == [letter]
+        assert [o.wrong_key for o in stored if o.wrong_key] == E2E_CHECK_ITEM_MC_WRONG_KEYS
+    for i in (i for i in items if i.format != "mc_reason"):
+        assert i.options == []
+        assert common_wrong(i) == [
+            WrongReason(key=E2E_CHECK_ITEM_WRONG_KEY, text=E2E_CHECK_ITEM_WRONG_TEXT)
+        ]
+    assert "check_items" in providers._FUNCTION_HANDLERS
+
+
+def test_the_mc_reason_top_up_rides_the_check_items_handler(monkeypatch):
+    """A37 (coordinator's ruling, 2026-09-28): the top-up is its own agent on
+    the check_items model slot, so function mode answers it with the
+    check_items handler — no handler of its own, no UnregisteredHandlerError.
+    Code keeps only the concept's mc_reason drafts (check_item_service)."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_topup import check_items_topup_agent
+    from agents.function_handlers_e2e import E2E_DOC_CONCEPTS
+
+    with check_items_topup_agent.override(model=model_for("check_items")):
+        result = check_items_topup_agent.run_sync("Concept: Gradient Descent", deps=_deps())
+    concepts = {i.concept for i in result.output.items}
+    assert concepts == {name for name, _, _ in E2E_DOC_CONCEPTS}
+
+
+def test_env_module_alignment_check_keeps_every_e2e_item_as_drafted(monkeypatch):
+    """Spec §13 A119: in function mode the alignment check runs on the upload's
+    request path after the drafting call, and an unavailable check stores
+    nothing — so the lane registers a handler, and it must leave every item
+    the check_items handler drafts exactly as drafted: every criterion asked,
+    each item testing the concept it was drafted for. Run through the REAL
+    agent, schema, prompt builder, parse and rules."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from agents.check_items_verify import (
+        VerifyItem,
+        build_verify_prompt,
+        check_items_verify_agent,
+        verdicts,
+    )
+    from agents.function_handlers_e2e import (
+        E2E_DOC_CONCEPTS,
+        E2E_VERIFY_ASKS,
+        E2E_VERIFY_WHY,
+    )
+    from learning.item_alignment import align, concept_key
+
+    with check_items_agent.override(model=model_for("check_items")):
+        drafts = check_items_agent.run_sync("Concepts: e2e", deps=_deps()).output.items
+    items = [
+        VerifyItem(
+            str(n),
+            d.format,
+            d.prompt,
+            next((o.text for o in d.options if o.is_correct), None),
+            tuple(o.text for o in d.options if not o.is_correct),
+            tuple(d.rubric),
+        )
+        for n, d in enumerate(drafts, start=1)
+    ]
+    names = [name for name, _, _ in E2E_DOC_CONCEPTS]
+    with check_items_verify_agent.override(model=model_for("check_items_verify")):
+        out = check_items_verify_agent.run_sync(build_verify_prompt(names, items), deps=_deps()).output
+    assert {c.why for c in out.criteria} == {E2E_VERIFY_WHY}
+    assert {c.asks for c in out.concepts} == {E2E_VERIFY_ASKS}
+    found = verdicts(out)
+    scope = {concept_key(n): n for n in names}
+    for item, draft in zip(items, drafts):
+        result = align(len(draft.rubric), concept_key(draft.concept), found[item.id], scope)
+        assert result.reject is None and result.flags == (), (draft.concept, draft.format)
+        assert result.keep == tuple(range(len(draft.rubric)))
+        assert result.concept_key == concept_key(draft.concept)
+    assert "check_items_verify" in providers._FUNCTION_HANDLERS
+
+
+def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(monkeypatch):
+    """An item without the E2E marker: the handler cannot tell what it tests,
+    so it says none (the check then rejects it) — it never guesses a concept."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_verify import (
+        VerifyItem,
+        build_verify_prompt,
+        check_items_verify_agent,
+        verdicts,
+    )
+
+    item = VerifyItem("1", "free", "What is a hash table?", None, (), ("Names buckets.", "Names keys."))
+    with check_items_verify_agent.override(model=model_for("check_items_verify")):
+        out = check_items_verify_agent.run_sync(
+            build_verify_prompt(["Hash Table"], [item]), deps=_deps()
+        ).output
+    assert verdicts(out)["1"].concept == "none"
+    assert dict(verdicts(out)["1"].asked) == {"c1": True, "c2": True}
+
+
+def test_env_module_key_check_verifies_every_e2e_item(monkeypatch):
+    """Spec §13 A124: in function mode the key check runs on the upload's
+    request path after the alignment check, and an unavailable check stores
+    nothing — so the lane registers a handler on the check_items_solve slot,
+    and it must agree with the key of every item the check_items handler
+    drafts: each is stored VERIFIED, no free-text pair needs the key match, and
+    no E2E item is ever held. Run through the REAL agents, schema, prompt
+    builder, letters (the server's slot key), parse and comparison rules."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from agents.check_items_solve import (
+        SolveItem,
+        build_solve_prompt,
+        check_items_solve_agent,
+        solutions,
+    )
+    from agents.function_handlers_e2e import E2E_SOLVE_BASIS
+    from learning.item_keys import AGREE, compare
+    from services.check_item_service import _draft_key_subject
+
+    with check_items_agent.override(model=model_for("check_items")):
+        drafts = check_items_agent.run_sync("Concepts: e2e", deps=_deps()).output.items
+    subjects = [_draft_key_subject(d) for d in drafts]
+    items = [
+        SolveItem(str(n), s.format, s.prompt, s.options, s.answer_kind)
+        for n, s in enumerate(subjects, start=1)
+    ]
+    passages = [{"id": "c1", "text": "Gradient descent steps against the gradient."}]
+    with check_items_solve_agent.override(model=model_for("check_items_solve")):
+        out = check_items_solve_agent.run_sync(build_solve_prompt(passages, items), deps=_deps()).output
+    assert {s.basis for s in out.solutions} == {E2E_SOLVE_BASIS}
+    found = solutions(out)
+    outcomes = [compare(s, found.get(i.id)) for i, s in zip(items, subjects)]
+    assert outcomes == [AGREE] * len(drafts), list(zip([d.format for d in drafts], outcomes))
+    assert {d.format for d in drafts} == {"free", "teachback", "mc_reason"}
+    assert "check_items_solve" in providers._FUNCTION_HANDLERS
+
+
+def test_e2e_key_check_handler_never_guesses(monkeypatch):
+    """An item without the E2E marker, an option list without the E2E answer
+    or a number to compute: the handler cannot tell, so it says unsolvable
+    (the item is then held) — never a guess. The key match on the same slot
+    agrees only on the same text."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_key_match import (
+        MatchItem,
+        build_match_prompt,
+        check_items_key_match_agent,
+        matches,
+    )
+    from agents.check_items_solve import (
+        SolveItem,
+        build_solve_prompt,
+        check_items_solve_agent,
+        solutions,
+    )
+    from agents.function_handlers_e2e import E2E_MATCH_WHY
+
+    items = [
+        SolveItem("1", "free", "What is a hash table?", (), "free"),
+        SolveItem("2", "mc_reason", "Pick one.", (("A", "x"), ("B", "y")), "free"),
+        SolveItem("3", "free", "[e2e-function-model][Learning Rate][free] 4/5?", (), "numeric"),
+    ]
+    with check_items_solve_agent.override(model=model_for("check_items_solve")):
+        out = check_items_solve_agent.run_sync(build_solve_prompt([], items), deps=_deps()).output
+    assert {k: (v.solvable, v.answer) for k, v in solutions(out).items()} == {
+        "1": (False, ""),
+        "2": (False, ""),
+        "3": (False, ""),
+    }
+    pairs = [MatchItem("1", "Q?", "The Step Size", " the step  size "), MatchItem("2", "Q?", "a", "b")]
+    with check_items_key_match_agent.override(model=model_for("check_items_solve")):
+        judged = check_items_key_match_agent.run_sync(build_match_prompt(pairs), deps=_deps()).output
+    assert {m.why for m in judged.matches} == {E2E_MATCH_WHY}
+    assert matches(judged) == {"1": True, "2": False}
+
+
+# ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
+
+
+def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
+    """PKG-05b: the decision agent's E2E handler serves BOTH per-run output
+    types off the real schema — the token → "yes" / the first OPTION key,
+    else "no" / "none" — at the fixed E2E_DECISION_CONFIDENCE."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.learning_decision import DecisionPickOutput, build_decision_message, learning_decision_agent
+    from agents.function_handlers_e2e import E2E_DECISION_CONFIDENCE, E2E_DECISION_YES_TOKEN
+
+    opts = [("w_loop", "loop"), ("w_speed", "speed")]
+    hit = build_decision_message(f"Q {E2E_DECISION_YES_TOKEN}", [("S", "x")], opts)
+    miss = build_decision_message("Q", [("S", "x")], opts)
+    with learning_decision_agent.override(model=model_for("learning_decision")):
+        picks = [
+            learning_decision_agent.run_sync(m, deps=_deps(), output_type=DecisionPickOutput).output
+            for m in (hit, miss)
+        ]
+        yes, no = (learning_decision_agent.run_sync(m, deps=_deps()).output for m in (hit, miss))
+    assert [p.choice for p in picks] == ["w_loop", "none"]
+    assert (yes.answer, no.answer) == ("yes", "no")
+    assert yes.confidence == picks[1].confidence == E2E_DECISION_CONFIDENCE
+    # Request-path from PKG-10 on (match_wrong_reason without a prior grade);
+    # until then services/decisions.py is its only runner, and no route calls it.
+    assert "learning_decision" in providers._FUNCTION_HANDLERS
+
+
+@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
+def test_env_module_registers_loop_tutor_handler_on_dispatch(monkeypatch, slot):
+    """PKG-07: one loop_tutor_agent, three tier slots picked per run (spec §3.5, A15);
+    the E2E module serves every slot the same fixed reply, with no tool call."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.loop_tutor import loop_tutor_agent
+
+    deps = _deps()
+    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
+
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY, E2E_LOOP_TUTOR_TURN
+    from learning.turn_shape import render_turn
+
+    assert result.output == E2E_LOOP_TUTOR_TURN
+    assert render_turn(result.output) == E2E_LOOP_TUTOR_REPLY
+    assert not deps.pending_evidence  # the handler scripts no tool call; the loop has no grader tool
+
+
+@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
+@pytest.mark.parametrize("phase,ceiling,released", [
+    ("teach", 0, False), ("teach", 3, False), ("hint", 1, False), ("feedback", 6, True),
+])
+def test_e2e_loop_handler_returns_valid_turn(monkeypatch, slot, phase, ceiling, released):
+    """PKG-07 unblock S1: the E2E seam answers the structured output type with a
+    turn that passes the output validator at the TIGHTEST limits (a 1-sentence body
+    at H0/H1), so no E2E loop turn ever burns an output retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_TURN
+    from agents.loop_tutor import loop_tutor_agent
+    from learning.turn_shape import turn_limits, validate_turn
+
+    limits = turn_limits(phase, ceiling, released)
+    assert validate_turn(E2E_LOOP_TUTOR_TURN, limits) == []
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
+    assert result.output == E2E_LOOP_TUTOR_TURN
+    assert result.usage().requests == 1  # no output retry
+
+
+def test_env_module_serves_session_close(monkeypatch):
+    """PKG-09: the close agent is on the request path (POST /api/learn/loop/close
+    and the loop end_session), so the E2E lane needs its handler."""
+    from agents.session_close import session_close_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    with session_close_agent.override(model=model_for("session_close")):
+        result = session_close_agent.run_sync("close this session", deps=_deps())
+
+    from agents.function_handlers_e2e import (
+        E2E_CLOSE_IF_THEN,
+        E2E_CLOSE_MISCONCEPTIONS,
+        E2E_CLOSE_SELF_EVAL,
+        E2E_CLOSE_SUMMARY,
+    )
+
+    assert result.output.summary == E2E_CLOSE_SUMMARY
+    assert result.output.self_eval_prompt == E2E_CLOSE_SELF_EVAL
+    assert result.output.if_then_plan == E2E_CLOSE_IF_THEN
+    assert result.output.open_misconception_keys == E2E_CLOSE_MISCONCEPTIONS
+    assert E2E_CLOSE_IF_THEN.startswith("If ") and ", then " in E2E_CLOSE_IF_THEN
+    assert E2E_CLOSE_SELF_EVAL.endswith("?") and E2E_CLOSE_SELF_EVAL.count("?") == 1
+
+
+# ── PKG-10: the misconception path on the E2E lane ─────────────────────────
+
+
+def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch):
+    """PKG-10 wires decisions.match_wrong_reason on the request path (with the
+    grader's result as `prior`, so no decision-agent run). The E2E lane makes
+    the matched key deterministic: an answer holding
+    E2E_GRADER_WRONG_REASON_TOKEN is graded wrong with the item's FIRST listed
+    common wrong reason matched; two such answers on two isomorphs of one
+    concept are a misconception (PKG-13's journey types the token)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from agents.grader import grader_agent
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import confront_of
+    from learning.policy import LoopState
+    from services import learning_decisions as decisions
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.function_handlers_e2e import (
+        E2E_GRADER_CORRECT_TOKEN,
+        E2E_GRADER_WRONG_REASON_TOKEN,
+    )
+    from tests.test_learning_check_tool import _item
+    from learning.checks import WrongReason
+
+    wrong = [WrongReason(key="w_loop", text="loops"), WrongReason(key="w_speed", text="speed")]
+    items = [
+        _item(id=f"ci-{qh}", question_hash=qh, difficulty=2, common_wrong=wrong)
+        for qh in ("h1", "h2")
+    ]
+    deps = SaplingDeps(
+        user_id="e2e-user",
+        course_id="e2e-course",
+        supabase=None,
+        request_id="e2e-req",
+        session_id="e2e-session",
+        learning_loop=True,
+        loop_state=LoopState().to_json(),
+    )
+    with (
+        grader_agent.override(model=model_for("grader")),
+        patch("learning.misconceptions.record", side_effect=AssertionError("route-only")),
+        patch.object(decisions, "_run_decision") as run,
+    ):
+        outs = [
+            asyncio.run(
+                grade_answer(
+                    it,
+                    CheckAnswer(
+                        question_hash=it.question_hash,
+                        answer_text=f"{E2E_GRADER_WRONG_REASON_TOKEN}: it just loops",
+                    ),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            for it in items
+        ]
+        right = asyncio.run(
+            grade_answer(
+                items[0],
+                CheckAnswer(question_hash="h1", answer_text=f"{E2E_GRADER_CORRECT_TOKEN} stops"),
+                deps=deps,
+                node_id="n2",
+            )
+        )
+    run.assert_not_called()
+    assert [(o.correct, o.wrong_key, o.verdict) for o in outs] == [
+        (False, "w_loop", "unknown"),
+        (False, "w_loop", "misconception"),
+    ]
+    assert outs[0].diagnosis["record"] is None
+    assert outs[1].diagnosis["record"] == {
+        "node_id": "n1",
+        "check_item_id": "ci-h2",
+        "wrong_key": "w_loop",
+    }
+    assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
+    assert right.correct is True and right.wrong_key is None and right.matched_wrong_key is None
+
+
+# ── Learning loop, PKG-13: the phase-aware loop_tutor handler ──────────────
+#
+# The loop_tutor handler answers by PHASE so frontend/e2e/learn-loop.spec.ts
+# can tell a hint turn from a feedback turn from a teach turn. It reads the
+# phase off THIS run's user prompt — the prefix routes/learn_loop.py assembles
+# with agents.loop_tutor.phase_prefix — never off the history, where an earlier
+# turn's prefix would answer a later teach turn with the hint reply. The
+# pattern values are copied from agents/loop_tutor.py's phase rules, so a
+# prompt rewrite that drops them fails these tests, not the browser lane.
+
+_LOOP_SLOTS = ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"]
+#: (phase, ceiling, answer_released, verdict) — one real prefix per model phase.
+_LOOP_PHASE_CASES = {
+    "teach": ("teach", 1, False, None),
+    "hint": ("hint", 1, False, None),
+    "feedback": ("feedback", 6, True, "not_yet"),
+}
+
+
+def _loop_turn_message(phase_key: str, student_text: str = "help me") -> tuple[str, object]:
+    """The user message a real loop run carries for `phase_key`, and its limits."""
+    from agents.loop_tutor import assemble_turn_message, new_nonce, phase_prefix
+    from learning.turn_shape import clamp_model_ceiling, turn_limits
+
+    phase, ceiling, released, verdict = _LOOP_PHASE_CASES[phase_key]
+    prefix = phase_prefix(
+        phase=phase,
+        band="novice",
+        ceiling=ceiling,
+        item_prompt=None if phase == "teach" else "[e2e-loop] A seeded check item.",
+        item_format=None if phase == "teach" else "free",
+        answer_released=released,
+        verdict=verdict,
+    )
+    message = assemble_turn_message(
+        prefix=prefix, blocks=[], nonce=new_nonce(), student_text=student_text
+    )
+    return message, turn_limits(phase, clamp_model_ceiling(ceiling, released), released)
+
+
+def _loop_turn_for(phase_key: str) -> dict:
+    import agents.function_handlers_e2e as m
+
+    return {
+        "teach": m.E2E_LOOP_TUTOR_TURN,
+        "hint": m.E2E_LOOP_HINT_TURN,
+        "feedback": m.E2E_LOOP_FEEDBACK_TURN,
+    }[phase_key]
+
+
+@pytest.mark.parametrize("slot", _LOOP_SLOTS)
+@pytest.mark.parametrize("phase_key", ["teach", "hint", "feedback"])
+def test_loop_tutor_handler_answers_by_phase_on_every_tier_slot(monkeypatch, slot, phase_key):
+    """Spec §13 A15: code picks the tier slot per run (feedback after a correct
+    answer runs on loop_tutor_lite), so the scripted reply depends on the PHASE
+    of the real prefix, never on the slot — and no turn burns an output retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.loop_tutor import loop_tutor_agent
+    from learning.turn_shape import render_turn
+
+    message, limits = _loop_turn_message(phase_key)
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync(message, deps=deps, model=model_for(slot))
+    turn = _loop_turn_for(phase_key)
+    assert result.output == turn
+    assert result.usage().requests == 1  # no output retry
+    assert not deps.pending_evidence  # no tool call
+
+    import agents.function_handlers_e2e as m
+
+    reply = {
+        "teach": m.E2E_LOOP_TUTOR_REPLY,
+        "hint": m.E2E_LOOP_HINT_REPLY,
+        "feedback": m.E2E_LOOP_FEEDBACK_REPLY,
+    }[phase_key]
+    assert render_turn(result.output) == reply
+
+
+def test_loop_tutor_handler_reads_this_runs_prompt_not_the_history(monkeypatch):
+    """A teach turn after a hint turn carries the hint prefix in its HISTORY;
+    the handler must still answer it with the teach reply."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from agents.function_handlers_e2e import E2E_LOOP_HINT_REPLY, E2E_LOOP_TUTOR_TURN
+    from agents.loop_tutor import loop_tutor_agent
+
+    hint_message, _ = _loop_turn_message("hint")
+    teach_message, limits = _loop_turn_message("teach")
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=hint_message)]),
+        ModelResponse(parts=[TextPart(content=E2E_LOOP_HINT_REPLY)]),
+    ]
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync(
+        teach_message, deps=deps, model=model_for("loop_tutor"), message_history=history
+    )
+    assert result.output == E2E_LOOP_TUTOR_TURN
+
+
+def test_loop_phase_patterns_are_real_and_unique_phase_prompt_text():
+    """Each pattern is verbatim prompt source, appears in its own phase's real
+    prefix, and in no other phase's prefix nor the system prompt — so it can
+    neither be invented nor misfire."""
+    import pathlib
+
+    from agents.function_handlers_e2e import E2E_LOOP_PHASE_PATTERNS
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT, LOOP_OUTPUT_TEMPLATE
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "agents" / "loop_tutor.py").read_text()
+    assert set(E2E_LOOP_PHASE_PATTERNS) == {"hint", "feedback"}
+    for phase, pattern in E2E_LOOP_PHASE_PATTERNS.items():
+        assert len(pattern) >= 12, (phase, pattern)
+        assert pattern in src, f"{phase!r} pattern {pattern!r} is not in agents/loop_tutor.py"
+        assert pattern not in _LOOP_SYSTEM_PROMPT + LOOP_OUTPUT_TEMPLATE
+        for other in _LOOP_PHASE_CASES:
+            message, _ = _loop_turn_message(other)
+            assert (pattern in message) == (other == phase), (phase, other)
+
+
+def _answer_check_message(student_text: str) -> tuple[str, object]:
+    """The user message of a real answer-check teach turn (spec §13 A121: the
+    `loop_tutor_v2` variant, the only one with an [ANSWER CHECK] line)."""
+    from agents.loop_tutor import assemble_turn_message, new_nonce, phase_prefix
+    from learning.turn_shape import turn_limits
+
+    prefix = phase_prefix(
+        phase="teach",
+        band="develop",
+        ceiling=3,
+        v2=True,
+        poses_check=True,
+        answer_check=True,
+    )
+    message = assemble_turn_message(
+        prefix=prefix, blocks=[], nonce=new_nonce(), student_text=student_text
+    )
+    return message, turn_limits(
+        "teach", 3, False, question=False, answer_check=True, v2=True
+    )
+
+
+def test_loop_answer_check_pattern_is_real_and_unique_prompt_text():
+    """Spec §13 A121: the handler tells an answer-check turn by a verbatim piece
+    of agents/loop_tutor.py::ANSWER_CHECK_LINE that only an answer-check prefix
+    carries — never the system prompt or the output template (which name the
+    line), never another phase's prefix."""
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_CHECK_PATTERN
+    from agents.loop_tutor import (
+        ANSWER_CHECK_LINE,
+        LOOP_OUTPUT_TEMPLATE,
+        LOOP_V2_OUTPUT_TEMPLATE,
+        V2_INSTRUCTIONS,
+        _LOOP_SYSTEM_PROMPT,
+    )
+
+    assert E2E_LOOP_ANSWER_CHECK_PATTERN in ANSWER_CHECK_LINE
+    for instructions in (
+        _LOOP_SYSTEM_PROMPT,
+        LOOP_OUTPUT_TEMPLATE,
+        V2_INSTRUCTIONS,
+        LOOP_V2_OUTPUT_TEMPLATE,
+    ):
+        assert E2E_LOOP_ANSWER_CHECK_PATTERN not in instructions
+    message, _ = _answer_check_message("slot 8")
+    assert E2E_LOOP_ANSWER_CHECK_PATTERN in message
+    for phase_key in _LOOP_PHASE_CASES:
+        other, _ = _loop_turn_message(phase_key)
+        assert E2E_LOOP_ANSWER_CHECK_PATTERN not in other, phase_key
+
+
+def test_a_v2_plan_focus_never_steers_the_seams_phase_patterns():
+    """Spec §13 A121 (v2): every teach turn carries a [PLAN FOCUS] line; none of
+    its wordings may contain a pattern the seam picks a scripted turn by, or a
+    flag-on teach turn would be answered as a hint, feedback or answer check."""
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_CHECK_PATTERN, E2E_LOOP_PHASE_PATTERNS
+    from agents.loop_tutor import PLAN_FOCUS_REASONS, plan_focus_block, plan_focus_line
+
+    patterns = [E2E_LOOP_ANSWER_CHECK_PATTERN, *E2E_LOOP_PHASE_PATTERNS.values()]
+    for reason in PLAN_FOCUS_REASONS:
+        text = plan_focus_line(reason) + plan_focus_block("Recursion")
+        assert not [p for p in patterns if p in text], reason
+
+
+@pytest.mark.parametrize("slot", _LOOP_SLOTS)
+def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch, slot):
+    """A reply carrying E2E_LOOP_CHAT_ANSWER_TOKEN is judged correct, any other
+    reply not_an_answer (a follow-up question — the quiz sheet's), on every tier
+    slot, and the turn passes the answer-check validator with no retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    import agents.function_handlers_e2e as m
+    from agents.loop_tutor import loop_tutor_agent, variant_run_args
+
+    for text, want in (
+        (f"working: {m.E2E_LOOP_CHAT_ANSWER_TOKEN}", m.E2E_LOOP_ANSWER_TURN),
+        ("Can you give me one more example?", m.E2E_LOOP_NOT_AN_ANSWER_TURN),
+    ):
+        message, limits = _answer_check_message(text)
+        deps = _deps()
+        deps.loop_turn = limits
+        result = loop_tutor_agent.run_sync(
+            message, deps=deps, model=model_for(slot), **variant_run_args(True)
+        )
+        assert result.output == want
+        assert result.usage().requests == 1  # no output retry
+    assert m.E2E_LOOP_CHAT_ANSWER_TOKEN != m.E2E_GRADER_CORRECT_TOKEN, (
+        "the journey's chat answer must never read as a graded check answer"
+    )
+
+
+def test_loop_turn_constants_are_valid_turns_at_the_tightest_limits():
+    """Every scripted loop turn passes the output validator — shape, control
+    tags, LaTeX and the below-H4 invented-math provenance check — at H0 (a
+    one-sentence body), with nothing given, so the served path never retries."""
+    from agents.function_handlers_e2e import (
+        E2E_LOOP_FEEDBACK_TURN,
+        E2E_LOOP_HINT_TURN,
+        E2E_LOOP_TUTOR_TURN,
+    )
+    from learning.turn_shape import turn_limits, validate_turn
+
+    for phase, turn in (
+        ("teach", E2E_LOOP_TUTOR_TURN),
+        ("hint", E2E_LOOP_HINT_TURN),
+        ("feedback", E2E_LOOP_FEEDBACK_TURN),
+    ):
+        for ceiling in (0, 1, 2, 3):
+            assert validate_turn(turn, turn_limits(phase, ceiling, False), source="") == [], (
+                phase,
+                ceiling,
+            )
+    # spec §13 A121: the answer-check turns, as a turn that also poses a check
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_TURN, E2E_LOOP_NOT_AN_ANSWER_TURN
+
+    for turn in (E2E_LOOP_ANSWER_TURN, E2E_LOOP_NOT_AN_ANSWER_TURN):
+        for ceiling in (0, 1, 2, 3):
+            for question in (True, False):
+                limits = turn_limits(
+                    "teach", ceiling, False, question=question, answer_check=True, v2=True
+                )
+                assert validate_turn(turn, limits, source="") == [], (ceiling, question)
+
+
+def test_loop_constants_do_not_state_a_seeded_answer():
+    """A hint or feedback reply carrying the grader's correct token would let the
+    journey pass a check it never answered; one carrying the seeded items' final
+    answer (or a 6-gram of their reference) would be a real leak."""
+    import agents.function_handlers_e2e as m
+    from learning.checks import answer_run, find_runs
+    from learning.params import LEAK_NGRAM
+
+    texts = (
+        m.E2E_LOOP_TUTOR_REPLY,
+        m.E2E_LOOP_HINT_REPLY,
+        m.E2E_LOOP_FEEDBACK_REPLY,
+        m.E2E_LOOP_PROBE_PROMPT,
+        # spec §13 A121
+        m.E2E_LOOP_CHECK_POSING_REPLY,
+        m.E2E_LOOP_ANSWER_REPLY,
+        m.E2E_LOOP_PROBE_OPENER,
+        m.E2E_LOOP_PLAN_OPENER,
+    )
+    reference = answer_run(m.E2E_LOOP_REFERENCE)
+    grams = {reference[i : i + LEAK_NGRAM] for i in range(len(reference) - LEAK_NGRAM + 1)}
+    for text in texts:
+        run = answer_run(text)
+        assert m.E2E_GRADER_CORRECT_TOKEN not in text
+        assert m.E2E_GRADER_WRONG_REASON_TOKEN not in text
+        assert not find_runs(run, answer_run(m.E2E_LOOP_FINAL_ANSWER)), text
+        assert not {run[i : i + LEAK_NGRAM] for i in range(len(run) - LEAK_NGRAM + 1)} & grams
+    # A34: the final answer is copied verbatim from the reference and absent from the prompt.
+    assert m.E2E_LOOP_FINAL_ANSWER in m.E2E_LOOP_REFERENCE
+    assert not find_runs(answer_run(m.E2E_LOOP_PROBE_PROMPT), answer_run(m.E2E_LOOP_FINAL_ANSWER))
+    # The E2E grader grades on the token anywhere in its message, which quotes the
+    # reference and the prompt: a token there would grade EVERY answer correct.
+    assert m.E2E_GRADER_CORRECT_TOKEN not in m.E2E_LOOP_REFERENCE
+    assert m.E2E_LOOP_PROBE_PROMPT.startswith("[e2e-loop]")
+
+
+def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_rung():
+    """frontend/e2e/learn-loop.spec.ts asserts the model-written body and question
+    of the hint (H1) and correct-verdict feedback turns: at H0/H1 the route serves
+    the KEY IDEA from code (routes.learn_loop.served_render), so the journey pins
+    the two fields that reach the student verbatim."""
+    import agents.function_handlers_e2e as m
+    from learning.ladder import Rung
+    from routes.learn_loop import served_render
+
+    for phase, turn, body, question, verdict in (
+        ("hint", m.E2E_LOOP_HINT_TURN, m.E2E_LOOP_HINT_BODY, m.E2E_LOOP_HINT_QUESTION, None),
+        (
+            "feedback",
+            m.E2E_LOOP_FEEDBACK_TURN,
+            m.E2E_LOOP_FEEDBACK_BODY,
+            m.E2E_LOOP_FEEDBACK_QUESTION,
+            "correct",
+        ),
+    ):
+        assert (turn["body"], turn["question"]) == (body, question)
+        for rung in (Rung.H0, Rung.H1):
+            served = served_render(turn, phase=phase, rung=rung, verdict=verdict)
+            assert body in served and question in served
+
+
+# ── PKG-14b (spec §11.4): the lane-aware support constants ──────────────────
+#
+# The quiz "Ask about this" sheet asserts E2E_TUTOR_REPLY in the kill-switch lane
+# and E2E_LOOP_TUTOR_REPLY in the default lane, through frontend/e2e/support/
+# quiz.ts (re-exported by support/quizStack.ts). inv_13a's sync scan reads only
+# *.spec.ts, so the support copies are pinned here.
+
+_SUPPORT_CONST_RX = r'export const (TUTOR_REPLY|LOOP_TUTOR_REPLY) =\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+);'
+
+
+def _ts_consts(rel: str) -> dict:
+    import json
+    import pathlib
+    import re
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / rel).read_text()
+    return {
+        name: "".join(json.loads(piece) for piece in re.findall(r'"(?:[^"\\]|\\.)*"', expr))
+        for name, expr in re.findall(_SUPPORT_CONST_RX, src)
+    }
+
+
+def test_support_ask_panel_constants_match_the_handlers():
+    import sys
+
+    import agents._providers as providers
+
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    try:
+        import agents.function_handlers_e2e as handlers
+
+        quiz = _ts_consts("frontend/e2e/support/quiz.ts")
+        assert quiz == {
+            "TUTOR_REPLY": handlers.E2E_TUTOR_REPLY,
+            "LOOP_TUTOR_REPLY": handlers.E2E_LOOP_TUTOR_REPLY,
+        }
+        stack = _ts_consts("frontend/e2e/support/quizStack.ts")
+        assert stack == {"TUTOR_REPLY": handlers.E2E_TUTOR_REPLY}
+    finally:
+        providers.clear_function_handlers()
+        sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+def test_support_lane_parse_is_the_spec_7_post_launch_parse():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/lane.ts").read_text()
+    assert 'export const killSwitchLane = ["false", "0", "off", "no"].includes(' in src
+    assert '(process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase()' in src
+    fixtures = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/fixtures.ts").read_text()
+    assert 'export { killSwitchLane } from "./lane";' in fixtures
 
 # ── Typed decision seam / tutor router (#640, ADR 0027) ───────────────────
 #

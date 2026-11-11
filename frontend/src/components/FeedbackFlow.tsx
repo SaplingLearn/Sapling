@@ -5,20 +5,21 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
-import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
+import {
+  currentLearningSession,
+  mayPrompt,
+  notePulseFirstSeen,
+  recordPrompt,
+  releaseFeedbackSlot,
+  tryClaimFeedbackSlot,
+  whenFeedbackFree,
+} from "@/lib/feedbackPacing";
 import { useToast } from "./ToastProvider";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-/** How long a page is open before the pulse asks. */
+/** How long a page is open before the pulse comes due. */
 export const PULSE_DELAY_MS = 2 * 60_000;
-/** Between one pulse and the next, however it was closed. */
-export const PULSE_COOLDOWN_MS = 14 * DAY_MS;
-/** A new student isn't asked how it's going in their first days. */
-export const PULSE_GRACE_MS = 3 * DAY_MS;
-const STORAGE_KEY = "sapling_last_feedback";
-export const FIRST_SEEN_KEY = "sapling_feedback_first_seen";
-/** Never over a task in progress: the pulse waits for a later page instead
- *  (nothing is recorded, so the chance isn't spent). */
+/** Never over a task in progress: on these paths the pulse skips and waits
+ *  for a later page instead (nothing is recorded, so the chance isn't spent). */
 const NO_PULSE_PATHS = ["/quiz"];
 // Numeric scale (serif numeral) keeps the tone "quiet library,"
 // not mobile-game. Labels on hover for clarity.
@@ -41,7 +42,9 @@ const OPTIONS = [
 ];
 
 interface FeedbackFlowProps {
-  /** Passive mode: auto-opens after PULSE_DELAY_MS, past the grace and cooldown. */
+  /** Passive mode: comes due PULSE_DELAY_MS after mount; opens when
+   *  lib/feedbackPacing.ts allows (past the new-student grace, never
+   *  mid-learning or over a quiz, one per session, cooldowns). */
   passive?: boolean;
   /** Manual mode: caller controls open state. */
   open?: boolean;
@@ -70,28 +73,31 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   useEffect(() => {
     if (!passive) return;
     if (!isAuthenticated) return;
-    let cancelled = false;
-    const now = Date.now();
-    let firstSeen = 0;
-    let last = 0;
-    try {
-      firstSeen = Number(localStorage.getItem(FIRST_SEEN_KEY) ?? "0");
-      if (!firstSeen) localStorage.setItem(FIRST_SEEN_KEY, String(now));
-      last = Number(localStorage.getItem(STORAGE_KEY) ?? "0");
-    } catch {
-      return; // no storage, no way to keep a cooldown: don't ask at all
-    }
-    const settledIn = firstSeen > 0 && now - firstSeen > PULSE_GRACE_MS;
-    const cooledDown = !last || now - last > PULSE_COOLDOWN_MS;
-    if (!testOverride && !(settledIn && cooledDown)) return;
-    // The session prompt may already be on screen (#762) — then skip this
-    // pulse rather than stack a second modal on it.
-    const t = setTimeout(() => {
-      if (cancelled) return;
-      if (!testOverride && NO_PULSE_PATHS.some(p => pathnameRef.current?.startsWith(p))) return;
-      if (tryClaimFeedbackSlot("global")) setOpen(true);
-    }, testOverride ? 1_000 : PULSE_DELAY_MS); // the test hook shows it, not paces it
-    return () => { cancelled = true; clearTimeout(t); };
+    // The new-student grace counts from the first time the pulse could ask.
+    notePulseFirstSeen();
+    // Not worth a timer while the grace or a cooldown has it spent anyway.
+    if (!testOverride && !mayPrompt("global", null)) return;
+    let cancelWait = () => {};
+    // Due at PULSE_DELAY_MS, but a learning activity in progress holds it until
+    // the next natural break; then pacing decides again, against the session
+    // the student is in by then. Spent there → dropped, never re-queued. Over a
+    // quiz it skips without recording, so a later page may still ask (the path
+    // is read when it fires, not when it was set). The session prompt may also
+    // be on screen (#762): then skip, not stack.
+    const show = () => {
+      if (!testOverride && NO_PULSE_PATHS.some((p) => pathnameRef.current?.startsWith(p))) return;
+      const session = currentLearningSession();
+      if (!testOverride && !mayPrompt("global", session)) return;
+      if (!tryClaimFeedbackSlot("global")) return;
+      recordPrompt("global", session); // on open: a dismissal counts as shown
+      setOpen(true);
+    };
+    // The test hook shows it, not paces it.
+    const t = setTimeout(
+      () => { cancelWait = whenFeedbackFree(show); },
+      testOverride ? 1_000 : PULSE_DELAY_MS,
+    );
+    return () => { clearTimeout(t); cancelWait(); };
   }, [passive, isAuthenticated, testOverride]);
 
   // Give the one-prompt slot back if the shell unmounts mid-prompt.
@@ -101,15 +107,17 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     if (openProp !== undefined) setOpen(openProp);
   }, [openProp]);
 
-  const close = useCallback((recordCooldown: boolean) => {
+  const close = useCallback(() => {
     setOpen(false);
     releaseFeedbackSlot("global");
     setRating(null);
     setSelected([]);
     setComment("");
-    if (recordCooldown) localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    // A passive open was recorded when it opened; a manual one (the caller's
+    // own form) still restarts the pulse's cooldown, as it always has.
+    if (!passive) recordPrompt("global", null);
     onClose?.();
-  }, [onClose]);
+  }, [onClose, passive]);
 
   const toggleOption = (o: string) => {
     setSelected(prev => prev.includes(o) ? prev.filter(x => x !== o) : [...prev, o]);
@@ -127,7 +135,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         comment: comment.trim() || undefined,
       });
       toast.success("Thanks for the feedback!");
-      close(true);
+      close();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit.");
     } finally {
@@ -148,7 +156,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         alignItems: "center",
         justifyContent: "center",
       }}
-      onClick={() => !submitting && close(true)}
+      onClick={() => !submitting && close()}
     >
       <div
         onClick={e => e.stopPropagation()}
@@ -163,7 +171,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="h-serif" style={{ fontSize: 24 }}>What's clicking?</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
         <div className="body-serif" style={{ fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>
           A quick pulse. Nothing is a wrong answer.
@@ -239,7 +247,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         />
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button className="btn" onClick={() => close(true)} disabled={submitting}>Not now</button>
+          <button className="btn" onClick={() => close()} disabled={submitting}>Not now</button>
           <button className="btn btn--primary" onClick={submit} disabled={rating === null || submitting}>
             {submitting ? "Sending…" : "Submit"}
           </button>

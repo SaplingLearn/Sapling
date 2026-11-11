@@ -26,6 +26,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
 import { AnswerOption, Badge, Button, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
+import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizSession } from "@/lib/quiz/types";
@@ -227,6 +228,7 @@ interface RootKeyContext {
   selectable: boolean;
   optionCount: number;
   actions: QuizActions;
+  confidenceRef: React.RefObject<HTMLDivElement | null>;
 }
 
 /** The sheet and the dialog own the keyboard while they are open — and both
@@ -262,8 +264,16 @@ function selectByShortcut(e: React.KeyboardEvent, { optionCount, actions }: Root
   actions.select(index);
 }
 
+/** The confidence group owns its keys (learning-loop spec §13 A127 (b),
+ *  A132): Enter or Space on a level chooses it rather than submitting, and a
+ *  letter there is not an answer shortcut. Escape still leaves. */
+function confidenceOwnsKey(e: React.KeyboardEvent, { confidenceRef }: RootKeyContext): boolean {
+  if (e.key === "Escape" || !(e.target instanceof Node)) return false;
+  return Boolean(confidenceRef.current?.contains(e.target));
+}
+
 function handleRootKey(e: React.KeyboardEvent, ctx: RootKeyContext) {
-  if (keyboardIsElsewhere(e, ctx)) return;
+  if (keyboardIsElsewhere(e, ctx) || confidenceOwnsKey(e, ctx)) return;
   if (e.key === "Escape") leaveOnEscape(e, ctx);
   else if (e.key === "Enter") activateOnEnter(e, ctx);
   else if (ctx.selectable) selectByShortcut(e, ctx);
@@ -668,6 +678,40 @@ function QuestionAside({
   );
 }
 
+/** Learning-loop spec §13 A132: A127's optional "How sure are you?" on every
+ *  quiz question, either format. Choosing makes no request — the level rides
+ *  this question's `/answer` — and Submit never waits on it. Rendered in every
+ *  live phase so nothing moves when the verdict lands; it stops taking changes
+ *  once the answer is sent. */
+function QuestionConfidence({
+  confidenceRef,
+  item,
+  selectable,
+  actions,
+}: {
+  confidenceRef: React.RefObject<HTMLDivElement | null>;
+  item: QuizItem | undefined;
+  selectable: boolean;
+  actions: QuizActions;
+}) {
+  return (
+    <div ref={confidenceRef} className="quiz-question__confidence">
+      <ConfidenceControl
+        testIdPrefix="quiz-confidence"
+        value={item?.confidence ?? null}
+        onChange={level => actions.setConfidence?.(level)}
+        disabled={!selectable || item?.verdict != null}
+      />
+    </div>
+  );
+}
+
+/** The question the tutor sheet asks about, as its `quiz_ask` origin (spec
+ *  §13 A99) — none before the attempt exists. */
+function quizAskFor(attemptId: string | null | undefined, item: QuizItem | undefined) {
+  return attemptId && item ? { attemptId, questionIndex: item.index } : undefined;
+}
+
 function flagItem(item: QuizItem | undefined, actions: QuizActions, toast: ToastApi) {
   const wasFlagged = item?.flagged ?? false;
   actions.flag();
@@ -686,6 +730,7 @@ export function QuizQuestion({
 }: QuizQuestionProps) {
   const toast = useToast();
   const askRef = useRef<HTMLButtonElement>(null);
+  const confidenceRef = useRef<HTMLDivElement>(null);
 
   /**
    * The tutor sheet, remembered per QUESTION rather than as a bare boolean: a
@@ -741,7 +786,7 @@ export function QuizQuestion({
   const shown = showVerdict ? view.verdict : null;
   const AnswerField = ANSWER_FIELDS[view.format];
   const onRootKeyDown = (e: React.KeyboardEvent) =>
-    handleRootKey(e, { askOpen, phase, primary, selectable, optionCount: view.options.length, actions });
+    handleRootKey(e, { askOpen, phase, primary, selectable, optionCount: view.options.length, actions, confidenceRef });
 
   return (
     <div
@@ -760,6 +805,7 @@ export function QuizQuestion({
         <div className="quiz-question__body" key={view.item?.question.id ?? cursor}>
           <QuestionPrompt item={view.item} format={view.format} />
           <AnswerField view={view} shown={shown} selectable={selectable} actions={actions} primary={primary} />
+          <QuestionConfidence confidenceRef={confidenceRef} item={view.item} selectable={selectable} actions={actions} />
           <VerdictFeedback
             feedbackRef={feedbackRef}
             shown={shown}
@@ -794,6 +840,7 @@ export function QuizQuestion({
         courseId={courseId}
         courseLabel={concept.courseCode || undefined}
         seed={askSeedFor(view)}
+        quizAsk={quizAskFor(session.attemptId, view.item)}
         returnFocusTo={askRef}
       />
     </div>

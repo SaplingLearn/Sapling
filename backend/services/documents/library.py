@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from db.connection import table
 from services.academics import offering_course_id
+from services.check_item_service import retire_items_for_documents
 from services.encryption import decrypt_if_present, decrypt_json
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,13 @@ async def soft_delete_document(document_id: str, user_id: str) -> None:
     from services.chunk_visibility import withdraw_document_chunks
 
     await run_in_threadpool(withdraw_document_chunks, document_id, user_id)
+    # Learning loop PKG-04 (A23): check items drafted from this document's
+    # text leave the class pool with it. Never gated on LEARNING_LOOP_ENABLED
+    # (withdrawal holds under the kill switch too) and never fails the delete.
+    try:
+        await run_in_threadpool(retire_items_for_documents, [document_id])
+    except Exception:
+        logger.warning("Retiring check items for doc %s failed", document_id, exc_info=True)
 
 
 async def update_document_row(document_id: str, user_id: str, updates: dict) -> dict:

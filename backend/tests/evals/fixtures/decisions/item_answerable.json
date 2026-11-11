@@ -1,0 +1,22 @@
+{
+  "decision": "item_answerable",
+  "provenance": "synthetic",
+  "note": "Authored for PKG-05b; mirrors tests/evals/grader.py. Synthetic only (A24): no stored student answer.",
+  "base_state": {
+    "question": "Why does every recursive function need a base case?",
+    "reference": "The base case stops the recursion; without it each call makes another call and the stack grows until it overflows."
+  },
+  "cases": [
+    {
+      "name": "partial_passage",
+      "state": {
+        "passages": [
+          "Recursion means a function calls itself on a smaller input."
+        ]
+      },
+      "gold": {
+        "answer": "no"
+      }
+    }
+  ]
+}

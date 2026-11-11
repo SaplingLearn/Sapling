@@ -61,7 +61,7 @@ function attempt(over: Partial<AttemptSummary> & { quiz_id: string }): AttemptSu
     difficulty: "medium",
     mastery_before: null,
     mastery_after: null,
-    mastery_delta: null,
+    p_delta: null,
     created_at: "2026-08-22T09:00:00Z",
     completed_at: null,
     ...over,

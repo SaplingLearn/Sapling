@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Recursive functions require a base case to prevent infinite recursion.\", \"body\": \"A base case defines a condition under which the function stops calling itself and returns a value directly.\", \"question\": \"What is the role of a base case in a recursive function?\"}"
+  ],
+  "input_sha256": "e5183e6af66364a0a1c5fb3887ca1554c40dba977977f9b9cd7a218f744341c2",
+  "model": "gemini-2.5-flash",
+  "output": {
+    "body": "A base case defines a condition under which the function stops calling itself and returns a value directly.",
+    "key_idea": "Recursive functions require a base case to prevent infinite recursion.",
+    "question": "What is the role of a base case in a recursive function?"
+  },
+  "prompt_hash": "10676b7d004e",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

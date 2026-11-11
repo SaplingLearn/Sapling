@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "ece4377f641acf22dbf626718a7c17da7bbce2a6a5da3ff1d7c11bed7e7d080a",
+  "output": {
+    "evidence": "What should factorial do when n reaches 0, instead of calling itself again?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "17afa9d9ef2bec1e84d4430dec52524751268a4c3e1d3f45dff88ab190caf3b5"
+}

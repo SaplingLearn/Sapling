@@ -18,11 +18,13 @@ from services import events_service
 from services.academics import offering_course_id
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
 from services.encryption import decrypt_if_present, decrypt_json_column, encrypt_json
+from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from services.streak_service import touch_streak_safe
 from services.tutor.errors import HTTPException
 from services.tutor.messages import save_message
 from services.tutor.pending import _open_turn_session, get_user_name
 from services.tutor_sessions import (
+    PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     aget_pending,
     arequire_session_owner,
@@ -71,12 +73,10 @@ def _session_summary(session_id: str, started_at: str, ended_at: str | None = No
             except Exception:
                 pass
 
+    # PKG-14b (spec §11.2): the three always-empty lists are gone.
     return {
         "concepts_covered": list(concepts_covered),
-        "mastery_changes": [],
-        "new_connections": [],
         "time_spent_minutes": _elapsed_minutes(started_at, until=ended_at),
-        "recommended_next": [],
     }
 
 
@@ -101,7 +101,7 @@ def _stored_session_summary(session_id: str) -> dict:
     return _session_summary(session_id, row.get("started_at") or "", row.get("ended_at"))
 
 
-def end_session(body: EndSessionBody, request: Request):
+def end_session(body: EndSessionBody, request: Request, loop_handler=None):
     if body.user_id:
         require_self(body.user_id, request)
     else:
@@ -111,12 +111,18 @@ def end_session(body: EndSessionBody, request: Request):
     ended_while_pending = discarded_reason(body.session_id, body.user_id) == "ended"
     if not ended_while_pending:
         require_session_owner(body.session_id, body.user_id)
+        # Learning loop (spec §7): `loop_handler` is the loop's handler when the
+        # route-entry gate is true (the default; routes/learn.py evaluates it,
+        # owner decision 00); below is the kill-switch path (spec §11.6). No
+        # model runs here, so no budget check.
+        if loop_handler is not None:
+            request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+            loop = loop_handler(body, request)
+            if loop is not None:
+                return loop
     empty = {
         "concepts_covered": [],
-        "mastery_changes": [],
-        "new_connections": [],
         "time_spent_minutes": 0,
-        "recommended_next": [],
     }
     # Discard under the materialisation lock so a concurrent first turn can't
     # insert the row after we drop the entry. A pending session whose row was
@@ -131,7 +137,8 @@ def end_session(body: EndSessionBody, request: Request):
 
     session_rows = table("sessions").select(
         "user_id,started_at",
-        filters={"id": f"eq.{body.session_id}"},
+        # a daily review session is never ended here: no XP, streak or summary (A73)
+        filters={"id": f"eq.{body.session_id}", **NOT_REVIEW},
     )
     if not session_rows:
         if popped is not None or ended_while_pending:
@@ -228,7 +235,7 @@ async def list_sessions(user_id: str, request: Request, limit: int = 10):
     limit = SESSION_LIST_MAX if limit <= 0 else min(limit, SESSION_LIST_MAX)
     sessions = await table("sessions").aselect(
         "id,user_id,topic,mode,offering_id,started_at,ended_at",
-        filters={"user_id": f"eq.{user_id}"},
+        filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},  # review queue rows are not tutor sessions
         order="started_at.desc",
         limit=limit,
     )
@@ -288,6 +295,17 @@ def delete_session(session_id: str, request: Request, user_id: str | None = None
     # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
     # no-op 200 — nothing is deleted, and the answer never says whether the id
     # exists. A second delete (another tab, a double click) still succeeds.
+    # A known OWNED daily-review row is explicitly refused. Missing and
+    # foreign ids still share #709's idempotent success below. Never delete
+    # the daily queue through the tutor endpoint (that would reset its budget).
+    if session_id not in PENDING_SESSIONS:
+        owner_rows = table("sessions").select(
+            "user_id,mode",
+            filters={"id": f"eq.{session_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        )
+        if owner_rows and owner_rows[0].get("user_id") == user_id and owner_rows[0].get("mode") == REVIEW_MODE:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     if not session_owned_by(session_id, user_id):
         return {"deleted": True}
     # Every delete leaves a "deleted" tombstone (#761): a turn already past
@@ -335,7 +353,7 @@ async def resume_session(session_id: str, request: Request):
 
     session_rows = await table("sessions").aselect(
         "id,user_id,topic,mode,started_at,ended_at,offering_id",
-        filters={"id": f"eq.{session_id}"},
+        filters={"id": f"eq.{session_id}", **NOT_REVIEW},  # a review session is never resumed
     )
     if not session_rows:
         raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
@@ -373,8 +391,10 @@ async def mode_switch(body: ModeSwitchBody, request: Request):
     )
     student_name = (await run_in_threadpool(get_user_name, body.user_id)).split()[0]
     session_rows = await table("sessions").aselect(
-        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
+        "topic,mode", filters={"id": f"eq.{body.session_id}"}, limit=1
     )
+    if session_rows and session_rows[0].get("mode") == REVIEW_MODE:  # never a tutor session (A73)
+        raise HTTPException(status_code=404, detail="Session not found")
     topic = session_rows[0]["topic"] if session_rows else "this topic"
     
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)

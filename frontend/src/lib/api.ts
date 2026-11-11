@@ -12,12 +12,13 @@ import type {
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
-  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
+  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData, LearningLoopKpisData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
-import { createStreamPacer } from '@/lib/streamPacer';
+import type { WithCrisisSupport } from '@/lib/crisisSupport';
+import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 
 export const API_URL = '';
 
@@ -319,6 +320,27 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
 // Learn
 export type ModelPref = 'smart' | 'fast';
 
+/**
+ * PKG-14 (spec §13 A99): a session opened ABOUT one quiz question (the quiz's
+ * "Ask about this" panel). The question is named by its attempt and index; the
+ * server resolves its identity from the attempt row and records the help, so
+ * quiz evidence on that question earns no unassisted credit. On the loop path
+ * the session starts teaching the quiz's concept (no probe).
+ */
+export interface QuizAskOrigin {
+  attemptId: string;
+  questionIndex: number;
+}
+
+const quizAskFields = (quizAsk?: QuizAskOrigin) =>
+  quizAsk
+    ? {
+        origin: 'quiz_ask' as const,
+        quiz_attempt_id: quizAsk.attemptId,
+        quiz_question_index: quizAsk.questionIndex,
+      }
+    : {};
+
 export const startSession = (
   userId: string,
   topic: string,
@@ -326,8 +348,10 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  quizAsk?: QuizAskOrigin,
 ) =>
-  fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
+  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
@@ -336,6 +360,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     }),
   });
 
@@ -360,7 +385,7 @@ export const sendChat = (
   modelPref?: ModelPref,
   turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean } & WithCrisisSupport>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -378,12 +403,15 @@ export interface GraphDelta {
   mastery_changes: MasteryChange[];
 }
 
-export interface ChatResult {
+export interface ChatResult extends WithCrisisSupport {
   reply: string;
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** Learning loop (PKG-07): `reply` is the leak-stripped text; true when the
+   *  strip changed it. `reply` is always the text to render (spec §13 A46). */
+  leak_redacted?: boolean;
   /** The server already had this `turn_id`'s reply and replayed it (#761). */
   replayed?: boolean;
 }
@@ -447,22 +475,66 @@ export interface StreamChatHandlers {
    *  `search_course_materials`) — what it is doing before any text. */
   onProgress?: (step: string) => void;
   signal?: AbortSignal;
+  // Learning-loop stream events (PKG-07; spec §9). The legacy tutor streams
+  // never send them, so the legacy callers pass none of these.
+  /** A46: discard EVERY token of this reply streamed so far; the full current
+   *  text follows as tokens, and `done.reply` is always the final text. */
+  onRetract?: (reason: string) => void;
+  /** The turn's phase (`teach` | `check` | `hint` | `feedback`). */
+  onPhase?: (phase: string) => void;
+  onCheck?: (item: LoopCheckItem) => void;
+  onHintOffer?: (rung: number) => void;
+  onLearnerState?: (state: LoopLearnerState) => void;
+  onBudget?: (notice: LoopBudgetNotice) => void;
 }
 
 const STREAM_IDLE_MS = 45_000;
 
+/** The `ChatStreamError` a mid-stream `error` event throws. */
+function streamErrorOf(ev: StreamEvent): ChatStreamError {
+  const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+  // Only an explicit false clears the flag — absent/other values keep
+  // the default-true contract with older backends.
+  const retryable = ev.data?.retryable !== false;
+  return new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+}
+
+type StreamEventHandler = (ev: StreamEvent, pacer: StreamPacer, h: StreamChatHandlers) => void;
+
+/** Every event but `done` (which ends the turn): what each one does. An event
+ *  type not listed here is ignored. */
+const STREAM_EVENT_HANDLERS = new Map<string, StreamEventHandler>([
+  ['token', (ev, pacer) => pacer.push(String(ev.data?.delta ?? ''))],
+  ['graph_update', (ev, _p, h) => h.onGraphUpdate?.(ev.data as unknown as GraphDelta)],
+  ['progress', (ev, _p, h) => h.onProgress?.(ev.step)],
+  ['retract', (ev, pacer, h) => {
+    // Learning loop (PKG-07): the server withdrew what it streamed (a
+    // caught leak). Text still queued in the pacer must never reach the
+    // screen after the retract, so it is DROPPED, not flushed.
+    pacer.discard();
+    h.onRetract?.(String(ev.data?.reason ?? ''));
+  }],
+  ['phase', (ev, _p, h) => h.onPhase?.(String(ev.data?.phase ?? ''))],
+  ['check', (ev, _p, h) => h.onCheck?.(ev.data as unknown as LoopCheckItem)],
+  ['hint_offer', (ev, _p, h) => h.onHintOffer?.(Number(ev.data?.rung))],
+  ['learner_state', (ev, _p, h) => h.onLearnerState?.(ev.data as unknown as LoopLearnerState)],
+  ['budget', (ev, _p, h) => h.onBudget?.(loopBudgetNoticeOf(ev.data))],
+  ['error', ev => { throw streamErrorOf(ev); }],
+]);
+
 async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
-  { onToken, onGraphUpdate, onProgress, signal }: StreamChatHandlers,
+  handlers: StreamChatHandlers,
 ): Promise<ChatResult> {
+  const { signal } = handlers;
   const { streamSSE } = await import('./sse');
   // Tokens go out through the pacer, so a reply the model sends in one burst
   // still types out (lib/streamPacer.ts). It is drained before `done`
   // resolves, because callers swap the streamed bubble for the final message
   // then. Any other exit flushes it first, so a caller's partial-text
   // handling (ADR 0020) sees every token that arrived.
-  const pacer = createStreamPacer(delta => onToken?.(delta));
+  const pacer = createStreamPacer(delta => handlers.onToken?.(delta));
   let result: ChatResult | null = null;
 
   try {
@@ -478,17 +550,8 @@ async function consumeChatStream(
       { idleTimeoutMs: STREAM_IDLE_MS },
     )) {
       const ev = e.data;
-      if (ev.type === 'token') pacer.push(String(ev.data?.delta ?? ''));
-      else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
-      else if (ev.type === 'progress') onProgress?.(ev.step);
-      else if (ev.type === 'error') {
-        const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
-        // Only an explicit false clears the flag — absent/other values keep
-        // the default-true contract with older backends.
-        const retryable = ev.data?.retryable !== false;
-        throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
-      }
-      else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+      if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+      else STREAM_EVENT_HANDLERS.get(ev.type)?.(ev, pacer, handlers);
     }
   } catch (err) {
     pacer.flush();
@@ -545,6 +608,7 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  quizAsk?: QuizAskOrigin,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -555,17 +619,16 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     },
     handlers,
   );
 };
 
+/** PKG-14b (spec §11.2): the three always-empty lists are gone from the wire. */
 export interface SessionSummaryData {
   concepts_covered: string[];
-  mastery_changes: { concept: string; before: number; after: number }[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export const endSession = (sessionId: string, userId: string) =>
@@ -975,6 +1038,8 @@ export const scanCourseConcepts = (courseId: string, userId: string) =>
 export interface GenerateFlashcardsResponse {
   flashcards: any[];
   context_used?: { documents_found: number; weak_concepts_found: number };
+  /** Cards held back for giving away an open learning check's answer (spec §13 A125). */
+  withheld?: number;
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
@@ -1017,11 +1082,585 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
     { method: 'DELETE' },
   );
 
+// Learning loop (PKG-12): the daily review queue (backend/routes/learn_loop.py
+// /review/*). Every route 404s while the loop is off for this student (spec §7),
+// so callers treat a 404 as "inactive", never as an error.
+export interface ReviewSr {
+  stage: 'acquire' | 'relearn' | 'done';
+  correct: number;
+  target: number;
+}
+export interface ReviewItemPayload {
+  kind: 'flashcard' | 'check';
+  id: string;
+  cost_s: number;
+  sr: ReviewSr;
+  // check items
+  node_id?: string | null;
+  concept_name?: string | null;
+  format?: 'free' | 'mc_reason' | null;
+  difficulty?: number | null;
+  prompt?: string | null;
+  // mc_reason only: the stored options in stored order; correctness is never marked (A22)
+  options?: { letter: string; text: string }[] | null;
+  // flashcards
+  topic?: string | null;
+  front?: string | null;
+  back?: string | null;
+}
+export interface ReviewNextResponse {
+  item: ReviewItemPayload | null;
+  remaining_budget_s: number;
+  session_id: string;
+  retention_target: number;
+  // everything due today; in_budget = what today's remaining budget covers. A null
+  // item with due_total > 0 means the budget is spent, not that nothing is due.
+  due_total: number;
+  in_budget: number;
+}
+export interface ReviewAnswerBody {
+  user_id: string;
+  session_id: string;
+  course_id?: string;
+  kind: 'flashcard' | 'check';
+  item_id: string;
+  answer?: string;
+  selected_option?: string;
+  reason?: string;
+  rating?: number;
+  /** Spec §13 A127: a check's stated confidence, only when chosen (never a flashcard's). */
+  confidence?: StudentConfidence;
+}
+export interface ReviewAnswerResponse extends WithCrisisSupport {
+  correct: boolean | null;
+  hint: string | null;
+  next_due_at: string | null;
+  rating: number | null;
+  remaining_budget_s: number;
+  sr: ReviewSr | Record<string, never>;
+  unavailable: boolean;
+  // A33: the answer read as instructions to the grader — ask for it in the
+  // student's own words (nothing was recorded; the item stays answerable)
+  refused: boolean;
+}
+export interface ReviewSummaryResponse {
+  due: { flashcard: number; check: number };
+  in_budget: number;
+  unservable: number;
+  paused: number;
+  budget_min: number;
+  remaining_budget_s: number;
+  retention_target: number;
+}
+
+const reviewQuery = (userId: string, courseId?: string) => {
+  const params = new URLSearchParams({ user_id: userId });
+  if (courseId) params.set('course_id', courseId);
+  return params.toString();
+};
+
+export const getReviewNext = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewQuery(userId, courseId)}`);
+
+export const answerReview = (body: ReviewAnswerBody) =>
+  fetchJSON<ReviewAnswerResponse>('/api/learn/loop/review/answer', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export const getReviewSummary = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
+
+/** Is the learning loop on for this student? Probes GET /review/active — a
+ *  gate-only route that builds nothing (PKG-07's /status needs a loop session id).
+ *  It answers `{active}` with 200 either way (PKG-13 fix round: a 404 for "off"
+ *  logged an error.4xx on every legacy visit); a 404 from an older backend still
+ *  reads as inactive. Any other failure rejects — the caller decides (useLoopStatus
+ *  times out and retries). */
+export const getLoopStatus = async (userId: string): Promise<{ active: boolean }> => {
+  try {
+    return await fetchJSON<{ active: boolean }>(
+      `/api/learn/loop/review/active?${reviewQuery(userId)}`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return { active: false };
+    throw err;
+  }
+};
+
+// ── Learning loop (PKG-13) ──────────────────────────────────────────────────
+// Clients for the loop tutor routes (backend/routes/learn_loop.py; shapes from
+// the code and HANDOFF-07/08/09, which override the PKG-13 prompt's table).
+// Every route 404s while the loop is off for the student (spec §7); only
+// getLoopStatus (above) swallows that. No loop client takes or sends
+// model_pref: the tier is chosen in code (spec §13 A15/A26). The attempt box
+// submits ONLY through streamLoopCheckAnswer, never as a chat turn (A16).
+export type LoopPhase = 'probe' | 'plan' | 'teach' | 'check' | 'feedback' | 'close';
+export type LoopBand = 'novice' | 'develop' | 'profic';
+export type LoopFormat = 'free' | 'teachback' | 'mc_reason';
+/** Explicit learner-confirmed concepts; null means exploring the whole course. */
+export interface LoopGoal { text: string; target_node_ids: string[] }
+export interface LoopDiagnosisSkill {
+  node_id: string;
+  status: 'bracketed' | 'partial' | 'above_range' | 'below_range' | 'untested' | 'inconsistent';
+  floor_difficulty: number | null;
+  ceiling_difficulty: number | null;
+  independent_correct: number;
+  independent_incorrect: number;
+  independent_observations: number;
+  observations: number;
+  tested_difficulties: number[];
+  available_difficulties: number[];
+  contradictory_difficulties: number[];
+}
+export interface LoopDiagnosis {
+  status: 'bracketed' | 'limited' | 'in_progress' | 'not_assessed';
+  stop_reason: string | null;
+  skills: LoopDiagnosisSkill[];
+}
+export interface LoopLearningScope {
+  goal_version?: number;
+  goal?: LoopGoal | null;
+  diagnosis?: LoopDiagnosis | null;
+  goal_progress?: LoopGoalProgress | null;
+  /** Goal-frontier concepts without a fresh, non-reserved practice item.
+   *  These remain unresolved; teaching/source review does not assess them. */
+  practice_unavailable_node_ids?: string[];
+}
+export interface LoopGoalProgress {
+  status: 'continue_available' | 'needs_more_practice' | 'session_plan_finished';
+  target_node_ids: string[];
+  remaining_target_node_ids: string[];
+  unresolved_prerequisite_ids: string[];
+  attempted_node_ids: string[];
+}
+export interface LoopGoalResult extends LoopLearningScope, WithCrisisSupport { phase: LoopPhase }
+
+/** A served option (A22): stored letter + text, never marked correct. */
+export interface LoopOption { letter: string; text: string }
+/** The check pose (`_pose_payload`). The `check` stream event carries only
+ *  `question_hash`/`format`/`difficulty`; `done.check` and `/check/next` carry
+ *  the whole pose. The pose never names its concept node. */
+export interface LoopCheckItem {
+  question_hash: string;
+  format: LoopFormat;
+  difficulty: number;
+  prompt?: string;
+  options?: LoopOption[] | null;
+  /** Spec §13 A122: the item opens on its worked example (a novice without the
+   *  prerequisite) and it is still owed — ask for it at once: /hint grants H4
+   *  with no attempt first, the hint turn serves it. Present only when true. */
+  worked_first?: boolean;
+}
+export interface LoopProbeItem extends LoopCheckItem {
+  check_item_id: string;
+  node_id: string;
+  prompt: string;
+}
+/** Spec §13 A138 (`segment_prequestion` on): the ungraded guess that opens a
+ *  teaching segment — a vetted item of the concept, asked before any teaching
+ *  on it; "No idea" is always allowed and nothing is graded. Served options
+ *  are never marked correct (A22). `text` is the exact assistant row the
+ *  server saved for the pose: the log hides that row while the card shows it.
+ *  `answered` (GET /status only): the guess is saved and its explanation is
+ *  still owed — the card offers to show it. */
+export interface LoopPrequestion {
+  question_hash: string;
+  format: 'mc_reason' | 'free';
+  difficulty: number;
+  prompt: string;
+  options: LoopOption[] | null;
+  text: string;
+  answered?: boolean;
+}
+/** A guess at the prequestion. `no_idea` sends no answer fields; once a guess
+ *  is saved the server ignores these and re-serves the explanation. */
+export interface LoopPrequestionGuess {
+  answer?: string;
+  option?: string;
+  reason?: string;
+  no_idea: boolean;
+}
+/** Spec §13 A139 (`self_explanation_prompts` on): the turn's single question is
+ *  a "why does this follow?" prompt at a juncture code chose. `prompt` is the
+ *  turn's last line (already in the turn's reply text). The reply is stored for
+ *  diagnosis only: never graded, never evidence. */
+export interface LoopSelfExplain {
+  prompt_id: string;
+  juncture: 'worked_example' | 'released_solution' | 'first_correct';
+  prompt: string;
+}
+/** POST /self-explain: the reply (or skip) recorded; `prequestion` is the next
+ *  segment's guess when the closed prompt was holding it back (A138/A139: one
+ *  open prompt at a time). */
+export type LoopSelfExplainResult = WithCrisisSupport & (
+  | { recorded: true; status: 'replied' | 'skipped'; prequestion?: LoopPrequestion | null }
+  // docs/safety/crisis-support.md: the card instead of a recorded reply
+  | { recorded: false });
+/** Opaque saved grading result; never includes the answer, key or checkpoint. */
+export interface LoopPendingGrade { kind: 'check' | 'probe'; question_hash: string }
+export type LoopProbeNext = LoopLearningScope & (
+  | ({ done: false } & LoopProbeItem)
+  | { done: false; pending_grade: LoopPendingGrade }
+  // A128: `preparing` (present only when true) — none yet: the student's upload is being drafted
+  | { done: true; phase: LoopPhase; no_check_items?: boolean; preparing?: boolean });
+export type LoopProbeAnswerResult = LoopLearningScope & WithCrisisSupport & (
+  | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
+  // unavailable → counted as not asked; refused (A33) → the item stays posed;
+  // recorded: false → graded but lost to a stale claim (the probe moved on)
+  | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean });
+export interface LoopLearnerState { node_id: string; p_known: number; band: LoopBand }
+export interface LoopPlanConcept {
+  node_id: string;
+  concept_name: string;
+  kind: 'review' | 'new' | 'sibling' | string;
+  p_known: number;
+  band?: LoopBand;
+  reason?: 'goal' | 'prerequisite' | 'review' | 'related';
+  target_node_ids?: string[];
+}
+export interface LoopPlan extends LoopLearningScope {
+  concepts: LoopPlanConcept[];
+  order: string[];
+  /** Nothing to plan: the server moved the session straight to `teach`. */
+  empty?: boolean;
+  phase?: LoopPhase;
+}
+export interface LoopOpenSession { session_id: string; topic: string; started_at: string; phase: LoopPhase }
+/** `budget` stream event / JSON `budget` key (06b j): level + reset + scope + session_capped. */
+export interface LoopBudgetNotice {
+  level: 'soft' | 'hard' | string;
+  reset_at: string | null;
+  scope: string | null;
+  session_capped: boolean;
+}
+export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
+  session_id: string;
+  initial_message: string;
+  graph_state?: unknown;
+  /** Present at the hard level: the opener is then a template, never a 429 (A27). */
+  budget?: LoopBudgetNotice | null;
+  /** A128: the opener's course-material retrieval failed (present only when true). */
+  materials_unavailable?: boolean;
+}
+/** A loop turn's `done.data` / JSON body (HANDOFF-07 §Symbols). */
+export interface LoopTurnResult extends ChatResult {
+  phase?: string;
+  check?: LoopCheckItem | null;
+  budget?: LoopBudgetNotice | null;
+  learner_state?: LoopLearnerState[];
+  hint_offer?: { rung: number } | null;
+  /** A128: this turn's course-material retrieval failed — present (true) on the
+   *  session's FIRST such turn only; the UI shows one calm note from it. */
+  materials_unavailable?: boolean;
+  // submissions (/check/answer) add these
+  graded?: boolean;
+  verdict?: string | null;
+  unavailable?: boolean;
+  answer_released?: boolean;
+  refused?: boolean;
+  /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
+  ask_rating?: boolean;
+  /** Spec §13 A138: this turn opened a new segment on its ungraded guess (present only then). */
+  prequestion?: LoopPrequestion | null;
+  /** Spec §13 A139: this turn's question is a self-explanation prompt (present only then). */
+  self_explain?: LoopSelfExplain | null;
+  /** Spec §13 A138: the prequestion answer route's turn (its guess is saved). */
+  prequestion_answered?: boolean;
+}
+/** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
+export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
+export interface LoopCheckNext extends LoopLearningScope {
+  phase: LoopPhase;
+  check?: LoopCheckItem | null;
+  pending_grade?: LoopPendingGrade | null;
+  plan_done?: boolean;
+  /** A128: no check yet because the student's upload is still being drafted. */
+  preparing?: boolean;
+}
+/** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
+ *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
+export interface LoopHintResponse { denied?: string; rung?: number; intent?: string }
+export interface LoopAttemptResult extends WithCrisisSupport { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
+/** A60: `close_json` as stored — no student answer to `self_eval`/`if_then`. */
+/** Spec §13 A117 (backend learning/session_close.py::Baseline): where a concept's
+ *  reported change starts. `pre_session` — the estimate it had before the session;
+ *  `check_in` / `teaching` — no evidence before the session, so its first
+ *  measurement this session (never the BKT prior). */
+export type LoopCloseBaseline = 'pre_session' | 'check_in' | 'teaching';
+export interface LoopCloseConcept {
+  node_id: string;
+  /** Where the reported change starts (see `baseline`). */
+  p_before: number;
+  p_after: number;
+  /** Absent on a close stored before A117: read it as `pre_session`. */
+  baseline?: LoopCloseBaseline;
+}
+export interface LoopCloseRecord {
+  summary: string;
+  self_eval: string;
+  if_then: string;
+  concepts: LoopCloseConcept[];
+  misconceptions: string[];
+  model_written: boolean;
+}
+export interface LoopCloseResponse { close: LoopCloseRecord; model_written: boolean; close_phase: string | null }
+/** Spec §13 A127: the student's stated confidence ("Guessing" / "Fairly sure" /
+ *  "Sure") — the answer bodies' enum (backend learning.evidence.StudentConfidence).
+ *  Optional: a skip sends nothing, never a default. */
+export type StudentConfidence = 'guessing' | 'fairly_sure' | 'sure';
+/** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones). */
+export interface LoopCheckAnswer {
+  answer?: string;
+  option?: string;
+  reason?: string;
+  idk: boolean;
+  /** A127: sent only when chosen, and never with an idk (which states none). */
+  confidence?: StudentConfidence | null;
+}
+export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
+
+const loopPost = <T>(path: string, body: Record<string, unknown>) =>
+  fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
+
+const loopAnswerFields = (a: LoopCheckAnswer): Record<string, unknown> => ({
+  ...(a.idk ? {} : a.option !== undefined ? { option: a.option, reason: a.reason ?? '' } : { answer: a.answer ?? '' }),
+  idk: a.idk,
+  ...(!a.idk && a.confidence ? { confidence: a.confidence } : {}),
+});
+
+function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {
+  const d = (data ?? {}) as Record<string, unknown>;
+  return {
+    level: String(d.level ?? ''),
+    reset_at: typeof d.reset_at === 'string' ? d.reset_at : null,
+    scope: typeof d.scope === 'string' ? d.scope : null,
+    session_capped: d.session_capped === true, // A39: a missing field reads as false
+  };
+}
+
+/** A20/A26/A39: the 429 body `{"detail": "ai budget reached", "reset_at", "scope",
+ *  "session_capped"}` from a JSON route (ApiError.body) or a stream route (sse.ts:
+ *  Error.message = raw body, `.status` set). Any other error → null. */
+export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
+  const status = (err as { status?: number } | null)?.status;
+  if (status !== 429) return null;
+  let body: unknown = err instanceof ApiError ? err.body : undefined;
+  if (body === undefined && err instanceof Error) {
+    try { body = JSON.parse(err.message); } catch { return null; }
+  }
+  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown } | null;
+  if (!b || b.detail !== 'ai budget reached') return null;
+  return { resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true };
+};
+
+/** The student's open loop sessions for a course, newest first (PKG-13's
+ *  GET /sessions; read-only, never rate-limited). */
+export const listLoopSessions = async (userId: string, courseId: string): Promise<LoopOpenSession[]> => {
+  const params = new URLSearchParams({ user_id: userId, course_id: courseId });
+  const r = await fetchJSON<{ sessions: LoopOpenSession[] }>(`/api/learn/loop/sessions?${params}`);
+  return r.sessions ?? [];
+};
+
+/** An open loop session `?resume=` named, wherever it lives (another course,
+ *  past the list limit): the listed shape plus its abstract course. */
+export interface LoopResumeSession extends LoopOpenSession { course_id: string }
+export interface LoopSessionList { sessions: LoopOpenSession[]; resume: LoopResumeSession | null }
+
+/** GET /sessions plus, for a `/learn?resume=<id>` deep link, that session when
+ *  it is the student's open loop session in ANY course (null: a legacy or closed
+ *  one — shown read-only). */
+export const listLoopSessionsFor = async (
+  userId: string, courseId: string, resumeId: string | null,
+): Promise<LoopSessionList> => {
+  const params = new URLSearchParams({ user_id: userId, course_id: courseId });
+  if (resumeId) params.set('resume', resumeId);
+  const r = await fetchJSON<{ sessions?: LoopOpenSession[]; resume?: LoopResumeSession | null }>(
+    `/api/learn/loop/sessions?${params}`,
+  );
+  return { sessions: r.sessions ?? [], resume: r.resume ?? null };
+};
+
+/** GET /status for one session (read-only): where it stands and, while an item
+ *  takes answers, its pose. The resume restore and the post-submission reconcile. */
+export interface LoopSessionStatus extends LoopLearningScope {
+  active: boolean;
+  session_id: string;
+  /** PKG-08's phase: probe | plan | teach | close. */
+  loop_phase: string;
+  /** PKG-07's teach refinement: teach | check | feedback. */
+  phase: string;
+  active_question_hash?: string | null;
+  check?: LoopCheckItem | null;
+  pending_grade?: LoopPendingGrade | null;
+  /** Spec §13 A138: the open segment-opening guess (absent when none). */
+  prequestion?: LoopPrequestion | null;
+  /** Spec §13 A139: the open self-explanation prompt (absent when none). */
+  self_explain?: LoopSelfExplain | null;
+}
+export const getLoopSessionStatus = (sessionId: string, userId: string) =>
+  fetchJSON<LoopSessionStatus>(
+    `/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`,
+  );
+
+/** The teaching modes StartSessionBody.mode knows (the legacy deep links' ?mode=). */
+export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as const;
+
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null) =>
+  loopPost<LoopStartResult>('/start-session', {
+    user_id: userId,
+    topic,
+    course_id: courseId,
+    ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
+    ...(goal !== undefined ? { goal } : {}),
+  });
+
+export const setLoopGoal = (sessionId: string, userId: string, goal: LoopGoal | null) =>
+  loopPost<LoopGoalResult>('/goal', { session_id: sessionId, user_id: userId, goal });
+
+export const nextLoopProbe = (sessionId: string, userId: string) =>
+  loopPost<LoopProbeNext>('/probe/next', { session_id: sessionId, user_id: userId });
+
+export const answerLoopProbe = (sessionId: string, userId: string, questionHash: string, a: LoopCheckAnswer) =>
+  loopPost<LoopProbeAnswerResult>('/probe/answer', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
+  });
+
+export const getLoopPlan = (sessionId: string, userId: string) =>
+  fetchJSON<LoopPlan>(`/api/learn/loop/plan?${new URLSearchParams({ session_id: sessionId, user_id: userId })}`);
+
+export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: string[], goalVersion?: number) =>
+  // spec §13 A138: `prequestion` — the first segment opens on an ungraded guess
+  loopPost<{ phase: LoopPhase; concept_ids: string[]; prequestion?: LoopPrequestion | null }>('/plan/approve', {
+    session_id: sessionId, user_id: userId, concept_ids: conceptIds,
+    ...(goalVersion !== undefined ? { goal_version: goalVersion } : {}),
+  });
+
+export const streamLoopChat = (sessionId: string, userId: string, message: string, handlers: StreamChatHandlers = {}) =>
+  consumeChatStream(
+    '/api/learn/loop/chat/stream', { session_id: sessionId, user_id: userId, message }, handlers,
+  ) as Promise<LoopTurnResult>;
+
+/** The attempt box's ONLY submit path (spec §13 A16): an explicit answer, never a chat message. */
+export const streamLoopCheckAnswer = (
+  sessionId: string, userId: string, questionHash: string, a: LoopCheckAnswer, handlers: StreamChatHandlers = {},
+) =>
+  consumeChatStream('/api/learn/loop/check/answer/stream', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
+  }, handlers) as Promise<LoopTurnResult>;
+
+/** Spec §13 A138: the guess at a segment's ungraded prequestion, then — in the
+ *  same stream — its explanation turn (the answer first, from code). Nothing is
+ *  graded. `answer` only for a free item, `option` (+ an optional `reason`) only
+ *  for multiple choice, `no_idea: true` with no answer fields. */
+export const streamLoopPrequestionAnswer = (
+  sessionId: string, userId: string, questionHash: string, guess: LoopPrequestionGuess,
+  handlers: StreamChatHandlers = {},
+) =>
+  consumeChatStream('/api/learn/loop/prequestion/answer/stream', {
+    session_id: sessionId,
+    user_id: userId,
+    question_hash: questionHash,
+    ...(guess.no_idea
+      ? {}
+      : guess.option !== undefined
+        ? { option: guess.option, ...(guess.reason ? { reason: guess.reason } : {}) }
+        : guess.answer !== undefined ? { answer: guess.answer } : {}),
+    no_idea: guess.no_idea,
+  }, handlers) as Promise<LoopTurnResult>;
+
+/** Spec §13 A139: the student's reply to a self-explanation prompt, or a skip.
+ *  Stored for diagnosis only — never graded, never evidence. */
+export const postLoopSelfExplain = (
+  sessionId: string, userId: string, promptId: string, body: { reply?: string; skip: boolean },
+) =>
+  loopPost<LoopSelfExplainResult>('/self-explain', {
+    session_id: sessionId,
+    user_id: userId,
+    prompt_id: promptId,
+    ...(body.skip ? {} : { reply: body.reply ?? '' }),
+    skip: body.skip,
+  });
+
+/** Records a genuine attempt for hint unlocking only (never stored, never graded). */
+export const postLoopAttempt =(sessionId: string, userId: string, questionHash: string, attemptText: string) =>
+  loopPost<LoopAttemptResult>('/step/attempt', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, attempt_text: attemptText,
+  });
+
+/** "Check me" (A27): activates the current concept's next item and returns its pose.
+ *  It WRITES (activation) — a resume restores through getLoopSessionStatus instead. */
+export const nextLoopCheck = (sessionId: string, userId: string) =>
+  loopPost<LoopCheckNext>('/check/next', { session_id: sessionId, user_id: userId });
+
+export const requestLoopHint = (sessionId: string, userId: string, questionHash: string) =>
+  loopPost<LoopHintResponse>('/hint', { session_id: sessionId, user_id: userId, question_hash: questionHash });
+
+/** The hint's text: the `[ACTION: hint]` turn at the item's (new) rung (JSON; may 429). */
+export const requestLoopHintTurn = (sessionId: string, userId: string) =>
+  loopPost<LoopTurnResult>('/action', { session_id: sessionId, user_id: userId, action_type: 'hint' });
+
+/** PKG-14: the perceived-difficulty rating the loop asks for every N checks; the
+ *  user is the session cookie's. Emits zpd.rating and resets the counter. */
+export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
+  fetchJSON<{ ok: true }>('/api/learn/loop/rating', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, rating }),
+  });
+
+/** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
+export const closeLoopSession = (sessionId: string, userId: string) =>
+  loopPost<LoopCloseResponse>('/close', { session_id: sessionId, user_id: userId });
+
+/** "Report this question" (spec §13 A113; #695): enums only — no free text is
+ *  ever sent or stored. Behind the `item_reports` flag (404 while it is off). */
+export type LoopReportReason = 'wrong_answer' | 'unclear' | 'not_from_my_course';
+export type LoopReportBody =
+  // the loop's check card: the session's posed check, by its hash
+  | { surface: 'loop'; user_id: string; session_id: string; question_hash: string; reason: LoopReportReason }
+  // Study's review queue: today's review session's served item, by its id
+  | { surface: 'review'; user_id: string; session_id: string; item_id: string; course_id?: string; reason: LoopReportReason };
+/** `first` false: already reported (nothing new recorded); `quarantined`:
+ *  this report withheld the question from the whole course until staff decide
+ *  (spec §13 A123 — a report never deletes a question). */
+export interface LoopReportResult { reported: true; first: boolean; quarantined: boolean }
+export const reportCheckItem = (body: LoopReportBody) =>
+  loopPost<LoopReportResult>('/report', body);
+
+export interface RetentionItem extends LoopCheckItem { node_id: string }
+export type RetentionAnswerResult = WithCrisisSupport & (
+  | { graded: false; refused: true }
+  | { correct: boolean; confidence: number }
+  // docs/safety/crisis-support.md: the card instead of a grade (nothing recorded)
+  | { graded: false; crisis_support: NonNullable<WithCrisisSupport['crisis_support']> });
+/** Explicitly opening commits a delayed pose; never call during page load. */
+export const startRetentionCheck = (userId: string, courseId: string) =>
+  loopPost<{ items: RetentionItem[] }>('/posttest/start', { user_id: userId, course_id: courseId });
+/** `hidden_count` / `hidden_s` (spec §13 A126): how often and how long the page
+ *  was hidden while the item was on screen — telemetry the server clamps and
+ *  never grades. */
+export const answerRetentionCheck = (body: {
+  user_id: string; node_id: string; question_hash: string;
+  answer?: string; selected_option?: string; reason?: string; idk: boolean;
+  hidden_count?: number; hidden_s?: number;
+}) => loopPost<RetentionAnswerResult>('/posttest/answer', body);
+/** A126: the item is on screen — the server stamps its first display (the
+ *  answer's latency is measured from it). Writes nothing else. */
+export const markRetentionShown = (body: { user_id: string; node_id: string; question_hash: string }) =>
+  loopPost<{ served: boolean }>('/posttest/shown', body);
+/** A126: whether a retention check is due now (read-only, cached by the
+ *  server; 404 while the `retention_due_badge` flag is off). */
+export interface RetentionDue { due: boolean; course_ids: string[] }
+export const fetchRetentionDue = (userId: string) =>
+  fetchJSON<RetentionDue>(`/api/learn/loop/posttest/due?${new URLSearchParams({ user_id: userId })}`);
+
 // Flashcard import
 export interface ImportCard { front: string; back: string }
-export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[] }
+// `withheld` (spec §13 A125): cards held back for giving away an open learning
+// check's answer; on cleanup, the whole cleanup was held back.
+export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[]; withheld?: number }
 export interface ImportCommitResponse { inserted: number; skipped_duplicates: number }
-export interface ImportGenerateResponse { cards: ImportCard[] }
+export interface ImportGenerateResponse { cards: ImportCard[]; withheld?: number }
 
 export const importParse = (
   userId: string,
@@ -1065,13 +1704,13 @@ export const importGenerate = (
   });
 
 export const importCleanup = (userId: string, cards: ImportCard[]) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cleanup`, {
+  fetchJSON<{ cards: ImportCard[]; withheld?: number }>(`/api/flashcards/import/cleanup`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, cards }),
   });
 
 export const importCloze = (userId: string, paragraph: string) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cloze`, {
+  fetchJSON<{ cards: ImportCard[]; withheld?: number }>(`/api/flashcards/import/cloze`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, paragraph }),
   });
@@ -1172,13 +1811,16 @@ export interface OnboardingProfilePayload {
   majors?: string[];
   minors?: string[];
   course_ids: string[];
-  learning_style?: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
 }
 
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
   fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    // Deploy-skew shim (PKG-14b): the pre-launch backend still REQUIRES
+    // `learning_style` (a bare str), the post-launch one ignores it. Sending ""
+    // keeps onboarding working whichever deploys first (the frontend worker or
+    // Railway). Remove once both run PKG-14b.
+    body: JSON.stringify({ ...payload, learning_style: '' }),
   });
 
 // Profile
@@ -1597,6 +2239,195 @@ export const adminErrors = (params?: {
   from?: string; to?: string; limit?: number; offset?: number; bucket?: AnalyticsBucket;
 }) =>
   fetchJSON<ErrorsPageData>(`/api/admin/analytics/errors${analyticsQuery(params)}`);
+
+// spec §10 / A110: the learning loop's KPIs, gates and BKT calibration
+export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =>
+  fetchJSON<LearningLoopKpisData>(`/api/admin/analytics/learning-loop${analyticsQuery(params)}`);
+
+// Admin — learning-loop check-item review queue (spec §13 A113;
+// backend/routes/admin_check_items.py). Items the item-flaw linter flagged,
+// the alignment check changed (A119: rubric_unasked_dropped, concept_retagged),
+// a hold withdraws (A124's key holds: key_disputed … key_audit_ambiguous;
+// A123's staff holds: reports_threshold — its reporters quarantined it —
+// and staff_retired), drafted without sources (A128: unsourced — provenance,
+// no hold) or students reported; the text comes decrypted for the first
+// `page_size` only. In the backend's QUEUE_FLAGS order (the staff holds last,
+// where the database's trigger stores them).
+export type CheckItemLintFlag =
+  | 'correct_longest'
+  | 'correct_repeats_stem'
+  | 'all_or_none_of_above'
+  | 'duplicate_options'
+  | 'negative_stem'
+  | 'rubric_unasked_dropped'
+  | 'concept_retagged'
+  | 'key_disputed'
+  | 'key_unsolved'
+  | 'key_audit_wrong'
+  | 'key_audit_ambiguous'
+  | 'unsourced'
+  | 'reports_threshold'
+  | 'staff_retired';
+/** What staff judge an item's key by (decrypted by the server for admins only). */
+export interface AdminCheckItemText {
+  prompt: string | null;
+  options: { letter: string; text: string; correct: boolean }[] | null;
+  final_answer: string | null;
+  reference_answer: string | null;
+  /** A124: a numeric item's key value and tolerance (what the A22 gate grades with). */
+  canonical_answer: string | null;
+  tolerance: number | null;
+}
+export interface AdminCheckItemEntry extends AdminCheckItemText {
+  id: string;
+  course_id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+  lint_flags: CheckItemLintFlag[];
+  reports: Record<LoopReportReason, number> & { total: number };
+  last_reported_at: string | null;
+  status: 'approved' | 'quarantined' | 'retired' | null;
+  reviewed_at: string | null;
+  /** The retire was decided but did not finish (its results not all voided, or
+   *  the question still stored): retire it again. */
+  retire_pending: boolean;
+  /** A hold withdraws it from every student until it is approved or retired:
+   *  a key hold (A124) or a staff hold (A123: `reports_threshold` — enough
+   *  students reported it, status 'quarantined'; nothing is deleted). */
+  held: boolean;
+  /** spec §13 A141: a multi-concept item's concept keys, apex first (absent
+   *  on a single-concept item, whose concept is `concept_key`). */
+  components?: string[];
+}
+export interface AdminCheckItemQueue {
+  items: AdminCheckItemEntry[];
+  count: number;
+  page_size: number;
+  /** distinct reporters that quarantine a question (spec §13 A123) */
+  quarantine_min_reporters: number;
+}
+export const adminCheckItemQueue = () =>
+  fetchJSON<AdminCheckItemQueue>('/api/admin/check-items/queue');
+/** `restored`: the item was held (a quarantine, A123, or a key hold, A124)
+ *  and the approval serves it to students again. */
+export const adminApproveCheckItem = (itemId: string) =>
+  fetchJSON<{ id: string; status: 'approved'; restored: boolean }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/approve`,
+    { method: 'POST' },
+  );
+/** Spec §13 A123: a retire voids every student's results on the question
+ *  (`voided` rows, `students` recomputed), then deletes it (`items` rows). */
+export const adminRetireCheckItem = (itemId: string) =>
+  fetchJSON<{ id: string; status: 'retired'; items: number; students: number; voided: number }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/retire`,
+    { method: 'POST' },
+  );
+
+// Admin — the human audit of check-item keys (spec §13 A124): a stratified
+// sample (format × difficulty × concept) staff judge correct / wrong /
+// ambiguous, and the course's key-error rate with a Wilson 95% interval.
+export type CheckItemAuditVerdict = 'correct' | 'wrong' | 'ambiguous';
+/** The key's status when it was (first) audited. */
+export type CheckItemKeyStatus = 'verified' | 'held' | 'unverified';
+export interface AuditRate {
+  rate: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+}
+export interface AuditCounts {
+  audited: number;
+  correct: number;
+  wrong: number;
+  ambiguous: number;
+  key_error: AuditRate;
+  key_error_or_ambiguous: AuditRate;
+}
+export interface AuditSummary extends AuditCounts {
+  by_key_status: Record<CheckItemKeyStatus, AuditCounts>;
+}
+export interface AdminAuditItem extends AdminCheckItemText {
+  id: string;
+  course_id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+  key_status: CheckItemKeyStatus;
+  verdict: CheckItemAuditVerdict | null;
+  audited_at: string | null;
+}
+export interface AdminAuditSample {
+  course_id: string;
+  seed: string;
+  /** Stored items the sample was drawn from. */
+  population: number;
+  items: AdminAuditItem[];
+  summary: AuditSummary;
+}
+export const adminCheckItemAuditSample = (courseId: string, n?: number) =>
+  fetchJSON<AdminAuditSample>(
+    `/api/admin/check-items/audit/sample?course_id=${encodeURIComponent(courseId)}` +
+      (n ? `&n=${n}` : ''),
+  );
+export const adminAuditCheckItem = (itemId: string, verdict: CheckItemAuditVerdict) =>
+  fetchJSON<{ id: string; verdict: CheckItemAuditVerdict; key_status: CheckItemKeyStatus; held: boolean }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/audit`,
+    { method: 'POST', body: JSON.stringify({ verdict }) },
+  );
+
+// Admin — empirical item statistics (spec §13 A131;
+// backend/learning/item_stats.py): classical item analysis of one course's
+// check items over students' FIRST unassisted attempts. A flag asks staff to
+// look; nothing is written to the item.
+export type ItemStatsFlag = 'too_easy' | 'too_hard' | 'low_discrimination' | 'negative_discrimination';
+export interface ItemStats {
+  /** Students whose first attempt on the question was unassisted. */
+  n: number;
+  correct: number;
+  /** correct / n — the share who got it right (high = easy); null at n = 0. */
+  p_value: number | null;
+  p_ci_low: number | null;
+  p_ci_high: number | null;
+  /** The corrected item–rest point-biserial over the students who also
+   *  answered another question of the concept; null when either side is constant. */
+  discrimination: number | null;
+  discrimination_n: number;
+  flags: ItemStatsFlag[];
+  /** When its numbers last changed (an attempt they count, or a retire that
+   *  voided one); an approval at or after it hides the item from "Flagged by data". */
+  numbers_changed_at: string | null;
+}
+export interface AdminItemStatsRow extends ItemStats {
+  id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+}
+export interface AdminItemStatsFlagged extends AdminCheckItemEntry {
+  stats: ItemStats;
+}
+export interface AdminItemStatsReport {
+  course_id: string;
+  /** Students a statistic needs before it may flag (ITEM_STATS_MIN_N). */
+  min_n: number;
+  easy_p: number;
+  hard_p: number;
+  low_discrimination: number;
+  rows_scanned: number;
+  /** The read hit its scan cap: the newest attempts are not counted. */
+  truncated: boolean;
+  /** Every stored question of the course. */
+  items: AdminItemStatsRow[];
+  /** The questions the data flags (worst first), the first `page_size` with their text. */
+  flagged: AdminItemStatsFlagged[];
+  flagged_count: number;
+  page_size: number;
+}
+export const adminCheckItemStats = (courseId: string) =>
+  fetchJSON<AdminItemStatsReport>(`/api/admin/check-items/stats?course_id=${encodeURIComponent(courseId)}`);
 
 // Careers
 export const submitJobApplication = async (data: {
@@ -2115,25 +2946,27 @@ export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId:
   );
 
 export const summarizeNote = (noteId: string, userId: string) =>
-  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+  fetchJSON<{ summary?: string } & WithCrisisSupport>(`/api/notes/${noteId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
-  fetchJSON<{ concepts: string[]; linked: number }>(
+  // `withheld` (spec §13 A125): names held back for giving away an open check's answer;
+  // a crisis-support response carries the card instead (no concepts, nothing linked)
+  fetchJSON<{ concepts?: string[]; linked?: number; withheld?: number } & WithCrisisSupport>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
 
 export const noteChat = (noteId: string, userId: string, message: string) =>
-  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+  fetchJSON<{ reply: string } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, message }),
   });
 
 export const sendNoteToTutor = (noteId: string, userId: string) =>
-  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+  fetchJSON<{ topic?: string; course_id?: string; preface?: string } & WithCrisisSupport>(
     `/api/notes/${noteId}/send-to-tutor`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

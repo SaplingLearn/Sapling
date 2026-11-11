@@ -1,0 +1,35 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "27033:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "The student correctly identified that the base case stops recursion. However, they did not explain the consequence of not having a base case, which is that the calls would never end and could lead to a stack overflow.",
+      "item_results": [
+        "27033:yes",
+        "93675:no"
+      ],
+      "matched_wrong_key": "')))))','))))",
+      "support": [
+        "27033: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "27033:yes"
+      ],
+      "item_results": [
+        "27033:yes"
+      ]
+    }
+  ]
+}

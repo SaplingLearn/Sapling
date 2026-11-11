@@ -29,6 +29,10 @@ from tests.agent_run_fakes import run_result
 from tests.db_fakes import with_async_twins
 from tests.split_patches import patch_tutor
 
+
+# This suite pins the preserved legacy tutor; active-loop ownership has separate regressions.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 #: Answers that WOULD change the turn if anything acted on them.

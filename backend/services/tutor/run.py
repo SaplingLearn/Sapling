@@ -7,6 +7,7 @@ observe-only router hook (#640).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from pydantic_ai.messages import ModelResponse, TextPart
@@ -15,10 +16,13 @@ from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
+from db.connection import table
 from models import ChatBody
+from services import ai_budget
 from services.chat_stream import join_text_parts
 from services.tutor.course import _get_catalog_chunk, _get_course_info
 from services.tutor_router import observe_tutor_turn
+from services.tutor_sessions import PENDING_SESSIONS
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -44,6 +48,46 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 # measurable tutor quality over `low` on Sonnet 5.5 at ~2x the cost, so
 # "smart" differs from "fast" by MODEL (Sonnet vs Haiku), not effort.
 _PRO_THINKING_BUDGET = 2048
+
+
+#: PKG-14b (spec §11.2, A20 †): the kill-switch path has no concept band, so it
+#: takes the develop/profic allowance — the same one `check(…, "close")` uses
+#: for a session with no novice-band concept. A band NAME, never a dollar figure.
+KILL_SWITCH_BUDGET_BAND = "develop"
+
+
+def _kill_switch_budget(user_id: str) -> None:
+    """The kill-switch path's cost bound (spec §11.2, A20; PKG-14b). Called by every
+    legacy model-calling handler AFTER the loop delegation and BEFORE any agent runs
+    or any stream opens: a hard decision is the §3.5 429 (`AIBudgetExceeded`, never a
+    mid-stream event); soft changes nothing (the legacy path has no tiers). A passing
+    check counts one tutor call (A39: the daily call-count cap holds even when
+    `llm_usage` cost reads wrong or EVENTS_LOGGING_ENABLED=false). It never creates or
+    biases evidence — the legacy tutor records none."""
+    decision = ai_budget.check(user_id, "tutor", KILL_SWITCH_BUDGET_BAND)
+    if decision.level == "hard":
+        raise ai_budget.AIBudgetExceeded(decision)
+    ai_budget.count_tutor_call(user_id)
+
+
+def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
+    """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
+    session only. A body-supplied id that belongs to someone else (or to nobody) is
+    recorded as NULL, so one student cannot move cost onto another's session in the
+    per-session cost report (PKG-14 review). A still-pending lazy session counts
+    when PENDING_SESSIONS records the same user. Never raises — usage recording is
+    best-effort (a failed read records NULL)."""
+    if not session_id:
+        return None
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        return session_id if pending.get("user_id") == user_id else None
+    try:
+        rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
+        logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
+        return None
+    return session_id if rows and rows[0].get("user_id") == user_id else None
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -246,10 +290,9 @@ async def _continuation_text(
 
     `override(tools=[], toolsets=[])` is what makes that a guarantee rather
     than a hope: the continuation is handed NO tools, so it cannot write even
-    if the model tries. Without it the model could call `update_mastery_tool`
-    again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name. Because the tutor's own
-    instructions (which demand a mastery call every turn) still reach this
+    if the model tries. Without it the model could call a graph writer
+    (`apply_graph_update_tool`) again and reintroduce the exact double-apply
+    the writes-guard exists to prevent — a re-run by a quieter name. Because the tutor instructions still reach this
     request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
     exist on this pass and it must reply with a message, not a call.
 
@@ -286,6 +329,13 @@ async def _continuation_text(
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
+            # #117: the session-owner read hops off the event loop (a thread of its
+        # own: a ready session's turn takes no request-threadpool token, #756)
+            session_id=await asyncio.to_thread(
+                _usage_session_id,
+                getattr(carried.get("deps"), "session_id", None),
+                getattr(carried.get("deps"), "user_id", None),
+            ),
             # Explicit, so the turn's rows can't depend on ambient state (the
             # contextvar does survive into the SSE generator —
             # tests/test_sse_request_context.py — but nothing else should

@@ -98,6 +98,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       title={proposal.title}
       meta={proposal.meta}
       rationale={proposal.rationale}
+      planLine={proposal.planLine}
       definitionPending={proposal.definitionPending}
       definition={proposal.definition}
       configLine={proposal.configLine}

@@ -1,30 +1,4 @@
 {
-  "text": "That's correct, and it's the core idea. A recursive function calls itself.\n\nYour definition is missing two things that your course handout (recursion-lab.pdf) treats as essential:\n\n- **A smaller subproblem.** Each call should work on a simpler version of the problem. If it doesn't, it never gets closer to finishing.\n- **A base case.** This is a non-recursive branch that stops the process. Without it, the calls never end and the call stack overflows.\n\nFor example, a factorial function has a recursive step, `n * factorial(n-1)`. It also needs a stopping rule so the calls can end.\n\nSuppose you wrote `factorial(n)` with only the recursive step and no base case. What would happen when you called `factorial(3)`, and why?",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "recursion base case recursive call"
-      },
-      "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Recursion",
-            "event_type": "interaction",
-            "mastery_delta": 0.05,
-            "reason": "correct but incomplete definition"
-          },
-          {
-            "concept_name": "Base Case",
-            "event_type": "interaction",
-            "mastery_delta": -0.05,
-            "reason": "omitted base case from explanation"
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "You've got the main idea! A recursive function does call itself.\n\nBut what happens if the function *never* stops calling itself?",
+  "tool_calls": []
 }

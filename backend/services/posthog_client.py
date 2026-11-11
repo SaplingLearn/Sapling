@@ -554,8 +554,15 @@ def _submit(
 #: id>` — in a value no key-based id filter can see. The account.* events are
 #: admin account-tools audit rows: no product signal, and the internal
 #: export/import rows are attributed to the TARGET student, who did nothing.
+#: safety.crisis_support_shown (docs/safety/crisis-support.md) says that a
+#: named student wrote something that read as suicidal ideation, self-harm or
+#: acute danger: mental-health information about an identifiable person
+#: (special-category health data under GDPR Art. 9). It is not product
+#: analytics, so it never leaves our own `events` table, where only admins
+#: can count it; a third-party analytics processor, its person profiles and
+#: everyone with PostHog access would otherwise hold it, consent or not.
 _NOT_MIRRORED: frozenset[str] = frozenset({
-    "error.4xx", "flag.changed",
+    "error.4xx", "flag.changed", "safety.crisis_support_shown",
     "account.seed", "account.wipe", "account.copy_push", "account.copy_pull",
     "account.export", "account.import",
 })
@@ -612,7 +619,8 @@ def mirror_event(
 
     Called only from ``events_service.log_event``, after its kill-switch
     check. ``content_fp`` is never forwarded (a hash of student text).
-    ``error.4xx`` and ``flag.changed`` are not mirrored; ``path``/``route`` become the route
+    ``_NOT_MIRRORED`` events (``error.4xx``, ``flag.changed``,
+    ``safety.crisis_support_shown``) are not mirrored; ``path``/``route`` become the route
     template; the #117 category is sent as ``event_category``. Consent is
     decided on the worker, at send time.
     """

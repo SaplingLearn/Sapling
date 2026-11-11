@@ -1,0 +1,80 @@
+{
+  "version": "draft-2026-11-08",
+  "title": "You don't have to go through this alone",
+  "intro": [
+    "It sounds like you might be going through something really painful right now. I'm glad you said something.",
+    "Sapling is a study tool, not a crisis service, so I can't give you the support you deserve here. These people can, for free, any time:"
+  ],
+  "resources_heading": "People you can reach right now",
+  "resources": [
+    {
+      "id": "lifeline_988",
+      "name": "988 Suicide & Crisis Lifeline",
+      "detail": "Call or text 988 (US). Free and confidential, 24/7.",
+      "actions": [
+        {
+          "kind": "call",
+          "label": "Call 988",
+          "href": "tel:988"
+        },
+        {
+          "kind": "text",
+          "label": "Text 988",
+          "href": "sms:988"
+        },
+        {
+          "kind": "link",
+          "label": "988lifeline.org",
+          "href": "https://988lifeline.org"
+        }
+      ]
+    },
+    {
+      "id": "crisis_text_line",
+      "name": "Crisis Text Line",
+      "detail": "Text HOME to 741741 (US). Free, 24/7.",
+      "actions": [
+        {
+          "kind": "text",
+          "label": "Text HOME to 741741",
+          "href": "sms:741741?body=HOME"
+        }
+      ]
+    },
+    {
+      "id": "campus_counseling",
+      "name": "Your campus counseling center",
+      "detail": "Most colleges offer free, confidential counseling, and many have a 24/7 line. Search your school's website for \"counseling\".",
+      "actions": []
+    },
+    {
+      "id": "emergency",
+      "name": "Emergency services",
+      "detail": "If you're in immediate danger, call 911 (US).",
+      "actions": [
+        {
+          "kind": "call",
+          "label": "Call 911",
+          "href": "tel:911"
+        }
+      ]
+    },
+    {
+      "id": "international",
+      "name": "Outside the US",
+      "detail": "Find a free helpline in your country at findahelpline.com.",
+      "actions": [
+        {
+          "kind": "link",
+          "label": "findahelpline.com",
+          "href": "https://findahelpline.com"
+        }
+      ]
+    }
+  ],
+  "closing": [
+    "If you can, let someone you trust know how you're feeling too: a friend, family member, RA, or professor.",
+    "Whenever you're ready, we can keep studying, right where you left off."
+  ],
+  "dismiss_label": "Back to studying"
+}

@@ -250,7 +250,8 @@ class TestSaveOnboardingProfile:
         assert profile_data["year"] == "junior"
         assert profile_data["majors"] == ["Computer Science"]
         assert profile_data["minors"] == ["Mathematics"]
-        assert profile_data["learning_style"] == "visual"
+        # PKG-14b: the payload may still carry it (older client); it is ignored.
+        assert "learning_style" not in profile_data
 
         # Two enrollments were created, keyed on offering_id (not course_id)
         assert tables["enrollments"].insert.call_count == 2
@@ -337,7 +338,8 @@ class TestSaveOnboardingProfile:
         assert res.status_code == 200
         profile_data = tables["user_profiles"].upsert.call_args[0][0]
         assert profile_data["majors"] == []
-        assert profile_data["learning_style"] is None
+        # PKG-14b: the learning style is never written (the column stays, dead).
+        assert "learning_style" not in profile_data
 
     def test_minors_optional_defaults_empty(self):
         payload = {**VALID_PAYLOAD}

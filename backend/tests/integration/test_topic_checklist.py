@@ -4,6 +4,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from agents.topic_checklist import topic_checklist_agent
+from agents.topic_checklist_model import wrap_topic_checklist_model
 from services.encryption import decrypt_json
 from services.topic_checklist_service import topic_key
 from tests.integration.conftest import USER_ACTIVE, _client_for
@@ -12,7 +13,10 @@ pytestmark = pytest.mark.integration
 
 
 def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded_user):
+    settings = []
+
     def handler(messages, info):
+        settings.append(info.model_settings)
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"topics": [{
             "name": "Recursion", "description": "Base cases and recursive calls.", "importance": 0.9,
             "source_ids": ["concept:rich-node-cs-recursion"],
@@ -20,9 +24,10 @@ def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded
 
     path = f"/api/topic-checklist/{USER_ACTIVE}/courses/rich-course-cs101"
     client = _client_for(USER_ACTIVE)
-    with topic_checklist_agent.override(model=FunctionModel(handler)):
+    with topic_checklist_agent.override(model=wrap_topic_checklist_model(FunctionModel(handler))):
         response = client.post(path + "/refresh", params={"semester": "Spring 2026"})
     assert response.status_code == 200, response.text
+    assert settings == [{"max_tokens": 8192, "timeout": 60.0}]
     topic = response.json()["topics"][0]
     # Rich fixtures seed mastery scores, but do not seed study counters/dates.
     # A low score alone must not manufacture a completed study session.

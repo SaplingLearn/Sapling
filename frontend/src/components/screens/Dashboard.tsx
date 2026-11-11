@@ -10,6 +10,7 @@ import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../grap
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
+import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
@@ -396,6 +397,8 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  // Spec §13 A126: a delayed retention check is open (the shell's one read)
+  const { due: retentionDue, courseIds: retentionCourseIds } = useRetentionDue();
   const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
@@ -603,6 +606,7 @@ export function Dashboard() {
   });
 
   const suggestBlock = suggestDismissed ? null : renderSuggestCard({ node: suggestNode, navigate, onDismiss: dismissSuggest });
+  const retentionBlock = renderRetentionCard({ due: retentionDue, courseIds: retentionCourseIds, navigate });
 
   const mainColumn = (
     <div
@@ -617,6 +621,7 @@ export function Dashboard() {
     >
       {heroBlock}
       {renderMobileMetaRow({ isMobile, navigate })}
+      {retentionBlock}
       {suggestBlock}
       {graphPanel}
     </div>
@@ -671,6 +676,7 @@ export function Dashboard() {
               <DashboardActions navigate={navigate} />
             </div>
           </div>
+          {retentionBlock}
           {suggestBlock}
           <div
             style={{
@@ -935,6 +941,38 @@ function renderSuggestCard({
         Start quiz
       </button>
       <button className="btn btn--sm btn--ghost" onClick={onDismiss}>Dismiss</button>
+    </div>
+  );
+}
+
+/** Spec §13 A126: a nudge, never the check itself — opening one commits its
+ *  pose, so only the student's click on Study does that. */
+function renderRetentionCard({
+  due, courseIds, navigate,
+}: {
+  due: boolean;
+  courseIds: string[];
+  navigate: Navigate;
+}) {
+  if (!due) return null;
+  return (
+    <div
+      className="card fade-in"
+      data-testid="dashboard-retention-due"
+      role="status"
+      style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}
+    >
+      <Icon name="bell" size={16} />
+      <div style={{ flex: 1, minWidth: 180, fontSize: 13 }}>
+        <strong>A retention check is due.</strong> A few questions on what you studied a while ago, with no hints.
+      </div>
+      <button
+        className="btn btn--sm btn--primary"
+        data-testid="dashboard-retention-open"
+        onClick={() => navigate(retentionHref(courseIds))}
+      >
+        Check what you remember
+      </button>
     </div>
   );
 }

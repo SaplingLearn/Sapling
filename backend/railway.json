@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 120,
+    "overlapSeconds": 30,
+    "drainingSeconds": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

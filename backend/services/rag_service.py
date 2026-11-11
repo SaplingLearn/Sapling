@@ -3,23 +3,25 @@ RAG retrieval service.
 
 Embeds queries and documents with gemini-embedding-001 using the correct
 task types (RETRIEVAL_QUERY for queries, RETRIEVAL_DOCUMENT for indexing),
-then calls the match_course_chunks Supabase RPC for ANN retrieval.
+then calls the match_course_chunks Supabase RPC for ANN retrieval. Every
+embed call goes through one per-process circuit breaker (spec §13 A128,
+`_EmbeddingBreaker`): an outage is reported as a failure, without calling.
 """
-import hashlib
 import json
 import logging
 import math
 import os
 import threading
+import time
 from typing import NamedTuple
 
 from google import genai
 from google.genai import types as genai_types
 
 from agents._providers import model_mode
-from db.connection import rpc, table
+from db.connection import pg_quote_value, rpc, table
 from db.scope import runs_as_service
-from services.chunk_visibility import PRIVATE, SHARED, record_contributors
+from services.chunk_visibility import SHARED, record_contributors
 from services.encryption import decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
 
@@ -29,7 +31,11 @@ logger = logging.getLogger(__name__)
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
 _EMBED_MODEL = "gemini-embedding-001"
-_OUTPUT_DIM = 768
+# The id and dimension live in db/chunk_ids (no SDK import) so the rich
+# seed can build chunk rows without importing google-genai; re-exported here —
+# `rag_service.chunk_id` stays the name every caller uses.
+from db.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM  # noqa: E402
+from db.chunk_ids import chunk_id  # noqa: E402,F401
 
 # `genai.Client(api_key="")` raises ValueError at construction, so a missing
 # GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
@@ -87,29 +93,235 @@ def _require_real_mode() -> None:
         )
 
 
-def _embed_query(text: str) -> list[float]:
-    _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=[text],
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_QUERY",
-        ),
+# ── The embeddings circuit breaker (spec §13 A128) ─────────────────────────
+#
+# Live, 2026-11-07: the dev GEMINI_API_KEY was invalid, so every embed call
+# failed `400 API_KEY_INVALID`. Indexing stored 0 chunks, and every tutor turn
+# retried retrieval, paid the round trip, logged the same failure and got
+# nothing. One per-process breaker now sits in front of every embed call (the
+# query side and the indexing side share it): after EMBED_BREAKER_FAILURES
+# consecutive failures of the SERVICE — or one auth-class failure, which no
+# retry can fix — it opens, and for EMBED_BREAKER_COOLDOWN_S every embed call
+# raises `EmbeddingUnavailable` without touching the network. Callers report
+# that as a FAILED retrieval or index, never an empty one. After the cooldown
+# exactly one call goes out as a trial (half-open): an answer closes the
+# breaker, a failure re-opens it. Each open is logged once and emits one
+# `rag.embedding_breaker_open` event.
+
+#: Consecutive service failures that open the breaker. † no measured cut-point:
+#: three in a row is past a blip (the indexer itself retries a batch 3 times).
+EMBED_BREAKER_FAILURES = 3
+#: How long an open breaker refuses embed calls before its one trial. † five
+#: minutes — the index sweeper's default interval, so a stuck key costs one
+#: trial call (and one event) per sweep instead of a call per turn.
+EMBED_BREAKER_COOLDOWN_S = 300.0
+
+#: HTTP statuses that say the KEY is the problem, not the request.
+_AUTH_CODES = frozenset({401, 403})
+_AUTH_STATUSES = frozenset({"UNAUTHENTICATED", "PERMISSION_DENIED"})
+#: google.rpc.ErrorInfo reasons on a 400 that are about the key, not the input.
+_AUTH_REASONS = frozenset({
+    "API_KEY_INVALID", "API_KEY_EXPIRED", "API_KEY_SERVICE_BLOCKED",
+    "API_KEY_HTTP_REFERRER_BLOCKED", "API_KEY_IP_ADDRESS_BLOCKED",
+})
+#: Statuses that are THIS request's own problem (an oversized or malformed
+#: input): the service answered, so it is up. One bad document must never open
+#: the breaker for every student's retrieval.
+_REQUEST_CODES = frozenset({413})
+_REQUEST_STATUSES = frozenset({"INVALID_ARGUMENT"})
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """Raised by the embed helpers while the breaker is open (spec §13 A128).
+
+    Not `_EmbeddingDisabled`: that one is a configured mode (function mode, no
+    key) and reads as "skipped"; this one is an outage, and every caller
+    reports it as a FAILURE — `Retrieval.failed`, `ChunkIndexResult.
+    embedding_unavailable` — so nothing downstream mistakes it for an empty
+    result."""
+
+
+def _error_reasons(exc: BaseException) -> set[str]:
+    """The google.rpc.ErrorInfo `reason`s of a google-genai APIError (its
+    `details` is the response JSON: {"error": {"details": [{"reason": …}]}})."""
+    details = getattr(exc, "details", None)
+    error = details.get("error", details) if isinstance(details, dict) else None
+    entries = error.get("details") if isinstance(error, dict) else None
+    return {
+        d["reason"] for d in entries or () if isinstance(d, dict) and isinstance(d.get("reason"), str)
+    }
+
+
+def auth_failure(exc: BaseException) -> bool:
+    """An auth-class failure: the key is invalid, expired or not allowed. No
+    retry can fix it, so it opens the breaker at once."""
+    code = getattr(exc, "code", None)
+    if code in _AUTH_CODES or getattr(exc, "status", None) in _AUTH_STATUSES:
+        return True
+    if code == 400 and _error_reasons(exc) & _AUTH_REASONS:
+        return True
+    # A wrapped error keeps only the message: the reason survives in its text.
+    return "API_KEY_INVALID" in str(exc)
+
+
+def _request_failure(exc: BaseException) -> bool:
+    """The service refused THIS request's input (and not its key)."""
+    if auth_failure(exc):
+        return False
+    code = getattr(exc, "code", None)
+    return code in _REQUEST_CODES or (
+        code == 400 and getattr(exc, "status", None) in _REQUEST_STATUSES
     )
+
+
+class _EmbeddingBreaker:
+    """Per-process and thread-safe: request threads, the indexing post-roll
+    and the sweeper all embed through it. `clock` is monotonic seconds."""
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._failures = 0  # consecutive service failures
+        self._open_until: float | None = None  # None = closed
+        self._trial = False  # the half-open trial call is in flight
+
+    def before_call(self) -> None:
+        """Let a call go out, or raise `EmbeddingUnavailable`. Past the
+        cooldown the FIRST caller becomes the trial; the rest wait for it."""
+        with self._lock:
+            if self._open_until is None:
+                return
+            if self._trial or self._clock() < self._open_until:
+                raise EmbeddingUnavailable(
+                    "embedding skipped: the embeddings breaker is open (spec §13 A128)"
+                )
+            self._trial = True
+
+    def succeeded(self) -> None:
+        """The service answered: close (a trial that came back closes it)."""
+        with self._lock:
+            was_open = self._open_until is not None
+            self._failures, self._open_until, self._trial = 0, None, False
+        if was_open:
+            logger.info("[RAG] embeddings answered again — the breaker is closed")
+
+    def failed(self, exc: BaseException) -> None:
+        """A call failed. A request-specific refusal proves the service is up;
+        anything else counts toward the threshold, and an auth-class failure
+        or a failed trial opens the breaker at once."""
+        if _request_failure(exc):
+            self.succeeded()
+            return
+        auth = auth_failure(exc)
+        with self._lock:
+            trial, self._trial = self._trial, False
+            if self._open_until is not None and not trial:
+                return  # already open: a call that began before it opened
+            self._failures += 1
+            if not (auth or trial or self._failures >= EMBED_BREAKER_FAILURES):
+                return
+            self._open_until = self._clock() + EMBED_BREAKER_COOLDOWN_S
+            failures = self._failures
+        self._report_open(exc, auth=auth, trial=trial, failures=failures)
+
+    def blocked(self) -> bool:
+        """Whether a call now would be refused: open inside its cooldown, or
+        past it with the trial still in flight."""
+        with self._lock:
+            return self._open_until is not None and (
+                self._trial or self._clock() < self._open_until
+            )
+
+    def state(self) -> str:
+        """closed | open | half_open (the cooldown is over; the next call, or
+        the one in flight, is the trial)."""
+        with self._lock:
+            if self._open_until is None:
+                return "closed"
+            return "open" if self._clock() < self._open_until else "half_open"
+
+    def reset(self) -> None:
+        """Closed, no failures (tests; never called by the app)."""
+        with self._lock:
+            self._failures, self._open_until, self._trial = 0, None, False
+
+    @staticmethod
+    def _report_open(exc: BaseException, *, auth: bool, trial: bool, failures: int) -> None:
+        """Once per open: one WARNING and one event. The class, status and
+        ErrorInfo reasons only — never the message, which can quote input."""
+        code = getattr(exc, "code", None)
+        reasons = sorted(_error_reasons(exc))
+        logger.warning(
+            "[RAG] embeddings breaker OPEN for %.0fs: %s (%s%s) after %d consecutive "
+            "failure(s)%s — retrieval and indexing report failed, without calling, "
+            "until a trial call answers",
+            EMBED_BREAKER_COOLDOWN_S,
+            type(exc).__name__,
+            code if code is not None else "no status",
+            f", {','.join(reasons)}" if reasons else "",
+            failures,
+            " (auth-class: no retry can fix it)" if auth else "",
+        )
+        log_event(
+            "rag.embedding_breaker_open",
+            category="error",
+            payload={
+                "reason": "auth" if auth else "failures",
+                "trial": trial,
+                "error_type": type(exc).__name__,
+                "status_code": code if isinstance(code, int) else None,
+                "failures": failures,
+                "cooldown_s": int(EMBED_BREAKER_COOLDOWN_S),
+            },
+        )
+
+
+_BREAKER = _EmbeddingBreaker()
+
+
+def embedding_blocked() -> bool:
+    """Whether an embed call now would be refused by the breaker (the index
+    sweeper backs off on this instead of claiming documents it cannot index)."""
+    return _BREAKER.blocked()
+
+
+def embedding_breaker_state() -> str:
+    """closed | open | half_open."""
+    return _BREAKER.state()
+
+
+def reset_embedding_breaker_for_tests() -> None:
+    _BREAKER.reset()
+
+
+def _embed(contents: list[str], task_type: str):
+    """One embed_content call, behind the #439 seam and the A128 breaker."""
+    _require_real_mode()
+    client = _get_client()  # keyless → _EmbeddingDisabled: a mode, never a failure
+    _BREAKER.before_call()
+    try:
+        resp = client.models.embed_content(
+            model=_EMBED_MODEL,
+            contents=contents,
+            config=genai_types.EmbedContentConfig(
+                output_dimensionality=_OUTPUT_DIM,
+                task_type=task_type,
+            ),
+        )
+    except Exception as exc:
+        _BREAKER.failed(exc)
+        raise
+    _BREAKER.succeeded()
+    return resp
+
+
+def _embed_query(text: str) -> list[float]:
+    resp = _embed([text], "RETRIEVAL_QUERY")
     return list(resp.embeddings[0].values)
 
 
 def _embed_document(text: str) -> list[float]:
-    _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=[text],
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_DOCUMENT",
-        ),
-    )
+    resp = _embed([text], "RETRIEVAL_DOCUMENT")
     return list(resp.embeddings[0].values)
 
 
@@ -119,8 +331,8 @@ def embed_document_text(text: str) -> list[float]:
     The sanctioned entry point for the one below-seam embed consumer outside
     this module: ``course_relevance`` below, behind routes/documents.py's
     observe-only catalog-relevance score (#628). Routing it through here (lazy
-    shared client with the dummy-key fallback, request timeout, and the #439
-    real-mode gate) replaced a raw ``genai.Client`` built with an empty-string
+    shared client with the dummy-key fallback, request timeout, the #439
+    real-mode gate and the A128 breaker) replaced a raw ``genai.Client`` built with an empty-string
     API-key fallback, whose keyless construction ``ValueError`` was swallowed
     into a silent no-index degrade (#413).
     """
@@ -182,15 +394,7 @@ def course_relevance(course_code: str, sample_text: str) -> float | None:
 
 
 def _embed_documents_batch(texts: list[str]) -> list[list[float]]:
-    _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=texts,
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_DOCUMENT",
-        ),
-    )
+    resp = _embed(texts, "RETRIEVAL_DOCUMENT")
     return [list(e.values) for e in resp.embeddings]
 
 
@@ -210,8 +414,10 @@ class Retrieval(NamedTuple):
     #: hand back the SAME list, and one caller mutating it in place would
     #: poison every future empty retrieval in the process.
     chunks: list[dict]
-    #: True when retrieval RAISED. False for a clean empty result and for the
-    #: #439 seam skip, which is a deliberate mode rather than a fault.
+    #: True when retrieval RAISED, or the embeddings breaker refused the query
+    #: (spec §13 A128: an outage, reported without calling). False for a clean
+    #: empty result and for the #439 seam skip, which is a deliberate mode
+    #: rather than a fault.
     failed: bool = False
 
 
@@ -276,6 +482,12 @@ def retrieve_chunks_detailed(
         # it as a fault would make every function-mode E2E run report broken
         # retrieval.
         return Retrieval(chunks=[])
+    except EmbeddingUnavailable:
+        # Spec §13 A128: the breaker is open — an outage, so `failed`, but no
+        # call went out and the breaker already logged and counted the open
+        # once. An event per refused turn would only repeat it.
+        logger.debug("[RAG] retrieve_chunks refused: the embeddings breaker is open")
+        return Retrieval(chunks=[], failed=True)
     except Exception as e:
         # Degrading to [] is deliberate (grounding is best-effort), but [] is
         # ALSO what "nothing relevant matched" returns — so without this the
@@ -290,47 +502,52 @@ def retrieve_chunks_detailed(
         return Retrieval(chunks=[], failed=True)
 
 
-def chunk_id(
-    course_code: str,
-    chunk_text: str,
-    *,
-    visibility: str = SHARED,
-    uploader_id: str | None = None,
-) -> str:
-    """Content-addressed chunk id, scoped per course and per row kind.
+def chunks_for_ids(chunk_ids: list[str], *, user_id: str) -> list[dict]:
+    """Resolve check-item `source_chunk_ids` for ONE named reader (spec
+    A17/A18, invariant 29) — the by-id twin of `match_course_chunks`' #629
+    visibility rule: a row comes back only when it is shared, or `user_id`
+    uploaded it, or `user_id` is a recorded contributor. A chunk an opt-out
+    has since made private to someone else is simply absent, so a stale id
+    can never leak a classmate's text. `user_id` is required: every caller
+    serves one student (no shared-only default, unlike retrieve_chunks).
 
-    Identical text in the same course maps to one row no matter which
-    document or uploader supplied it, so N students uploading the same
-    slides dedup to one embedding instead of N. doc_id/uploader_id/
-    chunk_index on the row are last-writer-wins metadata; retrieval only
-    reads course_id + chunk_text.
-
-    The literal "document" segment keeps this keyspace DISJOINT from
-    catalog rows: scripts/ingest_catalog.py ids category=catalog rows as
-    sha256(course::text) in the SAME course_chunks table (on_conflict=id),
-    so an un-namespaced hash would let a document chunk whose text
-    byte-matches a catalog chunk silently overwrite the catalog row and
-    flip its category — dropping it from every category=eq.catalog reader.
-
-    A PRIVATE chunk gets a third namespace segment plus its uploader (#629),
-    for the same structural reason: the shared upsert merges on id under
-    `resolution=merge-duplicates`, so an opted-out upload that hashed to the
-    shared id would merge INTO the classmates' row — leaving the opted-out
-    student's text in the shared pool under a row they can no longer withdraw.
-    Per-uploader, not merely per-visibility, so two opted-out students who
-    upload the same handout do not end up sharing one row with each other.
+    Returns [{"id", "course_id", "chunk_text"}] in `chunk_ids` order,
+    de-duplicated, `chunk_text` decrypted here (the decrypt boundary). Ids are
+    quoted with `pg_quote_value` (the `chunk_visibility._in_list` rule).
     """
-    if visibility == PRIVATE:
-        if not uploader_id:
-            raise ValueError(
-                "a private chunk id needs its uploader_id: without one the "
-                "private keyspace collapses back onto one key per course and "
-                "opted-out uploads re-merge with each other (#629)"
+    ids = [c for c in dict.fromkeys(chunk_ids) if c]
+    if not ids:
+        return []
+    in_ids = f"in.({','.join(pg_quote_value(c) for c in ids)})"
+    rows = (
+        table("course_chunks").select(
+            "id,course_id,chunk_text,visibility,uploader_id", filters={"id": in_ids}
+        )
+        or []
+    )
+    closed = [
+        r["id"] for r in rows if r.get("visibility") != SHARED and r.get("uploader_id") != user_id
+    ]
+    contributed: set[str] = set()
+    if closed:
+        in_closed = f"in.({','.join(pg_quote_value(c) for c in closed)})"
+        contributed = {
+            r["chunk_id"]
+            for r in table("course_chunk_contributors").select(
+                "chunk_id", filters={"chunk_id": in_closed, "user_id": f"eq.{user_id}"}
             )
-        return hashlib.sha256(
-            f"{course_code}::document::private::{uploader_id}::{chunk_text}".encode()
-        ).hexdigest()
-    return hashlib.sha256(f"{course_code}::document::{chunk_text}".encode()).hexdigest()
+            or []
+        }
+    visible = {
+        r["id"]: {
+            "id": r["id"],
+            "course_id": r.get("course_id"),
+            "chunk_text": decrypt_if_present(r.get("chunk_text")),
+        }
+        for r in rows
+        if r.get("visibility") == SHARED or r.get("uploader_id") == user_id or r["id"] in contributed
+    }
+    return [visible[c] for c in ids if c in visible]
 
 
 class ChunkIndexResult(NamedTuple):
@@ -354,6 +571,10 @@ class ChunkIndexResult(NamedTuple):
     #: layer does not record them itself: it is also called with fixture
     #: doc ids that name no `documents` row.
     chunk_ids: tuple[str, ...] = ()
+    #: Spec §13 A128: the embeddings breaker refused a batch, so the batches
+    #: from there on were not attempted. An outage, not this document's fault:
+    #: the indexer stops retrying it (services/document_indexing.py).
+    embedding_unavailable: bool = False
 
 
 @runs_as_service  # #115: content-addressed shared course_chunks rows: a scoped upsert onto a classmate's row fails
@@ -458,6 +679,7 @@ def index_document_chunks_detailed(
     # Distinguishes "the seam turned embedding off" (#439, every function-mode
     # run) from "embedding broke" — only the latter is worth an error event.
     embedding_disabled = False
+    embedding_unavailable = False
     embed_error: str | None = None
     for i in range(0, len(records), BATCH):
         batch = records[i : i + BATCH]
@@ -469,6 +691,17 @@ def index_document_chunks_detailed(
         except _EmbeddingDisabled as e:
             embedding_disabled = True
             logger.info("[RAG] doc %s batch %s not embedded: %s", doc_id, i, e)
+        except EmbeddingUnavailable:
+            # Spec §13 A128: the breaker is open, so every later batch would
+            # be refused the same way — stop here. The breaker already logged
+            # the outage once; the caller decides what the row records.
+            embedding_unavailable = True
+            embed_error = embed_error or EmbeddingUnavailable.__name__
+            logger.info(
+                "[RAG] doc %s: embeddings breaker open at batch %s; the rest of the "
+                "document waits for it", doc_id, i,
+            )
+            break
         except Exception as e:
             embed_error = type(e).__name__
             logger.warning(
@@ -486,6 +719,14 @@ def index_document_chunks_detailed(
         logger.info(
             "[RAG] doc %s: %s/%s chunk(s) not indexed — embedding disabled (#439)",
             doc_id, dropped, len(records),
+        )
+    elif dropped and embedding_unavailable:
+        # Spec §13 A128: an outage the breaker reported once (its own event);
+        # the row records failed/partial and the sweeper re-drives it once
+        # the breaker closes, so this is a wait, not a silent loss.
+        logger.info(
+            "[RAG] doc %s: %s/%s chunk(s) not indexed — embeddings unavailable "
+            "(breaker open)", doc_id, dropped, len(records),
         )
     elif dropped:
         # Silent data loss behind a successful-looking upload: the documents
@@ -509,6 +750,7 @@ def index_document_chunks_detailed(
         return ChunkIndexResult(
             upserted=0, total=len(records),
             embedding_disabled=embedding_disabled, embed_error=embed_error,
+            embedding_unavailable=embedding_unavailable,
         )
 
     # ADR 0025 / #484: `chunk_text` is the same student text that
@@ -546,6 +788,7 @@ def index_document_chunks_detailed(
         upserted=len(embedded), total=len(records),
         embedding_disabled=embedding_disabled, embed_error=embed_error,
         chunk_ids=tuple(r["id"] for r in embedded),
+        embedding_unavailable=embedding_unavailable,
     )
 
 

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "Recursion is a powerful programming technique where a function calls itself to break down a problem into smaller, self-similar subproblems.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "e4f7a1579b1c65d3e19a2c37146be7590a9d8b3e5c47e61ba7174973c0b0008a"
+}

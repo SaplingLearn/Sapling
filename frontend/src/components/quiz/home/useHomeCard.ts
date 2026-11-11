@@ -13,7 +13,7 @@
 import React from "react";
 import { useToast } from "@/components/ToastProvider";
 import type { SessionConfig } from "@/lib/quiz/machine";
-import { entrySelection, queueFor, type Candidate } from "@/lib/quiz/proposals";
+import { entrySelection, type Candidate } from "@/lib/quiz/proposals";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizSession } from "@/lib/quiz/types";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
@@ -25,11 +25,13 @@ import {
   cardDefinition,
   cardMeta,
   cardModeFor,
+  cardPlanLine,
   cardRationale,
   cardTitle,
   conceptStartRequest,
   configLineFor,
   courseFilterFor,
+  courseQueueFor,
   effectiveConfigFor,
   emptyTopicsCopy,
   entryKeyFor,
@@ -69,10 +71,12 @@ function useArrival(home: QuizHomeData, entry: EntryRequest) {
   }, [home.status, selection.unresolved, toast]);
 
   const courseQueue = React.useMemo(
-    () => (entry.course ? queueFor("course", home.nodes, entry.course) : []),
-    [entry.course, home.nodes],
+    () => courseQueueFor({ planned: home.planned, candidates: home.candidates, nodes: home.nodes }, entry.course),
+    [entry.course, home.nodes, home.planned, home.candidates],
   );
-  const dueQueue = React.useMemo(() => queueFor("due", home.nodes), [home.nodes]);
+  // The tier ranking's due queue, or with `quiz_concept_plan` the learner
+  // model's (spec §13 A143): the hook decides, so the card and the queue agree.
+  const dueQueue = home.dueQueue;
   const arrival: Arrival = {
     conceptId: selection.conceptId,
     course: entry.course,
@@ -256,8 +260,9 @@ function cardCopy(
     conceptName,
     courseCode,
     title: cardTitle(mode, courseCode, conceptName),
-    meta: cardMeta(mode, arrival.courseQueue.length, home.due, card),
+    meta: cardMeta(mode, arrival.courseQueue.length, home.due, card, home.planned),
     rationale: cardRationale(mode, pickedId, arrival.conceptId, card, entry.source.kind),
+    planLine: cardPlanLine(mode, pickedId, arrival.conceptId, card),
     definition,
     definitionPending: pending,
     configLine: configLineFor(queued, session.config),

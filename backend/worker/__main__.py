@@ -48,6 +48,7 @@ from pathlib import Path
 #: Modules whose import registers job handlers (`@job_handler`). A new job
 #: type's module goes here, or the worker never claims that type.
 HANDLER_MODULES: tuple[str, ...] = (
+    "services.check_item_jobs",         # check_items.document (learning loop PKG-04)
     "services.course_context_service",  # course_context.refresh
     "services.document_indexing",       # document.index
     "services.document_jobs",           # document.process

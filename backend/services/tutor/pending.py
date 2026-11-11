@@ -17,6 +17,7 @@ from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     aopen_stored,
+    aowned_live_row,
     araise_if_discarded,
     arequire_session_open,
     arequire_session_owner,
@@ -110,6 +111,9 @@ def _consume_pending(session_id: str, user_id: str) -> bool:
             }
             if pending.get("offering_id"):
                 session_data["offering_id"] = pending["offering_id"]
+            if pending.get("loop_state"):
+                # Quiz-ask loop sessions materialize in teach phase.
+                session_data["loop_state"] = pending["loop_state"]
 
             pending["_row_may_exist"] = True
             table("sessions").upsert(session_data, on_conflict="id", ignore_duplicates=True)
@@ -169,6 +173,39 @@ async def _open_turn_session(session_id: str, user_id: str) -> None:
         return await aopen_stored(session_id, user_id)
     await araise_if_discarded(session_id, user_id)
     await arequire_session_owner(session_id, user_id)
+    if await _consume_pending_off_loop(session_id, user_id):
+        return  # materialised just now, with ended_at NULL
+    await arequire_session_open(session_id)
+
+
+async def _require_turn_session(session_id: str, user_id: str) -> None:
+    """The first half of `_open_turn_session` for the turn routes that hand a
+    learning-loop session to the loop (/chat, /chat/stream, /action; spec
+    §7): not discarded, owned by the caller — before the rate-limit read and
+    the loop hand-off (A93 review). `_materialize_turn_session` opens the
+    legacy session after. This process's own tombstones first (no I/O); the
+    ownership check reads a table-held pending session too
+    (`stateless_tutor_sessions`, #117)."""
+    raise_if_discarded_here(session_id, user_id)
+    if session_id not in PENDING_SESSIONS and await astored() and await aowned_live_row(
+        session_id, user_id
+    ):
+        # #117: a live session answers from its sessions row, with no store read
+        # (`_materialize_turn_session` then opens it through `aopen_stored`)
+        return
+    await araise_if_discarded(session_id, user_id)
+    await arequire_session_owner(session_id, user_id)
+
+
+async def _materialize_turn_session(session_id: str, user_id: str) -> None:
+    """The second half of `_open_turn_session`: materialise if pending, then
+    refuse an ended session (409). The turn routes run the entry checks
+    first (`_require_turn_session`), hand a learning-loop session to the
+    loop (spec §7), and only then open the legacy session here. With
+    `stateless_tutor_sessions` on, a session not pending in this process
+    opens through `aopen_stored` (#117)."""
+    if session_id not in PENDING_SESSIONS and await astored():
+        return await aopen_stored(session_id, user_id)
     if await _consume_pending_off_loop(session_id, user_id):
         return  # materialised just now, with ended_at NULL
     await arequire_session_open(session_id)

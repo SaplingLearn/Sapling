@@ -2,16 +2,30 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /** A controlled harness: the input writes back through `onChange`, as the
- *  quiz session does. */
-function Harness({ type, initial = "", onSubmit = vi.fn() }: { type: WrittenType; initial?: string; onSubmit?: () => void }) {
+ *  quiz session does. `accept={false}` is an owner that refuses the write
+ *  (the session drops writes while an answer is being submitted). */
+function Harness({ type, initial = "", onSubmit = vi.fn(), accept = true }: {
+  type: WrittenType; initial?: string; onSubmit?: () => void; accept?: boolean;
+}) {
   const [value, setValue] = React.useState(initial);
   return (
-    <WrittenAnswer type={type} value={value} disabled={false} onChange={setValue} onSubmit={onSubmit} describedBy="hint" />
+    <WrittenAnswer
+      type={type}
+      value={value}
+      disabled={false}
+      onChange={next => { if (accept) setValue(next); }}
+      onSubmit={onSubmit}
+      describedBy="hint"
+    />
   );
 }
 
@@ -83,13 +97,53 @@ describe("WrittenAnswer", () => {
     expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("Functions like sin");
   });
 
-  it("inserts a key at the cursor, and brackets leave the cursor inside", () => {
+  it("inserts a key at the cursor, and brackets leave the cursor inside — in the click's own task", () => {
+    // No animation frame runs in this test: the cursor has to be in place
+    // when the click returns, before any keystroke can follow it.
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
     render(<Harness type="symbolic" initial="2+1" />);
+    input().focus();
     input().setSelectionRange(1, 1);
     fireEvent.click(screen.getByTestId("quiz-key-brackets"));
     expect(input().value).toBe("2()+1");
-    expect(input().selectionStart).toBe(2);
-    expect(input().selectionEnd).toBe(2);
+    expect([input().selectionStart, input().selectionEnd]).toEqual([2, 2]);
+    expect(document.activeElement).toBe(input());
+  });
+
+  // The quiz-written E2E journey's regression: "2", "( )", then "x + 1" typed
+  // at once read "2( 1)x +". Writing "2()" moves the cursor to the end; the
+  // cursor used to go inside the brackets only at the next animation frame, so
+  // the keys typed before that frame went in at the end and the frame then put
+  // the cursor back behind them. However late a frame comes, typing straight
+  // after a key continues where the key left the cursor.
+  it("keeps typing inside the brackets when the next frame comes late", async () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    const user = userEvent.setup();
+    render(<Harness type="symbolic" initial="2" />);
+    input().focus();
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-brackets"));
+    await user.keyboard("x +");
+    await act(async () => {
+      vi.runAllTimers(); // the frame arrives mid-typing
+    });
+    await user.keyboard(" 1");
+    expect(input().value).toBe("2(x + 1)");
+    // A good expression gets no readback line: the field already shows it (#849).
+    expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
+  });
+
+  it("leaves the value and the student's cursor alone when the write is refused", () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+    render(<Harness type="symbolic" initial="2+1" accept={false} />);
+    input().focus();
+    input().setSelectionRange(1, 1);
+    fireEvent.click(screen.getByTestId("quiz-key-brackets"));
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(input().value).toBe("2+1");
+    expect([input().selectionStart, input().selectionEnd]).toEqual([1, 1]);
   });
 
   it("has the cursor inside the brackets before the next keystroke, with no frame in between", () => {

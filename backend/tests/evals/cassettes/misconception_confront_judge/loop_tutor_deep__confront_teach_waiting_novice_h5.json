@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "3ce1196b8fd5e1ddd2ef0e7ebfd972ec099f635d11b5ab028bf18efcd8a32a71",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What result do you get for the derivative of x^3 when you apply the limit definition, lim(h->0) [f(x+h) - f(x)]/h?",
+    "only_states_correction": false
+  },
+  "served_sha256": "69946a0aff0113aed7764eac2220f953ae1e09db7e734119603b01f0e3da479f"
+}

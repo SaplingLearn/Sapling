@@ -2,7 +2,7 @@
 /**
  * Characterization of the notetaker screen's top-level wiring, pinned before
  * `NotetakerScreen` was split for the complexity budget: the loading and
- * empty states, the four-rail layout (styles + aria-hidden per fullscreen
+ * empty states, the four-rail layout (styles + inert per fullscreen
  * mode), Escape handling, the course / concept pickers, tags, the agent
  * actions not already covered by page.stateMachines.test.tsx, the list
  * filters, and that switching notes reuses the editor's DOM (no remount)
@@ -270,17 +270,17 @@ describe("four-rail layout", () => {
     ],
   };
 
-  it("pins rail styles and aria-hidden in normal and fullscreen modes, toggled by the button and Escape", async () => {
+  it("pins rail styles and inert in normal and fullscreen modes, toggled by the button and Escape", async () => {
     const { container } = await renderPage();
     const snapshot = (l: ReturnType<typeof layout>) => ({
       row: l.row.getAttribute("style"),
-      list: [l.list.getAttribute("style"), l.list.getAttribute("aria-hidden")],
+      list: [l.list.getAttribute("style"), String(l.list.hasAttribute("inert"))],
       editor: [
         l.editor.getAttribute("style"),
         (l.editor.firstElementChild as HTMLElement).getAttribute("style"),
       ],
-      detail: [l.detail.getAttribute("style"), l.detail.getAttribute("aria-hidden")],
-      chat: [l.chat.getAttribute("style"), l.chat.getAttribute("aria-hidden")],
+      detail: [l.detail.getAttribute("style"), String(l.detail.hasAttribute("inert"))],
+      chat: [l.chat.getAttribute("style"), String(l.chat.hasAttribute("inert"))],
     });
     const normal = layout(container);
     expect(snapshot(normal)).toEqual(NORMAL);

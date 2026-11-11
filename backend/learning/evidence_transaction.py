@@ -1,0 +1,424 @@
+"""Atomic evidence transport; Python remains the learning-math authority.
+
+Only graph_service's single writer submits a plan. Snapshot/CAS retries handle
+concurrent legacy writers; an ambiguous acknowledgment retries the IDENTICAL
+plan first. Receipts identify whole committed operations, never partial rows.
+No learner answer, rubric or prompt is stored in this protocol.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+from typing import Callable
+import uuid
+
+from db.connection import rpc
+from db.scope import runs_as_service
+from learning.evidence import Evidence, PlanningObservation, PlanningPersistenceUnavailable
+from learning.learner_state import LearnerState, _from_row
+from learning.params import EVIDENCE_TRANSACTION_RETRIES
+
+_DATETIME_TYPE = datetime
+
+
+class EvidenceTransactionConflict(PlanningPersistenceUnavailable):
+    """An operation identity was reused with different semantic input/plan."""
+
+
+class EvidenceObservationSuperseded(PlanningPersistenceUnavailable):
+    """An uncommitted older grade cannot overwrite newer learner evidence."""
+
+
+class EvidenceItemRetired(EvidenceObservationSuperseded):
+    """Spec §13 A123: staff retired a check item this batch grades, so the
+    batch was refused and nothing was written. A grade on a retired item is
+    void by definition; like a superseded grade it is dropped, never retried
+    as is (the student is offered another check)."""
+
+
+class EvidenceVoidRefused(PlanningPersistenceUnavailable):
+    """A void was asked for a check item staff have not retired (nothing written)."""
+
+
+def _semantic(ev: Evidence) -> dict:
+    """One evidence's identity in the fingerprint. Spec §13 A127: an absent
+    `student_confidence` is left out, so an operation committed before the field
+    existed fingerprints the same after the deploy (a recovered grade replays,
+    never conflicts); a stated one is part of the identity."""
+    out = ev.model_dump(mode="json", exclude={"operation_id"})
+    if out.get("student_confidence") is None:
+        out.pop("student_confidence", None)
+    return out
+
+
+def fingerprint(user_id: str, course_id: str | None, evidences: list[Evidence], retention) -> str:
+    value = {
+        "user_id": user_id,
+        "course_id": course_id,
+        "retention": retention,
+        "evidence": [_semantic(ev) for ev in evidences],
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def operation_id(evidences: list[Evidence]) -> str:
+    supplied = {ev.operation_id for ev in evidences if ev.operation_id is not None}
+    if len(supplied) > 1 or (supplied and any(ev.operation_id is None for ev in evidences)):
+        raise EvidenceTransactionConflict("Evidence batch operation identity disagrees")
+    # Compatibility only: stable during THIS invocation, not across HTTP retries.
+    return next(iter(supplied)) if supplied else str(uuid.uuid4())
+
+
+def _result(value) -> dict:
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise PlanningPersistenceUnavailable("Invalid evidence transaction response")
+    return value
+
+
+def _receipt(value: dict, user_id: str, op_id: str, expected_fingerprint=None) -> dict:
+    receipt = value.get("receipt")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("user_id") != user_id
+        or receipt.get("operation_id") != op_id
+        or not isinstance(receipt.get("input_fingerprint"), str)
+        or not isinstance(receipt.get("changes"), list)
+        or not isinstance(receipt.get("posteriors"), dict)
+        or not isinstance(receipt.get("observations"), list)
+    ):
+        raise PlanningPersistenceUnavailable("Invalid evidence transaction receipt")
+    if expected_fingerprint is not None and receipt["input_fingerprint"] != expected_fingerprint:
+        raise EvidenceTransactionConflict("Evidence operation input changed")
+    for change in receipt["changes"]:
+        if not isinstance(change, dict) or not isinstance(change.get("concept"), str):
+            raise PlanningPersistenceUnavailable("Invalid evidence transaction changes")
+        for key in ("before", "after"):
+            number = change.get(key)
+            if (
+                type(number) not in (int, float)
+                or not math.isfinite(number)
+                or not 0 <= number <= 1
+            ):
+                raise PlanningPersistenceUnavailable("Invalid evidence transaction posterior")
+    for node_id, value in receipt["posteriors"].items():
+        if (
+            not isinstance(node_id, str)
+            or not node_id
+            or type(value) not in (int, float)
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise PlanningPersistenceUnavailable("Invalid evidence receipt posterior")
+    try:
+        for raw in receipt["observations"]:
+            observation = PlanningObservation.model_validate(raw)
+            if observation.node_id not in receipt["posteriors"]:
+                raise ValueError("Observation outside committed posterior set")
+    except Exception:
+        # Validation errors may contain the supplied envelope. Keep this
+        # interface metadata-only and never silently fall back to caller flags.
+        raise PlanningPersistenceUnavailable("Invalid final evidence observation") from None
+    return receipt
+
+
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
+def read_receipt(user_id: str, op_id: str, *, input_fingerprint: str | None = None) -> dict | None:
+    """Owner-scoped committed receipt for checkpoint recovery, or no receipt.
+
+    Missing is not permission to grade again or invent an outcome. An earlier
+    network request might still be queued; the operation's identity remains
+    mandatory on any later submission. Read failures never become 'missing'.
+    """
+    try:
+        op_id = str(uuid.UUID(op_id))
+        out = _result(
+            rpc("learning_evidence_receipt", {"p_user_id": user_id, "p_operation_id": op_id})
+        )
+        if out["status"] == "missing":
+            return None
+        if out["status"] != "committed":
+            raise EvidenceTransactionConflict("Evidence operation ownership changed")
+        return _receipt(out, user_id, op_id, input_fingerprint)
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence transaction receipt unavailable") from exc
+
+
+@dataclass
+class EvidencePlan:
+    op_id: str
+    snapshot: dict
+    now: datetime
+    observed_at: datetime | None = None
+    nodes: dict[str, dict] = field(init=False)
+    states: dict[str, LearnerState] = field(init=False)
+    state_rows: dict[str, dict] = field(default_factory=dict)
+    mirrors: dict[str, dict] = field(default_factory=dict)
+    events: list[dict] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.snapshot = deepcopy(self.snapshot)
+        self.nodes = {row["id"]: deepcopy(row) for row in self.snapshot["nodes"]}
+        self.states = {row["node_id"]: _from_row(row, self.now) for row in self.snapshot["states"]}
+
+    def event_id(self, index: int) -> str:
+        return str(uuid.uuid5(uuid.UUID(self.op_id), str(index)))
+
+    def prior_check(self, ev: Evidence) -> bool:
+        return any(
+            row["session_id"] == ev.session_id
+            and row["question_hash"] == ev.question_hash
+            and row["count"] > 0
+            for row in self.snapshot["checks"]
+        )
+
+    def prior_exposure(self, ev: Evidence) -> bool:
+        """Any prior owned event consumes first exposure, including NULL legacy provenance."""
+        counts = [row["global_count"] for row in self.snapshot["checks"]
+                  if row["question_hash"] == ev.question_hash]
+        if not counts or any(type(count) is not int or count < 0 for count in counts):
+            raise PlanningPersistenceUnavailable("Global evidence exposure snapshot unavailable")
+        return any(count > 0 for count in counts)
+
+    def payload(self, changes: list[dict]) -> dict:
+        versions = {row["node_id"]: row["evidence_version"] for row in self.snapshot["states"]}
+        return {
+            "observed_at": self.observed_at.isoformat() if self.observed_at is not None else None,
+            "nodes": [
+                {"id": row["id"], "version": row["evidence_version"]}
+                for row in self.snapshot["nodes"]
+            ],
+            "states_expected": [
+                {"node_id": node_id, "version": versions.get(node_id)}
+                for node_id in sorted(self.nodes)
+            ],
+            "edges": self.snapshot["edges"],
+            "checks": self.snapshot["checks"],
+            "state_rows": list(self.state_rows.values()),
+            "mirrors": list(self.mirrors.values()),
+            "events": self.events,
+            "changes": changes,
+        }
+
+
+def _retryable_sql(exc: Exception) -> bool:
+    try:
+        return exc.response.json().get("code") in {"40P01", "40001", "55P03", "57014"}
+    except Exception:
+        return False
+
+
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
+def commit_evidence_transaction(
+    user_id: str,
+    course_id: str | None,
+    evidences: list[Evidence],
+    retention,
+    compute: Callable[[EvidencePlan], list[dict]],
+) -> tuple[list[dict], dict, bool]:
+    """Return original changes/receipt and whether this call newly committed.
+
+    The transient flag is deliberately outside the durable receipt: recovering
+    an old operation must not count as new study activity on the recovery day.
+    A lost acknowledgment recovered as replay can omit best-effort activity
+    effects; it cannot invent activity for a later day.
+    """
+    op_id = operation_id(evidences)
+    semantic = fingerprint(user_id, course_id, evidences, retention)
+    times = {getattr(ev, "observed_at", None) for ev in evidences}
+    if len(times) > 1:
+        raise EvidenceTransactionConflict("Evidence batch observation times disagree")
+    observed_at = next(iter(times)) if times else None
+    if observed_at is not None:
+        if not isinstance(observed_at, _DATETIME_TYPE) or observed_at.tzinfo is None:
+            raise EvidenceTransactionConflict("Evidence observation time is not trusted UTC")
+        observed_at = observed_at.astimezone(timezone.utc)
+    try:
+        existing = read_receipt(user_id, op_id, input_fingerprint=semantic)
+        if existing is not None:
+            return existing["changes"], existing, False
+        node_ids = sorted({ev.node_id for ev in evidences})
+        checks = sorted(
+            {
+                (ev.session_id or "", ev.question_hash)
+                for ev in evidences
+                if ev.question_hash
+            }
+        )
+        for _attempt in range(EVIDENCE_TRANSACTION_RETRIES):
+            snapshot = _result(
+                rpc(
+                    "learning_evidence_snapshot",
+                    {
+                        "p_user_id": user_id,
+                        "p_course_id": course_id,
+                        "p_node_ids": node_ids,
+                        "p_checks": [
+                            {"session_id": sid, "question_hash": qh} for sid, qh in checks
+                        ],
+                    },
+                )
+            )
+            if snapshot["status"] != "snapshot":
+                raise EvidenceTransactionConflict("Evidence target ownership/course unavailable")
+            plan = EvidencePlan(
+                op_id, snapshot, observed_at or datetime.now(timezone.utc), observed_at
+            )
+            changes = compute(plan)
+            payload = plan.payload(changes)
+            args = {
+                "p_user_id": user_id,
+                "p_course_id": course_id,
+                "p_operation_id": op_id,
+                "p_input_fingerprint": semantic,
+                "p_plan": payload,
+            }
+            # An ambiguous response is retried identically, never recalculated.
+            try:
+                out = _result(rpc("learning_evidence_commit", args))
+            except Exception as first:
+                if _retryable_sql(first):
+                    continue  # The server explicitly rolled back the transaction.
+                try:
+                    out = _result(rpc("learning_evidence_commit", args))
+                except Exception as second:
+                    known = read_receipt(user_id, op_id, input_fingerprint=semantic)
+                    if known is not None:
+                        return known["changes"], known, False
+                    raise PlanningPersistenceUnavailable(
+                        "Evidence commit acknowledgment unavailable"
+                    ) from second
+            if out["status"] == "stale":
+                continue
+            if out["status"] == "superseded":
+                raise EvidenceObservationSuperseded(
+                    "Newer learner evidence supersedes this uncommitted grade"
+                )
+            if out["status"] == "retired":
+                # §13 A123: under the item's lock the commit found a staff
+                # retire — no row was written, so none can be left non-void.
+                raise EvidenceItemRetired("A check item this batch grades was retired")
+            if out["status"] not in {"committed", "replay"}:
+                raise EvidenceTransactionConflict(
+                    "Evidence transaction identity/ownership conflict"
+                )
+            receipt = _receipt(out, user_id, op_id, semantic)
+            return receipt["changes"], receipt, out["status"] == "committed"
+        raise PlanningPersistenceUnavailable("Evidence transaction remained busy")
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence transaction unavailable") from exc
+
+
+# ── spec §13 A123: void + recompute ─────────────────────────────────────────
+#
+# One student's void of a retired check item's evidence is ONE transaction:
+# `learning_evidence_void_commit` inserts the void rows and writes the
+# learner_state rows and graph mirrors the journal replay computed, under the
+# evidence commit's owner lock, the item's lock and the same version checks.
+# Only graph_service's single writer submits a plan (`_apply_void`); the plan
+# is a deterministic function of the snapshot, so a stale snapshot is simply
+# re-read and re-planned, and a re-run of a finished void writes nothing.
+
+_VOID_KEYS = ("voids", "nodes", "states_expected", "edges", "state_rows", "mirrors", "misconceptions")
+
+
+@dataclass
+class VoidPlan:
+    """What a void commits (`payload`, the RPC's plan) and what it changes,
+    for the caller's report ({concept, before, after} per recomputed node)."""
+
+    payload: dict
+    changes: list[dict]
+
+
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
+def void_pending(course_id: str, question_hash: str) -> dict[str, int]:
+    """{user_id: rows} — the students who still have a NON-void evidence row
+    graded against the course item. Read-only; raises
+    PlanningPersistenceUnavailable when the store does not answer (an empty
+    answer would read as "nothing left to void")."""
+    try:
+        out = _result(
+            rpc(
+                "learning_evidence_void_pending",
+                {"p_course_id": course_id, "p_question_hash": question_hash},
+            )
+        )
+        users = out.get("users")
+        if out["status"] != "pending" or not isinstance(users, dict):
+            raise PlanningPersistenceUnavailable("Invalid evidence void pending set")
+        pending: dict[str, int] = {}
+        for user_id, rows in users.items():
+            if not isinstance(user_id, str) or not user_id or type(rows) is not int or rows < 1:
+                raise PlanningPersistenceUnavailable("Invalid evidence void pending set")
+            pending[user_id] = rows
+        return pending
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence void pending set unavailable") from exc
+
+
+@runs_as_service  # spec §13 A148: the evidence RPCs and learner_state are service-only; the single writer is reached from quiz and tutor tools
+def commit_void_transaction(
+    user_id: str,
+    course_id: str,
+    question_hash: str,
+    compute: Callable[[dict], VoidPlan],
+) -> tuple[list[dict], dict]:
+    """Snapshot → plan (`compute`, the replay; no I/O) → commit, retried on a
+    stale snapshot or an explicit rollback, at most EVIDENCE_TRANSACTION_RETRIES
+    times. Returns (the plan's changes, the commit's counts). An ambiguous
+    acknowledgment is retried with the IDENTICAL plan once: a void commit is
+    idempotent (void rows on conflict do nothing; a row equal to what is
+    stored is not written), so whether the first attempt landed or not, the
+    retry ends in the same state."""
+    op_id = str(uuid.uuid4())
+    args_base = {"p_user_id": user_id, "p_course_id": course_id, "p_question_hash": question_hash}
+    try:
+        for _attempt in range(EVIDENCE_TRANSACTION_RETRIES):
+            snapshot = _result(rpc("learning_evidence_void_snapshot", args_base))
+            if snapshot["status"] != "snapshot":
+                raise EvidenceTransactionConflict("Evidence void snapshot unavailable")
+            plan = compute(snapshot)
+            if set(plan.payload) != set(_VOID_KEYS):
+                raise EvidenceTransactionConflict("Invalid evidence void plan")
+            args = {**args_base, "p_operation_id": op_id, "p_plan": plan.payload}
+            try:
+                out = _result(rpc("learning_evidence_void_commit", args))
+            except Exception as first:
+                if _retryable_sql(first):
+                    continue  # the server explicitly rolled the transaction back
+                try:
+                    out = _result(rpc("learning_evidence_void_commit", args))
+                except Exception as second:
+                    raise PlanningPersistenceUnavailable(
+                        "Evidence void acknowledgment unavailable"
+                    ) from second
+            if out["status"] == "stale":
+                continue
+            if out["status"] == "not_retired":
+                raise EvidenceVoidRefused("The check item is not retired")
+            if out["status"] != "committed":
+                raise EvidenceTransactionConflict("Evidence void ownership conflict")
+            counts = {}
+            for key in ("voided", "states", "mirrors", "misconceptions"):
+                value = out.get(key)
+                if type(value) is not int or value < 0:
+                    raise PlanningPersistenceUnavailable("Invalid evidence void receipt")
+                counts[key] = value
+            return plan.changes, counts
+        raise PlanningPersistenceUnavailable("Evidence void remained busy")
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence void unavailable") from exc

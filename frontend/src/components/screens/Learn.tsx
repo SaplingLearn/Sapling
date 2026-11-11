@@ -20,6 +20,11 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { crisisSupportIn } from "@/lib/crisisSupport";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -47,6 +52,7 @@ import {
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
 import { humanizeError, isNotFound, statusOf } from "@/lib/errorMessage";
+import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
@@ -69,8 +75,6 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 ];
 
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
-// Read by SessionFeedbackGlobal when the student navigates away from /learn.
-const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 const RAIL_OPEN_KEY = "sapling_learn_rail_open";
 const RAIL_WIDTH = 400;
 
@@ -96,11 +100,13 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
-// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
-// mastery the same way a full graph refetch would.
+// Mirrors backend/learning/bkt.py::tier_for (learning/params.py BKT_PROFICIENT /
+// BAND_NOVICE_MAX / TIER_UNEXPLORED_MAX, PKG-14b) so a streamed delta classifies
+// mastery the same way a full graph refetch would. Pinned by
+// backend/tests/test_mastery_tier_unification.py.
 function tierForScore(score: number): GraphNode["mastery_tier"] {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -127,11 +133,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
@@ -312,12 +317,10 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
 // ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
 // directly before it — the user bubble of the same turn, so the re-send
@@ -351,6 +354,32 @@ export function isSessionEndedError(err: unknown): boolean {
 }
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  const { status: loop, retry } = useLoopStatus(userId, userReady);
+  if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop === "error") {
+    return (
+      <div data-testid="loop-status-error" role="alert" style={{ padding: 40, color: "var(--text-dim)" }}>
+        <p style={{ marginBottom: 12 }}>Couldn&apos;t reach the tutor. Try again.</p>
+        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  if (loop) {
+    return (
+      <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
       <LearnInner />
@@ -449,6 +478,7 @@ function LearnInner() {
     return (
       <FullHeightScreen className="fade-in">
         <DisclaimerModal />
+        {session.crisisDialog}
         <TopBar
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
@@ -555,7 +585,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={session.closeSummary}
-          onStartNext={session.startNextFromSummary}
         />
       )}
     </FullHeightScreen>
@@ -850,6 +879,14 @@ type RailCollapse = ReturnType<typeof useRailCollapse>;
 
 // The tutor session on screen and every async path that changes it or talks
 // to it: start, resume, send, retry, hint/confused/skip, mode switch, end.
+/** Feedback pacing (lib/feedbackPacing.ts) for the legacy tutor: the session
+ *  on screen counts against prompts, and none opens while a call runs or the
+ *  session is live. */
+function useLearnFeedbackPacing({ sessionId, busy, live }: { sessionId: string | null; busy: boolean; live: boolean }) {
+  useEffect(() => { if (sessionId) noteLearningSession(sessionId); }, [sessionId]);
+  useFeedbackHold(busy || live);
+}
+
 function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
   router: Router;
   searchParams: SearchParams;
@@ -937,11 +974,21 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   };
   // The feedback context belongs to the last session the student ENDED; once
   // they move into another one it would attribute feedback to the wrong one.
-  const clearLastSessionContext = () => {
-    try { sessionStorage.removeItem(LAST_SESSION_CTX_KEY); } catch {}
-  };
+  const clearLastSessionContext = forgetEndedSession;
+  // docs/safety/crisis-support.md: a session start the crisis screen answered
+  const crisis = useCrisisSupport();
 
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
+  // Feedback pacing (lib/feedbackPacing.ts), as in LoopLearn: a prompt counts
+  // against the session on screen, and no survey opens while a session is live
+  // or a tutor turn streams. Ending it is the natural break — End session here
+  // (summary or not), or the server's 409.
+  const [endedHere, setEndedHere] = useState<string | null>(null);
+  useLearnFeedbackPacing({
+    sessionId,
+    busy: starting || resuming || sending || actionPending || streamingText !== null,
+    live: !!sessionId && !sessionEnded && sessionId !== endedHere,
+  });
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
 
@@ -1020,6 +1067,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           },
           signal: controller.signal,
         });
+        // The crisis card instead of a greeting: no session was opened.
+        if (crisis.intercept(res)) return;
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
@@ -1041,6 +1090,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         if (!isCurrent()) return;
         setStreamingText(null);
         const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        if (crisis.intercept(res)) return;
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
@@ -1270,7 +1320,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       // it loses nothing: the JSON route persisted the pair server-side, so
       // re-opening the original session shows the turn (PR #461 review).
       if (sessionIdRef.current === turnSessionId) {
-        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+        // docs/safety/crisis-support.md: a crisis turn renders as the card
+        const crisisSupport = crisisSupportIn(res) ?? undefined;
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
       if (isSessionEndedError(err)) { endedTurn(); return; }
@@ -1394,9 +1446,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       const res = await endSession(sessionId, userId);
       // Write session context for navigate-away feedback — even if the
       // student has already moved on, this IS the session they ended.
-      try {
-        sessionStorage.setItem(LAST_SESSION_CTX_KEY, JSON.stringify({ sessionId, topic }));
-      } catch {}
+      rememberEndedSession({ sessionId, topic });
+      setEndedHere(sessionId);
       // …but its summary only belongs on screen while they're still in it.
       if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {
@@ -1422,21 +1473,13 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     router.replace(`/learn?mode=${mode}`, { scroll: false });
   };
 
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    enterSession(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
-  };
-
   const stopStream = () => streamAbort.current?.abort();
 
   return {
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
     sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
-    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, startNextFromSummary, stopStream,
+    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, stopStream,
+    crisisDialog: crisis.dialog,
   };
 }
 
@@ -1730,6 +1773,7 @@ function EntryStartCard({
     <div className="card" style={{ padding: "var(--pad-xl)" }}>
       <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
       <CustomSelect<string>
+        ariaLabel="Course (optional)"
         value={selectedCourseId}
         options={[
           { value: "", label: "No course" },

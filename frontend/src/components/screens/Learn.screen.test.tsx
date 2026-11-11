@@ -32,6 +32,11 @@ vi.mock("@/lib/useActiveSemester", () => ({
   courseInTerm: () => true,
 }));
 vi.mock("../DisclaimerModal", () => ({ DisclaimerModal: () => null }));
+// The kill-switch path: the loop status probe says "legacy", so Learn renders
+// LearnInner (the loop screen has its own suite, learn/LoopLearn.test.tsx).
+vi.mock("../learn/useLoopStatus", () => ({
+  useLoopStatus: () => ({ status: false, retry: () => {} }),
+}));
 vi.mock("../graph/KnowledgeGraph", () => ({
   KnowledgeGraph: ({ nodes, highlightId, onNodeClick }: { nodes: { id: string; name: string }[]; highlightId?: string; onNodeClick?: (n: unknown) => void }) => (
     <div data-testid="kg" data-highlight={highlightId ?? ""}>
@@ -395,23 +400,23 @@ describe("session summary", () => {
     await openSession("sess-a", "A function calling itself.");
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm end" }));
-    await screen.findByText("Recommended next");
+    await screen.findByText("Session summary");
   }
 
   it("Done closes the summary and returns to an empty picker", async () => {
     await endWithSummary();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByTestId("tutor-start")).toBeDisabled();
-    expect(screen.queryByText("Recommended next")).toBeNull();
+    expect(screen.queryByText("Session summary")).toBeNull();
   });
 
-  it("a recommended concept pre-fills the picker and the URL", async () => {
+  // PKG-14b (spec §11.2): the summary shows only what the backend fills. The
+  // always-empty lists, "Recommended next" among them, are gone, so a stale
+  // `recommended_next` renders nothing.
+  it("shows the concepts covered and no recommended-next list", async () => {
     await endWithSummary();
-    nav.replace.mockClear();
-    fireEvent.click(within(screen.getByText("Recommended next").parentElement!).getByRole("button", { name: /Trees/ }));
-    expect(await screen.findByTestId("tutor-start")).not.toBeDisabled();
-    expect(screen.getByTestId("tutor-topic-picker")).toHaveTextContent("Trees");
-    expect(nav.replace).toHaveBeenCalledWith("/learn?topic=Trees&mode=socratic", { scroll: false });
+    expect(screen.getByText("Concepts covered")).toBeInTheDocument();
+    expect(screen.queryByText("Recommended next")).toBeNull();
   });
 });
 

@@ -19,6 +19,8 @@ interface CardTextProps {
   title: string;
   meta: string;
   rationale: string | null;
+  /** The learner model's reason and skill meter (spec §13 A143), or `null`. */
+  planLine: string | null;
   definitionPending: boolean;
   definition: string | null;
   configLine: string;
@@ -30,6 +32,7 @@ function CardText({
   title,
   meta,
   rationale,
+  planLine,
   definitionPending,
   definition,
   configLine,
@@ -51,6 +54,11 @@ function CardText({
 
       {meta && <p className="quiz-home__meta">{meta}</p>}
       {rationale && <p className="quiz-home__rationale">{rationale}</p>}
+      {planLine && (
+        <p className="quiz-home__rationale" data-testid="quiz-plan-reason">
+          {planLine}
+        </p>
+      )}
       {/* Keyed on its text: the AI sentence replacing the built stand-in a
           moment later fades in rather than snapping. */}
       {definitionPending && (

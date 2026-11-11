@@ -32,10 +32,14 @@ export interface MissedItem {
   chosenText: string;
   correctLabel: string;
   correctText: string;
-  explanation: string;
   /** A typed answer: `chosenText` / `correctText` ARE the answers (there are
    *  no option letters), so the line reads "You wrote 4 · the answer is 2". */
   written: boolean;
+  explanation: string;
+  /** The question's index in the attempt (`QuizItem.index`) — with the attempt
+   *  id, the AskPanel's `quizAsk` identity (spec §13 A99). null when the
+   *  question is no longer in the session's items. */
+  questionIndex: number | null;
 }
 
 /**
@@ -56,9 +60,10 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
   return result.results
     .filter(r => !r.correct)
     .map(r => {
-      const question = session.items.find(
+      const found = session.items.find(
         item => String(item.question.id) === String(r.question_id),
-      )?.question;
+      );
+      const question = found?.question;
       const written = isWrittenType(question?.type);
       const textFor = (label: string) =>
         written ? label : question?.options.find(o => o.label === label)?.text ?? "";
@@ -70,8 +75,9 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
         chosenText: textFor(r.selected),
         correctLabel: written ? "" : r.correct_answer,
         correctText: textFor(r.correct_answer),
-        explanation: r.explanation,
         written,
+        explanation: r.explanation,
+        questionIndex: found ? found.index : null,
       };
     });
 }
@@ -116,7 +122,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
             {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
             <p className="quiz-missed__line">
               {item.written
-                ? item.chosenText
+                ? item.chosenText.trim()
                   ? `You wrote ${item.chosenText} · the answer is ${item.correctText}`
                   : `No answer · the answer is ${item.correctText}`
                 : item.chosenLabel

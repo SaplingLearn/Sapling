@@ -95,6 +95,227 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # #695 (learning-loop spec §13 A113): "Report this question" on the loop's
+    # check card and Study's review queue, and POST /api/learn/loop/report.
+    # Client-visible: the frontend renders the control only when "on". Reports
+    # already made keep excluding their items whatever the flag says. Since
+    # A123 reports quarantine an item (a reversible hold); only staff retire.
+    FlagDef("item_reports", ("off", "on"),
+            "Students can report a learning-loop check question (wrong answer / "
+            "unclear / not from my course); two reporters hold it from every "
+            "student in the course until staff approve or retire it.",
+            True),
+    # Learning loop spec §13 A126: the "retention check due" badge on the Study
+    # nav entry and the Dashboard, and GET /api/learn/loop/posttest/due (404
+    # while off). Client-visible: the frontend fetches nothing while it is off.
+    # It turns the delayed post-test from pull to push, a change to the
+    # measurement protocol, so it is switched on deliberately (at a trial
+    # boundary), never by a deploy.
+    FlagDef("retention_due_badge", ("off", "on"),
+            "Show students a 'retention check due' badge on Study and the Dashboard "
+            "when a delayed post-test window is open with an item to pose (A126).",
+            True),
+    # Learning loop spec §13 A130: the matched pretest probe start
+    # (checks.pretest_form, read by routes/learn_loop.py::probe_next). Server-
+    # only: the probe route picks the item. It changes the measurement
+    # protocol — which item is each new concept's pretest — so, like
+    # retention_due_badge, it is switched on deliberately at a trial boundary,
+    # never by a deploy.
+    FlagDef("probe_matched_pretest", ("off", "on"),
+            "The probe asks a concept's first question, when the student has no graded "
+            "answer on it yet, in a form parallel to its delayed post-test items (same "
+            "format and difficulty, else the same difficulty; A130), so pre/post pairs "
+            "are matched. Changes the measurement protocol: switch it on at a trial "
+            "boundary. Off: the probe's choice is unchanged.", False),
+    # Learning loop spec §13 A118: upload prerequisite edges
+    # (services/concept_prereqs.py). Resolved ONCE per upload, for the
+    # uploading student, by upload_prereqs_on; that one answer picks the
+    # concept-extraction variant AND gates the edge write. Server-only: both
+    # happen inside the upload routes.
+    FlagDef("upload_prereq_edges", ("off", "on"),
+            "Uploads ask concept extraction for prerequisite relations (with the "
+            "course's existing concepts as context) and write them, validated in "
+            "code, as prerequisite edges (A118). On changes learning dynamics for "
+            "upload-built graphs: one-hop evidence propagation, prerequisite bands "
+            "and wheelspin repair, the novice exit and the planner's outer fringe "
+            "start acting on them, so plan order follows prerequisites. Off: the "
+            "upload is byte-identical to before A118 (same extraction prompt, "
+            "schema and message; no course-concepts read) and writes concept "
+            "nodes only.", False),
+    # Learning loop spec §13 A121: the tutor's v2 variant
+    # (agents/loop_tutor.py::variant_run_args) — every loop tutor prompt change
+    # that needs a live eval re-record. Resolved ONCE per turn, for the
+    # student, by routes/learn_loop.py::_tutor_v2_on; that one answer picks the
+    # prompt and schema variant, the per-turn prompt lines and the served
+    # framing. Server-only: the turn's text arrives already framed.
+    FlagDef("loop_tutor_v2", ("off", "on"),
+            "Loop tutor v2 (A121): a student's reply to the tutor's own question "
+            "opens the next turn with a plain verdict (right / partly right / not "
+            "quite), feedback turns open with the grader's verdict, 'Key idea:' "
+            "marks only new content, a turn that poses a check is asked for no "
+            "question, and every teach turn names the plan's current concept and "
+            "why the plan is on it. On sends a changed tutor prompt and output "
+            "schema, so turn it on only after the loop_tutor and "
+            "misconception_confront datasets are re-recorded live under "
+            "LOOP_EVAL_VARIANT=v2 (their own cassettes) and pass. "
+            "Off: the tutor request is byte-identical to before A121.", False),
+    # Learning loop spec §13 A134: the strict genuine-attempt rule for hint
+    # unlocking (learning/gates.py::strict_genuine_attempt). Resolved per
+    # request, for the student, by routes/learn_loop.py::_help_gate_strict_on
+    # (POST /step/attempt counts an attempt by it; POST /hint words its
+    # time-alone denial by it). Server-only: the client renders the denial
+    # reason it is sent. Turning it on is the owner's pedagogy decision, judged
+    # by the A133 help-abuse report (GET /api/admin/analytics/learning-loop,
+    # `help_abuse.by_gate`). Off: both routes behave exactly as before A134.
+    FlagDef("help_gate_strict", ("off", "on"),
+            "Strict genuine-attempt gate for loop hints (A134): an attempt "
+            "unlocks the next hint rung only after the band's independent time "
+            "(45 s; 90 s for a novice) alone with the latest hint, and only when "
+            "it says something none of the student's counted attempts on the item "
+            "said and is not a paste of the question. Off: an attempt counts after "
+            "that time since the question was posed, so later rungs need only the "
+            "8 s dwell. Judge it by the help-abuse report on the admin learning-"
+            "loop page (by gate).", False),
+    # Learning loop spec §13 A138: the segment prequestion — one ungraded guess
+    # at the start of a teaching segment, its answer and explanation right
+    # after. Resolved ONCE per request, for the student, by
+    # routes/learn_loop.py::_prequestion_on. Server-only: the card is posed by
+    # the server's responses. Off: nothing is posed or read, and every tutor
+    # request is byte-identical to before A138.
+    FlagDef("segment_prequestion", ("off", "on"),
+            "Segment prequestion (A138): when the plan reaches a new concept, the "
+            "student first takes an ungraded guess at one vetted question on it "
+            "(multiple choice or short answer, difficulty 1-2, never a post-test "
+            "item; 'No idea' allowed); the answer and an explanation that starts "
+            "from the guess follow at once. No grade, no evidence, no mastery "
+            "change; the item is revealed for that student. Skipped for due "
+            "reviews, concepts already proficient, exam mode, and when the "
+            "question would leave the concept's checks short. On sends a changed "
+            "tutor prompt on the explaining turn, so turn it on only after that "
+            "path is recorded live in the loop_tutor evals. Off: byte-identical "
+            "to before A138.", False),
+    # Learning loop spec §13 A139: self-explanation prompts — one interrogative
+    # "why does this follow?" as a turn's question at a code-decided juncture.
+    # Resolved ONCE per request, for the student, by
+    # routes/learn_loop.py::_self_explain_on. Server-only. The reply is stored
+    # (encrypted) for diagnosis only: never evidence, mastery or a misconception.
+    FlagDef("self_explanation_prompts", ("off", "on"),
+            "Self-explanation prompts (A139): after a worked example, after a "
+            "shown solution, or after a first unaided correct answer, the turn's "
+            "question becomes a 'why does this follow?' prompt (at most once per "
+            "concept per session) with its own reply box; the reply is stored for "
+            "staff analysis and is never graded or used as evidence. The next "
+            "tutor turn acknowledges a reply briefly, a changed prompt: turn it on "
+            "only after that path is recorded live in the loop_tutor evals. Off: "
+            "byte-identical to before A139.", False),
+    # Learning loop spec §13 A140: surface-varied isomorphs. Resolved ONCE per
+    # drafting run for the uploader (services/check_item_service.py::
+    # drafting_flags: the varied drafter and its structured surface
+    # descriptor) and per pick for the student being served (the cue-
+    # familiarity tie-break in-session, on the isomorph re-ask and in review,
+    # and the review interleave's definitional-item rule). Server-only.
+    FlagDef("varied_isomorphs", ("off", "on"),
+            "Surface-varied isomorphs (A140): this uploader's check items are drafted "
+            "so each concept's items vary their scenario and representation, each "
+            "with a stored surface descriptor; for this student, every check, "
+            "isomorph re-ask and review pick prefers, among items its own rules "
+            "leave equal, one whose surface they have not met on the concept, and "
+            "the review interleave never pairs recall-or-definition items. On sends "
+            "a changed drafting prompt and output schema, so turn it on only after "
+            "the varied check_items eval dataset is recorded live and passes. Off: "
+            "drafting and every pick are byte-identical to before A140.", False),
+    # Learning loop spec §13 A141: multi-concept items. Resolved ONCE per
+    # drafting run for the uploader (the combination drafter, from the
+    # uploader's prerequisite edges) and per activation for the student (the
+    # ideas-combined dial in routes/learn_loop.py). Server-only.
+    FlagDef("multi_concept_items", ("off", "on"),
+            "Multi-concept items (A141): this uploader's uploads also draft items "
+            "that combine a concept with one or two of its direct prerequisites, "
+            "every component verified; this student is served one, once a session, "
+            "on a concept whose every component they are proficient in (p >= 0.95 "
+            "with a strong unassisted answer behind it) while its difficulty is at "
+            "the top, and the answer is a half-weight observation on that concept. "
+            "On sends new drafting prompts, so turn it on only after the multi-"
+            "concept eval dataset is recorded live and passes. Off: drafting and "
+            "every pick are byte-identical to before A141.", False),
+    # Learning loop spec §13 A143-A147: the quiz in the learning system. Five
+    # flags because each part rolls out on its own condition; all ship off and,
+    # off, the quiz is byte-identical to before them
+    # (tests/test_quiz_learning_flags_off.py).
+    #
+    # A143: the quiz home's proposals and its "due" queue come from the learner
+    # model (GET /api/quiz/plan, 404 while off). Client-visible: the home asks
+    # for the plan only when it is on. Reads only, no model call.
+    FlagDef("quiz_concept_plan", ("off", "on"),
+            "Quiz concept plan (A143): the quiz home proposes concepts from the "
+            "learner model — reviews due by their FSRS date first, then concepts "
+            "with an open misconception, then concepts whose prerequisites are "
+            "proficient but which are not yet — and 'Review everything due' means "
+            "due by FSRS. Reads only. Off: the home ranks by the graph's mastery "
+            "tier as before.", True),
+    # A144: code chooses each question's difficulty (the band's loop check
+    # level when the student asked for adaptive) and the misconception one
+    # distractor must embody; a separate prompt (agents/quiz_planned.py) is
+    # told only that, and tags its distractors with the named keys. Resolved
+    # once per /generate for the student. Server-only.
+    FlagDef("quiz_planned_questions", ("off", "on"),
+            "Quiz planned questions (A144): the learner model chooses each "
+            "question's difficulty and the misconception a distractor targets; "
+            "the model only writes them, with options alike in length, and tags "
+            "its distractors with the named misconception keys. On sends a new "
+            "quiz prompt and schema, so turn it on only after the "
+            "quiz_generation_planned eval dataset is recorded live and passes. "
+            "Off: the quiz request is byte-identical to before A144.", False),
+    # A145: every generated question passes the A119 concept check and the
+    # A124 blind key solve (slot `quiz_check`, a different model from the
+    # quiz writer) before it is served; only a verified one is evidence.
+    # Resolved once per /generate for the student. Server-only.
+    FlagDef("quiz_item_gates", ("off", "on"),
+            "Quiz item gates (A145): each generated question is checked before it "
+            "is served — does it test this concept (the A119 check) and does an "
+            "independent blind solve reach its key (A124) — on the quiz_check "
+            "slot. A question testing another concept, or whose key the solve "
+            "disputes, is never served; only a verified one moves mastery. Adds "
+            "two to three model calls per quiz: turn it on after a live smoke of "
+            "the checks on quiz questions and a measured cost. Off: unchanged.",
+            False),
+    # A146: a verified question's tagged distractor chosen with "Sure" records
+    # the misconception; a correct, unassisted, first answer to a verified
+    # question listing an open key closes it (A127). Resolved once per /submit.
+    # Needs quiz_planned_questions (the tags) and quiz_item_gates (verified
+    # items) on when the quiz was generated. Server-only.
+    FlagDef("quiz_misconceptions", ("off", "on"),
+            "Quiz misconceptions (A146): a wrong answer stated 'Sure' on a verified "
+            "quiz question whose chosen option embodies a known misconception "
+            "records that misconception for the student (the Learn tutor and the "
+            "review queue then see it), and a correct, unassisted first answer to a "
+            "verified question listing an open misconception closes it. Acts only "
+            "on questions generated with quiz_planned_questions and "
+            "quiz_item_gates on. Off: the quiz records and closes nothing.",
+            False),
+    # A147: the submit response's `learning` block — each concept's skill-meter
+    # change, what is due for review, and the next step. Resolved once per
+    # /submit for the student. Server-only: the results screen renders the
+    # block whenever the response carries one.
+    FlagDef("quiz_results_routing", ("off", "on"),
+            "Quiz results routing (A147): the quiz results show, in plain words, "
+            "how each concept's skill meter moved, what is due for review, and the "
+            "next step — review what is due, or practise the weakest concept in "
+            "Learn. Reads only. Off: the results are unchanged.", False),
+    # docs/safety/crisis-support.md: the crisis-support path. On: a student
+    # message that states suicidal ideation, self-harm or acute danger gets
+    # the fixed resources card INSTEAD of a model turn, on every surface
+    # services/crisis_support.py lists. Server-only: the client renders the
+    # card whenever a response carries one. SHIPS OFF until the owner has
+    # reviewed the copy (services/crisis_support_copy.py).
+    FlagDef("crisis_support", ("off", "on"),
+            "Crisis-support path: a student message stating suicidal ideation, "
+            "self-harm or acute danger gets a fixed card with crisis resources "
+            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
+            "turn, on every tutor, learning-loop and notes AI surface. Keep OFF "
+            "until the owner has reviewed the copy in "
+            "services/crisis_support_copy.py (checklist: "
+            "docs/safety/crisis-support.md).", False),
     # #119: cross-provider LLM fallback (agents/_providers.py). Resolved
     # GLOBALLY (user_id=None — the model layer never sees a student), so only
     # the stored default and SAPLING_FLAG_LLM_FALLBACK (the kill switch)
@@ -126,8 +347,10 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Resolved for the student whose action triggered the work. It covers
     # course-context aggregation (course_context_service.
     # refresh_course_context), the upload's first indexing attempt
-    # (document_indexing.schedule_document_index) and the upload pipeline
-    # itself (services/document_jobs.py). On WITHOUT a running `python -m
+    # (document_indexing.schedule_document_index), the upload pipeline
+    # itself (services/document_jobs.py) and, with the learning loop on, the
+    # upload's index-then-draft check-item chain (services/check_item_jobs.py).
+    # On WITHOUT a running `python -m
     # worker`, aggregation and indexing only queue (class aggregates go stale;
     # the index sweeper still recovers unindexed documents in production) and
     # uploads wait PICKUP_GRACE_SECONDS, then run inline. Hence default off.
@@ -777,7 +1000,9 @@ NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
 
 NAV_FEATURES_NOT_ENFORCED: dict[str, str] = {
     "hide_tutor": "the quiz Ask panel streams through the tutor's chat/session "
-                  "endpoints and the dashboard/tree list sessions",
+                  "endpoints and the dashboard/tree list sessions; the learning "
+                  "loop's /api/learn/loop also serves quiz-ask sessions, Study's "
+                  "daily review and the delayed post-test",
     "hide_tree": "/api/graph backs the course list every page loads",
     "hide_library": "/api/documents backs the shared upload modal (Calendar) and "
                     "Study's document list",

@@ -95,6 +95,7 @@ describe("AskPanel runTurn — opening the session", () => {
       undefined,
       undefined,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      undefined, // no quiz_ask origin without an attempt (spec §13 A99)
     ]);
     expect(api.startSession.mock.calls[0]).toEqual([
       "user-1",
@@ -102,6 +103,8 @@ describe("AskPanel runTurn — opening the session", () => {
       "socratic",
       undefined,
       true,
+      undefined,
+      undefined, // no quiz_ask origin without an attempt (spec §13 A99)
     ]);
   });
 

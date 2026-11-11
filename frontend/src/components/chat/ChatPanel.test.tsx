@@ -16,6 +16,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
+import crisisFixture from "@/test-utils/crisisSupport.json";
+import { crisisSupportOf } from "@/lib/crisisSupport";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
@@ -147,5 +149,95 @@ describe("tutorStepLabel", () => {
 
   it("returns null for a step it does not know, so Thinking… stays", () => {
     expect(tutorStepLabel("final_result")).toBeNull();
+  });
+});
+
+describe("ChatPanel crisis-support turn (docs/safety/crisis-support.md)", () => {
+  it("renders the calm card in place of a tutor bubble, keeping the composer open", () => {
+    const support = crisisSupportOf(crisisFixture)!;
+    const onSend = vi.fn();
+    render(
+      <ChatPanel
+        messages={[
+          { id: "u-1", role: "user", content: "what I typed" },
+          { id: "a-1", role: "assistant", content: "the card's copy as text", crisisSupport: support },
+        ]}
+        onSend={onSend}
+      />,
+    );
+    const card = screen.getByTestId("crisis-support-card");
+    expect(card.textContent).toContain(support.title);
+    // the card, not the markdown bubble: the text rendering is not shown twice
+    expect(screen.queryByText("the card's copy as text")).toBeNull();
+    expect(screen.getByText("what I typed")).toBeTruthy();
+    // "whenever you're ready": the student keeps studying from the same composer
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+    fireEvent.change(input, { target: { value: "ok, back to hash tables" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(onSend).toHaveBeenCalledWith("ok, back to hash tables");
+  });
+});
+
+describe("ChatPanel — keyboard and screen reader (spec §13 A135)", () => {
+  const msg = (id: string, content: string, over: Partial<ChatMsg> = {}): ChatMsg => ({ id, role: "assistant", content, ...over });
+
+  it("the log is a polite live region a keyboard can reach and scroll", () => {
+    render(<ChatPanel messages={[msg("a", "hello")]} onSend={noop} />);
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log.tabIndex).toBe(0);
+  });
+
+  it("a visually hidden row stays in the log; clearing the flag paints the same node", () => {
+    const { rerender } = render(<ChatPanel messages={[msg("p", "Why does it stop?", { visuallyHidden: true })]} onSend={noop} />);
+    const row = screen.getByText("Why does it stop?");
+    const wrapper = row.closest("[data-visually-hidden]") as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.style.position).toBe("absolute");
+    expect(screen.getByRole("log")).toContainElement(row);
+    rerender(<ChatPanel messages={[msg("p", "Why does it stop?")]} onSend={noop} />);
+    expect(screen.getByText("Why does it stop?")).toBe(row);
+    expect(row.closest("[data-visually-hidden]")).toBeNull();
+  });
+
+  it("a message sent from the composer gives it focus back when the reply has ended", () => {
+    const { rerender } = render(<ChatPanel messages={[]} onSend={noop} streamingText={null} />);
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "why?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(<ChatPanel messages={[]} onSend={noop} streamingText="" />);
+    expect(input.disabled).toBe(true);
+    input.blur(); // a browser drops focus from a control that becomes disabled
+    rerender(<ChatPanel messages={[msg("r", "Because n reaches zero.")]} onSend={noop} streamingText={null} />);
+    expect(input).toHaveFocus();
+  });
+
+  it("does not take focus back when something else has it by the time the reply ends", () => {
+    const { rerender } = render(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText={null} />
+      </>,
+    );
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "why?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText="" />
+      </>,
+    );
+    screen.getByTestId("elsewhere").focus();
+    rerender(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText={null} />
+      </>,
+    );
+    expect(screen.getByTestId("elsewhere")).toHaveFocus();
   });
 });

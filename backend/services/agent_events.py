@@ -14,8 +14,15 @@ from pydantic import BaseModel, Field
 
 # "status"/"progress"/"result" are the document-pipeline vocabulary (ADR 0006).
 # "token"/"graph_update"/"done" extend it for chat streams; "error" is shared.
+# "phase"/"check"/"hint_offer"/"learner_state"/"budget" are the learning-loop
+# stream events (PKG-07, spec §9) — yielded by routes/learn_loop.py AROUND
+# chat_stream.stream_agent_turn, never from inside the rung ladder.
 SaplingEventType = Literal[
-    "status", "progress", "result", "error", "token", "graph_update", "done"
+    "status", "progress", "result", "error", "token", "graph_update", "done",
+    "phase", "check", "hint_offer", "learner_state", "budget",
+    # PKG-07 unblock S1: discard every token streamed so far this turn (an
+    # output retry superseded it, or the caller's transform rewrote it).
+    "retract",
 ]
 
 

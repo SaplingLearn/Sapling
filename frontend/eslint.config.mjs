@@ -118,6 +118,7 @@ const eslintConfig = [
       "src/components/quiz/question/LeaveDialog.tsx",
       "src/components/quiz/results/QuizResults.tsx",
       "src/components/quiz/results/MissedList.tsx",
+      "src/components/quiz/results/LearningBlock.tsx",
       "src/components/ui/AnswerOption.tsx",
       "src/components/ui/SegmentedControl.tsx",
       "src/components/ui/Sheet.tsx",
@@ -128,6 +129,21 @@ const eslintConfig = [
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",
       "src/components/screens/Learn.tsx",
+      // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
+      "src/components/learn/LoopLearn.tsx",
+      "src/components/learn/BudgetPausedBanner.tsx",
+      // "Report this question" (spec §13 A113), shared by the loop and review
+      // surfaces; its testids are passed in. New file, no baselined backlog.
+      "src/components/learn/ReportQuestion.tsx",
+      // The stated-confidence control (spec §13 A127), shared by the loop's check
+      // and probe cards and the review card; its testids are passed in. New file.
+      "src/components/learn/ConfidenceControl.tsx",
+      // The shared multiple-choice radio group (spec §13 A135; moved out of
+      // LoopLearn for A138), the segment prequestion card (A138) and the
+      // self-explanation card (A139). New files, no baselined backlog.
+      "src/components/learn/OptionList.tsx",
+      "src/components/learn/PrequestionCard.tsx",
+      "src/components/learn/SelfExplainCard.tsx",
       "src/components/screens/Library.tsx",
       "src/components/screens/Calendar.tsx",
       "src/components/screens/Gradebook/Landing.tsx",
@@ -137,7 +153,19 @@ const eslintConfig = [
       "src/components/Gradebook/AssignmentList.tsx",
       "src/components/Gradebook/AssignmentModal.tsx",
       "src/components/screens/AdminAnalytics.tsx",
+      // The learning-loop help-abuse section (spec §13 A133). New file, no backlog.
+      "src/components/screens/admin/HelpAbusePanel.tsx",
+      // The learning-loop self-explanation section (spec §13 A139). New file, no backlog.
+      "src/components/screens/admin/SelfExplanationPanel.tsx",
+      // The Learning loop panel's cost per learning gain (spec §13 A137). New file, no backlog.
+      "src/components/screens/AdminLoopCost.tsx",
+      // The /admin/check-items review queue (spec §13 A113). New file, no backlog.
+      "src/components/screens/AdminCheckItems.tsx",
       "src/components/screens/Tree.tsx",
+      // Learning loop review queue (PKG-12) — the launch Study surface.
+      "src/components/learn/DueQueue.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
       "src/components/marketing/FeatureBand.tsx",
       "src/components/marketing/SurfaceBento.tsx",

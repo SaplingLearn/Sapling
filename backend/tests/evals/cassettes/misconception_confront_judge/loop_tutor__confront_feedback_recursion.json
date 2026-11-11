@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "59ea877759515c5dc619e30ae8b5388ab6da5eaf11ba2a4e5d4be1b0b7097e58",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "The base case in a recursive function defines when the recursion stops.",
+    "only_states_correction": true
+  },
+  "served_sha256": "c702b0db6ade4db36997fdb79d76e447ff51e5df35a4312c9aec74d7e3f91a6d"
+}
