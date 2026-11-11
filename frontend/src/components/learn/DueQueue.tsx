@@ -273,11 +273,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
   const pausedConcepts = summary?.paused ?? 0;
-  const canSubmit =
-    !busy &&
-    !answered &&
-    item?.kind === "check" &&
-    (item.format === "mc_reason" ? choice !== "" : answer.trim() !== "");
+  const canSubmit = !busy && !answered && checkHasAnswer(item, choice, answer);
 
   return (
     <div
@@ -297,16 +293,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         )}
       </div>
 
-      {pause ? (
-        <BudgetPausedBanner
-          testId="review-budget-paused"
-          resetAt={pause.resetAt}
-          sessionCapped={pause.sessionCapped}
-          message={answerPauseMessage(pause)}
-        />
-      ) : pausedConcepts > 0 ? (
-        <BudgetPausedBanner testId="review-budget-paused" resetAt={null} message={pausedConceptsMessage(pausedConcepts)} />
-      ) : null}
+      {renderPauseBanner(pause, pausedConcepts)}
 
       {error && <div ref={errorRef} tabIndex={-1} role="alert" style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
       {/* Always in the DOM, so the confirmation is announced when it appears. */}
@@ -318,142 +305,28 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         )}
       </div>
 
-      {next && !item && next.due_total > 0 && (
-        <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-          That&apos;s today&apos;s review time. {next.due_total} more due — they&apos;ll wait for tomorrow.
-        </div>
-      )}
-      {next && !item && next.due_total === 0 && (
-        <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-          All caught up — nothing is due right now.
-        </div>
-      )}
+      {renderNothingServed(next, item, statusRef)}
 
       {item && (
         <div data-testid="review-item" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {item.kind === "check" ? (
-            <>
-              {item.concept_name && (
-                <span className="chip" style={{ alignSelf: "flex-start" }}>{item.concept_name}</span>
-              )}
-              <div id={promptId} style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
-              {item.format === "mc_reason" ? (
-                <>
-                  <div role="radiogroup" aria-labelledby={promptId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {(item.options ?? []).map((o, i) => (
-                      <label key={o.letter} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
-                        <input
-                          data-testid={`review-option-${o.letter}`}
-                          data-answer-start={(choice ? choice === o.letter : i === 0) ? "" : undefined}
-                          type="radio"
-                          name={`review-${item.id}`}
-                          value={o.letter}
-                          checked={choice === o.letter}
-                          disabled={answered}
-                          onChange={() => setChoice(o.letter)}
-                        />
-                        <span>{o.letter}. {o.text}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <textarea
-                    data-testid="review-reason-input"
-                    aria-label="Review reasoning"
-                    placeholder="In one sentence: why?"
-                    value={reason}
-                    disabled={answered}
-                    onChange={(e) => setReason(e.target.value)}
-                    rows={2}
-                  />
-                </>
-              ) : (
-                <textarea
-                  data-testid="review-answer-input"
-                  data-answer-start=""
-                  aria-label="Review answer"
-                  aria-describedby={promptId}
-                  placeholder="Your answer"
-                  value={answer}
-                  disabled={answered}
-                  onChange={(e) => setAnswer(e.target.value)}
-                  rows={3}
-                />
-              )}
-              {!answered && (
-                <ConfidenceControl
-                  testIdPrefix="review-confidence"
-                  value={confidence}
-                  onChange={setConfidence}
-                  disabled={busy}
-                />
-              )}
-              {!answered && (
-                <button
-                  data-testid="review-submit"
-                  className="btn btn--sm btn--primary"
-                  style={{ alignSelf: "flex-start" }}
-                  disabled={!canSubmit}
-                  onClick={() => submit()}
-                >
-                  {retryable ? "Try again" : "Check"}
-                </button>
-              )}
-              {reportsOn && (
-                <ReportQuestion key={item.id} testIdPrefix="review-report" disabled={busy} onReport={report} />
-              )}
-            </>
-          ) : (
-            <>
-              {item.topic && <span className="chip" style={{ alignSelf: "flex-start" }}>{item.topic}</span>}
-              <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.front}</div>
-              {flipped ? (
-                <>
-                  <div ref={backRef} tabIndex={-1} style={{ fontSize: 15, whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{item.back}</div>
-                  {!answered && (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {RATINGS.map((r) => (
-                        <button
-                          key={r.n}
-                          data-testid={`review-rate-${r.n}`}
-                          className="btn btn--sm"
-                          disabled={busy}
-                          onClick={() => submit({ rating: r.n })}
-                        >
-                          {r.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <button
-                  ref={flipRef}
-                  data-testid="review-flip"
-                  className="btn btn--sm"
-                  style={{ alignSelf: "flex-start" }}
-                  onClick={() => {
-                    focusNext.current = "back";
-                    setFlipped(true);
-                  }}
-                >
-                  Show answer
-                </button>
-              )}
-            </>
-          )}
+          {item.kind === "check"
+            ? renderCheckItem({
+                item, promptId, choice, setChoice, reason, setReason, answer, setAnswer,
+                answered, confidence, setConfidence, busy, canSubmit, retryable, reportsOn,
+                onSubmit: () => submit(), onReport: report,
+              })
+            : renderFlashcardItem({
+                item, flipped, backRef, flipRef, answered, busy,
+                onRate: (rating) => submit({ rating }),
+                onFlip: () => {
+                  focusNext.current = "back";
+                  setFlipped(true);
+                },
+              })}
 
           {result && (
             <div ref={resultRef} tabIndex={-1} data-testid="review-hint" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
-              {result.refused
-                ? "Answer in your own words — that read as instructions to the grader."
-                : result.unavailable
-                  ? "Grader unavailable — try again later."
-                  : (
-                    <>
-                      <strong>{result.correct ? "Correct." : "Not yet."}</strong>
-                      {result.hint ? ` ${result.hint}` : ""}
-                    </>
-                  )}
+              {resultText(result)}
             </div>
           )}
 
@@ -480,5 +353,213 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         </div>
       )}
     </div>
+  );
+}
+
+// ── The panel's parts: plain render calls, not components, so React sees the
+// same element tree the inline JSX produced (nothing remounts). ──────────────
+
+type ReviewItem = NonNullable<ReviewNextResponse["item"]>;
+
+/** A check has an answer to send: a chosen option, or a non-blank answer. */
+function checkHasAnswer(item: ReviewItem | null, choice: string, answer: string): boolean {
+  if (item?.kind !== "check") return false;
+  return item.format === "mc_reason" ? choice !== "" : answer.trim() !== "";
+}
+
+function renderPauseBanner(pause: LoopBudgetPause | null, pausedConcepts: number) {
+  if (pause) {
+    return (
+      <BudgetPausedBanner
+        testId="review-budget-paused"
+        resetAt={pause.resetAt}
+        sessionCapped={pause.sessionCapped}
+        message={answerPauseMessage(pause)}
+      />
+    );
+  }
+  if (pausedConcepts > 0) {
+    return <BudgetPausedBanner testId="review-budget-paused" resetAt={null} message={pausedConceptsMessage(pausedConcepts)} />;
+  }
+  return null;
+}
+
+/** No item served: the day's review time is spent, or nothing is due. */
+function renderNothingServed(
+  next: ReviewNextResponse | null,
+  item: ReviewItem | null,
+  statusRef: React.RefObject<HTMLDivElement | null>,
+) {
+  if (!next || item) return null;
+  return next.due_total > 0 ? (
+    <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+      That&apos;s today&apos;s review time. {next.due_total} more due — they&apos;ll wait for tomorrow.
+    </div>
+  ) : (
+    <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+      All caught up — nothing is due right now.
+    </div>
+  );
+}
+
+function resultText(result: ReviewAnswerResponse): React.ReactNode {
+  if (result.refused) return "Answer in your own words — that read as instructions to the grader.";
+  if (result.unavailable) return "Grader unavailable — try again later.";
+  return (
+    <>
+      <strong>{result.correct ? "Correct." : "Not yet."}</strong>
+      {result.hint ? ` ${result.hint}` : ""}
+    </>
+  );
+}
+
+interface CheckItemView {
+  item: ReviewItem;
+  promptId: string;
+  choice: string;
+  setChoice: (v: string) => void;
+  reason: string;
+  setReason: (v: string) => void;
+  answer: string;
+  setAnswer: (v: string) => void;
+  answered: boolean;
+  confidence: StudentConfidence | null;
+  setConfidence: (v: StudentConfidence | null) => void;
+  busy: boolean;
+  canSubmit: boolean;
+  retryable: boolean;
+  reportsOn: boolean;
+  onSubmit: () => void;
+  onReport: (reason: LoopReportReason) => Promise<boolean>;
+}
+
+function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReason, answer, setAnswer, answered }: CheckItemView) {
+  if (item.format === "mc_reason") {
+    return (
+      <>
+        <div role="radiogroup" aria-labelledby={promptId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {(item.options ?? []).map((o, i) => (
+            <label key={o.letter} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
+              <input
+                data-testid={`review-option-${o.letter}`}
+                data-answer-start={(choice ? choice === o.letter : i === 0) ? "" : undefined}
+                type="radio"
+                name={`review-${item.id}`}
+                value={o.letter}
+                checked={choice === o.letter}
+                disabled={answered}
+                onChange={() => setChoice(o.letter)}
+              />
+              <span>{o.letter}. {o.text}</span>
+            </label>
+          ))}
+        </div>
+        <textarea
+          data-testid="review-reason-input"
+          aria-label="Review reasoning"
+          placeholder="In one sentence: why?"
+          value={reason}
+          disabled={answered}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+        />
+      </>
+    );
+  }
+  return (
+    <textarea
+      data-testid="review-answer-input"
+      data-answer-start=""
+      aria-label="Review answer"
+      aria-describedby={promptId}
+      placeholder="Your answer"
+      value={answer}
+      disabled={answered}
+      onChange={(e) => setAnswer(e.target.value)}
+      rows={3}
+    />
+  );
+}
+
+function renderCheckItem(view: CheckItemView) {
+  const { item, promptId, answered, confidence, setConfidence, busy, canSubmit, retryable, reportsOn, onSubmit, onReport } = view;
+  return (
+    <>
+      {item.concept_name && (
+        <span className="chip" style={{ alignSelf: "flex-start" }}>{item.concept_name}</span>
+      )}
+      <div id={promptId} style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+      {renderCheckAnswer(view)}
+      {!answered && (
+        <ConfidenceControl
+          testIdPrefix="review-confidence"
+          value={confidence}
+          onChange={setConfidence}
+          disabled={busy}
+        />
+      )}
+      {!answered && (
+        <button
+          data-testid="review-submit"
+          className="btn btn--sm btn--primary"
+          style={{ alignSelf: "flex-start" }}
+          disabled={!canSubmit}
+          onClick={onSubmit}
+        >
+          {retryable ? "Try again" : "Check"}
+        </button>
+      )}
+      {reportsOn && (
+        <ReportQuestion key={item.id} testIdPrefix="review-report" disabled={busy} onReport={onReport} />
+      )}
+    </>
+  );
+}
+
+function renderFlashcardItem({ item, flipped, backRef, flipRef, answered, busy, onRate, onFlip }: {
+  item: ReviewItem;
+  flipped: boolean;
+  backRef: React.RefObject<HTMLDivElement | null>;
+  flipRef: React.RefObject<HTMLButtonElement | null>;
+  answered: boolean;
+  busy: boolean;
+  onRate: (rating: number) => void;
+  onFlip: () => void;
+}) {
+  return (
+    <>
+      {item.topic && <span className="chip" style={{ alignSelf: "flex-start" }}>{item.topic}</span>}
+      <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.front}</div>
+      {flipped ? (
+        <>
+          <div ref={backRef} tabIndex={-1} style={{ fontSize: 15, whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{item.back}</div>
+          {!answered && (
+            <div style={{ display: "flex", gap: 8 }}>
+              {RATINGS.map((r) => (
+                <button
+                  key={r.n}
+                  data-testid={`review-rate-${r.n}`}
+                  className="btn btn--sm"
+                  disabled={busy}
+                  onClick={() => onRate(r.n)}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <button
+          ref={flipRef}
+          data-testid="review-flip"
+          className="btn btn--sm"
+          style={{ alignSelf: "flex-start" }}
+          onClick={onFlip}
+        >
+          Show answer
+        </button>
+      )}
+    </>
   );
 }
