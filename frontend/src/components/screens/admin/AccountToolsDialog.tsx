@@ -8,9 +8,13 @@ import {
   adminSeedAccount, adminWipeAccount, adminCopyAccount,
 } from "@/lib/api";
 import type {
-  AccountTableCounts, AdminAccountSummary, AdminAccountsMeta, AdminCopyPreview, AdminUserListItem,
+  AccountTableCounts, AdminAccountSummary, AdminAccountsMeta, AdminUserListItem,
 } from "@/lib/types";
 import { fieldStyle } from "./adminStyles";
+import {
+  accountHandles, canConfirmReview, isCopyBlocked, metaView,
+  type Action, type ReviewData, type ReviewState,
+} from "./accountToolsModel";
 
 /**
  * Admin → Users → "Account tools": seed an account with a major's mock
@@ -26,17 +30,6 @@ import { fieldStyle } from "./adminStyles";
  * size ("Delete 312 items and seed Biology"). The environment being written
  * leads both steps, in the danger style on production.
  */
-
-type Action = "seed" | "wipe" | "push" | "pull";
-
-type ReviewData =
-  | { kind: "local"; summary: AdminAccountSummary }
-  | { kind: "copy"; preview: AdminCopyPreview };
-
-type ReviewState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: ReviewData };
 
 const sumCounts = (...maps: (AccountTableCounts | undefined)[]) =>
   maps.reduce<number>(
@@ -218,6 +211,38 @@ function SummaryBlock({ testid, title, summary, danger, emptyText, missing }: {
   );
 }
 
+/** Above the step: the env badge (hidden while reviewing), a meta error with a retry, or the loading line. */
+function renderMetaHeader({ meta, metaError, reviewing, loadMeta }: {
+  meta: AdminAccountsMeta | null;
+  metaError: string | null;
+  reviewing: Action | null;
+  loadMeta: (signal: { stale: boolean }) => Promise<void>;
+}) {
+  return meta ? (
+    reviewing ? null : <EnvBadge env={meta.env} />
+  ) : metaError ? (
+    <div
+      data-testid="admin-account-meta-error"
+      role="alert"
+      style={{ ...sectionStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+    >
+      <span style={{ color: "var(--err)", fontSize: 13 }}>{metaError}</span>
+      <button
+        type="button"
+        className="btn btn--sm"
+        data-testid="admin-account-meta-retry"
+        onClick={() => void loadMeta({ stale: false })}
+      >
+        Try again
+      </button>
+    </div>
+  ) : (
+    <div data-testid="admin-account-meta-loading" style={{ ...bodyText, marginBottom: 16 }}>
+      Loading environment…
+    </div>
+  );
+}
+
 export function AccountToolsDialog({ user, onClose }: {
   user: AdminUserListItem | null;
   onClose: () => void;
@@ -286,10 +311,7 @@ export function AccountToolsDialog({ user, onClose }: {
     }
   }, [userId]);
 
-  const blocked =
-    review?.status === "ready" && review.data.kind === "copy"
-      ? !review.data.preview.source.summary.exists || !review.data.preview.destination.summary.exists
-      : false;
+  const blocked = isCopyBlocked(review);
 
   // Land on the confirm input once there's something to confirm (Back when
   // the copy is blocked).
@@ -300,17 +322,11 @@ export function AccountToolsDialog({ user, onClose }: {
 
   if (!user) return null;
 
-  // An undecryptable row has no email to type; its id is the next-best
-  // unambiguous handle.
-  const target = (user.email ?? "").trim() || user.id;
-  const targetIsEmail = Boolean(user.email && user.email.trim());
-  const who = user.name || user.email || user.id;
+  const { target, targetIsEmail, who } = accountHandles(user);
   const armed = confirmText.trim().toLowerCase() === target.toLowerCase();
   const busy = running !== null;
 
-  const selectedMajor = meta?.majors.find((m) => m.key === major) ?? null;
-  const peer = meta?.sync.peer_env ?? null;
-  const env = meta?.env ?? "";
+  const { selectedMajor, peer, env } = metaView(meta, major);
 
   const openReview = (action: Action) => {
     if (!meta || busy) return;
@@ -328,7 +344,7 @@ export function AccountToolsDialog({ user, onClose }: {
   };
 
   const ready = review?.status === "ready" ? review.data : null;
-  const canConfirm = ready !== null && armed && !busy && !blocked && meta !== null;
+  const canConfirm = canConfirmReview({ ready, armed, busy, blocked, meta });
 
   const run = async () => {
     const action = reviewing;
@@ -711,29 +727,7 @@ export function AccountToolsDialog({ user, onClose }: {
       title={`Account tools: ${who}`}
     >
       <div data-testid="admin-account-tools">
-        {meta ? (
-          reviewing ? null : <EnvBadge env={meta.env} />
-        ) : metaError ? (
-          <div
-            data-testid="admin-account-meta-error"
-            role="alert"
-            style={{ ...sectionStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
-          >
-            <span style={{ color: "var(--err)", fontSize: 13 }}>{metaError}</span>
-            <button
-              type="button"
-              className="btn btn--sm"
-              data-testid="admin-account-meta-retry"
-              onClick={() => void loadMeta({ stale: false })}
-            >
-              Try again
-            </button>
-          </div>
-        ) : (
-          <div data-testid="admin-account-meta-loading" style={{ ...bodyText, marginBottom: 16 }}>
-            Loading environment…
-          </div>
-        )}
+        {renderMetaHeader({ meta, metaError, reviewing, loadMeta })}
 
         {reviewing && meta ? renderReview(reviewing) : renderActions()}
       </div>

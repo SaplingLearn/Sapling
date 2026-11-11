@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import React from 'react';
 import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
+import { GUMMI_BOOT_SCRIPT } from '@/lib/licensedFonts';
 import { UserProvider } from '@/context/UserContext';
 import { FlagsProvider } from '@/context/FlagsContext';
 import { RetentionDueProvider } from '@/context/RetentionDueContext';
@@ -22,7 +23,7 @@ import './globals.css';
  *
  * The type is the approved Pen set from the redesign (#728) — Aleo for
  * long-form reading text, SUSE for UI, IBM Plex Mono for numerals and code —
- * with headings since moved to the licensed Gummi (below).
+ * with headings since moved to the licensed Gummi (below, loaded at runtime).
  * Each woff2 in ./fonts is a lossless conversion of the official
  * google/fonts binary (ttf SHA-256 62b6cb49… Aleo, 9b4c074d… Aleo Italic,
  * 16bda691… SUSE, 6a3412f0… / a9b4c49b… / d3c38e55… / ac27abd6… Plex Mono
@@ -45,27 +46,12 @@ const aleo = localFont({
 });
 
 /*
- * Gummi (ZEKUTYPE, via fonts.xyz): the heading face. It owns the display role
- * (`--font-display`, FONT_DISPLAY, the landing's section headings).
- *
- * Commercially licensed, NOT OFL (terms in ./fonts/Gummi-LICENSE.md): the
- * files may not be redistributed, which is why this repository must stay
- * PRIVATE while they are in it.
- *
- * Gummi ships no medium: a 500 heading renders Regular, thickened by the
- * `--medium-stroke` rules in globals.css so it doesn't read thin.
+ * Gummi (ZEKUTYPE, via fonts.xyz), the heading face, is NOT loaded here: it is
+ * commercially licensed (saplinglearn.com only, no redistribution), so its
+ * files live outside the repo on fonts.saplinglearn.com and GUMMI_BOOT_SCRIPT
+ * (below, in <head>) switches it on only on a licensed host. Everywhere else
+ * `--font-gummi` stays on Aleo. See lib/licensedFonts.ts.
  */
-const gummi = localFont({
-  src: [
-    { path: './fonts/Gummi-Regular.woff2', weight: '400', style: 'normal' },
-    { path: './fonts/Gummi-Italics.woff2', weight: '400', style: 'italic' },
-    { path: './fonts/Gummi-Bold.otf', weight: '700', style: 'normal' },
-  ],
-  variable: '--font-gummi',
-  display: 'swap',
-  fallback: ['Georgia', 'serif'],
-  adjustFontFallback: 'Times New Roman',
-});
 
 const suse = localFont({
   src: './fonts/SUSE-variable.woff2',
@@ -147,8 +133,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-accent="sage"
       data-density="compact"
-      className={`${aleo.variable} ${gummi.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
+      className={`${aleo.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
     >
+      <head>
+        {/* Before first paint, so a licensed host never flashes Aleo for long. */}
+        <script dangerouslySetInnerHTML={{ __html: GUMMI_BOOT_SCRIPT }} />
+      </head>
       <body>
         {/* First, above every provider: a server-streamed page is revealed and
             hydrated before any post-hydration update reaches it (lib/streamedReveal.ts). */}

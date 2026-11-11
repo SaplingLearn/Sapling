@@ -24,36 +24,21 @@
  */
 
 import React from "react";
-import { Button, EmptyState, InlineBanner } from "@/components/ui";
-import { Skeleton } from "@/components/Skeleton";
-import { Icon } from "@/components/Icon";
-import { Pill } from "@/components/Pill";
-import { useToast } from "@/components/ToastProvider";
 import { apiToGraphNode } from "@/lib/data";
 import type { SessionConfig } from "@/lib/quiz/machine";
 import { savePrefs } from "@/lib/quiz/prefs";
-import {
-  colorFor,
-  courseQueueFromPlan,
-  entrySelection,
-  latestCompletedAttempt,
-  metaLine,
-  planReasonCopy,
-  queueFor,
-  rationaleFor,
-  skillPercent,
-  type Candidate,
-} from "@/lib/quiz/proposals";
-import { QUEUE_COUNT, QUEUE_MAX } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
-import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
-import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
+import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
+import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
-import { LiveNeighbourhood } from "./LiveNeighbourhood";
-import { TopicList } from "./TopicList";
+import { ResumeStrip, homeColumns, masteredState, stateBody } from "./HomeStates";
+import { ProposalCard } from "./ProposalCard";
+import { TopicsColumn } from "./TopicsColumn";
 import { accentStyle } from "./accent";
+import { adjustSubtitle, effectiveConfigFor, homeViewFor, prefsFor } from "./homeView";
+import { useHomeCard, useTopicFilter } from "./useHomeCard";
 import "./home.css";
 
 export interface QuizHomeProps {
@@ -68,125 +53,11 @@ export interface QuizHomeProps {
   onPickedChange?: (conceptId: string | null) => void;
 }
 
-/** The card's three shapes (§5 B1.2). `course` and `due` run as queues. */
-type CardMode = "concept" | "course" | "due";
-
-/** The neighbourhood window's height while the tree loads (`home.css`). */
-const GRAPH_SKELETON_HEIGHT = 340;
-
-/** Why a deep-linked concept is the one on offer (§5 B1.2). */
-const DEEP_LINK_RATIONALE: Partial<Record<SourceKind, string>> = {
-  tree: "From your tree",
-  notes: "From your note",
-};
-const DEFAULT_DEEP_LINK_RATIONALE = "Suggested for you";
-
-/** How long a swapped-out concept's row stays tinted — `--quiz-home-returned-dur`. */
-const RETURNED_TINT_MS = 1400;
-
-/** §6: a link into a term the student isn't looking at. */
-const UNRESOLVED_COPY = "That concept isn't in your current semester";
-
 export function QuizHome({ home, config, entry, session, actions, onPickedChange }: QuizHomeProps) {
-  const toast = useToast();
   const reducedMotion = usePrefersReducedMotion();
   const [adjustOpen, setAdjustOpen] = React.useState(false);
-  const [topicQuery, setTopicQuery] = React.useState("");
-  /** "all", or the one course the topic list is narrowed to. */
-  const [topicCourse, setTopicCourse] = React.useState("all");
-
-  // ── What the card is about ────────────────────────────────────────────
-
-  const selection = React.useMemo(
-    () => entrySelection(entry, home.nodes, home.courses),
-    [entry, home.nodes, home.courses],
-  );
-
-  // A deep link naming something outside the active semester says so once and
-  // then gets out of the way — the ordinary home renders underneath (§6).
-  const toasted = React.useRef(false);
-  React.useEffect(() => {
-    if (toasted.current || home.status !== "ready" || !selection.unresolved) return;
-    toasted.current = true;
-    toast.info(UNRESOLVED_COPY);
-  }, [home.status, selection.unresolved, toast]);
-
-  const courseQueue = React.useMemo(
-    () => (entry.course
-      ? home.planned
-        ? courseQueueFromPlan(home.candidates, entry.course)
-        : queueFor("course", home.nodes, entry.course)
-      : []),
-    [entry.course, home.nodes, home.planned, home.candidates],
-  );
-  // The tier ranking's due queue, or with `quiz_concept_plan` the learner
-  // model's (spec §13 A143): the hook decides, so the card and the queue agree.
-  const dueQueue = home.dueQueue;
-
-  // A concept picked off the topic list (or the neighbourhood). It belongs to
-  // the arrival it was made on: a new entry (another deep link) starts from
-  // that entry's own card again, without an effect to reset it.
-  const entryKey = `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}`;
-  const [pick, setPick] = React.useState<{ entryKey: string; id: string } | null>(null);
-  const pickedId =
-    pick && pick.entryKey === entryKey && home.nodes.some(n => n.id === pick.id) ? pick.id : null;
-
-  React.useEffect(() => {
-    onPickedChange?.(pickedId);
-  }, [pickedId, onPickedChange]);
-
-  const mode: CardMode = pickedId || selection.conceptId
-    ? "concept"
-    : entry.course && courseQueue.length > 0
-      ? "course"
-      : entry.scope === "due" && dueQueue.length > 0
-        ? "due"
-        : "concept";
-
-  /**
-   * A concept as the card and the dialogs want it. Ranked candidates come with
-   * their rationale already resolved; anything else (a mastered concept picked
-   * out of the list, say) is built the same way `rankCandidates` would.
-   */
-  const candidateFor = React.useCallback(
-    (nodeId: string | null | undefined): Candidate | null => {
-      if (!nodeId) return null;
-      const ranked = home.candidates.find(c => c.node.id === nodeId);
-      if (ranked) return ranked;
-      const node = home.nodes.find(n => n.id === nodeId);
-      if (!node) return null;
-      const course = home.courses.find(c => c.course_id === node.course_id) ?? null;
-      const lastAttempt = latestCompletedAttempt(node.id, home.attempts);
-      return {
-        node,
-        course,
-        color: colorFor(node, course),
-        rationale: rationaleFor(node, lastAttempt),
-        ...(lastAttempt ? { lastAttempt } : {}),
-      };
-    },
-    [home.candidates, home.nodes, home.courses, home.attempts],
-  );
-
-  /** The card the arrival itself proposes — what "Back to the suggestion"
-   *  returns to. */
-  const suggested = React.useMemo(() => {
-    if (!selection.conceptId && entry.course && courseQueue.length > 0) return candidateFor(courseQueue[0]);
-    if (!selection.conceptId && !entry.course && entry.scope === "due" && dueQueue.length > 0) {
-      return candidateFor(dueQueue[0]);
-    }
-    return candidateFor(selection.conceptId) ?? home.primary;
-  }, [selection.conceptId, entry.course, entry.scope, courseQueue, dueQueue, candidateFor, home.primary]);
-
-  const card = React.useMemo(
-    () => (pickedId ? candidateFor(pickedId) : suggested),
-    [pickedId, candidateFor, suggested],
-  );
-
-  const entryCourse = React.useMemo(
-    () => home.courses.find(c => c.course_id === entry.course) ?? null,
-    [home.courses, entry.course],
-  );
+  const proposal = useHomeCard({ home, entry, session, actions, onPickedChange, reducedMotion });
+  const topics = useTopicFilter(home.byCourse, proposal.mode, proposal.card);
 
   // ── The little constellation ──────────────────────────────────────────
   //
@@ -198,131 +69,14 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
     [home.nodes, home.courses],
   );
 
-  /** The `n` in "{Course} · {tier} · {n} connected concepts" (R-8's fallback). */
-  const connectedTo = React.useCallback(
-    (nodeId: string | undefined) =>
-      nodeId ? home.edges.filter(e => e.source === nodeId || e.target === nodeId).length : 0,
-    [home.edges],
-  );
-
-
-  // ── Copy ──────────────────────────────────────────────────────────────
-
-  const accent = card?.color ?? null;
-  const queued = mode !== "concept";
-  const conceptName = card?.node.concept_name ?? "";
-  const courseCode = (mode === "course" ? entryCourse : card?.course)?.course_code ?? "";
-
-  const title =
-    mode === "course"
-      ? `Practice ${courseCode}`
-      : mode === "due"
-        ? "Review everything due"
-        : conceptName;
-
-  const meta =
-    mode === "course"
-      ? `${courseQueue.length} concepts ${home.planned ? "to practise" : "due"}`
-      : mode === "due"
-        ? `${home.due.count} concepts across ${home.due.courseCount} courses · starting with the ${Math.min(home.due.count, QUEUE_MAX)} ${home.planned ? "most overdue" : "weakest"}`
-        : card
-          ? metaLine(card.node)
-          : "";
-
-  // Only a deep link explains itself on the card: it is the one arrival whose
-  // proposal the student did not just get from the ranking.
-  const rationale =
-    mode === "concept" && !pickedId && selection.conceptId && card
-      ? DEEP_LINK_RATIONALE[entry.source.kind] ?? DEFAULT_DEEP_LINK_RATIONALE
-      : null;
-  // Spec §13 A143: why the learner model proposes the card's concept, and its
-  // skill meter — on the plan's own suggestion only (a pick or a deep link is
-  // the student's choice, explained above or not at all).
-  const planLine =
-    mode === "concept" && !pickedId && !selection.conceptId && card?.plan
-      ? `${planReasonCopy(card.plan.reason)} Skill meter: ${skillPercent(card.plan.pKnown)}.`
-      : null;
-
-  // R-8's sentence, fetched by the hook for the concept the CARD shows — a deep
-  // link included (A2 fix round 5). The built sentence stands in while the call
-  // is in flight or after it fails. The two queued shapes show no definition at
-  // all: it describes one concept and would read as a caption for the wrong
-  // thing under "Practice CS101".
-  // The hook describes ITS card; for the frame between a pick here and the
-  // hook catching up, the two can differ, and that frame counts as pending.
-  const hookOnCard = home.cardConceptId === card?.node.id;
-  const description = hookOnCard ? home.cardDescription : null;
-  const definitionPending = !queued && !description && (!hookOnCard || home.cardDescriptionPending);
-  // The built sentence is only for a description that could not be fetched:
-  // shown first and replaced a moment later, it read as a glitch.
-  const definition = queued || definitionPending
-    ? null
-    : description ?? (card ? fallbackDefinition(card, connectedTo(card.node.id)) : "");
-
-  const feedbackSuffix = session.config.feedback === "as-you-go" ? " · answers as you go" : "";
-  const configLine = queued
-    ? `${QUEUE_COUNT} questions each, ${session.config.difficulty}${feedbackSuffix}`
-    : `${session.config.count} questions, ${session.config.difficulty}${feedbackSuffix}`;
-
-  // ── Starting ──────────────────────────────────────────────────────────
-
-  const startConcept = React.useCallback(
-    (candidate: Candidate, cfg: SessionConfig) => {
-      actions.start(
-        {
-          intent: "practice",
-          scope: { kind: "concept", conceptId: candidate.node.id },
-          conceptId: candidate.node.id,
-          courseId: candidate.node.course_id ?? null,
-        },
-        cfg,
-      );
-    },
-    [actions],
-  );
-
-  const startQueue = React.useCallback(
-    (kind: "course" | "due", queue: string[], cfg: SessionConfig, courseId?: string) => {
-      if (queue.length === 0) return;
-      const first = queue[0];
-      actions.start(
-        {
-          intent: kind === "due" ? "review" : "practice",
-          scope:
-            kind === "due"
-              ? { kind: "due", queue }
-              : { kind: "course", courseId: courseId ?? "", queue },
-          conceptId: first,
-          courseId: home.nodes.find(n => n.id === first)?.course_id ?? null,
-        },
-        cfg,
-      );
-    },
-    [actions, home.nodes],
-  );
-
-  /** The card's own Start, in whichever shape it currently has. */
-  const startCard = React.useCallback(
-    (cfg: SessionConfig) => {
-      if (mode === "course") return startQueue("course", courseQueue, cfg, entry.course);
-      if (mode === "due") return startQueue("due", dueQueue, cfg);
-      if (card) startConcept(card, cfg);
-    },
-    [mode, startQueue, courseQueue, dueQueue, entry.course, card, startConcept],
+  const conceptCount = React.useMemo(
+    () => home.nodes.filter(n => !n.is_subject_root).length,
+    [home.nodes],
   );
 
   /** Remember the choices a dialog was started with (§5 B1.6). `setConfig`
    *  persists on its own; `start` does not. */
-  const remember = (cfg: SessionConfig) =>
-    savePrefs({ count: cfg.count, difficulty: cfg.difficulty, feedback: cfg.feedback,
-      ...(cfg.questionFormat ? { questionFormat: cfg.questionFormat } : {}) });
-
-  // A queued session is QUEUE_COUNT questions per concept by default (R-4).
-  // That is what the card starts with AND what its Adjust dialog opens on —
-  // otherwise "Start · 5 medium" would quietly run three-question attempts.
-  const effectiveConfig: SessionConfig = queued
-    ? { ...session.config, count: QUEUE_COUNT }
-    : session.config;
+  const remember = (cfg: SessionConfig) => savePrefs(prefsFor(cfg));
 
   // ── Dialogs ───────────────────────────────────────────────────────────
 
@@ -332,412 +86,69 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
     actions.configure(open);
   };
 
-  // ── Swapping the card ─────────────────────────────────────────────────
-  //
-  // Picking a concept makes it the card, in place: Start and Adjust then act
-  // on it. The swap is deliberately quiet: the card fades up into place (its
-  // neighbourhood re-settles around the new concept), and the row the old
-  // card's concept returns to is tinted for a moment so the eye finds it.
-  // Reduced motion: it just changes.
-  const [swapped, setSwapped] = React.useState(false);
-  /** The row a swapped-out concept returns to, flashed once. */
-  const [returnedId, setReturnedId] = React.useState<string | null>(null);
-  const proposalRef = React.useRef<HTMLElement>(null);
-
-  // The tint lasts as long as its animation; cleared after, so a later
-  // re-render of the list (a filter, a search) does not replay it.
-  React.useEffect(() => {
-    if (!returnedId) return;
-    const timer = window.setTimeout(() => setReturnedId(null), RETURNED_TINT_MS);
-    return () => window.clearTimeout(timer);
-  }, [returnedId]);
-
-  /** The arrival proposes a queue ("Practice CS101", "Review everything
-   *  due") rather than one concept. */
-  const suggestedIsQueue =
-    !selection.conceptId &&
-    ((Boolean(entry.course) && courseQueue.length > 0) ||
-      (!entry.course && entry.scope === "due" && dueQueue.length > 0));
-
-  // Stable across renders that don't change what a pick means, so the
-  // neighbourhood's memoised graph isn't re-rendered on every search keystroke.
-  const choose = React.useCallback(
-    (requested: string | null) => {
-      // Picking the suggestion's own concept IS going back to the suggestion —
-      // except when the suggestion is a queue, where that one concept on its
-      // own is a real choice (and the queue card has no other way to it).
-      const target =
-        requested && !suggestedIsQueue && requested === suggested?.node.id ? null : requested;
-      // Compare the PICK, not the concept on screen: a queue card shows its
-      // first concept without that concept being picked.
-      if (target === pickedId) return;
-      const outgoingId = card?.node.id ?? null;
-      const incomingId = target ?? suggested?.node.id ?? null;
-      setPick(target ? { entryKey, id: target } : null);
-      setSwapped(true);
-      // A queued card is titled for its course or the due set; its first
-      // concept never left the list, so there is no row to point back to.
-      setReturnedId(mode === "concept" && outgoingId !== incomingId ? outgoingId : null);
-      // Stacked (phone), the card is above the list the student clicked in.
-      if (window.matchMedia?.("(max-width: 900px)").matches) {
-        proposalRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
-      }
-    },
-    [suggestedIsQueue, suggested, pickedId, card, entryKey, mode, reducedMotion],
-  );
-
   // ── Regions ───────────────────────────────────────────────────────────
 
-  const resumable = home.resumable;
-  const resumeName = resumable
-    ? home.nodes.find(n => n.id === resumable.attempt.concept_node_id)?.concept_name
-      ?? home.attempts.find(a => a.quiz_id === resumable.attempt.quiz_id)?.concept_name
-      ?? "a concept"
-    : "";
-  const resumeTotal = resumable
-    ? resumable.attempt.questions.length || resumable.attempt.total || 0
-    : 0;
-
-  // A true full-bleed band: it renders OUTSIDE the content column (A2's
-  // `.quiz-body--home` is padding-free for exactly this), so `InlineBanner`'s
-  // own page padding and bottom rule reach both edges under the TopBar with
-  // nothing here overriding them.
-  const resumeStrip = resumable ? (
-    <InlineBanner
-      testid="quiz-resume-strip"
-      actions={
-        <>
-          <Button data-testid="quiz-resume" onClick={() => actions.resume(resumable.attempt.quiz_id)}>
-            Resume
-          </Button>
-          <Button
-            variant="link"
-            data-testid="quiz-resume-discard"
-            onClick={() => home.discard(resumable.attempt.quiz_id)}
-          >
-            Discard
-          </Button>
-        </>
+  const lead = proposal.card ? (
+    <ProposalCard
+      card={proposal.card}
+      proposalRef={proposal.proposalRef}
+      entering={proposal.swapped && !reducedMotion}
+      showReset={Boolean(proposal.pickedId && proposal.suggested)}
+      onPick={proposal.choose}
+      title={proposal.title}
+      meta={proposal.meta}
+      rationale={proposal.rationale}
+      planLine={proposal.planLine}
+      definitionPending={proposal.definitionPending}
+      definition={proposal.definition}
+      configLine={proposal.configLine}
+      viewNodes={viewNodes}
+      edges={home.edges}
+      onStart={() => proposal.startCard(proposal.effectiveConfig)}
+      adjustOpen={adjustOpen}
+      onAdjust={() => openAdjust(!adjustOpen)}
+      dueLink={
+        home.due.count > 0 && proposal.mode !== "due"
+          ? { count: home.due.count, courseCount: home.due.courseCount }
+          : null
       }
-    >
-      {`You left a quiz on ${resumeName} — ${resumable.answered} of ${resumeTotal} answered`}
-    </InlineBanner>
-  ) : null;
-
-  const conceptCount = React.useMemo(
-    () => home.nodes.filter(n => !n.is_subject_root).length,
-    [home.nodes],
+      onReviewDue={() =>
+        proposal.startQueue("due", proposal.dueQueue, effectiveConfigFor(true, session.config))
+      }
+    />
+  ) : (
+    masteredState()
   );
 
-  // The due set is a quiz of its own, so it sits with the card's actions, not
-  // among the concepts. On a due card the card already IS that quiz.
-  const dueLink =
-    home.due.count > 0 && mode !== "due" ? (
-      <Button
-        variant="link"
-        className="quiz-home__due"
-        data-testid="quiz-review-due"
-        onClick={() => startQueue("due", dueQueue, { ...session.config, count: QUEUE_COUNT })}
-      >
-        {`Or review everything due · ${home.due.count} concepts across ${home.due.courseCount} courses →`}
-      </Button>
-    ) : null;
-
-  const proposal = card ? (
-    <section
-      ref={proposalRef}
-      className="quiz-home__proposal"
-      data-testid="quiz-proposal"
-      data-entering={swapped && !reducedMotion ? "true" : undefined}
-    >
-      {/* The card's TEXT is keyed on the concept, so a swap remounts it and
-          plays its entrance (the first card of a visit arrives without one).
-          The neighbourhood below is NOT: it stays mounted, so the concepts
-          two neighbourhoods share glide to their new places and the view
-          eases onto the new cluster, instead of the graph being rebuilt. */}
-      <div className="quiz-home__card-text" key={card.node.id}>
-      {/* No eyebrow: the concept's name heads the card. Once a topic is
-          picked, the one line above it is the way back to the suggestion. */}
-      {pickedId && suggested && (
-        <div className="quiz-home__eyebrow-row">
-          <Button variant="link" data-testid="quiz-pick-reset" onClick={() => choose(null)}>
-            ← Back to the suggestion
-          </Button>
-        </div>
-      )}
-      <div className="h-serif quiz-home__name" data-testid="quiz-proposal-name">
-        {title}
-      </div>
-
-      {meta && <p className="quiz-home__meta">{meta}</p>}
-      {rationale && <p className="quiz-home__rationale">{rationale}</p>}
-      {planLine && (
-        <p className="quiz-home__rationale" data-testid="quiz-plan-reason">
-          {planLine}
-        </p>
-      )}
-      {/* Keyed on its text: the AI sentence replacing the built stand-in a
-          moment later fades in rather than snapping. */}
-      {definitionPending && (
-        <div className="quiz-home__definition-pending" data-testid="quiz-definition-pending" aria-hidden>
-          <Skeleton width="100%" height={13} />
-          <Skeleton width="92%" height={13} />
-          <Skeleton width="60%" height={13} />
-        </div>
-      )}
-      {definition && (
-        <p className="quiz-home__definition" key={definition}>
-          {definition}
-        </p>
-      )}
-      <p className="quiz-home__config">{configLine}</p>
-      </div>
-
-      <LiveNeighbourhood
-        centreId={card.node.id}
-        nodes={viewNodes}
-        edges={home.edges}
-        onPick={choose}
-        ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
-      />
-
-      <div className="quiz-home__actions">
-        <Button
-          variant="primary"
-          data-testid="quiz-start"
-          onClick={() => startCard(effectiveConfig)}
-        >
-          Start
-        </Button>
-        <Button
-          variant="link"
-          data-testid="quiz-adjust"
-          aria-pressed={adjustOpen}
-          data-active={adjustOpen ? "true" : undefined}
-          onClick={() => openAdjust(!adjustOpen)}
-        >
-          Adjust
-        </Button>
-      </div>
-      {dueLink}
-    </section>
-  ) : (
-    // Every concept is mastered: there is nothing to propose, but every
-    // concept is still in the list beside this, so it is a signpost rather
-    // than a dead end.
-    <EmptyState
-      testid="quiz-empty-state"
-      title="Nothing needs review right now"
-      body="Every concept on your tree is in good shape. Pick one from the list to quiz it anyway."
+  const side = (
+    <TopicsColumn
+      byCourse={home.byCourse}
+      courseFilter={topics.courseFilter}
+      onCourse={topics.setTopicCourse}
+      topicQuery={topics.topicQuery}
+      onQuery={topics.setTopicQuery}
+      topicGroups={topics.topicGroups}
+      emptyTopics={topics.emptyTopics}
+      onPick={proposal.choose}
+      onIntent={home.prefetchDescription}
+      returnedId={proposal.returnedId}
     />
   );
 
-  // The card's own concept is not offered again beside it. A queued card is
-  // titled for the course or the due set, not its first concept, so there the
-  // first concept stays in the list. A search finds everything, the card's
-  // concept included: hiding a match the student typed would read as missing.
-  const query = topicQuery.trim().toLowerCase();
-  const hiddenTopic = mode === "concept" && !query ? card?.node.id : undefined;
-  // A narrowed course that has since left the list (a semester switch) falls
-  // back to every course rather than an empty list.
-  const courseFilter = home.byCourse.some(g => g.course.course_id === topicCourse) ? topicCourse : "all";
-  const topicGroups = React.useMemo(
-    () =>
-      home.byCourse
-        .filter(g => courseFilter === "all" || g.course.course_id === courseFilter)
-        .map(g => ({
-          ...g,
-          nodes: g.nodes.filter(
-            n =>
-              n.id !== hiddenTopic &&
-              (!query ||
-                n.concept_name.toLowerCase().includes(query) ||
-                g.course.course_code.toLowerCase().includes(query)),
-          ),
-        }))
-        .filter(g => g.nodes.length > 0),
-    [home.byCourse, hiddenTopic, query, courseFilter],
-  );
-
-  // One row of controls over the list: the course pills on the left (only
-  // when there is more than one course to choose between), the search on the
-  // right, centred on one line.
-  const toolbar = (
-    <div className="quiz-home__toolbar">
-      {home.byCourse.length > 1 && (
-        <div className="quiz-home__courses" role="group" aria-label="Show concepts from">
-          <Pill
-            size="md"
-            active={courseFilter === "all"}
-            onClick={() => setTopicCourse("all")}
-            testId="quiz-course-all"
-          >
-            All
-          </Pill>
-          {home.byCourse.map(({ course, nodes }) => (
-            <Pill
-              size="md"
-              key={course.course_id}
-              active={courseFilter === course.course_id}
-              onClick={() => setTopicCourse(course.course_id)}
-              testId={`quiz-course-${course.course_id}`}
-              icon={
-                <span
-                  className="quiz-home__course-dot"
-                  style={{ background: colorFor(nodes[0], course) }}
-                  aria-hidden
-                />
-              }
-            >
-              {course.course_code}
-            </Pill>
-          ))}
-        </div>
-      )}
-      <label className="quiz-home__search">
-        <Icon name="search" size={15} />
-        <input
-          type="search"
-          className="quiz-home__search-input"
-          data-testid="quiz-topic-search"
-          placeholder="Search concepts"
-          aria-label="Search your concepts"
-          value={topicQuery}
-          onChange={e => setTopicQuery(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Escape" && topicQuery) {
-              e.preventDefault();
-              setTopicQuery("");
-            }
-          }}
-        />
-      </label>
-    </div>
-  );
-
-  const narrowedCourse = home.byCourse.find(g => g.course.course_id === courseFilter)?.course;
-  const emptyTopics = query
-    ? `No concepts match “${topicQuery.trim()}”`
-    : narrowedCourse
-      ? `Nothing else in ${narrowedCourse.course_code} yet`
-      : "Nothing else on your tree yet";
-
-  const topics = (
-    <section className="quiz-home__topics-col" aria-label="Choose a topic">
-      {toolbar}
-      {/* Capped to the proposal's height and scrolled inside (`home.css`). */}
-      <div className="quiz-home__topics-scroll">
-        {topicGroups.length > 0 ? (
-          <TopicList
-            groups={topicGroups}
-            onPick={choose}
-            onIntent={home.prefetchDescription}
-            returnedId={returnedId}
-          />
-        ) : (
-          <p className="quiz-home__topics-empty" data-testid="quiz-topic-search-empty">
-            {emptyTopics}
-          </p>
-        )}
-      </div>
-    </section>
-  );
-
-  /** The two columns, with whatever each one holds. */
-  const columns = (lead: React.ReactNode, side: React.ReactNode) => (
-    <div className="quiz-home__grid">
-      <div className="quiz-home__lead">{lead}</div>
-      <div className="quiz-home__grid-divider" />
-      {side}
-    </div>
-  );
-
-  const skeleton = columns(
-    <div className="quiz-home__skeleton-main">
-      <Skeleton width={240} height={32} />
-      <Skeleton width={220} height={12} />
-      <Skeleton width={380} height={13} />
-      <Skeleton width={340} height={13} />
-      <Skeleton width={160} height={16} />
-      <Skeleton width="100%" height={GRAPH_SKELETON_HEIGHT} />
-      <Skeleton width={120} height={34} />
-    </div>,
-    <div className="quiz-home__topics-col">
-      <Skeleton width="100%" height={28} />
-      <div className="quiz-home__skeleton-rows">
-        {[0, 1, 2, 3, 4, 5].map(i => (
-          <Skeleton key={i} width="100%" height={18} />
-        ))}
-      </div>
-    </div>,
-  );
-
-  const errorCard = (
-    <div className="quiz-error" role="alert" data-testid="quiz-home-error">
-      <h2 className="h-serif quiz-error__title">We couldn&apos;t load your tree</h2>
-      <p className="quiz-error__body">{home.error?.message}</p>
-      <div className="quiz-error__actions">
-        <Button variant="primary" data-testid="quiz-home-retry" onClick={() => home.refresh()}>
-          Retry
-        </Button>
-      </div>
-    </div>
-  );
-
-  /** Which arrival the screen is rendering. Named once so the Cancel row
-   *  above the body knows whether the two columns already carry Cancel. */
-  const view =
-    home.status === "error"
-      ? "error"
-      : home.status === "loading"
-        ? "loading"
-        : home.courses.length === 0
-          ? "no-courses"
-          : conceptCount === 0
-            ? "empty-tree"
-            : "home";
-
-  const body = () => {
-    if (view === "error") return errorCard;
-    if (view === "loading") return skeleton;
-
-    if (view === "no-courses") {
-      return (
-        <EmptyState
-          testid="quiz-empty-state"
-          title="Add a course to start quizzing"
-          body="Quizzes come from the concepts on your tree, and your tree grows out of your courses."
-          action={{ label: "Go to your dashboard", href: "/dashboard" }}
-        />
-      );
-    }
-
-    if (view === "empty-tree") {
-      return (
-        <EmptyState
-          testid="quiz-empty-state"
-          title="Your tree is empty"
-          body="Upload notes or talk to the tutor and concepts will appear here."
-          action={
-            <>
-              <a className="btn btn--primary" href="/library">
-                Go to your library
-              </a>
-              <a className="btn" href="/learn">
-                Talk to the tutor
-              </a>
-            </>
-          }
-        />
-      );
-    }
-
-    return columns(proposal, topics);
-  };
+  /** Which arrival the screen is rendering. */
+  const view = homeViewFor(home.status, home.courses.length, conceptCount);
 
   return (
-    <div className="quiz-home" data-testid="quiz-home" style={accentStyle(accent)}>
-      {resumeStrip}
+    <div className="quiz-home" data-testid="quiz-home" style={accentStyle(proposal.accent)}>
+      {home.resumable && (
+        <ResumeStrip
+          resumable={home.resumable}
+          nodes={home.nodes}
+          attempts={home.attempts}
+          onResume={quizId => actions.resume(quizId)}
+          onDiscard={quizId => home.discard(quizId)}
+        />
+      )}
 
       {/* A2's `.quiz-body--home` is padding-free so the strip above can bleed;
           everything else gets the column and the page padding back here. The
@@ -747,17 +158,19 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
           padding outside the column. */}
       <div className="quiz-inset--home">
         <div className="quiz-col quiz-col--home">
-          {body()}
+          {view === "home"
+            ? homeColumns(lead, side)
+            : stateBody(view, home.error?.message, () => home.refresh())}
         </div>
       </div>
 
-      {adjustOpen && card && (
+      {adjustOpen && proposal.card && (
         <AdjustDialog
           open
-          subtitle={courseCode ? `${conceptName} · ${courseCode}` : conceptName}
-          accent={accent}
+          subtitle={adjustSubtitle(proposal.conceptName, proposal.courseCode)}
+          accent={proposal.accent}
           config={config}
-          initialConfig={effectiveConfig}
+          initialConfig={proposal.effectiveConfig}
           onDone={cfg => {
             openAdjust(false);
             actions.setConfig(cfg);
@@ -766,7 +179,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
           onStart={cfg => {
             openAdjust(false);
             remember(cfg);
-            startCard(cfg);
+            proposal.startCard(cfg);
           }}
         />
       )}

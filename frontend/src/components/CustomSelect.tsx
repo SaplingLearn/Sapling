@@ -32,6 +32,36 @@ interface CustomSelectProps<T extends string = string> {
   testId?: string;
 }
 
+const LIST_MAX = 280;
+const LIST_MIN = 120;
+const LIST_GAP = 4;
+
+/** The box the open list must fit inside: the viewport, narrowed by every
+ *  ancestor that clips or scrolls vertically (a list that runs past a
+ *  scrolling panel's edge makes the panel scroll instead of showing it). */
+function clipBox(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (getComputedStyle(p).overflowY === "visible") continue;
+    const r = p.getBoundingClientRect();
+    top = Math.max(top, r.top);
+    bottom = Math.min(bottom, r.bottom);
+  }
+  return { top, bottom };
+}
+
+/** Where the list opens: downward unless there isn't room there and there is
+ *  more above. Measured as the list opens, so it lays out once in the right place. */
+function placeList(el: HTMLElement): { up: boolean; max: number } {
+  const r = el.getBoundingClientRect();
+  const box = clipBox(el);
+  const below = box.bottom - r.bottom - LIST_GAP * 2;
+  const above = r.top - box.top - LIST_GAP * 2;
+  const up = below < Math.min(LIST_MAX, 200) && above > below;
+  return { up, max: Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below)) };
+}
+
 /**
  * A button that opens a listbox of options (spec §13 A135 for its keyboard
  * and screen-reader behaviour). The button is named by `ariaLabel` and the
@@ -66,6 +96,8 @@ export function CustomSelect<T extends string = string>({
   const labelId = `${baseId}-label`;
   const valueId = `${baseId}-value`;
   const optionId = (idx: number) => `${baseId}-option-${idx}`;
+  // Opens downward unless there isn't room there and there is more above.
+  const [place, setPlace] = useState<{ up: boolean; max: number }>({ up: false, max: LIST_MAX });
 
   const selectedIndex = useMemo(() => options.findIndex(o => o.value === value), [options, value]);
   const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
@@ -86,6 +118,7 @@ export function CustomSelect<T extends string = string>({
 
   const openList = () => {
     if (disabled) return;
+    if (wrapperRef.current) setPlace(placeList(wrapperRef.current));
     setHighlighted(selected && !selected.disabled ? selectedIndex : firstEnabled());
     setOpen(true);
   };
@@ -99,12 +132,14 @@ export function CustomSelect<T extends string = string>({
   // it, and so does Escape wherever focus is.
   useLayoutEffect(() => {
     if (!open) return;
-    listRef.current?.focus();
+    listRef.current?.focus({ preventScroll: true });
     const onDown = (e: MouseEvent) => {
       if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // Handled: an Esc that closes the list shouldn't also close what it sits in.
+      e.preventDefault();
       close(!!wrapperRef.current?.contains(document.activeElement));
     };
     document.addEventListener("mousedown", onDown);
@@ -237,7 +272,8 @@ export function CustomSelect<T extends string = string>({
           style={{
             position: "absolute",
             zIndex: 100,
-            top: "calc(100% + 4px)",
+            top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`,
+            bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto",
             left: align === "left" ? 0 : "auto",
             right: align === "right" ? 0 : "auto",
             minWidth: "100%",
@@ -248,7 +284,7 @@ export function CustomSelect<T extends string = string>({
             border: "1px solid var(--border-strong)",
             borderRadius: "var(--r-md)",
             boxShadow: "var(--shadow-lg)",
-            maxHeight: 280,
+            maxHeight: place.max,
             overflowY: "auto",
           }}
         >

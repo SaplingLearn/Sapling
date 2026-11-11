@@ -14,13 +14,14 @@ import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useToast } from "../ToastProvider";
-import { useConfirm } from "@/lib/useConfirm";
+import { useConfirm, type ConfirmHandle } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import type { AttemptSummary } from "@/lib/quiz/types";
+import { deleteButtonStyle, highlightIdFor, selectedCourseIdOf } from "./treeHelpers";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -340,130 +341,21 @@ export function Tree() {
   });
 
   const detailPanel = selected && (
-    <>
-      {/* Course on the left, close in the top-right corner. */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: "50%", background: selected.color, flexShrink: 0 }} />
-          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {selected.subject}
-          </span>
-        </div>
-        <button
-          className="btn btn--ghost btn--sm"
-          onClick={() => setSelected(null)}
-          aria-label="Close detail panel"
-          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
-        >
-          <Icon name="x" size={14} />
-        </button>
-      </div>
-      <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
-        {selected.name}
-      </h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-        <div className="card" style={{ padding: 12 }}>
-          <div className="label-micro">Mastery</div>
-          <div className="mono" style={{ fontSize: 22, color: selected.color }}>
-            {Math.round((selected.mastery_score || 0) * 100)}%
-          </div>
-        </div>
-        <div className="card" style={{ padding: 12 }}>
-          <div className="label-micro">Tier</div>
-          <div style={{ fontSize: 14, fontWeight: 500, marginTop: 4, textTransform: "capitalize" }}>
-            {selected.mastery_tier}
-          </div>
-        </div>
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <div className="label-micro" style={{ marginBottom: 6 }}>Last studied</div>
-        <div style={{ fontSize: 13 }}>
-          {selected.last_studied_at ? new Date(selected.last_studied_at).toLocaleString() : "never"}
-        </div>
-      </div>
-      <button className="btn btn--primary" style={{ width: "100%" }} onClick={() => onLearn(selected)}>
-        <Icon name="brain" size={14} /> Learn this
-      </button>
-      <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(selected)}>
-        <Icon name="bolt" size={14} /> Quick quiz
-      </button>
-      {!selected.is_subject_root && (
-        <button
-          onClick={del.trigger}
-          className="btn"
-          style={{
-            width: "100%", marginTop: 12,
-            background: del.armed ? "var(--err-soft)" : undefined,
-            color: del.armed ? "var(--err)" : undefined,
-            borderColor: del.armed ? "var(--err)" : undefined,
-          }}
-        >
-          <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete concept"}
-        </button>
-      )}
-      {!selected.is_subject_root && (
-        <div data-testid="tree-node-recent-quizzes" style={{ marginTop: 18 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Recent quizzes</div>
-          {attempts === null ? (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
-          ) : recentQuizzes.length === 0 ? (
-            // No second CTA here on purpose: "Quick quiz" is a few pixels up
-            // and is the action this empty state would ask for.
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
-          ) : (
-            recentQuizzes.map(a => (
-              <div
-                key={a.quiz_id}
-                data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
-                style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  gap: 8, padding: "8px 10px",
-                  background: "var(--bg-panel)", border: "1px solid var(--border)",
-                  borderRadius: "var(--r-sm)", marginBottom: 6,
-                }}
-              >
-                {/* Not a link: there is no finished-attempt review endpoint —
-                    `GET /attempts/{id}` answers `resumable: false, questions: []`
-                    for a completed row (gap G5). A row that navigated nowhere
-                    would be a broken promise. */}
-                <span style={{ fontSize: 12 }}>
-                  {relativeStudied(a.completed_at || a.created_at)}
-                </span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-      {sessionsForSelected.length > 0 && (
-        <div style={{ marginTop: 18 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Sessions for this concept</div>
-          {sessionsForSelected.slice(0, 4).map(s => (
-            <button
-              key={s.id}
-              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
-              style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                width: "100%", padding: "8px 10px",
-                background: "var(--bg-panel)", border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)", marginBottom: 6, textAlign: "left",
-              }}
-            >
-              <div style={{ fontSize: 12, minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontWeight: 500, textTransform: "capitalize" }}>{s.mode}</div>
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
-                </div>
-              </div>
-              <Icon name="chev" size={12} />
-            </button>
-          ))}
-        </div>
-      )}
-    </>
+    <NodeDetailPanel
+      node={selected}
+      del={del}
+      attempts={attempts}
+      recentQuizzes={recentQuizzes}
+      sessions={sessionsForSelected}
+      onClose={() => setSelected(null)}
+      onLearn={onLearn}
+      onQuiz={onQuiz}
+      onOpenSession={(id) => router.push(`/learn?resume=${encodeURIComponent(id)}`)}
+    />
   );
+
+  const selectedCourseId = selectedCourseIdOf(courseFilter);
+  const highlightId = highlightIdFor(suggestId, selected);
 
   return (
     <FullHeightScreen>
@@ -506,41 +398,15 @@ export function Tree() {
           </span>
         </div>
         {courseFilter !== "all" && (
-          addingConcept ? (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              <input
-                data-testid="graph-add-concept-input"
-                autoFocus
-                value={newConceptName}
-                placeholder="Concept name"
-                onChange={(e) => setNewConceptName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitAddConcept();
-                  if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
-                }}
-                style={{
-                  fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
-                  borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
-                }}
-              />
-              <button
-                data-testid="graph-add-concept-submit"
-                className="btn btn--sm btn--primary"
-                disabled={!newConceptName.trim() || savingConcept}
-                onClick={submitAddConcept}
-              >
-                Add
-              </button>
-            </span>
-          ) : (
-            <button
-              data-testid="graph-add-concept"
-              className="btn btn--sm"
-              onClick={() => setAddingConcept(true)}
-            >
-              ＋ Add concept
-            </button>
-          )
+          <AddConceptControl
+            adding={addingConcept}
+            name={newConceptName}
+            saving={savingConcept}
+            onNameChange={setNewConceptName}
+            onSubmit={submitAddConcept}
+            onOpen={() => setAddingConcept(true)}
+            onCancel={() => { setAddingConcept(false); setNewConceptName(""); }}
+          />
         )}
         {/* Right side: the mastery-status filter (its colours are the legend). */}
         <div style={{ marginLeft: "auto" }}>
@@ -577,11 +443,11 @@ export function Tree() {
                 edges={filteredEdges}
                 width={size.w}
                 height={size.h}
-                highlightId={suggestId || selected?.id}
+                highlightId={highlightId}
                 onNodeClick={(n) => setSelected(n)}
                 zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
                 legible
-                focusCourseId={keyHoverCourse ?? (courseFilter === "all" ? null : courseFilter)}
+                focusCourseId={keyHoverCourse ?? selectedCourseId}
                 onHoverCourse={setGraphHoverCourse}
                 zoomRequest={zoomRequest}
               />
@@ -594,7 +460,7 @@ export function Tree() {
                   testIdPrefix="tree"
                   rowTestId={(id) => `graph-course-filter-${id}`}
                   activeCourseId={keyHoverCourse ?? graphHoverCourse}
-                  selectedCourseId={courseFilter === "all" ? null : courseFilter}
+                  selectedCourseId={selectedCourseId}
                   onHoverCourse={setKeyHoverCourse}
                   onSelectCourse={pickCourse}
                   selectHint="Click to center this course, again to zoom out"
@@ -672,12 +538,212 @@ export function Tree() {
           <FullscreenGraph
             nodes={filteredNodes}
             edges={filteredEdges}
-            highlightId={suggestId || selected?.id}
+            highlightId={highlightId}
             onNodeClick={(n) => { setSelected(n); setFullscreen(false); }}
           />
         </div>
       )}
     </FullHeightScreen>
+  );
+}
+
+/** The toolbar's manual add-concept composer (#330): an opener button, or the
+ *  name input + Add once open. Enter submits, Escape cancels. */
+function AddConceptControl({
+  adding, name, saving, onNameChange, onSubmit, onOpen, onCancel,
+}: {
+  adding: boolean;
+  name: string;
+  saving: boolean;
+  onNameChange: (name: string) => void;
+  onSubmit: () => void;
+  onOpen: () => void;
+  onCancel: () => void;
+}) {
+  return adding ? (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+      <input
+        data-testid="graph-add-concept-input"
+        autoFocus
+        value={name}
+        placeholder="Concept name"
+        onChange={(e) => onNameChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onSubmit();
+          if (e.key === "Escape") onCancel();
+        }}
+        style={{
+          fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
+          borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
+        }}
+      />
+      <button
+        data-testid="graph-add-concept-submit"
+        className="btn btn--sm btn--primary"
+        disabled={!name.trim() || saving}
+        onClick={onSubmit}
+      >
+        Add
+      </button>
+    </span>
+  ) : (
+    <button
+      data-testid="graph-add-concept"
+      className="btn btn--sm"
+      onClick={onOpen}
+    >
+      ＋ Add concept
+    </button>
+  );
+}
+
+/** The selected node's detail panel: the desktop `<aside>` and the mobile
+ *  bottom sheet render the same content. */
+function NodeDetailPanel({
+  node, del, attempts, recentQuizzes, sessions, onClose, onLearn, onQuiz, onOpenSession,
+}: {
+  node: GraphNode;
+  del: ConfirmHandle;
+  attempts: AttemptSummary[] | null;
+  recentQuizzes: AttemptSummary[];
+  sessions: Session[];
+  onClose: () => void;
+  onLearn: (n: GraphNode) => void;
+  onQuiz: (n: GraphNode) => void;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  return (
+    <>
+      {/* Course on the left, close in the top-right corner. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: node.color, flexShrink: 0 }} />
+          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {node.subject}
+          </span>
+        </div>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={onClose}
+          aria-label="Close detail panel"
+          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
+        >
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
+        {node.name}
+      </h2>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+        <div className="card" style={{ padding: 12 }}>
+          <div className="label-micro">Mastery</div>
+          <div className="mono" style={{ fontSize: 22, color: node.color }}>
+            {Math.round((node.mastery_score || 0) * 100)}%
+          </div>
+        </div>
+        <div className="card" style={{ padding: 12 }}>
+          <div className="label-micro">Tier</div>
+          <div style={{ fontSize: 14, fontWeight: 500, marginTop: 4, textTransform: "capitalize" }}>
+            {node.mastery_tier}
+          </div>
+        </div>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <div className="label-micro" style={{ marginBottom: 6 }}>Last studied</div>
+        <div style={{ fontSize: 13 }}>
+          {node.last_studied_at ? new Date(node.last_studied_at).toLocaleString() : "never"}
+        </div>
+      </div>
+      <button className="btn btn--primary" style={{ width: "100%" }} onClick={() => onLearn(node)}>
+        <Icon name="brain" size={14} /> Learn this
+      </button>
+      <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(node)}>
+        <Icon name="bolt" size={14} /> Quick quiz
+      </button>
+      {!node.is_subject_root && (
+        <button
+          onClick={del.trigger}
+          className="btn"
+          style={deleteButtonStyle(del.armed)}
+        >
+          <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete concept"}
+        </button>
+      )}
+      {!node.is_subject_root && (
+        <RecentQuizzes attempts={attempts} recentQuizzes={recentQuizzes} />
+      )}
+      {sessions.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <div className="label-micro" style={{ marginBottom: 8 }}>Sessions for this concept</div>
+          {sessions.slice(0, 4).map(s => (
+            <button
+              key={s.id}
+              onClick={() => onOpenSession(s.id)}
+              style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                width: "100%", padding: "8px 10px",
+                background: "var(--bg-panel)", border: "1px solid var(--border)",
+                borderRadius: "var(--r-sm)", marginBottom: 6, textAlign: "left",
+              }}
+            >
+              <div style={{ fontSize: 12, minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontWeight: 500, textTransform: "capitalize" }}>{s.mode}</div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                  {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
+                </div>
+              </div>
+              <Icon name="chev" size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The node panel's "Recent quizzes" block. `attempts === null` is "not
+ *  fetched yet", never "none". */
+function RecentQuizzes({
+  attempts, recentQuizzes,
+}: {
+  attempts: AttemptSummary[] | null;
+  recentQuizzes: AttemptSummary[];
+}) {
+  return (
+    <div data-testid="tree-node-recent-quizzes" style={{ marginTop: 18 }}>
+      <div className="label-micro" style={{ marginBottom: 8 }}>Recent quizzes</div>
+      {attempts === null ? (
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+      ) : recentQuizzes.length === 0 ? (
+        // No second CTA here on purpose: "Quick quiz" is a few pixels up
+        // and is the action this empty state would ask for.
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
+      ) : (
+        recentQuizzes.map(a => (
+          <div
+            key={a.quiz_id}
+            data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              gap: 8, padding: "8px 10px",
+              background: "var(--bg-panel)", border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)", marginBottom: 6,
+            }}
+          >
+            {/* Not a link: there is no finished-attempt review endpoint —
+                `GET /attempts/{id}` answers `resumable: false, questions: []`
+                for a completed row (gap G5). A row that navigated nowhere
+                would be a broken promise. */}
+            <span style={{ fontSize: 12 }}>
+              {relativeStudied(a.completed_at || a.created_at)}
+            </span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
+            </span>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 
