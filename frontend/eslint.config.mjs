@@ -51,7 +51,35 @@ const eslintConfig = [
       // the ratchet (scripts/complexity_ratchet.mjs, two blocks down), not by
       // eslint-suppressions.json.
       complexity: ["error", 25],
+      // File size: the big screens (Learn, notetaker, Social, ...) passed 1,500
+      // to 2,700 lines with nothing stopping them. Files already over the
+      // limit are baselined in eslint-suppressions.json, so a NEW file over it
+      // fails, and splitting a baselined one lets `--prune-suppressions` drop
+      // its entry. Tests are exempt (below): long table-driven suites are fine.
+      "max-lines": ["error", { max: 800, skipBlankLines: true, skipComments: true }],
+      // The codebase's convention for an intentionally unused binding is a
+      // leading underscore (`predictedPercent: _predictedPercent`). Errors,
+      // not warnings, so CI can run with --max-warnings=0.
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+      // Every <img> here is a user upload, a blob: preview or a markdown image
+      // with an unknown size, and the Workers deploy (OpenNext) has no image
+      // optimizer configured, so next/image would not help and could break
+      // them. Off rather than left as permanent warning noise.
+      "@next/next/no-img-element": "off",
     },
+  },
+  {
+    name: "max-lines/tests-exempt",
+    files: ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "scripts/**"],
+    rules: { "max-lines": "off" },
   },
   // The landing-page animation engine is exempt from the complexity limit by
   // decision of its owner (Trov #118 phase 4): it is frame-loop and physics

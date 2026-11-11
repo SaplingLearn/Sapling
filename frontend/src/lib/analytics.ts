@@ -206,7 +206,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
 }
 
 /** The full init config. Exported so tests can pin the privacy posture. */
-export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
+export function buildPosthogConfig(_env: AnalyticsEnv): Partial<PostHogConfig> {
   return {
     // The same-origin proxy (src/app/ingest/[...path]/route.ts). Fixed: the
     // route handler, its path checks and the trailing-slash exemption all

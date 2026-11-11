@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "check:lockfile": "node scripts/check-lockfile-version.mjs",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "e2e": "playwright test",
     "cf:build": "opennextjs-cloudflare build",

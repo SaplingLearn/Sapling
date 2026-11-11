@@ -168,7 +168,6 @@ export function SideNav() {
           tone="light"
           style={{ position: "absolute", left: 6, top: 0, ...fade(collapsed) }}
         />
-        {/* eslint-disable-next-line @next/next/no-img-element -- a static vector; next/image adds nothing for SVG */}
         <img
           src={SAPLING_SYMBOL_SRC}
           alt=""

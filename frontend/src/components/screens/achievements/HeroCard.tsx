@@ -15,7 +15,6 @@ export function HeroCard({ me }: { me: GamificationMe }) {
                   strokeLinecap="round" strokeDasharray={C}
                   strokeDashoffset={C * (1 - me.level_pct / 100)} />
         </svg>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={stageAssetPath(me.stage.slug)} alt={me.stage.name}
              width={92} height={92}
              style={{ position: "absolute", borderRadius: "50%" }} />

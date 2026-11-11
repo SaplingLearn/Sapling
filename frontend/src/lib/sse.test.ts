@@ -224,7 +224,6 @@ describe('streamSSE', () => {
     );
 
     const iterate = async () => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _e of streamSSE('/x', {}, { idleTimeoutMs: 20 })) { /* drain */ }
     };
     await expect(iterate()).rejects.toThrow(/stalled/i);

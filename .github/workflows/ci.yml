@@ -107,10 +107,11 @@ jobs:
         run: npm install -g npm@10.9.2 --engine-strict=false
       - run: npm ci
       - name: Lint (eslint flat config — replaces the removed `next lint`)
-        # --max-warnings=-1 (with '=') means "no warning limit" so warnings don't
-        # fail CI. Written as `--max-warnings -1` the bare `-1` is parsed as an
-        # option ("No -NUM option defined") and eslint exits 2 before tsc/vitest run.
-        run: npx eslint . --max-warnings=-1
+        # Zero warnings: the last ones were fixed or their rule made a decision
+        # (eslint.config.mjs), so a new warning is a real regression. Keep the
+        # '=' form: a bare `--max-warnings 0` is fine, but a negative value
+        # without '=' is parsed as an option and eslint exits 2.
+        run: npx eslint . --max-warnings=0
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Test
@@ -250,3 +251,40 @@ jobs:
           echo "canopy/coverage = $PCT"
           gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=success -f context=canopy/coverage -f description="$PCT"
+
+      # Frontend line coverage, same rules as the backend reading: main only,
+      # never a gate (an instrumented run is slower and one flaky timing test
+      # must not turn main red), and skipped rather than posted when the run
+      # failed or the report cannot be trusted. Posted as its own context so it
+      # never mixes with canopy/coverage's backend series.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Measure frontend coverage
+        id: fe_coverage
+        continue-on-error: true
+        working-directory: ./frontend
+        run: |
+          npm install -g npm@10.9.2 --engine-strict=false
+          npm ci
+          npm run test:coverage
+      - name: Report frontend coverage
+        if: steps.fe_coverage.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        working-directory: ./frontend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ -s coverage/coverage-summary.json ] \
+            || { echo "::notice::canopy/frontend-coverage skipped: no summary"; exit 0; }
+          PCT=$(python3 -c "import json; t = json.load(open('coverage/coverage-summary.json'))['total']['lines']; assert t['total'] > 0; p = float(t['pct']); assert 0 <= p <= 100; print(f'{p:.1f}')") \
+            || { echo "::notice::canopy/frontend-coverage skipped: unreadable summary"; exit 0; }
+          [[ "$PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+            || { echo "::notice::canopy/frontend-coverage skipped: '$PCT' is not a bare decimal"; exit 0; }
+          echo "canopy/frontend-coverage = $PCT"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success -f context=canopy/frontend-coverage -f description="$PCT"
