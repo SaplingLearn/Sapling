@@ -20,7 +20,7 @@
  */
 
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
@@ -1017,6 +1017,429 @@ describe("QuizHome — the states with no proposal", () => {
     expect(within(dialog).queryByTestId("quiz-seg-difficulty")).toBeNull();
     // The one list that is a client concept (R-2) is always there.
     expect(within(dialog).getByTestId("quiz-seg-feedback")).toBeInTheDocument();
+  });
+});
+
+// ── Characterization (pinned before the complexity split) ─────────────────
+//
+// The rendered DOM of every state the home can be in, byte for byte, plus the
+// handler effects the specification tests above leave unpinned. The
+// neighbourhood's own graph is emptied first: it is `KnowledgeGraph2D`'s
+// output, not this screen's, and its layout is a simulation.
+
+function homeDom(): string {
+  // A string edit rather than a clone: jsdom cannot clone some inline styles.
+  return screen
+    .getByTestId("quiz-home")
+    .outerHTML.replace(
+      /(data-testid="quiz-neighbourhood">)[\s\S]*?(<\/div><div class="quiz-home__actions">)/,
+      "$1$2",
+    );
+}
+
+function withMatchMedia(matches: (query: string) => boolean) {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: matches(query),
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })) as unknown as typeof window.matchMedia;
+  __resetReducedMotionStoreForTests();
+  return () => {
+    window.matchMedia = original;
+    __resetReducedMotionStoreForTests();
+  };
+}
+
+describe("QuizHome — characterization: rendered DOM per state", () => {
+  // The meta line ("last studied N days ago") counts CALENDAR days from the
+  // real clock in the LOCAL timezone, so a snapshot of it depends on both the
+  // day and the machine's TZ. Pin both: only Date is faked (the tests' other
+  // timers stay real), and the zone is UTC so the fixture's 2026-08-18T00:00Z
+  // and this instant fall on the same calendar dates everywhere (84 days).
+  beforeEach(() => {
+    vi.stubEnv("TZ", "UTC");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-10T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  const mastered = NODES.map(n => ({ ...n, mastery_tier: "mastered" as const }));
+  const cases: [string, Parameters<typeof mount>[0]][] = [
+    ["the ranked proposal", {}],
+    ["a description on the card", { home: { cardDescription: "Calling yourself." } }],
+    ["a description in flight", { home: { cardDescriptionPending: true } }],
+    ["a course queue", { entry: entry({ course: "c-cs", source: { kind: "dashboard" } }) }],
+    ["the due card", { entry: entry({ scope: "due", source: { kind: "dashboard" } }) }],
+    ["a tree deep link", { entry: entry({ concept: "matrices", source: { kind: "tree" } }) }],
+    ["a link deep link", { entry: entry({ concept: "matrices", source: { kind: "link" } }) }],
+    ["the resume strip", { home: { resumable: { attempt: attemptDetail(), session: null, answered: 2 } } }],
+    ["answers as you go", { session: session({ config: { ...SESSION_CONFIG, feedback: "as-you-go" } }) }],
+    [
+      "a queue answering as it goes",
+      {
+        entry: entry({ course: "c-cs", source: { kind: "dashboard" } }),
+        session: session({ config: { ...SESSION_CONFIG, feedback: "as-you-go" } }),
+      },
+    ],
+    ["everything mastered", { home: { nodes: mastered } }],
+    ["one course", { home: { nodes: NODES.filter(n => n.course_id === "c-cs") } }],
+    ["loading", { home: { status: "loading", nodes: [], edges: [], courses: [] } }],
+    [
+      "an error",
+      { home: { status: "error", error: { code: "NETWORK", message: "You look offline.", retryable: true } } },
+    ],
+    ["no courses", { home: { nodes: [], courses: [], edges: [] } }],
+    ["an empty tree", { home: { nodes: [], edges: [] } }],
+  ];
+
+  it.each(cases)("%s", (_name, over) => {
+    mount(over);
+    expect(homeDom()).toMatchSnapshot();
+  });
+
+  it("a picked concept", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(homeDom()).toMatchSnapshot();
+  });
+
+  it("a picked concept, the hook caught up", () => {
+    const { home, actions, view } = mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    view.rerender(
+      <QuizHome
+        userId="u1"
+        home={{ ...home, cardConceptId: "determinants", cardDescription: "The scaling factor." }}
+        config={CONFIG}
+        entry={entry()}
+        session={session()}
+        actions={actions}
+      />,
+    );
+    expect(homeDom()).toMatchSnapshot();
+  });
+
+  it("a search with no match, and a narrowed course", () => {
+    mount();
+    fireEvent.change(screen.getByTestId("quiz-topic-search"), { target: { value: "  ZZZ " } });
+    expect(homeDom()).toMatchSnapshot();
+    fireEvent.change(screen.getByTestId("quiz-topic-search"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("quiz-course-c-math"));
+    expect(homeDom()).toMatchSnapshot();
+  });
+
+  it("the adjust dialog on a course queue", () => {
+    mount({ entry: entry({ course: "c-cs", source: { kind: "dashboard" } }) });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(homeDom()).toMatchSnapshot();
+    const dialog = screen.getByTestId("quiz-adjust-dialog");
+    expect(dialog).toHaveTextContent("Tail recursion · CS101");
+    expect(dialog).toHaveAttribute("style", "--quiz-accent: #7b4b99;");
+  });
+});
+
+describe("QuizHome — characterization: behaviour", () => {
+  it("binds the card's course accent on the root, and none without a card", () => {
+    mount();
+    expect(screen.getByTestId("quiz-home")).toHaveAttribute("style", "--quiz-accent: #7b4b99;");
+    cleanup();
+    const mastered = NODES.map(n => ({ ...n, mastery_tier: "mastered" as const }));
+    mount({ home: { nodes: mastered } });
+    expect(screen.getByTestId("quiz-home")).not.toHaveAttribute("style");
+  });
+
+  it("reports no pick on arrival", () => {
+    const { onPickedChange } = mount();
+    expect(onPickedChange).toHaveBeenCalledWith(null);
+    expect(onPickedChange).not.toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("forgets a pick when a new deep link arrives", () => {
+    const { home, actions, onPickedChange } = mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(onPickedChange).toHaveBeenLastCalledWith("determinants");
+    cleanup();
+    render(
+      <QuizHome
+        userId="u1"
+        home={home}
+        config={CONFIG}
+        entry={entry({ concept: "matrices", source: { kind: "tree" } })}
+        session={session()}
+        actions={actions}
+        onPickedChange={onPickedChange}
+      />,
+    );
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Matrices");
+  });
+
+  it("drops a pick, in place, when the entry changes underneath it", () => {
+    const { home, actions, view, onPickedChange } = mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    view.rerender(
+      <QuizHome
+        userId="u1"
+        home={home}
+        config={CONFIG}
+        entry={entry({ concept: "matrices", source: { kind: "tree" } })}
+        session={session()}
+        actions={actions}
+        onPickedChange={onPickedChange}
+      />,
+    );
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Matrices");
+    expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
+    expect(onPickedChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("tints no row when a queue card's concept is picked", () => {
+    mount({ entry: entry({ course: "c-cs", source: { kind: "dashboard" } }) });
+    fireEvent.click(screen.getByTestId("quiz-pick-base-cases"));
+    expect(screen.getByTestId("quiz-pick-list").querySelector("[data-returned]")).toBeNull();
+  });
+
+  it("skips the entrance under reduced motion", () => {
+    // The default stub reports reduced motion.
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(screen.getByTestId("quiz-proposal")).not.toHaveAttribute("data-entering");
+  });
+
+  it("scrolls the card into view on a phone, smoothly when motion is allowed", () => {
+    const restore = withMatchMedia(q => q.includes("max-width"));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+      expect(scroll.mock.contexts[0]).toBe(screen.getByTestId("quiz-proposal"));
+    } finally {
+      restore();
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("scrolls without animation on a phone under reduced motion", () => {
+    const restore = withMatchMedia(() => true);
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
+    } finally {
+      restore();
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("does not scroll on a wide screen", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("prevents Escape's default only when there is a query to clear", () => {
+    mount();
+    const input = screen.getByTestId("quiz-topic-search");
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(true);
+    fireEvent.change(input, { target: { value: "stack" } });
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+    expect(input).toHaveValue("stack");
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(false);
+    expect(input).toHaveValue("");
+  });
+
+  it("falls back to every course when the narrowed one leaves the list", () => {
+    const { home, actions, view } = mount();
+    fireEvent.click(screen.getByTestId("quiz-course-c-math"));
+    const csOnly = NODES.filter(n => n.course_id === "c-cs");
+    const next = buildHome({ nodes: [...csOnly, node("other", "Other", "c-other", 0.2, "struggling", 0)] });
+    view.rerender(
+      <QuizHome
+        userId="u1"
+        home={{ ...next, courses: home.courses, byCourse: groupByCourse(next.nodes, COURSES) }}
+        config={CONFIG}
+        entry={entry()}
+        session={session()}
+        actions={actions}
+      />,
+    );
+    // Only CS101 is left; a single course draws no pills and lists everything.
+    expect(screen.queryByTestId("quiz-course-all")).toBeNull();
+    expect(within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-base-cases")).toBeInTheDocument();
+  });
+
+  it("closes Adjust from its own close path without keeping or starting anything", () => {
+    const { actions } = mount();
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.keyDown(screen.getByTestId("quiz-adjust-dialog"), { key: "Escape" });
+    expect(screen.queryByTestId("quiz-adjust-dialog")).toBeNull();
+    expect(actions.configure).toHaveBeenLastCalledWith(false);
+    expect(actions.setConfig).not.toHaveBeenCalled();
+    expect(actions.start).not.toHaveBeenCalled();
+    expect(screen.getByTestId("quiz-adjust")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("remembers the dialog's choices when it starts, and closes", () => {
+    const { actions } = mount();
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(within(screen.getByTestId("quiz-adjust-dialog")).getByTestId("quiz-seg-count-4"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(JSON.parse(window.localStorage.getItem("sapling_quiz_prefs") ?? "null")).toEqual({
+      count: 4,
+      difficulty: "gentle",
+      feedback: "at-end",
+    });
+    expect(actions.configure).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByTestId("quiz-adjust-dialog")).toBeNull();
+  });
+
+  it("does not remember the dialog's choices on Done", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-done"));
+    expect(window.localStorage.getItem("sapling_quiz_prefs")).toBeNull();
+  });
+
+  it("remembers a question format the session carries", () => {
+    mount({ session: session({ config: { ...SESSION_CONFIG, questionFormat: "multiple_choice" } }) });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    // The dialog's draft re-seeds from the three scalar values only.
+    expect(JSON.parse(window.localStorage.getItem("sapling_quiz_prefs") ?? "null")).toEqual({
+      count: 2,
+      difficulty: "gentle",
+      feedback: "at-end",
+    });
+  });
+
+  it("starts a course queue from Adjust with the queue's own count", () => {
+    const { actions } = mount({ entry: entry({ course: "c-cs", source: { kind: "dashboard" } }) });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(screen.getByTestId("quiz-adjust-start")).toHaveTextContent(`Start · ${QUEUE_COUNT} gentle`);
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "course", courseId: "c-cs", queue: ["tail-recursion", "recursion", "stack-frames", "base-cases"] },
+        conceptId: "tail-recursion",
+        courseId: "c-cs",
+      },
+      { count: QUEUE_COUNT, difficulty: "gentle", feedback: "at-end" },
+    );
+  });
+
+  it("starts the due set from the due card with the queue's count", () => {
+    const { actions } = mount({ entry: entry({ scope: "due", source: { kind: "dashboard" } }) });
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "review",
+        scope: { kind: "due", queue: ["determinants", "tail-recursion", "recursion", "stack-frames", "eigenvalues"] },
+        conceptId: "determinants",
+        courseId: "c-math",
+      },
+      { ...SESSION_CONFIG, count: QUEUE_COUNT },
+    );
+  });
+
+  it("starts the due link from a course card with the session's settings and the queue's count", () => {
+    const { actions } = mount({
+      entry: entry({ course: "c-cs", source: { kind: "dashboard" } }),
+      session: session({ config: { count: 4, difficulty: "fierce", feedback: "as-you-go" } }),
+    });
+    fireEvent.click(screen.getByTestId("quiz-review-due"));
+    const [request, config] = (actions.start as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(request.scope.kind).toBe("due");
+    expect(config).toEqual({ count: QUEUE_COUNT, difficulty: "fierce", feedback: "as-you-go" });
+  });
+
+  it("runs the due card, not the course, when a `?course=` with nothing due also says `?scope=due`", () => {
+    const { actions } = mount({
+      entry: entry({ course: "c-none", scope: "due", source: { kind: "dashboard" } }),
+    });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    // The card under a due title is still the ranked primary.
+    expect(screen.getByTestId("quiz-adjust-dialog")).toHaveTextContent("Recursion · CS101");
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    const [request] = (actions.start as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(request.intent).toBe("review");
+    expect(request.scope.kind).toBe("due");
+  });
+
+  it("offers the ranked card when a `?course=` has nothing due", () => {
+    mount({ entry: entry({ course: "c-none", source: { kind: "dashboard" } }) });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-proposal")).not.toHaveTextContent("Suggested for you");
+  });
+
+  it("explains an unknown deep-link source with the default reason", () => {
+    mount({ entry: entry({ concept: "matrices", source: { kind: "dashboard" } }) });
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Suggested for you");
+  });
+
+  it("does not toast an unresolved link until the tree has loaded", () => {
+    const { home, actions, view } = mount({
+      home: { status: "loading" },
+      entry: entry({ concept: "not-in-this-term", source: { kind: "link" } }),
+    });
+    expect(toast.info).not.toHaveBeenCalled();
+    view.rerender(
+      <QuizHome
+        userId="u1"
+        home={{ ...home, status: "ready" }}
+        config={CONFIG}
+        entry={entry({ concept: "not-in-this-term", source: { kind: "link" } })}
+        session={session()}
+        actions={actions}
+      />,
+    );
+    expect(toast.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("names a resumable attempt off the history, then generically, and counts its total", () => {
+    mount({
+      home: {
+        resumable: {
+          attempt: attemptDetail({ concept_node_id: "gone", questions: [], total: 7 }),
+          session: null,
+          answered: 1,
+        },
+        attempts: [{ quiz_id: "attempt-1", concept_name: "Old concept" } as AttemptSummary],
+      },
+    });
+    expect(screen.getByTestId("quiz-resume-strip")).toHaveTextContent(
+      "You left a quiz on Old concept — 1 of 7 answered",
+    );
+    cleanup();
+    mount({
+      home: {
+        resumable: {
+          attempt: attemptDetail({ concept_node_id: "gone", questions: [], total: null }),
+          session: null,
+          answered: 0,
+        },
+      },
+    });
+    expect(screen.getByTestId("quiz-resume-strip")).toHaveTextContent(
+      "You left a quiz on a concept — 0 of 0 answered",
+    );
   });
 });
 

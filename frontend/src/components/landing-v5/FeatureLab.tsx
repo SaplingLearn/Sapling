@@ -53,7 +53,7 @@ export function FeatureLab({
             <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#445D22', textTransform: 'uppercase' }}>
               {g.num} · {g.kicker}
             </span>
-            <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#191F13' }}>
+            <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#191F13' }}>
               {g.title}
             </h3>
             <p style={{ margin: '18px 0 0', color: '#3B4233', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>

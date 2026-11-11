@@ -92,7 +92,7 @@ A ripgrep of the entire `src/` tree for `"/flashcards"` and `"/achievements"` re
 - **`/flashcards`** — the page exists and is functional, but the Navbar does not include it in the `LINKS` array (`Navbar.tsx:11-19` lists Dashboard, Learn, Study, Library, Calendar, Social, Tree). The only in-app flashcard surface wired into the nav is `FlashcardsPanel` embedded inside `/study` — which is the same flashcards feature, duplicated.
 - **`/achievements`** — the page exists but is not linked anywhere. `/settings` shows a featured-achievements showcase but does not link to the full gallery.
 
-This is a potential product-decision question for the rebuild (flagged in `QUESTIONS.md` Q9/Q10): is `/flashcards` intentionally hidden because `/study > Flashcards` replaces it, and is `/achievements` meant to be reached only through an eventual profile link (the missing `/profile` route — see §6)?
+This is a potential product-decision question for the rebuild (flagged in `questions.md` Q9/Q10): is `/flashcards` intentionally hidden because `/study > Flashcards` replaces it, and is `/achievements` meant to be reached only through an eventual profile link (the missing `/profile` route — see §6)?
 
 ---
 
@@ -115,10 +115,10 @@ The audit will not document these. Listed so the rebuild knows which URLs existe
 
 The root `CLAUDE.md` mentions the following which are **stale** — noted here so the rebuild doesn't chase ghosts. None of these change the route inventory, but they change expectations set by the README-style docs.
 
-- **`/profile/page.tsx`** is documented in `CLAUDE.md` but **does not exist** in `src/app/`. No `profile/` directory exists. Verified by `ls` and Glob. Public-profile data (`fetchPublicProfile`) is only rendered inside `/settings` as a preview modal. Components named `ProfileBanner` and `AvatarFrame` exist but `ProfileBanner` is not imported anywhere in `src/` — candidate for `zz-dead-code.md` in Phase 4 (also noted in `QUESTIONS.md` Q10).
+- **`/profile/page.tsx`** is documented in `CLAUDE.md` but **does not exist** in `src/app/`. No `profile/` directory exists. Verified by `ls` and Glob. Public-profile data (`fetchPublicProfile`) is only rendered inside `/settings` as a preview modal. Components named `ProfileBanner` and `AvatarFrame` exist but `ProfileBanner` is not imported anywhere in `src/` — candidate for `zz-dead-code.md` in Phase 4 (also noted in `questions.md` Q10).
 - **`UploadZone.tsx` vs `DocumentUploadModal.tsx`.** CLAUDE.md mentions `UploadZone.tsx` as the upload component; the routes actually import `DocumentUploadModal.tsx`. Both files exist; importer analysis for `UploadZone` is deferred to Phase 4.
 
-These observations are additive to the ones in `QUESTIONS.md`.
+These observations are additive to the ones in `questions.md`.
 
 ---
 
@@ -127,6 +127,6 @@ These observations are additive to the ones in `QUESTIONS.md`.
 - Did not document what each page *does* beyond a one-paragraph purpose line — flow-by-flow walk-throughs live in Phase 3.
 - Did not enumerate the components imported by each page — that's Phase 4's `02-components.md` job, where the component library gets its own inventory with prop surfaces and importer lists.
 - Did not open any marketing file.
-- Did not resolve Q1–Q10 in `QUESTIONS.md`.
+- Did not resolve Q1–Q10 in `questions.md`.
 
 Proceeding to Phase 3 unless you want boundary tweaks first.
