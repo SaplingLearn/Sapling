@@ -276,7 +276,7 @@ When a box is checked, it means the behavior is captured and testable. Use this 
 
 ---
 
-## D · Resolve before / during rebuild (from QUESTIONS.md)
+## D · Resolve before / during rebuild (from questions.md)
 
 - [ ] Q1 — `OnboardingFlow` scope split with landing-page host.
 - [ ] Q2 — `SpaceBackground.tsx` dead-code confirmation.
@@ -305,7 +305,7 @@ A new team given:
 - `docs/frontend-audit/features/*.md` (15 feature docs)
 - `docs/frontend-audit/zz-dead-code.md`
 - This checklist (`99-rebuild-checklist.md`)
-- `docs/frontend-audit/QUESTIONS.md` with your decisions filled in
+- `docs/frontend-audit/questions.md` with your decisions filled in
 
 should be able to produce a frontend that ticks every **Core** box and `n` **Secondary** boxes equal to prior parity. They should not need to read the original `frontend/src/` to produce a working rebuild.
 

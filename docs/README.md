@@ -17,6 +17,13 @@
   built (e.g. `async-db-client.md`, #117).
 - `releases/` — Prod release plans: merge order, migrations with reverse SQL,
   flags, promote + rollback steps (e.g. `2026-11-architecture-hardening.md`).
+- `api.md` — Every backend route, grouped by router.
+- `audits/` — Point-in-time audits (frontend rhythm/UI/component consistency,
+  backend contract bugs, student data inventory) and their HTML companions.
+- `assets/` — Images referenced from the README and docs.
+- `program.md` — State of the multi-wave cleanup-and-hardening program.
+- `deploy/`, `ops/`, `figma/`, `superpowers/` — Deploy runbooks, operational
+  notes, design exports, and agent-authored specs/plans/handoffs.
 
 If you are Claude Code, run `/sync-context` to load the most recent
 decisions before working.

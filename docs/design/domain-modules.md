@@ -29,6 +29,21 @@ The ratchet uses ruff's McCabe count because ruff already runs in CI. McCabe cou
 
 So the complexity half of Phase 4 is nearly met under the metric CI can enforce. The hard part of Phase 4 is file length. Once the splits below land, lower `[lint.mccabe] max-complexity` in steps (for example 20, then 15), re-baselining each time, to get the intent of the original target.
 
+### Frontend
+
+The same complexity limit holds in `frontend/`, measured with ESLint's built-in `complexity` rule. Its "classic" count also scores `&&`, `||`, `??`, `?.`, default parameters and each `case`, so it reads higher than ruff's McCabe count on the same shape of code.
+
+| What | Limit | Enforced by | Baseline |
+| --- | --- | --- | --- |
+| Function complexity (ESLint `complexity`) | 25 | `npx eslint .` for files with no baselined function; `frontend/scripts/complexity_ratchet.test.ts` (in `npm test`) for every function | `frontend/complexity-baseline.json` → `complexity` (`<path relative to frontend/>::<qualified name>`: ceiling) |
+
+- The logic lives in `frontend/scripts/complexity_ratchet.mjs`. From `frontend/`, `npm run complexity` reports (exit 1 on a new offender or a function above its ceiling; slack is listed as `SHRINK`), and `npm run complexity:shrink` lowers entries and deletes the ones back under 25. The rules are the backend's: the baseline only shrinks, `--shrink` never adds, raises or re-keys an entry (and exits 1 if a violation remains), slack only warns in the test, and raising a ceiling is a hand edit the reviewer sees.
+- What is measured: the files `eslint .` lints, restricted to git-tracked ones, test files included (they are part of `eslint .` too). The run forces `complexity` on at the configured limit for every file and ignores inline `eslint-disable` comments, so neither the config's per-file offs nor a comment can hide a function.
+- Keys carry no line numbers. A named function is keyed by its name, a class or object member as `Owner.member`, and an anonymous function by its context: the variable, property or JSX attribute it is bound to (`const save = useCallback(() => …)` → `save`, `onClick={() => …}` → `onClick`), else the call it is passed to (`useEffect()`, `items.map()`, `sim.force('follow')`), else `(returned)`, `(jsx child)` or `(anonymous)`. Enclosing functions are prefixed with `>`: `src/components/screens/Dashboard.tsx::Dashboard>load`. A name that still repeats among one file's offenders is numbered `#2`, `#3` in source order.
+- ESLint can only switch a rule off per file, so `eslint.config.mjs` turns `complexity` off for each file that still holds a baselined function. That block is generated from `complexity-baseline.json` when the config loads, so it shrinks with the baseline: delete a file's last entry and plain `eslint .` enforces 25 on it again. A test asserts the generated list equals the baseline's files. Complexity is never put in `eslint-suppressions.json`.
+- `src/lib/landing/engine/**` (the marketing hero's animation engine) is exempt by decision of its owner (#118 phase 4). It is frame-loop and physics code, where one long tick is clearer than a split. The config turns the rule off there and the ratchet skips it; a test fails if a baseline key ever points into it.
+- On 2026-11-09 the baseline held 25 functions in 20 files, from `QuizQuestion` (108) and `lib/quiz/machine.ts::reduce` (90) down to `Settings` (26). All 25 were refactored under the limit the same night with no behavior change. The baseline now holds one entry, `src/components/screens/Onboarding.tsx::Onboarding` (51): the v3 onboarding added it on main (9f070408) after this work started, and it stays baselined as a follow-up. `eslint .` enforces 25 on every file outside the landing engine and `Onboarding.tsx`.
+
 ## Current offenders (recorded ceilings, top of the wave-2 stack, 2026-11-08)
 
 These are the numbers in `code_size_baseline.json`, recorded with every wave-2 PR applied. Wave 2 grew several of these files, and moved `routes/admin_analytics.py` over the limit.

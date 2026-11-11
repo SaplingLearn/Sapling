@@ -39,6 +39,20 @@ describe("WrittenAnswer", () => {
     expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
   });
 
+  it("treats a type outside the known formats as plain text with no keys", () => {
+    // QuizQuestion casts the wire's type, so an unknown one can arrive here.
+    const type = "free_response" as WrittenType;
+    expect(() => render(<Harness type={type} initial="x^2 3e8" />)).not.toThrow();
+    expect(input().value).toBe("x^2 3e8");
+    expect(input().getAttribute("inputmode")).toBe("text");
+    expect(screen.queryByRole("group", { name: "Insert a symbol" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Insert a number" })).toBeNull();
+    expect(screen.queryByTestId("quiz-key-more")).toBeNull();
+    expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
+    fireEvent.change(input(), { target: { value: "x^2 3e8 + 1" } });
+    expect(input().value).toBe("x^2 3e8 + 1");
+  });
+
   it("gives numbers the decimal keypad, the keys it lacks, and a reading inside the field", () => {
     render(<Harness type="numeric" initial="3/4" />);
     expect(input().getAttribute("inputmode")).toBe("decimal");

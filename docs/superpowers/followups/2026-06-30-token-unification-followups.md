@@ -8,7 +8,7 @@ greens are collapsed to `--brand-forest` (+ bright + derived glow). Zero retired
 remain tree-wide.
 
 These items consume the now-unified tokens and were **intentionally deferred** from Phase 1.
-Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
+Each is its own plan / PR. Severity tags map to `docs/audits/frontend-rhythm-audit.md`.
 
 ## Component re-skins (the visible "feels different" fixes)
 
@@ -61,6 +61,6 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
       and/or folding the two into one once the component re-skins land.
 
 ## References
-- Audit + visual companion: `docs/frontend-rhythm-audit.md` (+ `.html`)
+- Audit + visual companion: `docs/audits/frontend-rhythm-audit.md` (+ `.html`)
 - Design spec: `docs/superpowers/specs/2026-06-30-token-unification-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-06-30-token-unification.md`

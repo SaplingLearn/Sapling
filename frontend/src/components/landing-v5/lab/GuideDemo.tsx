@@ -101,7 +101,7 @@ export function GuideDemo() {
         {phase === 'guide' && (
           <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
             <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#91978B' }}>{course.toUpperCase()} · STUDY GUIDE</span>
-            <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
+            <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
             <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#697062' }}>{set.overview}</p>
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {set.topics.map((t) => (

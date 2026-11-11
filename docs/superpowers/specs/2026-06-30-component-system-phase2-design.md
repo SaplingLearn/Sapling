@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-30
 **Status:** Approved design, pending spec review → implementation plan
-**Companion audit:** `docs/frontend-component-consistency-audit.md`
+**Companion audit:** `docs/audits/frontend-component-consistency-audit.md`
 **Builds on:** Phase 1 token unification (branch `refactor/token-unification`, PR #286)
 **User decisions:** sharp 6px primary buttons (+ dedicated `lg` hero size) · retire sage `--accent` toward the forest family · merge status greens into one `--positive` · scope = primitives + high-impact surfaces (long tail incremental)
 

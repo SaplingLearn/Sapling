@@ -158,7 +158,7 @@ laid out and readable, not blank. Any randomness routes through
 ## Styling
 
 Everything is scoped under `.landing-page`, which re-declares the same token
-names as the warm app shell (`docs/frontend-rhythm-audit.md`). New CSS must be
+names as the warm app shell (`docs/audits/frontend-rhythm-audit.md`). New CSS must be
 added inside that scope and must not leak token redefinitions outward — this is
 the documented cause of the "get-started/beta feels off" class of bug.
 
