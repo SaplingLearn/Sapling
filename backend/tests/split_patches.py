@@ -279,6 +279,11 @@ LOOP_MODULES = (
     "services.loop.prequestion",
     "services.loop.next_check",
     "services.loop.self_explain",
+    "services.loop.closing",
+    "services.loop.goal",
+    "services.loop.probe",
+    "services.loop.probe_grading",
+    "services.loop.plan",
 )
 
 

@@ -109,7 +109,7 @@ CASES: list[Case] = [
          neutral=START),
     Case("loop_goal", "/api/learn/loop/goal",
          lambda t: {"session_id": "s1", "user_id": "u1", "goal": {"text": t, "target_node_ids": ["n1"]}},
-         "routes.learn_loop._probe_plan_read_limit"),
+         "services.loop.goal._probe_plan_read_limit"),
     Case("loop_check_answer", "/api/learn/loop/check/answer", _answer,
          "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_check_answer", "/api/learn/loop/check/answer/stream", _answer,

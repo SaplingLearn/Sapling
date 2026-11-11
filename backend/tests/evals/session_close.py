@@ -58,7 +58,7 @@ from learning.checks import CheckItem  # noqa: E402
 from learning.evidence import Evidence, planning_observation  # noqa: E402
 from learning.params import CLOSE_SUMMARY_MAX_CHARS  # noqa: E402
 from learning.session_close import CloseDraft, CloseRecord, build_close  # noqa: E402
-from routes.learn_loop import close_states_answer, served_close  # noqa: E402
+from services.loop.closing import close_states_answer, served_close  # noqa: E402
 
 DATASET = "session_close"
 #: FIXED so the rendered message (and its input hash) is stable across replays.

@@ -142,8 +142,8 @@ files, which the row lists. A dash means the row has no code of its own.
 | A46 | tutor turn | The tutor's turn is structured: key idea, body, question (question last) | `backend/learning/turn_shape.py::render_turn` |
 | A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/services/loop/attempts.py::step_attempt` |
 | A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/services/loop/served.py::_served_fields` |
-| A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/routes/learn_loop.py::probe_next` |
-| A60 | close | The session close as built: one close per session, by claim | `backend/routes/learn_loop.py::close_session` |
+| A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/services/loop/probe.py::probe_next` |
+| A60 | close | The session close as built: one close per session, by claim | `backend/services/loop/closing.py::close_session` |
 | A70 | review queue | Review answers are claims; the open review item is stable across reloads | `backend/learning/review.py::claim_item` |
 | A75 | misconceptions | The misconception loop as built: record, confront, re-ask an isomorph, class rollup | `backend/learning/misconceptions.py::slip_or_misconception` |
 | A81 | tutor turn | Retired by A83: at a teach ceiling of H0/H1 the question would come from the ladder | — |

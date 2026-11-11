@@ -123,6 +123,14 @@ Modules, lowest first (each imports only the ones above it):
 - ``next_check``: POST /check/next: the next check item of the plan.
 - ``self_explain``: POST /self-explain (A139): the student's self-explanation
   reply.
+- ``closing``: The session close (PKG-09, spec §9): POST /close, the legacy
+  end-session delegate, the close record and the served close text.
+- ``goal``: POST /goal (A143): the session's learning goal.
+- ``probe``: POST /probe/next (PKG-08): the probe's next item, or the plan.
+- ``probe_grading``: POST /probe/answer (PKG-08): `_probe_submission`, the
+  probe's evidence writer, and its checkpoint.
+- ``plan``: GET /plan and POST /plan/approve (PKG-08): the plan the probe
+  built.
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until
@@ -140,8 +148,12 @@ _PUBLIC = {
     "check_answer": "grading",
     "check_answer_stream": "grading",
     "check_next": "next_check",
+    "close": "closing",
+    "end_session": "closing",
     "hint": "attempts",
     "list_open_sessions": "sessions",
+    "plan_approve": "plan",
+    "plan_get": "plan",
     "posed_items": "posed",
     "posttest_answer": "posttest",
     "posttest_due": "posttest",
@@ -149,6 +161,8 @@ _PUBLIC = {
     "posttest_start": "posttest",
     "prequestion_answer": "prequestion",
     "prequestion_answer_stream": "prequestion",
+    "probe_answer": "probe_grading",
+    "probe_next": "probe",
     "rating": "reports",
     "report_item": "reports",
     "review_active": "reviews",
@@ -156,6 +170,7 @@ _PUBLIC = {
     "review_next": "reviews",
     "review_summary": "reviews",
     "self_explain_reply": "self_explain",
+    "set_goal": "goal",
     "start_session": "teach",
     "start_session_stream": "teach",
     "status": "sessions",

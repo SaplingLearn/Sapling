@@ -1277,7 +1277,7 @@ def test_probe_answer_double_submit_writes_once(probe):
     """A52 for the probe: grading runs under a claim. A resubmission after the
     grade is a 409, and two submissions in flight at once grade and write once."""
     from models import ProbeAnswerBody
-    from routes.learn_loop import _probe_submission
+    from services.loop.probe_grading import _probe_submission
 
     _answer_doc(probe)
     gate = asyncio.Event()

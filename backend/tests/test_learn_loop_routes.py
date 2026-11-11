@@ -2779,7 +2779,7 @@ def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seam
 
 def test_end_session_is_a_pass_through_in_this_package():
     from models import EndSessionBody
-    from routes.learn_loop import end_session
+    from services.loop.closing import end_session
 
     assert end_session(EndSessionBody(session_id="s1", user_id="u1"), MagicMock()) is None
 
@@ -3260,7 +3260,7 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
     assert '_loop_for(body.user_id, "end_session")' in inspect.getsource(learn.end_session)
     # spec §13 A148: the delegate marks the request service-scoped (db_user_scope)
     delegate = inspect.getsource(learn._loop_delegate)
-    assert delegate.index("service_route(request)") < delegate.index("getattr(learn_loop, name)")
+    assert delegate.index("service_route(request)") < delegate.index("getattr(loop_service, name)")
     assert "learning_loop_for_request(user_id)" in inspect.getsource(learn._loop_for)
 
 

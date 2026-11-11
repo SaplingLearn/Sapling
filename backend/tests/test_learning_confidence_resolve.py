@@ -40,6 +40,7 @@ from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _planner
 from tests.test_learn_loop_routes import ITEM, _answer, _feedback_agent, _state, client
 from tests.split_patches import patch_loop
+import services.loop.closing
 import services.loop.practice
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -738,13 +739,12 @@ def test_a_resolved_key_leaves_the_brief(store):
 
 
 def test_a_resolved_key_leaves_the_session_close(store):
-    import routes.learn_loop as rl
 
     store.rows = [_row()]
     evidence = [{"node_id": "n1"}]
-    assert rl._close_misconception_keys("u1", evidence) == ["k1"]
+    assert services.loop.closing._close_misconception_keys("u1", evidence) == ["k1"]
     _resolve_k1(store)
-    assert rl._close_misconception_keys("u1", evidence) == []
+    assert services.loop.closing._close_misconception_keys("u1", evidence) == []
 
 
 # ── 6. the routes resolve after their claimed save ─────────────────────────

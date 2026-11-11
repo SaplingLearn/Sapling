@@ -8,6 +8,7 @@ from __future__ import annotations
 import pathlib
 import re
 from tests.split_patches import patch_loop, setattr_loop
+import services.loop.closing
 import services.loop.guard
 import services.loop.history
 import services.loop.state
@@ -649,7 +650,7 @@ def _out(**kw):
 
 
 def test_served_close_keeps_a_well_formed_model_close():
-    from routes.learn_loop import served_close
+    from services.loop.closing import served_close
 
     rec = served_close(_out(), _draft(), [])
     assert rec.model_written is True
@@ -658,7 +659,7 @@ def test_served_close_keeps_a_well_formed_model_close():
 
 
 def test_served_close_drops_a_malformed_plan_and_self_eval():
-    from routes.learn_loop import served_close
+    from services.loop.closing import served_close
     from learning.session_close import FALLBACK_SELF_EVAL
 
     rec = served_close(
@@ -671,7 +672,7 @@ def test_served_close_drops_a_malformed_plan_and_self_eval():
 
 
 def test_served_close_that_states_an_unreleased_answer_is_the_fallback(caplog):
-    from routes.learn_loop import served_close
+    from services.loop.closing import served_close
 
     leaking = _out(summary="The base case is n == 0 — remember that for the check.")
     with caplog.at_level("WARNING"):
@@ -683,7 +684,7 @@ def test_served_close_that_states_an_unreleased_answer_is_the_fallback(caplog):
 
 
 def test_served_close_fails_closed_on_an_item_without_a_final_answer():
-    from routes.learn_loop import served_close
+    from services.loop.closing import served_close
 
     assert served_close(_out(), _draft(), [_item(final_answer=None)]).model_written is False
 
@@ -697,7 +698,7 @@ def test_complete_sentences_never_cuts_inside_a_number():
 
 
 def test_served_close_cuts_an_incomplete_summary_or_falls_back():
-    from routes.learn_loop import served_close
+    from services.loop.closing import served_close
 
     rec = served_close(_out(summary="We checked the base case. The student"), _draft(), [])
     assert rec.summary == "We checked the base case." and rec.model_written is True
@@ -1498,7 +1499,6 @@ def test_close_route_serves_the_fallback_when_the_close_states_an_unreleased_ans
 
 
 def test_unreleased_items_skip_graded_and_revealed_steps(monkeypatch):
-    import routes.learn_loop as loop
 
     fetched = []
     setattr_loop(monkeypatch, "get_check_item", lambda i: fetched.append(i) or _item())
@@ -1510,7 +1510,7 @@ def test_unreleased_items_skip_graded_and_revealed_steps(monkeypatch):
             "qh-rev": {"check_item_id": "ci-rev"},
         },
     }
-    assert len(loop._unreleased_items(doc)) == 1 and fetched == ["ci-open"]
+    assert len(services.loop.closing._unreleased_items(doc)) == 1 and fetched == ["ci-open"]
 
 
 def test_close_is_idempotent_once_stored(monkeypatch):
@@ -2358,7 +2358,7 @@ def test_closing_a_pending_session_sets_its_phase_to_close(monkeypatch):
 def test_close_leak_check_reads_answers_in_any_position(text):
     """Review MINOR 3: a close is no tutor turn — number words count anywhere."""
     from learning.checks import CheckItem
-    from routes.learn_loop import close_states_answer
+    from services.loop.closing import close_states_answer
 
     item = CheckItem(
         id="a",
@@ -2386,7 +2386,7 @@ def test_the_fallback_close_withholds_a_concept_name_that_states_the_answer():
     even the numbers would say it."""
     from learning.checks import CheckItem
     from learning.session_close import BARE_SUMMARY, build_close
-    from routes.learn_loop import _served_fallback
+    from services.loop.closing import _served_fallback
 
     item = CheckItem(
         id="b",
@@ -2729,7 +2729,7 @@ def test_the_fallback_withholds_a_concept_name_the_answer_contains():
     answer), not a list."""
     from learning.checks import CheckItem
     from learning.session_close import build_close
-    from routes.learn_loop import _served_fallback
+    from services.loop.closing import _served_fallback
 
     free = CheckItem(
         id="c",
@@ -2923,12 +2923,11 @@ def test_close_session_with_no_evidence_reads_no_misconceptions(monkeypatch):
 
 def test_close_keys_are_deduplicated_across_nodes(monkeypatch):
     """F5 (fix round): one key open on two of the session's nodes is listed once."""
-    import routes.learn_loop as loop
 
     setattr_loop(monkeypatch, "open_for", lambda uid, ids: [
             {"node_id": "n1", "wrong_key": "k1", "count": 3},
             {"node_id": "n2", "wrong_key": "k1", "count": 1},
             {"node_id": "n2", "wrong_key": "k2", "count": 1},
         ])
-    keys = loop._close_misconception_keys("u", [{"node_id": "n1"}, {"node_id": "n2"}])
+    keys = services.loop.closing._close_misconception_keys("u", [{"node_id": "n1"}, {"node_id": "n2"}])
     assert keys == ["k1", "k2"]

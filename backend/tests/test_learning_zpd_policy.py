@@ -3781,7 +3781,6 @@ _PKG06_SANCTIONED_IMPORTS = {
 # (at import) and an ACTIVE guard (inside `_posed`) import it.
 _PKG06_SANCTIONED_IMPORTERS = frozenset(
     {
-        "routes/learn_loop.py",
         "learning/review.py",
         "learning/served_scan.py",
         "services/integrity_guard.py",
@@ -3984,11 +3983,14 @@ def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
 
 
 def test_inertness_scan_sanctions_the_loop_wiring(tmp_path):
-    """PKG-07: the loop route may import any PKG-06 module; the loop tutor exactly
-    `Rung` and `intent` from the ladder; every other importer is still flagged."""
+    """PKG-07: the loop package (services/loop/, its route's bodies since #118)
+    may import any PKG-06 module; the loop tutor exactly `Rung` and `intent`
+    from the ladder; every other importer, the loop's thin route included, is
+    still flagged."""
     (tmp_path / "routes").mkdir()
     (tmp_path / "agents").mkdir()
-    (tmp_path / "routes" / "learn_loop.py").write_text(
+    (tmp_path / "services" / "loop").mkdir(parents=True)
+    (tmp_path / "services" / "loop" / "turn.py").write_text(
         "from learning import gates, ladder, policy, zpd_events\n"
         "from learning.leak import detect_leak\nimport learning.loop_state_store\n"
     )
@@ -4007,7 +4009,8 @@ def test_inertness_scan_sanctions_the_loop_wiring(tmp_path):
         assert _inertness_offenders(tmp_path) == ["agents/loop_tutor.py"], extra
     (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung\n")
     (tmp_path / "routes" / "learn.py").write_text("from learning import gates\n")
-    assert _inertness_offenders(tmp_path) == ["routes/learn.py"]
+    (tmp_path / "routes" / "learn_loop.py").write_text("from learning import gates\n")
+    assert _inertness_offenders(tmp_path) == ["routes/learn.py", "routes/learn_loop.py"]
 
 
 def test_review_reaches_only_the_loop_state_store():
@@ -4021,7 +4024,7 @@ def test_review_reaches_only_the_loop_state_store():
 def test_zpd_layer_is_inert_nothing_imports_it():
     offenders = _inertness_offenders(BACKEND)
     assert offenders == [], (
-        "PKG-06 modules are reached only through the loop route (routes/learn_loop.py), "
+        "PKG-06 modules are reached only through the loop package (services/loop/), "
         f"the loop tutor's ladder import and the AI budget's aliases: {offenders}"
     )
 

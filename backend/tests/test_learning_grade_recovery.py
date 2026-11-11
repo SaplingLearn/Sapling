@@ -12,10 +12,10 @@ from learning import grade_checkpoint
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.evidence_transaction import EvidenceObservationSuperseded
 from models import ChatBody, LoopCheckAnswerBody, EndSessionBody
-from routes import learn_loop
 from tests import test_learn_loop_routes as routes
 from tests.split_patches import patch_loop
 import services.loop.checkpoint
+import services.loop.closing
 import services.loop.grading
 import services.loop.state
 import services.loop.turn
@@ -236,7 +236,7 @@ def test_legacy_end_does_not_close_over_an_unacknowledged_grade(gate_on, seams, 
     with patch_loop("table") as table, patch_loop("run_agent_sync", side_effect=fail_close):
         table.return_value.select.return_value = [{"loop_state": routes._state()}]
         with pytest.raises(HTTPException) as error:
-            learn_loop.end_session(EndSessionBody(session_id="s1", user_id="u1"), Request({"type": "http", "headers": []}))
+            services.loop.closing.end_session(EndSessionBody(session_id="s1", user_id="u1"), Request({"type": "http", "headers": []}))
     assert error.value.status_code in (409, 503)
     handle.log_event.assert_not_called()
 

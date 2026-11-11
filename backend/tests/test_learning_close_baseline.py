@@ -35,6 +35,7 @@ from learning.session_close import (
     session_probe_hashes,
 )
 from tests.split_patches import setattr_loop
+import services.loop.closing
 
 SID = "s1"
 NAMES = {
@@ -424,7 +425,6 @@ class _Journal:
 
 
 def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(monkeypatch):
-    import routes.learn_loop as loop
 
     journal = _Journal(
         [
@@ -439,7 +439,7 @@ def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(
     )
     setattr_loop(monkeypatch, "table", journal)
     evidence = [{"node_id": n} for n in ("n-hf", "n-quiz", "n-later", "n-oa", "n-cr", "n-cr")]
-    assert loop._measured_before("u1", SID, evidence) == {"n-hf", "n-quiz"}
+    assert services.loop.closing._measured_before("u1", SID, evidence) == {"n-hf", "n-quiz"}
     # one owner-scoped, journal-ordered limit-1 read per distinct node
     assert [c[1]["node_id"] for c in journal.calls] == [
         f"eq.{n}" for n in ("n-hf", "n-quiz", "n-later", "n-oa", "n-cr")
@@ -448,7 +448,7 @@ def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(
         assert filters["graph_nodes.user_id"] == "eq.u1" and filters["event_type"] == "eq.evidence"
         assert "graph_nodes!inner(user_id)" in cols
         assert order == "created_at.asc,evidence_seq.asc" and limit == 1
-    assert loop._measured_before("u1", SID, []) == set()
+    assert services.loop.closing._measured_before("u1", SID, []) == set()
 
 
 def test_a_void_earlier_row_does_not_measure_a_node_before_the_session(monkeypatch):
@@ -457,7 +457,6 @@ def test_a_void_earlier_row_does_not_measure_a_node_before_the_session(monkeypat
     row is void: it was first measured in this session and starts at that
     measurement. n-old's earlier row stands. The student's void ids are read
     once, by node, and only n-void's read leaves its void id out."""
-    import routes.learn_loop as loop
 
     journal = _Journal(
         [
@@ -476,15 +475,14 @@ def test_a_void_earlier_row_does_not_measure_a_node_before_the_session(monkeypat
     setattr_loop(monkeypatch, "table", journal)
     setattr_loop(monkeypatch, "voided_by_node", voided_by_node)
     evidence = [{"node_id": "n-void"}, {"node_id": "n-old"}]
-    assert loop._measured_before("u1", SID, evidence) == {"n-old"}
+    assert services.loop.closing._measured_before("u1", SID, evidence) == {"n-old"}
     assert reads == ["u1"]
     assert [c[1].get("id") for c in journal.calls] == ['not.in.("e-void")', None]
     setattr_loop(monkeypatch, "voided_by_node", lambda user_id: {})
-    assert loop._measured_before("u1", SID, evidence) == {"n-old", "n-void"}  # nothing void
+    assert services.loop.closing._measured_before("u1", SID, evidence) == {"n-old", "n-void"}  # nothing void
 
 
 def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch):
-    import routes.learn_loop as loop
     from learning.probe import PLANNING_BOUND_FIELDS
 
     journal = _Journal([])
@@ -493,7 +491,7 @@ def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch
             if name == "node_mastery_events"
             else SimpleNamespace(select=lambda *a, **k: [])
         ))
-    loop._session_record(SID)
+    services.loop.closing._session_record(SID)
     [(cols, filters, _, _)] = journal.calls
     assert filters == {"session_id": f"eq.{SID}", "event_type": "eq.evidence"}
     needed = {
