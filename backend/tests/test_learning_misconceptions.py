@@ -1265,7 +1265,7 @@ def test_confront_tiers_match_the_eval_baselines():
 
 def test_the_eval_assembles_the_route_s_confronting_message():
     """The eval's message is the route's: the prefix, then the line built by
-    routes.learn_loop.confront_line_for, placed by with_confrontation."""
+    services.loop.guard.confront_line_for, placed by with_confrontation."""
     from services.loop.guard import confront_line_for
 
     mod = _confront_eval()

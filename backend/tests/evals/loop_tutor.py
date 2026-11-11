@@ -29,7 +29,7 @@ Recording runs the real agent with the route's run shape — `phase_prefix` at
 the route's clamped model ceiling, `deps.loop_turn = turn_limits(...)`,
 `tier_run_kwargs(tier, tool_choice=context_policy(...).tool_choice)`,
 LOOP_LIMITS — and, when the run ends without a structured turn, the route's
-tool-less rescue (`routes.learn_loop.continuation_plan` under
+tool-less rescue (`services.loop.continuation.continuation_plan` under
 `override(tools=[], toolsets=[])`). The cassette (`cassettes/<slot>/<case>.json`,
 a `LoopRecording`) stores the raw LoopTurnOut, every raw model attempt, the
 request/retry counts, the tool calls, and the hashes it was recorded under:
@@ -38,7 +38,7 @@ JSON schema — a field description is sent to Gemini), `model` (the slot's mode
 name) and `input_sha256` (the assembled case message + the slot's run
 settings). Replay REFUSES a recording whose hashes differ (StaleRecordingError)
 and recomputes the served text: `turn_shape.render_turn`, then
-`routes.learn_loop.served_model_text` at `loop_leak_rung` (served mode, the
+`services.loop.served.served_model_text` at `loop_leak_rung` (served mode, the
 item's correct_option and its text; a leak becomes the rung's ladder line). The served text is then read by the eval-side rung
 judge (`_rung_judge.ajudge_rung`, its own cassettes, stale-checked on the
 served text's sha).

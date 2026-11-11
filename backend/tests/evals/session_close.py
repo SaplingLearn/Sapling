@@ -9,7 +9,7 @@ session posed but never released. A cassette stores the model's raw
 `StaleRecordingError` on any mismatch. The rendered message uses a FIXED eval
 nonce, so the input hash is stable (production draws one per call).
 
-Gates are on the SERVED path — `routes.learn_loop.served_close`, what the
+Gates are on the SERVED path — `services.loop.closing.served_close`, what the
 route stores and returns: ServedIfThenForm, ServedOneQuestion, ServedKeysSubset,
 ServedSummaryBounded, ServedNoInjection (injection-tagged cases never claim
 mastery), ServedNoUnreleasedAnswer and ServedModelWritten (the model's close
