@@ -11,7 +11,7 @@ import logging
 from contextlib import contextmanager
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 
 from db.connection import table
 from models import (
@@ -102,7 +102,7 @@ def create_role(body: CreateRoleBody, request: Request):
 
 
 @router.patch("/roles/{role_id}")
-def update_role(role_id: str, request: Request, body: dict = {}):
+def update_role(role_id: str, request: Request, body: dict = Body(default_factory=dict)):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
@@ -180,7 +180,7 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 
 
 @router.patch("/achievements/{achievement_id}")
-def update_achievement(achievement_id: str, request: Request, body: dict = {}):
+def update_achievement(achievement_id: str, request: Request, body: dict = Body(default_factory=dict)):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
@@ -290,7 +290,7 @@ def create_cosmetic(body: CreateCosmeticBody, request: Request):
 
 
 @router.patch("/cosmetics/{cosmetic_id}")
-def update_cosmetic(cosmetic_id: str, request: Request, body: dict = {}):
+def update_cosmetic(cosmetic_id: str, request: Request, body: dict = Body(default_factory=dict)):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():

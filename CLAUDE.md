@@ -98,7 +98,7 @@ docker-compose up
 Lint (run from `backend/`):
 
 ```
-ruff check .                    # lint, gated in CI against the ruff.toml baseline (#193)
+ruff check .                    # lint (pyflakes + ASYNC/bugbear/blind-except), gated in CI against the ruff.toml baseline (#193)
 lint-imports                    # import-boundary contracts in .importlinter (#118), gated in CI after ruff
 python scripts/type_ratchet.py  # pyright (basic) against type_baseline.json; a new type error fails CI, a fixed one asks for --shrink
 ruff format .                   # formatter — available, not yet CI-gated (see ruff.toml)

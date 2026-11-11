@@ -213,7 +213,7 @@ def end_session(body: EndSessionBody, request: Request):
         # award above may well be what tipped today over the line.
         newly_earned += check_achievements(body.user_id, "goal_streak", {})
     except Exception:
-        pass
+        logger.warning("session-end achievement checks failed", exc_info=True)
 
     return {"summary": summary, "achievements_earned": newly_earned}
 

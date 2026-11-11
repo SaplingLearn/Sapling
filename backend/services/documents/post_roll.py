@@ -46,7 +46,7 @@ def _check_upload_achievements(user_id: str) -> None:
     try:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
-        pass
+        logger.warning("documents_uploaded achievement check failed", exc_info=True)
 
 
 #: In-flight post-roll tasks (#759). The event loop holds only a WEAK

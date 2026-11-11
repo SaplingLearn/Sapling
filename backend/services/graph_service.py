@@ -613,7 +613,9 @@ def add_course(
         from services.course_context_service import refresh_course_context
         refresh_course_context(offering_id, user_id=user_id)
     except Exception:
-        pass
+        # Best-effort: the course is added either way, but a refresh that
+        # keeps failing leaves the tutor on stale context, so say so.
+        logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
     return {"course_id": course_id, "already_existed": False}
 
 
@@ -670,7 +672,7 @@ def delete_node(user_id: str, node_id: str) -> dict:
             try:
                 refresh_course_context(offering_id, user_id=user_id)
             except Exception:
-                pass
+                logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
     return {"deleted": True}
 
 
@@ -744,7 +746,7 @@ def delete_course(user_id: str, course_id: str, term: str | None = None) -> dict
         try:
             refresh_course_context(offering_id, user_id=user_id)
         except Exception:
-            pass
+            logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
     return {"deleted": True}
 
 

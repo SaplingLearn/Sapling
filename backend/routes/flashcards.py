@@ -212,7 +212,8 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "flashcards_created", {})
     except Exception:
-        pass
+        # Best-effort: never fail the generate, but never hide a broken check.
+        logger.warning("flashcards_created achievement check failed", exc_info=True)
 
     # rows_to_insert holds the ciphertext just written; the response the
     # frontend renders (freshly generated cards, before any list re-fetch)
@@ -369,7 +370,7 @@ def import_commit(body: ImportCommitBody, request: Request):
     try:
         check_achievements(body.user_id, "flashcards_created", {"count": len(rows)})
     except Exception:
-        pass
+        logger.warning("flashcards_created achievement check failed", exc_info=True)
 
     return {"inserted": len(rows), "skipped_duplicates": skipped_count}
 
