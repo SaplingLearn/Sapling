@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import psycopg
 import pytest
+import services.loop.reveals
 
 pytestmark = pytest.mark.integration
 
@@ -103,13 +104,12 @@ def test_the_floor_is_reread_inside_the_claim(db_conn):
     re-read right before B's write raises B's Evidence to H6."""
     from learning import help_ledger
     from learning.params import RUNG_NO_CREDIT_MIN
-    from routes import learn_loop
 
     qh = _qh()
     item = SimpleNamespace(question_hash=qh)
     help_ledger.record_posed(USER, qh, source="loop", session_id="s-b")
-    assert learn_loop._reveal_floor(USER, item, None) == 0
+    assert services.loop.reveals._reveal_floor(USER, item, None) == 0
     pending = [{"question_hash": qh, "max_rung": 0, "assisted": False}]
     help_ledger.record_help(USER, qh, 6, source="loop", session_id="s-a")  # concurrently, in A
-    assert learn_loop._refloor(pending, USER, item, None, 0) == 6
+    assert services.loop.reveals._refloor(pending, USER, item, None, 0) == 6
     assert pending[0]["max_rung"] == 6 and pending[0]["max_rung"] >= RUNG_NO_CREDIT_MIN

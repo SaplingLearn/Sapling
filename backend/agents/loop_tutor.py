@@ -32,7 +32,7 @@ the plan_concept untrusted block. The verdict line and the "Key idea:" label are
 The validator runs inside the output functions (`LOOP_OUTPUT`,
 `LOOP_V2_OUTPUT`), which is what lets a run pick its output type.
 
-The model slot is chosen per RUN, in code: routes/learn_loop.py asks
+The model slot is chosen per RUN, in code: services/loop/ asks
 learning.policy.model_tier for a tier and passes `tier_run_kwargs(tier)`
 (model + thinking + max_tokens [+ tool_choice]) to `agent.run`. There is no
 fast/smart knob on the loop (invariant 22).
@@ -371,7 +371,7 @@ ANSWER_CHECK_LINE = (
 )
 
 #: Spec §13 A121 (v2): why the plan's cursor is on its current concept, in the
-#: route's terms (routes/learn_loop.py::CURSOR_REASONS, read off loop state by
+#: route's terms (services/loop/cursor.py::CURSOR_REASONS, read off loop state by
 #: `plan_focus`, never off text). These are trusted route words; the concept's
 #: NAME is graph data (often extracted from an uploaded document), so it rides
 #: the plan_concept untrusted block instead (`plan_focus_block`).
@@ -578,7 +578,7 @@ _VERDICT_H0_GUIDE = (
 )
 
 #: m1 (review round 3): the released answer is served FROM CODE — the stored
-#: reference, above the model's turn (routes/learn_loop.py) — so the model is
+#: reference, above the model's turn (services/loop/) — so the model is
 #: never asked to state or compute it.
 #: The teach phase has no item, so below H4 the item-centric CEILING_GUIDE
 #: wording ("the next step of the item") reads as an invitation to invent one;
@@ -883,7 +883,7 @@ def _given_text(messages: list) -> str:
     expression is no invention), and tool results — never this run's own
     attempts nor the system prompt. The provenance `validate_turn` checks
     invented math against (the served leak check reads only what the STUDENT
-    can see: routes/learn_loop.py `_visible_text`)."""
+    can see: services/loop/guard.py `_visible_text`)."""
     start = _run_start(messages)
     parts = []
     for i, m in enumerate(messages):

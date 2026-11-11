@@ -68,7 +68,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 
 | Spec term | Plain words | Code |
 |---|---|---|
-| Loop | The tutoring system as a whole: probe → plan → teach ⇄ check → feedback → close, plus spaced review and the delayed post-test. | `backend/routes/learn_loop.py` |
+| Loop | The tutoring system as a whole: probe → plan → teach ⇄ check → feedback → close, plus spaced review and the delayed post-test. | `backend/routes/learn_loop.py`, `backend/services/loop/` |
 | Phase | Where a session is: `probe`, `plan`, `teach`, `check`, `feedback`, `close`. | `backend/learning/params.py::CLOSE_PHASES` |
 | `loop_state` | The session's JSON state document on `sessions.loop_state`, saved only by compare-and-set on `loop_state_rev`. | `backend/learning/loop_state_store.py::update_loop_state` |
 | Compare-and-set (CAS) | A save that succeeds only if the row's revision is still the one loaded; the loser reloads and reapplies its change. | `backend/learning/loop_state_store.py::save_loop_state` |
@@ -82,15 +82,15 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Teach turn | A tutor turn in the teach phase: key idea, body, one question. | `backend/learning/turn_shape.py::render_turn` |
 | Model tier | Which tutor model a turn runs on: `lite`, `standard`, `deep` or `none` (no model call). Chosen in code. | `backend/learning/policy.py::model_tier` |
 | Pose | Showing a check item to the student. A posed item is open until it is graded. | `backend/learning/help_ledger.py::record_posed` |
-| Activation | Picking the next item for the plan's current concept and making it the active check. | `backend/routes/learn_loop.py::_activate_next_item` |
+| Activation | Picking the next item for the plan's current concept and making it the active check. | `backend/services/loop/practice.py::_activate_next_item` |
 | Seen set | Every item hash in the student's evidence rows. Pickers exclude it (the probe falls back to a seen item only when nothing unseen is left). | `backend/learning/loop_state_store.py::seen_hashes` |
 | Revealed set | Items whose answer the student has been shown (wrong answer, worked solution, a served tutor text that stated it). Excluded like seen items. | `backend/learning/loop_state_store.py::revealed_hashes` |
 | Reported set | Items the student reported; excluded for that student. | `backend/learning/loop_state_store.py::reported_hashes` |
-| Explicit submission | An answer sent through the answer box (`/check/answer`, `/probe/answer`, `/review/answer`, `/posttest/answer`). The only thing ever graded, A16. | `backend/routes/learn_loop.py::_grade_submission` |
-| Grading claim | A marker taken by CAS before grading, so one posed item is graded once, A52. | `backend/routes/learn_loop.py::_grade_submission` |
+| Explicit submission | An answer sent through the answer box (`/check/answer`, `/probe/answer`, `/review/answer`, `/posttest/answer`). The only thing ever graded, A16. | `backend/services/loop/grading.py::_grade_submission` |
+| Grading claim | A marker taken by CAS before grading, so one posed item is graded once, A52. | `backend/services/loop/grading.py::_grade_submission` |
 | Grade checkpoint | An encrypted, owner-bound record of a finished grade saved before its evidence commits, so a crash is recovered without grading twice (ADR 0038). | `backend/learning/grade_checkpoint.py::seal` |
 | Turn activity | Prose-free timing and fencing for a tutor turn, so an interrupted turn cannot earn help-gate time (ADR 0036). | `backend/learning/turn_activity.py::begin` |
-| Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/routes/learn_loop.py::_LoopTurn` |
+| Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/services/loop/turn.py::_LoopTurn` |
 | Close | The end-of-session record: a summary, a self-evaluation prompt and an "If …, then …" plan, stored encrypted on `sessions.close_json`. | `backend/learning/session_close.py::build_close` |
 | Segment | The stretch of a session spent on one concept, from the moment the plan's cursor reaches it until it moves on. | `backend/learning/prequestion.py::segment_open` |
 | Segment prequestion | One ungraded guess at a vetted question when a segment opens, followed at once by the answer and why. Never evidence; the item becomes revealed. A138, flag `segment_prequestion`. | `backend/learning/prequestion.py::choose` |
@@ -123,8 +123,8 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Spec term | Plain words | Code |
 |---|---|---|
 | Leak | Tutor text that states an item's answer: a run of reference tokens, the final answer, or the item's stem. | `backend/learning/leak.py::detect_leak` |
-| Leak cut, `retract` | How a served turn avoids a leak: the stream stops before the sentence that would state the answer and a `retract` event tells the client to discard what it showed; a final text that still leaks is replaced by the ladder's fallback line. Nothing is masked in place (A51); the unused stripper was removed (A142). | `backend/routes/learn_loop.py::served_model_text` |
-| Served text | The text the student actually receives, after the code-side template and the strip. Evals score this, not raw model output, A48. | `backend/routes/learn_loop.py::served_model_text` |
+| Leak cut, `retract` | How a served turn avoids a leak: the stream stops before the sentence that would state the answer and a `retract` event tells the client to discard what it showed; a final text that still leaks is replaced by the ladder's fallback line. Nothing is masked in place (A51); the unused stripper was removed (A142). | `backend/services/loop/served.py::served_model_text` |
+| Served text | The text the student actually receives, after the code-side template and the strip. Evals score this, not raw model output, A48. | `backend/services/loop/served.py::served_model_text` |
 | Served scan, reveal | Every served tutor text is scanned against the student's open posed items; an item it states is recorded as revealed, at serve time, A88. | `backend/learning/served_scan.py::ScanSet` |
 | Unscanned marker | When a turn's open items cannot be read or scanned, an `unscanned` row is written instead, and every item posed before it is then graded as assisted (fail closed). | `backend/learning/reveal_store.py::record_unscanned` |
 | Answer guard | Deterministic screen of the student's answer before grading: text addressed to the grader is refused, A33. | `backend/learning/answer_guard.py::screen` |
@@ -152,7 +152,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | DASH order | Serve first the items whose predicted recall is nearest 0.33 (overdue triage). | `backend/learning/fsrs.py::order_due` |
 | Confusable, interleave | Concepts easily mixed up (prerequisite siblings, or sharing an open wrong key) are served next to each other in review, A114. | `backend/learning/interleave.py::serve_order` |
 | Review session | A daily `sessions` row with `mode='review'`; not a tutor session, A73. | `backend/learning/review.py::review_session_id` |
-| Post-test | A delayed, tool-removed check: no hints, no course passages, no brief. The outcome measure. | `backend/routes/learn_loop.py::posttest_start` |
+| Post-test | A delayed, tool-removed check: no hints, no course passages, no brief. The outcome measure. | `backend/services/loop/posttest.py::posttest_start` |
 | Anchor | A concept's first graded evidence; post-test windows count from it. Practice cannot move it. | `backend/learning/posttest_store.py::posttest_anchors` |
 | Window | A fixed delay after the anchor at which the post-test is offered: 7 and 28 days; the last window closes at 56 days. | `backend/learning/learning_gain.py::window_at` |
 | Reserve | Up to two items per concept protected for the post-test: never used in the probe, checks or review. | `backend/learning/checks.py::posttest_reserve_hashes` |

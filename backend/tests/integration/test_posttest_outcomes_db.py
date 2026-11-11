@@ -20,6 +20,7 @@ import psycopg
 import pytest
 
 from learning.params import POSTTEST_POSE_TTL_HOURS, POSTTEST_WINDOWS_DAYS
+import services.loop.posttest_poses
 
 pytestmark = pytest.mark.integration
 
@@ -166,11 +167,10 @@ def _skip(node, reason, window=W1):
 
 
 def test_a_skip_is_one_row_per_window_with_the_latest_reason(db_conn):
-    from routes import learn_loop
 
     node = _node(db_conn)
-    learn_loop._record_skips([_skip(node, "exhausted")])
-    learn_loop._record_skips([_skip(node, "reported"), _skip(node, "no_items", W2)])
+    services.loop.posttest_poses._record_skips([_skip(node, "exhausted")])
+    services.loop.posttest_poses._record_skips([_skip(node, "reported"), _skip(node, "no_items", W2)])
     rows = db_conn.execute(
         "SELECT window_days, reason FROM posttest_skips WHERE user_id = %s AND node_id = %s "
         "ORDER BY window_days",
@@ -180,10 +180,9 @@ def test_a_skip_is_one_row_per_window_with_the_latest_reason(db_conn):
 
 
 def test_an_unknown_skip_reason_is_refused_and_never_fails_the_start(db_conn):
-    from routes import learn_loop
 
     node = _node(db_conn)
-    learn_loop._record_skips([_skip(node, "bored")])  # the CHECK refuses it; the helper logs
+    services.loop.posttest_poses._record_skips([_skip(node, "bored")])  # the CHECK refuses it; the helper logs
     assert db_conn.execute(
         "SELECT count(*) AS n FROM posttest_skips WHERE node_id = %s", (node,)
     ).fetchone()["n"] == 0
@@ -196,14 +195,13 @@ def _open_pose(node, *, qh="q1", posed=None, window=W1):
     """Open (or renew) a pose with the row /posttest/start writes
     (`learn_loop._new_pose`): every answer column NULL, the outcome (A112) as
     well as what the answer reports (A126), so a renewal resets them all."""
-    from routes import learn_loop
 
     at = posed or _now()
     choice = SimpleNamespace(
         item=SimpleNamespace(question_hash=qh), match="difficulty", source="reserve"
     )
     span = SimpleNamespace(first_id=None, first_at=at - timedelta(days=window), last_at=at - timedelta(days=1))
-    learn_loop._record_poses([learn_loop._new_pose(USER, COURSE, node, window, choice, span, at)])
+    services.loop.posttest_poses._record_poses([services.loop.posttest_poses._new_pose(USER, COURSE, node, window, choice, span, at)])
 
 
 def _pose(db_conn, node, window=W1):
@@ -214,39 +212,36 @@ def _pose(db_conn, node, window=W1):
 
 
 def test_the_first_display_is_stamped_once(db_conn):
-    from routes import learn_loop
 
     node = _node(db_conn)
     _open_pose(node)
     first = _now()
-    assert learn_loop._stamp_served(USER, node, "q1", first) is True
-    assert learn_loop._stamp_served(USER, node, "q1", first + timedelta(minutes=5)) is False
+    assert services.loop.posttest_poses._stamp_served(USER, node, "q1", first) is True
+    assert services.loop.posttest_poses._stamp_served(USER, node, "q1", first + timedelta(minutes=5)) is False
     assert _pose(db_conn, node)["served_at"] == first
-    assert learn_loop._stamp_served(USER, node, "another-item", first) is False
+    assert services.loop.posttest_poses._stamp_served(USER, node, "another-item", first) is False
 
 
 def test_an_expired_or_answered_pose_is_never_stamped(db_conn):
-    from routes import learn_loop
 
     now = _now()
     old, done = _node(db_conn), _node(db_conn)
     _open_pose(old, posed=now - timedelta(hours=POSTTEST_POSE_TTL_HOURS, seconds=1))
     _open_pose(done)
-    assert learn_loop._claim_pose(USER, done, "q1", "c", now) is not None
-    assert learn_loop._answer_pose(USER, done, "c", now, correct=True, max_rung=0) is True
-    assert learn_loop._stamp_served(USER, old, "q1", now) is False
-    assert learn_loop._stamp_served(USER, done, "q1", now) is False
+    assert services.loop.posttest_poses._claim_pose(USER, done, "q1", "c", now) is not None
+    assert services.loop.posttest_poses._answer_pose(USER, done, "c", now, correct=True, max_rung=0) is True
+    assert services.loop.posttest_poses._stamp_served(USER, old, "q1", now) is False
+    assert services.loop.posttest_poses._stamp_served(USER, done, "q1", now) is False
 
 
 def test_the_answer_records_its_latency_and_visibility(db_conn):
-    from routes import learn_loop
 
     node = _node(db_conn)
     _open_pose(node)
     now = _now()
-    learn_loop._stamp_served(USER, node, "q1", now - timedelta(seconds=40))
-    assert learn_loop._claim_pose(USER, node, "q1", "c", now) is not None
-    assert learn_loop._answer_pose(
+    services.loop.posttest_poses._stamp_served(USER, node, "q1", now - timedelta(seconds=40))
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "c", now) is not None
+    assert services.loop.posttest_poses._answer_pose(
         USER, node, "c", now, correct=False, max_rung=0, latency_s=40.0, hidden_count=2, hidden_s=7.5
     ) is True
     row = _pose(db_conn, node)
@@ -282,13 +277,12 @@ def test_the_checks_refuse_an_impossible_open_pose(db_conn, assignment):
     ],
 )
 def test_the_checks_refuse_impossible_answer_telemetry(db_conn, assignment):
-    from routes import learn_loop
 
     node = _node(db_conn)
     _open_pose(node)
     now = _now()
-    assert learn_loop._claim_pose(USER, node, "q1", "c", now) is not None
-    assert learn_loop._answer_pose(USER, node, "c", now, correct=True, max_rung=0) is True
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "c", now) is not None
+    assert services.loop.posttest_poses._answer_pose(USER, node, "c", now, correct=True, max_rung=0) is True
     with pytest.raises(psycopg.errors.CheckViolation):
         db_conn.execute(f"UPDATE posttest_poses SET {assignment} WHERE node_id = %s", (node,))
 

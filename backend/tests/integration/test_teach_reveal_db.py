@@ -14,6 +14,8 @@ import psycopg
 import pytest
 
 from learning.params import POSTTEST_WINDOWS_DAYS
+import services.loop.posed
+import services.loop.posttest_poses
 
 pytestmark = pytest.mark.integration
 
@@ -68,7 +70,6 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     """A93 (owner decision 1) supersedes A88's open-only scan: an ENDED session's
     ungraded step and an EXPIRED pose are posed and ungraded, so they are scanned."""
     from db.connection import table
-    from routes import learn_loop
 
     now = _now()
     loop_sid, closed_sid, review_sid = (str(uuid.uuid4()) for _ in range(3))
@@ -110,7 +111,7 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     # A112: a pose belongs to a fixed follow-up window (window_days is part of
     # the key, NOT NULL)
     window = POSTTEST_WINDOWS_DAYS[0]
-    learn_loop._record_poses(
+    services.loop.posttest_poses._record_poses(
         [
             {
                 "user_id": USER,
@@ -150,18 +151,18 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     with (
         # A101: the scan set batches its item reads (items_by_ids), never one
         # get_check_item per id; the fixture ids are not real check_items rows.
-        # spec §13 A149: the scan set lives in services/loop_posed.py, so its
+        # spec §13 A149: the scan set lives in services/loop/posed.py, so its
         # batched reads are patched there (a get_check_item patch on the route
         # module intercepted nothing since A101 and is gone)
         patch(
-            "services.loop_posed.items_by_ids",
+            "services.loop.posed.items_by_ids",
             side_effect=lambda ids: [loaded[i] for i in ids if i in loaded],
         ),
         patch(
-            "services.loop_posed.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
+            "services.loop.posed.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
         ) as by_hash,
     ):
-        got = learn_loop.posed_items(USER, now=now)
+        got = services.loop.posed.posed_items(USER, now=now)
     assert got is not None
     items, overflow = got
     assert sorted(i.question_hash for i, _ in items) == ["qh-a", "qh-old", "qh-p", "qh-r", "qh-x"]

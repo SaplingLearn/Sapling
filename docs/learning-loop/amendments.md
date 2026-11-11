@@ -88,7 +88,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A | Area | Change | Main code |
 |---|---|---|---|
 | A47 | evals | The eval-side rung judge is the authority on ceiling compliance | `backend/tests/evals/_rung_judge.py` |
-| A48 | evals | Tier routability is judged on the served text, not the raw model text | `backend/routes/learn_loop.py::served_model_text` |
+| A48 | evals | Tier routability is judged on the served text, not the raw model text | `backend/services/loop/served.py::served_model_text` |
 | A49 | evals | A tier routes only after three fresh recordings all pass | `backend/agents/loop_tutor.py::LOOP_ROUTABLE_TIERS` |
 | A79 | metrics | The evaluation ladder as built: nightly metrics, within-student arms, `write_metrics` | `backend/scripts/derive_zpd_metrics.py` |
 | A82 | metrics | `zpd.step` carries the session id, so cost is reported per session | `backend/learning/zpd_events.py::emit_zpd_step` |
@@ -135,15 +135,15 @@ files, which the row lists. A dash means the row has no code of its own.
 | A5 | gates | Gates take an injectable clock; every gate time scales with `LEARNING_GATE_TIME_SCALE` (E2E only) | `backend/learning/params.py::gate_seconds` |
 | A13 | planning | No syllabus-week filter for the planner; exam proximity drives the retention target and the brief | `backend/services/exam_proximity.py::days_until_next_exam` |
 | A17 | ladder | Deterministic turns (check pose, H2 passages, H4 sibling, H6 reference), each leak-checked | `backend/learning/ladder.py::deterministic_content` |
-| A27 | activation | Item activation and the current concept: the plan cursor drives which item is posed | `backend/routes/learn_loop.py::_activate_next_item` |
+| A27 | activation | Item activation and the current concept: the plan cursor drives which item is posed | `backend/services/loop/practice.py::_activate_next_item` |
 | A29 | misconceptions | The class misconception rollup groups by course concept, not by per-student node | `backend/learning/misconceptions.py::rollup` |
 | A32 | ladder | H6 (the full solution) needs a practice item; ungraded is not practice | `backend/learning/gates.py::h6_allowed` |
 | A40 | bands | Tuning decisions: eval floors are min-of-3, "harder" needs four attempts, "no idea" is I-don't-know | `backend/learning/policy.py::band_control` |
 | A46 | tutor turn | The tutor's turn is structured: key idea, body, question (question last) | `backend/learning/turn_shape.py::render_turn` |
-| A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/routes/learn_loop.py::step_attempt` |
-| A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/routes/learn_loop.py::_served_fields` |
-| A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/routes/learn_loop.py::probe_next` |
-| A60 | close | The session close as built: one close per session, by claim | `backend/routes/learn_loop.py::close_session` |
+| A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/services/loop/attempts.py::step_attempt` |
+| A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/services/loop/served.py::_served_fields` |
+| A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/services/loop/probe.py::probe_next` |
+| A60 | close | The session close as built: one close per session, by claim | `backend/services/loop/closing.py::close_session` |
 | A70 | review queue | Review answers are claims; the open review item is stable across reloads | `backend/learning/review.py::claim_item` |
 | A75 | misconceptions | The misconception loop as built: record, confront, re-ask an isomorph, class rollup | `backend/learning/misconceptions.py::slip_or_misconception` |
 | A81 | tutor turn | Retired by A83: at a teach ceiling of H0/H1 the question would come from the ladder | — |
@@ -169,7 +169,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A16 | grading | Grade only explicit answer submissions, in the route; chat messages are never graded | `backend/agents/tools/check.py::grade_answer` |
 | A33 | answer guard | An answer addressed to the grader is refused, never graded (prompt-injection guard) | `backend/learning/answer_guard.py::screen` |
 | A51 | prompt safety | A student's words can never steer the loop tutor (nonce envelope, rules on every turn) | `backend/agents/loop_tutor.py::student_envelope` |
-| A52 | grading | Grading a check item is a claim: one grade per posed item, taken by compare-and-set | `backend/routes/learn_loop.py::_grade_submission` |
+| A52 | grading | Grading a check item is a claim: one grade per posed item, taken by compare-and-set | `backend/services/loop/grading.py::_grade_submission` |
 | A61 | prompt safety | The tutor's rules ride `instructions=` so they reach every turn, not only the first | `backend/agents/loop_tutor.py::loop_tutor_agent` |
 | A62 | brief | The learner brief carries no model-written free text | `backend/learning/learner_brief.py::build_brief` |
 | A84 | reveals | Superseded by A86: teach turns never state check answers | — |
@@ -223,7 +223,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A38 | decision record | Owner decisions before PKG-07: step-state layout, compare-and-set saves, option-letter leak, one gate read per request | `backend/learning/loop_state_store.py::update_loop_state` |
 | A42 | decision record | Keep as built: the hand-offs' answers to open questions stand | — |
 | A45 | decision record | Recorded, not decided: two competing decision seams and ADR numbering (resolved by ADR 0032) | `docs/decisions/0032-separate-learning-decisions-from-tutor-observation.md` |
-| A72 | frontend | The loop status probe (`/review/active`) and a read-only review summary | `backend/routes/learn_loop.py::review_active` |
+| A72 | frontend | The loop status probe (`/review/active`) and a read-only review summary | `backend/services/loop/reviews.py::review_active` |
 | A73 | sessions | Review sessions are not tutor sessions; tutor-session readers skip them | `backend/services/session_modes.py::NOT_REVIEW` |
 | A78 | frontend | The student UI's server seams as built (status probe, resume, review) | `frontend/src/components/learn/useLoopStatus.ts::useLoopStatus` |
 | A91 | rollout | The cutover (PKG-14 half B) as built: kill-switch parse, legacy cost bound, E2E lanes | `backend/config.py::LEARNING_LOOP_ENABLED` |
@@ -234,7 +234,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A136 | schema | Every float the backend reads through PostgREST is exact | `backend/db/migrations/20261108162223_learning_exact_floats.sql` |
 | A142 | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) | `backend/db/migrations/20261108193927_learning_report_course_key.sql` |
 | A148 | main sync | The loop on main's hardening architecture: its tables' RLS posture, service scope, the upload job queue, the LLM budget and resilience | `backend/db/migrations/20261109032302_learning_loop_rls.sql` |
-| A149 | main port | The learning system on main's Phase 3/4 layout: the quiz, tutor, documents, flashcards and analytics changes in main's domain packages, the async turn entry, the import contracts kept with no new exception | `backend/services/loop_posed.py::posed_items` |
+| A149 | main port | The learning system on main's Phase 3/4 layout: the quiz, tutor, documents, flashcards and analytics changes in main's domain packages, the async turn entry, the import contracts kept with no new exception | `backend/services/loop/posed.py::posed_items` |
 
 ## In A-number order
 

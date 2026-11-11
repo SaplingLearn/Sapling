@@ -96,11 +96,12 @@ router = APIRouter()
 
 
 def _loop_delegate(name: str):
-    """The learning loop's handler `name` (routes/learn_loop.py), resolved
-    lazily: routes.learn_loop imports this module's helpers, so a top-level
-    import would be circular. Here, not in services/tutor/: a service must
-    not import a route (.importlinter), so the route hands the tutor body
-    this callable and the body calls it at its hand-off point (spec §7).
+    """The learning loop's handler `name` (its body in services/loop/, #118),
+    resolved lazily, at the hand-off: nothing of the loop loads with the
+    legacy tutor (the PKG-06 inertness probe imports the app with the loop
+    route stubbed). Here, not in services/tutor/: the tutor body is handed this
+    callable and calls it at its hand-off point (spec §7), so the tutor domain
+    never imports the loop's.
 
     #115 (spec §13 A148): a delegated request runs as the loop router does,
     as the service role under `db_user_scope` — the loop's tables are
@@ -110,10 +111,10 @@ def _loop_delegate(name: str):
     the student."""
 
     def delegate(body, request: Request):
-        from routes import learn_loop
+        import services.loop as loop_service
 
         service_route(request)
-        return getattr(learn_loop, name)(body, request)
+        return getattr(loop_service, name)(body, request)
 
     return delegate
 

@@ -9,6 +9,7 @@ import sys
 
 import pytest
 import yaml
+import services.loop.planning
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
@@ -91,16 +92,15 @@ def test_probe_plan_config_default_is_the_named_policy():
 def test_configured_probe_plan_guard_still_throttles_per_user(monkeypatch):
     import config
     from fastapi import HTTPException
-    from routes import learn_loop
     from services import request_limits
 
     monkeypatch.setattr(config, "LOOP_PROBE_PLAN_READS_PER_MIN", 2)
     monkeypatch.setattr(request_limits, "_rate_state", {})
-    learn_loop._probe_plan_read_limit("diagnostic-user")
-    learn_loop._probe_plan_read_limit("diagnostic-user")
+    services.loop.planning._probe_plan_read_limit("diagnostic-user")
+    services.loop.planning._probe_plan_read_limit("diagnostic-user")
     with pytest.raises(HTTPException) as raised:
-        learn_loop._probe_plan_read_limit("diagnostic-user")
+        services.loop.planning._probe_plan_read_limit("diagnostic-user")
     assert raised.value.status_code == 429
     assert raised.value.detail == "too many requests"
     assert 1 <= int(raised.value.headers["Retry-After"]) <= 60
-    learn_loop._probe_plan_read_limit("another-user")
+    services.loop.planning._probe_plan_read_limit("another-user")

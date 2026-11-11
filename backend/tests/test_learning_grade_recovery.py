@@ -3,7 +3,6 @@
 import asyncio
 from copy import deepcopy
 import json
-from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -13,15 +12,20 @@ from learning import grade_checkpoint
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.evidence_transaction import EvidenceObservationSuperseded
 from models import ChatBody, LoopCheckAnswerBody, EndSessionBody
-from routes import learn_loop
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
+import services.loop.checkpoint
+import services.loop.closing
+import services.loop.grading
+import services.loop.state
+import services.loop.turn
 
 client = routes.client
 gate_on, seams, no_rate_limit = routes.gate_on, routes.seams, routes.no_rate_limit
 
 
 def submit(answer="The base case returns 1"):
-    return asyncio.run(learn_loop._grade_submission(
+    return asyncio.run(services.loop.grading._grade_submission(
         LoopCheckAnswerBody(**routes._answer(answer=answer)),
         Request({"type": "http", "headers": []}), loop_on=True,
     ))
@@ -56,7 +60,7 @@ def test_cold_retry_uses_saved_answer_and_operation_without_regrading(gate_on, s
 
 @pytest.mark.parametrize("after_save", [False, True])
 def test_lost_session_ack_never_grades_or_commits_evidence_twice(gate_on, seams, after_save):
-    real_update = learn_loop._update_loop_state
+    real_update = services.loop.state._update_loop_state
     armed = True
     committed = {}
 
@@ -76,11 +80,11 @@ def test_lost_session_ack_never_grades_or_commits_evidence_twice(gate_on, seams,
             armed = False
             if after_save:
                 real_update(sid, mutate, **kw)
-            raise learn_loop._StateConflict()
+            raise services.loop.state._StateConflict()
         return real_update(sid, mutate, **kw)
 
     seams.flush.side_effect = flush
-    with patch.object(learn_loop, "_update_loop_state", lose_ack):
+    with patch_loop("_update_loop_state", lose_ack):
         with pytest.raises(HTTPException):
             submit()
     if after_save:
@@ -100,7 +104,7 @@ def test_lost_session_ack_never_grades_or_commits_evidence_twice(gate_on, seams,
 
 
 def test_lost_checkpoint_ack_is_recoverable_without_a_second_grader(gate_on, seams):
-    real_update = learn_loop._update_loop_state
+    real_update = services.loop.state._update_loop_state
     armed = True
 
     def save_then_lose_ack(sid, mutate, **kw):
@@ -111,7 +115,7 @@ def test_lost_checkpoint_ack_is_recoverable_without_a_second_grader(gate_on, sea
             raise RuntimeError("checkpoint acknowledgment lost")
         return doc
 
-    with patch.object(learn_loop, "_update_loop_state", save_then_lose_ack), pytest.raises(RuntimeError):
+    with patch_loop("_update_loop_state", save_then_lose_ack), pytest.raises(RuntimeError):
         submit()
     seams.flush.assert_not_called()
     saved = checkpoint(seams)
@@ -131,7 +135,7 @@ def test_saved_checkpoint_cannot_expire_or_disappear_on_withdrawal(gate_on, seam
     assert response.status_code == 200
     assert response.json()["pending_grade"] == {"kind": "check", "question_hash": "qh-1"}
     assert seams.store["doc"] == before
-    assert learn_loop._grading_in_flight(before, routes.NOW + 100000)
+    assert services.loop.state._grading_in_flight(before, routes.NOW + 100000)
     seams.flush.side_effect = None
     assert submit().kind == "feedback"
     seams.grade.assert_awaited_once()
@@ -197,7 +201,7 @@ def test_older_uncommitted_answer_is_retired_without_fabricating_diagnosis(gate_
     assert "graded_at" not in entry
     assert "goal_observation" not in entry and grade_checkpoint.KEY not in entry
     assert seams.store["doc"]["current"] is None
-    assert not learn_loop._grading_in_flight(seams.store["doc"], routes.NOW)
+    assert not services.loop.state._grading_in_flight(seams.store["doc"], routes.NOW)
     with pytest.raises(HTTPException):
         submit()
     seams.grade.assert_awaited_once()
@@ -217,7 +221,7 @@ def test_replay_checks_current_session_fences_before_flushing(gate_on, seams, ch
         seams.store["doc"]["steps"]["qh-1"]["grading_claim"] = "other"
     seams.flush.reset_mock()
     with pytest.raises(HTTPException):
-        learn_loop._finish_check_checkpoint(saved, ("off-1", "c1"), Request({"type": "http", "headers": []}), loop_on=True)
+        services.loop.checkpoint._finish_check_checkpoint(saved, ("off-1", "c1"), Request({"type": "http", "headers": []}), loop_on=True)
     seams.flush.assert_not_called()
 
 
@@ -229,10 +233,10 @@ def test_legacy_end_does_not_close_over_an_unacknowledged_grade(gate_on, seams, 
         coro.close()  # the fake runner owns the coroutine it refuses to execute
         raise failure
 
-    with patch.object(learn_loop, "table") as table, patch.object(learn_loop, "run_agent_sync", side_effect=fail_close):
+    with patch_loop("table") as table, patch_loop("run_agent_sync", side_effect=fail_close):
         table.return_value.select.return_value = [{"loop_state": routes._state()}]
         with pytest.raises(HTTPException) as error:
-            learn_loop.end_session(EndSessionBody(session_id="s1", user_id="u1"), Request({"type": "http", "headers": []}))
+            services.loop.closing.end_session(EndSessionBody(session_id="s1", user_id="u1"), Request({"type": "http", "headers": []}))
     assert error.value.status_code in (409, 503)
     handle.log_event.assert_not_called()
 
@@ -246,7 +250,7 @@ def test_chat_cannot_clear_a_withdrawn_saved_grade_or_start_a_model(gate_on, sea
     before = deepcopy(seams.store["doc"])
     seams.item.side_effect = AssertionError("A pending grade must precede withdrawn-item lookup")
     seams.ai_budget.reset_mock()
-    with patch.object(learn_loop, "_LoopTurn") as turn, patch.object(learn_loop, "loop_tutor_agent") as agent:
+    with patch_loop("_LoopTurn") as turn, patch_loop("loop_tutor_agent") as agent:
         response = client.post(path, json={"session_id": "s1", "user_id": "u1", "message": "continue"})
     assert response.status_code == 409
     assert saved.operation_id not in response.text and grade_checkpoint.KEY not in response.text
@@ -262,7 +266,7 @@ def test_chat_cannot_clear_a_withdrawn_saved_grade_or_start_a_model(gate_on, sea
 def test_stale_withdrawn_turn_cannot_clear_a_new_saved_grade(gate_on, seams):
     # This turn derived withdrawal before another request saved its answer.
     seams.item.return_value = None
-    turn = learn_loop._LoopTurn(
+    turn = services.loop.turn._LoopTurn(
         body=ChatBody(session_id="s1", user_id="u1", message="continue"),
         request=Request({"type": "http", "headers": []}), message="continue", loop_on=True,
     )

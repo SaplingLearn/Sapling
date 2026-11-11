@@ -6,13 +6,14 @@ DB/model seams. Real checkpoint/receipt/browser coverage runs in the DB lane.
 
 from copy import deepcopy
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.grade_checkpoint import KEY
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 
@@ -45,9 +46,9 @@ def test_reload_pending_withdrawn_feedback_serves_only_recorded_result_once(
     original_grade = deepcopy(seams.store["doc"]["steps"]["qh-1"])
     seams.item.return_value = None
     with (
-        patch("routes.learn_loop._prepare_loop_run", side_effect=AssertionError("No model/context for withdrawal")) as prepare,
-        patch("routes.learn_loop.stream_structured_turn", side_effect=AssertionError("No model stream for withdrawal")) as stream,
-        patch("routes.learn_loop.record_agent_usage") as usage,
+        patch_loop("_prepare_loop_run", side_effect=AssertionError("No model/context for withdrawal")) as prepare,
+        patch_loop("stream_structured_turn", side_effect=AssertionError("No model stream for withdrawal")) as stream,
+        patch_loop("record_agent_usage") as usage,
     ):
         # A fresh status request must retain the outstanding feedback phase,
         # while returning no withdrawn prompt/reference or open check.
@@ -106,9 +107,9 @@ def test_saved_check_grade_recovers_after_item_withdrawal_without_second_grade_o
     assert resumed.json()["pending_grade"] == {"kind": "check", "question_hash": "qh-1"}
     assert resumed.json()["check"] is None
     with (
-        patch("routes.learn_loop._prepare_loop_run", side_effect=AssertionError("No model/context for withdrawal")) as prepare,
-        patch("routes.learn_loop.stream_structured_turn", side_effect=AssertionError("No model stream for withdrawal")) as stream,
-        patch("routes.learn_loop.record_agent_usage") as usage,
+        patch_loop("_prepare_loop_run", side_effect=AssertionError("No model/context for withdrawal")) as prepare,
+        patch_loop("stream_structured_turn", side_effect=AssertionError("No model stream for withdrawal")) as stream,
+        patch_loop("record_agent_usage") as usage,
     ):
         response = routes.client.post(
             "/api/learn/loop/check/answer" + ("/stream" if streamed else ""),
@@ -141,7 +142,7 @@ def test_saved_check_grade_recovers_after_item_withdrawal_without_second_grade_o
 def test_stale_withdrawal_completion_cannot_count_feedback_twice(gate_on, seams):
     from fastapi import HTTPException
     from models import ChatBody
-    from routes.learn_loop import _LoopTurn
+    from services.loop.turn import _LoopTurn
 
     seams.store["doc"] = routes._graded("idk")
     seams.item.return_value = None

@@ -65,7 +65,7 @@ LOOP_PROBE_OPENER = (
     "your session together."
 )
 #: The same opener for a course with no check items: its probe ends at once and
-#: the plan follows (routes/learn_loop.py::probe_next, `no_check_items`).
+#: the plan follows (services/loop/probe.py::probe_next, `no_check_items`).
 LOOP_PLAN_OPENER = (
     "Welcome! This course has no check-in questions yet, so we'll go straight to "
     "planning your session."

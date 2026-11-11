@@ -16,6 +16,7 @@ from learning.ladder import Rung
 from learning.policy import CeilingReason, LearnerView, StepState
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import NOW, client
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -128,8 +129,8 @@ def _teach(seams, *, served_at, message=CLAIM):
     seams.p_known["node-1"] = 0.99  # profic
     agent, _ = _routes._json_agent("You looked at the numerator only.")
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         patch("services.graph_service.apply_graph_update") as apply,
         # the only learner_state writer: the single writer's transaction RPC
         patch("learning.evidence_transaction.commit_evidence_transaction") as commit,
@@ -172,8 +173,8 @@ def test_an_action_turn_is_never_a_teach_attempt(gate_on, seams):
     seams.p_known["node-1"] = 0.99
     agent, _ = _routes._json_agent("A pump.")
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = client.post(
             "/api/learn/loop/action",
@@ -203,8 +204,8 @@ def test_a_retry_after_a_failure_is_timed_from_the_failure(gate_on, seams):
     seams.store["doc"] = doc
     agent, _ = _routes._json_agent("You looked at the numerator only.")
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
@@ -223,8 +224,8 @@ def test_a_failed_json_turn_refreshes_served_at(gate_on, seams):
 
     agent.run = _boom
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
@@ -254,7 +255,7 @@ def test_a_stream_error_refreshes_served_at(gate_on, seams):
         yield SaplingEvent(type="status", step="start", message="Starting.")
         yield SaplingEvent(type="error", step="reply", message="boom", data={"retryable": True})
 
-    with patch("routes.learn_loop.stream_structured_turn", _failing):
+    with patch_loop("stream_structured_turn", _failing):
         client.post(
             "/api/learn/loop/chat/stream",
             json={"session_id": "s1", "user_id": "u1", "message": CLAIM},

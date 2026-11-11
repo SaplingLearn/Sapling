@@ -17,6 +17,8 @@ import pytest
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from tests.db_fakes import with_async_twins
 from tests.split_patches import setattr_tutor
+from tests.split_patches import patch_loop, setattr_loop
+import services.loop.state
 
 USER = "u1"
 
@@ -142,12 +144,11 @@ def test_review_session_started_is_in_the_taxonomy():
 def test_loop_session_scope_never_resolves_a_review_session(monkeypatch):
     from fastapi import HTTPException
 
-    from routes import learn_loop
 
     spy = _Spy()
-    monkeypatch.setattr(learn_loop, "table", spy)
+    setattr_loop(monkeypatch, "table", spy)
     with pytest.raises(HTTPException) as exc:
-        learn_loop._session_scope("sess-review", USER)
+        services.loop.state._session_scope("sess-review", USER)
     assert exc.value.status_code == 404
     assert spy.filters[-1].get("mode") == "neq.review"
 
@@ -156,7 +157,6 @@ def test_probe_next_on_a_review_session_id_writes_nothing(monkeypatch):
     """The failure the scope guard prevents: /probe/next would read the phase-less
     review document as probing and write a probe into it."""
     from fastapi.testclient import TestClient
-    from unittest.mock import patch
 
     from main import app
 
@@ -176,19 +176,17 @@ def test_probe_next_on_a_review_session_id_writes_nothing(monkeypatch):
             handle.select.side_effect = select
             return handle
 
-    monkeypatch.setattr("routes.learn_loop.table", _ReviewRow())
-    monkeypatch.setattr("routes.learn_loop._load_loop_state", lambda sid: {"sr": {}, "review": {}})
-    monkeypatch.setattr("routes.learn_loop._probe_course_has_items", lambda cid: False)
-    monkeypatch.setattr("routes.learn_loop.offering_course_id", lambda oid: "c1")
+    setattr_loop(monkeypatch, "table", _ReviewRow())
+    setattr_loop(monkeypatch, "_load_loop_state", lambda sid: {"sr": {}, "review": {}})
+    setattr_loop(monkeypatch, "_probe_course_has_items", lambda cid: False)
+    setattr_loop(monkeypatch, "offering_course_id", lambda oid: "c1")
     writes = []
-    monkeypatch.setattr(
-        "routes.learn_loop._update_loop_state", lambda *a, **k: writes.append(a) or {}
-    )
+    setattr_loop(monkeypatch, "_update_loop_state", lambda *a, **k: writes.append(a) or {})
     with (
-        patch("routes.learn_loop.require_self", return_value=None),
-        patch("routes.learn_loop.learning_loop_for_request", return_value=True),
-        patch("routes.learn_loop._probe_plan_read_limit", return_value=None),
-        patch("routes.learn_loop._consume_pending", return_value=None),
+        patch_loop("require_self", return_value=None),
+        patch_loop("learning_loop_for_request", return_value=True),
+        patch_loop("_probe_plan_read_limit", return_value=None),
+        patch_loop("_consume_pending", return_value=None),
     ):
         r = TestClient(app).post(
             "/api/learn/loop/probe/next", json={"session_id": "sess-review", "user_id": USER}
@@ -203,7 +201,13 @@ def test_review_routes_never_consult_the_loop_phase():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    tree = ast.parse((root / "routes" / "learn_loop.py").read_text())
+    # a handler's BODY, over its route wrapper (#118: the bodies live in services/loop/)
+    bodies = {}
+    for path in [*sorted((root / "services" / "loop").glob("*.py")), root / "routes" / "learn_loop.py"]:
+        for n in ast.walk(ast.parse(path.read_text())):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bodies.setdefault(n.name, n)
+    tree = ast.Module(body=list(bodies.values()), type_ignores=[])
     handlers = {"review_next", "review_answer", "review_summary", "review_active"}
     lock = {
         "_loop_phase",

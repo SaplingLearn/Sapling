@@ -176,10 +176,11 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
-    # spec §13 A126: the per-process "retention check due" cache. Only if imported.
-    loop_routes = sys.modules.get("routes.learn_loop")
-    if loop_routes is not None:
-        loop_routes.clear_posttest_due_cache()
+    # spec §13 A126: the per-process "retention check due" cache
+    # (services/loop/posttest.py). Only if imported.
+    loop_posttest = sys.modules.get("services.loop.posttest")
+    if loop_posttest is not None:
+        loop_posttest.clear_posttest_due_cache()
     yield
     _unfreeze_model_mode_for_tests()
     clear_override_model_cache()
@@ -194,9 +195,9 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
-    loop_routes = sys.modules.get("routes.learn_loop")
-    if loop_routes is not None:
-        loop_routes.clear_posttest_due_cache()
+    loop_posttest = sys.modules.get("services.loop.posttest")
+    if loop_posttest is not None:
+        loop_posttest.clear_posttest_due_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -922,9 +923,9 @@ def _bypass_session_auth(request, monkeypatch):
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        # services.quiz.* / services.tutor.*: the quiz and learn splits (#118)
-        # moved guarded handler bodies there.
-        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.")):
+        # services.quiz.* / services.tutor.* / services.loop.*: the quiz, learn
+        # and learn_loop splits (#118) moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.", "services.loop.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):

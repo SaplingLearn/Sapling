@@ -302,7 +302,7 @@ times only, never text. Writers: `backend/learning/reveal_store.py`,
   outcome (`correct`, `max_rung`, `answered_at`, `answer_latency_s`, and the
   hidden-tab telemetry `hidden_count`, `hidden_s`). CHECKs keep outcome and
   telemetry consistent (all or none, only on an answered pose). Mutable;
-  written only by the post-test handlers in `backend/routes/learn_loop.py`.
+  written only by the post-test handlers in `backend/services/loop/posttest.py`.
 - `posttest_skips`: a due window that could not be posed and why (`no_items`,
   `exhausted`, `reported`; A126).
 

@@ -249,13 +249,13 @@ def test_strict_mode_catches_the_restated_correct_option_text():
 def test_random_texts_cut_clean_on_the_served_stream_in_both_modes():
     """Property: for random mixes of option contexts, markup, separators,
     look-alikes, invisible characters and existing markers, the served
-    stream's cut (routes.learn_loop._cut_before_leak: the text up to the last
+    stream's cut (services.loop.guard._cut_before_leak: the text up to the last
     sentence end before the first leak, never masked in place — spec §13
     A51 N1) leaves nothing the same mode's served check flags. It replaces the
     removed stripper's "one pass leaves nothing" property (spec §13 A142):
     the cut is what a student can see stream before the final text."""
     from learning.leak import leak_spans
-    from routes.learn_loop import _cut_before_leak
+    from services.loop.guard import _cut_before_leak
 
     pieces = [
         "option", "opt.", "choice", "answer", "answer is", "correct:", "it's", "It is",

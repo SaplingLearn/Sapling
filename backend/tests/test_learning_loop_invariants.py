@@ -100,6 +100,10 @@ STUBBED_AGENT_MODULES = ("check_items.py", "grader.py", "loop_tutor.py")
 # AgentTask from PKG-07 on (inv_06), each with an E2E function handler.
 LOOP_TUTOR_SLOTS = ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")
 LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
+#: The loop's handler bodies and helpers since #118 (the route wraps them).
+LOOP_PACKAGE = BACKEND / "services" / "loop"
+#: Every file of the loop's code: the route, then the package's modules.
+LOOP_SOURCES = (LOOP_ROUTES, *sorted(LOOP_PACKAGE.glob("*.py")))
 #: routes/learn_loop.py functions allowed to grade or persist evidence (spec §8 #26).
 #: PKG-08/12/14 add their explicit-submission helper; nothing else ever joins.
 #: PKG-08: `_probe_submission` is the probe's writer (grade_answer → ONE
@@ -2133,7 +2137,15 @@ def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
                 runs.append(node.lineno)
             elif isinstance(node, ast.Call) and _last_name(node.func) in _STREAM_RUNNERS:
                 runs.append(node.lineno)
-            elif isinstance(node, ast.Call) and _dotted(node.func).endswith("ai_budget.check"):
+            elif isinstance(node, ast.Call) and (
+                _dotted(node.func).endswith("ai_budget.check")
+                # #117: the same read hopped off the event loop
+                or (
+                    _last_name(node.func) in ("to_thread", "run_in_threadpool")
+                    and node.args
+                    and _dotted(node.args[0]).endswith("ai_budget.check")
+                )
+            ):
                 checks.append(node.lineno)
         found += len(runs)
         bad += [
@@ -2145,13 +2157,17 @@ def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
 
 
 def _loop_run_sites_without_budget_check() -> list[str]:
-    """Invariant 23, loop half: every loop-agent run in routes/learn_loop.py is
-    preceded by ai_budget.check( in the same function body."""
-    if not LOOP_ROUTES.exists():
-        return []
-    source = LOOP_ROUTES.read_text()
-    found, bad = _loop_run_scan(source, "learn_loop")
-    if "APIRouter" in source:  # the real module (not the PKG-00 stub): never vacuous
+    """Invariant 23, loop half: every loop-agent run in the loop's code (the
+    route and services/loop/) is preceded by ai_budget.check( in the same
+    function body."""
+    found, bad = 0, []
+    for path in LOOP_SOURCES:
+        if path.exists():
+            n, offenders = _loop_run_scan(path.read_text(), path.stem)
+            found += n
+            bad += offenders
+    if LOOP_ROUTES.exists() and "APIRouter" in LOOP_ROUTES.read_text():
+        # the real module (not the PKG-00 stub): never vacuous
         assert found >= 3, (
             f"expected the JSON run, the stream and the continuation run sites, found {found}"
         )
@@ -2178,6 +2194,11 @@ def test_inv_23_loop_run_scan_self_test():
         "    return g\n"
     )
     assert _loop_run_scan(good, "good") == (1, [])
+    hopped = good.replace(
+        "d = ai_budget.check(turn.user_id, 'tutor', 'develop')",
+        "d = await asyncio.to_thread(ai_budget.check, turn.user_id, 'tutor', 'develop')",
+    )
+    assert hopped != good and _loop_run_scan(hopped, "hopped") == (1, [])
     assert _loop_run_scan(late, "late")[1] == ["late:run_json:2"]
     assert _loop_run_scan(stream, "stream") == (1, ["stream:s:2"])
     structured = stream.replace("stream_agent_turn", "stream_structured_turn")
@@ -2195,10 +2216,12 @@ def test_inv_15_gate_never_inside_chat_stream():
 
 
 def test_inv_22_loop_routes_ignore_model_pref():
-    if LOOP_ROUTES.exists():
-        assert "model_pref" not in LOOP_ROUTES.read_text(), (
-            "routes/learn_loop.py names model_pref: the loop picks its tier in code (spec A15)"
-        )
+    for path in LOOP_SOURCES:
+        if path.exists():
+            assert "model_pref" not in path.read_text(), (
+                f"{path.relative_to(BACKEND)} names model_pref: the loop picks its tier in "
+                "code (spec A15)"
+            )
 
 
 def _evidence_scan(source: str) -> list[str]:
@@ -2263,12 +2286,53 @@ def test_inv_26_evidence_scan_self_test():
     ]
 
 
+def _is_thin_wrapper(fn) -> bool:
+    """A #118 route wrapper: its body is ONE ``return [await] loop_service.<its
+    own name>(...)``, under ``@same_doc(loop_service.<its own name>)``."""
+    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or len(fn.body) != 1:
+        return False
+    ret = fn.body[0]
+    call = ret.value.value if isinstance(getattr(ret, "value", None), ast.Await) else getattr(ret, "value", None)
+    return (
+        isinstance(ret, ast.Return)
+        and isinstance(call, ast.Call)
+        and _dotted(call.func) == f"loop_service.{fn.name}"
+    )
+
+
+def _without_thin_wrappers(source: str) -> str:
+    """The route's source minus its thin wrappers: what is left is route code
+    the evidence rule applies to as before (the wrapped bodies are scanned
+    where they live, in services/loop/)."""
+    tree = ast.parse(source)
+    tree.body = [n for n in tree.body if not _is_thin_wrapper(n)]
+    return ast.unparse(tree)
+
+
+def test_inv_26_wrapper_filter_self_test():
+    src = (
+        "@router.post('/x')\n@same_doc(loop_service.posttest_answer)\n"
+        "async def posttest_answer(body, request):\n"
+        "    return await loop_service.posttest_answer(body, request)\n"
+        "def chat(body):\n    return loop_service.posttest_answer(body)\n"
+    )
+    assert _evidence_scan(src)
+    assert _evidence_scan(_without_thin_wrappers(src)) == [
+        "chat:2 reaches the evidence writer posttest_answer"
+    ]
+
+
 def test_inv_26_evidence_only_from_explicit_submission():
-    if LOOP_ROUTES.exists():
-        offenders = _evidence_scan(LOOP_ROUTES.read_text())
+    for path in LOOP_SOURCES:
+        if not path.exists():
+            continue
+        source = path.read_text()
+        if path == LOOP_ROUTES:
+            source = _without_thin_wrappers(source)
+        offenders = _evidence_scan(source)
         assert not offenders, (
-            f"learn_loop reaches an evidence writer outside the explicit-submission path "
-            f"(spec A16): {offenders}"
+            f"{path.relative_to(BACKEND)} reaches an evidence writer outside the "
+            f"explicit-submission path (spec A16): {offenders}"
         )
 
 
@@ -2459,6 +2523,8 @@ def test_inv_17_rollup_not_a_tutor_tool():
                 re.M,
             ):
                 importers.add(str(path.relative_to(BACKEND)))
+    # #118: the loop route's bodies live in the services/loop/ package
+    importers = {i for i in importers if not i.startswith("services/loop/")}
     assert importers <= MISCONCEPTIONS_IMPORTERS_ALLOWED, (
         f"unexpected importers: {importers - MISCONCEPTIONS_IMPORTERS_ALLOWED}"
     )

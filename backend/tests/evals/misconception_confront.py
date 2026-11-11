@@ -272,7 +272,7 @@ _META: dict[str, dict] = {c.name: dict(c.metadata or {}) for c in CASES}
 
 def confront_line(meta: dict) -> str:
     """The line the route sends for this case's misconception (production's helper)."""
-    from routes.learn_loop import confront_line_for
+    from services.loop.guard import confront_line_for
 
     line = confront_line_for(meta["misconception"])
     assert line, "every case carries a confrontation line"
@@ -285,7 +285,7 @@ def assembled(case_input: LoopInput, v2: bool = V2) -> str:
     confrontation line right after it (`with_confrontation`), the phase's
     context block, the student's words enveloped (an [ACTION: ...] line is
     server text)."""
-    from routes.learn_loop import with_confrontation
+    from services.loop.guard import with_confrontation
 
     phase, band, _ceiling, message = case_input
     meta = _META[_INPUT_TO_NAME[case_input]]
@@ -369,7 +369,7 @@ async def record_turn(slot: str, case_input: LoopInput, v2: bool = V2) -> LoopRe
     from pydantic_ai import capture_run_messages
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-    from routes.learn_loop import continuation_plan
+    from services.loop.continuation import continuation_plan
 
     phase = case_input[0]
     meta = _META[_INPUT_TO_NAME[case_input]]

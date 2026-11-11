@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.split_patches import patch_loop
+import services.loop.closing
 
 T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
@@ -160,7 +162,6 @@ def test_an_unreadable_void_record_fails_the_planning_read_closed():
 
 
 def test_a_close_leaves_out_every_concept_a_void_row_touched_in_the_session():
-    from routes import learn_loop
 
     evidence = [
         {"id": "e1", "node_id": "n-bad", "p_before": 0.35, "p_after": 0.6, "correct": True, "channel": "mc"},
@@ -172,10 +173,10 @@ def test_a_close_leaves_out_every_concept_a_void_row_touched_in_the_session():
         return _paged(evidence if name == "node_mastery_events" else [])
 
     with (
-        patch("routes.learn_loop.table", side_effect=table),
-        patch("routes.learn_loop.voided_event_ids", return_value={"e1"}) as voids,
+        patch_loop("table", side_effect=table),
+        patch_loop("voided_event_ids", return_value={"e1"}) as voids,
     ):
-        _transcript, kept = learn_loop._session_record("s1")
+        _transcript, kept = services.loop.closing._session_record("s1")
     voids.assert_called_once_with(session_id="s1")
     assert [e["id"] for e in kept] == ["e3"]  # e2 ran through the void e1: no valid trajectory
 

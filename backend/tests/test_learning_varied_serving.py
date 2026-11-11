@@ -29,6 +29,7 @@ from learning.multi_concept import SEP, STEP_KEY, combo_key
 from learning.surface import Surface
 from tests.test_learn_loop_routes import ITEM, NOW, _iso, _plan_state, _unknown_attempt
 from tests.test_learn_loop_routes import seams as seams  # the loop routes' fixture
+from tests.split_patches import setattr_loop
 
 T = "2026-11-01T00:00:00+00:00"
 
@@ -140,7 +141,7 @@ def _unknown_state(qh="last"):
 
 
 def test_the_isomorph_re_ask_prefers_the_least_familiar_surface_among_equals():
-    from routes.learn_loop import _isomorph_after_unknown
+    from services.loop.practice import _isomorph_after_unknown
 
     last = _item("last")
     a = _item("iso-a", created="2026-09-01T00:00:00+00:00")
@@ -162,7 +163,7 @@ def test_the_isomorph_re_ask_prefers_the_least_familiar_surface_among_equals():
 
 
 def test_flag_off_activation_reads_no_surface_and_picks_as_before(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     surfaces = MagicMock()
@@ -180,7 +181,7 @@ def test_flag_off_activation_reads_no_surface_and_picks_as_before(seams, monkeyp
 
 
 def test_varied_activation_prefers_the_surface_the_student_has_not_met(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     monkeypatch.setattr(varied_practice, "varied_on", lambda u: True)
@@ -209,7 +210,7 @@ def test_varied_activation_prefers_the_surface_the_student_has_not_met(seams, mo
 
 
 def test_a_failed_surface_read_keeps_the_plain_order(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     monkeypatch.setattr(varied_practice, "varied_on", lambda u: True)
@@ -503,7 +504,7 @@ def test_a_failed_read_gives_no_combination(monkeypatch):
 
 
 def test_flag_off_activation_never_reads_a_combination(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     pick = MagicMock()
@@ -516,7 +517,7 @@ def test_flag_off_activation_never_reads_a_combination(seams, monkeypatch):
 
 
 def test_multi_concept_activation_poses_the_combination_and_marks_its_step(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     combo = _combo("qh-combo")
@@ -624,7 +625,7 @@ def test_planning_reads_a_combination_as_the_apexs_observation_never_a_prerequis
     from learning.evidence import Evidence, planning_observation
     from learning.planner import planning_states
     from learning.planning_history import project_planning_history
-    from routes.learn_loop import _tag_planning_evidence
+    from services.loop.reveals import _tag_planning_evidence
 
     monkeypatch.setattr(check_tool, "apply_misconception_rule", _no_rule)
 
@@ -667,7 +668,7 @@ def test_planning_reads_a_combination_as_the_apexs_observation_never_a_prerequis
 
 
 def test_a_combinations_node_is_its_apex(monkeypatch):
-    from routes.learn_loop import _node_for_item
+    from services.loop.learner import _node_for_item
 
     rows = [
         {"id": "n-pre", "concept_name": "Gradient  Descent"},
@@ -675,7 +676,7 @@ def test_a_combinations_node_is_its_apex(monkeypatch):
     ]
     table = MagicMock()
     table.return_value.select.return_value = rows
-    monkeypatch.setattr("routes.learn_loop.table", table)
+    setattr_loop(monkeypatch, "table", table)
     assert _node_for_item("u1", _combo("q")) == "n-apex"
     assert _node_for_item("u1", _item("q", concept="gradient descent")) == "n-pre"
     assert SEP not in _item("q", concept="gradient descent").concept_key

@@ -231,13 +231,15 @@ class _FakeTable:
 @pytest.fixture
 def db(monkeypatch):
     """One fake behind every reader and writer on the path: this module, the
-    graph service (apply_graph_update) and the loop route's plan reader."""
-    import routes.learn_loop as learn_loop
+    graph service (apply_graph_update) and the loop's plan reader (#118: the
+    loop route and the services/loop/ modules split out of it)."""
     import services.graph_service as gs
+    from tests.split_patches import setattr_loop
 
     fake = _FakeDB()
-    for module in (cp, gs, learn_loop):
+    for module in (cp, gs):
         monkeypatch.setattr(module, "table", fake.table)
+    setattr_loop(monkeypatch, "table", fake.table)
     return fake
 
 
@@ -697,7 +699,7 @@ def _learning_order(states: dict[str, float], edges) -> list[str]:
 
 
 def test_the_planner_orders_prerequisites_before_dependents_once_edges_exist(db, monkeypatch):
-    from routes.learn_loop import _plan_prereq_edges
+    from services.loop.planning import _plan_prereq_edges
 
     _seed_deck(db)
     names = {node_id: name for name, _imp, node_id in DECK}

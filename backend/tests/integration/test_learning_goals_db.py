@@ -309,7 +309,7 @@ def test_concurrent_http_goal_edits_reapply_against_real_compare_and_set(monkeyp
 def test_selected_goal_reads_more_than_1000_learner_states_without_prior_fallback(db_conn):
     from db.connection import table
     from learning.learner_state import read_states
-    from routes.learn_loop import _plan_states
+    from services.loop.planning import _plan_states
 
     ids = [str(uuid.uuid4()) for _ in range(1005)]
     for start in range(0, len(ids), 200):

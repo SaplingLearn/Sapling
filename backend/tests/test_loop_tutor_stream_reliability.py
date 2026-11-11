@@ -28,6 +28,11 @@ from tests.test_chat_stream import (
     _streamed_model,
     collect_structured,
 )
+from tests.split_patches import setattr_loop
+import services.ai_budget
+import services.loop.continuation
+import services.loop.runner
+import services.loop.turn
 
 # The live final failure was question_shape:2 sentences, not necessarily two
 # question marks. A declarative preface in the question field is invalid too.
@@ -232,7 +237,6 @@ def test_successful_usage_hook_failure_does_not_change_the_valid_reply(caplog):
 
 
 def _route_turn(model):
-    from routes import learn_loop
 
     deps = _loop_deps()
     turn = SimpleNamespace(
@@ -262,14 +266,13 @@ def _route_turn(model):
         touch_served_at=MagicMock(),
         complete=MagicMock(side_effect=lambda reply, graph, mastery: {"reply": reply}),
     )
-    turn.record_usage = MethodType(learn_loop._LoopTurn.record_usage, turn)
-    turn.budget_counters = MethodType(learn_loop._LoopTurn.budget_counters, turn)
+    turn.record_usage = MethodType(services.loop.turn._LoopTurn.record_usage, turn)
+    turn.budget_counters = MethodType(services.loop.turn._LoopTurn.budget_counters, turn)
     return turn
 
 
 @pytest.mark.parametrize("rescue", ["model_free", "succeeds", "fails"])
 def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, monkeypatch):
-    from routes import learn_loop
 
     stream_calls, rescue_calls, bills = [], [], []
 
@@ -284,26 +287,26 @@ def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, mon
     model = FunctionModel(nonstream, stream_function=stream)
     turn = _route_turn(model)
     monkeypatch.setattr(
-        learn_loop.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
+        services.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
     )
     counted = MagicMock()
-    monkeypatch.setattr(learn_loop.ai_budget, "count_tutor_call", counted)
-    monkeypatch.setattr(learn_loop, "served_model_name", lambda *args: "function-loop")
+    monkeypatch.setattr(services.ai_budget, "count_tutor_call", counted)
+    setattr_loop(monkeypatch, "served_model_name", lambda *args: "function-loop")
 
     def record(result, **kwargs):
-        bills.append((learn_loop._requests_of(result), kwargs["feature"]))
+        bills.append((services.loop.continuation._requests_of(result), kwargs["feature"]))
         return result
 
-    monkeypatch.setattr(learn_loop, "record_agent_usage", record)
+    setattr_loop(monkeypatch, "record_agent_usage", record)
     if rescue == "model_free":
 
         async def model_free(turn, messages):
             return "An explicit model-free response."
 
-        monkeypatch.setattr(learn_loop, "_continue_turn", model_free)
+        setattr_loop(monkeypatch, "_continue_turn", model_free)
 
     async def run():
-        return [event async for event in learn_loop._stream_turn(turn)]
+        return [event async for event in services.loop.runner._stream_turn(turn)]
 
     events = asyncio.run(run())
     assert len(stream_calls) == 3
@@ -327,7 +330,6 @@ def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, mon
 
 @pytest.mark.parametrize("when", ["before_tokens", "after_tokens", "during_rescue"])
 def test_route_cancellation_keeps_only_known_primary_and_rescue_usage(when, monkeypatch):
-    from routes import learn_loop
 
     async def run():
         waiting = asyncio.Event()
@@ -357,19 +359,19 @@ def test_route_cancellation_keeps_only_known_primary_and_rescue_usage(when, monk
 
         turn = _route_turn(FunctionModel(nonstream, stream_function=stream))
         monkeypatch.setattr(
-            learn_loop.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
+            services.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
         )
-        monkeypatch.setattr(learn_loop.ai_budget, "count_tutor_call", MagicMock())
-        monkeypatch.setattr(learn_loop, "served_model_name", lambda *args: "function-loop")
+        monkeypatch.setattr(services.ai_budget, "count_tutor_call", MagicMock())
+        setattr_loop(monkeypatch, "served_model_name", lambda *args: "function-loop")
 
         def record(result, **kwargs):
-            bills.append(learn_loop._requests_of(result))
+            bills.append(services.loop.continuation._requests_of(result))
             return result
 
-        monkeypatch.setattr(learn_loop, "record_agent_usage", record)
+        setattr_loop(monkeypatch, "record_agent_usage", record)
 
         async def consume():
-            async for event in learn_loop._stream_turn(turn):
+            async for event in services.loop.runner._stream_turn(turn):
                 events.append(event)
 
         task = asyncio.create_task(consume())
@@ -400,7 +402,6 @@ def test_route_cancellation_keeps_only_known_primary_and_rescue_usage(when, monk
 @pytest.mark.parametrize("confronting", [False, True])
 def test_continuation_checks_known_work_without_mutating_saved_cap_units(confronting, monkeypatch):
     from learning import params
-    from routes import learn_loop
     from services.ai_budget import BudgetDecision
 
     turn = _route_turn(MagicMock())
@@ -418,16 +419,16 @@ def test_continuation_checks_known_work_without_mutating_saved_cap_units(confron
         assert kwargs["session_deep_requests"] == cap
         return BudgetDecision(level="soft", tier_ceiling="standard", scope="session_deep")
 
-    monkeypatch.setattr(learn_loop.ai_budget, "check", budget)
+    monkeypatch.setattr(services.ai_budget, "check", budget)
     counted = MagicMock()
-    monkeypatch.setattr(learn_loop.ai_budget, "count_tutor_call", counted)
+    monkeypatch.setattr(services.ai_budget, "count_tutor_call", counted)
     billed = MagicMock()
-    monkeypatch.setattr(learn_loop, "record_agent_usage", billed)
+    setattr_loop(monkeypatch, "record_agent_usage", billed)
     # A fresh planning read is still exactly the saved counters. The continuation
     # is the only caller that opts in to known work from its uncompleted turn.
     assert turn.budget_counters()["session_deep_requests"] == cap - spent
     assert turn.budget_counters()["session_tutor_requests"] == 2
-    assert asyncio.run(learn_loop._loop_continuation_text(turn, [])) is None
+    assert asyncio.run(services.loop.continuation._loop_continuation_text(turn, [])) is None
     assert counters[0]["session_tutor_requests"] == 3
     assert turn.state == saved and turn.run_requests == 3
     counted.assert_not_called()
@@ -436,7 +437,6 @@ def test_continuation_checks_known_work_without_mutating_saved_cap_units(confron
 
 @pytest.mark.parametrize("failure", ["shape", "timeout", "cancel"])
 def test_continuation_usage_hook_failure_preserves_original_failure(failure, monkeypatch, caplog):
-    from routes import learn_loop
 
     calls, bills = [], []
 
@@ -452,22 +452,22 @@ def test_continuation_usage_hook_failure_preserves_original_failure(failure, mon
     turn = _route_turn(FunctionModel(fn))
     turn.run_requests = 3  # known failed primary, already accounted separately
     monkeypatch.setattr(
-        learn_loop.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
+        services.ai_budget, "check", lambda *args, **kwargs: SimpleNamespace(level="ok")
     )
-    monkeypatch.setattr(learn_loop.ai_budget, "count_tutor_call", MagicMock())
+    monkeypatch.setattr(services.ai_budget, "count_tutor_call", MagicMock())
 
     def broken(result, **kwargs):
-        bills.append(learn_loop._requests_of(result))
+        bills.append(services.loop.continuation._requests_of(result))
         raise RuntimeError("PRIVATE_CONTINUATION_USAGE_CONTENT")
 
-    monkeypatch.setattr(learn_loop, "record_agent_usage", broken)
+    setattr_loop(monkeypatch, "record_agent_usage", broken)
     expected = {
         "shape": UnexpectedModelBehavior,
         "timeout": httpx.ReadTimeout,
         "cancel": asyncio.CancelledError,
     }
     with pytest.raises(expected[failure]):
-        asyncio.run(learn_loop._loop_continuation_text(turn, []))
+        asyncio.run(services.loop.continuation._loop_continuation_text(turn, []))
     known = 3 if failure == "shape" else 1
     assert bills == [known] and turn.run_requests == 3 + known
     assert len(calls) == (3 if failure == "shape" else 2)

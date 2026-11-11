@@ -958,7 +958,7 @@ E2E_LOOP_TUTOR_REPLY = render_turn(E2E_LOOP_TUTOR_TURN)
 # everything else (teach, a quiz-ask session's opener — a probe-phase opener
 # is a template and runs no model) the PKG-07 turn above. The phase is read
 # off THIS run's user prompt — the prefix
-# routes/learn_loop.py assembles with agents.loop_tutor.phase_prefix — never off
+# services/loop/ assembles with agents.loop_tutor.phase_prefix — never off
 # the history, where an earlier hint turn's prefix would answer a later teach
 # turn with the hint reply. The pattern values are copied verbatim from
 # agents/loop_tutor.py::_PHASE_RULES; tests/test_e2e_function_handlers.py pins
@@ -968,7 +968,7 @@ E2E_LOOP_TUTOR_REPLY = render_turn(E2E_LOOP_TUTOR_TURN)
 # retry. The served text can differ from the *_REPLY render: at H0/H1 the route
 # serves the key idea of a hint or a correct-verdict feedback from code, at H2
 # the hint question, and a released feedback leads with "The answer: …"
-# (routes/learn_loop.py::served_render / released_lead). Asserted verbatim by
+# (services/loop/served.py::served_render / released_lead). Asserted verbatim by
 # frontend/e2e/learn-loop.spec.ts. Keep in sync.
 E2E_LOOP_PHASE_PATTERNS: dict[str, str] = {
     "hint": "the student asked for help with the check item below",
@@ -1031,7 +1031,7 @@ E2E_LOOP_REFERENCE = (
 # correct and any other reply not_an_answer (a follow-up question, say), so the
 # quiz "Ask about this" follow-up still gets the plain teach reply. A correct
 # verdict is served as its plain line first, with no "Key idea:" label; a turn
-# that also poses a check drops its question (routes/learn_loop.py::
+# that also poses a check drops its question (services/loop/served.py::
 # served_render) — E2E_LOOP_ANSWER_REPLY. Flag off, no prefix carries the
 # pattern, so the seam never answers with a verdict.
 E2E_LOOP_PROBE_OPENER = LOOP_PROBE_OPENER

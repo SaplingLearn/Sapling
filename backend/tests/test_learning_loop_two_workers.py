@@ -20,7 +20,6 @@ import pytest
 
 from learning import turn_activity
 from learning.ladder import Rung
-from routes import learn_loop
 from services import tutor_sessions as ts
 from services.encryption import decrypt_if_present
 from services.tutor import pending as tutor_pending
@@ -29,6 +28,9 @@ from tests.split_patches import patch_tutor
 from tests.test_learning_teach_attempt import CLAIM
 from tests.test_quiz_ask_session import _opener
 from tests.test_tutor_sessions_store import _FakeDB
+from tests.split_patches import patch_loop
+import services.loop.history
+import services.loop.posttest
 
 client = routes.client
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
@@ -40,8 +42,8 @@ UID, OTHER = "u1", "u-other"
 _PROCESS_MAPS = (
     (ts, "PENDING_SESSIONS"),
     (ts, "_DISCARDED"),
-    (learn_loop, "_BRIEF_FAILED"),
-    (learn_loop, "_DUE_CACHE"),
+    (services.loop.history, "_BRIEF_FAILED"),
+    (services.loop.posttest, "_DUE_CACHE"),
 )
 
 
@@ -129,7 +131,7 @@ def _loop_payload(*, user_id=UID, loop_state=None) -> dict:
 def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on, seams, db):
     """The quiz's "Ask about this" session (spec §13 A99) starts in `teach` on the
     quiz's concept: that document must reach the row the OTHER worker writes."""
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     a, b = Worker(), Worker()
     opener, _ = routes._json_agent("Key idea: the base case. Which input stops it?")
@@ -157,8 +159,8 @@ def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on
     turn, _ = routes._json_agent("Right. What does factorial(0) return?")
     with (
         b.serving(),
-        patch("routes.learn_loop.loop_tutor_agent", turn),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", turn),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": sid, "user_id": UID, "message": "n == 0"}
@@ -228,7 +230,7 @@ def test_a_loop_session_discarded_on_one_worker_is_refused_on_the_other(
     assert db.store("s-end")["state"] == reason and db.store("s-end")["loop_state"] is None
     turn = MagicMock()
     turn.run = AsyncMock(side_effect=AssertionError("no turn runs on a discarded session"))
-    with b.serving(), patch("routes.learn_loop.loop_tutor_agent", turn):
+    with b.serving(), patch_loop("loop_tutor_agent", turn):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s-end", "user_id": UID, "message": "hi"}
         )
@@ -317,7 +319,7 @@ def test_a_failure_on_one_worker_times_the_retry_on_the_other(gate_on, seams):
 
     broken.run = fail
     a, b = Worker(), Worker()
-    with a.serving(), patch("routes.learn_loop.loop_tutor_agent", broken):
+    with a.serving(), patch_loop("loop_tutor_agent", broken):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": UID, "message": CLAIM}
         )
@@ -328,8 +330,8 @@ def test_a_failure_on_one_worker_times_the_retry_on_the_other(gate_on, seams):
     agent, _ = routes._json_agent("You looked at the numerator only.")
     with (
         b.serving(),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": UID, "message": CLAIM}
@@ -355,7 +357,7 @@ def test_a_turn_whose_activity_marker_never_landed_still_leaves_the_anchor(gate_
 
     seams.save.side_effect = flaky
     model = MagicMock(side_effect=AssertionError("no AI before the activity marker lands"))
-    with Worker().serving(), patch("routes.learn_loop.stream_structured_turn", model):
+    with Worker().serving(), patch_loop("stream_structured_turn", model):
         r = client.post(
             "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": UID, "message": CLAIM}
         )
@@ -388,7 +390,7 @@ def test_flag_off_keeps_the_loop_session_in_the_starting_workers_memory(
     """The flag is the multi-worker switch: off, a loop session is pending in the
     starting worker's memory and the table is never touched (one worker is the
     supported shape then, as before #117)."""
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
     a = Worker()

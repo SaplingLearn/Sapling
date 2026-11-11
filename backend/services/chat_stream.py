@@ -955,7 +955,9 @@ async def stream_structured_turn(
     merged = merge_graph_updates(deps.graph_updates)
     mastery = list(deps.mastery_changes)
     try:
-        extra = on_complete(raw_reply, merged, mastery) or {}
+        # #117: the hook makes DB writes; never inline on the event loop (the
+        # sync hook hops to a worker thread, as stream_agent_turn's does, #761)
+        extra = await _run_on_complete(on_complete, raw_reply, merged, mastery) or {}
     except Exception as complete_exc:
         logger.warning(
             "on_complete persistence failed after streamed reply", exc_info=complete_exc

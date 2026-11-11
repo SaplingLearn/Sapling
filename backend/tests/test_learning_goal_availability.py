@@ -2,17 +2,18 @@
 
 import copy
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
-import routes.learn_loop as rl
 from learning.checks import posttest_reserve_hash
 from test_learning_goal_integrity import approve, proposal
 from test_learning_goals import _open_write_harness as _open_write_harness, set_goal
 from test_learning_probe_planner import LOOP, NEXT, PLAN_Q, _node_items, client, probe as probe
+from tests.split_patches import patch_loop
+import services.loop.planning
+import services.loop.state
 
-_REAL_PREFLIGHT = rl._goal_practice_unavailable
+_REAL_PREFLIGHT = services.loop.planning._goal_practice_unavailable
 
 
 @pytest.fixture
@@ -21,14 +22,14 @@ def bank(probe):
     probe.ai_budget.check.return_value = SimpleNamespace(pause_novice=False)
     assets = {node: _node_items(node, 3) for node in ("A", "B", "T", "K")}
     with (
-        patch.object(rl, "_concept_key_for_node", side_effect=lambda _u, node: node),
-        patch.object(rl, "list_items", side_effect=lambda _c, key: assets.get(key, [])) as listed,
-        patch.object(rl, "get_check_item", side_effect=lambda item_id: next(
+        patch_loop("_concept_key_for_node", side_effect=lambda _u, node: node),
+        patch_loop("list_items", side_effect=lambda _c, key: assets.get(key, [])) as listed,
+        patch_loop("get_check_item", side_effect=lambda item_id: next(
             (item for items in assets.values() for item in items if item.id == item_id), None,
         )),
-        patch.object(rl, "_band_for", return_value=("novice", 0.2)),
-        patch.object(rl, "_ledger"),
-        patch.object(rl, "save_message"),
+        patch_loop("_band_for", return_value=("novice", 0.2)),
+        patch_loop("_ledger"),
+        patch_loop("save_message"),
     ):
         yield SimpleNamespace(assets=assets, listed=listed)
 
@@ -76,7 +77,7 @@ def test_only_reserved_or_unusable_items_do_not_make_a_goal_checkable(probe, ban
             item.item.final_answer = None
     else:
         assert set_goal(("T",)).status_code == 200
-        probe.store["doc"]["steps"] = {item.question_hash: {"rung": 0, "first_shown_at": rl._now_s()}
+        probe.store["doc"]["steps"] = {item.question_hash: {"rung": 0, "first_shown_at": services.loop.state._now_s()}
                                       for item in bank.assets["A"][1:]}
         probe.store["doc"]["phase"] = "plan"
         body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()

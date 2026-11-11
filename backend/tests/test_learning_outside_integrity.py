@@ -44,6 +44,8 @@ from services.integrity_guard import (
 from tests import test_learn_loop_routes as _routes
 from tests.test_learning_help_ledger import _grade_appends
 from tests.test_notes_routes import fake_get_note
+from tests.split_patches import patch_loop
+import services.loop.reveals
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -77,13 +79,13 @@ def _item(qh: str, prompt: str, final: str = "x") -> SimpleNamespace:
 @pytest.fixture
 def posed():
     """Each student's posed-and-ungraded items at the guard's one read seam
-    (`services.loop_posed.posed_items`): u1 has ITEM, u2 has OTHER."""
+    (`services.loop.posed.posed_items`): u1 has ITEM, u2 has OTHER."""
     world = {"u1": [(ITEM, POSED)], "u2": [(OTHER, POSED)]}
 
     def read(user_id, *, now):
         return list(world.get(user_id, [])), None
 
-    with patch("services.loop_posed.posed_items", side_effect=read) as reader:
+    with patch("services.loop.posed.posed_items", side_effect=read) as reader:
         reader.world = world
         yield reader
 
@@ -233,7 +235,7 @@ def test_restating_the_students_own_words_is_not_withheld(posed, records):
 
 
 def test_unreadable_posed_items_serve_under_one_unscanned_marker(records):
-    with patch("services.loop_posed.posed_items", return_value=None):
+    with patch("services.loop.posed.posed_items", return_value=None):
         guard = open_guard("u1", surface="note_chat", texts=[PASTE], active=True)
         assert not guard.refused and guard.unreadable
         assert guard.screen(LEAKING_REPLY) is True
@@ -247,7 +249,7 @@ def test_unreadable_posed_items_serve_under_one_unscanned_marker(records):
 
 def test_items_beyond_the_window_mark_the_edge_only_when_text_is_served(records):
     edge = datetime(2026, 11, 1, tzinfo=timezone.utc)
-    with patch("services.loop_posed.posed_items", return_value=([(ITEM, POSED)], edge)):
+    with patch("services.loop.posed.posed_items", return_value=([(ITEM, POSED)], edge)):
         guard = open_guard("u1", surface="flashcards", texts=["topic"], active=True)
         assert guard.screen_each([LEAKING_REPLY]) == [False]
         records.unscanned.assert_not_called()  # nothing was served
@@ -326,7 +328,7 @@ def test_an_inactive_guard_loads_no_pkg06_module():
         "assert guard.screen_each(['a', 'b'], own=guard.own_text) == [True, True]\n"
         "print('LOADED=' + ','.join(sorted(m for m in sys.modules if m in (\n"
         "    'learning.leak', 'learning.zpd_events', 'learning.served_scan', 'learning.stem_match',\n"
-        "    'routes.learn_loop'))))\n"
+        "    'routes.learn_loop', 'services.loop.posed'))))\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", program],
@@ -785,9 +787,9 @@ def test_a_help_record_floors_the_later_grade(gate_on, seams):
     that check in the loop — the grade carries no unassisted credit."""
     ledger = _Ledger()
     seams.open_posed.return_value = ([(ITEM, POSED)], None)  # the guard's one read
-    # spec §13 A149: the guard reads the scan set from services/loop_posed.py
+    # spec §13 A149: the guard reads the scan set from services/loop/posed.py
     with patch("learning.help_ledger.table", return_value=ledger), \
-            patch("services.loop_posed.posed_items", seams.open_posed):
+            patch("services.loop.posed.posed_items", seams.open_posed):
         r, run = _note_chat(PASTE)
         assert r.json()["integrity"] == "refused"
         run.assert_not_called()
@@ -799,9 +801,8 @@ def test_a_help_record_floors_the_later_grade(gate_on, seams):
             "rung": params.INTEGRITY_HELP_RUNG,
             "source": "outside",
         }
-        import routes.learn_loop as ll
 
-        assert ll._reveal_floor("u1", ITEM, None) >= params.RUNG_NO_CREDIT_MIN
+        assert services.loop.reveals._reveal_floor("u1", ITEM, None) >= params.RUNG_NO_CREDIT_MIN
 
         seams.store["doc"] = _routes._state(attempted_at=[_routes.T0 + 10])
         rung_seen: list = []
@@ -811,7 +812,7 @@ def test_a_help_record_floors_the_later_grade(gate_on, seams):
             written.append([dict(e) for e in deps.pending_evidence]) or []
         )
         agent_p, usage_p, _ = _routes._feedback_agent()
-        with agent_p, usage_p, patch("routes.learn_loop.mark_graded"):
+        with agent_p, usage_p, patch_loop("mark_graded"):
             r = client.post(
                 "/api/learn/loop/check/answer",
                 json=_routes._answer(answer="The base case returns 1"),

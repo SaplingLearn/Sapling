@@ -100,7 +100,7 @@ def test_the_served_stream_cuts_before_the_inflection():
     """The served path never masks in place (spec §13 A51 N1; the stripper
     was removed, A142): the stream stops before the sentence holding the
     inflection, so nothing the detector flags is shown."""
-    from routes.learn_loop import _cut_before_leak
+    from services.loop.guard import _cut_before_leak
 
     text = "Key idea: the mitochondria make ATP.\n\nWhich organelle is it?"
     spans = leak_spans(emitted=text, strict=True, given="", **MITO)

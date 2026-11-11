@@ -88,7 +88,7 @@ There is no stripper. A leaking served turn is never masked in place (spec
 §13 A51, fix round 2 N1: the mask's position is itself the signal): the
 stream stops before the sentence holding the first `leak_spans` hit, and a
 final text that still leaks is replaced by the rung's fixed line
-(routes/learn_loop.py::served_model_text). The in-place masker this module
+(services/loop/served.py::served_model_text). The in-place masker this module
 once had (strip_leak) had no caller after that and was removed (§13 A142).
 The detector still reads a literal WITHHELD marker as one masked word, so its
 verdict on a text that holds one is what it always was.

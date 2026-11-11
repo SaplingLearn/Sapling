@@ -15,9 +15,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import routes.learn_loop as ll
 from main import app
 from services import ai_budget
+from tests.split_patches import patch_loop
+import services.loop.sessions
 
 client = TestClient(app)
 
@@ -129,10 +130,8 @@ def gate_on():
     """The loop gate on, and the student ENROLLED only in the earlier term — so a
     route that looked sessions up by enrollment would find none of them."""
     with (
-        patch("routes.learn_loop.learning_loop_for_request", return_value=True) as g,
-        patch(
-            "routes.learn_loop.user_offering_ids_for_course", return_value=[OFF_ENROLLED]
-        ) as enrolled,
+        patch_loop("learning_loop_for_request", return_value=True) as g,
+        patch_loop("user_offering_ids_for_course", return_value=[OFF_ENROLLED]) as enrolled,
     ):
         yield g, enrolled
 
@@ -140,13 +139,13 @@ def gate_on():
 def _get(db):
     import services.academics as academics
 
-    with patch("routes.learn_loop.table", db), patch.object(academics, "table", db):
+    with patch_loop("table", db), patch.object(academics, "table", db):
         return client.get(URL)
 
 
 def test_404_when_gate_false_and_no_read():
     db = _Db([_row("s1")])
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=False):
+    with patch_loop("learning_loop_for_request", return_value=False):
         r = _get(db)
     assert r.status_code == 404 and r.json()["detail"] == "learning loop not enabled"
     assert db.calls == []
@@ -184,8 +183,8 @@ def test_another_students_sessions_are_refused_before_any_read():
 
     db = _Db([_row("s1")])
     with (
-        patch("routes.learn_loop.require_self", _refuse),
-        patch("routes.learn_loop.learning_loop_for_request") as gate,
+        patch_loop("require_self", _refuse),
+        patch_loop("learning_loop_for_request") as gate,
     ):
         r = _get(db)
     assert r.status_code == 403
@@ -215,7 +214,7 @@ def test_lists_open_loop_sessions_newest_first_in_one_read(gate_on):
         "loop_state": "neq.{}",
         "mode": "neq.review",
     }
-    assert call["order"] == "started_at.desc" and call["limit"] == ll.LOOP_OPEN_SESSIONS_LIMIT
+    assert call["order"] == "started_at.desc" and call["limit"] == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
     # never reads the ciphertext (is.null only, invariant 9) nor model_pref (invariant 22);
     # close_phase is written WITH close_json (session_close.store_close), so an open row has none
     for col in ("close_json", "close_phase", "model_pref"):
@@ -269,7 +268,7 @@ def test_phase_is_the_status_routes_phase_for_the_document(gate_on, state, phase
 
 
 def test_course_id_is_required():
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=True):
+    with patch_loop("learning_loop_for_request", return_value=True):
         assert client.get(f"{LOOP}/sessions?user_id={UID}").status_code == 422
 
 
@@ -304,7 +303,7 @@ def test_never_rate_limited(gate_on):
 def _get_resume(db, sid):
     import services.academics as academics
 
-    with patch("routes.learn_loop.table", db), patch.object(academics, "table", db):
+    with patch_loop("table", db), patch.object(academics, "table", db):
         return client.get(f"{URL}&resume={sid}")
 
 
@@ -350,11 +349,11 @@ def test_a_resume_in_another_course_names_that_course(gate_on):
 def test_a_resume_beyond_the_list_limit_is_found(gate_on):
     rows = [
         _row(f"s{i:02d}", started=f"2026-09-{i + 1:02d}T10:00:00Z")
-        for i in range(ll.LOOP_OPEN_SESSIONS_LIMIT + 2)
+        for i in range(services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT + 2)
     ]
     rows.sort(key=lambda r: r["started_at"], reverse=True)
     body = _get_resume(_Db(rows), "s00").json()
-    assert len(body["sessions"]) == ll.LOOP_OPEN_SESSIONS_LIMIT
+    assert len(body["sessions"]) == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
     assert "s00" not in [s["session_id"] for s in body["sessions"]]
     assert body["resume"]["session_id"] == "s00" and body["resume"]["course_id"] == COURSE
 

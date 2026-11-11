@@ -1472,11 +1472,11 @@ def test_loop_constants_do_not_state_a_seeded_answer():
 def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_rung():
     """frontend/e2e/learn-loop.spec.ts asserts the model-written body and question
     of the hint (H1) and correct-verdict feedback turns: at H0/H1 the route serves
-    the KEY IDEA from code (routes.learn_loop.served_render), so the journey pins
+    the KEY IDEA from code (services.loop.served.served_render), so the journey pins
     the two fields that reach the student verbatim."""
     import agents.function_handlers_e2e as m
     from learning.ladder import Rung
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     for phase, turn, body, question, verdict in (
         ("hint", m.E2E_LOOP_HINT_TURN, m.E2E_LOOP_HINT_BODY, m.E2E_LOOP_HINT_QUESTION, None),

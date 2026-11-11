@@ -30,6 +30,7 @@ from services import crisis_support_copy as crisis_copy
 from services.feature_flags import REGISTRY
 from services.tutor_sessions import PENDING_SESSIONS
 from tests.split_patches import patch_tutor
+from tests.split_patches import setattr_loop
 
 client = TestClient(app)
 
@@ -96,48 +97,48 @@ CASES: list[Case] = [
     Case("tutor_start", "/api/learn/start-session", _start_goal,
          "services.ai_budget.enforce_rate_limit_for", neutral=START),
     # /api/learn/loop/*
-    Case("loop_chat", "/api/learn/loop/chat", _chat, "routes.learn_loop._consume_pending_off_loop",
+    Case("loop_chat", "/api/learn/loop/chat", _chat, "services.loop.teach._consume_pending_off_loop",
          async_next=True, neutral=TURN),
-    Case("loop_chat", "/api/learn/loop/chat/stream", _chat, "routes.learn_loop._consume_pending_off_loop",
+    Case("loop_chat", "/api/learn/loop/chat/stream", _chat, "services.loop.teach._consume_pending_off_loop",
          stream=True, async_next=True, neutral=TURN),
-    Case("loop_start", "/api/learn/loop/start-session", _start, "routes.learn_loop._LoopOpener",
+    Case("loop_start", "/api/learn/loop/start-session", _start, "services.loop.teach._LoopOpener",
          neutral=START),
-    Case("loop_start", "/api/learn/loop/start-session/stream", _start, "routes.learn_loop._LoopOpener",
+    Case("loop_start", "/api/learn/loop/start-session/stream", _start, "services.loop.teach._LoopOpener",
          stream=True, neutral={"session_id": None, **TURN}),
-    Case("loop_start", "/api/learn/loop/start-session", _start_goal, "routes.learn_loop._LoopOpener",
+    Case("loop_start", "/api/learn/loop/start-session", _start_goal, "services.loop.teach._LoopOpener",
          neutral=START),
     Case("loop_goal", "/api/learn/loop/goal",
          lambda t: {"session_id": "s1", "user_id": "u1", "goal": {"text": t, "target_node_ids": ["n1"]}},
-         "routes.learn_loop._probe_plan_read_limit"),
+         "services.loop.goal._probe_plan_read_limit"),
     Case("loop_check_answer", "/api/learn/loop/check/answer", _answer,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_check_answer", "/api/learn/loop/check/answer/stream", _answer,
-         "routes.learn_loop._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+         "services.loop.grading._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
     Case("loop_check_answer", "/api/learn/loop/check/answer", _reason,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_step_attempt", "/api/learn/loop/step/attempt",
          lambda t: {"session_id": "s1", "user_id": "u1", "question_hash": "qh", "attempt_text": t},
-         "routes.learn_loop._session_scope", neutral={"genuine": False, "counted": False}),
+         "services.loop.attempts._session_scope", neutral={"genuine": False, "counted": False}),
     Case("loop_probe_answer", "/api/learn/loop/probe/answer", _answer,
          "services.ai_budget.enforce_rate_limit_for", neutral={"graded": False}),
     Case("loop_review_answer", "/api/learn/loop/review/answer",
          lambda t: {"user_id": "u1", "session_id": "r1", "kind": "check", "item_id": "i1", "answer": t},
-         "routes.learn_loop._review_course",
+         "services.loop.reviews._review_course",
          neutral={"correct": None, "unavailable": True, "refused": False}),
     Case("loop_posttest_answer", "/api/learn/loop/posttest/answer",
          lambda t: {"user_id": "u1", "node_id": "n1", "question_hash": "qh", "answer": t},
-         "routes.learn_loop._posttest_node", neutral={"graded": False}),
+         "services.loop.posttest._posttest_node", neutral={"graded": False}),
     # learning-loop spec §13 A138: a guess at the segment prequestion (free and
     # multiple choice), JSON and stream; A139: a self-explanation reply
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _answer,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer/stream", _answer,
-         "routes.learn_loop._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _reason,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_self_explain", "/api/learn/loop/self-explain",
          lambda t: {"session_id": "s1", "user_id": "u1", "prompt_id": "p1", "reply": t},
-         "routes.learn_loop._session_scope", neutral={"recorded": False}),
+         "services.loop.self_explain._session_scope", neutral={"recorded": False}),
     # /api/notes/* — the message, or the note an agent action hands a model
     Case("note_chat", "/api/notes/n1/chat", lambda t: {"user_id": "u1", "message": t},
          "routes.notes.offering_course_id", neutral={"degraded": False}),
@@ -375,7 +376,7 @@ def real_limiters(monkeypatch):
         return 30 if state["limited"] else None
 
     monkeypatch.setattr(ai_budget, "_rate_limit_decision", rate_limit_decision)
-    monkeypatch.setattr("routes.learn_loop.check_rate_limit", probe_plan_window)
+    setattr_loop(monkeypatch, "check_rate_limit", probe_plan_window)
     return state
 
 
@@ -548,8 +549,9 @@ SCREENED_INLINE = [
     ("/api/learn/start-session/stream", "crisis_support.screen_async",
      ("enforce_rate_limit_for,", "_kill_switch_budget,")),
     ("/api/learn/loop/goal", "crisis_support.screen(", ("_probe_plan_read_limit(",)),
-    ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
-    ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
+    # #117: the loop's limiter read hops off the event loop, as the tutor's does
+    ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
+    ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
 ]
 
 
@@ -604,6 +606,10 @@ def test_an_inline_screen_precedes_every_inline_limiter(path, screen_call, limit
         import services.tutor as tutor  # #118: the thin wrapper's body (spec §13 A149)
 
         endpoint = getattr(tutor, route.endpoint.__name__)
+    else:
+        import services.loop as loop  # #118: the thin wrapper's body
+
+        endpoint = getattr(loop, route.endpoint.__name__, endpoint)
     source = inspect.getsource(endpoint)
     for limiter in limiters:
         assert limiter in source, (path, limiter)

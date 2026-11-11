@@ -1830,6 +1830,8 @@ def test_fsrs_importers_are_sanctioned():
                 continue
             if "learning.fsrs" in names:
                 importers.add(rel)
+    # #118: the loop route's bodies live in the services/loop/ package
+    importers = {i for i in importers if not i.startswith("services/loop/")}
     assert importers <= sanctioned, importers - sanctioned
     writer = ast.parse((backend / "services" / "graph_service.py").read_text())
     replay = ast.parse((backend / "learning" / "evidence_replay.py").read_text())

@@ -21,6 +21,9 @@ import pytest
 
 from tests.integration.conftest import COURSE_CS, USER_ACTIVE
 from tests.integration.test_learning_goals_db import LOOP, _body, _goal, _node, _session
+from tests.split_patches import setattr_loop
+import agents.tools.check
+import services.loop.state
 
 pytestmark = pytest.mark.integration
 
@@ -94,24 +97,23 @@ def _learning_rows(db_conn, node):
 def _hold_grade(monkeypatch, *, after_commit):
     """Leave the real encrypted checkpoint at either side of Evidence commit."""
     from learning.evidence import PlanningPersistenceUnavailable
-    from routes import learn_loop
 
-    grade = AsyncMock(wraps=learn_loop.grade_answer)
-    monkeypatch.setattr(learn_loop, "grade_answer", grade)
+    grade = AsyncMock(wraps=agents.tools.check.grade_answer)
+    setattr_loop(monkeypatch, "grade_answer", grade)
     if after_commit:
-        real_update = learn_loop._update_loop_state
+        real_update = services.loop.state._update_loop_state
 
         def stop_before_session_finalization(session, mutate, **kwargs):
             if mutate.__name__ == "record_posed":
                 raise HTTPException(status_code=409, detail="Synthetic crash before final CAS")
             return real_update(session, mutate, **kwargs)
 
-        monkeypatch.setattr(learn_loop, "_update_loop_state", stop_before_session_finalization)
+        setattr_loop(monkeypatch, "_update_loop_state", stop_before_session_finalization)
     else:
         def stop_before_evidence(*args, **kwargs):
             raise PlanningPersistenceUnavailable("Synthetic interruption before Evidence commit")
 
-        monkeypatch.setattr(learn_loop, "flush_pending", stop_before_evidence)
+        setattr_loop(monkeypatch, "flush_pending", stop_before_evidence)
     return grade
 
 
@@ -123,13 +125,17 @@ def _cold_answer(body):
         config.LEARNING_LOOP_ENABLED = True
         from fastapi.testclient import TestClient
         from main import app
-        from routes import learn_loop
+        from tests.split_patches import LOOP_MODULES
+        import importlib
         from services.session_tokens import mint_session
         calls = []
         async def forbidden(*args, **kwargs):
             calls.append(1)
             raise AssertionError('Saved grade recovery must never invoke the grader')
-        learn_loop.grade_answer = forbidden
+        for name in LOOP_MODULES:  # every module that looks the grader up (#118)
+            module = importlib.import_module(name)
+            if hasattr(module, 'grade_answer'):
+                module.grade_answer = forbidden
         body = json.loads(sys.argv[1])
         # A changed retry body cannot replace the frozen original IDK grade.
         body.update(idk=False, answer='Different retry text must never be graded')

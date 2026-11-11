@@ -1,13 +1,15 @@
 """Goal graph drift and bounded progression through real plan/CAS handlers."""
 
-from unittest.mock import patch
 
 import pytest
 
 from learning import planner
 from test_learning_goals import _open_write_harness as _open_write_harness, set_goal
 from test_learning_probe_planner import LOOP, NEXT, PLAN_Q, client, probe as probe
-import routes.learn_loop as rl
+from tests.split_patches import patch_loop
+import learning.params
+import services.loop.cursor
+import services.loop.state
 
 
 def proposal(probe, targets=("T",)):
@@ -19,7 +21,7 @@ def proposal(probe, targets=("T",)):
 
 
 def approve(body, ids):
-    with patch.object(rl, "store_brief"):
+    with patch_loop("store_brief"):
         return client.post(
             f"{LOOP}/plan/approve",
             json={**NEXT, "concept_ids": ids, "goal_version": body["goal_version"]},
@@ -78,23 +80,23 @@ def obs(node, *, correct=True, difficulty=2, key=None, **extra):
 
 def finish_frontier(probe, node, *, observation):
     doc = probe.store["doc"]
-    doc["concept_checks"] = rl.LOOP_CHECKS_PER_CONCEPT
+    doc["concept_checks"] = learning.params.LOOP_CHECKS_PER_CONCEPT
     if node == "A" and (doc.get("probe") or {}).get("history"):
         doc.setdefault("steps", {})[f"recheck-{node}"] = {
-            "graded_at": rl._now_s() - 1,
-            "first_shown_at": rl._now_s() - 60,
+            "graded_at": services.loop.state._now_s() - 1,
+            "first_shown_at": services.loop.state._now_s() - 60,
             "node_id": node,
             "goal_observation": obs(
                 node, key=f"recheck-{node}", independent=False, same_session_recheck=True
             ),
         }
     doc.setdefault("steps", {})[observation["question_hash"]] = {
-        "graded_at": rl._now_s(),
-        "first_shown_at": rl._now_s() - 60,
+        "graded_at": services.loop.state._now_s(),
+        "first_shown_at": services.loop.state._now_s() - 60,
         "node_id": node,
         "goal_observation": observation,
     }
-    rl._advance_cursor(doc)
+    services.loop.cursor._advance_cursor(doc)
 
 
 def test_goal_frontiers_replan_A_then_B_then_target_without_autoapproval_or_mastery(probe):
@@ -164,7 +166,7 @@ def test_help_or_recheck_cannot_clear_a_failed_foundation_or_repeat_it_forever(p
 
 def test_easier_correct_answer_does_not_erase_a_harder_independent_failure():
     history = [obs("A", correct=False, difficulty=3, key="miss"), obs("A", difficulty=1)]
-    assert planner.planning_states({"A": 0.99}, history)["A"] < rl.BKT_PROFICIENT
+    assert planner.planning_states({"A": 0.99}, history)["A"] < learning.params.BKT_PROFICIENT
     history.append(obs("A", difficulty=3, key="resolved"))
     assert planner.planning_states({"A": 0.99}, history)["A"] == 0.99
 
@@ -175,8 +177,8 @@ def test_missing_practice_bank_does_not_claim_target_practice_finished_or_loop(p
     body = proposal(probe)
     assert approve(body, ["T"]).status_code == 200
     with (
-        patch.object(rl, "_concept_key_for_node", return_value="concept-t"),
-        patch.object(rl, "list_items", return_value=[]),
+        patch_loop("_concept_key_for_node", return_value="concept-t"),
+        patch_loop("list_items", return_value=[]),
     ):
         response = client.post(f"{LOOP}/check/next", json=NEXT).json()
     assert response["phase"] == "teach" and response["plan_done"]
