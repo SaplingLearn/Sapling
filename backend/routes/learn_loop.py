@@ -54,19 +54,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from typing import NamedTuple, get_args
+from typing import get_args
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 import config
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.session_close import run_session_close, shape_close
-from agents.tools.check import (
-    CHANNEL_FOR_FORMAT,
-    CheckAnswer,
-    GradeOutcome,
-    grade_answer,
-    grader_answer_text,
-)
+from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer
 from db.connection import page_all, pg_quote_value, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
 from learning import grade_checkpoint, item_reports
@@ -87,13 +81,8 @@ from learning.checks import (
     pretest_form,
     pretest_match,
 )
-from learning.multi_concept import is_multi_concept
-from learning.evidence import PlanningObservation, PlanningPersistenceUnavailable, flush_pending
-from learning.evidence_transaction import (
-    EvidenceItemRetired,
-    EvidenceObservationSuperseded,
-    read_receipt as read_evidence_receipt,
-)
+from learning.evidence import PlanningPersistenceUnavailable, flush_pending
+from learning.evidence_transaction import EvidenceItemRetired
 from learning.void_store import voided_by_node, voided_event_ids
 from learning.gate import learning_loop_active
 from learning.goals import encode_goal, goal_version, attempted_nodes, progress as goal_progress
@@ -102,19 +91,10 @@ from learning.leak import detect_leak
 from learning.learning_gain import answer_latency_s, clamp_visibility, window_at
 from learning.posttest_store import posttest_anchors
 from learning.learner_brief import store_brief
-from learning.learner_state import LearnerState, read_states
-from learning.misconceptions import (
-    carry,
-    is_key,
-    open_for,
-    record,
-    recheck_after_release,
-    resolve_after_grade,
-)
+from learning.misconceptions import carry, is_key, open_for, recheck_after_release
 from learning.loop_state_store import (
     LoopStateConflict,
     evidence_spans,
-    opportunity_window,
     recent_evidence,
     reported_hashes,
     revealed_hashes,
@@ -176,11 +156,7 @@ from services.tutor.pending import _consume_pending, _consume_pending_off_loop
 from services.tutor.turns import _agent_turn_or_http_error
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, get_pending
 from services import ai_budget, crisis_support, events_service
-from services.academics import (
-    course_offering_ids,
-    offering_course_id,
-    user_offering_ids_for_course,
-)
+from services.academics import user_offering_ids_for_course
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
@@ -191,9 +167,10 @@ from services.graph_service import _normalize_concept
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 from services.request_limits import check_rate_limit
-from services.loop.constants import _ALREADY_GRADED, _IDK_RENDERED, _NOT_ENABLED, _WITHDRAWN_ITEM
+import services.loop as loop_service
+from routes._docs import same_doc
+from services.loop.constants import _ALREADY_GRADED, _NOT_ENABLED, _WITHDRAWN_ITEM
 from services.loop.flags import (
-    _ACTION_PROMPTS,
     _ANSWER_CLAIM,
     _GUESS_IN_FLIGHT,
     _help_gate_strict_on,
@@ -220,7 +197,6 @@ from services.loop.state import (
     _loop_phase,
     _now_s,
     _pending_grade,
-    _phase_for,
     _refuse_while_closing,
     _request_id,
     _require_no_pending_feedback,
@@ -230,7 +206,6 @@ from services.loop.state import (
     _StateConflict,
     _step_state,
     _steps,
-    _teaching_open,
     _update_loop_state,
 )
 from services.loop.learner import (
@@ -243,7 +218,6 @@ from services.loop.learner import (
     _learner_view,
     _node_for_item,
     _prereq_proficient,
-    _prerequisites,
     _seconds_since,
 )
 from services.loop.served import _item_check_kwargs, _POSES
@@ -279,22 +253,33 @@ from services.loop.pose import (
     _emit_prequestion,
     _emit_self_explanation,
     _NO_POSE,
-    _open_teach_prompts,
     _pose_prequestion,
     _posed_prequestion,
     _spend_prequestion_item,
     _superseded_prequestion,
     _without_claim,
 )
-from services.loop.practice import (
-    _activate_next_item,
-    _BAND_CONTROL,
-    _pose_payload,
-    _worked_example_owed,
-)
+from services.loop.practice import _activate_next_item, _pose_payload, _worked_example_owed
 from services.loop.turn import _LoopTurn
-from services.loop.opener import _LoopOpener
 from services.loop.runner import _json_turn, _sse
+from services.loop.claims import (
+    _grading_open,
+    _is_idk_phrase,
+    _not_asked,
+    _on_step,
+    _record_attempt,
+    _resolve_misconceptions,
+    _under_probe_claim,
+    _write_misconception,
+)
+from services.loop.checkpoint import (
+    _committed_grade_observation,
+    _flush_grade_checkpoint,
+    _ITEM_RETIRED,
+    _open_grade_checkpoint,
+    _RETIRED_DETAIL,
+    _save_grade_checkpoint,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -373,917 +358,32 @@ def served_close(output, draft, unreleased_items) -> CloseRecord:
 
 
 @router.get("/status")
+@same_doc(loop_service.status)
 def status(request: Request, user_id: str = Query(...), session_id: str = Query(...)) -> dict:
-    _gate(user_id, request)
-    pending = get_pending(session_id)
-    if pending is not None:
-        if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail="Session not found")
-        state: dict = copy.deepcopy(pending.get("loop_state") or {})
-    else:
-        try:
-            _session_scope(session_id, user_id)
-            state = _load_loop_state(session_id)
-        except HTTPException as exc:
-            if exc.status_code != 404:
-                raise
-            state = {}  # no session yet: a fresh loop (never the gate's 404)
-    active = state.get("current")
-    entry = (state.get("steps") or {}).get(active) if active else None
-    pending_grade = _pending_grade(state)
-    item = (
-        get_check_item(entry["check_item_id"])
-        if isinstance(entry, dict) and entry.get("check_item_id") and not pending_grade
-        else None
-    )
-    node_id = (_node_for_item(user_id, item) if item is not None else None) or state.get("concept")
-    learner = _learner_state(user_id, node_id)
-    band, p_known = _band_of(learner)
-    step = _step_state(state, active if item is not None else None)
-    prereq = _prereq_proficient(user_id, node_id) if node_id else True
-    ceiling, _ = _ceiling_for(
-        step=step,
-        learner=_learner_view(learner, band=band, prereq_proficient=prereq),
-        message="",
-        independent_s=0.0,
-        band_delta=_band_ceiling_delta(state, node_id),  # spec §13 A122
-    )
-    pending_withdrawn_feedback = item is None and _phase_for(state) == "feedback"
-    phase = ("check" if pending_grade and pending_grade["kind"] == "check"
-             else "feedback" if pending_withdrawn_feedback
-             else _phase_for(dict(state, current=active if item is not None else None)))
-    # spec §13 A138 / A139: an open card is restored READ-ONLY on resume — each
-    # key present only when there is one (never null), behind its flag
-    teach_prompts = _open_teach_prompts(user_id, state) if not pending_grade else {}
-    return {
-        **teach_prompts,
-        "active": True,
-        "session_id": session_id,
-        "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
-        **_learning_scope_payload(state),
-        "phase": phase,
-        "pending_grade": pending_grade,
-        # PKG-13 reopen: the open item's pose, so a resuming client restores the
-        # check READ-ONLY (POST /check/next may activate — write — another item).
-        # Only while the item takes answers; never the reference (A17/A22). A122:
-        # it still says so when its worked example is owed (the client asks for it).
-        "check": (
-            _pose_payload(item, worked_first=_worked_example_owed(user_id, state, active))
-            if item is not None and phase == "check"
-            else None
-        ),
-        "band": band,
-        "ceiling": int(ceiling),
-        "active_question_hash": active if item is not None else None,
-        "items": len(state.get("steps") or {}),
-        "rung": int(step.rung) if item is not None else None,
-        "attempts": step.genuine_attempts if item is not None else 0,
-    }
-
-
-# ── Open loop sessions (PKG-13; spec §9, §11.3, §13 A26) ────────────────────
-# What LoopLearn resumes instead of starting a new probe: the student's loop
-# sessions for the course that have loop_state, no close record and no end.
-# Read-only — no write, no model, no event — and never rate-limited (A20: a
-# failure here must not push a student off the loop UI). The offerings are the
-# COURSE's (`course_offering_ids`): a loop session is stamped with
-# `resolve_offering(course, create=True)` — the current term — which is not the
-# enrollment's offering once a term rolls over (#553/#529); ownership is the
-# `user_id` filter. Offerings the store cannot vouch for are a 503 (the
-# client's retry state), never an empty list — that would start a new probe.
-# `loop_state=neq.{}` keeps legacy tutor sessions (the column default '{}') out
-# BEFORE the limit; mode='review' rows are PKG-12's daily review sessions
-# (NOT_REVIEW). A lazy session (spec §9) has no row until its first loop write,
-# so it is not listed. `phase` is the phase GET /status reports for the same
-# document: `_loop_phase` (probe | plan | teach), refined in teach by
-# `_phase_for` (teach | check | feedback); a document whose close is being
-# stored (`phase: close`) is not open. (`close_phase` is written together with
-# `close_json`, so an open row never has one.)
-LOOP_OPEN_SESSIONS_LIMIT = 10  # † picker length; mirrors the legacy getSessions(limit=10)
-
-
-_OFFERINGS_UNKNOWN = "course offerings unavailable, retry"
-
-
-def _open_loop_filters(user_id: str) -> dict:
-    """An open loop session of this student: no close record, no end, loop state,
-    not a review session."""
-    return {
-        "user_id": f"eq.{user_id}",
-        "close_json": "is.null",  # never an equality on the ciphertext (invariant 9)
-        "ended_at": "is.null",
-        "loop_state": "neq.{}",
-        **NOT_REVIEW,
-    }
-
-
-def _open_session_entry(row: dict) -> dict | None:
-    """The listed shape of one open row, or None when it is not resumable."""
-    state = row.get("loop_state")
-    if not isinstance(state, dict) or not state:
-        return None
-    loop_phase = _loop_phase(state)
-    if loop_phase == "close":
-        return None
-    return {
-        "session_id": row["id"],
-        "topic": row.get("topic") or "",
-        "started_at": row.get("started_at"),
-        "phase": _phase_for(state) if loop_phase == "teach" else loop_phase,
-    }
-
-
-def _resume_entry(user_id: str, session_id: str) -> dict | None:
-    """`?resume=<id>` outside the list (another course, or past the limit): ONE
-    read of that row under the same open-loop filters, its course from the
-    offering. None when it is not this student's open loop session — the client
-    then shows it read-only (a legacy chat) — or its course cannot be told."""
-    rows = (
-        table("sessions").select(
-            "id,topic,started_at,loop_state,offering_id",
-            filters={"id": f"eq.{session_id}", **_open_loop_filters(user_id)},
-            limit=1,
-        )
-        or []
-    )
-    entry = _open_session_entry(rows[0]) if rows else None
-    course = offering_course_id(rows[0].get("offering_id") or "") if entry else None
-    return {**entry, "course_id": course} if entry and course else None
+    return loop_service.status(request, user_id, session_id)
 
 
 @router.get("/sessions")
+@same_doc(loop_service.list_open_sessions)
 def list_open_sessions(
     request: Request,
     user_id: str = Query(...),
     course_id: str = Query(...),
     resume: str | None = Query(None),
 ) -> dict:
-    """PKG-13 fix round: `resume` (the `/learn?resume=<id>` deep link) adds
-    `"resume": {…, course_id} | null` — the named session when it is the
-    student's open loop session in ANY course, even past the list limit."""
-    _gate(user_id, request)  # require_self, then the spec §7 404
-    offering_ids = course_offering_ids(course_id)
-    if offering_ids is None:
-        raise HTTPException(status_code=503, detail=_OFFERINGS_UNKNOWN)
-    rows = (
-        table("sessions").select(
-            "id,topic,started_at,loop_state",
-            filters={
-                **_open_loop_filters(user_id),
-                "offering_id": f"in.({','.join(offering_ids)})",
-            },
-            order="started_at.desc",
-            limit=LOOP_OPEN_SESSIONS_LIMIT,
-        )
-        if offering_ids
-        else []
-    ) or []
-    sessions = [e for e in map(_open_session_entry, rows) if e is not None]
-    if resume is None:
-        return {"sessions": sessions}
-    listed = next((s for s in sessions if s["session_id"] == resume), None)
-    found = {**listed, "course_id": course_id} if listed else _resume_entry(user_id, resume)
-    return {"sessions": sessions, "resume": found}
+    return loop_service.list_open_sessions(request, user_id, course_id, resume)
 
 
 @router.post("/chat", dependencies=_screened("loop_chat", "message", respond=crisis_support.turn_response))
+@same_doc(loop_service.chat)
 async def chat(body: ChatBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
-    return await _json_turn(
-        lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
-        "loop chat agent",
-    )
+    return await loop_service.chat(body, request)
 
 
 @router.post("/chat/stream", dependencies=_screened("loop_chat", "message", respond=crisis_support.turn_stream))
+@same_doc(loop_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
-    return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
-
-
-# ── The explicit-submission route (A16) ───────────────────────────────────
-
-
-@dataclass
-class _Submission:
-    kind: str  # "feedback" | "hint_request" | "unavailable" | "refused"
-    state: dict
-    rendered: str  # the user row persisted for this submission
-    scope: tuple[str, str]
-    verdict: str | None = None
-    refused: bool = False  # A33: refused, or the idk its CHECK_REFUSALS_AS_IDK-th refusal became
-    ask_rating: bool = False  # PKG-14: this graded check brought the counter to the rating cadence
-
-
-def _is_idk_phrase(text: str) -> bool:
-    """A16's idk split, as HANDOFF-06 defines it: the submission routes to idk
-    when gates.non_attempt_phrases (the A16 routing rule, which fails toward
-    grading) returns a gates.IDK_PATTERNS phrase (A40 06(b): "idk", "i don't
-    know", "no idea", "dunno") — so a hedged answer ("idk maybe 7") is graded,
-    never turned into idk evidence."""
-    return any(p in gates.IDK_PATTERNS for p in gates.non_attempt_phrases(text or ""))
-
-
-def _render_submission(body: LoopCheckAnswerBody, *, idk: bool) -> str:
-    if body.answer:
-        return body.answer
-    if body.option:
-        return f"({body.option}) {body.reason}".strip()
-    if idk:
-        return _IDK_RENDERED
-    return body.reason
-
-
-def _record_attempt(entry: dict, now: float, *, failed: bool) -> None:
-    """A genuine attempt: its time counts toward hint unlocking
-    (`attempted_at`), and one that did not close the step correct is a failed
-    genuine attempt (PKG-06's `attempts`, the ceiling's input)."""
-    entry["attempted_at"] = [*(entry.get("attempted_at") or []), now]
-    if failed:
-        entry["attempts"] = int(entry.get("attempts") or 0) + 1
-
-
-def _on_step(qh: str, change: Callable[[dict], None]) -> Callable[[dict], None]:
-    """A compare-and-set mutate that applies `change` to the item's per-step
-    entry in the FRESH document (nothing when the entry is gone)."""
-
-    def mutate(state: dict) -> None:
-        entry = _steps(state).get(qh)
-        if isinstance(entry, dict):
-            change(entry)
-
-    return mutate
-
-
-def _grading_open(entry: dict | None, now: float) -> bool:
-    """The item still takes answers: never graded, and not left under a claim
-    older than LOOP_GRADING_CLAIM_STALE_S (a crash mid-grade or a conflict
-    after the flush — /check/next moves past it; it is never graded again)."""
-    if not isinstance(entry, dict) or entry.get("graded_at") is not None or entry.get("grading_superseded"):
-        return False
-    if grade_checkpoint.KEY in entry:
-        return True  # a saved result must be recovered, never abandoned as stale
-    claimed_at = entry.get("grading_claim_at")
-    return not (
-        entry.get("grading_claim") and now - float(claimed_at or 0) > LOOP_GRADING_CLAIM_STALE_S
-    )
-
-
-def _claim_grading(session_id: str, qh: str, claim: str, now: float) -> None:
-    """C2 (review round 3): grading is a CLAIM. One compare-and-set write sets
-    `steps[qh].grading_claim` only when the item is ungraded and unclaimed;
-    otherwise nothing is written and the submission is a 409. The claim is
-    never re-taken: the grade, the ONE flush and its record all run under it,
-    so a resubmission after the release, a double submit or a concurrent
-    refusal can never grade (or flush) the item twice."""
-
-    def take(state: dict) -> None:
-        _refuse_while_closing(state, now)  # PKG-09: grading and closing exclude each other
-        entry = _steps(state).get(qh)
-        if not isinstance(entry, dict):
-            raise HTTPException(status_code=404, detail="No such check item in this session")
-        if entry.get("graded_at") is not None or entry.get("grading_claim"):
-            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        entry["grading_claim"], entry["grading_claim_at"] = claim, now
-
-    _update_loop_state(session_id, take)
-
-
-def _under_claim(qh: str, claim: str, change: Callable[[dict], None], *, release: bool):
-    """A mutate that applies `change` to the item's entry only while `claim`
-    holds it, and — `release` — gives the claim up in the same write."""
-
-    def mutate(state: dict) -> None:
-        entry = _steps(state).get(qh)
-        if not isinstance(entry, dict) or entry.get("grading_claim") != claim:
-            return
-        change(entry)
-        if release:
-            entry.pop("grading_claim", None)
-            entry.pop("grading_claim_at", None)
-            entry.pop(grade_checkpoint.KEY, None)
-
-    return mutate
-
-
-async def _grade_submission(
-    body: LoopCheckAnswerBody, request: Request, *, loop_on: bool
-) -> _Submission:
-    """The ONLY loop-chat evidence path (spec A16; invariant 26's allow-list):
-    grade ONE explicit submission and persist its evidence with ONE
-    flush_pending, before any feedback turn or stream starts — all under the
-    item's grading claim (C2, `_claim_grading`): a graded item, or one another
-    request is grading, is a 409 before anything is graded. A33: a guard
-    refusal (checked BEFORE `unavailable`, which it also sets) is no credit, no
-    evidence and never a genuine attempt; it is counted on the item under the
-    claim, and the CHECK_REFUSALS_AS_IDK-th refusal of the same item is graded
-    as idk. Every path that writes no evidence releases the claim; after the
-    flush it is released only by the write that records the grade, so a lost
-    record never admits a second flush."""
-    scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
-    course_id = scope[1]
-    state = _load_loop_state(body.session_id)
-    _require_open(state)
-    qh = body.question_hash
-    entry = _steps(state).get(qh)
-    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
-        checkpoint = _open_grade_checkpoint(entry, body, course_id, kind="check")
-        return _finish_check_checkpoint(checkpoint, scope, request, loop_on=loop_on)
-    if isinstance(entry, dict) and (
-        entry.get("graded_at") is not None or entry.get("grading_claim") or entry.get("grading_superseded")
-    ):
-        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-    if not isinstance(entry, dict) or state.get("current") != qh:
-        raise HTTPException(status_code=404, detail="No such check item in this session")
-    item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-    if item is None:  # A23 withdrawal: nothing is graded
-        raise HTTPException(status_code=409, detail="check item withdrawn")
-    text = body.answer or body.reason
-    idk = body.idk or _is_idk_phrase(text)
-    rendered = _render_submission(body, idk=idk)
-    if not idk and gates.matches_non_attempt(text):
-        return _Submission("hint_request", state, rendered, scope)  # never graded
-    node_id = await asyncio.to_thread(_node_for_item, body.user_id, item)  # #117
-    if node_id is None:  # evidence needs the student's node for this concept (A2)
-        raise HTTPException(status_code=409, detail="no graph node for this item")
-    band, p_before = _band_for(body.user_id, node_id)
-    now = _now_s()
-    # hint-unlock bookkeeping only: the independent-time gate never blocks grading (A16)
-    arm = await asyncio.to_thread(_arm_for, body.user_id, request)  # #117
-    variant = arms.variant_for(body.user_id, node_id, arm)
-    genuine = not idk and _genuine(
-        text, _seconds_since(entry.get("first_shown_at"), now), band, variant
-    )
-    deps = SaplingDeps(
-        user_id=body.user_id,
-        course_id=course_id or None,
-        supabase=None,
-        request_id=_request_id(request),
-        session_id=body.session_id,
-        feature="loop_check",
-        learning_loop=loop_on,
-        # PKG-10: the hook's attempt log + marker; its change rides
-        # outcome.diagnosis into the grade's compare-and-set save below
-        loop_state=copy.deepcopy(state),
-    )
-    # A88: a posed item a served turn revealed grades with no unassisted credit
-    rung = max(
-        int(entry.get("rung") or 0),
-        _reveal_floor(body.user_id, item, _ts(entry.get("first_shown_at"))),
-    )
-    # PKG-10 (spec §13 A76): the next graded item on a concept after a release
-    # is a re-check, never a full-weight unassisted first attempt
-    recheck = recheck_after_release(
-        body.user_id,
-        node_id,
-        state,
-        now=datetime.fromtimestamp(now, tz=timezone.utc),
-        item=item,
-    )
-    claim = str(uuid.uuid4())
-    _claim_grading(body.session_id, qh, claim, now)
-    checkpointed = False
-    # spec §13 A141: a multi-concept item's answer is a partial observation on
-    # its apex (node_id above); the keyword is passed only for one
-    combo = {"multi_concept": True} if is_multi_concept(item) else {}
-    answer = CheckAnswer(
-        question_hash=qh,
-        answer_text=body.answer,
-        selected_option=body.option,
-        reason=body.reason,
-        idk=idk,
-        # spec §13 A127: the stated confidence; an idk (a box or a phrase) states none
-        confidence=None if idk else body.confidence,
-    )
-    try:
-        outcome = await grade_answer(
-            _item_like(item),
-            answer,
-            deps=deps,
-            node_id=node_id,
-            max_rung=rung,
-            same_session_recheck=recheck,
-            **combo,
-        )
-        refused = bool(outcome.refused)
-        if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
-
-            # A97: a disowned answer is never escalated to idk — the student may
-            # have been right; they are only asked to state their own answer
-            disowned = outcome.refused == "disowned_answer"
-
-            def count_refusal(e: dict) -> None:
-                if not disowned:
-                    e["refusals"] = int(e.get("refusals") or 0) + 1
-                if disowned or e["refusals"] < CHECK_REFUSALS_AS_IDK:
-                    # nothing was graded: the claim goes with the count
-                    e.pop("grading_claim", None)
-                    e.pop("grading_claim_at", None)
-
-            state = _update_loop_state(
-                body.session_id, _under_claim(qh, claim, count_refusal, release=False)
-            )
-            if (_steps(state).get(qh) or {}).get("grading_claim") != claim:
-                return _Submission("refused", state, rendered, scope, refused=True)
-            # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
-            idk, genuine = True, False
-            answer = CheckAnswer(question_hash=qh, idk=True)
-            outcome = await grade_answer(
-                _item_like(item),
-                answer,
-                deps=deps,
-                node_id=node_id,
-                max_rung=rung,
-                same_session_recheck=recheck,
-                **combo,
-            )
-        if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
-
-            def note_attempt(e: dict) -> None:
-                if genuine:
-                    _record_attempt(e, now, failed=True)
-
-            state = _update_loop_state(
-                body.session_id, _under_claim(qh, claim, note_attempt, release=True)
-            )
-            return _Submission("unavailable", state, rendered, scope, refused=refused)
-        # A93: the help floor re-read inside the claim, right before the write
-        rung = _refloor(
-            deps.pending_evidence, body.user_id, item, _ts(entry.get("first_shown_at")), rung
-        )
-        previously_seen = qh in seen_hashes(body.user_id)
-        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused),
-                               previously_seen=previously_seen, operation_id=claim, observed_at=now)
-        correct = bool(outcome.correct)
-        verdict = "idk" if idk else ("correct" if correct else "not_yet")
-        evidence = outcome.evidence or {}
-        graded = {
-            "graded_at": now,
-            "last_correct": correct,
-            "last_verdict": verdict,
-            "max_rung": rung,
-            "assisted": bool(evidence.get("assisted")),
-            "node_id": node_id,
-            "channel": evidence.get("channel"),
-            "confidence": outcome.confidence,
-            "grader_backend": outcome.grader_backend,
-            "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
-            "p_before": p_before,
-            "feedback_given": False,
-        }
-
-        if state.get("goal"):
-            effective_rung = max(rung, int(evidence.get("max_rung") or 0))
-            rechecked = bool(recheck or evidence.get("same_session_recheck"))
-            graded["goal_observation"] = {
-                "node_id": node_id, "question_hash": qh, "difficulty": item.difficulty,
-                "channel": CHANNEL_FOR_FORMAT[item.format], "correct": correct, "idk": bool(idk),
-                "max_rung": effective_rung, "same_session_recheck": rechecked,
-                "previously_seen": previously_seen, "synthetic_idk": bool(refused),
-                "independent": effective_rung == 0 and not rechecked and not refused
-                and not previously_seen and not evidence.get("assisted", False),
-            }
-
-        checkpoint = grade_checkpoint.GradeCheckpoint(
-            kind="check", operation_id=claim, user_id=body.user_id,
-            session_id=body.session_id, course_id=course_id or None, question_hash=qh,
-            goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
-            continuation={"graded": graded, "correct": correct, "genuine": genuine,
-                          "diagnosis": getattr(outcome, "diagnosis", None), "rendered": rendered,
-                          "answer": answer.model_dump(mode="json"), "verdict": verdict, "refused": refused},
-        )
-        # Treat a lost checkpoint acknowledgment as potentially saved. Never release
-        # its claim or call the grader again while that uncertainty exists.
-        checkpointed = True
-        _save_grade_checkpoint(checkpoint)
-        return _finish_check_checkpoint(
-            checkpoint, scope, request, loop_on=loop_on, deps=deps, difficulty=item.difficulty
-        )
-    except BaseException as exc:
-        if not checkpointed:
-            try:
-                _update_loop_state(
-                    body.session_id, _under_claim(qh, claim, lambda e: None, release=True)
-                )
-            except Exception:
-                logger.warning("grading claim could not be released")
-        if isinstance(exc, PlanningPersistenceUnavailable):
-            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
-        raise
-
-
-def _open_grade_checkpoint(entry, body, course_id, *, kind):
-    try:
-        return grade_checkpoint.open_checkpoint(
-            entry.get(grade_checkpoint.KEY), kind=kind, operation_id=entry.get("grading_claim"),
-            user_id=body.user_id, session_id=body.session_id, course_id=course_id or None,
-            question_hash=body.question_hash,
-        )
-    except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry later") from None
-
-
-def _save_grade_checkpoint(checkpoint):
-    encrypted = grade_checkpoint.seal(checkpoint)  # constant across CAS retries
-
-    def save(doc):
-        _refuse_while_closing(doc, _now_s())
-        _check_goal_version(doc, checkpoint.goal_version)
-        entry = (_steps(doc).get(checkpoint.question_hash) if checkpoint.kind == "check"
-                 else _probe_doc(doc).get("current"))
-        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
-                or (checkpoint.kind == "probe" and entry.get("question_hash") != checkpoint.question_hash)):
-            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        entry[grade_checkpoint.KEY] = encrypted
-        entry["grading_claim_at"] = _now_s()
-
-    _update_loop_state(checkpoint.session_id, save, require_open=True, require_existing=True)
-
-
-#: spec §13 A123: _flush_grade_checkpoint's answer when the commit refused the
-#: grade because staff retired its item meanwhile (EvidenceItemRetired)
-_ITEM_RETIRED = object()
-
-
-_RETIRED_DETAIL = "This question was withdrawn. Select another check to continue."
-
-
-def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
-    def guard(doc):
-        _refuse_while_closing(doc, _now_s())
-        _check_goal_version(doc, checkpoint.goal_version)
-        if checkpoint.kind == "probe":
-            _require_phase(doc, "probe")
-            entry = _probe_doc(doc).get("current")
-        else:
-            _require_teaching(doc)
-            entry = _steps(doc).get(checkpoint.question_hash)
-            if doc.get("current") != checkpoint.question_hash:
-                raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
-                or grade_checkpoint.KEY not in entry):
-            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-
-    # The durable claim excludes goal changes and close. A conditional write
-    # also checks ended_at/close_json before any replay can write evidence.
-    _update_loop_state(checkpoint.session_id, guard, require_open=True, require_existing=True)
-    deps = deps or SaplingDeps(
-        user_id=checkpoint.user_id, course_id=checkpoint.course_id, supabase=None,
-        request_id=_request_id(request), session_id=checkpoint.session_id,
-        feature="loop_check" if checkpoint.kind == "check" else "loop_probe", learning_loop=loop_on,
-    )
-    deps.pending_evidence = copy.deepcopy(checkpoint.evidence)
-    try:
-        flush_pending(deps, checkpoint.course_id)
-    except EvidenceObservationSuperseded as exc:
-        # The original answer has no committed receipt, and a newer observation
-        # is already authoritative — or (A123, EvidenceItemRetired) staff retired
-        # the item while it was graded, so the grade is void by definition and
-        # nothing was written. Never apply the old answer out of order or
-        # invent a diagnosis; retire its pose and ask for fresh evidence.
-        def supersede(doc):
-            if checkpoint.kind == "check":
-                def retire(entry):
-                    entry["grading_superseded"] = True
-                    entry["discarded_grade_operation_id"] = checkpoint.operation_id
-                _under_claim(checkpoint.question_hash, checkpoint.operation_id, retire, release=True)(doc)
-                if doc.get("current") == checkpoint.question_hash:
-                    doc["current"] = None
-            else:
-                _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, _not_asked)(doc)
-
-        _update_loop_state(checkpoint.session_id, supersede, require_open=True, require_existing=True)
-        return _ITEM_RETIRED if isinstance(exc, EvidenceItemRetired) else False
-    except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
-    try:
-        receipt = read_evidence_receipt(checkpoint.user_id, checkpoint.operation_id)
-        if receipt is None or receipt.get("course_id") != checkpoint.course_id:
-            raise PlanningPersistenceUnavailable("Saved grade receipt unavailable")
-    except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
-    _ledger(mark_graded, checkpoint.user_id, checkpoint.question_hash)
-    return receipt
-
-
-def _committed_grade_observation(checkpoint, receipt, node_id):
-    """Use the final serialized writer's exposure provenance, never a stale guess.
-
-    Another session may have answered this question after the grader began.
-    The original grade stays frozen, but only the committed receipt can attest
-    that this particular exposure was fresh and independently useful.
-    """
-    try:
-        matches = [PlanningObservation.model_validate(row) for row in receipt["observations"]
-                   if row.get("node_id") == node_id and row.get("question_hash") == checkpoint.question_hash]
-        original = next(row for row in checkpoint.evidence if row["node_id"] == node_id)
-        if len(matches) != 1:
-            raise ValueError("Saved grade observation unavailable")
-        final = matches[0].model_dump(mode="json")
-        for key in ("check_item_id", "channel", "correct", "idk", "max_rung"):
-            if final[key] != original[key]:
-                raise ValueError("Saved grade observation disagrees")
-        for key in ("difficulty", "synthetic_idk"):
-            if final[key] != original["planning_provenance"][key]:
-                raise ValueError("Saved grade immutable provenance disagrees")
-        if original.get("same_session_recheck") and not final["same_session_recheck"]:
-            raise ValueError("Saved grade recheck provenance weakened")
-        if original["planning_provenance"]["previously_seen"] and not final["previously_seen"]:
-            raise ValueError("Saved grade exposure provenance weakened")
-        return final
-    except Exception:
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
-
-
-class _BandOutcome(NamedTuple):
-    """One graded check's band-control verdict (spec §13 A122). `stored` is
-    what the graded step keeps for its feedback turn to apply (ids, the enum,
-    an int) — None for HOLD, which adjusts nothing; the rest feeds the events."""
-
-    stored: dict | None
-    verdict: policy.BandVerdict
-    p_known: float
-    opps: int
-    difficulty: int | None
-    prerequisite_ids: list[str]
-
-
-def _graded_difficulty(difficulty: int | None, checkpoint) -> int | None:
-    """The graded item's difficulty: the grading request's (it holds the item),
-    else — a saved grade recovered by a later request — the item's, read once
-    by its id in the checkpoint's evidence; None when it cannot be read."""
-    if type(difficulty) is int:
-        return difficulty
-    ids = [
-        row.get("check_item_id")
-        for row in checkpoint.evidence
-        if row.get("question_hash") == checkpoint.question_hash and row.get("check_item_id")
-    ]
-    try:
-        item = get_check_item(ids[0]) if ids else None
-    except Exception:
-        logger.warning("graded item unreadable; band control takes no difficulty step")
-        return None
-    return item.difficulty if item is not None else None
-
-
-def _band_verdict(user_id: str, node_id: str, difficulty: int | None) -> _BandOutcome | None:
-    """Spec §3.3 band control after ONE graded check (§13 A122), read after its
-    evidence is flushed so the window holds it: the concept's opportunity window
-    (loop_state_store.opportunity_window: unassisted first-attempt outcomes,
-    newest last, across sessions), its decayed learner_state (p_known, opps, the
-    A3 max streak) and — for a verdict that checks prerequisites
-    (EASIER_CHECK_PREREQS, WHEELSPIN) — its prerequisite parents, from which
-    policy.repair_target picks the weakest unproficient one. Typed state in
-    (policy.band_verdict, invariant 4); never the student's text. None when a
-    read failed: the grade stands, no verdict is applied — never an invented
-    one — and the next graded check decides again from the durable journal."""
-    window = opportunity_window(user_id, node_id)
-    if window is None:
-        return None
-    try:
-        state = read_states(user_id, [node_id]).get(node_id) or LearnerState(
-            user_id=user_id, node_id=node_id
-        )
-        verdict = policy.band_verdict(
-            window,
-            p_known=state.p_known,
-            opps=state.opps,
-            max_streak_unassisted=state.max_streak_unassisted,
-        )
-        band, _ = _band_of(state)
-        adjusts = verdict.action is not policy.BandAction.HOLD
-        # prerequisites: the repair target (EASIER_CHECK_PREREQS, WHEELSPIN), and
-        # the novice rows of the effective ceiling (prerequisite known or not)
-        checks_prereqs = verdict.action in (
-            policy.BandAction.EASIER_CHECK_PREREQS,
-            policy.BandAction.WHEELSPIN,
-        ) or (adjusts and band == "novice")
-        prerequisites = _prerequisites(user_id, node_id) if checks_prereqs else []
-    except Exception as exc:
-        logger.warning("band control skipped for this grade: %s", type(exc).__name__)
-        return None
-    target = policy.repair_target(prerequisites)
-    delta = policy.ceiling_delta(verdict.action)
-    stored = None
-    if adjusts:
-        proficient = policy.prerequisite_status(prerequisites) is policy.PrerequisiteStatus.PROFICIENT
-        view = _learner_view(state, band=band, prereq_proficient=proficient)
-        stored = {
-            "action": verdict.action.value,
-            "difficulty": (
-                policy.next_difficulty(verdict.action, difficulty)
-                if difficulty is not None
-                else None
-            ),
-            "repair": target.node_id if target is not None else None,
-            # §3.3's ceiling clause and the ceiling it leaves a fresh item on the
-            # concept (0 failed attempts, outside exam mode): the band's row moved
-            # by the delta, clamped — gates still apply turn by turn
-            "ceiling_delta": delta,
-            "ceiling": int(
-                policy.ceiling(view, StepState(question_hash=""), band_delta=delta)
-            ),
-        }
-    return _BandOutcome(
-        stored=stored,
-        verdict=verdict,
-        p_known=state.p_known,
-        opps=state.opps,
-        difficulty=difficulty,
-        prerequisite_ids=sorted(p.node_id for p in prerequisites),
-    )
-
-
-def _emit_band_verdict(user_id: str, request_id: str, node_id: str, band: _BandOutcome) -> None:
-    """Spec §6 (§13 A122): zpd.band_adjust for every verdict that adjusts
-    something (HOLD adjusts nothing), with direction, trigger and window_stats
-    (numbers and bools only); and on WHEELSPIN zpd.wheelspin (category error) —
-    the spec's "flag instructor": Sapling has no instructor role, so this error
-    event IS the flag. The emitters never raise into the request."""
-    verdict = band.verdict
-    trigger = policy.BAND_TRIGGERS.get(verdict.action)
-    if trigger is None:
-        return
-    stored = band.stored or {}
-    zpd_events.emit_zpd_band_adjust(
-        user_id=user_id,
-        request_id=request_id,
-        direction=verdict.action,
-        trigger=trigger,
-        window_stats={
-            "rate": verdict.rate,
-            "n": verdict.n,
-            "full_windows": verdict.full_windows,
-            "stable": verdict.stable,
-            "p_known": band.p_known,
-            "opps": band.opps,
-            "difficulty": band.difficulty,
-            "next_difficulty": stored.get("difficulty"),
-            "repair": stored.get("repair") is not None,
-        },
-        ceiling_delta=policy.ceiling_delta(verdict.action),  # spec §13 A122
-    )
-    if verdict.action is policy.BandAction.WHEELSPIN:
-        zpd_events.emit_zpd_wheelspin(
-            user_id=user_id,
-            request_id=request_id,
-            concept_id=node_id,
-            opps=band.opps,
-            unassisted_next=verdict.rate,
-            htc_k=verdict.htc_k,
-            prerequisite_ids=list(band.prerequisite_ids),
-        )
-
-
-def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, difficulty=None):
-    receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
-    if receipt is _ITEM_RETIRED:
-        raise HTTPException(status_code=409, detail=_RETIRED_DETAIL)
-    if receipt is False:
-        raise HTTPException(status_code=409, detail="Newer learning activity was recorded. Select another check to continue.")
-    qh, claim = checkpoint.question_hash, checkpoint.operation_id
-    c = checkpoint.continuation
-    graded, correct, genuine = copy.deepcopy(c["graded"]), c["correct"], c["genuine"]
-    committed = _committed_grade_observation(checkpoint, receipt, graded["node_id"])
-    if graded.get("goal_observation") is not None:
-        graded["goal_observation"].update(committed)
-    now = graded["graded_at"]
-    # spec §13 A122: the band controller's verdict on the concept, read now that
-    # the journal holds this grade; stored on the step under the claim below and
-    # applied when its feedback turn is served
-    band = _band_verdict(
-        checkpoint.user_id, graded["node_id"], _graded_difficulty(difficulty, checkpoint)
-    )
-    def record_grade(e: dict) -> None:
-        if genuine:
-            _record_attempt(e, now, failed=not correct)
-        if e.get("graded_at") is None:
-            e["first_attempt_correct"] = correct
-        e["graded"] = int(e.get("graded") or 0) + 1
-        e["wrong"] = int(e.get("wrong") or 0) + (0 if correct else 1)
-        e.update(graded)
-
-    under = _under_claim(qh, claim, record_grade, release=True)
-    diagnosis = c["diagnosis"]
-
-    held = {"last": False}
-
-    def record_grade_and_diagnosis(doc: dict) -> None:
-        _refuse_while_closing(doc, _now_s())
-        _check_goal_version(doc, checkpoint.goal_version)
-        entry = _steps(doc).get(qh)
-        held["last"] = isinstance(entry, dict) and entry.get("grading_claim") == claim
-        under(doc)
-        if held["last"]:
-            _steps(doc)[qh]["graded_operation_id"] = claim
-            if band is not None and band.stored is not None:
-                _steps(doc)[qh][_BAND_CONTROL] = dict(band.stored)
-        if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
-            carry(doc, diagnosis)
-            # PKG-14 (spec §3.4): one more flushed check toward the zpd.rating prompt,
-            # in this same write — only an evidence flush counts (A16, invariant 26)
-            doc["checks_since_rating"] = int(doc.get("checks_since_rating") or 0) + 1
-            held["checks"] = doc["checks_since_rating"]
-
-    # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
-    # conflict retains the encrypted checkpoint; retry replays the same atomic
-    # operation and then materializes this session continuation exactly once.
-    state = _update_loop_state(checkpoint.session_id, record_grade_and_diagnosis, require_open=True, require_existing=True)
-    if not held["last"]:
-        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-    if band is not None:  # after the save that recorded it under OUR claim: once per grade
-        _emit_band_verdict(checkpoint.user_id, _request_id(request), graded["node_id"], band)
-    if held["last"]:
-        # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
-        # after the ONE flush and the save that recorded the grade under OUR
-        # claim (a claim lost to another request writes nothing; never raises)
-        if (diagnosis or {}).get("record"):
-            try:
-                item = get_check_item((_steps(state).get(qh) or {}).get("check_item_id"))
-                if item is not None:
-                    _write_misconception(checkpoint.user_id, GradeOutcome(diagnosis=diagnosis),
-                                         _item_like(item), CheckAnswer.model_validate(c["answer"]))
-            except Exception:
-                logger.warning("optional misconception rollup unavailable after saved grade")
-        # spec §13 A127: a correct, unassisted answer on an isomorph closes the
-        # misconceptions its item tests — after the flush and the claimed save
-        _resolve_misconceptions(checkpoint, diagnosis, committed, surface="check", request=request)
-    ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
-    return _Submission("feedback", state, c["rendered"], scope, c["verdict"], refused=c["refused"], ask_rating=ask)
-
-
-def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> None:
-    """PKG-10: write the misconceptions row the grade marked
-    (`outcome.diagnosis["record"]`), its evidence_text the text the grader saw
-    (encrypted by learning.misconceptions.record). Nothing marked, nothing
-    written; the store never raises."""
-    mark = (getattr(outcome, "diagnosis", None) or {}).get("record")
-    if not mark:
-        return
-    record(
-        user_id,
-        mark["node_id"],
-        mark["check_item_id"],
-        mark["wrong_key"],
-        grader_answer_text(item, answer),
-        question_hash=getattr(item, "question_hash", None),  # A123: the supporting attempt's item
-    )
-
-
-def _resolve_misconceptions(
-    checkpoint, diagnosis: dict | None, committed: dict, *, surface: str, request: Request
-) -> list[str]:
-    """Spec §13 A127: close what a correct, unassisted answer on an isomorph
-    closes — the keys the hook listed for this answer (`diagnosis["resolve"]`:
-    the item's keys but one the student's reason matched), judged on the
-    grade's FINAL observation (`committed`: the single writer's, with the help
-    floor's rung and any re-check it forced). Called by the check route and
-    the probe after their one flush and the claimed save that recorded the
-    grade (A75 (a)'s order), so a failed flush closes nothing. It never changes
-    the response, the phase or the next item (the probe stays a diagnostic,
-    A120 (e)). A checkpoint saved before A127 lists no keys: nothing to close.
-    Never raises."""
-    keys = (diagnosis or {}).get("resolve") or []
-    if not keys:
-        return []
-    try:
-        return resolve_after_grade(
-            checkpoint.user_id,
-            committed["node_id"],
-            keys=keys,
-            item_id=committed.get("check_item_id"),
-            attempt=committed,
-            surface=surface,
-            session_id=checkpoint.session_id,
-            request_id=_request_id(request),
-        )
-    except Exception:
-        logger.warning("misconception resolution unavailable after saved grade")
-        return []
-
-
-def _submission_turn(
-    sub: _Submission, body: LoopCheckAnswerBody, request: Request, *, loop_on: bool
-) -> _LoopTurn:
-    chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=sub.rendered)
-    turn = _LoopTurn(
-        body=chat_body,
-        request=request,
-        message=sub.rendered,
-        kind=sub.kind,
-        state=sub.state,
-        verdict=sub.verdict,
-        scope=sub.scope,
-        loop_on=loop_on,
-        refused=sub.refused,
-    )
-    turn.ask_rating = sub.ask_rating
-    return turn
+    return await loop_service.chat_stream(body, request)
 
 
 # crisis support: a crisis answer leaves the item posed and ungraded (no claim, no evidence)
@@ -1291,28 +391,18 @@ def _submission_turn(
     "/check/answer",
     dependencies=_screened("loop_check_answer", "answer", "reason", respond=crisis_support.turn_response),
 )
+@same_doc(loop_service.check_answer)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    sub = await _agent_turn_or_http_error(
-        _grade_submission(body, request, loop_on=loop_on), what="loop grader"
-    )
-    return await _json_turn(
-        lambda: _submission_turn(sub, body, request, loop_on=loop_on), "loop feedback agent"
-    )
+    return await loop_service.check_answer(body, request)
 
 
 @router.post(
     "/check/answer/stream",
     dependencies=_screened("loop_check_answer", "answer", "reason", respond=crisis_support.turn_stream),
 )
+@same_doc(loop_service.check_answer_stream)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    sub = await _agent_turn_or_http_error(
-        _grade_submission(body, request, loop_on=loop_on), what="loop grader"
-    )
-    return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
+    return await loop_service.check_answer_stream(body, request)
 
 
 _NO_RATING_ASKED = "no rating was asked for"
@@ -2669,32 +1759,9 @@ def hint(body: LoopHintBody, request: Request) -> dict:
 
 
 @router.post("/action", dependencies=_RATE_LIMITED)
+@same_doc(loop_service.action)
 async def action(body: ActionBody, request: Request):
-    """An "[ACTION: ...]" turn: in the check phase a hint at the item's current
-    rung, otherwise the current phase. Assistant-only persistence; never graded
-    (invariant 26)."""
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
-    message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
-    chat_body = ChatBody(
-        session_id=body.session_id,
-        user_id=body.user_id,
-        message=message,
-        mode=body.mode,
-        use_shared_context=body.use_shared_context,
-    )
-    return await _json_turn(
-        lambda: _LoopTurn(
-            body=chat_body,
-            request=request,
-            message=message,
-            kind="action",
-            persist_user_row=False,
-            loop_on=loop_on,
-        ),
-        "loop action agent",
-    )
+    return await loop_service.action(body, request)
 
 
 # crisis support: a crisis topic or goal opens no session (nothing is stashed or
@@ -2703,31 +1770,18 @@ async def action(body: ActionBody, request: Request):
     "/start-session",
     dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_response),
 )
+@same_doc(loop_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    result = await _json_turn(
-        lambda: _LoopOpener(body=body, request=request, loop_on=loop_on),
-        "loop start-session agent",
-    )
-    out = {
-        "session_id": result["session_id"],
-        "initial_message": result["reply"],
-        "graph_state": result["graph_state"],
-    }
-    if result.get("budget"):
-        out["budget"] = result["budget"]
-    if result.get("materials_unavailable"):
-        out["materials_unavailable"] = True  # A128: present only when true
-    return out
+    return await loop_service.start_session(body, request)
 
 
 @router.post(
     "/start-session/stream",
     dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_stream),
 )
+@same_doc(loop_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    return _sse(_LoopOpener(body=body, request=request, loop_on=loop_on))
+    return await loop_service.start_session_stream(body, request)
 
 
 @router.post("/check/next")
@@ -3804,44 +2858,10 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     }
 
 
-def _on_posed(qh: str, change: Callable[[dict, dict], None]) -> Callable[[dict], None]:
-    """A compare-and-set mutate over the probe's posed item `qh`: `change(pr,
-    current)` runs only while `qh` is still the posed item."""
-
-    def mutate(doc: dict) -> None:
-        pr = _probe_doc(doc)
-        cur = pr.get("current")
-        if isinstance(cur, dict) and cur.get("question_hash") == qh:
-            change(pr, cur)
-
-    return mutate
-
-
-def _under_probe_claim(
-    qh: str, claim: str, change: Callable[[dict, dict], None]
-) -> Callable[[dict], None]:
-    """`_on_posed`, applied only while `claim` holds the item (PKG-07's
-    `_under_claim` for the probe's posed item)."""
-
-    def guarded(pr: dict, cur: dict) -> None:
-        if cur.get("grading_claim") == claim:
-            change(pr, cur)
-
-    return _on_posed(qh, guarded)
-
-
 def _release(_pr: dict, cur: dict) -> None:
     cur.pop("grading_claim", None)
     cur.pop("grading_claim_at", None)
     cur.pop(grade_checkpoint.KEY, None)
-
-
-def _not_asked(pr: dict, cur: dict) -> None:
-    """Invariant 28 / Behaviour 11: the item counts as not asked — excluded from
-    selection, never counted toward a cap; the next /probe/next serves another."""
-    if cur["question_hash"] not in pr["unavailable"]:
-        pr["unavailable"].append(cur["question_hash"])
-    pr["current"] = None
 
 
 async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on: bool) -> dict:

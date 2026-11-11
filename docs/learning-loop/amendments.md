@@ -169,7 +169,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A16 | grading | Grade only explicit answer submissions, in the route; chat messages are never graded | `backend/agents/tools/check.py::grade_answer` |
 | A33 | answer guard | An answer addressed to the grader is refused, never graded (prompt-injection guard) | `backend/learning/answer_guard.py::screen` |
 | A51 | prompt safety | A student's words can never steer the loop tutor (nonce envelope, rules on every turn) | `backend/agents/loop_tutor.py::student_envelope` |
-| A52 | grading | Grading a check item is a claim: one grade per posed item, taken by compare-and-set | `backend/routes/learn_loop.py::_grade_submission` |
+| A52 | grading | Grading a check item is a claim: one grade per posed item, taken by compare-and-set | `backend/services/loop/grading.py::_grade_submission` |
 | A61 | prompt safety | The tutor's rules ride `instructions=` so they reach every turn, not only the first | `backend/agents/loop_tutor.py::loop_tutor_agent` |
 | A62 | brief | The learner brief carries no model-written free text | `backend/learning/learner_brief.py::build_brief` |
 | A84 | reveals | Superseded by A86: teach turns never state check answers | — |

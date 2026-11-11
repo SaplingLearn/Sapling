@@ -86,8 +86,8 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Seen set | Every item hash in the student's evidence rows. Pickers exclude it (the probe falls back to a seen item only when nothing unseen is left). | `backend/learning/loop_state_store.py::seen_hashes` |
 | Revealed set | Items whose answer the student has been shown (wrong answer, worked solution, a served tutor text that stated it). Excluded like seen items. | `backend/learning/loop_state_store.py::revealed_hashes` |
 | Reported set | Items the student reported; excluded for that student. | `backend/learning/loop_state_store.py::reported_hashes` |
-| Explicit submission | An answer sent through the answer box (`/check/answer`, `/probe/answer`, `/review/answer`, `/posttest/answer`). The only thing ever graded, A16. | `backend/routes/learn_loop.py::_grade_submission` |
-| Grading claim | A marker taken by CAS before grading, so one posed item is graded once, A52. | `backend/routes/learn_loop.py::_grade_submission` |
+| Explicit submission | An answer sent through the answer box (`/check/answer`, `/probe/answer`, `/review/answer`, `/posttest/answer`). The only thing ever graded, A16. | `backend/services/loop/grading.py::_grade_submission` |
+| Grading claim | A marker taken by CAS before grading, so one posed item is graded once, A52. | `backend/services/loop/grading.py::_grade_submission` |
 | Grade checkpoint | An encrypted, owner-bound record of a finished grade saved before its evidence commits, so a crash is recovered without grading twice (ADR 0038). | `backend/learning/grade_checkpoint.py::seal` |
 | Turn activity | Prose-free timing and fencing for a tutor turn, so an interrupted turn cannot earn help-gate time (ADR 0036). | `backend/learning/turn_activity.py::begin` |
 | Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/services/loop/turn.py::_LoopTurn` |

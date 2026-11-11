@@ -1626,14 +1626,14 @@ def test_the_idk_subset_is_the_gates_idk_patterns():
 def test_is_idk_phrase_is_the_a16_routing_rule(text, idk):
     """HANDOFF-06: the idk split is gates.non_attempt_phrases, so a hedged answer
     is graded, never turned into idk evidence."""
-    from routes.learn_loop import _is_idk_phrase
+    from services.loop.claims import _is_idk_phrase
 
     assert _is_idk_phrase(text) is idk
 
 
 def test_render_submission():
     from models import LoopCheckAnswerBody
-    from routes.learn_loop import _render_submission
+    from services.loop.claims import _render_submission
 
     body = LoopCheckAnswerBody(**_answer(answer="n == 0"))
     assert _render_submission(body, idk=False) == "n == 0"
@@ -3403,7 +3403,7 @@ def test_claim_grading_refuses_while_the_session_closes(seams, extra, detail):
     """Grading and closing exclude each other on the one session document: the
     close refuses a live grading claim (PKG-09), and the grading claim refuses a
     live close claim or a closed session — so no evidence lands outside a close."""
-    from routes.learn_loop import _claim_grading
+    from services.loop.claims import _claim_grading
 
     doc = _state()
     doc.update(extra)

@@ -272,7 +272,7 @@ def test_a_written_answer_keeps_its_confidence():
 
 def test_the_quiz_idk_rule_is_the_loops():
     """One A16 idk split: the quiz's reads the loop route's rule."""
-    from routes.learn_loop import _is_idk_phrase
+    from services.loop.claims import _is_idk_phrase
 
     for text in (
         "idk", "IDK", "i dont know", "I don't know", "no idea", "dunno", "idk lmao",

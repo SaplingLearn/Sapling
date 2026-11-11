@@ -613,7 +613,7 @@ sequenceDiagram
     RT-->>UI: verdict, then one feedback turn
 ```
 
-1. **Before grading.** `backend/routes/learn_loop.py::_grade_submission`
+1. **Before grading.** `backend/services/loop/grading.py::_grade_submission`
    checks the kill switch, the crisis screen and the rate limit, that the
    item is the current one and still servable (a held item answers 409
    "check item withdrawn"), and that it is not already graded. A plea with no

@@ -15,6 +15,8 @@ from models import ChatBody, LoopCheckAnswerBody, EndSessionBody
 from routes import learn_loop
 from tests import test_learn_loop_routes as routes
 from tests.split_patches import patch_loop
+import services.loop.checkpoint
+import services.loop.grading
 import services.loop.state
 import services.loop.turn
 
@@ -23,7 +25,7 @@ gate_on, seams, no_rate_limit = routes.gate_on, routes.seams, routes.no_rate_lim
 
 
 def submit(answer="The base case returns 1"):
-    return asyncio.run(learn_loop._grade_submission(
+    return asyncio.run(services.loop.grading._grade_submission(
         LoopCheckAnswerBody(**routes._answer(answer=answer)),
         Request({"type": "http", "headers": []}), loop_on=True,
     ))
@@ -219,7 +221,7 @@ def test_replay_checks_current_session_fences_before_flushing(gate_on, seams, ch
         seams.store["doc"]["steps"]["qh-1"]["grading_claim"] = "other"
     seams.flush.reset_mock()
     with pytest.raises(HTTPException):
-        learn_loop._finish_check_checkpoint(saved, ("off-1", "c1"), Request({"type": "http", "headers": []}), loop_on=True)
+        services.loop.checkpoint._finish_check_checkpoint(saved, ("off-1", "c1"), Request({"type": "http", "headers": []}), loop_on=True)
     seams.flush.assert_not_called()
 
 

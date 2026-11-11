@@ -454,7 +454,7 @@ def test_a_failed_window_read_applies_no_verdict_and_the_grade_stands(loop):
 
 @pytest.mark.parametrize("failing", ["learner", "prerequisites"])
 def test_a_failed_read_yields_no_verdict_rather_than_an_invented_one(failing):
-    from routes.learn_loop import _band_verdict
+    from services.loop.checkpoint import _band_verdict
 
     reads = {"learner": "read_states", "prerequisites": "_prerequisite_edges"}
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.4, opps=2, exists=True)}
@@ -468,7 +468,7 @@ def test_a_failed_read_yields_no_verdict_rather_than_an_invented_one(failing):
 
 
 def test_band_verdict_reads_prerequisites_only_when_the_verdict_checks_them():
-    from routes.learn_loop import _band_verdict
+    from services.loop.checkpoint import _band_verdict
 
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.6, opps=4, exists=True)}
     with (

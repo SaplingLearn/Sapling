@@ -15,10 +15,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import routes.learn_loop as ll
 from main import app
 from services import ai_budget
 from tests.split_patches import patch_loop
+import services.loop.sessions
 
 client = TestClient(app)
 
@@ -214,7 +214,7 @@ def test_lists_open_loop_sessions_newest_first_in_one_read(gate_on):
         "loop_state": "neq.{}",
         "mode": "neq.review",
     }
-    assert call["order"] == "started_at.desc" and call["limit"] == ll.LOOP_OPEN_SESSIONS_LIMIT
+    assert call["order"] == "started_at.desc" and call["limit"] == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
     # never reads the ciphertext (is.null only, invariant 9) nor model_pref (invariant 22);
     # close_phase is written WITH close_json (session_close.store_close), so an open row has none
     for col in ("close_json", "close_phase", "model_pref"):
@@ -349,11 +349,11 @@ def test_a_resume_in_another_course_names_that_course(gate_on):
 def test_a_resume_beyond_the_list_limit_is_found(gate_on):
     rows = [
         _row(f"s{i:02d}", started=f"2026-09-{i + 1:02d}T10:00:00Z")
-        for i in range(ll.LOOP_OPEN_SESSIONS_LIMIT + 2)
+        for i in range(services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT + 2)
     ]
     rows.sort(key=lambda r: r["started_at"], reverse=True)
     body = _get_resume(_Db(rows), "s00").json()
-    assert len(body["sessions"]) == ll.LOOP_OPEN_SESSIONS_LIMIT
+    assert len(body["sessions"]) == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
     assert "s00" not in [s["session_id"] for s in body["sessions"]]
     assert body["resume"]["session_id"] == "s00" and body["resume"]["course_id"] == COURSE
 

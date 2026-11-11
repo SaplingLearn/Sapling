@@ -266,6 +266,11 @@ LOOP_MODULES = (
     "services.loop.turn",
     "services.loop.opener",
     "services.loop.runner",
+    "services.loop.sessions",
+    "services.loop.claims",
+    "services.loop.checkpoint",
+    "services.loop.grading",
+    "services.loop.teach",
 )
 
 

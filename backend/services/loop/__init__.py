@@ -94,6 +94,19 @@ Modules, lowest first (each imports only the ones above it):
 - ``runner``: The run sites: the JSON turn and the SSE turn (budget, plan, one
   model run or the deterministic text, complete) and the guardrail mapping
   around them.
+- ``sessions``: GET /status and GET /sessions: a session's status and the
+  student's open loop sessions (PKG-13).
+- ``claims``: The explicit submission's bookkeeping (A16, C2): the submission
+  record, the item's grading claim, attempts and the misconceptions a grade
+  records.
+- ``checkpoint``: The grade checkpoint (crash recovery of a graded answer):
+  save, flush and finish, and the band verdict it emits (A122).
+- ``grading``: POST /check/answer (JSON and stream): `_grade_submission`, the
+  loop's one chat-path evidence writer (invariant 26), and the feedback turn
+  after it.
+- ``teach``: The teach turns: POST /chat, /chat/stream, /action, /start-
+  session and /start-session/stream (the legacy /api/learn routes delegate
+  here).
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until
@@ -105,7 +118,16 @@ import importlib
 
 _PUBLIC = {
     "_NOT_ENABLED": "constants",
+    "action": "teach",
+    "chat": "teach",
+    "chat_stream": "teach",
+    "check_answer": "grading",
+    "check_answer_stream": "grading",
+    "list_open_sessions": "sessions",
     "posed_items": "posed",
+    "start_session": "teach",
+    "start_session_stream": "teach",
+    "status": "sessions",
 }
 
 __all__ = sorted(_PUBLIC)

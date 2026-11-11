@@ -12,10 +12,10 @@ from learning.evidence import Evidence, PlanningPersistenceUnavailable, planning
 from learning.goals import encode_goal
 from models import LoopCheckAnswerBody, LoopGoal
 from test_learn_loop_routes import ITEM, seams as seams
-import routes.learn_loop as rl
 from test_learning_probe_planner import _grader
 from tests.split_patches import patch_loop
 import learning.params
+import services.loop.grading
 
 
 @pytest.mark.parametrize(
@@ -44,7 +44,7 @@ def test_actual_grade_carries_final_help_exposure_and_recheck_provenance(
         patch_loop("recheck_after_release", return_value=recheck),
         patch_loop("_reveal_floor", side_effect=[rung, late_floor]),
     ):
-        submission = asyncio.run(rl._grade_submission(body, request, loop_on=True))
+        submission = asyncio.run(services.loop.grading._grade_submission(body, request, loop_on=True))
     assert submission.kind == "feedback"
     observation = seams.store["doc"]["steps"]["qh-1"]["goal_observation"]
     assert observation["independent"] is expected
@@ -76,7 +76,7 @@ def test_actual_check_tags_durable_provenance_in_goal_and_coursewide_sessions(
     )
     request = Request({"type": "http", "method": "POST", "path": "/check/answer", "headers": []})
     with patch_loop("_reveal_floor", return_value=0):
-        submission = asyncio.run(rl._grade_submission(body, request, loop_on=True))
+        submission = asyncio.run(services.loop.grading._grade_submission(body, request, loop_on=True))
     assert submission.kind == "feedback"
     assert len(captured) == 1
     observation = planning_observation(Evidence.model_validate(captured[0]))
@@ -95,7 +95,7 @@ def test_strict_check_write_failure_retains_saved_grade_and_retries_one_operatio
     request = Request({"type": "http", "method": "POST", "path": "/check/answer", "headers": []})
     with patch_loop("_reveal_floor", return_value=0):
         with pytest.raises(HTTPException) as failure:
-            asyncio.run(rl._grade_submission(body, request, loop_on=True))
+            asyncio.run(services.loop.grading._grade_submission(body, request, loop_on=True))
     assert failure.value.status_code == 503
     step = seams.store["doc"]["steps"]["qh-1"]
     assert "graded_at" not in step and step["grading_claim"]
@@ -119,7 +119,7 @@ def test_strict_check_write_failure_retains_saved_grade_and_retries_one_operatio
 
     seams.flush.side_effect = flush
     changed = body.model_copy(update={"answer": "A changed retry must not replace the original"})
-    result = asyncio.run(rl._grade_submission(changed, request, loop_on=True))
+    result = asyncio.run(services.loop.grading._grade_submission(changed, request, loop_on=True))
     assert result.kind == "feedback" and result.rendered == body.answer
     assert result.verdict == "not_yet"
     assert list(committed) == list(seams.receipts) == [saved.operation_id]
@@ -131,6 +131,6 @@ def test_strict_check_write_failure_retains_saved_grade_and_retries_one_operatio
     seams.grade.assert_awaited_once()
     assert seams.flush.call_count == 2  # Failed append, then one successful atomic operation.
     with pytest.raises(HTTPException) as duplicate:
-        asyncio.run(rl._grade_submission(body, request, loop_on=True))
+        asyncio.run(services.loop.grading._grade_submission(body, request, loop_on=True))
     assert duplicate.value.status_code == 409
     assert len(committed) == 1 and seams.flush.call_count == 2

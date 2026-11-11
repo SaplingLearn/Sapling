@@ -439,7 +439,7 @@ def _concurrently(seams, n: int, outcomes):
     """Run `n` _grade_submission calls at once: each grade awaits a shared gate
     so every call is in flight before any finishes."""
     from models import LoopCheckAnswerBody
-    from routes.learn_loop import _grade_submission
+    from services.loop.grading import _grade_submission
 
     gate = asyncio.Event()
     queue = list(outcomes)
