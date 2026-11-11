@@ -5,15 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-import routes.learn_loop as rl
 from learning.checks import posttest_reserve_hash
 from test_learning_goal_integrity import approve, proposal
 from test_learning_goals import _open_write_harness as _open_write_harness, set_goal
 from test_learning_probe_planner import LOOP, NEXT, PLAN_Q, _node_items, client, probe as probe
 from tests.split_patches import patch_loop
+import services.loop.planning
 import services.loop.state
 
-_REAL_PREFLIGHT = rl._goal_practice_unavailable
+_REAL_PREFLIGHT = services.loop.planning._goal_practice_unavailable
 
 
 @pytest.fixture

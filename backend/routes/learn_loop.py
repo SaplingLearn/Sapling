@@ -113,36 +113,17 @@ from learning.checks import (
     posttest_skip_reason,
     pretest_form,
     pretest_match,
-    select_item,
-    serve_quality,
 )
-from learning.checks import unsourced as item_unsourced
-from learning.multi_concept import STEP_KEY as MULTI_CONCEPT_STEP_KEY
 from learning.multi_concept import is_multi_concept
-from learning.evidence import (
-    PREREQ_RELATIONSHIP_TYPE,
-    PlanningObservation,
-    PlanningPersistenceUnavailable,
-    flush_pending,
-)
+from learning.evidence import PlanningObservation, PlanningPersistenceUnavailable, flush_pending
 from learning.evidence_transaction import (
     EvidenceItemRetired,
     EvidenceObservationSuperseded,
     read_receipt as read_evidence_receipt,
 )
 from learning.void_store import voided_by_node, voided_event_ids
-from learning.planning_history import read_planning_history
-from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active
-from learning.goals import (
-    encode_goal,
-    public_goal,
-    goal_version,
-    attempted_nodes,
-    planning_observations,
-    scope_signature,
-    progress as goal_progress,
-)
+from learning.goals import encode_goal, goal_version, attempted_nodes, progress as goal_progress
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.served_scan import ScanSet
@@ -151,8 +132,6 @@ from learning.posttest_store import posttest_anchors
 from learning.learner_brief import store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.misconceptions import (
-    attempts_for_node,
-    attempts_of,
     carry,
     confront_of,
     is_key,
@@ -161,7 +140,6 @@ from learning.misconceptions import (
     recheck_after_release,
     resolve_after_grade,
     set_confront,
-    slip_or_misconception,
 )
 from learning.loop_state_store import (
     LoopStateConflict,
@@ -177,17 +155,10 @@ from services.loop.posed import _ts, posed_items
 from learning.help_ledger import mark_graded, record_help, record_posed
 from learning.params import (
     BKT_L0,
-    BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
-    SURFACE_FAMILIARITY_UNKNOWN,
-    CHECK_ITEM_DIFFICULTIES,
-    CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_RUN_TIMEOUT_S,
-    EDGE_PREREQ_SOURCE_IS_PREREQ,
     HELP_NOVELTY_DIGESTS_MAX,
-    LOOP_CHECK_DIFFICULTY_BY_BAND,
-    LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
@@ -200,8 +171,6 @@ from learning.params import (
     POSTTEST_WINDOWS_DAYS,
     PROBE_MAX_SKILLS,
     PROBE_SESSION_CAP,
-    REVIEW_DAILY_BUDGET_MIN,
-    REVIEW_SECONDS_PER_CHECK,
     RUNG_ASSISTED_MIN,
     RUNG_NO_CREDIT_MIN,
     ZPD_RATING_EVERY_N_CHECKS,
@@ -265,19 +234,11 @@ from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
 from services.chat_stream import stream_structured_turn
-from services.check_item_service import (
-    course_has_items,
-    drafting_pending,
-    get_check_item,
-    items_for_concepts,
-    list_items,
-)
+from services.check_item_service import get_check_item, items_for_concepts
 from services.feature_flags import flag_on
 from services import varied_practice
 from services.graph_service import _normalize_concept, get_graph
-from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
-from services.rag_service import chunks_for_ids
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 from services.request_limits import check_rate_limit
@@ -303,7 +264,6 @@ from services.loop.flags import (
     OPEN_QUESTION_KEY,
     _PREQUESTION_CUE,
     _prequestion_on,
-    PREQUESTION_SOURCE,
     _self_explain_on,
     _tutor_v2_on,
 )
@@ -342,14 +302,12 @@ from services.loop.state import (
     _turn_phase,
     _update_loop_state,
 )
-from services.loop.history import _brief_message, _load_loop_history
+from services.loop.history import _load_loop_history
 from services.loop.learner import (
-    _BAND_CEILING,
     _band_ceiling_delta,
     _band_for,
     _band_of,
     _ceiling_for,
-    _concept_key_for_node,
     _failed_on_concept,
     _genuine,
     _learner_state,
@@ -365,7 +323,6 @@ from services.loop.context import (
     _prepare_loop_run,
     _RETRIEVAL_FAILED_VALUE,
     _RETRIEVAL_KEY,
-    _take_retrieval_mark,
 )
 from services.loop.continuation import _loop_continuation_text, _requests_of, _template_feedback
 from services.loop.served import (
@@ -395,6 +352,54 @@ from services.loop.guard import (
     option_text,
     _visible_text,
     with_confrontation,
+)
+from services.loop.planning import (
+    _check_goal_version,
+    _claim_live,
+    _continue_goal,
+    _current_plan,
+    _emit_probe_done,
+    _goal_practice_unavailable,
+    _goal_scope_for,
+    _learning_scope_payload,
+    _plan_node_names,
+    _plan_prereq_edges,
+    _plan_states,
+    _preparing,
+    _probe_course_has_items,
+    _probe_doc,
+    _probe_history,
+    _probe_items,
+    PROBE_MATCHED_PRETEST_FLAG,
+    _PROBE_NOT_POSED,
+    _probe_plan_read_limit,
+    _require_phase,
+    _unanchored_skills,
+    _update_if_changed,
+    _validate_goal,
+    _with_goal_context,
+)
+from services.loop.cursor import _auto_poses_checks, _h6_ok, _leak_checked_payload
+from services.loop.pose import (
+    _emit_prequestion,
+    _emit_self_explanation,
+    _NO_POSE,
+    _open_teach_prompts,
+    _pose_prequestion,
+    _posed_prequestion,
+    _self_explain_payload,
+    _spend_prequestion_item,
+    _superseded_prequestion,
+    _undo_pose,
+    _without_claim,
+)
+from services.loop.practice import (
+    _activate_next_item,
+    _BAND_CONTROL,
+    _count_feedback_and_move,
+    plan_focus,
+    _pose_payload,
+    _worked_example_owed,
 )
 
 logger = logging.getLogger(__name__)
@@ -1786,15 +1791,6 @@ class _LoopTurn:
         return extra
 
 
-def _auto_poses_checks(state: dict) -> bool:
-    """Spec §13 A121: whether a teach turn may pose the concept's next check
-    itself (A27 trigger 1). Not in a quiz-ask session (A99): its surface, the
-    quiz's "Ask about this" sheet, shows no check card, so a check posed there
-    would be an invisible second prompt that answers the student's next
-    message with its pose. "Check me" still poses one wherever a card shows."""
-    return state.get("origin") != QUIZ_ASK_ORIGIN
-
-
 def quiz_ask_state(node_id: str) -> dict:
     """PKG-14 final fix round (spec §13 A99): the loop document a quiz-ask session
     starts with — `teach` on the quiz's concept node, as /plan/approve leaves a
@@ -1954,706 +1950,6 @@ class _LoopOpener(_LoopTurn):
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             **_materials_notice(notice),
         }
-
-
-def _h6_ok(state: dict, qh: str | None, item_state: dict, check) -> bool:
-    """Spec §3.3 H6 item predicates (§13 A32), for the one gate PKG-06 owns:
-    taught (recorded at activation), practice (the ACTIVE in-session check;
-    activation never selects the post-test reserve), not graded coursework (a
-    missing item fails closed). Ungraded alone never admits H6."""
-    return gates.h6_allowed(
-        _step_state(state, qh),
-        item_taught=bool((item_state or {}).get("taught")),
-        item_practice=qh is not None and state.get("current") == qh,
-        item_graded=check is None or bool(check.graded),
-    )
-
-
-def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | None) -> tuple:
-    """A17: the deterministic H2/H4/H6 payload for `rung`, leak-checked HERE,
-    in the same function, before anything can emit it (invariant 27; A34: the
-    active item's structured final answer). Returns (payload | None, leaked).
-    H2 passages are resolved for the requesting student through the
-    visibility-aware reader; H4 never shows the concept's post-test reserve
-    (A23, HANDOFF-06), so the concept's items are read whole — the reserve is
-    defined over all of them — and ladder.deterministic_content keeps the
-    siblings of the item's format and difficulty."""
-    passages: list[str] = []
-    if rung == Rung.H2:
-        ids = list(item.source_chunk_ids or [])[:LOOP_SOURCE_CHUNKS_MAX]
-        passages = [r["chunk_text"] for r in chunks_for_ids(ids, user_id=user_id)] if ids else []
-    siblings: list = []
-    reserves: frozenset[str] = frozenset()
-    if rung == Rung.H4:
-        concept_items = list_items(item.course_id, item.concept_key)
-        reserves = posttest_reserves(concept_items)  # A23, A126: both protected items
-        # spec §13 A129: deterministic_content shows the FIRST isomorph left, so
-        # the siblings go best-first — a confirmed key (the worked example IS
-        # its solution), then clean, never-linted, flagged; ties keep the
-        # bank's (created_at, id) order (a stable sort)
-        siblings = sorted(
-            (s for s in concept_items if s.question_hash != item.question_hash),
-            key=serve_quality,
-        )
-    payload = ladder.deterministic_content(
-        rung,
-        _item_like(item),
-        [_item_like(s) for s in siblings],
-        passages,
-        exclude_hashes=reserves,
-    )
-    if payload is None:
-        return None, False
-    verdict = detect_leak(
-        reference=reference or "",
-        emitted=payload.text,
-        rung=rung,
-        final_answer=item.final_answer,
-        canonical_answer=item.canonical_answer,
-        correct_option=item.correct_option,
-    )
-    return payload, verdict.leaked
-
-
-#: Spec §13 A121 (`loop_tutor_v2`): why the plan's cursor is on its current
-#: concept, as a v2 teach turn tells the tutor (agents.loop_tutor
-#: .PLAN_FOCUS_REASONS words each one). Read off loop state, never off text.
-CURSOR_REASONS = ("plan_order", "prerequisite_repair", "wheelspin_moved", "isomorph_reask")
-
-
-#: The two reasons a cursor MOVE records (`mark_cursor_reason`); "plan_order"
-#: is the default and "isomorph_reask" is read off the attempt log.
-_MOVE_REASONS = ("prerequisite_repair", "wheelspin_moved")
-
-
-#: The `plan` key that records why a move that is not plan order put the
-#: cursor where it is; `_advance_cursor` (plan order) clears it.
-CURSOR_REASON_KEY = "cursor_reason"
-
-
-def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
-    """Move the plan (PKG-08's `plan = {approved, cursor}`) to its next concept,
-    resetting the concept's counters; past the end the plan is done and there is
-    no current concept. False when there is no next concept (or no plan)."""
-    plan = state.get("plan")
-    if not isinstance(plan, dict):
-        return False
-    plan.pop(CURSOR_REASON_KEY, None)  # spec §13 A121: a plan-order move
-    set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
-    approved = list(plan.get("approved") or [])
-    if state.get("goal") and state.get("concept"):
-        # A finite session frontier is an attempt, not proof of proficiency.
-        plan["attempted"] = list(dict.fromkeys([*attempted_nodes(state), state["concept"]]))
-        if not no_items:
-            plan["checked_nodes"] = list(dict.fromkeys([*(plan.get("checked_nodes") or []), state["concept"]]))
-        else:
-            plan["practice_unavailable_node_ids"] = list(dict.fromkeys([
-                *(plan.get("practice_unavailable_node_ids") or []), state["concept"],
-            ]))
-    plan["cursor"] = int(plan.get("cursor") or 0) + 1
-    if plan["cursor"] >= len(approved):
-        plan["done"] = True
-        state.pop("concept", None)
-        return False
-    state["concept"] = approved[plan["cursor"]]
-    state["teach_turns"] = 0
-    state["concept_checks"] = 0
-    return True
-
-
-def _count_feedback_and_move(state: dict, entry: dict) -> None:
-    """A27: one more graded check on the concept; the cursor advances at the
-    cap — unless the band controller's verdict on this grade (spec §13 A122)
-    already moved it: stop practice, wheel-spin, prerequisite repair. The
-    feedback turn's own compare-and-set mutate (and, read-only on a copy,
-    spec §13 A138's prequestion trial) runs it."""
-    state["concept_checks"] = int(state.get("concept_checks") or 0) + 1
-    state["teach_turns"] = 0
-    moved = _apply_band_control(state, entry)
-    if not moved and state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
-        _advance_cursor(state)
-
-
-# ── The segment prequestion (spec §13 A138) ────────────────────────────────
-
-
-class _Pose(NamedTuple):
-    """What a segment start decided: the concept, the item posed (None: a skip,
-    with its reason — or no segment start at all, when `node` is None too)."""
-
-    node: str | None
-    item: object | None
-    reason: str | None
-
-
-_NO_POSE = _Pose(None, None, None)
-
-
-def _pose_prequestion(user_id: str, course_id: str, state: dict, *, now: float) -> _Pose:
-    """Spec §13 A138: at a segment start (`learning.prequestion.segment_open`;
-    the caller has read the flag), decide the concept's prequestion and record
-    it in `state` — a compare-and-set mutate's document, so no side effects
-    beyond reads (as `_activate_next_item`): a pose (and the card becomes the
-    one open prompt, A121) or a skip with its reason. Excluded like every
-    selection (A23, A113): seen, revealed and reported items, this session's
-    steps and earlier prequestions, the concept's post-test reserves (inside
-    `choose`). A failed read poses nothing and records nothing: the segment
-    simply opens without one (a learning activity, never a gate)."""
-    node = prequestion_rules.segment_open(state)
-    if node is None:
-        return _NO_POSE
-    try:
-        _, p_known = _band_for(user_id, node)
-        reason = prequestion_rules.skip_reason(state, node, p_known=p_known)
-        item = None
-        if reason is None:
-            excluded = (
-                seen_hashes(user_id)
-                | revealed_hashes(user_id)
-                | reported_hashes(user_id)
-                | set(state.get("steps") or {})
-                | prequestion_rules.session_hashes(state)
-            )
-            key = _concept_key_for_node(user_id, node)
-            bank = list_items(course_id, key) if key and course_id else []
-            item, reason = prequestion_rules.choose(bank, excluded)
-    except Exception:
-        logger.warning("prequestion: the concept could not be read; the segment opens without one", exc_info=True)
-        return _NO_POSE
-    records = dict(prequestion_rules.records(state))
-    if item is None:
-        records[node] = prequestion_rules.skip_record(reason)
-        state[prequestion_rules.KEY] = records
-        return _Pose(node, None, reason)
-    records[node] = prequestion_rules.pose_record(item, node, now)
-    state[prequestion_rules.KEY] = records
-    state[OPEN_QUESTION_KEY] = False  # A121: the card is the one open prompt
-    return _Pose(node, item, None)
-
-
-def _undo_pose(state: dict, pose: _Pose) -> None:
-    """Spec §13 A138 × A121: a pose the turn was not planned for (its trial
-    found none, so the turn kept its own question) is dropped in the same
-    compare-and-set: never two open prompts. The segment then opens without
-    a prequestion, as when a planned check cannot be posed (A121 (b))."""
-    if pose.item is None or pose.node is None:
-        return
-    records = dict(prequestion_rules.records(state))
-    records.pop(pose.node, None)
-    state[prequestion_rules.KEY] = records
-
-
-def _spend_prequestion_item(user_id: str, session_id: str, question_hash: str | None, *, at: float) -> None:
-    """Spec §13 A138 (review fix): a posed prequestion's item is SPENT however
-    its card closes — answered (its answer is about to be shown) or superseded
-    (a turn was served, or a check opened, while its question was in front of
-    the student, and that turn's text cannot be trusted not to have worked it).
-    A durable reveal (A88: never served to this student again, and any grade of
-    it carries no credit), then its ledger 'posed' row closes: the reveal floors
-    every later grade, so the scan has nothing left to protect. Only then
-    (second review): when both reveal stores failed, the row stays open, so
-    A88's scan still covers the item — a superseded card has no stored answer
-    to stand in for the reveal. Never raises."""
-    if not question_hash:
-        return
-    if _persist_reveals(
-        user_id, session_id, [question_hash], unscanned=False, source=PREQUESTION_SOURCE,
-        at=datetime.fromtimestamp(at, tz=timezone.utc),
-    ):
-        _ledger(mark_graded, user_id, question_hash)
-
-
-def _superseded_prequestion(user_id: str, session_id: str, request_id: str, node: str, rec: dict, *, at: float) -> None:
-    """After the write that superseded a posed card: the item spent, the event."""
-    _spend_prequestion_item(user_id, session_id, rec.get("question_hash"), at=at)
-    _emit_prequestion(user_id, request_id, session_id, node, "superseded", question_hash=rec.get("question_hash"))
-
-
-def _emit_prequestion(user_id: str, request_id: str, session_id: str, node_id: str, status: str, **extra) -> None:
-    """`learn.prequestion` (spec §6, §13 A138): ids, enums and counts only —
-    never the question or the guess. One per lifecycle step of a segment's
-    prequestion: posed, skipped (with its reason), answered (no_idea), superseded."""
-    events_service.log_event(
-        "learn.prequestion",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload={"session_id": session_id, "node_id": node_id, "status": status, **extra},
-    )
-
-
-def _posed_prequestion(user_id: str, session_id: str, request_id: str, pose: _Pose) -> dict | None:
-    """After the write that recorded `pose`: a posed item's assistant row (the
-    transcript shows what was asked; the card hides it while open) and its
-    event, and the payload for the response; a skip's event only."""
-    if pose.node is None:
-        return None
-    if pose.item is None:
-        _emit_prequestion(user_id, request_id, session_id, pose.node, "skipped", reason=pose.reason)
-        return None
-    # A88/A93: the card's item is a posed item — the served-text scan covers it
-    # while the card is open, like a check's (review fix: it was outside it)
-    _ledger(record_posed, user_id, pose.item.question_hash, source=PREQUESTION_SOURCE, session_id=session_id)
-    try:
-        save_message(session_id, "assistant", prequestion_rules.pose_text(pose.item))
-    except Exception:
-        # the card is posed (the write above): only the transcript row is lost;
-        # the explaining turn carries the question in its own prefix block
-        logger.warning("prequestion pose row not saved", exc_info=True)
-    _emit_prequestion(
-        user_id,
-        request_id,
-        session_id,
-        pose.node,
-        "posed",
-        question_hash=pose.item.question_hash,
-        format=pose.item.format,
-        difficulty=int(pose.item.difficulty),
-    )
-    return prequestion_rules.pose_payload(pose.item)
-
-
-def _emit_self_explanation(user_id: str, request_id: str, session_id: str, prompt: dict, status: str, **extra) -> None:
-    """`learn.self_explanation` (spec §6, §13 A139): ids, enums and counts only
-    — never the prompt's reply. shown (the turn carrying it was served),
-    replied (with reply_chars) or skipped."""
-    events_service.log_event(
-        "learn.self_explanation",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload={
-            "session_id": session_id,
-            "node_id": prompt.get("node_id"),
-            "juncture": prompt.get("juncture"),
-            "status": status,
-            **extra,
-        },
-    )
-
-
-def _self_explain_payload(prompt: dict) -> dict:
-    """The client's view of an open prompt: its id (echoed by the reply), juncture and text."""
-    return {"prompt_id": prompt["id"], "juncture": prompt["juncture"], "prompt": self_explain.prompt_text(prompt)}
-
-
-def _open_teach_prompts(user_id: str, state: dict) -> dict:
-    """GET /status's spec §13 A138 / A139 keys: the plan concept's prequestion
-    card while it is open (posed, or answered with its explanation owed —
-    `answered: true`) and the open self-explanation prompt, each behind its
-    flag and present only when there is one. Reads one item at most."""
-    keys: dict = {}
-    rec = prequestion_rules.record_for(state, state.get("concept"))
-    if (
-        rec is not None
-        and rec.get("status") in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
-        and not state.get("current")
-        and _prequestion_on(user_id)
-    ):
-        item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
-        if item is not None:
-            keys["prequestion"] = prequestion_rules.pose_payload(
-                item, answered=rec.get("status") == prequestion_rules.ANSWERED
-            )
-    prompt = self_explain.open_prompt(state)
-    if prompt is not None and _self_explain_on(user_id):
-        keys["self_explain"] = _self_explain_payload(prompt)
-    return keys
-
-
-# ── Band control on the plan (spec §3.3, §13 A122) ──────────────────────────
-#: loop_state key: node id → the target difficulty band control set for that
-#: concept's next item this session (ids → ints only; read by activation)
-_BAND_DIFFICULTY = "band_difficulty"
-
-
-#: the graded step's key holding the verdict _finish_check_checkpoint stored
-_BAND_CONTROL = "band_control"
-
-
-def _repaired(plan: dict, concept: str, prereq: str) -> bool:
-    """This concept already sent the student to this prerequisite in the
-    session (`plan["repairs"]`): each (concept, prerequisite) repair runs at
-    most once a session, so repairs never cycle."""
-    return any(
-        isinstance(r, dict) and r.get("for") == concept and r.get("node_id") == prereq
-        for r in plan.get("repairs") or []
-    )
-
-
-def _repair_cursor(
-    state: dict, prereq: str, action: policy.BandAction, *, replace: bool
-) -> None:
-    """Prerequisite repair (§3.3): teaching moves to `prereq` NOW — it takes the
-    plan slot at the cursor, so activation, the band and the ceiling follow it.
-    REPAIR_RETURN (`replace` False) puts the concept right after it, to be
-    practised again once the prerequisite's checks are done; REPAIR_REPLACE
-    (wheel-spin: stop more-of-the-same) drops the concept from the rest of the
-    session, and a goal session records it attempted, as _advance_cursor would.
-    A later occurrence of `prereq` in the plan moves up to here. Recorded in
-    `plan["repairs"]` (ids and the enum only)."""
-    plan = state["plan"]
-    approved = [n for n in plan.get("approved") or [] if isinstance(n, str)]
-    cursor = int(plan.get("cursor") or 0)
-    concept = state["concept"]
-    ahead = [n for n in approved[cursor + 1 :] if n != prereq]
-    plan["approved"] = approved[:cursor] + [prereq] + ([] if replace else [concept]) + ahead
-    plan["repairs"] = [
-        *(plan.get("repairs") or []),
-        {"node_id": prereq, "for": concept, "action": action.value},
-    ]
-    if replace and state.get("goal"):
-        # an exhausted session frontier is an attempt, never a claim of proficiency
-        plan["attempted"] = list(dict.fromkeys([*attempted_nodes(state), concept]))
-        plan["checked_nodes"] = list(
-            dict.fromkeys([*(plan.get("checked_nodes") or []), concept])
-        )
-    set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
-    state["concept"] = prereq
-    state["teach_turns"] = 0
-    state["concept_checks"] = 0
-
-
-def _apply_band_control(state: dict, entry: dict) -> bool:
-    """Apply the band controller's verdict on the graded step `entry` (spec §3.3,
-    §13 A122) as its feedback turn is served — inside that turn's
-    compare-and-set mutate, from the stored verdict alone (no reads). The next
-    item's difficulty: `state["band_difficulty"][node]` (activation reads it).
-    The concept's ceiling clause: `state["band_ceiling"][node]` (−1 / +1 rung,
-    `policy.ceiling_delta`; every ceiling on the concept reads it through
-    `_band_ceiling_delta`, gates unchanged; HOLD keeps the last one).
-    The cursor: policy.cursor_move — STOP_PRACTICE leaves the concept,
-    WHEELSPIN stops more-of-the-same (repairing the weakest unproficient
-    prerequisite in its place when there is one), EASIER_CHECK_PREREQS repairs
-    a weak prerequisite first and comes back. True when the cursor moved, so
-    the per-concept check count does not move it again. A verdict on a concept
-    the cursor has left, or a session without a plan, moves nothing."""
-    verdict = entry.get(_BAND_CONTROL)
-    if not isinstance(verdict, dict):
-        return False
-    try:
-        action = policy.BandAction(verdict.get("action"))
-    except ValueError:
-        return False
-    node = entry.get("node_id")
-    if not isinstance(node, str) or not node:
-        return False
-    target = verdict.get("difficulty")
-    if type(target) is int and target in CHECK_ITEM_DIFFICULTIES:
-        targets = state.get(_BAND_DIFFICULTY)
-        state[_BAND_DIFFICULTY] = {**(targets if isinstance(targets, dict) else {}), node: target}
-    # §3.3's ceiling clause, from the action itself (never a stored number):
-    # HARDER −1 rung, EASIER_CHECK_PREREQS +1; the band's ceiling only
-    delta = policy.ceiling_delta(action)
-    if delta:
-        deltas = state.get(_BAND_CEILING)
-        state[_BAND_CEILING] = {**(deltas if isinstance(deltas, dict) else {}), node: delta}
-    plan = state.get("plan")
-    if node != state.get("concept") or not isinstance(plan, dict):
-        return False
-    prereq = verdict.get("repair")
-    available = (
-        isinstance(prereq, str) and bool(prereq) and prereq != node
-        and not _repaired(plan, node, prereq)
-    )
-    move = policy.cursor_move(action, repair_available=available)
-    if move is policy.CursorMove.STAY:
-        return False
-    # spec §13 A121 × A122: every move records why the cursor moved
-    # (mark_cursor_reason, read by plan_focus); a plan-order advance clears it
-    wheelspin = action is policy.BandAction.WHEELSPIN
-    if move is policy.CursorMove.ADVANCE:
-        if _advance_cursor(state) and wheelspin:
-            mark_cursor_reason(state, "wheelspin_moved")  # moved on, no prerequisite to repair
-    else:
-        _repair_cursor(state, prereq, action, replace=move is policy.CursorMove.REPAIR_REPLACE)
-        mark_cursor_reason(state, "wheelspin_moved" if wheelspin else "prerequisite_repair")
-    return True
-
-
-def _target_difficulty(state: dict, node_id: str, band: str) -> int:
-    """The difficulty an activated item on the concept targets (select_item falls
-    back to the nearest): the band controller's target for the concept this
-    session when a verdict set one (spec §13 A122: HARDER one step up,
-    EASIER_CHECK_PREREQS one step down from the graded item's), else the band's
-    LOOP_CHECK_DIFFICULTY_BY_BAND."""
-    targets = state.get(_BAND_DIFFICULTY)
-    target = targets.get(node_id) if isinstance(targets, dict) else None
-    if type(target) is int and target in CHECK_ITEM_DIFFICULTIES:
-        return target
-    return LOOP_CHECK_DIFFICULTY_BY_BAND[band]
-
-
-def _worked_example_shown(state: dict, node_id: str) -> bool:
-    """A worked example was already shown on this concept this session: one of
-    its steps opened on the worked example AND reached H4 (spec §13 A122's
-    near-transfer rule — the next item is attempted, not shown worked)."""
-    return any(
-        isinstance(e, dict)
-        and e.get("node_id") == node_id
-        and e.get("worked_first") is True
-        and int(e.get("rung") or 0) >= int(Rung.H4)
-        for e in (state.get("steps") or {}).values()
-    )
-
-
-def mark_cursor_reason(state: dict, reason: str) -> None:
-    """THE HOOK for a cursor move that is not plan order (spec §13 A121 × A122).
-    A122's band control calls it right after it moves `plan.cursor` / `concept`
-    (`_apply_band_control`): "prerequisite_repair" after a repair that comes
-    back (EASIER_CHECK_PREREQS), "wheelspin_moved" after wheel-spin's move — a
-    repair in the concept's place, or moving on when there is none — so the v2
-    tutor's teach turns say why the plan is on the new concept (`plan_focus`).
-    The next plan-order advance (`_advance_cursor`) clears it. PKG-10's isomorph
-    re-ask moves no cursor: plan_focus reads it off the attempt log, exactly
-    while the re-ask is pending."""
-    if reason not in _MOVE_REASONS:
-        raise ValueError(f"not a cursor move reason: {reason!r} (expected one of {_MOVE_REASONS})")
-    plan = state.get("plan")
-    if isinstance(plan, dict):
-        plan[CURSOR_REASON_KEY] = reason
-
-
-def plan_focus(state: dict) -> tuple[str, str] | None:
-    """Spec §13 A121 (`loop_tutor_v2`): (the plan's current concept node, why
-    the cursor is there), from loop state only — never from text. The reason
-    is "isomorph_reask" when the session's last attempt on the concept was
-    `unknown` (its next check re-asks an isomorph, `_isomorph_after_unknown`),
-    else the reason a non-plan-order move recorded (`mark_cursor_reason`),
-    else "plan_order". None with no plan, a finished plan or no concept. Pure:
-    `state` is never changed."""
-    plan = state.get("plan")
-    concept = state.get("concept")
-    if not isinstance(plan, dict) or plan.get("done") or not isinstance(concept, str) or not concept:
-        return None
-    tail = attempts_for_node(attempts_of(dict(state)), concept)  # a copy: attempts_of may add the log
-    if tail and slip_or_misconception(tail) == "unknown":
-        return concept, "isomorph_reask"
-    moved = plan.get(CURSOR_REASON_KEY)
-    return concept, moved if moved in _MOVE_REASONS else "plan_order"
-
-
-def _isomorph_after_unknown(
-    state: dict, node_id: str, items: list, exclude: set, *, familiarity: dict | None = None
-):
-    """PKG-10 (spec §3.3 "unknown → re-ask an isomorph"; §13 A27): when the
-    session's last attempt on this concept was `unknown`, the isomorph of that
-    attempt's item (policy.next_isomorph) among the site's own candidates —
-    everything `exclude` leaves (seen, revealed, session hashes, the post-test
-    reserve; A23), servable only (A34) — else None (the normal pick).
-    `familiarity` (spec §13 A140, varied_isomorphs on): among isomorphs of
-    equal quality, the one whose surface the student has met least first."""
-    tail = attempts_for_node(attempts_of(state), node_id)
-    if not tail or slip_or_misconception(tail) != "unknown":
-        return None
-    last = next((i for i in items if i.question_hash == tail[-1].question_hash), None)
-    if last is None:
-        return None
-    # spec §13 A129: next_isomorph takes the FIRST isomorph in the given
-    # order — every isomorph is equal under its rule (same concept, format and
-    # difficulty) — so the candidates go best-first by serve_quality; ties keep
-    # the bank's (created_at, id) order (a stable sort)
-    candidates = (i for i in items if i.question_hash not in exclude and is_servable(i))
-    if familiarity is None:
-        return policy.next_isomorph(last, sorted(candidates, key=serve_quality))
-    # spec §13 A140: then the least familiar surface (the re-ask's "different
-    # surface", §3.3, read off the stored descriptors)
-    return policy.next_isomorph(
-        last,
-        sorted(
-            candidates,
-            key=lambda i: (
-                *serve_quality(i),
-                familiarity.get(i.question_hash, SURFACE_FAMILIARITY_UNKNOWN),
-            ),
-        ),
-    )
-
-
-def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
-    """The ONLY code that SETS the document's `current` (the spec's `active`;
-    feedback and withdrawal only clear it). For the current plan concept: its
-    items, minus everything the student has seen or had revealed, every hash
-    already keyed in this session and the concept's post-test reserve (A23);
-    the band's target difficulty; the formats rotated by the concept's checks
-    so far. A concept with nothing servable advances the cursor and tries the
-    next (at most once per remaining concept). No plan → None (teaching only).
-    Writes no evidence and runs no model. An item the student reported (A113)
-    is excluded like a seen or revealed one."""
-    concept = state.get("concept")
-    if not concept:
-        return None
-    try:
-        excluded = (
-            seen_hashes(user_id)
-            | revealed_hashes(user_id)
-            | reported_hashes(user_id)
-            | set(state.get("steps") or {})
-            # spec §13 A138: an item this session posed as a prequestion (empty
-            # with the flag off) — its answer is shown, or its stem was seen
-            | prequestion_rules.session_hashes(state)
-        )
-    except Exception as exc:
-        if state.get("goal"):
-            raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
-        raise
-    # spec §13 A140 / A141: the student's two varied-practice dials, read once
-    # per activation; both off → every pick below is exactly the plain one
-    varied, combos = varied_practice.varied_on(user_id), varied_practice.multi_concept_on(user_id)
-    while True:
-        item = None
-        try:
-            items, exclude = _practice_pool(user_id, course_id, concept, excluded)
-        except Exception as exc:
-            if state.get("goal"):
-                raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
-            raise
-        learner = None
-        if items:
-            # A140: how familiar each item's surface is to the student on this
-            # concept (met = seen, revealed, reported, posed this session)
-            familiarity = (
-                varied_practice.familiarity_for(course_id, items[0].concept_key, excluded)
-                if varied
-                else None
-            )
-            item = _isomorph_after_unknown(state, concept, items, exclude, familiarity=familiarity)
-            learner = _learner_state(user_id, concept)
-            band, _ = _band_of(learner)
-            rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
-            formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
-            target = _target_difficulty(state, concept, band)
-            if item is None and combos:
-                # A141: the ideas-combined dial — a multi-concept item whose
-                # apex is this concept, when its gate and the session dial allow
-                item = varied_practice.multi_concept_pick(
-                    user_id, course_id, state, concept, items[0].concept_key,
-                    target=target, formats=formats, excluded=excluded,
-                )
-            for fmt in formats if item is None else ():
-                item = select_item(
-                    items,
-                    format=fmt,
-                    difficulty=target,
-                    exclude_hashes=exclude,
-                    familiarity=familiarity,
-                )
-                if item is not None:
-                    break
-        if item is not None:
-            qh = item.question_hash
-            state["current"] = qh
-            step = {
-                "rung": int(Rung.H0),
-                "attempts": 0,
-                "wrong": 0,
-                "first_shown_at": now,
-                "check_item_id": item.id,
-                "node_id": concept,
-                "feedback_given": False,
-                # the H6 predicate (spec §3.3, A32): taught earlier in this session
-                "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
-            }
-            if is_multi_concept(item):
-                # A141: counted by the session dial (one per concept a session)
-                step[MULTI_CONCEPT_STEP_KEY] = True
-            # spec §13 A122: a novice without the prerequisite (policy.attempt_first
-            # says no) gets the worked example FIRST on the concept's first item of
-            # the session; the item after it is the near-transfer, attempted
-            view = _learner_view(
-                learner, band=band, prereq_proficient=_prereq_proficient(user_id, concept)
-            )
-            if policy.opens_on_worked_example(
-                view, shown_on_concept=_worked_example_shown(state, concept)
-            ):
-                step["worked_first"] = True
-            if _take_retrieval_mark(state, concept):
-                # A128: this step's teaching ran without its course material
-                step[_RETRIEVAL_KEY] = _RETRIEVAL_FAILED_VALUE
-            _steps(state)[qh] = step
-            return qh
-        if not _advance_cursor(state, no_items=True):
-            return None
-        concept = state["concept"]
-
-
-def _practice_pool(user_id: str, course_id: str, node_id: str, excluded: set[str]) -> tuple[list, set[str]]:
-    """The same eligible bank for planning and actual check activation.
-
-    A probe's practice reserve is eligible here; the delayed post-test
-    reserves (both, A126) are not. Difficulty is not an availability filter:
-    selection uses the nearest difficulty and rotates through all supported
-    check formats. Failed reads propagate, never masquerade as an empty bank.
-    """
-    key = _concept_key_for_node(user_id, node_id)
-    if not key:
-        return [], excluded
-    items = list_items(course_id, key)
-    return items, excluded | posttest_reserves(items)
-
-
-def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_ids) -> set[str]:
-    """Read-only, owner-scoped goal preflight. A read outage is not depletion."""
-    if not node_ids:
-        return set()
-    try:
-        excluded = (
-            seen_hashes(user_id)
-            | revealed_hashes(user_id)
-            | reported_hashes(user_id)
-            | set(state.get("steps") or {})
-            | prequestion_rules.session_hashes(state)  # spec §13 A138, as activation
-        )
-        unavailable = set()
-        for node in node_ids:
-            items, excluded_for_node = _practice_pool(user_id, course_id, node, excluded)
-            if not any(item.question_hash not in excluded_for_node and item.format in CHECK_ITEM_FORMATS
-                       and is_servable(item) for item in items):
-                unavailable.add(node)
-        return unavailable
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
-
-
-def _pose_payload(item, *, worked_first: bool = False) -> dict:
-    """The check pose the client renders (A17: the prompt verbatim; A22: an
-    mc_reason item's stored options, never rebuilt, never marked correct, no
-    wrong_key). Never the reference. `worked_first` (spec §13 A122): the item
-    opens on the worked example and it has not been unlocked yet — the client
-    asks for it at once (/hint grants H4 with no attempt before it, the hint
-    turn serves it); the key is present only when true."""
-    options = None
-    if item.format == "mc_reason" and item.options:
-        options = [{"letter": o.letter, "text": o.text} for o in item.options]
-    pose = {
-        "question_hash": item.question_hash,
-        "format": item.format,
-        "difficulty": item.difficulty,
-        "prompt": ladder.check_pose(item.prompt),
-        "options": options,
-    }
-    if worked_first:
-        pose["worked_first"] = True
-    return pose
-
-
-def _worked_example_owed(user_id: str, state: dict, qh: str | None) -> bool:
-    """Whether item `qh`'s next hint is its worked example (spec §13 A122): its
-    step opened on it, is still below H4, and policy.worked_example_rung —
-    re-read on the learner's state NOW — still grants it. Reads only for such a
-    step (the common pose reads nothing more)."""
-    entry = (state.get("steps") or {}).get(qh) if qh else None
-    if not isinstance(entry, dict) or entry.get("worked_first") is not True:
-        return False
-    node_id = entry.get("node_id")
-    if not node_id or int(entry.get("rung") or 0) >= int(Rung.H4):
-        return False
-    learner = _learner_state(user_id, node_id)
-    band, _ = _band_of(learner)
-    view = _learner_view(learner, band=band, prereq_proficient=_prereq_proficient(user_id, node_id))
-    step = _step_state(state, qh)
-    delta = _band_ceiling_delta(state, node_id)
-    return policy.worked_example_rung(view, step, worked_first=True, band_delta=delta) is not None
 
 
 # ── Run sites ──────────────────────────────────────────────────────────────
@@ -5534,11 +4830,6 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
     return state, scope
 
 
-def _without_claim(rec: dict) -> dict:
-    """A card's record without its answer claim's keys."""
-    return {k: v for k, v in rec.items() if k not in (_ANSWER_CLAIM, f"{_ANSWER_CLAIM}_at")}
-
-
 def _give_back_quietly(session_id: str, give_back: Callable[[dict], None]) -> None:
     """Give an answer claim back after a failure (never raises: a claim that
     cannot be given back goes stale after LOOP_GRADING_CLAIM_STALE_S)."""
@@ -6069,109 +5360,6 @@ def end_session(body: EndSessionBody, request: Request) -> None:
     return None
 
 
-# ── Probe and plan (PKG-08; spec §3.3 probe row, §3.4, §9; A16, A20, A23, A27, A33, A34) ──
-#
-# The session document's top-level `phase` is PKG-08's: `probe` → `plan` →
-# `teach` (a missing key reads `probe`, unless the plan is already approved).
-# The probe lives under `probe` = {skills, history, current, unavailable,
-# refusals} and the plan under `plan` = {proposed, proposed_kinds, approved,
-# cursor} plus PKG-07's `concept`/`teach_turns`/`concept_checks`. Nothing here
-# writes PKG-07's top-level `current` or `steps` (only `_activate_next_item`
-# sets `current`, A27). No handler here reads the tutor budget or counts a tutor
-# call (A20: the probe runs at every budget level; the grader's own cap lives
-# inside grade(), PKG-06b) — `/probe/answer`, the one route that can run a
-# model, carries the rate limit.
-
-#: A /probe/answer whose question_hash is not the posed item's (stale client,
-#: or the item was answered or moved past meanwhile).
-_PROBE_NOT_POSED = "not the posed probe item"
-
-
-@dataclass(frozen=True)
-class _BoundItem:
-    """A course check item bound to the student's graph node (A2: stored items
-    key on concept_key, never node_id). Satisfies `learning.probe.ProbeItem`;
-    every other attribute is the item's own. `item` is what grade_answer takes."""
-
-    item: CheckItem
-    node_id: str
-
-    @property
-    def unsourced(self) -> bool:
-        """A128: drafted from extracted text after a failed index — the probe
-        ranks such an item after an equal one with its sources."""
-        return item_unsourced(self.item)
-
-    @property
-    def quality(self) -> tuple:
-        """Spec §13 A129: checks.serve_quality — the probe ranks an item by it
-        among equal challenges (a confirmed key, then clean, never-linted,
-        flagged; A128's sourced item first among flagged ones)."""
-        return serve_quality(self.item)
-
-    def __getattr__(self, name: str):
-        return getattr(self.item, name)
-
-
-def _require_phase(doc: dict, phase: str) -> None:
-    current = _loop_phase(doc)
-    if current != phase:
-        raise HTTPException(status_code=409, detail=f"phase is {current}")
-
-
-def _validate_goal(goal, states: dict[str, float]) -> None:
-    if goal is not None and not set(goal.target_node_ids) <= set(states):
-        raise HTTPException(status_code=422, detail="Choose target concepts from this course")
-
-
-def _goal_scope_for(state: dict, states: dict[str, float], edges) -> frozenset[str] | None:
-    goal = state.get("goal")
-    if not isinstance(goal, dict) or not goal.get("target_node_ids"):
-        return None
-    targets = goal["target_node_ids"]
-    if not set(targets) <= set(states):
-        raise HTTPException(status_code=422, detail="A goal concept is no longer available; edit the goal")
-    return planner.goal_scope(targets, edges, nodes=states)
-
-
-def _check_goal_version(doc: dict, expected: int) -> None:
-    if goal_version(doc) != expected:
-        raise HTTPException(status_code=409, detail="Goal changed; refresh the learning session")
-
-
-def _learning_scope_payload(state: dict) -> dict:
-    pr = state.get("probe") or {}
-    skills = pr.get("scope", pr.get("skills", []))
-    payload = {
-        "goal": public_goal(state),
-        "goal_version": goal_version(state),
-        "diagnosis": probe_policy.diagnostic_summary(
-            pr.get("history") or [], skills=skills,
-            stop_reason=pr.get("stop_reason"),
-            available_difficulties=pr.get("available_difficulties"),
-        ),
-    }
-    plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
-    progress = plan.get("goal_progress")
-    if state.get("goal") and isinstance(progress, dict):
-        payload["goal_progress"] = copy.deepcopy(progress)
-    if state.get("goal"):
-        payload["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
-    return payload
-
-
-def _with_goal_context(history: list, state: dict, user_id: str) -> list:
-    goal = public_goal(state)
-    if goal is None:
-        return history
-    names = _plan_node_names(user_id, goal["target_node_ids"])
-    text = "Student-confirmed learning goal: " + goal["text"]
-    text += "\nTarget concepts: " + ", ".join(names.get(n, n) for n in goal["target_node_ids"])
-    text += "\nConnect the approved prerequisites and practice to this objective."
-    context = wrap_untrusted(neutralise_control_tags(text), source="student_goal")
-    return [_brief_message(context), *history]
-
-
 @router.post("/goal")
 def set_goal(body: LoopGoalBody, request: Request) -> dict:
     """Change confirmed scope before teaching, preserving evidence and fatigue caps."""
@@ -6216,238 +5404,6 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
 
     saved = _update_loop_state(body.session_id, change, require_open=True)
     return {"phase": "probe", **_learning_scope_payload(saved)}
-
-
-def _probe_doc(doc: dict) -> dict:
-    """The document's `probe` object with every list/map present (in place)."""
-    pr = doc.get("probe")
-    if not isinstance(pr, dict):
-        pr = doc["probe"] = {}
-    pr.setdefault("history", [])
-    pr.setdefault("unavailable", [])
-    pr.setdefault("refusals", {})
-    pr.setdefault("current", None)
-    return pr
-
-
-class _PlanNodesRead:
-    """Read-only paging adapter; all graph writes still use graph_service."""
-    def select_with_count(self, *args, **kwargs):
-        return table("graph_nodes").select_with_count(*args, **kwargs)
-
-
-class _PlanEdgesRead:
-    def select_with_count(self, *args, **kwargs):
-        return table("graph_edges").select_with_count(*args, **kwargs)
-
-
-def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
-    """Decayed p_known for every graph node of (user, course) — one
-    `graph_nodes` read, one `learner_state` read (PKG-03); BKT_L0 for a node
-    with no learner_state row."""
-    rows = list(page_all(
-        _PlanNodesRead(), "id",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        order="id.asc",
-    ))
-    ids = [r["id"] for r in rows if r.get("id")]
-    states = read_states(user_id, ids)
-    return {n: (states[n].p_known if n in states else BKT_L0) for n in ids}
-
-
-def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str]]:
-    """The user's prerequisite edges among `node_ids`, oriented (prerequisite,
-    dependent) by EDGE_PREREQ_SOURCE_IS_PREREQ — the direction PKG-03's
-    propagation and PKG-07's `_prereq_proficient` read. One `graph_edges` read."""
-    rows = list(page_all(
-        _PlanEdgesRead(), "id,source_node_id,target_node_id",
-        filters={"user_id": f"eq.{user_id}",
-                 "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}"},
-        order="id.asc",
-    ))
-    keep = set(node_ids)
-    out = []
-    for e in rows:
-        src, tgt = e.get("source_node_id"), e.get("target_node_id")
-        if src in keep and tgt in keep:
-            out.append((src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src))
-    return out
-
-
-#: Spec §13 A130: the matched pretest probe start (services/feature_flags.py).
-PROBE_MATCHED_PRETEST_FLAG = "probe_matched_pretest"
-
-
-def _probe_history(doc: dict) -> list:
-    """The probe's recorded observations, read without touching the document
-    (`_probe_doc` fills defaults in place; this reads only)."""
-    pr = doc.get("probe")
-    history = pr.get("history") if isinstance(pr, dict) else None
-    return history if isinstance(history, list) else []
-
-
-def _unanchored_skills(user_id: str, skills: list[str], history: list) -> frozenset[str]:
-    """Spec §13 A130: the probe's skills whose next graded answer is their
-    pretest — no graded answer in this session's probe history
-    (`probe.graded_strands`) and no anchor in the evidence journal: the
-    `posttest_anchors` SQL function, the one anchor rule the post-test
-    windows, the due read and evidence_spans share (a void row anchors
-    nothing). The anchors are read only when some skill could still be
-    steered. A failed read steers nothing this time — a WARNING, and the
-    probe keeps its own first-item rule (the pose later records how well the
-    outcome item matched whatever pretest was asked)."""
-    open_skills = [n for n in skills if n not in probe_policy.graded_strands(history)]
-    if not open_skills:
-        return frozenset()
-    try:
-        rows, _ = posttest_anchors(user_id=user_id)
-    except Exception as exc:
-        logger.warning("probe: anchors unread (%s); no matched pretest this time", type(exc).__name__)
-        return frozenset()
-    anchored = {row.get("node_id") for row in rows}
-    return frozenset(n for n in open_skills if n not in anchored)
-
-
-def _probe_course_has_items(course_id: str) -> bool:
-    """A23: one `limit=1` read; False for a session with no course."""
-    return bool(course_id) and course_has_items(course_id)
-
-
-def _preparing(user_id: str, course_id: str, *, no_items: bool = False) -> dict:
-    """Spec §13 A128: `{"preparing": True}` while the course has no item to
-    serve and the student's own upload in it is still being drafted
-    (`check_item_service.drafting_pending`), else {} — present only when true.
-    `no_items`: the caller already read that the course has none. Advisory
-    copy, so a read that fails answers {} (the pre-A128 state), never an error."""
-    try:
-        if not no_items and _probe_course_has_items(course_id):
-            return {}
-        return {"preparing": True} if drafting_pending(user_id, course_id) else {}
-    except Exception as exc:
-        logger.warning("loop: the preparing state could not be read (%s)", type(exc).__name__)
-        return {}
-
-
-def _probe_items(user_id: str, course_id: str, node_ids: list[str]) -> list[_BoundItem]:
-    """PKG-08's node → concept_key → items resolver (A2; the inverse of PKG-07's
-    `_node_for_item`): one `graph_nodes` read for the nodes' names, one
-    `check_items` read for their normalised keys, each item bound to the node.
-    Unfiltered — the handlers drop the reserve, unavailable, revealed and
-    unservable items (they must still COUNT an asked one)."""
-    if not node_ids:
-        return []
-    rows = (
-        table("graph_nodes").select(
-            "id,concept_name",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "course_id": f"eq.{course_id}",
-                "id": f"in.({','.join(sorted(set(node_ids)))})",
-            },
-        )
-        or []
-    )
-    node_for_key: dict[str, str] = {}
-    for row in sorted(rows, key=lambda r: r.get("id") or ""):
-        key = _normalize_concept(row.get("concept_name") or "")
-        if key and row.get("id"):
-            node_for_key.setdefault(key, row["id"])  # one node per concept key
-    by_key = items_for_concepts(course_id, list(node_for_key))
-    return [
-        _BoundItem(item, node_for_key[key])
-        for key, items in by_key.items()
-        if key in node_for_key
-        for item in items
-    ]
-
-
-def _plan_node_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
-    """id → concept_name for the student's nodes (one `graph_nodes` read)."""
-    if not node_ids:
-        return {}
-    rows = (
-        table("graph_nodes").select(
-            "id,concept_name",
-            filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(sorted(set(node_ids)))})"},
-        )
-        or []
-    )
-    return {r["id"]: r.get("concept_name") or "" for r in rows if r.get("id")}
-
-
-def _plan_due_reviews(
-    user_id: str, node_ids: list[str], *, now: datetime | None = None
-) -> list[str]:
-    """The plan's review section: nodes whose FSRS review is due now
-    (`fsrs_due_at ≤ now`; never reviewed = not due), in PKG-02's `order_due`
-    order, capped by `budget_select` (REVIEW_DAILY_BUDGET_MIN /
-    REVIEW_SECONDS_PER_CHECK). One `learner_state` read."""
-    now = now or datetime.now(timezone.utc)
-    due = [
-        {"node_id": n, "fsrs_s": st.fsrs_s, "fsrs_last_review_at": st.fsrs_last_review_at}
-        for n, st in read_states(user_id, node_ids, now=now).items()
-        if st.fsrs_due_at is not None and st.fsrs_due_at <= now
-    ]
-    ordered = order_due(sorted(due, key=lambda r: r["node_id"]), now)
-    return [
-        r["node_id"]
-        for r in budget_select(ordered, REVIEW_DAILY_BUDGET_MIN, REVIEW_SECONDS_PER_CHECK)
-    ]
-
-
-def _probe_done_payload(pr: dict) -> dict:
-    """learn.probe_done (spec §6): ids and counts only."""
-    history = list(pr.get("history") or [])
-    return {
-        "items": len(history),
-        "misses": sum(1 for h in history if not h.get("correct")),
-        "novice_floor": probe_policy.novice_floor(history),
-        "skills": list(pr.get("skills") or []),
-    }
-
-
-def _emit_probe_done(saved: dict, user_id: str, request_id: str) -> None:
-    events_service.log_event(
-        "learn.probe_done",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload=_probe_done_payload(_probe_doc(dict(saved))),
-    )
-
-
-def _probe_plan_read_limit(user_id: str) -> None:
-    """A cheap per-user limit on the two no-model routes that write loop state
-    (/probe/next, GET /plan): services/request_limits' in-process sliding
-    window, PROBE_PLAN_READS_PER_MIN a minute. Runs after the gate. No model
-    runs behind these routes, so this is not the A20 rate limit (llm_usage)."""
-    retry = check_rate_limit(
-        f"loop_probe_plan:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
-    )
-    if retry is not None:
-        raise HTTPException(
-            status_code=429, detail="too many requests", headers={"Retry-After": str(retry)}
-        )
-
-
-def _update_if_changed(session_id: str, doc: dict, mutate: Callable[[dict], None], *, require_open: bool = False) -> dict:
-    """`_update_loop_state`, skipped when `mutate` leaves the document as read
-    unchanged (a re-served item, a re-GET of the same plan): the mutate runs on a
-    copy first; only a real change costs a compare-and-set write."""
-    trial = copy.deepcopy(doc)
-    mutate(trial)
-    if trial == doc:
-        return trial
-    return _update_loop_state(session_id, mutate, require_open=require_open)
-
-
-def _claim_live(current: dict, now: float) -> bool:
-    if grade_checkpoint.KEY in current:
-        return True
-    claimed_at = current.get("grading_claim_at")
-    return bool(current.get("grading_claim")) and (
-        now - float(claimed_at or 0) <= LOOP_GRADING_CLAIM_STALE_S
-    )
 
 
 @router.post("/probe/next")
@@ -6979,103 +5935,6 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"
     )
-
-
-@dataclass(frozen=True)
-class _PlanView:
-    states: dict[str, float]
-    planning_states: dict[str, float]
-    scope: frozenset[str] | None
-    targets: frozenset[str]
-    ready: frozenset[str]
-    proposal: planner.Plan
-    signature: str | None
-    practice_unavailable: frozenset[str]
-
-
-def _planning_observations(state: dict, user_id: str, course_id: str, nodes) -> list[dict]:
-    try:
-        return read_planning_history(user_id, course_id, nodes)
-    except PlanningPersistenceUnavailable as exc:
-        raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
-
-
-def _current_plan(state: dict, user_id: str, course_id: str) -> _PlanView:
-    states = _plan_states(user_id, course_id)
-    edges = _plan_prereq_edges(user_id, list(states))
-    scope = _goal_scope_for(state, states, edges)
-    targets = frozenset((state.get("goal") or {}).get("target_node_ids") or [])
-    observations = (_planning_observations(state, user_id, course_id, states)
-                    if scope is not None else planning_observations(state))
-    planning_states = planner.planning_states(states, observations)
-    parents: dict[str, set[str]] = {}
-    for prereq, dependent in edges:
-        if prereq != dependent:
-            parents.setdefault(dependent, set()).add(prereq)
-
-    def siblings(node_id: str) -> list[str]:
-        mine = parents.get(node_id, set())
-        return sorted(m for m, ps in parents.items() if m != node_id and ps & mine)
-
-    ready = planner.prerequisite_ready(planning_states, edges, transitive=True) if scope is not None else frozenset(states)
-    attempted = set(attempted_nodes(state)) if scope is not None else set()
-    fringe = planner.outer_fringe(planning_states, edges)
-    reviews = list(dict.fromkeys(_plan_due_reviews(user_id, list(states)) + [
-        n for n in sorted(targets) if planning_states[n] >= BKT_PROFICIENT
-    ]))
-    proficient = frozenset(n for n, p in planning_states.items() if p >= BKT_PROFICIENT)
-    candidates = (set(fringe) | set(reviews) | {s for n in fringe for s in siblings(n) if s in proficient}
-                  if scope is not None else set())
-    unavailable = (_goal_practice_unavailable(
-        user_id, course_id, state, sorted(candidates & scope & ready - attempted),
-    ) if scope is not None else set())
-    previous = state.get("plan") if isinstance(state.get("plan"), dict) else {}
-    # Activation may have lost its last item after approval. Preserve that
-    # exhausted attempt; new assets never reset this session's finite frontier.
-    unavailable |= set(previous.get("practice_unavailable_node_ids") or []) & attempted
-    proposal = planner.plan(
-        fringe,
-        reviews,
-        siblings,
-        (lambda n: n in scope and n in ready and n not in attempted and n not in unavailable) if scope is not None else None,
-        proficient=proficient,
-    )
-    return _PlanView(states, planning_states, scope, targets, ready, proposal,
-                     scope_signature(targets, scope, edges) if scope is not None else None,
-                     frozenset(unavailable))
-
-
-def _continue_goal(session_id: str, user_id: str, course_id: str, state: dict) -> dict:
-    """Offer another finite frontier only after an explicit 'Check me' request.
-
-    Every exhausted concept is remembered, so an unresolved/bank-starved
-    foundation cannot repeat indefinitely. A new frontier still needs approval.
-    """
-    previous = state.get("plan") if isinstance(state.get("plan"), dict) else {}
-    if not state.get("goal") or not previous.get("done"):
-        return state
-    version = goal_version(state)
-    view = _current_plan(state, user_id, course_id)
-    progress = goal_progress(state, view.planning_states, view.scope,
-                             continue_available=bool(view.proposal.concepts))
-    attempted = attempted_nodes(state)
-
-    def offer(doc: dict) -> None:
-        _require_teaching(doc)
-        _check_goal_version(doc, version)
-        _refuse_while_closing(doc, _now_s())
-        plan = doc.get("plan") or {}
-        if not plan.get("done") or attempted_nodes(doc) != attempted or doc.get("current"):
-            raise _StateConflict()
-        plan["goal_progress"] = progress
-        plan["practice_unavailable_node_ids"] = sorted(view.practice_unavailable)
-        if view.proposal.concepts:
-            for key in ("proposed", "proposed_kinds", "scope_signature"):
-                plan.pop(key, None)
-            doc["phase"] = "plan"
-        doc["plan"] = plan
-
-    return _update_loop_state(session_id, offer, require_open=True)
 
 
 @router.get("/plan")

@@ -15,9 +15,9 @@ from learning.evidence import (
     planning_observation,
 )
 from test_learning_probe_planner import LOOP, PLAN_Q, client, probe as probe
-import routes.learn_loop as rl
 from tests.split_patches import patch_loop
 import learning.params
+import services.loop.planning
 
 
 def event(key, *, node="A", owner="u1", course="c1", **changes):
@@ -78,14 +78,14 @@ def test_fresh_goal_cannot_forget_failed_practice_and_only_independent_recovery_
     probe.due.return_value = ["A"]
     fresh = {"phase": "plan", "goal": {"target_node_ids": ["T"]}}
     with patch_loop("read_planning_history", side_effect=lambda *a: read(rows)[0]):
-        before = rl._current_plan(fresh, "u1", "c1")
+        before = services.loop.planning._current_plan(fresh, "u1", "c1")
         assert "T" not in before.ready
         assert [c.node_id for c in before.proposal.concepts] == ["A"]
         rows.append(event("helped-correct", correct=True, max_rung=2))
         rows.append(event("easier-correct", correct=True, difficulty=1))
-        assert "T" not in rl._current_plan(fresh, "u1", "c1").ready
+        assert "T" not in services.loop.planning._current_plan(fresh, "u1", "c1").ready
         rows.append(event("independent-recovery", correct=True))
-        after = rl._current_plan(fresh, "u1", "c1")
+        after = services.loop.planning._current_plan(fresh, "u1", "c1")
     assert "T" in after.ready
     assert "T" in [c.node_id for c in after.proposal.concepts]
 
@@ -106,10 +106,10 @@ def test_current_legacy_snapshots_neither_upgrade_unknown_nor_reblock_newer_reco
         "probe": {"history": [recovery["planning_observation"]]},
     }
     with patch_loop("read_planning_history", side_effect=lambda *a: read([miss, recovery])[0]):
-        assert "T" in rl._current_plan(state, "u1", "c1").ready
+        assert "T" in services.loop.planning._current_plan(state, "u1", "c1").ready
     unknown = {**recovery, "planning_observation": None}
     with patch_loop("read_planning_history", side_effect=lambda *a: read([miss, unknown])[0]):
-        assert "T" not in rl._current_plan(state, "u1", "c1").ready
+        assert "T" not in services.loop.planning._current_plan(state, "u1", "c1").ready
 
 
 def test_global_first_hash_includes_unknown_and_other_course_but_not_other_user():

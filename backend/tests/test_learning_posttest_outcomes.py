@@ -32,6 +32,8 @@ from learning.checks import (
     pretest_match,
 )
 from tests.split_patches import patch_loop
+import services.loop.cursor
+import services.loop.planning
 
 FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
 MIGRATION = next(
@@ -278,21 +280,19 @@ def test_the_skip_reasons():
 
 
 def test_in_session_practice_excludes_both_reserves():
-    from routes import learn_loop
 
     grid = _grid()
     with (
         patch_loop("_concept_key_for_node", return_value="k1"),
         patch_loop("list_items", return_value=grid),
     ):
-        items, exclude = learn_loop._practice_pool("u1", "c1", "node-1", {"seen"})
+        items, exclude = services.loop.planning._practice_pool("u1", "c1", "node-1", {"seen"})
     assert items == grid and exclude == {"seen", "f2", "m2"}
 
 
 def test_an_h4_sibling_is_never_a_reserve():
     """The active item m2b shares its cell with the second reserve m2 (a
     duplicate cell): H4 shows an isomorph — never m2."""
-    from routes import learn_loop
     from learning.ladder import Rung
 
     grid = _grid(m2b=_item("m2b", "mc_reason", 2))
@@ -301,7 +301,7 @@ def test_an_h4_sibling_is_never_a_reserve():
     with patch_loop("list_items", return_value=grid), patch(
         'learning.ladder.deterministic_content', return_value=None
     ) as content:
-        learn_loop._leak_checked_payload(user_id="u1", item=active, rung=Rung.H4, reference="r")
+        services.loop.cursor._leak_checked_payload(user_id="u1", item=active, rung=Rung.H4, reference="r")
     assert content.call_args.kwargs["exclude_hashes"] == frozenset({"f2", "m2"})
 
 

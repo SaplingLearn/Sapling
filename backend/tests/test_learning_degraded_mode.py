@@ -623,7 +623,7 @@ def test_selection_prefers_an_item_with_its_sources_at_the_same_difficulty():
 
 def test_the_probe_ranks_an_unsourced_item_after_an_equal_sourced_one():
     from learning import probe
-    from routes.learn_loop import _BoundItem
+    from services.loop.planning import _BoundItem
 
     a = _BoundItem(_item("a", flags=["unsourced"]), "n1")
     b = _BoundItem(_item("b", flags=[]), "n1")

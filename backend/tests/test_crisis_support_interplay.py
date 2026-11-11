@@ -39,6 +39,7 @@ from tests.test_learning_outside_integrity import posed, records  # noqa: F401  
 from tests.test_learning_turn_template import CHAT, _chat
 from tests.test_notes_routes import fake_get_note
 from tests.split_patches import patch_loop
+import services.loop.practice
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -161,12 +162,11 @@ def test_a_crisis_chat_turn_runs_no_activation_trial_and_poses_no_check(
     """A teach turn due to pose a check (A121 decides that by a read-only
     activation trial before the model runs). A crisis message there gets the
     card: no trial, no check, and the loop state is untouched."""
-    from routes import learn_loop
 
     seams.store["doc"] = _plan_state(teach_turns=params.LOOP_TEACH_TURNS_BEFORE_CHECK - 1)
     seams.list_items.return_value = [ITEM]
     before = copy.deepcopy(seams.store["doc"])
-    trial = MagicMock(side_effect=learn_loop._activate_next_item)
+    trial = MagicMock(side_effect=services.loop.practice._activate_next_item)
     with patch_loop("_activate_next_item", trial):
         r = client.post("/api/learn/loop/chat", json={**CHAT, "message": CRISIS})
         assert r.status_code == 200, r.text

@@ -23,6 +23,7 @@ from tests import test_learning_probe_planner as _probe
 from tests import test_learning_posttest as _post
 from tests.test_learn_loop_routes import client
 from tests.split_patches import patch_loop, setattr_loop
+import services.loop.practice
 import services.loop.reveals
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -162,8 +163,8 @@ def test_an_h6_in_session_a_floors_the_same_item_graded_in_session_b(monkeypatch
     setattr_loop(monkeypatch, "list_items", lambda c, k: list(ITEMS))
     setattr_loop(monkeypatch, "_band_for", lambda u, n: ("develop", 0.5))
     a, b = {"concept": "n1", "teach_turns": 2}, {"concept": "n1", "teach_turns": 2}
-    qa = ll._activate_next_item("u", "c1", a, now=1.0)
-    qb = ll._activate_next_item("u", "c1", b, now=2.0)
+    qa = services.loop.practice._activate_next_item("u", "c1", a, now=1.0)
+    qb = services.loop.practice._activate_next_item("u", "c1", b, now=2.0)
     assert qa == qb  # the same item is open in both sessions
     item = next(i for i in ITEMS if i.question_hash == qa)
     assert services.loop.reveals._reveal_floor("u", item, None) == 0  # before any help

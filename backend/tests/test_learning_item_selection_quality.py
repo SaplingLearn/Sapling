@@ -30,6 +30,7 @@ from learning.checks import (
     serve_quality,
 )
 from tests.split_patches import patch_loop
+import services.loop.cursor
 
 T = "2026-11-01T00:00:00+00:00"
 
@@ -206,7 +207,7 @@ def test_review_novelty_difficulty_and_channel_come_before_quality(monkeypatch):
 
 
 def _bound(item, node="n1"):
-    from routes.learn_loop import _BoundItem
+    from services.loop.planning import _BoundItem
 
     return _BoundItem(item, node)
 
@@ -289,7 +290,7 @@ def _unknown_state(qh="last"):
 
 
 def test_the_isomorph_re_ask_takes_the_best_isomorph():
-    from routes.learn_loop import _isomorph_after_unknown
+    from services.loop.practice import _isomorph_after_unknown
 
     last = _item("last")
     flagged = _item("iso-a", lint=["correct_longest"], created="2026-09-01T00:00:00+00:00")
@@ -311,7 +312,6 @@ def test_the_isomorph_re_ask_takes_the_best_isomorph():
 @pytest.mark.parametrize("best", ["clean", "verified"])
 def test_the_h4_worked_example_is_the_best_isomorph(best):
     from learning.ladder import Rung
-    from routes import learn_loop
 
     # the isomorphs sit outside both reserve cells (f2, m2), so none is protected
     active = _item("active", "teachback", 1, stepwise=True)
@@ -323,7 +323,7 @@ def test_the_h4_worked_example_is_the_best_isomorph(best):
     bank = _grid_without("t1") + [active, flagged, clean] + ([verified] if best == "verified" else [])
     assert posttest_reserve_hashes(bank) == ("f2", "m2")
     with patch_loop("list_items", return_value=bank):
-        payload, leaked = learn_loop._leak_checked_payload(
+        payload, leaked = services.loop.cursor._leak_checked_payload(
             user_id="u1", item=active, rung=Rung.H4, reference=active.reference_answer
         )
     assert payload is not None and not leaked
@@ -334,7 +334,6 @@ def test_the_h4_worked_example_is_never_a_reserve_whatever_its_quality():
     """A23/A126: the reserves stay protected — a clean, confirmed sibling that is
     a reserve is never shown; the flagged isomorph is."""
     from learning.ladder import Rung
-    from routes import learn_loop
 
     # no mc_reason item at difficulty 2, so the second reserve is the
     # teachback one there (A126's parallel form), confirmed and clean
@@ -347,7 +346,7 @@ def test_the_h4_worked_example_is_never_a_reserve_whatever_its_quality():
     bank += [active, flagged]
     assert posttest_reserve_hashes(bank) == ("f2", "t2")
     with patch_loop("list_items", return_value=bank):
-        payload, _ = learn_loop._leak_checked_payload(
+        payload, _ = services.loop.cursor._leak_checked_payload(
             user_id="u1", item=active, rung=Rung.H4, reference=active.reference_answer
         )
     assert payload is not None and payload.revealed_hash == "t2c"

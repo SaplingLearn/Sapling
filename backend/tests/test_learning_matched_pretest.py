@@ -148,7 +148,7 @@ def test_a_format_only_match_is_no_parallel_form():
 
 
 def _bound(item, node="n1"):
-    from routes.learn_loop import _BoundItem
+    from services.loop.planning import _BoundItem
 
     return _BoundItem(item, node)
 
@@ -226,7 +226,7 @@ def test_the_flag_is_server_only_off_first_and_off_unconfigured(monkeypatch):
     """Off until an admin turns it on (no migration seeds a row): the
     measurement protocol changes only at a trial boundary."""
     from services import feature_flags as ff
-    from routes.learn_loop import PROBE_MATCHED_PRETEST_FLAG
+    from services.loop.planning import PROBE_MATCHED_PRETEST_FLAG
 
     monkeypatch.delenv("SAPLING_FLAG_PROBE_MATCHED_PRETEST", raising=False)
     fd = ff.REGISTRY[PROBE_MATCHED_PRETEST_FLAG]
@@ -337,7 +337,7 @@ def _seed_bank():
     the real decrypt boundary, bound to the loop user's nodes."""
     from db import seed_helpers
     from db import seed_local_rich as seed
-    from routes.learn_loop import _BoundItem
+    from services.loop.planning import _BoundItem
     from services.check_item_service import _row_to_item
     from services.graph_service import _normalize_concept
 

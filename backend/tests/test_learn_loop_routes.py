@@ -2801,7 +2801,7 @@ def _plan_state(**over) -> dict:
 
 
 def test_activation_excludes_seen_revealed_reserve_and_session_hashes(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.seen_hashes.return_value = {"qh-seen"}
     seams.revealed_hashes.return_value = {"qh-rev"}
@@ -2827,7 +2827,7 @@ def test_activation_excludes_seen_revealed_reserve_and_session_hashes(seams):
 
 
 def test_activation_rotates_formats_by_the_concepts_checks(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.list_items.return_value = [ITEM]
     seams.select_item.side_effect = None
@@ -2839,7 +2839,7 @@ def test_activation_rotates_formats_by_the_concepts_checks(seams):
 
 
 def test_activation_advances_the_cursor_when_a_concept_has_nothing_left(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.list_items.return_value = [ITEM]
     seams.select_item.side_effect = [None, None, None, ITEM]  # three formats miss on node-1
@@ -2853,7 +2853,7 @@ def test_activation_advances_the_cursor_when_a_concept_has_nothing_left(seams):
 
 
 def test_activation_without_a_plan_or_past_its_end_returns_none(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     assert _activate_next_item("u1", "c1", {}, now=NOW) is None
     seams.list_items.assert_not_called()
@@ -2932,7 +2932,7 @@ def test_teach_turn_below_the_threshold_activates_nothing(gate_on, seams):
 
 
 def test_mc_reason_pose_serves_the_stored_options_unmarked(seams):
-    from routes.learn_loop import _pose_payload
+    from services.loop.practice import _pose_payload
 
     mc = ITEM.model_copy(
         update={
@@ -3707,7 +3707,7 @@ def test_item_selection_prefers_isomorph_after_unknown(seams):
     `unknown` on node-1 (one wrong attempt, qh-1), the next item is qh-1's
     isomorph (same concept_key, format, difficulty), not the band's pick; A34:
     only servable candidates (a legacy row with no final_answer never is)."""
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     last = _iso("qh-1")
     seams.revealed_hashes.return_value = {"qh-1"}  # wrong → revealed: never a candidate
@@ -3731,7 +3731,7 @@ def test_item_selection_prefers_isomorph_after_unknown(seams):
 def test_item_selection_never_widens_the_exclusions_for_an_isomorph(seams):
     """The isomorph comes from the site's own candidates: seen, revealed,
     session and the post-test reserve stay excluded (A23)."""
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.revealed_hashes.return_value = {"qh-1"}
     seams.seen_hashes.return_value = {"qh-2"}
@@ -3744,7 +3744,7 @@ def test_item_selection_never_widens_the_exclusions_for_an_isomorph(seams):
 
 
 def test_item_selection_is_unchanged_without_an_unknown(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.list_items.return_value = [_iso("qh-1"), _iso("qh-2")]
     seams.select_item.side_effect = None
@@ -3916,7 +3916,7 @@ def test_a_marker_for_another_concept_never_confronts_or_routes_deep(gate_on, se
 def test_advancing_the_plan_cursor_drops_the_marker():
     """F2: a marker never outlives its concept's place in the plan."""
     from learning.misconceptions import confront_of
-    from routes.learn_loop import _advance_cursor
+    from services.loop.cursor import _advance_cursor
 
     st = _plan_state(confront=dict(CONFRONT))
     assert _advance_cursor(st) is True and confront_of(st) is None
@@ -4225,7 +4225,7 @@ def _events_of(seams, name):
 
 def test_activation_excludes_reported_items(seams):
     """A113: an item the student reported is excluded like a seen or revealed one."""
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.reported_hashes.return_value = {"qh-reported"}
     seams.list_items.return_value = [ITEM]

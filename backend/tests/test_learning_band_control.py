@@ -358,7 +358,7 @@ def test_easier_with_a_weak_prerequisite_repairs_it_first_then_comes_back(loop):
     assert doc["concept"] == "node-0" and doc["concept_checks"] == 0 and doc["teach_turns"] == 0
     assert _band_events(loop)[0]["window_stats"]["repair"] is True
     # the prerequisite's checks done, the cursor comes back to the concept
-    from routes.learn_loop import _advance_cursor
+    from services.loop.cursor import _advance_cursor
 
     assert _advance_cursor(doc) is True and doc["concept"] == "node-1"
 
@@ -505,7 +505,7 @@ def test_the_verdict_is_read_once_even_when_its_save_retries(loop):
 
 
 def test_a_verdict_on_a_concept_the_cursor_left_moves_no_cursor():
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = routes._plan_state(concept="node-2", plan={"approved": ["node-1", "node-2"], "cursor": 1})
     entry = {"node_id": "node-1", "band_control": {"action": "stop_practice", "difficulty": None, "repair": None}}
@@ -531,7 +531,7 @@ def test_a_malformed_stored_verdict_is_ignored_safely(stored):
     """A malformed field is ignored; a valid action still applies what it
     names. The ceiling clause comes from the action itself, never a stored
     number, so a bad difficulty cannot stop HARDER's one rung down."""
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = routes._plan_state()
     entry = {"node_id": "node-1", "band_control": stored}
@@ -548,7 +548,7 @@ def test_a_malformed_stored_verdict_is_ignored_safely(stored):
 
 
 def test_without_a_plan_the_verdict_sets_only_the_difficulty_and_the_ceiling():
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = {"phase": "teach", "concept": "node-1"}
     entry = {"node_id": "node-1", "band_control": {"action": "easier_check_prereqs", "difficulty": 1, "repair": "node-0"}}
@@ -718,7 +718,7 @@ def test_every_band_control_move_records_why_the_cursor_moved(
     order (`_advance_cursor` clears the reason) — so plan_focus reports it, and
     with `loop_tutor_v2` on the next teach turn names the new concept and why."""
     from agents.loop_tutor import plan_focus_block, plan_focus_line
-    from routes.learn_loop import plan_focus
+    from services.loop.practice import plan_focus
 
     _learner_reads(loop, **reads)
     _answer(loop, window, correct=correct, edges=edges)
@@ -728,7 +728,8 @@ def test_every_band_control_move_records_why_the_cursor_moved(
 
 
 def test_a_repair_that_comes_back_returns_to_plan_order(loop):
-    from routes.learn_loop import _advance_cursor, plan_focus
+    from services.loop.cursor import _advance_cursor
+    from services.loop.practice import plan_focus
 
     _learner_reads(loop, p=0.4, prereqs={"node-0": 0.2})
     _answer(loop, [MISS], correct=False, edges=[("node-0", "node-1")])
@@ -744,7 +745,7 @@ def test_an_unknown_answer_names_the_isomorph_reask_until_it_is_answered(seams, 
     `_isomorph_after_unknown` re-asks by — while the re-ask is pending, and never
     after it is answered (a recorded reason would outlive it)."""
     from agents.loop_tutor import plan_focus_line
-    from routes.learn_loop import plan_focus
+    from services.loop.practice import plan_focus
 
     unknown = {"question_hash": "qh-1", "node_id": "node-1", "correct": False, "difficulty": 2}
     seams.store["doc"] = {**routes._plan_state(), "attempts": [unknown]}

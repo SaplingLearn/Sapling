@@ -383,7 +383,7 @@ def test_a_supersede_strips_a_stale_claim(gate_on, on):
 
 def test_the_posed_row_stays_open_when_the_reveal_was_lost(gate_on, on):
     # second review, item 4: with no reveal recorded, the item stays in A88's scan
-    from routes.learn_loop import _spend_prequestion_item
+    from services.loop.pose import _spend_prequestion_item
 
     with patch_loop("_persist_reveals", return_value=False):
         _spend_prequestion_item("u1", "s1", "qh-pq", at=NOW)
@@ -494,7 +494,7 @@ def test_a_guess_being_saved_holds_the_card(gate_on, on):
 
 
 def test_activation_never_serves_a_prequestion_item_of_the_session(seams):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
 
     seams.list_items.return_value = list(BANK)
     st = _plan_state(prequestion={"node-1": {**pq.pose_record(PQ, "node-1", NOW), "status": "resolved"}})

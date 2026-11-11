@@ -6,9 +6,9 @@ import pytest
 from learning import planner
 from test_learning_goals import _open_write_harness as _open_write_harness, set_goal
 from test_learning_probe_planner import LOOP, NEXT, PLAN_Q, client, probe as probe
-import routes.learn_loop as rl
 from tests.split_patches import patch_loop
 import learning.params
+import services.loop.cursor
 import services.loop.state
 
 
@@ -96,7 +96,7 @@ def finish_frontier(probe, node, *, observation):
         "node_id": node,
         "goal_observation": observation,
     }
-    rl._advance_cursor(doc)
+    services.loop.cursor._advance_cursor(doc)
 
 
 def test_goal_frontiers_replan_A_then_B_then_target_without_autoapproval_or_mastery(probe):

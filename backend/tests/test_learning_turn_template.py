@@ -64,6 +64,7 @@ from tests.test_learn_loop_routes import (
     client,
 )
 from tests.split_patches import patch_loop
+import services.loop.practice
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -407,11 +408,10 @@ def test_a_turn_served_with_its_question_never_poses_a_check(gate_on, seams):
     """The race: the trial found nothing to pose, so the turn was served WITH
     its question; an item that became servable before the save is not posed
     beside it — never two open prompts."""
-    import routes.learn_loop as ll
 
     seams.store["doc"] = _plan_state(teach_turns=params.LOOP_TEACH_TURNS_BEFORE_CHECK - 1)
     seams.list_items.return_value = [ITEM]
-    real = ll._activate_next_item
+    real = services.loop.practice._activate_next_item
     calls = []
 
     def flaky(user_id, course_id, state, *, now):
@@ -428,11 +428,10 @@ def test_a_turn_served_with_its_question_never_poses_a_check(gate_on, seams):
 
 
 def test_a_planned_check_that_cannot_be_posed_leaves_no_open_question_flag(gate_on, seams):
-    import routes.learn_loop as ll
 
     seams.store["doc"] = _plan_state(teach_turns=params.LOOP_TEACH_TURNS_BEFORE_CHECK - 1)
     seams.list_items.return_value = [ITEM]
-    real = ll._activate_next_item
+    real = services.loop.practice._activate_next_item
     calls = []
 
     def gone(user_id, course_id, state, *, now):
@@ -807,7 +806,8 @@ def _names(names: dict):
 def test_plan_focus_reads_the_cursor_off_loop_state_alone():
     import copy
 
-    from routes.learn_loop import CURSOR_REASON_KEY, _advance_cursor, mark_cursor_reason, plan_focus
+    from services.loop.cursor import CURSOR_REASON_KEY, _advance_cursor
+    from services.loop.practice import mark_cursor_reason, plan_focus
 
     st = _plan_state()
     before = copy.deepcopy(st)
@@ -841,14 +841,14 @@ def test_plan_focus_reads_the_cursor_off_loop_state_alone():
     ],
 )
 def test_no_plan_concept_no_plan_focus(state):
-    from routes.learn_loop import plan_focus
+    from services.loop.practice import plan_focus
 
     assert plan_focus(state) is None
 
 
 @pytest.mark.parametrize("reason", ["plan_order", "isomorph_reask", "detour", ""])
 def test_only_a_cursor_move_records_its_reason(reason):
-    from routes.learn_loop import mark_cursor_reason
+    from services.loop.practice import mark_cursor_reason
 
     with pytest.raises(ValueError, match="not a cursor move reason"):
         mark_cursor_reason(_plan_state(), reason)
@@ -856,7 +856,7 @@ def test_only_a_cursor_move_records_its_reason(reason):
 
 def test_the_route_and_the_tutor_share_the_cursor_reasons():
     from agents.loop_tutor import PLAN_FOCUS_REASONS
-    from routes.learn_loop import CURSOR_REASONS
+    from services.loop.cursor import CURSOR_REASONS
 
     assert set(CURSOR_REASONS) == set(PLAN_FOCUS_REASONS)
     assert len(set(PLAN_FOCUS_REASONS.values())) == len(PLAN_FOCUS_REASONS)
@@ -881,7 +881,8 @@ def test_a_cursor_move_changes_what_the_teach_turn_names(gate_on, v2_on):
     import copy
 
     from agents.loop_tutor import plan_focus_block, plan_focus_line
-    from routes.learn_loop import _advance_cursor, mark_cursor_reason
+    from services.loop.cursor import _advance_cursor
+    from services.loop.practice import mark_cursor_reason
 
     st = _plan_state()
     msgs = []

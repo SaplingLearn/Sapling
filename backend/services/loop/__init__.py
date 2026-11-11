@@ -78,6 +78,15 @@ Modules, lowest first (each imports only the ones above it):
   help ledger.
 - ``guard``: The served-text leak guard (A38) and the misconception
   confrontation line (PKG-10, A76).
+- ``planning``: Goal and plan state shared by the probe, plan and teach paths:
+  the goal's scope and version, the probe document and its items, the plan
+  read and the goal's practice pool (spec §13 A143-A146).
+- ``cursor``: The check cursor: the leak-checked pose payload, the H6 gate and
+  the cursor's advance with its reason.
+- ``pose``: The segment prequestion's pose (A138), the self-explanation
+  prompts (A139) and the teach-prompt juncture they open.
+- ``practice``: The next check (spec §10): band control (A122), the target
+  difficulty, worked examples, the isomorph re-ask and `_activate_next_item`.
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until

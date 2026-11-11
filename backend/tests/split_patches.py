@@ -259,6 +259,10 @@ LOOP_MODULES = (
     "services.loop.served",
     "services.loop.reveals",
     "services.loop.guard",
+    "services.loop.planning",
+    "services.loop.cursor",
+    "services.loop.pose",
+    "services.loop.practice",
 )
 
 

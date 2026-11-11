@@ -82,7 +82,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Teach turn | A tutor turn in the teach phase: key idea, body, one question. | `backend/learning/turn_shape.py::render_turn` |
 | Model tier | Which tutor model a turn runs on: `lite`, `standard`, `deep` or `none` (no model call). Chosen in code. | `backend/learning/policy.py::model_tier` |
 | Pose | Showing a check item to the student. A posed item is open until it is graded. | `backend/learning/help_ledger.py::record_posed` |
-| Activation | Picking the next item for the plan's current concept and making it the active check. | `backend/routes/learn_loop.py::_activate_next_item` |
+| Activation | Picking the next item for the plan's current concept and making it the active check. | `backend/services/loop/practice.py::_activate_next_item` |
 | Seen set | Every item hash in the student's evidence rows. Pickers exclude it (the probe falls back to a seen item only when nothing unseen is left). | `backend/learning/loop_state_store.py::seen_hashes` |
 | Revealed set | Items whose answer the student has been shown (wrong answer, worked solution, a served tutor text that stated it). Excluded like seen items. | `backend/learning/loop_state_store.py::revealed_hashes` |
 | Reported set | Items the student reported; excluded for that student. | `backend/learning/loop_state_store.py::reported_hashes` |

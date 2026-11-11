@@ -141,7 +141,7 @@ def _unknown_state(qh="last"):
 
 
 def test_the_isomorph_re_ask_prefers_the_least_familiar_surface_among_equals():
-    from routes.learn_loop import _isomorph_after_unknown
+    from services.loop.practice import _isomorph_after_unknown
 
     last = _item("last")
     a = _item("iso-a", created="2026-09-01T00:00:00+00:00")
@@ -163,7 +163,7 @@ def test_the_isomorph_re_ask_prefers_the_least_familiar_surface_among_equals():
 
 
 def test_flag_off_activation_reads_no_surface_and_picks_as_before(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     surfaces = MagicMock()
@@ -181,7 +181,7 @@ def test_flag_off_activation_reads_no_surface_and_picks_as_before(seams, monkeyp
 
 
 def test_varied_activation_prefers_the_surface_the_student_has_not_met(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     monkeypatch.setattr(varied_practice, "varied_on", lambda u: True)
@@ -210,7 +210,7 @@ def test_varied_activation_prefers_the_surface_the_student_has_not_met(seams, mo
 
 
 def test_a_failed_surface_read_keeps_the_plain_order(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     monkeypatch.setattr(varied_practice, "varied_on", lambda u: True)
@@ -504,7 +504,7 @@ def test_a_failed_read_gives_no_combination(monkeypatch):
 
 
 def test_flag_off_activation_never_reads_a_combination(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     pick = MagicMock()
@@ -517,7 +517,7 @@ def test_flag_off_activation_never_reads_a_combination(seams, monkeypatch):
 
 
 def test_multi_concept_activation_poses_the_combination_and_marks_its_step(seams, monkeypatch):
-    from routes.learn_loop import _activate_next_item
+    from services.loop.practice import _activate_next_item
     from services import varied_practice
 
     combo = _combo("qh-combo")

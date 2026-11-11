@@ -40,6 +40,7 @@ from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _planner
 from tests.test_learn_loop_routes import ITEM, _answer, _feedback_agent, _state, client
 from tests.split_patches import patch_loop
+import services.loop.practice
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MIGRATION = BACKEND / "db" / "migrations" / "20261108092032_learning_student_confidence.sql"
@@ -304,13 +305,12 @@ def test_sure_and_wrong_without_a_key_stamps_the_verdict_and_records_nothing(gra
 def test_guessing_and_wrong_is_a_gap_so_no_isomorph_is_re_asked(grader):
     """§3.3 "wrong with low confidence → gap: teach" — the check route's
     re-ask of an isomorph follows `unknown` only (A75 (g))."""
-    import routes.learn_loop as rl
 
     deps = _deps()
     out = _graded(deps, confidence="guessing")
     assert out.verdict == "gap" and out.diagnosis["record"] is None
     twin = _item(qh="qh-2", item_id="item-2")
-    assert rl._isomorph_after_unknown(deps.loop_state, "n1", [_item(), twin], set()) is None
+    assert services.loop.practice._isomorph_after_unknown(deps.loop_state, "n1", [_item(), twin], set()) is None
 
 
 @pytest.mark.parametrize("confidence", ["fairly_sure", None])

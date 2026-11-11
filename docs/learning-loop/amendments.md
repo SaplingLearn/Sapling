@@ -135,7 +135,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A5 | gates | Gates take an injectable clock; every gate time scales with `LEARNING_GATE_TIME_SCALE` (E2E only) | `backend/learning/params.py::gate_seconds` |
 | A13 | planning | No syllabus-week filter for the planner; exam proximity drives the retention target and the brief | `backend/services/exam_proximity.py::days_until_next_exam` |
 | A17 | ladder | Deterministic turns (check pose, H2 passages, H4 sibling, H6 reference), each leak-checked | `backend/learning/ladder.py::deterministic_content` |
-| A27 | activation | Item activation and the current concept: the plan cursor drives which item is posed | `backend/routes/learn_loop.py::_activate_next_item` |
+| A27 | activation | Item activation and the current concept: the plan cursor drives which item is posed | `backend/services/loop/practice.py::_activate_next_item` |
 | A29 | misconceptions | The class misconception rollup groups by course concept, not by per-student node | `backend/learning/misconceptions.py::rollup` |
 | A32 | ladder | H6 (the full solution) needs a practice item; ungraded is not practice | `backend/learning/gates.py::h6_allowed` |
 | A40 | bands | Tuning decisions: eval floors are min-of-3, "harder" needs four attempts, "no idea" is I-don't-know | `backend/learning/policy.py::band_control` |

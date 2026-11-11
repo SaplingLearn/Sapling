@@ -699,7 +699,7 @@ def _learning_order(states: dict[str, float], edges) -> list[str]:
 
 
 def test_the_planner_orders_prerequisites_before_dependents_once_edges_exist(db, monkeypatch):
-    from routes.learn_loop import _plan_prereq_edges
+    from services.loop.planning import _plan_prereq_edges
 
     _seed_deck(db)
     names = {node_id: name for name, _imp, node_id in DECK}

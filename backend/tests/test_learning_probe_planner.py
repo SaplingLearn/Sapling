@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from agents.tools.check import CHANNEL_FOR_FORMAT
 from learning import params as P
 from tests.split_patches import patch_loop
+import services.loop.planning
 import services.loop.state
 
 
@@ -428,7 +429,6 @@ def _without_scope_metadata(body, *, diagnosis_status):
 def _ci(item_id, node, fmt, difficulty, qh, **over):
     """A decrypted PKG-04 item bound to the student's node (A2) the way the
     route binds it (`_BoundItem`)."""
-    import routes.learn_loop as rl
 
     fields = dict(
         id=item_id,
@@ -445,7 +445,7 @@ def _ci(item_id, node, fmt, difficulty, qh, **over):
         question_hash=qh,
     )
     fields.update(over)
-    return rl._BoundItem(CheckItem(**fields), node)
+    return services.loop.planning._BoundItem(CheckItem(**fields), node)
 
 
 def _node_items(node, n, *, difficulty=2):
@@ -1384,7 +1384,6 @@ def test_probe_answer_for_a_withdrawn_item_counts_as_not_asked(probe):
 def test_probe_items_binds_items_to_the_students_nodes():
     """A2: the student's node → concept_key = _normalize_concept(concept_name) →
     the course's items for those keys, in ONE items read, each bound to the node."""
-    import routes.learn_loop as rl
 
     nodes = MagicMock()
     nodes.select.return_value = [
@@ -1409,7 +1408,7 @@ def test_probe_items_binds_items_to_the_students_nodes():
         patch_loop("table", return_value=nodes),
         patch_loop("items_for_concepts", return_value={"recursion": [item], "big-o": []}) as ifc,
     ):
-        out = rl._probe_items(UID, "c1", ["A", "B"])
+        out = services.loop.planning._probe_items(UID, "c1", ["A", "B"])
     assert [(o.id, o.node_id, o.question_hash) for o in out] == [("i1", "A", "h1")]
     assert out[0].item is item
     ifc.assert_called_once()
@@ -1472,7 +1471,6 @@ def test_plan_get_wrong_phase_is_409(probe):
 def test_plan_get_reviews_only_due():
     """GET /plan's due reviews: only nodes whose FSRS due date has passed
     (fsrs_due_at ≤ now), then PKG-02's order_due, then budget_select's cap."""
-    import routes.learn_loop as rl
     from learning.fsrs import budget_items, order_due
 
     now = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
@@ -1494,7 +1492,7 @@ def test_plan_get_reviews_only_due():
     states["NEVER"] = st("NEVER", due_days=None)
     states["NOW"] = st("NOW", due_days=0)
     with patch_loop("read_states", return_value=states) as rs:
-        out = rl._plan_due_reviews(UID, list(states), now=now)
+        out = services.loop.planning._plan_due_reviews(UID, list(states), now=now)
     assert rs.call_args.args[0] == UID
     due_rows = [
         {"node_id": n, "fsrs_s": s.fsrs_s, "fsrs_last_review_at": s.fsrs_last_review_at}
