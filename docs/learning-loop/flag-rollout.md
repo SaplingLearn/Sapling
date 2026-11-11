@@ -92,7 +92,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 ### varied_isomorphs (A140)
 - **Changes:** uploads draft each concept's items with varied scenarios and representations; picks prefer a surface the student hasn't met.
 - **Before:** the varied `check_items` dataset recorded live and passing. Takes effect per uploader on new uploads.
-- **Watch:** drafting failures; `scripts/project_varied_practice_cost.py` for the cost.
+- **Watch:** drafting failures; `backend/scripts/project_varied_practice_cost.py` for the cost.
 
 ### multi_concept_items (A141)
 - **Changes:** uploads also draft items combining a concept with its direct prerequisites; a proficient student gets one per session.
