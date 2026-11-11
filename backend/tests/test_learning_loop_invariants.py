@@ -128,8 +128,13 @@ CHECKPOINT_CALLERS = {
 #: PKG-13: the local rich seed writes its seeded items' source_chunk_ids beside the
 #: course_chunks rows it seeds, through db/seed_helpers only — it never reads a chunk
 #: back (tests/test_learning_seed_loop_user.py pins that seed_learning_loop has no
-#: select of its own).
-CHECK_ITEM_WRITERS = {"services/check_item_service.py", "db/seed_local_rich.py"}
+#: select of its own). The local learning-loop showcase overlay does the same for its
+#: hand-written items and the showcase document's chunks (tests/test_seed_showcase_loop.py).
+CHECK_ITEM_WRITERS = {
+    "services/check_item_service.py",
+    "db/seed_local_rich.py",
+    "db/seed_showcase_loop.py",
+}
 # spec §8.9: encrypted learning columns — never UNIQUE, never a PostgREST filter
 ENCRYPTED_LEARNING_COLUMNS = (
     "prompt",

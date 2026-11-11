@@ -49,6 +49,7 @@ ignore_imports =
     db.seed_local_owner -> services.profiles
     db.seed_local_rich -> services.encryption
     db.seed_showcase -> services.encryption
+    db.seed_showcase_loop -> services.encryption
     db.seed_staging -> services.encryption
     db.e2e_staging_http -> services.encryption
     db.e2e_staging_http -> services.session_tokens
