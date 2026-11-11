@@ -19,6 +19,7 @@ def db(monkeypatch):
     fake = FakeDB()
     for mod in (acs, aw, cv):
         monkeypatch.setattr(mod, "table", fake.table)
+    monkeypatch.setattr(aw, "rpc", fake.rpc)
     return fake
 
 
