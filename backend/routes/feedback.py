@@ -1,12 +1,12 @@
 import logging
 import uuid
 
-import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from db.connection import SUPABASE_KEY, SUPABASE_URL, table
+from db.connection import table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id, guard_off_loop
+from services import storage_service
 from services.encryption import encrypt_if_present
 from services.request_limits import read_within_limit
 from services.tutor_sessions import session_owned_by
@@ -18,7 +18,6 @@ router = APIRouter()
 # #231: issue-report screenshots upload here. They used to be written by the
 # frontend with the public anon key; this endpoint moves the write server-side
 # (service role) so the bucket can be made private.
-ISSUE_BUCKET = "issues-media-files"
 MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024  # 5 MB
 ALLOWED_SCREENSHOT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
@@ -99,36 +98,6 @@ async def upload_issue_screenshot(request: Request, file: UploadFile = File(...)
     content = await read_within_limit(file, MAX_SCREENSHOT_BYTES)  # 413 if oversize
     if not content:
         raise HTTPException(status_code=400, detail="Empty file.")
-    ext = (
-        file.filename.rsplit(".", 1)[-1]
-        if file.filename and "." in file.filename
-        else "png"
-    )
-    path = f"{user_id}/{uuid.uuid4()}.{ext}"
-    url = f"{SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
-    r = httpx.put(
-        url,
-        content=content,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": file.content_type or "application/octet-stream",
-        },
-        timeout=30.0,
-    )
-    if r.status_code not in (200, 201):
-        # Surface the real Supabase response so the failure is debuggable
-        # without server access (mirrors storage_service.upload_avatar). We
-        # only show the truncated upstream body — never the URL or headers
-        # (the latter contains the service-role key).
-        body_text = (r.text or "").strip()[:500]
-        logger.warning(
-            "upload_issue_screenshot: Supabase storage rejected upload "
-            "user=%s status=%d body=%s",
-            user_id, r.status_code, body_text,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Screenshot upload failed (Supabase {r.status_code}): {body_text or 'no body'}",
-        )
+    # The content type is already checked against ALLOWED_SCREENSHOT_TYPES.
+    path = await storage_service.upload_issue_screenshot(user_id, content, file.content_type or "")
     return {"path": path}

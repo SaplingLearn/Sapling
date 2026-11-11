@@ -5,6 +5,7 @@ Storage service for avatar and cosmetic asset uploads via Supabase Storage.
 import logging
 import re
 import struct
+import uuid
 
 from fastapi import HTTPException
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, STORAGE_BUCKET, MAX_AVATAR_SIZE
@@ -120,6 +121,52 @@ def _validate_upload(file_bytes: bytes, content_type: str):
         raise HTTPException(status_code=415, detail="Unsupported image type. Allowed: jpeg, png, webp, gif")
     if len(file_bytes) > MAX_AVATAR_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 5 MB")
+
+
+# #231: issue-report screenshots. Private bucket, service-role write, and the
+# caller stores the returned PATH (never a public URL).
+ISSUE_BUCKET = "issues-media-files"
+
+
+async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type: str) -> str:
+    """Upload one issue-report screenshot and return its storage path.
+
+    Async on purpose: the route is an ``async def`` handler, and the old inline
+    ``httpx.put`` blocked the event loop (every other request on the worker) for
+    the whole upload. The caller validates type and size first. The extension
+    comes from the validated content type, never from the client's filename.
+    """
+    # Imported here, not at module top, so the db layer's env read stays where
+    # it was for the existing sync helpers above.
+    from db.connection import SUPABASE_KEY, SUPABASE_URL as DB_SUPABASE_URL
+
+    ext = _EXT_MAP.get(content_type, "png")
+    path = f"{user_id}/{uuid.uuid4()}.{ext}"
+    url = f"{DB_SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.put(
+            url,
+            content=file_bytes,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": content_type,
+            },
+        )
+    if resp.status_code not in (200, 201):
+        # Only the truncated upstream body reaches the client, never the URL or
+        # the headers (the latter carry the service-role key).
+        body_text = (resp.text or "").strip()[:500]
+        logger.warning(
+            "upload_issue_screenshot: Supabase storage rejected upload "
+            "user=%s status=%d body=%s",
+            user_id, resp.status_code, body_text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Screenshot upload failed (Supabase {resp.status_code}): {body_text or 'no body'}",
+        )
+    return path
 
 
 def upload_avatar(user_id: str, file_bytes: bytes, content_type: str) -> str:
