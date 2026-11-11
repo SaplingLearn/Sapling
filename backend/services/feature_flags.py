@@ -116,7 +116,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "when a delayed post-test window is open with an item to pose (A126).",
             True),
     # Learning loop spec §13 A130: the matched pretest probe start
-    # (checks.pretest_form, read by routes/learn_loop.py::probe_next). Server-
+    # (checks.pretest_form, read by services/loop/probe.py::probe_next). Server-
     # only: the probe route picks the item. It changes the measurement
     # protocol — which item is each new concept's pretest — so, like
     # retention_due_badge, it is switched on deliberately at a trial boundary,
@@ -145,7 +145,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Learning loop spec §13 A121: the tutor's v2 variant
     # (agents/loop_tutor.py::variant_run_args) — every loop tutor prompt change
     # that needs a live eval re-record. Resolved ONCE per turn, for the
-    # student, by routes/learn_loop.py::_tutor_v2_on; that one answer picks the
+    # student, by services/loop/flags.py::_tutor_v2_on; that one answer picks the
     # prompt and schema variant, the per-turn prompt lines and the served
     # framing. Server-only: the turn's text arrives already framed.
     FlagDef("loop_tutor_v2", ("off", "on"),
@@ -161,7 +161,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Off: the tutor request is byte-identical to before A121.", False),
     # Learning loop spec §13 A134: the strict genuine-attempt rule for hint
     # unlocking (learning/gates.py::strict_genuine_attempt). Resolved per
-    # request, for the student, by routes/learn_loop.py::_help_gate_strict_on
+    # request, for the student, by services/loop/flags.py::_help_gate_strict_on
     # (POST /step/attempt counts an attempt by it; POST /hint words its
     # time-alone denial by it). Server-only: the client renders the denial
     # reason it is sent. Turning it on is the owner's pedagogy decision, judged
@@ -179,7 +179,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Learning loop spec §13 A138: the segment prequestion — one ungraded guess
     # at the start of a teaching segment, its answer and explanation right
     # after. Resolved ONCE per request, for the student, by
-    # routes/learn_loop.py::_prequestion_on. Server-only: the card is posed by
+    # services/loop/flags.py::_prequestion_on. Server-only: the card is posed by
     # the server's responses. Off: nothing is posed or read, and every tutor
     # request is byte-identical to before A138.
     FlagDef("segment_prequestion", ("off", "on"),
@@ -197,7 +197,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Learning loop spec §13 A139: self-explanation prompts — one interrogative
     # "why does this follow?" as a turn's question at a code-decided juncture.
     # Resolved ONCE per request, for the student, by
-    # routes/learn_loop.py::_self_explain_on. Server-only. The reply is stored
+    # services/loop/flags.py::_self_explain_on. Server-only. The reply is stored
     # (encrypted) for diagnosis only: never evidence, mastery or a misconception.
     FlagDef("self_explanation_prompts", ("off", "on"),
             "Self-explanation prompts (A139): after a worked example, after a "

@@ -183,7 +183,7 @@ _DEFAULTS: dict[AgentTask, str] = {
     # observe-only `decision` seam above.
     "learning_decision": "gemini-2.5-flash-lite",
     # Loop tutor tier slots (PKG-07, spec §3.5, A15): ONE loop_tutor_agent;
-    # routes/learn_loop.py picks the slot per run from learning.policy.model_tier
+    # services/loop/ picks the slot per run from learning.policy.model_tier
     # and never reads model_pref, so these defaults ARE the routing.
     "loop_tutor_lite": "gemini-2.5-flash-lite",
     "loop_tutor": "gemini-2.5-flash",

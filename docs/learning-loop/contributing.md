@@ -11,7 +11,7 @@ cited with each item tells the story. Commands for every test lane are in
 ## The checklist
 
 Work through it top to bottom for any change to `backend/learning/`,
-`backend/routes/learn_loop.py`, a loop agent, a learning migration or a
+`backend/routes/learn_loop.py` or `backend/services/loop/`, a loop agent, a learning migration or a
 learning screen.
 
 ### 1. Write the spec row first

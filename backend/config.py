@@ -64,7 +64,7 @@ if _raw not in {"false", "0", "off", "no", "", "true", "1", "on", "yes"}:
     )
 # Spec §13 A5: every GATE_* seconds constant is scaled by this factor (production never
 # sets it; the E2E lane sets 0.01 so hint gates open in seconds). learning.params stays
-# config-free (invariant 2), so routes/learn_loop.py reads it here and passes
+# config-free (invariant 2), so the loop (services/loop/) reads it here and passes
 # time_scale= to learning.gates (HANDOFF-06). Must be finite and > 0 (params.gate_seconds).
 LEARNING_GATE_TIME_SCALE = float(os.getenv("LEARNING_GATE_TIME_SCALE", "1.0"))
 

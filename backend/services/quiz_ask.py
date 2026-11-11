@@ -20,7 +20,7 @@ The question is named by (attempt id, question index); the hash is resolved
 from the attempt row the student owns — a client-supplied hash is never read.
 The help row is written BEFORE any tutor text is served; a failed write refuses
 the session (503), because a tutor explanation the ledger cannot see would be
-unassisted credit later. Shared by the loop opener (`routes/learn_loop.py`) and
+unassisted credit later. Shared by the loop opener (`services/loop/opener.py`) and
 the kill-switch path (`routes/learn.py`), so both lanes floor the quiz alike."""
 
 from __future__ import annotations

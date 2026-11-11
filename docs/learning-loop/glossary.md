@@ -68,7 +68,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 
 | Spec term | Plain words | Code |
 |---|---|---|
-| Loop | The tutoring system as a whole: probe → plan → teach ⇄ check → feedback → close, plus spaced review and the delayed post-test. | `backend/routes/learn_loop.py` |
+| Loop | The tutoring system as a whole: probe → plan → teach ⇄ check → feedback → close, plus spaced review and the delayed post-test. | `backend/routes/learn_loop.py`, `backend/services/loop/` |
 | Phase | Where a session is: `probe`, `plan`, `teach`, `check`, `feedback`, `close`. | `backend/learning/params.py::CLOSE_PHASES` |
 | `loop_state` | The session's JSON state document on `sessions.loop_state`, saved only by compare-and-set on `loop_state_rev`. | `backend/learning/loop_state_store.py::update_loop_state` |
 | Compare-and-set (CAS) | A save that succeeds only if the row's revision is still the one loaded; the loser reloads and reapplies its change. | `backend/learning/loop_state_store.py::save_loop_state` |

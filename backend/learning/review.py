@@ -45,7 +45,7 @@ A served item is opened for answering in loop_state["open"][key]; an answer
 first takes a claim on it (`claim_item`, PKG-07's grading-claim discipline,
 §13 A52), so a double submit is graded and written at most once.
 
-Imported only by routes/learn_loop.py (the /review/* routes), behind the loop gate.
+Imported only by the loop (services/loop/reviews.py, the /review/* handlers), behind the loop gate.
 """
 
 from __future__ import annotations

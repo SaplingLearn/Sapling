@@ -259,7 +259,7 @@ class LoopCheckNextBody(BaseModel):
 
 
 # PKG-08 (probe + plan; spec §9). No course_id: the course is the session's
-# (routes/learn_loop.py::_session_scope), never the client's.
+# (services/loop/state.py::_session_scope), never the client's.
 
 
 class ProbeNextBody(BaseModel):

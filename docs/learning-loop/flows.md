@@ -195,7 +195,7 @@ under-covered concepts).
 
 ## 2. A session: probe → plan → teach ⇄ check → close
 
-`backend/routes/learn_loop.py` runs the session; `sessions.loop_state` holds
+`backend/routes/learn_loop.py` (its bodies in `backend/services/loop/`) runs the session; `sessions.loop_state` holds
 its state. Every write to that document is a compare-and-set
 (`loop_state_store.update_loop_state`), so two overlapping requests (a
 streamed turn and a "Check me") cannot overwrite each other.
