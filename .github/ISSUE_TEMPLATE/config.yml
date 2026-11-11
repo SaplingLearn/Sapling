@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SaplingLearn/Sapling/blob/main/SECURITY.md
+    about: Report security issues privately as described in SECURITY.md, not as a public issue.

@@ -53,7 +53,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#191F13' }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#191F13' }}>
           Ready to <br /> Start <em style={{ color: '#445D22', paddingRight: 8 }}>Growing?</em>
         </h2>
         <p style={{ margin: '24px 0 0', color: '#697062', fontSize: 17, fontWeight: 400 }}>

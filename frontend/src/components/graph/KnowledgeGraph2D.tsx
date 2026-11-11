@@ -12,10 +12,8 @@ import {
 import { type GraphEdge, type GraphNode } from "@/lib/data";
 import {
   GLOW,
-  NODE_STROKE_OPACITY,
   edgeWidthFor,
   masteryFillFor,
-  opacityFor,
   radiusFor,
   shadeFor,
   truncateLabel,
@@ -23,10 +21,27 @@ import {
 } from "@/lib/graph/nodeStyle";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
+  conceptLabelOpacity,
+  conceptLabelSize,
+  conceptLabelWeight,
+  hoverFocusId,
+  hoverMastery,
+  isDragPinned,
+  legibleLinkOpacity,
+  legibleNodeOpacity,
+  linkArrow,
+  linkEnd,
+  linkIncident,
+  linkMarker,
+  linkStroke,
+  nodeOpacity,
+  nodeStrokeOpacity,
+  plainLinkOpacity,
+} from "./knowledgeGraph2DPaint";
+import {
   courseLinks,
   forceOrbit,
   importanceRadii,
-  isDirected,
   labelOpacityAt,
   planBounds,
   planRadial,
@@ -188,6 +203,73 @@ export function followersOf(
 }
 
 /**
+ * A freed node's rope to the node that leads it (null for the dragged one)
+ * and its length: as long as their link was when the drag began.
+ */
+type Tether = { leader: string | null; gap: number };
+/** Freed nodes while a drag plays out, and the node being dragged (if any). */
+type FreeNodes = { leader: Map<string, Tether>; dragging: string | null };
+type FollowNode = Pick<SimulationNodeDatum, "x" | "y" | "vx" | "vy" | "fx">;
+type OrbitSlot = { rootId: string | null; angle: number; radius: number };
+
+/**
+ * A rope stretched past its length pulls the follower `n` after its leader
+ * `l` — or, when the follower is pinned (a classic-layout course root), pulls
+ * the leader back instead. `n` is positioned (the caller checked).
+ */
+function pullAlongRope(n: FollowNode, l: FollowNode | undefined, gap: number): void {
+  if (!l || l.x == null || l.y == null) return;
+  const dx = l.x - n.x!;
+  const dy = l.y - n.y!;
+  const len = Math.hypot(dx, dy) || 1e-6;
+  const slack = len - gap;
+  // Not `slack <= 0`: a NaN slack must not pull, as before.
+  if (!(slack > 0)) return;
+  const px = (dx / len) * slack * FOLLOW_PULL;
+  const py = (dy / len) * slack * FOLLOW_PULL;
+  if (n.fx == null) {
+    n.vx = (n.vx ?? 0) + px;
+    n.vy = (n.vy ?? 0) + py;
+  } else if (l.fx == null) {
+    l.vx = (l.vx ?? 0) - px;
+    l.vy = (l.vy ?? 0) - py;
+  }
+}
+
+/**
+ * The "follow" force, one simulation tick. Freed nodes (`free`): each rope
+ * stretched past its length pulls (see `pullAlongRope`). Each freed concept's
+ * orbit target tracks it so the orbit force (next) doesn't hold it on its old
+ * ring. Once everything has slowed down, wherever it all came to rest becomes
+ * the layout (`settle`). Runs every tick: allocates nothing beyond `centerOf`.
+ * Exported for tests.
+ */
+export function followForce(
+  alpha: number,
+  free: FreeNodes,
+  nodeById: ReadonlyMap<string, FollowNode>,
+  orbit: ReadonlyMap<string, OrbitSlot>,
+  centerOf: (rootId: string | null) => { x: number; y: number },
+  settle: () => void,
+): void {
+  if (!free.leader.size) return;
+  let moving = free.dragging != null;
+  for (const [id, { leader: leaderId, gap }] of free.leader) {
+    const n = nodeById.get(id);
+    if (!n || n.x == null || n.y == null) continue;
+    pullAlongRope(n, leaderId ? nodeById.get(leaderId) : undefined, gap);
+    const o = orbit.get(id);
+    if (o && id !== free.dragging) {
+      const c = centerOf(o.rootId);
+      o.angle = Math.atan2(n.y - c.y, n.x - c.x);
+      o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
+    }
+    if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
+  }
+  if (!moving || (free.dragging == null && alpha < 0.02)) settle();
+}
+
+/**
  * The visible part of a link: rim of the source to rim of the target, so no
  * line is ever drawn underneath a node. Node fills are translucent (mastery
  * tier opacity, legible-mode fades), so a line running to a node's centre
@@ -227,6 +309,86 @@ const SR_ONLY: React.CSSProperties = {
   whiteSpace: "nowrap",
   border: 0,
 };
+
+/**
+ * The hover tooltip: name, course, mastery bar, tier and last studied. Its
+ * position is seeded from `pos` when it mounts; pointer moves then write it
+ * directly (see `tooltipRef`).
+ */
+function renderTooltip(
+  hovered: GraphNode,
+  ref: React.RefObject<HTMLDivElement | null>,
+  pos: { x: number; y: number },
+  color: string,
+  mastery: number,
+) {
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        left: pos.x + 14,
+        top: pos.y + 14,
+        background: "var(--bg-panel)",
+        border: "1px solid var(--border-strong)",
+        borderRadius: "var(--r-md)",
+        padding: "10px 12px",
+        boxShadow: "var(--shadow-md)",
+        pointerEvents: "none",
+        zIndex: 50,
+        fontSize: 12,
+        minWidth: 200,
+      }}
+    >
+      <div style={{ fontFamily: "var(--font-display)", fontSize: 14, marginBottom: 4 }}>{hovered.name}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+        {hovered.is_subject_root ? "Course" : hovered.subject}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            marginBottom: 4,
+          }}
+        >
+          <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
+          <span className="mono" style={{ color: "var(--text)" }}>
+            {Math.round(mastery * 100)}%
+          </span>
+        </div>
+        <div
+          style={{
+            height: 4,
+            background: "var(--bg-soft)",
+            borderRadius: "var(--r-full)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              background: color,
+              transformOrigin: "left",
+              transform: `scaleX(${mastery})`,
+              transition: "transform var(--dur) var(--ease)",
+            }}
+          />
+        </div>
+      </div>
+      {!hovered.is_subject_root && (
+        <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, textTransform: "capitalize" }}>
+          {hovered.mastery_tier}
+          {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function KnowledgeGraph2DImpl({
   nodes,
@@ -418,8 +580,7 @@ function KnowledgeGraph2DImpl({
   // was when the drag began (`gap`): stretch it further and the other end is
   // pulled along — the course root too, which carries its rings — so no
   // link is ever left hyperextended.
-  type Tether = { leader: string | null; gap: number };
-  const freeRef = React.useRef<{ leader: Map<string, Tether>; dragging: string | null }>({
+  const freeRef = React.useRef<FreeNodes>({
     leader: new Map(),
     dragging: null,
   });
@@ -584,47 +745,10 @@ function KnowledgeGraph2DImpl({
               : 20 + (d.mastery_score || 0) * 6,
         ),
       )
-      .force("follow", (alpha: number) => {
-        // Freed nodes (see freeRef): a rope stretched past its length pulls
-        // the follower after its leader — or, when the follower is pinned (a
-        // classic-layout course root), pulls the leader back instead. Each
-        // freed concept's orbit target tracks it so the orbit force (next)
-        // doesn't hold it on its old ring. Once everything has slowed down,
-        // wherever it all came to rest becomes the layout.
-        const free = freeRef.current;
-        if (!free.leader.size) return;
-        let moving = free.dragging != null;
-        for (const [id, { leader: leaderId, gap }] of free.leader) {
-          const n = nodeById.get(id);
-          if (!n || n.x == null || n.y == null) continue;
-          const l = leaderId ? nodeById.get(leaderId) : undefined;
-          if (l && l.x != null && l.y != null) {
-            const dx = l.x - n.x;
-            const dy = l.y - n.y;
-            const len = Math.hypot(dx, dy) || 1e-6;
-            const slack = len - gap;
-            if (slack > 0) {
-              const px = (dx / len) * slack * FOLLOW_PULL;
-              const py = (dy / len) * slack * FOLLOW_PULL;
-              if (n.fx == null) {
-                n.vx = (n.vx ?? 0) + px;
-                n.vy = (n.vy ?? 0) + py;
-              } else if (l.fx == null) {
-                l.vx = (l.vx ?? 0) - px;
-                l.vy = (l.vy ?? 0) - py;
-              }
-            }
-          }
-          const o = planRef.current.orbit.get(id);
-          if (o && id !== free.dragging) {
-            const c = centerOf(o.rootId);
-            o.angle = Math.atan2(n.y - c.y, n.x - c.x);
-            o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
-          }
-          if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
-        }
-        if (!moving || (free.dragging == null && alpha < 0.02)) settleFreed();
-      })
+      // Freed nodes (see freeRef) follow their leaders on ropes; see followForce.
+      .force("follow", (alpha: number) =>
+        followForce(alpha, freeRef.current, nodeById, planRef.current.orbit, centerOf, settleFreed),
+      )
       .force(
         "orbit",
         forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55, 0.12, {
@@ -685,7 +809,7 @@ function KnowledgeGraph2DImpl({
 
   // Legible focus: the hovered concept and its direct neighbours — from the
   // props (concept edges + the course's inner-circle links), never the sim.
-  const focusId = legible ? hovered?.id ?? null : null;
+  const focusId = hoverFocusId(legible, hovered);
   // The same radial plan the simulation uses, recomputed from props for render.
   const planned = React.useMemo(() => {
     const { concept } = splitEdges(nodes, edges);
@@ -699,8 +823,6 @@ function KnowledgeGraph2DImpl({
     const rootOfCourse = new Map(roots.map((r) => [r.course_id, r.id]));
     return { concept, plan, outer, roots, rootOfCourse };
   }, [nodes, edges, width, height]);
-  // A hovered "My courses" row (the host's key): that course stays bright.
-  const inLegendFocus = (n: GraphNode) => !focusCourseId || n.course_id === focusCourseId;
   // The host's key asked to zoom to a course (Dashboard: click a row).
   const zoomSeq = zoomRequest?.seq;
   const zoomCourse = zoomRequest?.courseId;
@@ -1088,11 +1210,7 @@ function KnowledgeGraph2DImpl({
     easeView((initialZoom !== 1 ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
   };
 
-  const hoveredMastery = hovered
-    ? hovered.is_subject_root
-      ? subjectAverage[hovered.subject] ?? 0
-      : hovered.mastery_score || 0
-    : 0;
+  const hoveredMastery = hoverMastery(hovered, subjectAverage);
 
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
@@ -1100,13 +1218,206 @@ function KnowledgeGraph2DImpl({
   // Legible nodes never shrink below MIN_SCREEN_R on screen, however far out.
   const drawRadius = (n: GraphNode) =>
     legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
-  // Labels of focused concepts stay readable however far out the view is.
-  const focusFont = (size: number) => size / Math.min(1, view.scale);
   // O(1) endpoint resolution for edges whose source/target is still an id
   // string (before the link force swaps in node objects) — replaces the old
   // per-edge .find() over all nodes.
   const nodeById = new Map<string, SimNode>();
   for (const n of simNodes) nodeById.set(n.id, n);
+
+  /** One edge (its mastery gradient + line), keyed by its index. */
+  const renderLink = (l: SimLink, i: number) => {
+    const s = linkEnd(l.source, nodeById);
+    const t = linkEnd(l.target, nodeById);
+    if (!s || !t || s.x == null || t.x == null) return null;
+    const incident = linkIncident(focusId, s.id, t.id);
+    const op = legible
+      ? legibleLinkOpacity(l.anchor, incident, s, t, mastery, focusId, focusCourseId)
+      : plainLinkOpacity(mastery, variant);
+    const arrow = linkArrow(l, legible, focusId, incident, view.scale);
+    const [x1, y1, x2, y2] = rimToRim(
+      s.x!, s.y!, t.x!, t.y!,
+      drawRadius(s) + rimGap(s),
+      drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
+    );
+    const gradId = `${gradPrefix}-e${i}`;
+    return (
+      <React.Fragment key={i}>
+        {mastery && (
+          <defs>
+            <linearGradient
+              id={gradId}
+              ref={(el) => {
+                if (el) gradElsRef.current.set(i, el);
+                else gradElsRef.current.delete(i);
+              }}
+              gradientUnits="userSpaceOnUse"
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+            >
+              <stop offset="0%" stopColor={fillFor(s)} />
+              <stop offset="100%" stopColor={fillFor(t)} />
+            </linearGradient>
+          </defs>
+        )}
+        <line
+          ref={(el) => {
+            if (el) edgeElsRef.current.set(i, el);
+            else edgeElsRef.current.delete(i);
+          }}
+          data-testid="graph-edge"
+          x1={x1}
+          y1={y1}
+          x2={x2}
+          y2={y2}
+          stroke={linkStroke(mastery, gradId, incident)}
+          strokeOpacity={op}
+          markerEnd={linkMarker(arrow, gradPrefix, incident)}
+          style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
+          strokeWidth={mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength)}
+          strokeLinecap="round"
+          strokeDasharray={l.relationship_type === "related" ? "4 4" : undefined}
+        />
+      </React.Fragment>
+    );
+  };
+
+  /** One node group (hit area, glow, highlight, comparison ring, dot, label), keyed by id. */
+  const renderNode = (n: SimNode) => {
+    if (n.x == null || n.y == null) return null;
+    const r = drawRadius(n);
+    const color = fillFor(n);
+    const op = nodeOpacity(n, mastery);
+    const isHl = highlightId === n.id;
+    const isHovered = hovered?.id === n.id;
+    const isPinned = isDragPinned(n);
+    return (
+      <g
+        key={n.id}
+        ref={(el) => {
+          if (el) nodeElsRef.current.set(n.id, el);
+          else nodeElsRef.current.delete(n.id);
+        }}
+        data-testid="graph-node"
+        data-node-id={n.id}
+        transform={`translate(${n.x}, ${n.y})`}
+        style={
+          legible
+            ? {
+                cursor: "grab",
+                opacity: legibleNodeOpacity(n, focusId, focusSet, focusCourseId),
+                transition: "opacity 150ms ease",
+              }
+            : { cursor: "grab" }
+        }
+        onPointerDown={(ev) => onNodePointerDown(ev, n)}
+        onPointerEnter={(ev) => {
+          // Seed the tooltip position as it mounts so it opens
+          // under the cursor, not at a stale spot.
+          setTooltipPos({ x: ev.clientX, y: ev.clientY });
+          setHovered(n);
+          if (legible) onHoverCourse?.(n.course_id);
+        }}
+        onPointerLeave={() => {
+          setHovered((h) => (h?.id === n.id ? null : h));
+          if (legible) onHoverCourse?.(null);
+        }}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          if (movedRef.current) return;
+          onNodeClick?.(n);
+        }}
+      >
+        {legible && (
+          // A bigger, invisible hover/click target than the dot itself.
+          <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
+        )}
+        {variant === "organism" && (
+          <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
+        )}
+        {isHl && (
+          <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
+            <animate
+              attributeName="r"
+              values={`${r + 5};${r + 11};${r + 5}`}
+              dur="2.4s"
+              repeatCount="indefinite"
+            />
+          </circle>
+        )}
+        {(() => {
+          const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());
+          if (!partner) return null;
+          const partnerR = r + 4 + partner.mastery_score * 5;
+          return (
+            <circle
+              cx={0}
+              cy={0}
+              r={partnerR}
+              fill="none"
+              stroke={comparisonColor}
+              strokeWidth={1.8}
+              strokeDasharray="3 3"
+              opacity={0.35 + partner.mastery_score * 0.55}
+            >
+              <title>
+                {comparisonLabel ? `${comparisonLabel}: ` : ""}
+                {Math.round(partner.mastery_score * 100)}% mastery on {n.name}
+              </title>
+            </circle>
+          );
+        })()}
+        {variant === "constellation" ? (
+          <>
+            <circle data-testid="graph-node-circle" cx={0} cy={0} r={r * 0.7} fill={color} opacity={op} />
+            <circle cx={0} cy={0} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
+          </>
+        ) : (
+          <circle
+            data-testid="graph-node-circle"
+            cx={0}
+            cy={0}
+            r={r}
+            fill={color}
+            opacity={op}
+            stroke={color}
+            strokeWidth={n.is_subject_root ? 2.5 : 1.5}
+            strokeOpacity={nodeStrokeOpacity(isPinned, isHovered)}
+          />
+        )}
+        {n.is_subject_root && !legible && (
+          <text
+            x={0}
+            y={r + 16}
+            textAnchor="middle"
+            fontFamily="var(--font-display)"
+            fontSize={13}
+            fontWeight={600}
+            fill={color}
+            pointerEvents="none"
+          >
+            {n.name}
+          </text>
+        )}
+        {!n.is_subject_root && (
+          <text
+            x={0}
+            y={r + 13}
+            textAnchor="middle"
+            fontFamily="var(--font-sans)"
+            fontSize={conceptLabelSize(legible, focusSet.has(n.id), view.scale)}
+            fontWeight={conceptLabelWeight(legible, focusId === n.id)}
+            fill="var(--text-dim)"
+            opacity={conceptLabelOpacity(legible, focusId, focusSet.has(n.id), zoomLabels)}
+            pointerEvents="none"
+          >
+            {truncateLabel(n.name)}
+          </text>
+        )}
+      </g>
+    );
+  };
 
   return (
     <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
@@ -1149,217 +1460,12 @@ function KnowledgeGraph2DImpl({
         <g transform={`translate(${view.tx}, ${view.ty}) scale(${view.scale})`}>
           {/* Edges */}
           <g>
-            {simLinks.map((l, i) => {
-              const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
-              const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
-              if (!s || !t || s.x == null || t.x == null) return null;
-              const baseOp = mastery ? 0.85 : variant === "constellation" ? 0.35 : 0.2;
-              const incident = !!focusId && (s.id === focusId || t.id === focusId);
-              const op = !legible
-                ? baseOp
-                : focusId
-                  ? incident ? 0.9 : 0.04
-                  : !inLegendFocus(s) || !inLegendFocus(t)
-                    ? 0.03
-                    : l.anchor ? 0.1 : mastery ? 0.45 : 0.16;
-              const directed = legible && !l.anchor && isDirected(l);
-              // Arrowheads don't fade with their line, so a dimmed link drops its arrow.
-              const arrow = directed && (focusId ? incident : view.scale >= 0.9);
-              const [x1, y1, x2, y2] = rimToRim(
-                s.x!, s.y!, t.x!, t.y!,
-                drawRadius(s) + rimGap(s),
-                drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
-              );
-              const gradId = `${gradPrefix}-e${i}`;
-              return (
-                <React.Fragment key={i}>
-                  {mastery && (
-                    <defs>
-                      <linearGradient
-                        id={gradId}
-                        ref={(el) => {
-                          if (el) gradElsRef.current.set(i, el);
-                          else gradElsRef.current.delete(i);
-                        }}
-                        gradientUnits="userSpaceOnUse"
-                        x1={x1}
-                        y1={y1}
-                        x2={x2}
-                        y2={y2}
-                      >
-                        <stop offset="0%" stopColor={fillFor(s)} />
-                        <stop offset="100%" stopColor={fillFor(t)} />
-                      </linearGradient>
-                    </defs>
-                  )}
-                  <line
-                    ref={(el) => {
-                      if (el) edgeElsRef.current.set(i, el);
-                      else edgeElsRef.current.delete(i);
-                    }}
-                    data-testid="graph-edge"
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke={mastery ? `url(#${gradId})` : incident ? "var(--text-dim)" : "var(--text-muted)"}
-                    strokeOpacity={op}
-                    markerEnd={arrow ? `url(#${gradPrefix}-arrow${incident ? "-on" : ""})` : undefined}
-                    style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
-                    strokeWidth={mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength)}
-                    strokeLinecap="round"
-                    strokeDasharray={l.relationship_type === "related" ? "4 4" : undefined}
-                  />
-                </React.Fragment>
-              );
-            })}
+            {simLinks.map(renderLink)}
           </g>
 
           {/* Nodes */}
           <g>
-            {simNodes.map((n) => {
-              if (n.x == null || n.y == null) return null;
-              const r = drawRadius(n);
-              const color = fillFor(n);
-              // `mastery` mode carries the tier in the hue, so every mark is
-              // fully opaque; `course` mode carries it in the opacity.
-              const op = n.is_subject_root || mastery ? 1 : opacityFor(n.mastery_tier);
-              const isHl = highlightId === n.id;
-              const isHovered = hovered?.id === n.id;
-              // Course roots are always pinned by the radial layout, so a pin
-              // only means "being dragged" for concepts.
-              const isPinned = !n.is_subject_root && n.fx != null && n.fy != null;
-              return (
-                <g
-                  key={n.id}
-                  ref={(el) => {
-                    if (el) nodeElsRef.current.set(n.id, el);
-                    else nodeElsRef.current.delete(n.id);
-                  }}
-                  data-testid="graph-node"
-                  data-node-id={n.id}
-                  transform={`translate(${n.x}, ${n.y})`}
-                  style={
-                    legible
-                      ? {
-                          cursor: "grab",
-                          opacity:
-                            (focusId && !focusSet.has(n.id)) || (!focusId && !inLegendFocus(n)) ? 0.15 : 1,
-                          transition: "opacity 150ms ease",
-                        }
-                      : { cursor: "grab" }
-                  }
-                  onPointerDown={(ev) => onNodePointerDown(ev, n)}
-                  onPointerEnter={(ev) => {
-                    // Seed the tooltip position as it mounts so it opens
-                    // under the cursor, not at a stale spot.
-                    setTooltipPos({ x: ev.clientX, y: ev.clientY });
-                    setHovered(n);
-                    if (legible) onHoverCourse?.(n.course_id);
-                  }}
-                  onPointerLeave={() => {
-                    setHovered((h) => (h?.id === n.id ? null : h));
-                    if (legible) onHoverCourse?.(null);
-                  }}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    if (movedRef.current) return;
-                    onNodeClick?.(n);
-                  }}
-                >
-                  {legible && (
-                    // A bigger, invisible hover/click target than the dot itself.
-                    <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
-                  )}
-                  {variant === "organism" && (
-                    <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
-                  )}
-                  {isHl && (
-                    <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
-                      <animate
-                        attributeName="r"
-                        values={`${r + 5};${r + 11};${r + 5}`}
-                        dur="2.4s"
-                        repeatCount="indefinite"
-                      />
-                    </circle>
-                  )}
-                  {(() => {
-                    const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());
-                    if (!partner) return null;
-                    const partnerR = r + 4 + partner.mastery_score * 5;
-                    return (
-                      <circle
-                        cx={0}
-                        cy={0}
-                        r={partnerR}
-                        fill="none"
-                        stroke={comparisonColor}
-                        strokeWidth={1.8}
-                        strokeDasharray="3 3"
-                        opacity={0.35 + partner.mastery_score * 0.55}
-                      >
-                        <title>
-                          {comparisonLabel ? `${comparisonLabel}: ` : ""}
-                          {Math.round(partner.mastery_score * 100)}% mastery on {n.name}
-                        </title>
-                      </circle>
-                    );
-                  })()}
-                  {variant === "constellation" ? (
-                    <>
-                      <circle data-testid="graph-node-circle" cx={0} cy={0} r={r * 0.7} fill={color} opacity={op} />
-                      <circle cx={0} cy={0} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
-                    </>
-                  ) : (
-                    <circle
-                      data-testid="graph-node-circle"
-                      cx={0}
-                      cy={0}
-                      r={r}
-                      fill={color}
-                      opacity={op}
-                      stroke={color}
-                      strokeWidth={n.is_subject_root ? 2.5 : 1.5}
-                      strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
-                    />
-                  )}
-                  {n.is_subject_root && !legible && (
-                    <text
-                      x={0}
-                      y={r + 16}
-                      textAnchor="middle"
-                      fontFamily="var(--font-display)"
-                      fontSize={13}
-                      fontWeight={600}
-                      fill={color}
-                      pointerEvents="none"
-                    >
-                      {n.name}
-                    </text>
-                  )}
-                  {!n.is_subject_root && (
-                    <text
-                      x={0}
-                      y={r + 13}
-                      textAnchor="middle"
-                      fontFamily="var(--font-sans)"
-                      fontSize={legible && focusSet.has(n.id) ? Math.min(24, focusFont(10.5)) : 10.5}
-                      fontWeight={legible && focusId === n.id ? 600 : undefined}
-                      fill="var(--text-dim)"
-                      opacity={
-                        legible
-                          ? (focusId ? (focusSet.has(n.id) ? 1 : 0) : zoomLabels) * 0.85
-                          : 0.85
-                      }
-                      pointerEvents="none"
-                    >
-                      {truncateLabel(n.name)}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
+            {simNodes.map(renderNode)}
           </g>
         </g>
       </svg>
@@ -1419,72 +1525,7 @@ function KnowledgeGraph2DImpl({
         </button>
       </div>
 
-      {hovered && !dragRef.current && (
-        <div
-          ref={tooltipRef}
-          style={{
-            position: "fixed",
-            left: tooltipPos.x + 14,
-            top: tooltipPos.y + 14,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-md)",
-            padding: "10px 12px",
-            boxShadow: "var(--shadow-md)",
-            pointerEvents: "none",
-            zIndex: 50,
-            fontSize: 12,
-            minWidth: 200,
-          }}
-        >
-          <div style={{ fontFamily: "var(--font-display)", fontSize: 14, marginBottom: 4 }}>{hovered.name}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: courseColor(hovered) }} />
-            {hovered.is_subject_root ? "Course" : hovered.subject}
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 11,
-                color: "var(--text-muted)",
-                marginBottom: 4,
-              }}
-            >
-              <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
-              <span className="mono" style={{ color: "var(--text)" }}>
-                {Math.round(hoveredMastery * 100)}%
-              </span>
-            </div>
-            <div
-              style={{
-                height: 4,
-                background: "var(--bg-soft)",
-                borderRadius: "var(--r-full)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  background: courseColor(hovered),
-                  transformOrigin: "left",
-                  transform: `scaleX(${hoveredMastery})`,
-                  transition: "transform var(--dur) var(--ease)",
-                }}
-              />
-            </div>
-          </div>
-          {!hovered.is_subject_root && (
-            <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, textTransform: "capitalize" }}>
-              {hovered.mastery_tier}
-              {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
-            </div>
-          )}
-        </div>
-      )}
+      {hovered && !dragRef.current && renderTooltip(hovered, tooltipRef, tooltipPos, courseColor(hovered), hoveredMastery)}
       {/* The a11y node list doubles as the browser suite's data seam (#395):
           `graph-node-item` mirrors the `nodes` prop 1:1 and carries the node
           id as `data-node-id` so tests assert by identity, never by label

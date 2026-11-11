@@ -493,7 +493,7 @@ These consume the unified tokens and were intentionally deferred. Each is its ow
 - [ ] **Optional cosmetic:** rename the `.landing-page` scope class to `.public-surface`
       (and its `.landing-*` utilities) now that it is layout-hosted, not page-bolted.
 
-Reference: `docs/frontend-rhythm-audit.md`, `docs/superpowers/specs/2026-06-30-token-unification-design.md`.
+Reference: `docs/audits/frontend-rhythm-audit.md`, `docs/superpowers/specs/2026-06-30-token-unification-design.md`.
 ```
 
 - [ ] **Step 4: File GitHub issues (if `gh` is available and the repo wants issues)**
