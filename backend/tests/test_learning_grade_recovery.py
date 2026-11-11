@@ -42,7 +42,6 @@ def test_cold_retry_uses_saved_answer_and_operation_without_regrading(gate_on, s
     saved = checkpoint(seams)
     assert "base case" not in json.dumps(seams.store["doc"])
     assert grade_checkpoint.KEY in seams.store["doc"]["steps"]["qh-1"]
-    learn_loop._FAILED_TURN_ANCHORS.clear()
     seams.flush.side_effect = None
     result = submit("A different answer on retry must not be graded")
     assert result.kind == "feedback" and result.rendered == "The base case returns 1"

@@ -35,6 +35,15 @@ not needed there, and a discard is one atomic call
 An entry is looked up where it was stashed: memory first (a session started
 before the flag went on finishes there), then the table when the flag is on.
 Flag off = the in-memory store exactly as before; no table is touched.
+
+Learning-loop sessions (routes/learn_loop.py) use the same store: their
+pending payload also carries the loop document the session starts with
+(``loop_state``, the ``sessions.loop_state`` format; migration
+20261111030007_tutor_pending_loop_state.sql), which materialisation writes
+onto the row. The loop's first write materialises through
+``services/tutor/pending.py::_consume_pending`` (which, flag on, calls
+``materialize_tutor_session`` for a session not pending here) and its close of
+a never-answered session claims the payload with :func:`claim_pending`.
 """
 from __future__ import annotations
 
@@ -97,7 +106,7 @@ FLAG_KEY = "stateless_tutor_sessions"
 STORE_TABLE = "tutor_pending_sessions"
 _STORE_COLS = (
     "session_id,user_id,state,mode,topic,course_id,offering_id,"
-    "use_shared_context,assistant_reply,stashed_at,discarded_at"
+    "use_shared_context,assistant_reply,stashed_at,discarded_at,loop_state"
 )
 
 
@@ -143,7 +152,7 @@ def _view(row: dict | None, user_id: str | None = None) -> tuple[dict | None, st
     if row.get("state") == "pending":
         if not _within(row.get("stashed_at"), PENDING_TTL_SECONDS):
             return None, None
-        return {
+        payload = {
             "user_id": row.get("user_id"),
             "mode": row.get("mode"),
             "topic": row.get("topic"),
@@ -151,7 +160,15 @@ def _view(row: dict | None, user_id: str | None = None) -> tuple[dict | None, st
             "offering_id": row.get("offering_id"),
             "use_shared_context": row.get("use_shared_context"),
             "assistant_reply": decrypt_if_present(row.get("assistant_reply")),
-        }, None
+        }
+        # A learning-loop session (stored with a document, `{}` when it starts
+        # empty) reads back as the memory payload it was stashed from.
+        loop_state = row.get("loop_state")
+        if loop_state is not None:
+            payload["loop"] = True
+            if loop_state:
+                payload["loop_state"] = loop_state
+        return payload, None
     if not _within(row.get("discarded_at"), DISCARD_TOMBSTONE_TTL_SECONDS):
         return None, None
     if user_id is not None and row.get("user_id") != user_id:
@@ -187,6 +204,12 @@ def _stash_params(session_id: str, payload: dict) -> dict:
         # The messages.content format: materialisation copies it as is.
         "p_assistant_reply": encrypt_if_present(payload["assistant_reply"]),
         "p_graph_update": payload.get("graph_update") or None,
+        # A learning-loop session's starting document (sessions.loop_state's
+        # format: the goal text inside is already encrypted); NULL for a tutor
+        # session, {} for a loop session that starts empty.
+        "p_loop_state": (
+            dict(payload.get("loop_state") or {}) if payload.get("loop") else None
+        ),
         "p_ttl_seconds": PENDING_TTL_SECONDS,
         "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
         "p_max_entries": PENDING_MAX_ENTRIES,
@@ -228,6 +251,18 @@ def _store_rename(session_id: str, topic: str) -> bool:
     ))
 
 
+def _materialize_params(session_id: str, user_id: str) -> dict:
+    return {
+        "p_session_id": session_id,
+        "p_user_id": user_id,
+        "p_ttl_seconds": PENDING_TTL_SECONDS,
+        "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
+        # The greeting's created_at, on the app clock the turn's own rows
+        # use (routes/learn.py::_message_row), so it always sorts first.
+        "p_created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @runs_as_service
 async def amaterialize_stored(session_id: str, user_id: str) -> bool:
     """The first turn of a table-held pending session, in one call (flag on).
@@ -238,17 +273,21 @@ async def amaterialize_stored(session_id: str, user_id: str) -> bool:
     SESSION_ENDED / 404 for the caller's ended / deleted tombstone, and 404
     for another student's pending session.
     """
+    rows = await arpc("materialize_tutor_session", _materialize_params(session_id, user_id))
+    return _materialized(rows, session_id, user_id)
+
+
+@runs_as_service
+def materialize_stored(session_id: str, user_id: str) -> bool:
+    """:func:`amaterialize_stored` for threadpool callers (the learning loop's
+    sync routes and ``_consume_pending``)."""
+    rows = rpc("materialize_tutor_session", _materialize_params(session_id, user_id))
+    return _materialized(rows, session_id, user_id)
+
+
+def _materialized(rows, session_id: str, user_id: str) -> bool:
     from services import events_service
 
-    rows = await arpc("materialize_tutor_session", {
-        "p_session_id": session_id,
-        "p_user_id": user_id,
-        "p_ttl_seconds": PENDING_TTL_SECONDS,
-        "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,
-        # The greeting's created_at, on the app clock the turn's own rows
-        # use (routes/learn.py::_message_row), so it always sorts first.
-        "p_created_at": datetime.now(timezone.utc).isoformat(),
-    })
     row = rows[0] if isinstance(rows, list) and rows else {}
     outcome = row.get("outcome")
     if outcome == "ended":
@@ -342,6 +381,41 @@ def rename_pending(session_id: str, topic: str) -> bool:
                 return not row_may_exist(pending)
         return False  # it materialised while we waited: rename the real row
     return stored() and _store_rename(session_id, topic)
+
+
+@runs_as_service
+def _store_claim(session_id: str, user_id: str) -> dict | None:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=PENDING_TTL_SECONDS)
+    # One DELETE ... RETURNING: of two concurrent claimers (or a claim racing
+    # the first turn's materialisation, which deletes the row too) one wins.
+    rows = table(STORE_TABLE).delete({
+        "session_id": f"eq.{session_id}",
+        "user_id": f"eq.{user_id}",
+        "state": "eq.pending",
+        "stashed_at": f"gte.{cutoff.isoformat()}",
+    })
+    return _view(rows[0])[0] if rows else None
+
+
+def claim_pending(session_id: str, user_id: str) -> dict | None:
+    """Take ``session_id``'s pending payload away for good, without
+    materialising it (the learning loop's close of a session nobody answered
+    in: its row is written by the close itself). None when the session is not
+    pending; 404 when it is another student's. The memory entry is popped; a
+    table-held one (flag on) is deleted in one atomic call, so a session
+    started on another replica closes here too."""
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        if pending.get("user_id") != user_id:
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+        return PENDING_SESSIONS.pop(session_id, None)
+    if not stored():
+        return None
+    claimed = _store_claim(session_id, user_id)
+    if claimed is None and (other := _view(_store_row(session_id))[0]) is not None:
+        if other.get("user_id") != user_id:
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    return claimed
 
 
 def stash_pending(session_id: str, payload: dict) -> None:

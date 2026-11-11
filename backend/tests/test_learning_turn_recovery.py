@@ -19,15 +19,6 @@ gate_on, seams, no_rate_limit = routes.gate_on, routes.seams, routes.no_rate_lim
 NOW = routes.NOW
 
 
-@pytest.fixture(autouse=True)
-def clear_worker_memory():
-    from routes import learn_loop
-
-    learn_loop._FAILED_TURN_ANCHORS.clear()
-    yield
-    learn_loop._FAILED_TURN_ANCHORS.clear()
-
-
 @pytest.mark.parametrize("value", [None, {}, [], {"id": "old", "state": "complete", "at": True}, {"id": "old", "state": "unknown", "at": NOW}, {"id": "old", "state": "complete", "at": float("nan")}])
 def test_malformed_activity_never_earns_independent_time(value):
     assert turn_activity.timing({turn_activity.KEY: value})[1] is True
@@ -54,12 +45,10 @@ def test_new_operation_fences_both_old_completion_and_old_cancellation():
 
 @pytest.mark.parametrize("state", ["pending", "interrupted"])
 def test_cold_worker_reads_durable_interruption_instead_of_old_served_time(state, gate_on, seams):
-    from routes import learn_loop
 
     seams.store["doc"] = routes._plan_state(served_at=NOW - 600)
     seams.store["doc"][turn_activity.KEY] = {"id": "old-worker", "state": state, "at": NOW - 5}
     seams.p_known["node-1"] = 0.99
-    learn_loop._FAILED_TURN_ANCHORS.clear()  # no warm-worker fallback is available
     agent, _ = routes._json_agent("Think about the input.")
     with patch("routes.learn_loop.loop_tutor_agent", agent), patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
         response = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM})
@@ -87,7 +76,6 @@ def test_failed_json_turn_persists_timing_and_survives_worker_cache_loss(gate_on
     assert response.status_code >= 500
     assert seams.store["doc"][turn_activity.KEY]["state"] == "interrupted"
     assert seams.store["doc"][turn_activity.KEY]["at"] == NOW
-    learn_loop._FAILED_TURN_ANCHORS.clear()
     assert learn_loop._load_loop_state("s1")[turn_activity.KEY]["state"] == "interrupted"
     for key, value in original.items():
         assert seams.store["doc"][key] == value
@@ -151,7 +139,6 @@ def test_late_interruption_after_legitimate_close_is_info_only_without_reopening
         learn_loop._LoopTurn.touch_served_at(turn)
     assert update.call_count == 1 and update.call_args.kwargs == {"require_open": True}
     assert seams.store == before
-    assert learn_loop._FAILED_TURN_ANCHORS["s1"] == NOW
     records = [r for r in caplog.records if "Tutor interruption timing" in r.getMessage()]
     assert len(records) == 1 and records[0].levelno == logging.INFO
     assert records[0].getMessage() == "Tutor interruption timing skipped: session already closed"
@@ -181,7 +168,7 @@ def test_unexpected_interruption_write_failures_still_warn_with_traceback(
         learn_loop._LoopTurn.touch_served_at(turn)
     assert update.call_count == 1
     assert update.call_args.kwargs == {"require_open": True, "require_existing": True}
-    assert seams.store == before and learn_loop._FAILED_TURN_ANCHORS["s1"] == NOW
+    assert seams.store == before
     records = [r for r in caplog.records if "Tutor interruption timing" in r.getMessage()]
     assert len(records) == 1 and records[0].levelno == logging.WARNING
     assert records[0].getMessage() == "Tutor interruption timing could not be stored"
@@ -222,7 +209,6 @@ def test_cancelled_real_route_turn_keeps_durable_interruption(gate_on, seams):
     asyncio.run(run())
     assert seams.store["doc"][turn_activity.KEY]["state"] == "interrupted"
     assert seams.store["doc"][turn_activity.KEY]["at"] == NOW
-    learn_loop._FAILED_TURN_ANCHORS.clear()
     assert learn_loop._load_loop_state("s1")[turn_activity.KEY]["state"] == "interrupted"
     seams.save_msg.assert_not_called()
     seams.flush.assert_not_called()

@@ -7,7 +7,8 @@ other. Each test wipes the process-local store between steps (`_replica_hop`)
 to stand in for "the next request landed on the other replica".
 
 The fake below mirrors the three SQL functions of
-20261109024225_tutor_pending_sessions.sql; tests/integration/
+20261109024225_tutor_pending_sessions.sql (with the loop document of
+20261111030007_tutor_pending_loop_state.sql); tests/integration/
 test_tutor_pending_sessions_db.py pins the SQL itself against Postgres.
 """
 from __future__ import annotations
@@ -96,8 +97,9 @@ class _FakeDB:
             return []
 
         def delete(filters=None, **_k):
+            gone = [dict(r) for r in rows if _match(r, filters)]  # Prefer: return=representation
             rows[:] = [r for r in rows if not _match(r, filters)]
-            return []
+            return gone
 
         m.select.side_effect = select
         m.update.side_effect = update
@@ -131,6 +133,7 @@ class _FakeDB:
             "mode": p["p_mode"], "topic": p["p_topic"], "course_id": p["p_course_id"],
             "offering_id": p["p_offering_id"], "use_shared_context": p["p_use_shared_context"],
             "assistant_reply": p["p_assistant_reply"], "graph_update": p["p_graph_update"],
+            "loop_state": p.get("p_loop_state"),
             "stashed_at": now.isoformat(), "discarded_at": None,
         })
         return True
@@ -152,6 +155,7 @@ class _FakeDB:
             self.rows["sessions"].append({
                 "id": r["session_id"], "user_id": r["user_id"], "mode": r["mode"],
                 "topic": r["topic"], "offering_id": r["offering_id"] or None,
+                "loop_state": r.get("loop_state") or {},
                 "started_at": now.isoformat(), "ended_at": None,
             })
         self.rows["messages"].append({
@@ -176,7 +180,7 @@ class _FakeDB:
             "session_id": p["p_session_id"], "user_id": p["p_user_id"],
             "state": p["p_reason"], "discarded_at": now.isoformat(),
             "stashed_at": now.isoformat(), "mode": None, "topic": None,
-            "assistant_reply": None, "graph_update": None,
+            "assistant_reply": None, "graph_update": None, "loop_state": None,
         })
         return was
 
@@ -422,4 +426,5 @@ def test_the_stash_carries_the_bounds():
     assert (params["p_ttl_seconds"], params["p_tombstone_ttl_seconds"], params["p_max_entries"]) == (
         ts.PENDING_TTL_SECONDS, ts.DISCARD_TOMBSTONE_TTL_SECONDS, ts.PENDING_MAX_ENTRIES)
     assert params["p_graph_update"] is None, "an empty graph update stores NULL, like messages"
+    assert params["p_loop_state"] is None, "a tutor session carries no loop document"
     assert decrypt_if_present(params["p_assistant_reply"]) == GREETING

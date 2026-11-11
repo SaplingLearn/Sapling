@@ -1041,8 +1041,11 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_only_activity(gate_on, s
     assert [e["type"] for e in evs] == ["phase", "budget"]
     assert evs[1]["data"] == HARD_BUDGET
     seams.save_msg.assert_not_called()
-    assert set(seams.store["doc"]) == {"v", "steps", "current", "checks_since_rating", "phase", "turn_activity"}
+    assert set(seams.store["doc"]) == {
+        "v", "steps", "current", "checks_since_rating", "phase", "turn_activity", "turn_failed_at"
+    }
     assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    assert seams.store["doc"]["turn_failed_at"] == NOW  # #117: the durable failure anchor
     seams.flush.assert_not_called()
 
 
