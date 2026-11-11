@@ -87,6 +87,13 @@ Modules, lowest first (each imports only the ones above it):
   prompts (A139) and the teach-prompt juncture they open.
 - ``practice``: The next check (spec §10): band control (A122), the target
   difficulty, worked examples, the isomorph re-ask and `_activate_next_item`.
+- ``turn``: `_LoopTurn`: one loop turn, shared by the JSON and streamed run
+  sites (phase, band and ceiling before the budget read; plan; complete).
+- ``opener``: `_LoopOpener`: the session opener (A27, A121) and the quiz-ask
+  state it carries.
+- ``runner``: The run sites: the JSON turn and the SSE turn (budget, plan, one
+  model run or the deterministic text, complete) and the guardrail mapping
+  around them.
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until

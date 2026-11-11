@@ -263,6 +263,9 @@ LOOP_MODULES = (
     "services.loop.cursor",
     "services.loop.pose",
     "services.loop.practice",
+    "services.loop.turn",
+    "services.loop.opener",
+    "services.loop.runner",
 )
 
 

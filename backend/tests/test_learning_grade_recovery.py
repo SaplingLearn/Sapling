@@ -16,6 +16,7 @@ from routes import learn_loop
 from tests import test_learn_loop_routes as routes
 from tests.split_patches import patch_loop
 import services.loop.state
+import services.loop.turn
 
 client = routes.client
 gate_on, seams, no_rate_limit = routes.gate_on, routes.seams, routes.no_rate_limit
@@ -263,7 +264,7 @@ def test_chat_cannot_clear_a_withdrawn_saved_grade_or_start_a_model(gate_on, sea
 def test_stale_withdrawn_turn_cannot_clear_a_new_saved_grade(gate_on, seams):
     # This turn derived withdrawal before another request saved its answer.
     seams.item.return_value = None
-    turn = learn_loop._LoopTurn(
+    turn = services.loop.turn._LoopTurn(
         body=ChatBody(session_id="s1", user_id="u1", message="continue"),
         request=Request({"type": "http", "headers": []}), message="continue", loop_on=True,
     )

@@ -236,7 +236,7 @@ SESSION_SITES = {
     ("agents/session_close.py", "run_session_close"): {"session_id"},
     ("agents/grader.py", "_run_once"): {"deps.session_id"},
     ("services/learning_decisions.py", "_run_decision"): {"deps.session_id"},
-    ("routes/learn_loop.py", "record_usage"): {"self.session_id"},
+    ("services/loop/turn.py", "record_usage"): {"self.session_id"},
     # #118: the loop route's run sites live in services/loop/
     ("services/loop/continuation.py", "_loop_continuation_text"): {"turn.session_id"},
     # #117 (main's async ratchet): the owner read hops off the event loop.

@@ -445,7 +445,7 @@ def test_a_planned_check_that_cannot_be_posed_leaves_no_open_question_flag(gate_
 
 
 def test_a_quiz_ask_session_never_poses_a_check_its_sheet_cannot_show(gate_on, seams):
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     seams.store["doc"] = {
         **quiz_ask_state("node-1"),
@@ -555,7 +555,7 @@ def test_a_reply_to_the_quiz_ask_openers_question_is_judged(gate_on, v2_on):
     """A quiz-ask session's model opener ends with the tutor's question (A99; it
     stores `open_question`, tests/test_quiz_ask_session.py), so the student's
     first reply opens with the verdict like any other reply."""
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     v2_on.store["doc"] = {**quiz_ask_state("node-1"), "open_question": True}
     body, seen = _chat("B goes into the next free slot.", out={"answer_verdict": "correct", **OUT})

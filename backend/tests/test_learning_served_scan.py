@@ -35,6 +35,9 @@ from learning.ladder import Rung
 from learning.served_scan import ScanSet, form_chars
 from services.chat_stream import SaplingEvent
 from tests.split_patches import patch_loop
+import services.loop.opener
+import services.loop.runner
+import services.loop.turn
 
 POSED = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 WORDS = (
@@ -229,9 +232,8 @@ def test_incremental_scanning_finds_what_a_whole_text_scan_finds():
 
 def _scan_turn(items, *, overflow=None, unreadable=False):
     """A real _LoopTurn's scan methods on a bare object (no request)."""
-    from routes import learn_loop
 
-    turn = learn_loop._LoopTurn.__new__(learn_loop._LoopTurn)
+    turn = services.loop.turn._LoopTurn.__new__(services.loop.turn._LoopTurn)
     turn.user_id, turn.session_id, turn.phase, turn.tier = "u1", "s1", "teach", "standard"
     turn.item, turn.given, turn.request_id = None, "", "rq"
     turn.reveal_hashes, turn.reveal_unscanned = [], False
@@ -241,7 +243,6 @@ def _scan_turn(items, *, overflow=None, unreadable=False):
 
 
 def test_record_relayed_scans_every_delta_and_records_each_item_once():
-    from routes import learn_loop
 
     turn, posed = _scan_turn(ITEMS[:2])
     with (
@@ -253,7 +254,7 @@ def test_record_relayed_scans_every_delta_and_records_each_item_once():
         shown = ""
         for delta in ["At n == 0 it ret", "urns 1. Each frame", " waits on the call stack."]:
             shown += delta
-            learn_loop._LoopTurn.record_relayed(turn, shown)
+            services.loop.turn._LoopTurn.record_relayed(turn, shown)
     assert [c.args[1] for c in rec.call_args_list] == [["qh-base"], ["qh-stack"]]
     marker.assert_not_called()
     assert [c.kwargs["question_hashes"] for c in zpd.emit_zpd_reveal.call_args_list] == [
@@ -266,7 +267,6 @@ def test_record_relayed_scans_every_delta_and_records_each_item_once():
 def test_an_unreadable_scan_set_writes_one_marker_and_one_event_per_turn():
     """Minor 2: a stream meets the unreadable scan set on every delta; the turn
     writes ONE 'unscanned' marker and emits ONE unscanned zpd.reveal."""
-    from routes import learn_loop
 
     turn, posed = _scan_turn([], unreadable=True)
     with (
@@ -276,8 +276,8 @@ def test_an_unreadable_scan_set_writes_one_marker_and_one_event_per_turn():
         patch_loop("zpd_events") as zpd,
     ):
         for n in range(1, 30):
-            learn_loop._LoopTurn.record_relayed(turn, "word " * n)
-        learn_loop._LoopTurn._record_served(turn)  # complete()'s write too
+            services.loop.turn._LoopTurn.record_relayed(turn, "word " * n)
+        services.loop.turn._LoopTurn._record_served(turn)  # complete()'s write too
     assert read.call_count == 1  # read once per turn
     marker.assert_called_once()
     rec.assert_not_called()
@@ -286,7 +286,6 @@ def test_an_unreadable_scan_set_writes_one_marker_and_one_event_per_turn():
 
 
 def test_the_overflow_marker_is_written_once_per_turn():
-    from routes import learn_loop
 
     turn, posed = _scan_turn(ITEMS[:1], overflow=POSED)
     with (
@@ -296,7 +295,7 @@ def test_the_overflow_marker_is_written_once_per_turn():
         patch_loop("zpd_events"),
     ):
         for n in range(1, 10):
-            learn_loop._LoopTurn.record_relayed(turn, "word " * n)
+            services.loop.turn._LoopTurn.record_relayed(turn, "word " * n)
     (call,) = marker.call_args_list
     assert call.kwargs["at"] == POSED
 
@@ -308,7 +307,6 @@ def _tok(text):
 def test_the_stream_scans_off_the_event_loop_before_each_chunk_goes_out():
     """(c): record_relayed runs in a worker thread, and the chunk that triggered
     it is yielded only after it returned."""
-    from routes import learn_loop
 
     order: list = []
     main = threading.get_ident()
@@ -323,7 +321,7 @@ def test_the_stream_scans_off_the_event_loop_before_each_chunk_goes_out():
         yield SaplingEvent(type="done", step="reply", message="Complete.", data={})
 
     async def drain():
-        async for chunk in learn_loop._stream_turn(turn):
+        async for chunk in services.loop.runner._stream_turn(turn):
             if '"token"' in chunk or "token" in str(chunk)[:40]:
                 order.append(("out", len([o for o in order if o[0] == "scan"])))
 
@@ -339,13 +337,12 @@ def test_the_stream_scans_off_the_event_loop_before_each_chunk_goes_out():
 def test_a_cancelled_streams_final_scan_waits_for_the_in_flight_one():
     """The turn's lock: the synchronous final scan of a cancelled stream never
     runs concurrently with a worker-thread scan still in flight."""
-    from routes import learn_loop
 
     turn, posed = _scan_turn(ITEMS[:1])
     inside = threading.Event()
     release = threading.Event()
     active = []
-    real = learn_loop._LoopTurn._record_relayed
+    real = services.loop.turn._LoopTurn._record_relayed
 
     def slow(self, text):
         active.append(text)
@@ -358,15 +355,15 @@ def test_a_cancelled_streams_final_scan_waits_for_the_in_flight_one():
 
     with (
         posed,
-        patch.object(learn_loop._LoopTurn, "_record_relayed", slow),
+        patch.object(services.loop.turn._LoopTurn, "_record_relayed", slow),
         patch_loop("record_reveals"),
         patch_loop("zpd_events"),
     ):
-        t = threading.Thread(target=learn_loop._LoopTurn.record_relayed, args=(turn, "At n == 0"))
+        t = threading.Thread(target=services.loop.turn._LoopTurn.record_relayed, args=(turn, "At n == 0"))
         t.start()
         inside.wait(5)
         threading.Timer(0.05, release.set).start()
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")  # blocks on the lock
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")  # blocks on the lock
         t.join(5)
     assert turn.reveal_hashes == ["qh-base"]
 
@@ -413,7 +410,6 @@ SCAN_CPU_BUDGET_S = 10.0
 
 
 def test_a_long_streamed_turn_over_200_items_stays_within_a_cpu_budget():
-    from routes import learn_loop
 
     rnd = random.Random(5)
     items = _random_items(params.LOOP_SCAN_POSED_MAX, rnd)
@@ -434,8 +430,8 @@ def test_a_long_streamed_turn_over_200_items_stays_within_a_cpu_budget():
         shown = ""
         for k in range(0, len(text), 20):
             shown += text[k : k + 20]
-            learn_loop._LoopTurn.record_relayed(turn, shown)
-        learn_loop._LoopTurn._scan_served(turn, shown)  # complete()'s final scan
+            services.loop.turn._LoopTurn.record_relayed(turn, shown)
+        services.loop.turn._LoopTurn._scan_served(turn, shown)  # complete()'s final scan
         spent = time.process_time() - t0
     assert spent < SCAN_CPU_BUDGET_S, f"{spent:.2f}s CPU"
     assert turn.reveal_hashes == ScanSet.build(items, given="").stated(text)
@@ -512,7 +508,6 @@ def test_completes_final_scan_is_a_whole_text_scan():
     """Review m1 safety net: the turn's final text is scanned whole once at
     completion, so no windowing gap survives the turn — here a window that
     skips everything already scanned (start = upto) still ends in the hit."""
-    from routes import learn_loop
 
     turn, posed = _scan_turn([_STACK])
     text = _FILL + "Frames sit on the call stack."
@@ -526,9 +521,9 @@ def test_completes_final_scan_is_a_whole_text_scan():
         shown = ""
         for k in range(0, len(text), 3):
             shown += text[k : k + 3]
-            learn_loop._LoopTurn.record_relayed(turn, shown)
+            services.loop.turn._LoopTurn.record_relayed(turn, shown)
         assert turn.reveal_hashes == []  # the broken window missed it
-        learn_loop._LoopTurn._scan_served(turn, text, whole=True)
+        services.loop.turn._LoopTurn._scan_served(turn, text, whole=True)
     assert turn.reveal_hashes == ["qh-stack-pad"]
 
 
@@ -544,20 +539,19 @@ def _complete_turn(cls):
 
 
 def test_both_completions_scan_the_final_text_whole():
-    from routes import learn_loop
 
-    turn = _complete_turn(learn_loop._LoopTurn)
+    turn = _complete_turn(services.loop.turn._LoopTurn)
     with (
         patch_loop("_update_loop_state"),
         patch_loop("save_message"),
         patch_loop("events_service"),
         patch_loop("get_check_item"),
     ):
-        learn_loop._LoopTurn.complete(turn, "the reply", {}, [])
+        services.loop.turn._LoopTurn.complete(turn, "the reply", {}, [])
     turn._scan_served.assert_called_once_with("the reply", whole=True)
-    opener = _complete_turn(learn_loop._LoopOpener)
+    opener = _complete_turn(services.loop.opener._LoopOpener)
     try:
-        learn_loop._LoopOpener.complete(opener, "hello", {}, [])
+        services.loop.opener._LoopOpener.complete(opener, "hello", {}, [])
     except Exception:
         pass  # the opener's later bookkeeping needs a real request; the scan came first
     opener._scan_served.assert_called_once_with("hello", whole=True)
@@ -567,7 +561,6 @@ def test_both_completions_scan_the_final_text_whole():
 
 
 def test_a_scan_exception_writes_the_unscanned_marker_and_keeps_the_window():
-    from routes import learn_loop
 
     turn, posed = _scan_turn([_STACK])
     real = ScanSet.stated
@@ -587,11 +580,11 @@ def test_a_scan_exception_writes_the_unscanned_marker_and_keeps_the_window():
         patch_loop("zpd_events") as zpd,
         patch.object(ScanSet, "stated", flaky),
     ):
-        learn_loop._LoopTurn.record_relayed(turn, first)
+        services.loop.turn._LoopTurn.record_relayed(turn, first)
         marker.assert_called_once()  # fail closed: posed items floor to assisted (A88/A93)
         assert zpd.emit_zpd_reveal.call_args.kwargs["unscanned"] is True
         assert "_scanned_text" not in turn.__dict__  # the failed window is NOT marked scanned
-        learn_loop._LoopTurn.record_relayed(turn, first + " Next.")
+        services.loop.turn._LoopTurn.record_relayed(turn, first + " Next.")
     assert calls[1] == 0  # the next scan re-reads the window the failed one lost
     assert rec.call_args.args[1] == ["qh-stack-pad"]
 
@@ -608,7 +601,6 @@ def _stream_mock(record):
 
 
 def test_a_cancelled_streams_final_scan_runs_off_the_event_loop_and_still_records():
-    from routes import learn_loop
 
     main = threading.get_ident()
     started, release = threading.Event(), threading.Event()
@@ -629,7 +621,7 @@ def test_a_cancelled_streams_final_scan_runs_off_the_event_loop_and_still_record
 
     async def main_():
         async def consume():
-            async for _ in learn_loop._stream_turn(turn):
+            async for _ in services.loop.runner._stream_turn(turn):
                 pass
 
         task = asyncio.create_task(consume())
@@ -652,7 +644,6 @@ def test_a_cancelled_streams_final_scan_runs_off_the_event_loop_and_still_record
 
 
 def test_a_retracted_attempt_that_was_scanned_is_not_rescanned():
-    from routes import learn_loop
 
     calls: list = []
     turn = _stream_mock(lambda text: calls.append(text))
@@ -665,7 +656,7 @@ def test_a_retracted_attempt_that_was_scanned_is_not_rescanned():
         yield SaplingEvent(type="done", step="reply", message="Complete.", data={})
 
     async def drain():
-        async for _ in learn_loop._stream_turn(turn):
+        async for _ in services.loop.runner._stream_turn(turn):
             pass
 
     with patch_loop("ai_budget"), patch_loop("stream_structured_turn", fake):

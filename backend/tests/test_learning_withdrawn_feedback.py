@@ -142,7 +142,7 @@ def test_saved_check_grade_recovers_after_item_withdrawal_without_second_grade_o
 def test_stale_withdrawal_completion_cannot_count_feedback_twice(gate_on, seams):
     from fastapi import HTTPException
     from models import ChatBody
-    from routes.learn_loop import _LoopTurn
+    from services.loop.turn import _LoopTurn
 
     seams.store["doc"] = routes._graded("idk")
     seams.item.return_value = None

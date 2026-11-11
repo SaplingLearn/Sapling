@@ -51,6 +51,7 @@ from tests.test_learn_loop_routes import (
 )
 from tests.split_patches import patch_tutor
 from tests.split_patches import patch_loop
+import services.loop.turn
 import services.tutor.run
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
@@ -724,7 +725,6 @@ def test_the_stream_fallback_continues_from_the_failed_runs_messages_without_rep
 ):
     from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 
-    import routes.learn_loop as ll
     from tests.test_learn_loop_routes import FakeRunResult, SaplingEvent
 
     seams.store["doc"] = {"phase": "teach"}
@@ -754,7 +754,7 @@ def test_the_stream_fallback_continues_from_the_failed_runs_messages_without_rep
         patch_loop("stream_structured_turn", fake),
         patch_loop("loop_tutor_agent", agent),
         patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
-        patch.object(ll._LoopTurn, "plan", autospec=True, side_effect=ll._LoopTurn.plan) as plan,
+        patch.object(services.loop.turn._LoopTurn, "plan", autospec=True, side_effect=services.loop.turn._LoopTurn.plan) as plan,
     ):
         r = client.post(
             "/api/learn/loop/chat/stream",

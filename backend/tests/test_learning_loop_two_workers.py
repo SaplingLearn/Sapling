@@ -131,7 +131,7 @@ def _loop_payload(*, user_id=UID, loop_state=None) -> dict:
 def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on, seams, db):
     """The quiz's "Ask about this" session (spec §13 A99) starts in `teach` on the
     quiz's concept: that document must reach the row the OTHER worker writes."""
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     a, b = Worker(), Worker()
     opener, _ = routes._json_agent("Key idea: the base case. Which input stops it?")
@@ -390,7 +390,7 @@ def test_flag_off_keeps_the_loop_session_in_the_starting_workers_memory(
     """The flag is the multi-worker switch: off, a loop session is pending in the
     starting worker's memory and the table is never touched (one worker is the
     supported shape then, as before #117)."""
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
     a = Worker()

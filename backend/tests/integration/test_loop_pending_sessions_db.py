@@ -107,7 +107,7 @@ def test_a_stored_loop_document_reaches_the_row_through_postgrest(db_conn):
     PostgREST, carry a quiz-ask session's document (spec §13 A99) to the row."""
     import uuid
 
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
     from services import tutor_sessions as ts
     from services.tutor.pending import _consume_pending
 

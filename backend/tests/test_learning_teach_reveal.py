@@ -28,6 +28,8 @@ from tests.split_patches import patch_loop
 import learning.loop_state_store
 import services.loop.posed
 import services.loop.reveals
+import services.loop.runner
+import services.loop.turn
 import services.tutor_sessions
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -588,7 +590,6 @@ async def _drain(gen, *, stop_after=None):
     ids=["raises", "cancelled", "disconnected"],
 )
 def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_after):
-    from routes import learn_loop
 
     turn = _turn()
     events = [_tok("At n == 0 "), _tok("it returns 1.")]
@@ -596,7 +597,7 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
         patch_loop("ai_budget"),
         patch_loop("stream_structured_turn", _stream_with(events, then=then)),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn), stop_after=stop_after))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn), stop_after=stop_after))
     turn.touch_served_at.assert_called_once()  # A85: the anchor moves on a disconnect too
     # A93 (M3): scanned as it is relayed; A105 (review m3): text whose scan already
     # returned is not scanned again at the end (a cancellation mid-scan still is —
@@ -612,7 +613,6 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
 
 
 def test_a_retract_discards_what_was_relayed_before_it():
-    from routes import learn_loop
 
     turn = _turn()
     events = [_tok("old"), SaplingEvent(type="retract", step="reply", message=""), _tok("new")]
@@ -620,14 +620,13 @@ def test_a_retract_discards_what_was_relayed_before_it():
         patch_loop("ai_budget"),
         patch_loop("stream_structured_turn", _stream_with(events, then=RuntimeError())),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn)))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn)))
     assert turn.record_relayed.call_args.args[0] == "new"
 
 
 def test_a_finished_stream_scans_each_delta_and_adds_no_end_scan():
     """A101: every delta is scanned as relayed; a stream that finished is not
     scanned again at its end (complete() scans its final text)."""
-    from routes import learn_loop
 
     turn = _turn()
     done = SaplingEvent(type="done", step="reply", message="Complete.", data={})
@@ -635,7 +634,7 @@ def test_a_finished_stream_scans_each_delta_and_adds_no_end_scan():
         patch_loop("ai_budget"),
         patch_loop("stream_structured_turn", _stream_with([_tok("x"), _tok(""), done])),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn)))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn)))
     assert [c.args[0] for c in turn.record_relayed.call_args_list] == ["x"]  # an empty delta: none
     turn.touch_served_at.assert_not_called()
 
@@ -668,19 +667,19 @@ def test_persist_reveals_falls_back_to_loop_state_then_logs(caplog):
 
 
 def _relay_turn(learn_loop):
-    turn = MagicMock(spec=learn_loop._LoopTurn)
+    turn = MagicMock(spec=services.loop.turn._LoopTurn)
     turn.user_id, turn.session_id, turn.phase, turn.tier = "u1", "s1", "teach", "standard"
     turn.item, turn.given = None, ""
     turn.reveal_hashes, turn.reveal_unscanned = [], False
-    turn._scan_served = lambda text: learn_loop._LoopTurn._scan_served(turn, text)
-    turn._record_relayed = lambda text: learn_loop._LoopTurn._record_relayed(turn, text)
+    turn._scan_served = lambda text: services.loop.turn._LoopTurn._scan_served(turn, text)
+    turn._record_relayed = lambda text: services.loop.turn._LoopTurn._record_relayed(turn, text)
     return turn
 
 
 def _real_relay_turn(learn_loop):
     turn = _relay_turn(learn_loop)
-    turn._record_served = lambda: learn_loop._LoopTurn._record_served(turn)
-    turn._scan_set = lambda: learn_loop._LoopTurn._scan_set(turn)
+    turn._record_served = lambda: services.loop.turn._LoopTurn._record_served(turn)
+    turn._scan_set = lambda: services.loop.turn._LoopTurn._scan_set(turn)
     turn.reveal_overflow, turn.reveal_fallback = None, None
     return turn
 
@@ -694,8 +693,8 @@ def test_record_relayed_scans_the_open_items_and_persists(gate_on, seams):
         patch_loop("record_reveals") as rec,
         patch_loop("_persist_reveals") as persist,
     ):
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1. More.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1. More.")
     (call,) = rec.call_args_list  # A93: recorded once per turn, however often scanned
     assert call.args[:2] == ("u1", ["qh-base"]) and call.kwargs["session_id"] == "s1"
     persist.assert_not_called()  # the primary store worked: no fallback
@@ -711,7 +710,7 @@ def test_record_relayed_falls_back_to_loop_state_when_the_store_fails(gate_on, s
         patch_loop("record_reveals", side_effect=RuntimeError("down")),
         patch_loop("_persist_reveals") as persist,
     ):
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
     (call,) = persist.call_args_list
     assert call.args[:3] == ("u1", "s1", ["qh-base"]) and call.kwargs["source"] == "teach:relayed"
     turn._emit_reveal.assert_called_once()
@@ -722,7 +721,7 @@ def test_record_relayed_never_raises(gate_on, seams, caplog):
 
     turn = _relay_turn(learn_loop)
     seams.open_posed.side_effect = RuntimeError("boom")
-    learn_loop._LoopTurn.record_relayed(turn, "text")
+    services.loop.turn._LoopTurn.record_relayed(turn, "text")
     assert "could not be scanned" in caplog.text
 
 

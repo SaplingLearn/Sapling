@@ -31,6 +31,8 @@ from tests.test_chat_stream import (
 from tests.split_patches import setattr_loop
 import services.ai_budget
 import services.loop.continuation
+import services.loop.runner
+import services.loop.turn
 
 # The live final failure was question_shape:2 sentences, not necessarily two
 # question marks. A declarative preface in the question field is invalid too.
@@ -235,7 +237,6 @@ def test_successful_usage_hook_failure_does_not_change_the_valid_reply(caplog):
 
 
 def _route_turn(model):
-    from routes import learn_loop
 
     deps = _loop_deps()
     turn = SimpleNamespace(
@@ -265,14 +266,13 @@ def _route_turn(model):
         touch_served_at=MagicMock(),
         complete=MagicMock(side_effect=lambda reply, graph, mastery: {"reply": reply}),
     )
-    turn.record_usage = MethodType(learn_loop._LoopTurn.record_usage, turn)
-    turn.budget_counters = MethodType(learn_loop._LoopTurn.budget_counters, turn)
+    turn.record_usage = MethodType(services.loop.turn._LoopTurn.record_usage, turn)
+    turn.budget_counters = MethodType(services.loop.turn._LoopTurn.budget_counters, turn)
     return turn
 
 
 @pytest.mark.parametrize("rescue", ["model_free", "succeeds", "fails"])
 def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, monkeypatch):
-    from routes import learn_loop
 
     stream_calls, rescue_calls, bills = [], [], []
 
@@ -306,7 +306,7 @@ def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, mon
         setattr_loop(monkeypatch, "_continue_turn", model_free)
 
     async def run():
-        return [event async for event in learn_loop._stream_turn(turn)]
+        return [event async for event in services.loop.runner._stream_turn(turn)]
 
     events = asyncio.run(run())
     assert len(stream_calls) == 3
@@ -330,7 +330,6 @@ def test_route_accounts_failed_primary_and_rescue_independently_once(rescue, mon
 
 @pytest.mark.parametrize("when", ["before_tokens", "after_tokens", "during_rescue"])
 def test_route_cancellation_keeps_only_known_primary_and_rescue_usage(when, monkeypatch):
-    from routes import learn_loop
 
     async def run():
         waiting = asyncio.Event()
@@ -372,7 +371,7 @@ def test_route_cancellation_keeps_only_known_primary_and_rescue_usage(when, monk
         setattr_loop(monkeypatch, "record_agent_usage", record)
 
         async def consume():
-            async for event in learn_loop._stream_turn(turn):
+            async for event in services.loop.runner._stream_turn(turn):
                 events.append(event)
 
         task = asyncio.create_task(consume())

@@ -13,6 +13,7 @@ import pytest
 from tests.work_meter import assert_linear, cpu_seconds
 from tests.db_fakes import with_async_twins
 from tests.split_patches import DOCUMENTS_MODULES, patch_documents, patch_profile_table, setattr_in
+import services.loop.turn
 
 MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 
@@ -6243,9 +6244,8 @@ def test_validate_draft_and_the_confront_route_call_the_one_function():
     import textwrap
 
     from learning import checks
-    from routes import learn_loop
 
-    for fn in (checks._wrong_text_answer_reasons, learn_loop._LoopTurn._confront_line):
+    for fn in (checks._wrong_text_answer_reasons, services.loop.turn._LoopTurn._confront_line):
         src = inspect.getsource(fn)
         tree = ast.parse(textwrap.dedent(src))
         called = {

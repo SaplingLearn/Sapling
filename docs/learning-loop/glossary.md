@@ -90,7 +90,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Grading claim | A marker taken by CAS before grading, so one posed item is graded once, A52. | `backend/routes/learn_loop.py::_grade_submission` |
 | Grade checkpoint | An encrypted, owner-bound record of a finished grade saved before its evidence commits, so a crash is recovered without grading twice (ADR 0038). | `backend/learning/grade_checkpoint.py::seal` |
 | Turn activity | Prose-free timing and fencing for a tutor turn, so an interrupted turn cannot earn help-gate time (ADR 0036). | `backend/learning/turn_activity.py::begin` |
-| Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/routes/learn_loop.py::_LoopTurn` |
+| Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/services/loop/turn.py::_LoopTurn` |
 | Close | The end-of-session record: a summary, a self-evaluation prompt and an "If …, then …" plan, stored encrypted on `sessions.close_json`. | `backend/learning/session_close.py::build_close` |
 | Segment | The stretch of a session spent on one concept, from the moment the plan's cursor reaches it until it moves on. | `backend/learning/prequestion.py::segment_open` |
 | Segment prequestion | One ungraded guess at a vetted question when a segment opens, followed at once by the answer and why. Never evidence; the item becomes revealed. A138, flag `segment_prequestion`. | `backend/learning/prequestion.py::choose` |

@@ -185,7 +185,7 @@ def _opener(path: str, *, agent=None, stream=None, record=None):
 
 def test_the_loop_quiz_ask_session_starts_in_teach_on_the_quiz_concept(gate_on, seams):
     from services.tutor_sessions import PENDING_SESSIONS
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     order: list = []
     agent, seen = _routes._json_agent("Key idea: the base case. Which input stops it?")
@@ -242,7 +242,7 @@ def test_a_quiz_ask_template_opener_leaves_no_open_question(gate_on, seams):
     it never gets the probe opener's "quick check-in" promise."""
     from learning.turn_shape import LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
     from services.tutor_sessions import PENDING_SESSIONS
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     seams.ai_budget.check.return_value = _routes.HARD
     agent = MagicMock()
@@ -316,7 +316,7 @@ def test_the_materialised_quiz_ask_row_carries_its_teach_doc_so_chat_is_open():
     row, and a teach document passes the teaching check."""
     from routes.learn import PENDING_SESSIONS, _consume_pending
     from services.loop.state import _require_teaching
-    from routes.learn_loop import quiz_ask_state
+    from services.loop.opener import quiz_ask_state
 
     PENDING_SESSIONS["s-q"] = {
         "user_id": "u1",

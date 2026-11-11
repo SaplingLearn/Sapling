@@ -25,6 +25,8 @@ from tests.test_learn_loop_routes import client
 from tests.split_patches import patch_loop, setattr_loop
 import services.loop.practice
 import services.loop.reveals
+import services.loop.runner
+import services.loop.turn
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 probe, _no_rate_limit = _probe.probe, _probe._no_rate_limit
@@ -145,7 +147,7 @@ ITEMS = [_item(1, "a" * 64), _item(2, "b" * 64), _item(3, "c" * 64), _item(4, "d
 
 
 def _hint_turn(ll, item, rung, *, h6=False, sibling=None, paused=False):
-    turn = MagicMock(spec=ll._LoopTurn)
+    turn = MagicMock(spec=services.loop.turn._LoopTurn)
     turn.user_id, turn.session_id, turn.phase, turn.item = "u", "sA", "hint", item
     turn.rung, turn.served_as_h6, turn.revealed_hash, turn.paused = rung, h6, sibling, paused
     turn.text, turn.tier = "payload", "none"
@@ -168,7 +170,7 @@ def test_an_h6_in_session_a_floors_the_same_item_graded_in_session_b(monkeypatch
     assert qa == qb  # the same item is open in both sessions
     item = next(i for i in ITEMS if i.question_hash == qa)
     assert services.loop.reveals._reveal_floor("u", item, None) == 0  # before any help
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H6))  # the H6 payload, in A
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H6))  # the H6 payload, in A
     assert services.loop.reveals._reveal_floor("u", item, None) == int(Rung.H6)  # B's grade: no credit
     assert services.loop.reveals._reveal_floor("u", item, None) >= params.RUNG_NO_CREDIT_MIN
 
@@ -177,7 +179,7 @@ def test_a_lower_hint_elsewhere_floors_the_grade_as_assisted(ledger):
     import routes.learn_loop as ll
 
     item = ITEMS[0]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H2))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H2))
     assert services.loop.reveals._reveal_floor("u", item, None) == int(Rung.H2)
 
 
@@ -185,17 +187,17 @@ def test_an_h4_sibling_payload_is_help_on_the_sibling_and_a_paused_turn_is_none(
     import routes.learn_loop as ll
 
     item, sibling = ITEMS[0], ITEMS[1]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H4, sibling=sibling.question_hash))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H4, sibling=sibling.question_hash))
     assert ledger[("u", item.question_hash)] == [int(Rung.H4)]
     assert ledger[("u", sibling.question_hash)] == [params.RUNG_NO_CREDIT_MIN]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[2], Rung.H3, paused=True))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[2], Rung.H3, paused=True))
     assert ledger[("u", ITEMS[2].question_hash)] == []  # nothing was served
 
 
 def test_a_leaking_payload_served_as_h6_is_recorded_as_h6(ledger):
     import routes.learn_loop as ll
 
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[0], Rung.H4, h6=True))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[0], Rung.H4, h6=True))
     assert ledger[("u", ITEMS[0].question_hash)] == [int(Rung.H6)]
 
 
@@ -349,7 +351,6 @@ def test_a_retracted_attempt_is_scanned_too():
     """A93 (M4): a retract no longer forgets what the student already saw."""
     import asyncio
 
-    import routes.learn_loop as ll
     from tests import test_learning_teach_reveal as _tr
 
     turn = _tr._turn()
@@ -358,7 +359,7 @@ def test_a_retracted_attempt_is_scanned_too():
         patch_loop("ai_budget"),
         patch_loop("stream_structured_turn", _tr._stream_with(events, then=RuntimeError())),
     ):
-        asyncio.run(_tr._drain(ll._stream_turn(turn)))
+        asyncio.run(_tr._drain(services.loop.runner._stream_turn(turn)))
     scanned = [c.args[0] for c in turn.record_relayed.call_args_list]
     assert "old text" in scanned and scanned[-1] == "new"
 
