@@ -118,7 +118,7 @@ CASES: list[Case] = [
          "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_step_attempt", "/api/learn/loop/step/attempt",
          lambda t: {"session_id": "s1", "user_id": "u1", "question_hash": "qh", "attempt_text": t},
-         "routes.learn_loop._session_scope", neutral={"genuine": False, "counted": False}),
+         "services.loop.attempts._session_scope", neutral={"genuine": False, "counted": False}),
     Case("loop_probe_answer", "/api/learn/loop/probe/answer", _answer,
          "services.ai_budget.enforce_rate_limit_for", neutral={"graded": False}),
     Case("loop_review_answer", "/api/learn/loop/review/answer",
@@ -131,14 +131,14 @@ CASES: list[Case] = [
     # learning-loop spec §13 A138: a guess at the segment prequestion (free and
     # multiple choice), JSON and stream; A139: a self-explanation reply
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _answer,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer/stream", _answer,
-         "routes.learn_loop._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _reason,
-         "routes.learn_loop._consume_pending_off_loop", async_next=True, neutral=TURN),
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
     Case("loop_self_explain", "/api/learn/loop/self-explain",
          lambda t: {"session_id": "s1", "user_id": "u1", "prompt_id": "p1", "reply": t},
-         "routes.learn_loop._session_scope", neutral={"recorded": False}),
+         "services.loop.self_explain._session_scope", neutral={"recorded": False}),
     # /api/notes/* — the message, or the note an agent action hands a model
     Case("note_chat", "/api/notes/n1/chat", lambda t: {"user_id": "u1", "message": t},
          "routes.notes.offering_course_id", neutral={"degraded": False}),

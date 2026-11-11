@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import pytest
 from psycopg.types.json import Jsonb
 from tests.split_patches import ADMIN_ANALYTICS_MODULES, patch_in
+import services.loop.attempts
 import services.loop.state
 
 pytestmark = pytest.mark.integration
@@ -25,7 +26,6 @@ FROM, TO = "2026-01-01T00:00:00+00:00", "2026-02-01T00:00:00+00:00"
 
 def test_the_hint_mark_survives_the_real_loop_state_round_trip(db_conn):
     from db.connection import table
-    from routes import learn_loop
 
     sid = str(uuid.uuid4())
     now = datetime.now(timezone.utc).timestamp()
@@ -47,7 +47,7 @@ def test_the_hint_mark_survives_the_real_loop_state_round_trip(db_conn):
         }
     )
     doc = services.loop.state._load_loop_state(sid)
-    learn_loop._mark_earnest_blocked(sid, "qh-e", services.loop.state._step_state(doc, "qh-e"), entry)
+    services.loop.attempts._mark_earnest_blocked(sid, "qh-e", services.loop.state._step_state(doc, "qh-e"), entry)
 
     row = db_conn.execute("SELECT loop_state FROM sessions WHERE id = %s", (sid,)).fetchone()
     stored = row["loop_state"]["steps"]["qh-e"]

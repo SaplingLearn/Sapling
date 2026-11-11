@@ -275,6 +275,10 @@ LOOP_MODULES = (
     "services.loop.reports",
     "services.loop.posttest_poses",
     "services.loop.posttest",
+    "services.loop.attempts",
+    "services.loop.prequestion",
+    "services.loop.next_check",
+    "services.loop.self_explain",
 )
 
 

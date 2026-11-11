@@ -43,30 +43,19 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
-import hmac
 import logging
 import re
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from collections import Counter
-from collections.abc import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-import config
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.session_close import run_session_close, shape_close
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer
 from db.connection import pg_quote_value, table
-from learning import answer_guard, arms, gates, ladder, planner, policy, zpd_events
+from learning import planner
 from learning import grade_checkpoint
-from learning import prequestion as prequestion_rules
-from learning import self_explain
-from learning.prequestion_store import store_answer as store_prequestion_answer
-from learning.prequestion_store import stored_answer as stored_prequestion_answer
-from learning.self_explain_store import LOST as SELF_EXPLAIN_LOST
-from learning.self_explain_store import close_prompt as close_self_explain_prompt
 from learning import probe as probe_policy
 from learning.checks import is_servable, posttest_reserves, pretest_form
 from learning.evidence import PlanningPersistenceUnavailable
@@ -78,17 +67,15 @@ from learning.leak import detect_leak
 from learning.learner_brief import store_brief
 from learning.misconceptions import carry, is_key, open_for, recheck_after_release
 from learning.loop_state_store import reported_hashes, revealed_hashes, seen_hashes
-from learning.help_ledger import record_help, record_posed
+from learning.help_ledger import record_posed
 from learning.params import (
     BKT_L0,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_RUN_TIMEOUT_S,
-    HELP_NOVELTY_DIGESTS_MAX,
     PLAN_ORDER,
     PROBE_MAX_SKILLS,
     PROBE_SESSION_CAP,
 )
-from learning.policy import StepState
 from learning.session_close import (
     CLOSE_FALLBACK_DETAILS,
     CloseRecord,
@@ -120,39 +107,25 @@ from models import (
     SelfExplainBody,
     StartSessionBody,
 )
-from services.tutor.messages import save_message_sync as save_message
 from services.tutor.pending import _consume_pending, _consume_pending_off_loop
 from services.tutor.turns import _agent_turn_or_http_error
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, get_pending
 from services import ai_budget, crisis_support, events_service
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop
-from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
+from services.encryption import decrypt_if_present, decrypt_json_column
 from services.check_item_service import get_check_item
 from services.feature_flags import flag_on
-from services import varied_practice
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 import services.loop as loop_service
 from routes._docs import same_doc
 from services.loop.constants import _ALREADY_GRADED, _NOT_ENABLED
-from services.loop.flags import (
-    _ANSWER_CLAIM,
-    _GUESS_IN_FLIGHT,
-    _help_gate_strict_on,
-    _NO_OPEN_PREQUESTION,
-    _NO_OPEN_SELF_EXPLAIN,
-    OPEN_QUESTION_KEY,
-    _PREQUESTION_CUE,
-    _prequestion_on,
-    _self_explain_on,
-)
+from services.loop.flags import _prequestion_on
 from services.loop.state import (
-    _arm_for,
     _CLOSE_IN_PROGRESS,
     _close_phase,
     _CLOSE_STORE_FAILED,
-    _closing,
     _gate,
     _GRADING_IN_FLIGHT,
     _grading_in_flight,
@@ -164,25 +137,8 @@ from services.loop.state import (
     _pending_grade,
     _refuse_while_closing,
     _request_id,
-    _require_no_pending_feedback,
-    _require_open,
-    _require_teaching,
     _session_scope,
-    _step_state,
-    _steps,
     _update_loop_state,
-)
-from services.loop.learner import (
-    _band_ceiling_delta,
-    _band_for,
-    _band_of,
-    _ceiling_for,
-    _genuine,
-    _learner_state,
-    _learner_view,
-    _node_for_item,
-    _prereq_proficient,
-    _seconds_since,
 )
 from services.loop.served import _item_check_kwargs
 from services.loop.reveals import _ledger, _refloor, _reveal_floor, _tag_planning_evidence
@@ -190,7 +146,6 @@ from services.loop.guard import option_text
 from services.loop.planning import (
     _check_goal_version,
     _claim_live,
-    _continue_goal,
     _current_plan,
     _emit_probe_done,
     _goal_practice_unavailable,
@@ -212,26 +167,11 @@ from services.loop.planning import (
     _update_if_changed,
     _validate_goal,
 )
-from services.loop.cursor import _h6_ok
-from services.loop.pose import (
-    _emit_prequestion,
-    _emit_self_explanation,
-    _NO_POSE,
-    _pose_prequestion,
-    _posed_prequestion,
-    _spend_prequestion_item,
-    _superseded_prequestion,
-    _without_claim,
-)
-from services.loop.practice import _activate_next_item, _pose_payload, _worked_example_owed
-from services.loop.turn import _LoopTurn
-from services.loop.runner import _json_turn, _sse
+from services.loop.pose import _NO_POSE, _pose_prequestion, _posed_prequestion
+from services.loop.practice import _pose_payload
 from services.loop.claims import (
-    _grading_open,
     _is_idk_phrase,
     _not_asked,
-    _on_step,
-    _record_attempt,
     _resolve_misconceptions,
     _under_probe_claim,
     _write_misconception,
@@ -410,115 +350,6 @@ def posttest_due(request: Request, user_id: str = Query("")) -> dict:
     return loop_service.posttest_due(request, user_id)
 
 
-# ── Attempt / hint / action / openers / end-session ───────────────────────
-
-
-def _addresses_grader(text: str, check) -> bool:
-    """A33 / Behaviour 12: text the answer guard refuses is never an attempt.
-    The screen reads the item's rubric ids and its own text (so "R1: yes" about
-    the item's own resistor stays an attempt); the bare screen when the item
-    is gone."""
-    terms = answer_guard.item_terms(_item_like(check)) if check is not None else {}
-    return answer_guard.screen(text, **terms).refusal is not None
-
-
-def _attempt_hash(text: str) -> str:
-    """A normalised digest of an attempt (lowercase alphanumeric words), so a
-    repeat with other spacing or punctuation is the same attempt. The text
-    itself is never stored."""
-    words = " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
-    return hashlib.sha256(words.encode("utf-8")).hexdigest()[:16]
-
-
-# ── Spec §13 A133/A134: one attempt's structured signals ────────────────────
-
-#: steps[qh] key (spec §13 A134): keyed digests of the answer tokens the
-#: student's COUNTED attempts on the item held — the strict rule's novelty
-#: memory, kept whichever rule is in force so the zpd.attempt measurement
-#: (A133) sees repeats under either. A digest is HMAC-SHA256 under a key
-#: derived from ENCRYPTION_KEY, over the item's hash and the token: neither a
-#: token nor the attempt text is stored, and the same word on two items does
-#: not match.
-_ATTEMPT_TOKENS = "attempt_tokens"
-
-
-_ATTEMPT_TOKEN_KEY = derive_key("learning/attempt-tokens")
-
-
-#: hex characters kept per digest (48 bits: a new token's chance of matching
-#: one of a step's HELP_NOVELTY_DIGESTS_MAX digests is about 1 in 10^12)
-_ATTEMPT_TOKEN_HEX = 12
-
-
-def _token_digest(question_hash: str, value: str) -> str:
-    mac = hmac.new(_ATTEMPT_TOKEN_KEY, f"{question_hash}\x1f{value}".encode("utf-8"), hashlib.sha256)
-    return mac.hexdigest()[:_ATTEMPT_TOKEN_HEX]
-
-
-def _help_anchor(entry: dict) -> float | None:
-    """When the student last got help on the item: the last rung shown, else
-    the pose (the M1 rung anchor; spec §13 A134 measures time alone from it)."""
-    return entry.get("last_rung_at") if entry.get("last_rung_at") is not None else entry.get("first_shown_at")
-
-
-@dataclass(frozen=True)
-class _AttemptSignals:
-    """Spec §13 A134: what one attempt shows, measured on the attempt — never
-    its length, never the item's key. `standard` is the §3.3 rule's verdict
-    (A120's hedge tolerance included), `strict` the strict rule's."""
-
-    alone_s: float  # since the latest help on the item (the last rung shown, else the pose)
-    required_s: float  # the band's independent-time gate (variant, A5 time scale)
-    novel: bool
-    digests: frozenset[str]
-    standard: bool
-    strict: bool
-
-
-def _attempt_signals(
-    text: str, qh: str, entry: dict, check, *, standard: bool, band: str, variant: str, now: float
-) -> _AttemptSignals:
-    """The strict rule's inputs and verdict for one attempt on the step
-    `entry` (gates.attempt_novelty and gates.strict_genuine_attempt): time
-    alone since the latest help, novelty against the earlier counted attempts
-    and the item's stem. Computed whichever rule is in force."""
-    alone_s = _seconds_since(_help_anchor(entry), now)
-    novel, digests = gates.attempt_novelty(
-        text,
-        stem=getattr(check, "prompt", None),
-        seen=entry.get(_ATTEMPT_TOKENS) or (),
-        digest=lambda value: _token_digest(qh, value),
-    )
-    scale = config.LEARNING_GATE_TIME_SCALE
-    return _AttemptSignals(
-        alone_s=alone_s,
-        required_s=gates.independent_time_required(band, time_scale=scale, variant=variant),
-        novel=novel,
-        digests=digests,
-        standard=standard,
-        strict=gates.strict_genuine_attempt(
-            standard, alone_s, novel, band, time_scale=scale, variant=variant
-        ),
-    )
-
-
-def _remember_attempt_tokens(entry: dict, digests: frozenset[str]) -> None:
-    """Add a counted attempt's token digests to the step's novelty memory,
-    oldest kept first, at most HELP_NOVELTY_DIGESTS_MAX (past it a later
-    attempt is compared with what is kept: the check errs toward counting)."""
-    kept = list(entry.get(_ATTEMPT_TOKENS) or [])
-    have = set(kept)
-    for d in sorted(digests - have):
-        if len(kept) >= HELP_NOVELTY_DIGESTS_MAX:
-            break
-        kept.append(d)
-    entry[_ATTEMPT_TOKENS] = kept
-
-
-def _ms_of(seconds: float) -> int:
-    return int(round(max(0.0, seconds) * 1000))
-
-
 # crisis support: a crisis attempt stops the hint flow — nothing counts toward a hint
 @router.post(
     "/step/attempt",
@@ -528,216 +359,15 @@ def _ms_of(seconds: float) -> int:
         respond=crisis_support.plain_response(genuine=False, counted=False),
     ),
 )
+@same_doc(loop_service.step_attempt)
 def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
-    """Records a genuine attempt for hint unlocking only (spec §3.3). The text
-    is judged by gates.is_genuine_attempt and the A33 screen, and never stored,
-    never graded. M1 (review round 3): at most ONE attempt counts per rung
-    anchor (since the last rung unlock, else the pose), and only one that
-    differs from every earlier attempt on the item (`attempt_hashes`), so
-    spamming the route cannot open the next rung; the route is rate-limited.
-
-    Spec §13 A134: with the `help_gate_strict` flag on, an attempt counts only
-    by the strict rule (gates.strict_genuine_attempt: the band's independent
-    time alone since the latest help, and something no counted attempt on the
-    item said, not a paste of the stem). Off, the response and every step key
-    the §3.3 rule writes are exactly as before A134. Either way the step keeps
-    the counted attempts' token digests (`attempt_tokens`) and one zpd.attempt
-    records the attempt's signals (spec §13 A133)."""
-    _gate(body.user_id, request)
-    _session_scope(body.session_id, body.user_id)
-    state = _load_loop_state(body.session_id)
-    _require_open(state)
-    qh = body.question_hash
-    entry = _steps(state).get(qh)
-    if not isinstance(entry, dict):
-        raise HTTPException(status_code=404, detail="No such check item in this session")
-    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-    node_id = _node_for_item(body.user_id, check) if check else None
-    band, _ = _band_for(body.user_id, node_id)
-    variant = arms.variant_for(body.user_id, node_id or "", _arm_for(body.user_id, request))
-    now = _now_s()
-    independent_s = _seconds_since(entry.get("first_shown_at"), now)
-    standard = bool(
-        _genuine(body.attempt_text, independent_s, band, variant)
-    ) and not _addresses_grader(body.attempt_text, check)
-    strict_on = _help_gate_strict_on(body.user_id)
-
-    def signals_of(e: dict) -> _AttemptSignals:
-        return _attempt_signals(
-            body.attempt_text, qh, e, check, standard=standard, band=band, variant=variant, now=now
-        )
-
-    signals = signals_of(entry)
-    genuine = signals.strict if strict_on else standard
-    digest = _attempt_hash(body.attempt_text)
-    counted: dict = {}
-
-    def record(e: dict) -> None:
-        counted.clear()
-        anchor = (
-            e.get("last_rung_at") if e.get("last_rung_at") is not None else e.get("first_shown_at")
-        )
-        if any(float(t) > float(anchor or 0) for t in e.get("attempted_at") or []):
-            return  # this rung anchor already has its attempt
-        if digest in (e.get("attempt_hashes") or []):
-            return  # the same attempt again is no new work
-        fresh = signals_of(e)
-        if strict_on and not fresh.strict:
-            return  # A134: re-judged on the fresh document (a rung granted, an attempt counted meanwhile)
-        _record_attempt(e, now, failed=True)  # the step stays open: a failed genuine attempt
-        e["attempt_hashes"] = [*(e.get("attempt_hashes") or []), digest]
-        _remember_attempt_tokens(e, fresh.digests)  # A134's novelty memory (either rule)
-        counted["yes"] = True
-
-    rung = int(entry.get("rung") or 0)
-    if genuine:
-        state = _update_loop_state(body.session_id, _on_step(qh, record))
-        entry = _steps(state).get(qh) or entry
-    zpd_events.emit_zpd_attempt(
-        user_id=body.user_id,
-        request_id=_request_id(request),
-        session_id=body.session_id,
-        question_hash=qh,
-        concept_id=node_id,
-        band=band,
-        gate="strict" if strict_on else "standard",
-        rung=Rung(min(max(rung, int(Rung.H0)), int(Rung.H6))),
-        since_pose_ms=_ms_of(independent_s),
-        alone_ms=_ms_of(signals.alone_s),
-        gate_ms=_ms_of(signals.required_s),
-        novel=signals.novel,
-        standard=standard,
-        strict=signals.strict,
-        counted=bool(counted),
-    )
-    return {
-        "genuine": genuine,
-        "counted": bool(counted),
-        "attempts": len(entry.get("attempted_at") or []),
-        "independent_s": independent_s,
-    }
-
-
-def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict) -> None:
-    """Spec §10's earnest-revise signal (spec §13 A109): /hint denied a rung
-    because the ceiling (or the H6 gate) held, on a step with a genuine attempt
-    (`attempted_at` holds genuine attempts only). Never for `no_genuine_attempt`
-    or `dwell` — the dwell clock lifts with the same attempt, so it is not the
-    ceiling holding. Stored on the step's loop_state entry (a StepState.extra
-    key) by the compare-and-set write, so the feedback turn's zpd.step carries
-    it. Written once per step. A measurement: a failed write is logged and the
-    deny is served unchanged."""
-    if not step.attempted_at or entry.get("earnest_blocked") is True:
-        return
-
-    def mark(e: dict) -> None:
-        if e.get("graded_at") is None and e.get("attempted_at"):
-            e["earnest_blocked"] = True
-
-    try:
-        _update_loop_state(session_id, _on_step(qh, mark))
-    except Exception:
-        logger.warning("earnest_blocked not recorded for %s", qh, exc_info=True)
-
-
-def _rung_gate_denial(step: StepState, now: float) -> dict | None:
-    """gates.rung_unlock's denial for /hint — "dwell" when a genuine attempt
-    came since the rung anchor, else "no_genuine_attempt" — or None (open)."""
-    if gates.rung_unlock(step, now, time_scale=config.LEARNING_GATE_TIME_SCALE):
-        return None
-    anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
-    attempted = any(t > anchor for t in step.attempted_at)
-    return {"denied": "dwell" if attempted else "no_genuine_attempt"}
-
-
-def _hint_gate_denial(
-    body: LoopHintBody, request: Request, entry: dict, step: StepState, now: float
-) -> dict | None:
-    """`_rung_gate_denial`, worded for the strict rule (spec §13 A134). With
-    the `help_gate_strict` flag on, a step with no counted attempt since the
-    rung anchor whose time alone with that help is still short of the band's
-    independent-time gate answers "dwell" (LoopLearn: "Stay with this step a
-    little longer before the next hint.") — the time is what is missing, not
-    the attempt. Flag off: exactly `_rung_gate_denial`, and nothing more is read."""
-    denied = _rung_gate_denial(step, now)
-    if denied != {"denied": "no_genuine_attempt"} or not _help_gate_strict_on(body.user_id):
-        return denied
-    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-    node_id = _node_for_item(body.user_id, check) if check else None
-    band, _ = _band_for(body.user_id, node_id)
-    variant = arms.variant_for(body.user_id, node_id or "", _arm_for(body.user_id, request))
-    required = gates.independent_time_required(
-        band, time_scale=config.LEARNING_GATE_TIME_SCALE, variant=variant
-    )
-    if _seconds_since(_help_anchor(entry), now) < required:
-        return {"denied": "dwell"}
-    return denied
+    return loop_service.step_attempt(body, request)
 
 
 @router.post("/hint")
+@same_doc(loop_service.hint)
 def hint(body: LoopHintBody, request: Request) -> dict:
-    """Moves the active item's rung up one, behind the dwell / attempt gate, the
-    ceiling and — at H6 — the item predicates (A32). The hint TEXT is the next
-    `[ACTION: hint]` turn's (PKG-13), deterministic when a leak-clean payload
-    exists. No model call. Spec §13 A122: on an item that opens on the worked
-    example (`worked_first`, set at activation), the first hint unlocks H4
-    with no attempt and no dwell before it while policy.worked_example_rung
-    grants it — the example comes FIRST; every later rung keeps the gate."""
-    _gate(body.user_id, request)
-    _session_scope(body.session_id, body.user_id)
-    state = _load_loop_state(body.session_id)
-    _require_teaching(state)
-    qh = body.question_hash
-    entry = _steps(state).get(qh)
-    if not isinstance(entry, dict) or state.get("current") != qh:
-        return {"denied": "no_active_item"}
-    step = _step_state(state, qh)
-    now = _now_s()
-    may_jump = entry.get("worked_first") is True and step.rung < Rung.H4
-    if not may_jump and (denied := _hint_gate_denial(body, request, entry, step, now)):
-        return denied
-    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-    node_id = _node_for_item(body.user_id, check) if check else None
-    learner = _learner_state(body.user_id, node_id)
-    band, _ = _band_of(learner)
-    prereq = _prereq_proficient(body.user_id, node_id) if node_id else True
-    view = _learner_view(learner, band=band, prereq_proficient=prereq)
-    delta = _band_ceiling_delta(state, node_id)  # spec §13 A122: the band's ceiling only
-    jump = policy.worked_example_rung(view, step, worked_first=may_jump, band_delta=delta)
-    if jump is None and may_jump and (denied := _hint_gate_denial(body, request, entry, step, now)):
-        return denied  # the learner left the worked-example row: the ordinary gate
-    # an empty message: showed_work comes from the step alone — the floor-at-H3 rule
-    # is applied by the turn that carried the work, never by a hint request
-    ceiling, _ = _ceiling_for(
-        step=step, learner=view, message="", independent_s=0.0, band_delta=delta
-    )
-    next_rung = int(jump) if jump is not None else int(step.rung) + 1
-    if next_rung > int(ceiling):
-        _mark_earnest_blocked(body.session_id, qh, step, entry)
-        return {"denied": "ceiling"}
-    if next_rung == int(Rung.H6) and not _h6_ok(state, qh, entry, check):
-        _mark_earnest_blocked(body.session_id, qh, step, entry)
-        return {"denied": "h6_gate"}
-    accepted: dict = {}
-
-    def unlock(e: dict) -> None:
-        accepted.clear()
-        if int(e.get("rung") or 0) >= next_rung:
-            return  # a concurrent request already moved it this far
-        e["rung"], e["last_rung_at"] = next_rung, now
-        e["rungs"] = [*(e.get("rungs") or []), {"rung": next_rung, "at": now}]
-        if e.get("offered"):
-            e["offered"] = False
-            accepted["offer"] = True
-
-    _update_loop_state(body.session_id, _on_step(qh, unlock))
-    # A93: the rung is granted now — recorded in the help ledger before its text is served
-    _ledger(record_help, body.user_id, qh, next_rung, source="loop", session_id=body.session_id)
-    if accepted.get("offer"):
-        zpd_events.emit_zpd_offer(
-            user_id=body.user_id, request_id=_request_id(request), accepted=True, band=band
-        )
-    return {"rung": next_rung, "intent": ladder.intent(Rung(next_rung))}
+    return loop_service.hint(body, request)
 
 
 @router.post("/action", dependencies=_RATE_LIMITED)
@@ -767,336 +397,27 @@ async def start_session_stream(body: StartSessionBody, request: Request):
 
 
 @router.post("/check/next")
+@same_doc(loop_service.check_next)
 def check_next(body: LoopCheckNextBody, request: Request) -> dict:
-    """ "Check me" (spec §9, A27): the current concept's next check item and its
-    pose. No model call, so no rate limit and no invariant-23 run site; the
-    budget is read only for the novice pause (§3.5): a novice-band concept is
-    not activated at the hard level. The activation is tried on a read copy
-    first (the budget read is not a mutate's business), then applied to the
-    fresh document by one compare-and-set write."""
-    _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
-    _, course_id = _session_scope(body.session_id, body.user_id)
-    state = _load_loop_state(body.session_id)
-    _require_teaching(state)
-    _require_no_pending_feedback(state)
-    active = state.get("current")
-    entry = (state.get("steps") or {}).get(active) if active else None
-    now = _now_s()
-    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
-        return {"phase": "check", "pending_grade": _pending_grade(state)}
-    if _grading_open(entry, now):
-        item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-        if item is not None:  # idempotent (A122: a worked example still owed says so)
-            pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, state, active))
-            return {"phase": "check", "check": pose}
-
-    def activate(st: dict, out: dict) -> None:
-        out.clear()
-        _require_teaching(st)
-        _require_no_pending_feedback(st)  # recheck on the fresh CAS document too
-        cur = st.get("current")
-        cur_entry = (st.get("steps") or {}).get(cur) if cur else None
-        if isinstance(cur_entry, dict) and grade_checkpoint.KEY in cur_entry:
-            out["pending_grade"] = _pending_grade(st)
-            return
-        if _grading_open(cur_entry, now):
-            if cur_entry.get("check_item_id") and get_check_item(cur_entry["check_item_id"]):
-                out["qh"] = cur  # another request activated one meanwhile
-                return
-        # Spec §13 A138 (review fix): a guess being saved under its claim is
-        # the one open prompt until it commits — no check opens over it
-        card = prequestion_rules.open_record(st, st.get("concept"))
-        if card is not None and _live(card, _ANSWER_CLAIM, now):
-            raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
-        if cur:
-            # withdrawn (A23) or held (A124, A123), graded, or left under a
-            # stale claim (C2): drop it; the entry stays
-            st["current"] = None
-        out["qh"] = _activate_next_item(body.user_id, course_id, st, now=now)
-        if out["qh"] is not None:
-            # Spec §13 A121: the student chose the check over the tutor's last
-            # question; the card is now the one open prompt, so a later chat
-            # message is no reply to that question
-            st[OPEN_QUESTION_KEY] = False
-            # Spec §13 A139 / A138: so is it over an open self-explanation prompt
-            # (its row stays 'open': never replied) and over a prequestion card
-            # on the concept the check opens (the segment started on a check)
-            self_explain.close_open(st)
-            node = (st.get("steps") or {}).get(out["qh"], {}).get("node_id")
-            rec = prequestion_rules.open_record(st, node)
-            if rec is not None:
-                records = dict(prequestion_rules.records(st))
-                records[node] = {**_without_claim(rec), "status": prequestion_rules.SUPERSEDED}
-                st[prequestion_rules.KEY] = records
-                out["pq_superseded"] = (node, rec)
-
-    trial: dict = {}
-    activate(state, trial)
-    if trial.get("qh") is not None:
-        band, _ = _band_for(body.user_id, state["steps"][trial["qh"]]["node_id"])
-        if band == "novice":
-            decision = ai_budget.check(
-                body.user_id,
-                "tutor",
-                "novice",
-                session_tutor_requests=int(state.get("tutor_requests") or 0),
-                session_deep_requests=int(state.get("deep_requests") or 0),
-                arm_session=bool(_arm_for(body.user_id, request)),
-            )
-            if decision.pause_novice:
-                raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
-    out: dict = {}
-    saved = _update_loop_state(body.session_id, lambda st: activate(st, out))
-    if out.get("pending_grade"):
-        return {"phase": "check", "pending_grade": out["pending_grade"]}
-    qh = out.get("qh")
-    if qh is None:  # the cursor may have moved
-        saved = _continue_goal(body.session_id, body.user_id, course_id, saved)
-        plan = saved.get("plan") if isinstance(saved.get("plan"), dict) else {}
-        out = {"phase": _loop_phase(saved), "plan_done": bool(plan.get("done")) and _loop_phase(saved) != "plan", "check": None}
-        if saved.get("goal") and isinstance(plan.get("goal_progress"), dict):
-            out["goal_progress"] = plan["goal_progress"]
-        if saved.get("goal"):
-            out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
-        out.update(_preparing(body.user_id, course_id))  # A128
-        return out
-    item = get_check_item(saved["steps"][qh]["check_item_id"])
-    # A122: an item that opens on the worked example says so (the client asks for it)
-    pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, saved, qh))
-    _ledger(record_posed, body.user_id, qh, source="loop", session_id=body.session_id)  # A93
-    varied_practice.note_posed(body.user_id, body.session_id, item)  # A141
-    save_message(body.session_id, "assistant", pose["prompt"])
-    if out.get("pq_superseded"):  # spec §13 A138
-        node, rec = out["pq_superseded"]
-        _superseded_prequestion(body.user_id, body.session_id, _request_id(request), node, rec, at=now)
-    return {"phase": "check", "check": pose}
-
-
-# ── The segment prequestion's answer (spec §13 A138) ───────────────────────
-#
-# One request records the guess and serves its explanation: the guess is
-# stored encrypted (learning_prequestions), the item is revealed for the
-# student at once (learning_reveals, A88 — before any text goes out), the
-# card's record moves to `answered`, the guess is saved as the student's
-# message, and the turn that explains it runs (its lead, from code, is the
-# answer; A51 m1). Nothing is graded: no grade_answer, no evidence (invariant
-# 26: this route is not an evidence writer), no misconception, no help-ledger
-# rung, no band-control input. A retry after a failed explanation (a stored
-# guess) ignores the guess fields and serves the explanation again; so does
-# the next teach turn, whatever it is.
-
-
-def _validated_guess(body: PrequestionAnswerBody, item) -> tuple[bool, dict | None]:
-    """(no_idea, guess) for a posed prequestion: "no idea"; a choice among the
-    item's own letters, with an optional reason (multiple choice); or a
-    non-empty answer (free). Anything else is a 422 and nothing is stored."""
-    if body.no_idea:
-        return True, None
-    if item.format == "mc_reason":
-        option = (body.option or "").strip()
-        if option not in {o.letter for o in item.options or []}:
-            raise HTTPException(status_code=422, detail="Choose one of the options, or say you have no idea.")
-        return False, {"option": option, "reason": body.reason.strip()}
-    answer = body.answer.strip()
-    if not answer:
-        raise HTTPException(status_code=422, detail="Write a guess, or say you have no idea.")
-    return False, {"answer": answer}
-
-
-async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> tuple[dict, tuple[str, str]]:
-    """Record the guess (a stored one stands) and return (loop state, scope)
-    for the explaining turn. 409 when no prequestion with this hash is open on
-    the plan's current concept — or the flag is off for the student."""
-    scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
-    course_id = scope[1]
-    if not _prequestion_on(body.user_id):
-        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-    state = _load_loop_state(body.session_id)
-    _require_teaching(state)
-    if _pending_grade(state):
-        raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
-    node = state.get("concept")
-    rec = prequestion_rules.record_for(state, node)
-    if (
-        rec is None
-        or state.get("current")
-        or rec.get("question_hash") != body.question_hash
-        or rec.get("status") not in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
-    ):
-        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-    item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
-    if item is None:  # A23 withdrawal / A124, A123 holds: nothing left to explain
-        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-    if rec.get("status") == prequestion_rules.ANSWERED:
-        return state, scope  # a retry: the stored guess stands
-    no_idea, guess = _validated_guess(body, item)
-    now = _now_s()
-    claim = str(uuid.uuid4())
-
-    # Review fix (spec §13 A138): the guess commits under a CLAIM, the way a
-    # grade does (C2). (1) A compare-and-set write claims the open card — or
-    # answers 409 and writes nothing: the card is not open, a check is, the
-    # session is closing, or another request holds the claim. While it holds,
-    # nothing supersedes the card, no check opens and no close starts. (2) The
-    # stored row is the COMMIT POINT: written, then read back — the first stored
-    # guess stands, and whatever this request sent, THAT guess is committed and
-    # explained (second review: a 409 here stranded a student whose first
-    # request stored its guess and then failed — every retry with another
-    # guess, "No idea" or an edited reason was refused for good); the
-    # transcript and the event are built from it. (3) The reveal, before any
-    # text is served. (4) The record moves to `answered` under the claim — only
-    # while the card is still `posed` and no check is open (a claim that went
-    # stale may have lost its card to a check). A failure before (4) gives the
-    # claim back; any retry finishes the commit.
-    def take(doc: dict) -> None:
-        _refuse_while_closing(doc, now)
-        cur = prequestion_rules.open_record(doc, node)
-        if cur is None or cur.get("question_hash") != item.question_hash or doc.get("current"):
-            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-        if _live(cur, _ANSWER_CLAIM, now):
-            raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
-        records = dict(prequestion_rules.records(doc))
-        records[node] = {**cur, _ANSWER_CLAIM: claim, f"{_ANSWER_CLAIM}_at": now}
-        doc[prequestion_rules.KEY] = records
-
-    def give_back(doc: dict) -> None:
-        cur = prequestion_rules.record_for(doc, node)
-        if cur is not None and cur.get(_ANSWER_CLAIM) == claim:
-            records = dict(prequestion_rules.records(doc))
-            records[node] = _without_claim(cur)
-            doc[prequestion_rules.KEY] = records
-
-    _update_loop_state(body.session_id, take, require_open=True, require_existing=True)
-    posed = rec.get("posed_at")
-    posed_at = datetime.fromtimestamp(
-        float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
-    )
-    try:
-        await asyncio.to_thread(
-            store_prequestion_answer,
-            user_id=body.user_id,
-            session_id=body.session_id,
-            course_id=course_id or None,
-            node_id=node,
-            item=item,
-            no_idea=no_idea,
-            guess=guess,
-            posed_at=posed_at,
-        )
-        stored = await asyncio.to_thread(stored_prequestion_answer, body.user_id, body.session_id, node)
-        if stored is None or stored.get("question_hash") != item.question_hash:
-            raise RuntimeError("the stored prequestion answer could not be read back")
-    except Exception as exc:
-        logger.warning("prequestion guess not stored", exc_info=True)
-        _give_back_quietly(body.session_id, give_back)
-        raise HTTPException(status_code=503, detail="Your guess could not be saved; try again") from exc
-    if (bool(stored["no_idea"]), stored["guess"]) != (no_idea, guess):
-        logger.info("prequestion answer: a stored earlier guess stands and is the one explained")
-    # its answer is about to be shown: spent now (A88, before any text), so the
-    # item never serves this student again — a check, a review item or a
-    # post-test item; its ledger 'posed' row closes
-    await asyncio.to_thread(_spend_prequestion_item, body.user_id, body.session_id, item.question_hash, at=now)
-
-    def commit(doc: dict) -> None:
-        cur = prequestion_rules.record_for(doc, node)
-        if (
-            cur is None
-            or cur.get(_ANSWER_CLAIM) != claim
-            or cur.get("status") != prequestion_rules.POSED
-            or doc.get("current")
-        ):
-            # the claim went stale and the card was superseded or re-claimed,
-            # or a check opened: no explanation over it (second review, item 3)
-            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-        records = dict(prequestion_rules.records(doc))
-        records[node] = {
-            **_without_claim(cur), "status": prequestion_rules.ANSWERED, "answered_at": now,
-            "no_idea": bool(stored["no_idea"]),
-        }
-        doc[prequestion_rules.KEY] = records
-
-    # #117: the loop_state write and the transcript row are sync PostgREST
-    # calls, so they hop off the event loop (spec §13 A149)
-    state = await asyncio.to_thread(
-        _update_loop_state, body.session_id, commit, require_open=True, require_existing=True
-    )
-    stored_guess = stored["guess"] or {}
-    await asyncio.to_thread(
-        save_message,
-        body.session_id,
-        "user",
-        prequestion_rules.render_guess(
-            no_idea=bool(stored["no_idea"]),
-            answer=str(stored_guess.get("answer") or ""),
-            option=stored_guess.get("option"),
-            reason=str(stored_guess.get("reason") or ""),
-        ),
-    )
-    _emit_prequestion(
-        body.user_id,
-        _request_id(request),
-        body.session_id,
-        node,
-        "answered",
-        question_hash=item.question_hash,
-        no_idea=bool(stored["no_idea"]),
-        format=item.format,
-        difficulty=int(item.difficulty),
-    )
-    return state, scope
-
-
-def _give_back_quietly(session_id: str, give_back: Callable[[dict], None]) -> None:
-    """Give an answer claim back after a failure (never raises: a claim that
-    cannot be given back goes stale after LOOP_GRADING_CLAIM_STALE_S)."""
-    try:
-        _update_loop_state(session_id, give_back)
-    except Exception:
-        logger.warning("prequestion answer claim not given back; it goes stale", exc_info=True)
-
-
-def _prequestion_turn(
-    state: dict, scope: tuple[str, str], body: PrequestionAnswerBody, request: Request, *, loop_on: bool
-) -> _LoopTurn:
-    """The turn that explains the answered prequestion: a teach turn on the
-    plan's concept, its message the route's cue (trusted server text; the
-    guess is the student's saved message, enveloped in the history, A51)."""
-    chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=_PREQUESTION_CUE)
-    return _LoopTurn(
-        body=chat_body,
-        request=request,
-        message=_PREQUESTION_CUE,
-        kind="prequestion",
-        persist_user_row=False,
-        state=state,
-        scope=scope,
-        loop_on=loop_on,
-    )
+    return loop_service.check_next(body, request)
 
 
 @router.post(
     "/prequestion/answer",
     dependencies=_screened("loop_prequestion_answer", "answer", "reason", respond=crisis_support.turn_response),
 )
+@same_doc(loop_service.prequestion_answer)
 async def prequestion_answer(body: PrequestionAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
-    return await _json_turn(
-        lambda: _prequestion_turn(state, scope, body, request, loop_on=loop_on), "loop prequestion agent"
-    )
+    return await loop_service.prequestion_answer(body, request)
 
 
 @router.post(
     "/prequestion/answer/stream",
     dependencies=_screened("loop_prequestion_answer", "answer", "reason", respond=crisis_support.turn_stream),
 )
+@same_doc(loop_service.prequestion_answer_stream)
 async def prequestion_answer_stream(body: PrequestionAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    await _consume_pending_off_loop(body.session_id, body.user_id)
-    state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
-    return _sse(_prequestion_turn(state, scope, body, request, loop_on=loop_on))
+    return await loop_service.prequestion_answer_stream(body, request)
 
 
 # ── The self-explanation reply (spec §13 A139) ─────────────────────────────
@@ -1106,91 +427,9 @@ async def prequestion_answer_stream(body: PrequestionAnswerBody, request: Reques
     "/self-explain",
     dependencies=_screened("loop_self_explain", "reply", respond=crisis_support.plain_response(recorded=False)),
 )
+@same_doc(loop_service.self_explain_reply)
 def self_explain_reply(body: SelfExplainBody, request: Request) -> dict:
-    """The student's reply to the open self-explanation prompt, or a skip (an
-    empty reply is a skip). Stored encrypted with its juncture
-    (learning_self_explanations) and saved as the student's message; never
-    graded, never evidence, never a misconception — no model reads it here (the
-    next tutor turn may acknowledge it, flag-on prompt only). Then, when the
-    prompt closed a segment, the next segment's prequestion is posed (A138:
-    the self-explanation comes first, one open prompt at a time)."""
-    _gate(body.user_id, request)
-    _, course_id = _session_scope(body.session_id, body.user_id)
-    if not _self_explain_on(body.user_id):
-        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
-    state = _load_loop_state(body.session_id)
-    _require_teaching(state)
-    now = _now_s()
-    _refuse_while_closing(state, now)  # a closing session writes nothing
-    prompt = self_explain.open_prompt(state)
-    if prompt is None or prompt.get("id") != body.prompt_id:
-        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
-    reply = "" if body.skip else body.reply.strip()
-    # Review fix: the row is the COMMIT POINT — closed only while it is 'open',
-    # so of two concurrent replies the first stands and the other writes
-    # nothing (a 409); the loop state, the transcript and the event follow it
-    try:
-        outcome = close_self_explain_prompt(
-            prompt,
-            user_id=body.user_id,
-            session_id=body.session_id,
-            course_id=course_id,
-            reply=reply or None,
-            closed_at=datetime.fromtimestamp(now, tz=timezone.utc),
-        )
-    except Exception as exc:
-        logger.warning("self-explanation reply not stored", exc_info=True)
-        raise HTTPException(status_code=503, detail="Your explanation could not be saved; try again") from exc
-    if outcome == SELF_EXPLAIN_LOST:
-        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
-    pq_on = _prequestion_on(body.user_id)
-    out: dict = {}
-
-    def close(doc: dict) -> None:
-        # the reply is committed: a prompt a turn closed meanwhile, or a close
-        # that started meanwhile, changes nothing here and refuses nothing.
-        # Second review: exactly ONE request writes the reply's transcript row
-        # and event — the one whose write first records it here, a slow winner
-        # or its retry alike
-        out.clear()
-        out["emit"] = self_explain.mark_closed_by_reply(doc, body.prompt_id)
-        cur = self_explain.open_prompt(doc)
-        if _closing(doc, now) or cur is None or cur.get("id") != body.prompt_id:
-            return
-        self_explain.close_open(doc)
-        if reply:
-            self_explain.set_ack(doc, body.prompt_id)
-        out["pose"] = _pose_prequestion(body.user_id, course_id, doc, now=now) if pq_on else _NO_POSE
-
-    try:
-        _update_loop_state(body.session_id, close, require_open=True, require_existing=True)
-    except HTTPException as exc:
-        if exc.status_code != 409:
-            raise  # a retry finishes it (SAME)
-        # the session closed meanwhile: the committed reply's row stands for
-        # the admin report; with no write to decide it, no transcript row
-        out.clear()
-    request_id = _request_id(request)
-    if out.get("emit"):
-        if reply:
-            try:
-                save_message(body.session_id, "user", reply)
-            except Exception:
-                logger.warning("self-explanation reply row not saved", exc_info=True)
-        _emit_self_explanation(
-            body.user_id,
-            request_id,
-            body.session_id,
-            prompt,
-            "replied" if reply else "skipped",
-            **({"reply_chars": len(reply)} if reply else {}),
-        )
-    prequestion = _posed_prequestion(body.user_id, body.session_id, request_id, out.get("pose", _NO_POSE))
-    return {
-        "recorded": True,
-        "status": "replied" if reply else "skipped",
-        **({"prequestion": prequestion} if prequestion else {}),
-    }
+    return loop_service.self_explain_reply(body, request)
 
 
 def _unreleased_items(doc: dict | None) -> list:

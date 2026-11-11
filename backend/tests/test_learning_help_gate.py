@@ -362,7 +362,7 @@ def test_the_attempt_text_is_never_stored_and_the_digests_are_keyed(gate_on, sea
     doc = json.dumps(seams.store["doc"])
     for word in ("base", "case", "returns", "one"):
         assert f'"{word}"' not in doc and word not in seams.store["doc"]["steps"]["qh-1"]["attempt_tokens"]
-    from routes.learn_loop import _token_digest
+    from services.loop.attempts import _token_digest
 
     tokens = seams.store["doc"]["steps"]["qh-1"]["attempt_tokens"]
     assert _token_digest("qh-1", "base") in tokens
@@ -371,7 +371,7 @@ def test_the_attempt_text_is_never_stored_and_the_digests_are_keyed(gate_on, sea
 
 def test_the_novelty_memory_is_bounded_and_errs_toward_counting(gate_on, seams):
     entry: dict = {"attempt_tokens": [f"{i:012x}" for i in range(params.HELP_NOVELTY_DIGESTS_MAX)]}
-    from routes.learn_loop import _remember_attempt_tokens
+    from services.loop.attempts import _remember_attempt_tokens
 
     _remember_attempt_tokens(entry, frozenset({"ffffffffffff"}))
     assert len(entry["attempt_tokens"]) == params.HELP_NOVELTY_DIGESTS_MAX

@@ -116,6 +116,13 @@ Modules, lowest first (each imports only the ones above it):
   releases.
 - ``posttest``: The post-test handlers (PKG-14): start, answer, shown and due
   (with its per-process due cache, A126).
+- ``attempts``: POST /step/attempt and POST /hint: the genuine-attempt signals
+  (A134) and the hint ladder's gates.
+- ``prequestion``: POST /prequestion/answer (JSON and stream, A138): the
+  student's guess and the turn that explains its answer.
+- ``next_check``: POST /check/next: the next check item of the plan.
+- ``self_explain``: POST /self-explain (A139): the student's self-explanation
+  reply.
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until
@@ -132,21 +139,27 @@ _PUBLIC = {
     "chat_stream": "teach",
     "check_answer": "grading",
     "check_answer_stream": "grading",
+    "check_next": "next_check",
+    "hint": "attempts",
     "list_open_sessions": "sessions",
     "posed_items": "posed",
     "posttest_answer": "posttest",
     "posttest_due": "posttest",
     "posttest_shown": "posttest",
     "posttest_start": "posttest",
+    "prequestion_answer": "prequestion",
+    "prequestion_answer_stream": "prequestion",
     "rating": "reports",
     "report_item": "reports",
     "review_active": "reviews",
     "review_answer": "reviews",
     "review_next": "reviews",
     "review_summary": "reviews",
+    "self_explain_reply": "self_explain",
     "start_session": "teach",
     "start_session_stream": "teach",
     "status": "sessions",
+    "step_attempt": "attempts",
 }
 
 __all__ = sorted(_PUBLIC)

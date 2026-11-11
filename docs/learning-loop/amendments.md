@@ -140,7 +140,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A32 | ladder | H6 (the full solution) needs a practice item; ungraded is not practice | `backend/learning/gates.py::h6_allowed` |
 | A40 | bands | Tuning decisions: eval floors are min-of-3, "harder" needs four attempts, "no idea" is I-don't-know | `backend/learning/policy.py::band_control` |
 | A46 | tutor turn | The tutor's turn is structured: key idea, body, question (question last) | `backend/learning/turn_shape.py::render_turn` |
-| A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/routes/learn_loop.py::step_attempt` |
+| A53 | gates | `/step/attempt` counts at most one new, distinct attempt per rung | `backend/services/loop/attempts.py::step_attempt` |
 | A54 | ladder | The ladder serves the fields its lowest rungs fix, instead of model text | `backend/services/loop/served.py::_served_fields` |
 | A55 | probe/plan | The probe and the plan as built (phases, routes, approval) | `backend/routes/learn_loop.py::probe_next` |
 | A60 | close | The session close as built: one close per session, by claim | `backend/routes/learn_loop.py::close_session` |
