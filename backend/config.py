@@ -48,18 +48,23 @@ ALLOWED_EMAIL_DOMAINS = [
 ]
 
 # Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7,
-# post-launch parse — PKG-14b). The loop is the default for every student.
+# post-launch parse — PKG-14b). The env var is the emergency kill switch on top of
+# the per-student `learning_loop` feature flag (default off; learning/gate.py): the
+# loop is on for a student only when this is not thrown AND their flag is on.
 _raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()
-# Kill switch (spec §13 A14): any falsy spelling turns the loop off; unset or empty means ON.
+# Kill switch (spec §13 A14): any falsy spelling turns the loop off for everyone;
+# unset or empty means the switch is not thrown (the flag decides).
 LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}
 if _raw not in {"false", "0", "off", "no", "", "true", "1", "on", "yes"}:
-    # Still ON (the §7 table is unchanged), but say so: a typo such as "disabled"
-    # or "n" would otherwise leave the loop on with no trace (PKG-14 review).
+    # Still not thrown (the §7 table is unchanged), but say so: a typo such as
+    # "disabled" or "n" would otherwise leave the switch open with no trace
+    # (PKG-14 review).
     import logging
 
     logging.getLogger(__name__).warning(
-        "LEARNING_LOOP_ENABLED=%r is not a recognised spelling; the learning loop is ON. "
-        "Use false/0/off/no to turn it off.",
+        "LEARNING_LOOP_ENABLED=%r is not a recognised spelling; the kill switch is NOT "
+        "thrown (the learning_loop flag decides per student). Use false/0/off/no to "
+        "turn the loop off for everyone.",
         _raw,
     )
 # Spec §13 A5: every GATE_* seconds constant is scaled by this factor (production never

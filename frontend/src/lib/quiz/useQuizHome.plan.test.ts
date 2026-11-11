@@ -8,9 +8,10 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphNode } from "@/lib/types";
 
-const flags = vi.hoisted(() => ({ plan: "on" }));
+const flags = vi.hoisted(() => ({ plan: "on", loop: "on" }));
 vi.mock("@/context/FlagsContext", () => ({
-  useFlag: (key: string) => (key === "quiz_concept_plan" ? flags.plan : "off"),
+  useFlag: (key: string) =>
+    key === "quiz_concept_plan" ? flags.plan : key === "learning_loop" ? flags.loop : "off",
 }));
 
 const quizApi = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ const COURSES = [
 beforeEach(() => {
   window.localStorage.clear();
   flags.plan = "on";
+  flags.loop = "on";
   coreApi.getCourses.mockResolvedValue({ courses: COURSES });
   coreApi.getGraph.mockResolvedValue({
     nodes: [node("weakest", { mastery_score: 0.05 }), node("due-a"), node("due-b"), node("ready")],
@@ -100,6 +102,14 @@ describe("useQuizHome with the learner model's plan", () => {
 
   it("never asks for the plan while the flag is off", async () => {
     flags.plan = "off";
+    const { result } = renderHook(() => useQuizHome("user_andres", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(quizApi.getQuizPlan).not.toHaveBeenCalled();
+    expect(result.current.planned).toBe(false);
+  });
+
+  it("never asks for the plan while the student's learning_loop flag is off", async () => {
+    flags.loop = "off";
     const { result } = renderHook(() => useQuizHome("user_andres", ""));
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(quizApi.getQuizPlan).not.toHaveBeenCalled();

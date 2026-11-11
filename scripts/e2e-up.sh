@@ -306,17 +306,23 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
-# Learning loop (PKG-14b, spec §7 / §11.4): the loop is the default — the lane
-# runs the CODE default, so nothing is exported here. Run
-# `LEARNING_LOOP_ENABLED=false make e2e-up` for the kill-switch lane (the legacy
-# Learn screen, tutor and Study UI; /api/learn/loop/* 404s). The seeded loop
-# users are ordinary students now. frontend/e2e/support/fixtures.ts::killSwitchLane
+# Learning loop (PKG-14b, spec §7 / §11.4): the loop is on for a student only
+# when the LEARNING_LOOP_ENABLED kill switch is not thrown AND their
+# `learning_loop` feature flag is on; the flag ships off. The lanes test the
+# loop, so the flag is switched on for every student here through its generic
+# env override (a value the caller exported wins), in BOTH lanes: the default
+# lane then runs the loop, and the kill-switch lane stays the kill switch's
+# (`LEARNING_LOOP_ENABLED=false make e2e-up`: the legacy Learn screen, tutor
+# and Study UI; /api/learn/loop/* 404s) whatever the flag says. The seeded loop
+# users are ordinary students. frontend/e2e/support/fixtures.ts::killSwitchLane
 # is the one lane parse Playwright uses; global-setup.ts asserts the stack agrees.
 # (backend/.env must not name the variable — the preflight fails fast on it.)
+export SAPLING_FLAG_LEARNING_LOOP="${SAPLING_FLAG_LEARNING_LOOP:-on}"
+echo "  ℹ SAPLING_FLAG_LEARNING_LOOP=$SAPLING_FLAG_LEARNING_LOOP for this stack (the learning_loop flag ships off)"
 if [ -n "${LEARNING_LOOP_ENABLED+x}" ]; then
   echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED from the shell (spec §7 parse: false/0/off/no = the kill-switch lane)"
 else
-  echo "  ℹ LEARNING_LOOP_ENABLED unset: the default lane (the loop is on for every student)"
+  echo "  ℹ LEARNING_LOOP_ENABLED unset: the default lane (the loop is on for every student whose flag is on)"
 fi
 # Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
 # gates' independent-work and dwell times) by 0.01, so a journey waits a

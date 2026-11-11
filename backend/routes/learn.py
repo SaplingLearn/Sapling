@@ -12,13 +12,15 @@ patch must target the module that LOOKS UP the name now (``patch_tutor`` in
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 import services.tutor as tutor_service
 from db.scope import service_route
 from learning.gate import learning_loop_for_request
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from routes._docs import same_doc
+from services.auth_guard import get_session_user_id
 
 # ── Re-exports: every name that moved out of this file (#118) ────────────────
 from services.tutor.course import (  # noqa: F401  (re-export, #118)
@@ -119,34 +121,58 @@ def _loop_delegate(name: str):
     return delegate
 
 
-def _loop_for(user_id: str, name: str):
+def _loop_for(user_id: str | None, name: str, request: Request):
     """Owner decision 00 (A38): the learning-loop gate, evaluated ONCE at
-    route entry. The loop's handler when it is on (the default), else None:
-    the tutor body then runs the kill-switch path (spec §11.6). The gate is
-    the env kill switch alone (PKG-14b): no read of any kind, so evaluating it
-    before the body's own checks changes nothing they do."""
-    return _loop_delegate(name) if learning_loop_for_request(user_id) else None
+    route entry — the env kill switch, then this student's `learning_loop`
+    flag (learning/gate.py). The loop's handler when it is on, else None: the
+    tutor body then runs the pre-loop path (spec §11.6), the kill switch's and
+    a flag-off student's alike. The answer is carried on
+    `request.state.learning_loop` as `(user_id, answer)`, so the delegated
+    loop handler's `_gate`
+    (require_self first) does not resolve it again. The flag read may reach
+    the flag store: call this from a sync route (the threadpool), and
+    `_loop_for_async` from an `async def` one. It decides nothing the body's
+    own checks do: a request for another student's id is refused by the body
+    or the loop handler either way."""
+    loop_on = learning_loop_for_request(user_id)
+    request.state.learning_loop = (user_id, loop_on)
+    return _loop_delegate(name) if loop_on else None
+
+
+async def _loop_for_async(user_id: str | None, name: str, request: Request):
+    """`_loop_for` from an `async def` route: the gate is resolved in a worker
+    thread, never on the event loop (the flag resolver can read the store)."""
+    return await run_in_threadpool(_loop_for, user_id, name, request)
+
+
+def _session_user_or_none(request: Request) -> str | None:
+    try:
+        return get_session_user_id(request)
+    except HTTPException:
+        return None
 
 
 @router.post("/start-session")
 @same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
     return await tutor_service.start_session(
-        body, request, loop_handler=_loop_for(body.user_id, "start_session")
+        body, request, loop_handler=await _loop_for_async(body.user_id, "start_session", request)
     )
 
 
 @router.post("/chat")
 @same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
-    return await tutor_service.chat(body, request, loop_handler=_loop_for(body.user_id, "chat"))
+    return await tutor_service.chat(
+        body, request, loop_handler=await _loop_for_async(body.user_id, "chat", request)
+    )
 
 
 @router.post("/chat/stream")
 @same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
     return await tutor_service.chat_stream(
-        body, request, loop_handler=_loop_for(body.user_id, "chat_stream")
+        body, request, loop_handler=await _loop_for_async(body.user_id, "chat_stream", request)
     )
 
 
@@ -154,17 +180,18 @@ async def chat_stream(body: ChatBody, request: Request):
 @same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
     return await tutor_service.start_session_stream(
-        body, request, loop_handler=_loop_for(body.user_id, "start_session_stream")
+        body, request, loop_handler=await _loop_for_async(body.user_id, "start_session_stream", request)
     )
 
 
 @router.post("/end-session")
 @same_doc(tutor_service.end_session)
 def end_session(body: EndSessionBody, request: Request):
-    # A body without user_id is the session user's (the body resolves it);
-    # the gate reads no user, so it is evaluated on whatever id is known.
+    # A body without user_id is the session user's (the body resolves it), and
+    # the gate is per student: it is evaluated for that same student.
+    user_id = body.user_id or _session_user_or_none(request)
     return tutor_service.end_session(
-        body, request, loop_handler=_loop_for(body.user_id, "end_session")
+        body, request, loop_handler=_loop_for(user_id, "end_session", request)
     )
 
 
@@ -195,7 +222,9 @@ async def resume_session(session_id: str, request: Request):
 @router.post("/action")
 @same_doc(tutor_service.action)
 async def action(body: ActionBody, request: Request):
-    return await tutor_service.action(body, request, loop_handler=_loop_for(body.user_id, "action"))
+    return await tutor_service.action(
+        body, request, loop_handler=await _loop_for_async(body.user_id, "action", request)
+    )
 
 
 @router.post("/mode-switch")

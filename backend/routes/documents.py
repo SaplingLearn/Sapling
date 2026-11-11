@@ -28,8 +28,8 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-import config
 from db.connection import table
+from learning.gate import learning_loop_for_uploader
 from services import events_service
 from services.academics import offering_course_id, require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
@@ -394,10 +394,13 @@ async def upload_document_sync(
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
-    if config.LEARNING_LOOP_ENABLED:
+    if await asyncio.to_thread(learning_loop_for_uploader, user_id):
         # Learning loop PKG-04: check items cite the chunks indexing writes, so
-        # indexing and drafting run in order as ONE task. Gated on the env flag
-        # at course level (items are course assets), never one student's gate.
+        # indexing and drafting run in order as ONE task. Gated, once per
+        # upload, on the UPLOADER's gate (the env kill switch, then their
+        # `learning_loop` flag; learning/gate.py::learning_loop_for_uploader):
+        # a flag-off student's upload is the pre-loop upload and spends no
+        # drafting call. Items stay course assets once drafted.
         concept_names = [c.name for c in result.concepts.concepts]
         if model_mode() == "function":
             # E2E lane: post-response handlers are unregistered by design, so

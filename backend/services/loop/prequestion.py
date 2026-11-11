@@ -17,7 +17,6 @@ from models import ChatBody, PrequestionAnswerBody
 from services.tutor import save_message_sync as save_message
 from services.tutor import _consume_pending_off_loop
 from services.tutor import _agent_turn_or_http_error
-from services.auth_guard import guard_off_loop
 from services.check_item_service import get_check_item
 
 from services.loop.flags import (
@@ -28,7 +27,7 @@ from services.loop.flags import (
     _prequestion_on,
 )
 from services.loop.state import (
-    _gate,
+    _agate,
     _live,
     _load_loop_state,
     _now_s,
@@ -258,7 +257,7 @@ def _prequestion_turn(
 
 
 async def prequestion_answer(body: PrequestionAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
     return await _json_turn(
@@ -267,7 +266,7 @@ async def prequestion_answer(body: PrequestionAnswerBody, request: Request):
 
 
 async def prequestion_answer_stream(body: PrequestionAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
     # #117: building the turn reads the session's state; off the event loop

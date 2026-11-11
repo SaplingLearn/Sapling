@@ -382,11 +382,11 @@ async def _integrity_guard(
     user_id: str, surface: str, texts: Iterable[str | None]
 ) -> integrity_guard.Guard:
     """Spec §13 A125: the request's integrity guard (services/note_guard.py).
-    Off with the loop (the kill switch; the gate is read here, at route entry,
-    once)."""
-    return await open_note_guard(
-        user_id, surface, texts, active=learning_loop_for_request(user_id)
-    )
+    Off with the loop (the kill switch, or this student's `learning_loop` flag
+    off; the gate is read here, at route entry, once — in a worker thread,
+    since the flag read can reach the store)."""
+    active = await asyncio.to_thread(learning_loop_for_request, user_id)
+    return await open_note_guard(user_id, surface, texts, active=active)
 
 
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:

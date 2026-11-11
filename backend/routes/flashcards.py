@@ -142,7 +142,8 @@ def llm_http_error(exc: BaseException) -> HTTPException:
 def _integrity_guard(user_id: str, texts) -> integrity_guard.Guard:
     """The guard around one generator: 409 (nothing generated) when the text
     the student sent quotes one of their posed checks. Off with the loop (the
-    gate is read here, at route entry, once)."""
+    kill switch, or this student's `learning_loop` flag off; the gate is read
+    here, at route entry, once — the routes are sync, so in the threadpool)."""
     guard = open_card_guard(user_id, texts, active=learning_loop_for_request(user_id))
     if guard.refused:
         raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)

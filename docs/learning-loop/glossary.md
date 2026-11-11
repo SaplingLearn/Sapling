@@ -204,7 +204,8 @@ area; within a group, the order follows the order you meet them. "Spec" is
 
 | Spec term | Plain words | Code |
 |---|---|---|
-| Kill switch | `LEARNING_LOOP_ENABLED=false` (or `0`, `off`, `no`) turns the loop off for everyone at the next process start; unset means on. | `backend/learning/gate.py::learning_loop_active` |
+| Kill switch | `LEARNING_LOOP_ENABLED=false` (or `0`, `off`, `no`) turns the loop off for everyone at the next process start, whatever the `learning_loop` flag says; unset leaves the flag to decide. | `backend/learning/gate.py::learning_loop_active` |
+| `learning_loop` flag | The per-student feature flag the loop is behind (default off): on for a student only with the kill switch open. Off is the kill switch's pre-loop app for that student. | `backend/services/feature_flags.py::REGISTRY`, `backend/learning/gate.py` |
 | Feature flag | A per-student switch declared in code and configured in the database; `off` is always the safe default. | `backend/services/feature_flags.py::REGISTRY` |
 | Release fence | The rule that a migration a code change depends on is applied before the code ships. | `docs/operations/learning-engineering-readiness.md` |
 | Package (PKG-*nn*), hand-off | The build units of the original series and their completion notes; the spec's "affects" column cites them. | `docs/superpowers/specs/2026-09-26-learning-loop-design.md` |

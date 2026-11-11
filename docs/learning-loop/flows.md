@@ -15,7 +15,7 @@ them.
 4. [Spaced review and confusable interleaving](#4-spaced-review-and-confusable-interleaving)
 5. [The post-test windows and the learning-gain report](#5-the-post-test-windows-and-the-learning-gain-report)
 6. [Voids after a staff retire](#6-voids-after-a-staff-retire)
-7. [The kill switch](#7-the-kill-switch)
+7. [The kill switch and the `learning_loop` flag](#7-the-kill-switch-and-the-learning_loop-flag)
 8. [The quiz in the learning system](#8-the-quiz-in-the-learning-system) —
    the concept plan, planned questions, item gates, misconceptions and the
    results block (A143–A147, five flags)
@@ -57,8 +57,11 @@ sequenceDiagram
 1. **Trigger.** `backend/routes/documents.py::upload_document` (SSE) and
    `upload_document_sync` schedule
    `backend/services/documents/post_roll.py::_index_then_check_items` after the upload
-   commits — only when `LEARNING_LOOP_ENABLED` is on (items are course
-   assets, so this is a course-level gate, not a per-student one). It marks
+   commits — only when the loop is on for the UPLOADER (the
+   `LEARNING_LOOP_ENABLED` kill switch, then their `learning_loop` flag,
+   resolved once per upload by `backend/learning/gate.py::learning_loop_for_uploader`;
+   off, the upload only indexes, so a flag-off student's upload spends no
+   drafting call). The items it drafts are course assets all the same. It marks
    the document `pending` (`check_item_service.mark_drafting`; while it is
    pending, the uploader's loop says it is "preparing" — A128), indexes the passages
    (`backend/services/document_indexing.py::index_document`), then hands the
@@ -913,36 +916,52 @@ Prequestion and self-explanation rows are not evidence, so a retire leaves
 them as they are; the item they used stays revealed for the student who saw
 its answer.
 
-## 7. The kill switch
+## 7. The kill switch and the `learning_loop` flag
 
 ```mermaid
 flowchart LR
-  ENV["LEARNING_LOOP_ENABLED=false<br/>(read at process start)"] --> GATE["learning.gate.learning_loop_for_request<br/>(once per request, no DB read)"]
+  ENV["LEARNING_LOOP_ENABLED<br/>(read at process start)"] --> GATE["learning.gate.learning_loop_for_request<br/>(once per request, off the event loop)"]
+  FLAG["learning_loop flag<br/>(per student, default off)"] --> GATE
   GATE -->|false| LEG["routes/learn.py: legacy tutor<br/>(no mastery writer)"]
   GATE -->|false| F404["/api/learn/loop/* → 404<br/>'learning loop not enabled'"]
   GATE -->|false| ACT["/review/active → 200 {active: false}"]
-  ACT --> FE["frontend: legacy Learn screen,<br/>no DueQueue, no RetentionCheck"]
+  FLAG -->|off| FE["frontend: legacy Learn screen,<br/>no DueQueue, no RetentionCheck,<br/>no loop call at all"]
+  ACT --> FE
   GATE -->|true| LOOP["routes/learn.py delegates to learn_loop.py"]
 ```
 
-- The env var is parsed once at import (`backend/config.py`); the gate
-  (`backend/learning/gate.py::learning_loop_for_request`) reads only that
-  value and is evaluated once per request at route entry. Agents, tools and
-  services read the answer from `SaplingDeps.learning_loop`, never the gate
-  (`backend/tests/test_learning_gate_route_entry.py`).
-- Off: the legacy tutor routes run their legacy bodies (the five that call a
+- The gate (`backend/learning/gate.py::learning_loop_active`) reads the env
+  kill switch first — thrown, it answers false with no read of any kind —
+  then the student's `learning_loop` flag
+  (`backend/services/feature_flags.py`, default off). It is evaluated once
+  per request at route entry and never on the event loop: the rate-limited
+  loop routes' `_kill_switch_first` dependency and the legacy routes'
+  `_loop_for` resolve it in a worker thread and carry it on
+  `request.state.learning_loop`; any other `async def` loop handler reads it
+  through `services/loop/state.py::_agate`, in the threadpool. Agents,
+  tools and services read the answer from `SaplingDeps.learning_loop`, never
+  the gate (`backend/tests/test_learning_gate_route_entry.py`); the quiz's
+  `quiz_flags` and the upload post-rolls (`learning_loop_for_uploader`, the
+  uploader's gate) are the named exceptions.
+- Off — the switch for everyone, or the flag for one student — is the same
+  app: the legacy tutor routes run their legacy bodies (the five that call a
   model carry a rate limit and a budget check, A91), every loop route except
   `/review/active` answers the gate's 404 — the rate-limited routes before
-  authentication or the rate limiter run
+  the rate limiter runs, and under the switch before authentication too
   (`backend/tests/test_kill_switch_gate_first.py`), the others after the
-  ownership check — and drafting on upload stops (it is gated on the same
-  variable). No request reaches the tutoring
-  policy: that layer is reachable only through the gated loop router and a
-  few sanctioned single imports (the inertness scan in
-  `backend/tests/test_learning_zpd_policy.py`).
-- The frontend probe (`useLoopStatus`) renders the legacy screen only on a
-  definite "inactive" answer; an error or timeout shows a retry state, never
-  the legacy tree (a half-loop, half-legacy screen would grade nothing).
+  ownership check — the quiz learning flags read as off, the integrity guard
+  on notes and flashcards is off, and the student's uploads draft nothing.
+  No request reaches the tutoring policy: that layer is reachable only
+  through the gated loop router and a few sanctioned single imports (the
+  inertness scan in `backend/tests/test_learning_zpd_policy.py`).
+  `backend/tests/test_learning_loop_flag.py` compares every loop route's
+  answer under the two, and every `kill_switch` test runs both ways.
+- The frontend reads the flag first (`useLoopStatus`): "off" renders the
+  legacy screen with no probe. Otherwise the probe decides, and the legacy
+  screen renders only on a definite "inactive" answer; an error or timeout
+  shows a retry state, never the legacy tree (a half-loop, half-legacy screen
+  would grade nothing). A flag map without the key (flags unreadable, nothing
+  remembered) defers to the probe.
 - On again: the same sessions, goals and evidence are there; nothing is
   migrated either way. The drill — and what it does not prove — is in the
   readiness record, "Kill-switch and rollback drill".

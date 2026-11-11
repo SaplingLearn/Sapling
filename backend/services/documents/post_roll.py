@@ -14,8 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import config
 from agents._providers import model_mode
+from learning.gate import learning_loop_for_uploader
 from db.connection import table
 from services import check_item_jobs, jobs
 from services.achievement_service import check_achievements
@@ -75,8 +75,12 @@ async def _stream_index_steps(
     the chunks it wrote — one ordered task (see upload_document_sync). In
     function mode (the E2E lane) post-response handlers stay unregistered, so
     the chain runs inline here with the check_items handler, and no step is
-    left to spawn."""
-    if not config.LEARNING_LOOP_ENABLED:
+    left to spawn.
+
+    "Loop on" is the UPLOADER's gate (the env kill switch, then their
+    `learning_loop` flag), read once per upload in a worker thread: off is the
+    pre-loop upload, indexing alone, and no drafting call."""
+    if not await asyncio.to_thread(learning_loop_for_uploader, user_id):
         return [("index_document", schedule_document_index, doc_id, user_id)]
     if model_mode() == "function":
         await asyncio.to_thread(
@@ -94,8 +98,9 @@ def _index_then_check_items(
 ) -> None:
     """PKG-04: check items cite the chunks indexing writes (and the A23 source
     rule reads their visibility), so the two run in ORDER inside one post-roll
-    task. Only scheduled when LEARNING_LOOP_ENABLED; the flag-off path still
-    schedules the indexing alone (`schedule_document_index`, byte-identical).
+    task. Only scheduled when the loop is on for the uploader
+    (`learning_loop_for_uploader`); the loop-off path still schedules the
+    indexing alone (`schedule_document_index`, byte-identical).
 
     #116: with `jobs_queue` on for the uploader the whole chain moves to the
     worker as ONE `check_items.document` job (services/check_item_jobs.py),

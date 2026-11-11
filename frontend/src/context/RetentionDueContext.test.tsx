@@ -10,8 +10,11 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 
 const user = vi.hoisted(() => ({ state: { userId: "u1", isAuthenticated: true } }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => user.state }));
-const flags = vi.hoisted(() => ({ value: "on" }));
-vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => (key === "retention_due_badge" ? flags.value : "off") }));
+const flags = vi.hoisted(() => ({ value: "on", loop: "on" }));
+vi.mock("@/context/FlagsContext", () => ({
+  useFlag: (key: string) =>
+    key === "retention_due_badge" ? flags.value : key === "learning_loop" ? flags.loop : "off",
+}));
 const api = vi.hoisted(() => ({ fetchRetentionDue: vi.fn() }));
 vi.mock("@/lib/api", () => api);
 
@@ -42,6 +45,7 @@ describe("RetentionDueProvider", () => {
     vi.resetAllMocks();
     user.state = { userId: "u1", isAuthenticated: true };
     flags.value = "on";
+    flags.loop = "on";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -62,6 +66,15 @@ describe("RetentionDueProvider", () => {
     cleanup();
     flags.value = "on";
     user.state = { userId: "", isAuthenticated: false };
+    renderShell();
+    await act(async () => {});
+    expect(api.fetchRetentionDue).not.toHaveBeenCalled();
+    expect(screen.getByTestId("due").textContent).toBe("none");
+  });
+
+  it("fetches nothing while the student's learning_loop flag is off, the badge flag on", async () => {
+    flags.loop = "off";
+    api.fetchRetentionDue.mockResolvedValue({ due: true, course_ids: ["c1"] });
     renderShell();
     await act(async () => {});
     expect(api.fetchRetentionDue).not.toHaveBeenCalled();

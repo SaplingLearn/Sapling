@@ -8,28 +8,80 @@ repository root unless they start with `cd`.
 
 ## Switches
 
-### The kill switch
+### Who gets the loop: the `learning_loop` flag and the kill switch
 
-`LEARNING_LOOP_ENABLED`, parsed once at import by `backend/config.py`
-(`backend/config.py::LEARNING_LOOP_ENABLED`):
+The loop is on for a student only when **both** say yes
+(`backend/learning/gate.py::learning_loop_active`):
+
+1. the env kill switch `LEARNING_LOOP_ENABLED` is not thrown, and
+2. the student's `learning_loop` feature flag is `on`.
+
+The flag ships **off**: with no configuration, every student gets the pre-loop
+app. The owner turns it on from the admin Flags page (`/admin`, the
+`learning_loop` row), in this order: a user rule for their own account; then
+the class (a user rule per student, or a role the class's students hold); then
+everyone (the stored default `on`, or a percentage rollout first). Turning it
+off again is the same page: the student is back on the pre-loop app on their
+next request (flag snapshots converge within about 5 s across replicas; an
+open browser tab follows within `ACCOUNT_REFRESH_MS` or on reload). Nothing
+is migrated or deleted either way: sessions, goals and evidence are there when
+it comes back on.
+
+The kill switch, `LEARNING_LOOP_ENABLED`, parsed once at import by
+`backend/config.py` (`backend/config.py::LEARNING_LOOP_ENABLED`), is the
+emergency brake on top:
 
 | Value | Loop |
 |---|---|
-| unset, empty, `true`, `1`, `yes`, anything else | **on** (an unrecognised spelling logs a warning and stays on) |
-| `false`, `0`, `off`, `no` (any case, whitespace ignored) | **off** for every student |
+| unset, empty, `true`, `1`, `yes`, anything else | not thrown: the `learning_loop` flag decides per student (an unrecognised spelling logs a warning) |
+| `false`, `0`, `off`, `no` (any case, whitespace ignored) | **off** for every student, whatever the flag says |
 
-Off means: the legacy routes in `backend/routes/learn.py` stop delegating to
-the loop (their bodies, in `backend/services/tutor/`, run the legacy tutor), every `/api/learn/loop/*` route answers
+Off — by the switch, or by the student's flag — means the same app for that
+student: the legacy routes in `backend/routes/learn.py` do not delegate to
+the loop (their bodies, in `backend/services/tutor/`, run the legacy tutor),
+every `/api/learn/loop/*` route answers
 `404 {"detail": "learning loop not enabled"}` (the status probe
-`/review/active` answers `200 {"active": false}`), and the frontend renders
-the legacy Learn screen. It is read at process start, so a change needs a
-redeploy. The legacy tutor that runs instead writes no mastery: quiz and
-flashcard evidence still flow through the single writer. The navigation flag
-`hide_tutor` is **not** a kill switch: it hides the nav entry but is
-deliberately not enforced on `/api/learn/loop`, which also serves Study's
-review and post-test (`NAV_FEATURES_NOT_ENFORCED` in
-`backend/services/feature_flags.py`). The drill is in the readiness record,
-"Kill-switch and rollback drill".
+`/review/active` answers `200 {"active": false}`), the quiz learning flags
+read as off (`backend/services/quiz_learning.py::quiz_flags`), the integrity
+guard on notes and flashcards is off, their uploads draft no check items,
+and the frontend renders the legacy Learn screen and no review queue,
+retention check or retention badge. A flag-off student's frontend does not
+call the loop at all (`frontend/src/components/learn/useLoopStatus.ts`,
+`frontend/src/context/RetentionDueContext.tsx`). The switch is read at
+process start, so a change needs a redeploy; the flag needs none. The legacy
+tutor that runs instead writes no mastery: quiz and flashcard evidence still
+flow through the single writer. The navigation flag `hide_tutor` is **not** a
+loop switch: it hides the nav entry but is deliberately not enforced on
+`/api/learn/loop`, which also serves Study's review and post-test
+(`NAV_FEATURES_NOT_ENFORCED` in `backend/services/feature_flags.py`). The
+drill is in the readiness record, "Kill-switch and rollback drill".
+
+Decisions about work that has no student request behind it, shared state and
+staff tools:
+
+- **Upload-time check-item drafting is the uploader's.** The upload resolves
+  the uploader's gate once (`learning_loop_for_uploader`, in the upload routes
+  and in the worker's `document.process` post-roll) before it schedules
+  anything: off, the upload indexes and drafts nothing, exactly the pre-loop
+  upload, so a flag-off student's upload spends no drafting call. Items are
+  course assets, so an on student's upload drafts items the whole course
+  shares (a flag-off classmate is never served them). Material uploaded by
+  flag-off students before their class is turned on has no items yet:
+  `backend/scripts/backfill_check_items.py` (with `--course` and the course
+  id) drafts them, run per course as each class is turned on. A queued `check_items.document` job runs
+  as scheduled even if the uploader's flag is turned off meanwhile.
+- **The class summary stays on the kill switch.** `offering_summary` is one
+  row per offering, shared by students on and off the flag; switching its
+  regime per student would rewrite it on every refresh. With the switch open
+  it is written in the loop's regime (numbers, no prose, no model call); the
+  prose has no reader, so a flag-off student sees no difference and no model
+  runs on their behalf.
+- **Staff tools are not behind the flag**: the admin learning-loop analytics
+  (`/api/admin/analytics/learning-loop`, cost per gain, help abuse), the
+  check-item review queue and the key audit read what the loop stored and run
+  no student-facing model; staff see them whatever their own flag says.
+  Withdrawal (a deleted document, an opted-out uploader) retires items with
+  the loop off as well.
 
 `LEARNING_GATE_TIME_SCALE` (default 1.0) scales every gate time; only the
 E2E lanes set it (0.01). Production never sets it (A5).
@@ -42,10 +94,11 @@ first match wins: `SAPLING_FLAG_<KEY>` env override → fail closed (an
 unknown flag or an unreadable store gives `off`) → user rule → role rule →
 percentage rollout → stored default. Reads come from a 30-second snapshot
 (`FEATURE_FLAGS_SNAPSHOT_TTL_S`; the E2E stack sets 0). Every loop flag ships
-`off`.
+`off`, and every one of them acts only for a student the loop is on for.
 
 | Flag | What `on` does | Visible to client | Who turns it on, and when |
 |---|---|---|---|
+| `learning_loop` | The learning loop itself for this student: the loop tutor and `/api/learn/loop/*`, the hand-off from `/api/learn`, Study's review queue and retention check, the quiz learning flags (each needs this one too), the integrity guard on notes and flashcards, check-item drafting on their uploads. Off: the kill switch's pre-loop app for that student (see above). | yes | Owner, from the Flags page: own account, then a class, then everyone. |
 | `item_reports` | Students see "Report this question" on loop and review cards; `POST /api/learn/loop/report` accepts reports. Two reporters put an item on a reversible hold (A123). Reports already made keep excluding their items whatever the flag says (A113). | yes | Owner, any time. |
 | `retention_due_badge` | A "retention check due" badge on Study and the Dashboard, and `GET /posttest/due` (404 while off). Turns the delayed post-test from pull to push (A126). | yes | Owner, **at a trial boundary only**, recorded, kept for the whole cohort: it changes the measurement protocol. |
 | `probe_matched_pretest` | The probe opens a new concept on a form parallel to its post-test reserves, so pre/post pairs match (A130). One extra `posttest_anchors` read per `/probe/next`. | no | Owner, **at a trial boundary only**, as above. |
@@ -283,12 +336,12 @@ readiness record, "Safe additional verifier".
 
 | Lane | Proves for the loop | Command | CI |
 |---|---|---|---|
-| **Unit** (hermetic) | Policy, math, the invariant scans, routes over a mocked database, agents on function-mode handlers, cassette hash pins | `cd backend && python -m pytest tests/ -q` (CI adds `--ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py`) | `.github/workflows/ci.yml`, every PR and push to main |
+| **Unit** (hermetic) | Policy, math, the invariant scans, routes over a mocked database, agents on function-mode handlers, cassette hash pins (the unit and integration suites run with the `learning_loop` flag on, `backend/tests/conftest.py::_kill_switch`) | `cd backend && python -m pytest tests/ -q` (CI adds `--ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py`) | `.github/workflows/ci.yml`, every PR and push to main |
 | **Integration** (real local Postgres) | SQL functions, locks, races, migration replay, the evidence transaction, voids, post-test claims, recovery | `supabase start`; `cd backend && SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate`; then `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e RUN_INTEGRATION=1 python -m pytest -m integration -q` | `.github/workflows/integration.yml`, every PR and push to main |
 | **Eval replay** | Recorded model outputs still pass every evaluator against current prompts and schemas (a changed prompt makes a recording stale) | `cd backend && python tests/evals/run_all.py` (one dataset: `python tests/evals/loop_tutor.py`) | `.github/workflows/evals.yml`, PRs touching `backend/agents/**`, `backend/tests/evals/**`, `backend/learning/**`, `backend/routes/learn_loop.py`, the learning decision seam and the few services the datasets read (A142) |
 | **Eval record** (live, billable, owner-run) | Re-records cassettes against live models | `SAPLING_EVAL_MODE=record python tests/evals/run_all.py`, then `SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py`; commit cassettes and `baselines.json` together | none |
 | **E2E default lane** | The browser journey on function-mode models: probe → plan → check → hint → feedback → close, resume, budget pause, review, retention check, recovery; with each wave-4 flag turned on for a seeded student, the prequestion and self-explanation journeys (`frontend/e2e/learn-loop.spec.ts`) and varied and multi-concept practice (`frontend/e2e/learn-varied-practice.spec.ts`) | see the stack below; `cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/learn-varied-practice.spec.ts` | `.github/workflows/e2e.yml`, push to main and manual (not a PR gate) |
-| **E2E kill-switch lane** | The legacy Learn screen and tutor return when the loop is off | the same, with `LEARNING_LOOP_ENABLED=false` exported in the same shell for the stack and Playwright | `e2e.yml` matrix `lane: kill-switch` |
+| **E2E kill-switch lane** | The legacy Learn screen and tutor return when the loop is off (a flag-off student gets the same app: the unit lane runs every kill-switch test both ways, `backend/tests/conftest.py::LOOP_OFF_VIA`, and `backend/tests/test_learning_loop_flag.py` compares every loop route's answer) | the same, with `LEARNING_LOOP_ENABLED=false` exported in the same shell for the stack and Playwright | `e2e.yml` matrix `lane: kill-switch` |
 | **Accessibility and keyboard** | WCAG 2.1 A/AA scans of every student surface; a keyboard-only loop journey (A135) | `cd frontend && npx playwright test e2e/a11y.spec.ts e2e/learn-keyboard.spec.ts` | inside `e2e.yml` |
 | **Oracles** | Database-level judges after a run: evidence without learner state, any `zpd.leak`, mirror drift, a graded step without evidence, a seeded answer served before release, and more | `cd backend && venv/bin/python -m e2e_oracles` (`--check learn_loop` for the loop judge) | inside `e2e.yml`, both lanes |
 | **Live opt-in** | A few billable schema checks; none exercises a loop slot | `RUN_LIVE_QUIZ=1`, `RUN_LIVE_TOPIC_CHECKLIST=1`, `RUN_LIVE_TUTOR_TOOLS=1`, `RUN_LIVE_STREAM_RUNGS=1`, `RUN_LIVE_OCR=1`, `RUN_LIVE_OCR_PIPELINE=1` with real keys | none |
@@ -329,7 +382,9 @@ A137).
 1. `cp backend/.env.local.example backend/.env`, then set `ANTHROPIC_API_KEY`
    and `GEMINI_API_KEY` (the Gemini key serves embeddings and the eight loop
    slots still on Gemini). Leave `LEARNING_LOOP_ENABLED` and
-   `SAPLING_MODEL_MODE` unset (on, and real).
+   `SAPLING_MODEL_MODE` unset (switch open, and real), and turn the loop on
+   for your student: `SAPLING_FLAG_LEARNING_LOOP=on` in the backend's
+   environment, or a user rule on the admin Flags page.
 2. Install: `python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt`;
    `cp frontend/.env.local.example frontend/.env.local && (cd frontend && npm ci)`.
 3. `scripts/local-up.sh`: starts local Supabase, migrates, creates buckets,
@@ -355,8 +410,9 @@ reload on :5000, the test-profile frontend on :3000, the rich seed) and
 `make e2e-down` tears it down. It does **not** set function mode itself:
 export `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e`
 first, or the stack calls live models. `scripts/e2e-up.sh` exports
-`LEARNING_GATE_TIME_SCALE=0.01`, zero flag-cache TTLs and blank PostHog
-tokens, and switches on no loop flag.
+`LEARNING_GATE_TIME_SCALE=0.01`, zero flag-cache TTLs, blank PostHog
+tokens and `SAPLING_FLAG_LEARNING_LOOP=on` (the loop for every student, in
+both lanes; a value you export wins), and switches on no other loop flag.
 
 The stack is a machine singleton. Hold one `flock` on
 `/tmp/claude-<uid>/sapling-e2e-stack.lock` around the whole

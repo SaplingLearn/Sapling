@@ -95,6 +95,28 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # The learning loop itself, per student (owner decision 2026-11-11; spec
+    # §7): every loop surface for this student. /api/learn/loop/* and the
+    # tutor's hand-off from /api/learn (routes/learn_loop.py, routes/learn.py),
+    # Study's review queue and retention check, the retention badge, the
+    # quiz learning flags (each also needs this one: services/quiz_learning.py
+    # ::quiz_flags), the integrity guard on notes and flashcards, and the
+    # check-item drafting of THEIR uploads (resolved for the uploader,
+    # learning/gate.py::learning_loop_for_uploader). The env kill switch
+    # LEARNING_LOOP_ENABLED stays on top: the loop is on for a student only
+    # when that switch is not thrown AND this flag is on (learning/gate.py).
+    # Off, the default, is the kill switch's pre-loop app for this student.
+    # Client-visible: the frontend renders no loop UI and calls no loop
+    # endpoint while it is off. Staff tools (the admin learning-loop
+    # analytics, the check-item review queue) are not behind it.
+    FlagDef("learning_loop", ("off", "on"),
+            "The AI learning system (the learning loop) for this student: the loop "
+            "tutor and its routes, Study's review queue and retention check, the "
+            "retention badge, the quiz learning features, the integrity guard on "
+            "notes and flashcards, and check-item drafting on their uploads. Off: "
+            "the pre-loop app, exactly as under the LEARNING_LOOP_ENABLED=false "
+            "kill switch, which still overrides it. Roll out: your own account, "
+            "then a class, then everyone.", True),
     # #695 (learning-loop spec §13 A113): "Report this question" on the loop's
     # check card and Study's review queue, and POST /api/learn/loop/report.
     # Client-visible: the frontend renders the control only when "on". Reports

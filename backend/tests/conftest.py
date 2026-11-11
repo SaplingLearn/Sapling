@@ -80,7 +80,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "kill_switch: legacy /api/learn path under LEARNING_LOOP_ENABLED=false (spec §11.5)",
+        "kill_switch: legacy /api/learn path with the loop off (spec §11.5): run twice, under "
+        "LEARNING_LOOP_ENABLED=false and with the student's learning_loop flag off",
     )
     config.addinivalue_line(
         "markers",
@@ -109,15 +110,49 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
-@pytest.fixture(autouse=True)
-def _kill_switch(request, monkeypatch):
-    """Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
-    path — the loop is the default for everyone after launch, so a module that
-    exercises the legacy handlers pins the kill switch explicitly."""
-    if request.node.get_closest_marker("kill_switch"):
-        import config
+#: How a `kill_switch` test turns the loop off: the env kill switch, or the
+#: student's `learning_loop` flag off under an open switch. Every kill_switch
+#: test runs both ways, so "flag off" is pinned to be the kill switch's app.
+LOOP_OFF_VIA = ("kill_switch", "flag_off")
 
-        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+
+def pytest_generate_tests(metafunc):
+    if (
+        metafunc.definition.get_closest_marker("kill_switch")
+        and "loop_off_via" in metafunc.fixturenames
+    ):
+        metafunc.parametrize("loop_off_via", LOOP_OFF_VIA, indirect=True)
+
+
+@pytest.fixture
+def loop_off_via(request):
+    """`kill_switch` tests: parametrized over LOOP_OFF_VIA (pytest_generate_tests);
+    any other test: the env kill switch, unused."""
+    return getattr(request, "param", "kill_switch")
+
+
+@pytest.fixture(autouse=True)
+def _kill_switch(request, monkeypatch, loop_off_via):
+    """The learning loop's switches for the hermetic and integration suites.
+
+    The loop is on for a student only when the env kill switch is not thrown AND
+    their `learning_loop` flag is on (learning/gate.py); the flag ships off. The
+    suites test the loop, so the flag is on here (its env override, the
+    resolver's first step, so no test depends on the flag store), and the env
+    switch keeps its code default. A test that wants the flag off sets
+    SAPLING_FLAG_LEARNING_LOOP=off itself.
+
+    Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
+    path. Each runs twice: under the env kill switch, and with the switch open
+    and the student's flag off — the two must be the same pre-loop app."""
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    if request.node.get_closest_marker("kill_switch"):
+        if loop_off_via == "flag_off":
+            monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
+        else:
+            import config
+
+            monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)

@@ -40,8 +40,11 @@ jobs:
     # Acceptance bar (#389): total wall clock under 15 minutes — enforced.
     timeout-minutes: 15
     # PKG-14b (spec §11.4): two lanes. `default` sets no LEARNING_LOOP_ENABLED
-    # (the code default — the loop for every student); `kill-switch` sets
-    # "false" (the legacy Learn/tutor/Study path; /api/learn/loop/* 404).
+    # (the switch's code default) and runs the loop: the per-student
+    # learning_loop flag ships off, so both lanes turn it on below
+    # (SAPLING_FLAG_LEARNING_LOOP, as scripts/e2e-up.sh does); `kill-switch`
+    # sets "false" (the legacy Learn/tutor/Study path; /api/learn/loop/* 404)
+    # whatever the flag says.
     strategy:
       fail-fast: false
       matrix:
@@ -132,7 +135,10 @@ jobs:
           # lane actually runs under is visible beside the rest of the seam.
           QUIZ_GENERATE_RATE_LIMIT: "1000"
           # LEARNING_LOOP_ENABLED comes from the lane step above (unset in the
-          # default lane — PKG-14b, spec §11.4).
+          # default lane — PKG-14b, spec §11.4). The learning_loop flag ships
+          # off; the lanes test the loop, so it is on for every student (the
+          # kill-switch lane stays the kill switch's whatever it says).
+          SAPLING_FLAG_LEARNING_LOOP: "on"
           # spec §13 A5: the E2E env scales the ZPD gate seconds (e2e-up.sh sets the same)
           LEARNING_GATE_TIME_SCALE: "0.01"
           # Scripted grading/tutor/router calls run a whole session in seconds;

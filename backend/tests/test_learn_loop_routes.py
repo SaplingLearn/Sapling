@@ -3248,7 +3248,7 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
         ("action", turns.action),
     ):
         route = inspect.getsource(getattr(learn, name))
-        assert f'_loop_for(body.user_id, "{name}")' in route, name
+        assert f'await _loop_for_async(body.user_id, "{name}", request)' in route, name
         src = inspect.getsource(body)
         # #756: `await guard_off_loop(require_self, ...)` — the guard off the event loop
         auth = src.index("guard_off_loop(require_self,")
@@ -3257,7 +3257,7 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
         assert "learning_loop_for_request" not in src, name
     src = inspect.getsource(sessions.end_session)
     assert src.index("get_session_user_id(request)") < src.index("loop_handler(body, request)")
-    assert '_loop_for(body.user_id, "end_session")' in inspect.getsource(learn.end_session)
+    assert '_loop_for(user_id, "end_session", request)' in inspect.getsource(learn.end_session)
     # spec §13 A148: the delegate marks the request service-scoped (db_user_scope)
     delegate = inspect.getsource(learn._loop_delegate)
     assert delegate.index("service_route(request)") < delegate.index("getattr(loop_service, name)")

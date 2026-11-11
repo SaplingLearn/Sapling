@@ -9,15 +9,18 @@ Split into ``services/loop/`` in #118. Each handler below is a thin wrapper
 over the same-named function in that package, which holds the handler's body
 verbatim; the wrapper keeps the FastAPI signature, the dependencies and the
 docstring OpenAPI publishes. The route-level dependencies stay here:
-`_kill_switch_first` (the spec §7 404 before anything else) and `_screened` /
+`_kill_switch_first` (the spec §7 404 before anything else: the gate — the env
+kill switch, then the session student's `learning_loop` flag — resolved once,
+off the event loop, and carried to the handler) and `_screened` /
 `_RATE_LIMITED`. A test patch must target the module that LOOKS UP the name
 now (``patch_loop`` in ``tests/split_patches.py``).
 """
 
 from __future__ import annotations
 
+import config
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from learning.gate import learning_loop_active
+from learning import gate as loop_gate
 from models import (
     ActionBody,
     ChatBody,
@@ -46,17 +49,55 @@ import services.loop as loop_service
 from routes._docs import same_doc
 from services.loop import _NOT_ENABLED
 
+
+def _loop_gate_for_session(request: Request) -> bool | None:
+    """The learning-loop gate for the SESSION user, resolved once per request and
+    carried on `request.state.learning_loop` as `(user_id, answer)` (owner
+    decision 00) — the value the handler's `_gate` (require_self first, which
+    proves the body's user IS the session user) then reads instead of resolving
+    again. `(None, False)` is the kill switch: off for everyone.
+
+    A sync function, so as a dependency it runs in FastAPI's threadpool: the
+    `learning_loop` flag read may reach the flag store and never runs on the
+    event loop (an `async def` handler without this dependency resolves the
+    gate in the threadpool itself: `services/loop/state.py::_agate`). The env
+    kill switch is read first and, thrown, answers False with no read of any
+    kind (no session lookup, no flag). None when no session user
+    can be named (no cookie, an unapproved account): nothing is carried and the
+    handler's own require_self answers. Called through the module
+    (`loop_gate.…`), so a test that patches the loop's own gate name patches
+    only what the handler reads."""
+    carried = getattr(request.state, "learning_loop", None)
+    if isinstance(carried, tuple) and len(carried) == 2:
+        return carried[1]
+    if not config.LEARNING_LOOP_ENABLED:
+        request.state.learning_loop = (None, False)
+        return False
+    from services.auth_guard import get_session_user_id
+
+    try:
+        user_id = get_session_user_id(request)
+    except HTTPException:
+        return None
+    loop_on = loop_gate.learning_loop_for_request(user_id)
+    request.state.learning_loop = (user_id, loop_on)
+    return loop_on
+
+
 router = APIRouter()
 
 
 def _kill_switch_first(request: Request) -> None:
-    """The kill switch BEFORE the rate limit (spec §7: every loop route 404s when the
+    """The loop-off 404 BEFORE the rate limit (spec §7: every loop route 404s when the
     loop is off). Route dependencies run in order and before the handler's `_gate`,
     so a bare `enforce_rate_limit` dependency answered a thrown kill switch with 401
-    (no session) or 429 instead of the 404. The gate is env-only after PKG-14b, so no
-    user is needed to read it, and it costs no read of any kind — the handler's
-    `_gate` still makes the one route-entry read (A38 00) and runs require_self."""
-    if not learning_loop_active(""):
+    (no session) or 429 instead of the 404. Off means the env kill switch (no
+    session needed, no read of any kind) or the session student's `learning_loop`
+    flag (read once, here, in the threadpool: a sync dependency). With
+    no session and the switch not thrown it lets the request through to the
+    limiter and the handler's `_gate` (require_self, then the gate's 404), as
+    before the flag existed."""
+    if _loop_gate_for_session(request) is False:
         raise HTTPException(status_code=404, detail=_NOT_ENABLED)
 
 

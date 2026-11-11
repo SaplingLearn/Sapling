@@ -13,8 +13,14 @@ Stores data in:
 - offering_summary: class-wide summary with Gemini-generated text (per offering)
 
 The prose in offering_summary.summary_text has no reader on any request path.
-Two regimes, switched by the process-wide LEARNING_LOOP_ENABLED (a class mixes
-students on and off the loop, so a per-user gate cannot pick):
+Two regimes, switched by the process-wide LEARNING_LOOP_ENABLED kill switch
+alone, never by a student's `learning_loop` flag: the summary is one row per
+offering, shared by a class that mixes students on and off the flag, so a
+per-student answer would flip it with every refresh (prose written for one
+student's trigger, cleared for the next, a course_summary call each time). The
+loop regime writes no prose and calls no model, and the prose has no reader,
+so a flag-off student sees nothing different and no model runs on their
+behalf; under the kill switch the pre-series regime returns, as before:
 - loop off (the pre-series product, unchanged): `update_course_context`
   regenerates the prose synchronously whenever the per-concept stats hash moves.
 - loop on (spec §13 A35): `update_course_context` writes the same numbers and

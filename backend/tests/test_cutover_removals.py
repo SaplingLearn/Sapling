@@ -71,20 +71,34 @@ def test_frontend_session_summary_renders_no_dead_lists():
 
 def test_post_launch_wording_replaces_the_build_phase_comments():
     main = (BACKEND / "main.py").read_text()
-    assert "# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch)." in main
+    assert (
+        "# Learning loop: 404 unless the loop is on for the student (the "
+        "LEARNING_LOOP_ENABLED kill switch, then their learning_loop flag)." in main
+    )
     example = (BACKEND / ".env.local.example").read_text()
-    assert "# LEARNING_LOOP_ENABLED — unset = ON (default); false/0/off/no = kill switch (spec §7)" in example
+    assert (
+        "# LEARNING_LOOP_ENABLED — the kill switch: false/0/off/no = loop off for everyone; "
+        "unset = the per-student learning_loop flag decides (spec §7)" in example
+    )
     assert not any(
         line.strip().startswith("LEARNING_LOOP_ENABLED=") for line in example.splitlines()
     ), "no example config sets the variable (spec §7: owner-set)"
 
 
 @pytest.mark.kill_switch
-def test_kill_switch_marker_turns_the_loop_off():
+def test_kill_switch_marker_turns_the_loop_off(loop_off_via):
+    """Both ways (tests/conftest.py LOOP_OFF_VIA): the env kill switch, or the
+    student's learning_loop flag off under an open switch."""
+    import os
+
     import config
     from learning.gate import learning_loop_active
 
-    assert config.LEARNING_LOOP_ENABLED is False
+    if loop_off_via == "kill_switch":
+        assert config.LEARNING_LOOP_ENABLED is False
+    else:
+        assert config.LEARNING_LOOP_ENABLED is True
+        assert os.environ["SAPLING_FLAG_LEARNING_LOOP"] == "off"
     assert learning_loop_active("anyone") is False
 
 

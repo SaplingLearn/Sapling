@@ -77,8 +77,9 @@ async def soft_delete_document(document_id: str, user_id: str) -> None:
 
     await run_in_threadpool(withdraw_document_chunks, document_id, user_id)
     # Learning loop PKG-04 (A23): check items drafted from this document's
-    # text leave the class pool with it. Never gated on LEARNING_LOOP_ENABLED
-    # (withdrawal holds under the kill switch too) and never fails the delete.
+    # text leave the class pool with it. Never gated on the loop (withdrawal
+    # holds under the kill switch, and for a student whose learning_loop flag
+    # is off) and never fails the delete.
     try:
         await run_in_threadpool(retire_items_for_documents, [document_id])
     except Exception:

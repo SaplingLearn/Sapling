@@ -471,7 +471,7 @@ _ADMIN_SVC = [Depends(admin_service_route)]
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
-# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch). Service
+# Learning loop: 404 unless the loop is on for the student (the LEARNING_LOOP_ENABLED kill switch, then their learning_loop flag). Service
 # role under db_user_scope (#115): the loop's tables are service-only (bucket E,
 # spec §13 A148) and every handler checks ownership in code (require_self /
 # the session's owner), which the cross-user matrix pins.

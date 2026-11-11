@@ -26,7 +26,8 @@ from learning.params import CLOSE_PHASES, LOOP_GRADING_CLAIM_STALE_S
 from learning.policy import LoopState, StepState
 from services.academics import offering_course_id
 from services.agent_events import SaplingEvent
-from services.auth_guard import require_self
+from services.auth_guard import guard_off_loop, require_self
+from starlette.concurrency import run_in_threadpool
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 
@@ -44,22 +45,52 @@ logger = logging.getLogger("routes.learn_loop")
 
 
 def _gate(user_id: str, request: Request) -> bool:
-    """require_self, then the learning-loop gate, read ONCE per request (A38 00):
-    a delegating legacy route has already read it and carries the result on
-    `request.state.learning_loop` (routes/learn.py), so a delegated request
-    costs one `user_settings` read, not two. Returns the gate for
-    `SaplingDeps.learning_loop`; False is the spec §7 404."""
+    """require_self, then the learning-loop gate — the env kill switch, then the
+    student's `learning_loop` flag — read ONCE per request (A38 00): a rate-limited
+    route's `_kill_switch_first` (routes/learn_loop.py) or a delegating legacy
+    route (routes/learn.py) has already resolved it in a worker thread and
+    carries it on `request.state.learning_loop` (`_gate_carried`); otherwise it
+    is read here, in the threadpool (a sync handler, or `_agate`). Returns the
+    gate for `SaplingDeps.learning_loop`; False is the spec §7 404."""
     loop_on = _gate_value(user_id, request)
     if not loop_on:
         raise HTTPException(status_code=404, detail=_NOT_ENABLED)
     return loop_on
 
 
-def _gate_value(user_id: str, request: Request) -> bool:
-    """require_self, then the gate's value (read once per request, A38 00)."""
-    require_self(user_id, request)
+def _gate_carried(user_id: str, request: Request) -> bool | None:
+    """The gate already resolved for `user_id` on this request, or None. Carried
+    as `(user_id, answer)` by `_kill_switch_first` (routes/learn_loop.py) and the
+    legacy routes' `_loop_for` (routes/learn.py); `(None, False)` is the kill
+    switch, off for everyone; a bare bool is a delegating tutor body's mark."""
     carried = getattr(request.state, "learning_loop", None)
-    return carried if isinstance(carried, bool) else learning_loop_for_request(user_id)
+    if isinstance(carried, tuple) and len(carried) == 2:
+        carried_for, loop_on = carried
+        if carried_for is None or carried_for == user_id:
+            return bool(loop_on)
+        return None
+    return carried if isinstance(carried, bool) else None
+
+
+async def _agate(user_id: str, request: Request) -> bool:
+    """`_gate` from an `async def` handler. Inline (no I/O: the session guard's
+    cache hit, a carried gate) only when the gate is carried for this user;
+    otherwise the whole of `_gate` — the `learning_loop` flag read included —
+    runs in the threadpool, never on the event loop."""
+    if _gate_carried(user_id, request) is not None:
+        return await guard_off_loop(_gate, user_id, request)
+    return await run_in_threadpool(_gate, user_id, request)
+
+
+def _gate_value(user_id: str, request: Request) -> bool:
+    """require_self, then the gate's value (read once per request, A38 00). The
+    carried `(user_id, answer)` is used when it is this user's (require_self has
+    just proved the session user is `user_id`, so in production it always is);
+    resolving here is only for a caller that carried nothing for this user (a
+    direct call, or a unit test whose stub session names another user)."""
+    require_self(user_id, request)
+    carried = _gate_carried(user_id, request)
+    return carried if carried is not None else learning_loop_for_request(user_id)
 
 
 def _now_s() -> float:

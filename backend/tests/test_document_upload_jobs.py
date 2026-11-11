@@ -493,11 +493,23 @@ def test_process_job_refuses_a_payload_without_an_upload_id(payload):
         dj._run_document_process_job(payload)
 
 
-@pytest.mark.parametrize("loop_on", [False, True])
-def test_process_job_runs_the_pipeline_and_records_every_stage(monkeypatch, loop_on):
+#: The upload's loop decision is the UPLOADER's gate: off by the env kill
+#: switch, or by the uploader's `learning_loop` flag under an open switch —
+#: both must be the pre-loop upload — and on.
+LOOP_MODES = ("kill_switch", "flag_off", "on")
+
+
+def _set_loop(monkeypatch, config, loop: str) -> bool:
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop != "kill_switch")
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off" if loop == "flag_off" else "on")
+    return loop == "on"
+
+
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_process_job_runs_the_pipeline_and_records_every_stage(monkeypatch, loop):
     import config
 
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop_on)
+    loop_on = _set_loop(monkeypatch, config, loop)
     out = _process(_staged_row())
     stages = [d["stage"] for d, _ in out.uploads.updates if "stage" in d]
     assert stages == ["extracting", "classifying", "extracting_concepts", "merging",
@@ -676,11 +688,11 @@ _INLINE_STEPS = [("status", "start"), ("progress", "classify"), ("progress", "cl
                  ("result", "finalize"), ("status", "done")]
 
 
-@pytest.mark.parametrize("loop_on", [False, True])
-def test_flag_off_stream_is_unchanged_and_never_touches_the_queue(monkeypatch, loop_on):
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_flag_off_stream_is_unchanged_and_never_touches_the_queue(monkeypatch, loop):
     import config
 
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop_on)
+    loop_on = _set_loop(monkeypatch, config, loop)
     a, b, c, d = _route_agent_patches()
     with patch_documents("_validate_user"), \
          patch_documents("require_course_enrollment", return_value="off-1"), \
@@ -707,12 +719,12 @@ def test_flag_off_stream_is_unchanged_and_never_touches_the_queue(monkeypatch, l
         assert "index_then_check_items" not in tasks
 
 
-@pytest.mark.parametrize("loop_on", [False, True])
-def test_flag_off_sync_is_unchanged_and_never_touches_the_queue(monkeypatch, loop_on):
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_flag_off_sync_is_unchanged_and_never_touches_the_queue(monkeypatch, loop):
     import config
     from tests.test_documents_routes import _make_orchestrator_result
 
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop_on)
+    loop_on = _set_loop(monkeypatch, config, loop)
 
     result = _make_orchestrator_result()
     with patch_documents("_validate_user"), \

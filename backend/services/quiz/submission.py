@@ -31,7 +31,6 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.graph_service import apply_graph_update
 from services import quiz_learning
-from services.feature_flags import flag_on
 from learning import quiz_evidence, quiz_gates
 from learning.help_ledger import max_help_many
 from learning.params import RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
@@ -566,8 +565,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # they need from before the evidence write is read here: the skill meters
     # the results compare against, and what the journal said about the
     # attempt's questions and the concept (A127's first attempt, A76).
-    misconceptions_on = flag_on(quiz_learning.MISCONCEPTIONS_FLAG, user_id)
-    routing_on = flag_on(quiz_learning.RESULTS_ROUTING_FLAG, user_id)
+    # Each needs the learning loop on for the student too (quiz_flags).
+    misconceptions_on, routing_on = quiz_learning.quiz_flags(
+        user_id, quiz_learning.MISCONCEPTIONS_FLAG, quiz_learning.RESULTS_ROUTING_FLAG
+    )
     skills_before = (
         quiz_learning.skill_snapshot(user_id, concept_node_id) if routing_on else None
     )
