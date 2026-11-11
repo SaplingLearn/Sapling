@@ -211,6 +211,15 @@ SRC_ACH_GONE = "src-ach-2"  # slug the target does not have
 
 TERMS = [{"id": "fall-2026"}, {"id": "spring-2026"}]
 
+# A pending grade checkpoint as learning/grade_checkpoint.seal writes it: bound
+# to the session's (source) course.
+CHECKPOINT = {
+    "version": 1, "kind": "check", "operation_id": str(uuid.UUID(int=3)), "user_id": UID,
+    "session_id": "sess-1", "course_id": SRC_BIO, "question_hash": "qh-cells",
+    "goal_version": 1, "evidence": [{"node_id": "node-2"}], "continuation": {},
+}
+CHECKPOINT_SRC = json.dumps(CHECKPOINT, sort_keys=True, separators=(",", ":"))
+
 
 def source_db() -> FakeDB:
     A = KEY_A
@@ -311,6 +320,16 @@ def source_db() -> FakeDB:
         "sessions": [{
             "id": "sess-1", "user_id": UID, "offering_id": SRC_OFF_BIO, "mode": "socratic",
             "topic": "Cells", "summary_json": enc_json(A, {"bullets": ["mitochondria"]}),
+            # A closed learning-loop session (the export used to refuse these).
+            "close_json": enc_json(A, {"summary": "Cells divide", "concepts": []}),
+            "close_phase": "close", "loop_brief": enc(A, "Ada mixes up mitosis and meiosis"),
+            "loop_state": {
+                "goal": {"target_node_ids": ["node-2"], "text_encrypted": enc(A, "pass the midterm")},
+                "goal_version": 1,
+                "steps": {"qh-cells": {"rung": 2, "grade_checkpoint": enc(A, CHECKPOINT_SRC)}},
+                "revealed": ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+            },
+            "loop_state_rev": 4,
         }],
         "messages": [
             {"id": "msg-1", "session_id": "sess-1", "role": "user", "content": enc(A, "Hi")},
@@ -350,6 +369,46 @@ def source_db() -> FakeDB:
             {"user_id": UID, "achievement_id": SRC_ACH_GONE, "earned_at": "2026-10-02T00:00:00Z",
              "is_featured": False},
         ],
+        # ── The learning loop ──
+        "learner_state": [{"user_id": UID, "node_id": "node-1", "p_known": 0.7, "opps": 3}],
+        "misconceptions": [{
+            "id": "mc-1", "user_id": UID, "node_id": "node-1", "check_item_id": "item-1",
+            "wrong_key": "no_base_case", "evidence_text": enc(A, "it just calls itself"),
+            "count": 2,
+        }],
+        "misconception_attempts": [{
+            "id": 7, "misconception_id": "mc-1", "course_id": SRC_CS, "question_hash": "qh-rec",
+            "check_item_id": "item-1", "recorded_at": "2026-11-01T00:00:00Z",
+        }],
+        "learning_evidence_voids": [{
+            "event_id": "nme-1", "user_id": UID, "node_id": "node-1", "course_id": SRC_CS,
+            "question_hash": "qh-rec", "check_item_id": "item-1", "reason": "item_retired",
+            "event_created_at": "2026-11-01T00:00:00Z", "operation_id": str(uuid.UUID(int=1)),
+        }],
+        "posttest_poses": [{"user_id": UID, "node_id": "node-1", "window_days": 7,
+                            "course_id": SRC_CS, "question_hash": "qh-rec"}],
+        "posttest_skips": [{"user_id": UID, "node_id": "node-2", "window_days": 30,
+                            "course_id": SRC_BIO, "reason": "no_items"}],
+        "quiz_evidence_claims": [{"user_id": UID, "question_hash": "qh-quiz", "attempt_id": "qa-1"}],
+        "learning_reveals": [{"id": "rv-1", "user_id": UID, "kind": "reveal",
+                              "question_hash": "qh-rec", "session_id": "sess-1"}],
+        "check_item_reports": [{"user_id": UID, "course_id": SRC_CS, "question_hash": "qh-rec",
+                                "reason": "unclear", "surface": "loop"}],
+        "learning_prequestions": [{
+            "id": "pq-1", "user_id": UID, "session_id": "sess-1", "course_id": SRC_BIO,
+            "node_id": "node-2", "question_hash": "qh-cells", "format": "free", "difficulty": 1,
+            "no_idea": False, "guess_json": enc_json(A, {"answer": "they split"}),
+        }],
+        "learning_self_explanations": [{
+            "id": "se-1", "user_id": UID, "session_id": "sess-1", "course_id": None,
+            "node_id": "node-2", "juncture": "first_correct", "status": "replied",
+            "reply_text": enc(A, "because the cell copies its DNA first"), "reply_chars": 37,
+        }],
+        # Never copied: per-environment bookkeeping and the course's own items.
+        "ai_tutor_daily_calls": [{"user_id": UID, "day": "2026-11-07", "calls": 4}],
+        "learning_evidence_operations": [{"operation_id": str(uuid.UUID(int=2)), "user_id": UID,
+                                          "course_id": SRC_CS, "plan": {}, "changes": []}],
+        "check_items": [{"id": "item-1", "course_id": SRC_CS, "prompt": enc(A, "Define recursion")}],
     })
 
 
@@ -450,10 +509,64 @@ def test_legacy_plaintext_in_an_encrypted_column_travels_as_is(use):
 
 def test_unlisted_encrypted_column_fails_the_export(use):
     db = source_db()
-    db.data["sessions"][0]["close_json"] = enc(KEY_A, "a new 🔒 column nobody listed")
+    db.data["sessions"][0]["secret_notes"] = enc(KEY_A, "a new 🔒 column nobody listed")
     use(db, KEY_A, "staging")
 
-    with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
+    with pytest.raises(BundleError, match=r"sessions\.secret_notes.*not in account_bundle\.ENCRYPTED"):
+        account_bundle.export_account(UID)
+
+
+def test_unlisted_ciphertext_inside_a_json_column_fails_the_export(use):
+    """The sweep looks inside JSON: loop_state's encrypted fields are listed in
+    NESTED_ENCRYPTED, and a new one is refused rather than shipped as is."""
+    db = source_db()
+    db.data["sessions"][0]["loop_state"]["steps"]["qh-cells"]["draft"] = [
+        {"text": enc(KEY_A, "a new encrypted field")},
+    ]
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"sessions\.loop_state\.steps\.qh-cells\.draft\[0\]\.text"):
+        account_bundle.export_account(UID)
+
+
+def test_closed_learning_loop_session_exports_in_plaintext(use):
+    """The reported bug: close_json and loop_brief were unlisted, so any account
+    with a closed loop session failed to export."""
+    t = export_from_source(use)["tables"]
+
+    (session,) = t["sessions"]
+    assert session["close_json"] == {"summary": "Cells divide", "concepts": []}
+    assert session["loop_brief"] == "Ada mixes up mitosis and meiosis"
+    assert session["loop_state"]["goal"]["text_encrypted"] == "pass the midterm"
+    assert json.loads(session["loop_state"]["steps"]["qh-cells"]["grade_checkpoint"]) == CHECKPOINT
+    assert session["loop_state"]["revealed"] == source_db().data["sessions"][0]["loop_state"]["revealed"]
+    assert t["misconceptions"][0]["evidence_text"] == "it just calls itself"
+    assert t["learning_prequestions"][0]["guess_json"] == {"answer": "they split"}
+    assert t["learning_self_explanations"][0]["reply_text"] == "because the cell copies its DNA first"
+
+
+def test_export_carries_every_loop_table_the_student_owns(use):
+    bundle = export_from_source(use)
+    t = bundle["tables"]
+
+    for name in ("learner_state", "misconceptions", "misconception_attempts",
+                 "learning_evidence_voids", "posttest_poses", "posttest_skips",
+                 "quiz_evidence_claims", "learning_reveals", "check_item_reports",
+                 "learning_prequestions", "learning_self_explanations"):
+        assert len(t[name]) == 1, name
+    # Course assets and per-environment bookkeeping never leave.
+    for name in ("check_items", "ai_tutor_daily_calls", "learning_evidence_operations"):
+        assert name not in t, name
+    # Every course a loop row names is described by the catalog.
+    assert set(bundle["catalog"]["courses"]) == {SRC_CS, SRC_BIO}
+
+
+def test_wrong_key_ciphertext_inside_loop_state_is_refused(use):
+    db = source_db()
+    db.data["sessions"][0]["loop_state"]["goal"]["text_encrypted"] = enc(KEY_C, "other key")
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"sessions\.loop_state…text_encrypted.*does not decrypt"):
         account_bundle.export_account(UID)
 
 
@@ -539,6 +652,134 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert user["total_xp"] == 60 and user["level"] == level_for(60)
     assert user["streak_count"] == 5 and user["onboarding_completed"]
     assert counts["messages"] == 2 and counts["documents"] == 1 and counts["graph_nodes"] == 2
+
+
+def test_round_trip_moves_the_learning_loop(use, wipes, consent_clears):
+    bundle = export_from_source(use)
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    counts = account_bundle.import_account(UID, bundle)
+
+    d = dst.data
+    (session,) = d["sessions"]
+    assert json.loads(dec(KEY_B, session["close_json"]))["summary"] == "Cells divide"
+    assert dec(KEY_B, session["loop_brief"]) == "Ada mixes up mitosis and meiosis"
+    with pytest.raises(Exception):
+        dec(KEY_A, session["loop_brief"])
+    state = session["loop_state"]
+    assert dec(KEY_B, state["goal"]["text_encrypted"]) == "pass the midterm"
+    assert state["goal"]["target_node_ids"] == ["node-2"] and state["steps"]["qh-cells"]["rung"] == 2
+    # The pending grade checkpoint is re-sealed under B and bound to the
+    # target's course, as open_checkpoint will expect for this session.
+    sealed = dec(KEY_B, state["steps"]["qh-cells"]["grade_checkpoint"])
+    assert sealed == json.dumps({**CHECKPOINT, "course_id": DST_BIO}, sort_keys=True,
+                                separators=(",", ":"))
+    assert session["loop_state_rev"] == 4
+
+    (mc,) = d["misconceptions"]
+    assert dec(KEY_B, mc["evidence_text"]) == "it just calls itself"
+    assert mc["node_id"] == "node-1" and mc["check_item_id"] == "item-1"
+    (attempt,) = d["misconception_attempts"]
+    assert "id" not in attempt  # GENERATED ALWAYS AS IDENTITY: the target numbers it
+    assert attempt["misconception_id"] == "mc-1" and attempt["course_id"] == DST_CS
+    assert d["learning_evidence_voids"][0]["course_id"] == DST_CS
+    assert d["learning_evidence_voids"][0]["event_id"] == "nme-1"
+    assert d["posttest_poses"][0]["course_id"] == DST_CS
+    assert d["posttest_skips"][0]["course_id"] == DST_BIO
+    assert d["check_item_reports"][0]["course_id"] == DST_CS
+    (pq,) = d["learning_prequestions"]
+    assert pq["course_id"] == DST_BIO and json.loads(dec(KEY_B, pq["guess_json"])) == {"answer": "they split"}
+    (se,) = d["learning_self_explanations"]
+    assert se["course_id"] is None
+    assert dec(KEY_B, se["reply_text"]) == "because the cell copies its DNA first"
+    assert d["learner_state"] == [{"user_id": UID, "node_id": "node-1", "p_known": 0.7, "opps": 3}]
+    assert d["quiz_evidence_claims"][0]["attempt_id"] == "qa-1"
+    assert d["learning_reveals"][0]["session_id"] == "sess-1"
+    for name in ("check_items", "ai_tutor_daily_calls", "learning_evidence_operations"):
+        assert name not in d, name
+    assert counts["misconception_attempts"] == 1 and counts["learning_self_explanations"] == 1
+    # Parents before children: the void's journal row and the attempt's
+    # misconception are inserted first.
+    inserts = [name for op, name in dst.writes if op == "insert"]
+    assert inserts.index("node_mastery_events") < inserts.index("learning_evidence_voids")
+    assert inserts.index("graph_nodes") < inserts.index("learner_state")
+    assert inserts.index("misconceptions") < inserts.index("misconception_attempts")
+
+
+@pytest.mark.parametrize("child,column", [
+    ("learner_state", "node_id"),
+    ("misconceptions", "node_id"),
+    ("learning_evidence_voids", "event_id"),
+])
+def test_loop_row_naming_a_parent_outside_the_bundle_refuses_before_the_wipe(
+    use, wipes, child, column,
+):
+    bundle = export_from_source(use)
+    bundle["tables"][child][0][column] = "not-in-the-bundle"
+    use(target_db(), KEY_B, "production")
+
+    with pytest.raises(BundleError, match=rf"{child}\.{column}"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+def test_loop_course_missing_from_the_catalog_refuses_before_the_wipe(use, wipes):
+    bundle = export_from_source(use)
+    bundle["tables"]["posttest_poses"][0]["course_id"] = "src-course-unknown"
+    use(target_db(), KEY_B, "production")
+
+    with pytest.raises(BundleError, match="posttest_poses: course src-course-unknown"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+def test_a_version_one_bundle_without_the_loop_is_refused(use, wipes):
+    """A v1 exporter carries no loop tables; importing it would wipe the
+    target's loop rows and replace them with nothing."""
+    bundle = export_from_source(use)
+    bundle["version"] = 1
+    use(target_db(), KEY_B, "production")
+    with pytest.raises(BundleError, match="version"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+def _schema_columns(name: str) -> set[str]:
+    """Columns of `name` across the migrations: its last CREATE TABLE plus
+    every ALTER TABLE … ADD COLUMN."""
+    import re
+    from pathlib import Path
+
+    from tests.test_account_wipe import _create_table_body
+
+    cols = {m.group(1) for m in re.finditer(r"^\s*(\w+)\s+\w", _create_table_body(name), re.M)}
+    migrations = Path(__file__).resolve().parent.parent / "db" / "migrations"
+    for path in sorted(migrations.glob("*.sql")):
+        for stmt in re.findall(rf"ALTER TABLE (?:public\.)?{name}\b([^;]*);", path.read_text(), re.I):
+            cols |= set(re.findall(r"ADD COLUMN(?: IF NOT EXISTS)?\s+(\w+)", stmt, re.I))
+    return cols
+
+
+def test_every_encrypted_learning_column_of_a_bundled_table_is_listed():
+    """The loop's own list of encrypted columns (tests/test_learning_loop_invariants)
+    against the bundle's: a bundled table's encrypted loop column that
+    ENCRYPTED does not name would fail every export that has one."""
+    from tests.test_account_wipe import _loop_rls_tables
+    from tests.test_learning_loop_invariants import ENCRYPTED_LEARNING_COLUMNS
+
+    # The loop's tables, and the existing tables its migrations add columns to.
+    loop = set(_loop_rls_tables()) | {"sessions", "node_mastery_events", "flashcards"}
+    missing = []
+    for spec in account_bundle.SPECS:
+        if spec.name not in loop:
+            continue
+        cols = _schema_columns(spec.name)
+        for column in set(ENCRYPTED_LEARNING_COLUMNS) & cols:
+            if column not in account_bundle.ENCRYPTED.get(spec.name, {}):
+                missing.append(f"{spec.name}.{column}")
+    assert not missing
+    assert account_bundle.ENCRYPTED["sessions"].keys() >= {"close_json", "loop_brief"}
 
 
 def test_username_moves_when_free_on_the_target(use, wipes):

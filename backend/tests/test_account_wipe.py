@@ -444,15 +444,12 @@ WIPED_NOT_BUNDLED = {
     "gradescope_syncs": "in-flight Gradescope sync staging (#116)",
     "tutor_pending_sessions": "a tutor session not yet chatted in, or its tombstone (#117)",
     "gradescope_course_links": "Gradescope credentials do not move, so neither do their links",
-    # The learning loop's per-student tables: erased by the wipe here, copied by
-    # the account-export fix stacked on this change (fix/loop-account-export),
-    # which shrinks this list to the loop tables that are wiped but never copied.
-    **{name: "learning loop: bundled by the account-export fix" for name in (
-        "learner_state", "misconceptions", "misconception_attempts", "posttest_poses",
-        "posttest_skips", "quiz_evidence_claims", "learning_reveals", "check_item_reports",
-        "learning_evidence_operations", "ai_tutor_daily_calls", "learning_self_explanations",
-        "learning_prequestions", "learning_evidence_voids",
-    )},
+    # The learning loop's per-environment bookkeeping (account_bundle docstring).
+    "ai_tutor_daily_calls": "a per-day AI tutor call quota counter, not study data",
+    "learning_evidence_operations": (
+        "idempotency receipts of evidence commits, fingerprinted with the source's "
+        "course id; the evidence itself is in node_mastery_events and learner_state"
+    ),
 }
 
 
@@ -463,7 +460,10 @@ def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
     claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
     exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
     exception = exception[:exception.index("\n")]
-    for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
+    for name in (
+        "document_uploads", "gradescope_syncs", "tutor_pending_sessions",
+        "ai_tutor_daily_calls", "learning_evidence_operations",
+    ):
         assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
 
 
