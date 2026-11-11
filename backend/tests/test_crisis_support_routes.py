@@ -123,11 +123,11 @@ CASES: list[Case] = [
          "services.ai_budget.enforce_rate_limit_for", neutral={"graded": False}),
     Case("loop_review_answer", "/api/learn/loop/review/answer",
          lambda t: {"user_id": "u1", "session_id": "r1", "kind": "check", "item_id": "i1", "answer": t},
-         "routes.learn_loop._review_course",
+         "services.loop.reviews._review_course",
          neutral={"correct": None, "unavailable": True, "refused": False}),
     Case("loop_posttest_answer", "/api/learn/loop/posttest/answer",
          lambda t: {"user_id": "u1", "node_id": "n1", "question_hash": "qh", "answer": t},
-         "routes.learn_loop._posttest_node", neutral={"graded": False}),
+         "services.loop.posttest._posttest_node", neutral={"graded": False}),
     # learning-loop spec §13 A138: a guess at the segment prequestion (free and
     # multiple choice), JSON and stream; A139: a self-explanation reply
     Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _answer,

@@ -20,7 +20,6 @@ import pytest
 
 from learning import turn_activity
 from learning.ladder import Rung
-from routes import learn_loop
 from services import tutor_sessions as ts
 from services.encryption import decrypt_if_present
 from services.tutor import pending as tutor_pending
@@ -31,6 +30,7 @@ from tests.test_quiz_ask_session import _opener
 from tests.test_tutor_sessions_store import _FakeDB
 from tests.split_patches import patch_loop
 import services.loop.history
+import services.loop.posttest
 
 client = routes.client
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
@@ -43,7 +43,7 @@ _PROCESS_MAPS = (
     (ts, "PENDING_SESSIONS"),
     (ts, "_DISCARDED"),
     (services.loop.history, "_BRIEF_FAILED"),
-    (learn_loop, "_DUE_CACHE"),
+    (services.loop.posttest, "_DUE_CACHE"),
 )
 
 

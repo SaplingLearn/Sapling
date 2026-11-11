@@ -25,6 +25,7 @@ from tests.test_learn_loop_routes import client
 from tests.split_patches import patch_loop, setattr_loop
 import services.loop.practice
 import services.loop.reveals
+import services.loop.reviews
 import services.loop.runner
 import services.loop.turn
 
@@ -375,7 +376,6 @@ def test_grade_review_applies_the_refloor_right_before_its_one_write(monkeypatch
     import inspect
 
     from learning import review
-    import routes.learn_loop as ll
 
     grade, _calls = _rv._grade(correct=True)
     monkeypatch.setattr(review, "grade_answer", grade)
@@ -401,5 +401,5 @@ def test_grade_review_applies_the_refloor_right_before_its_one_write(monkeypatch
     _rv._grade_check(item, _rv._check_item("n-due", "qh-1"), loop_state, answer="x", refloor=refloor)
     assert [k for k, _ in order] == ["refloor", "write"]
     assert order[1][1]["max_rung"] == params.RUNG_NO_CREDIT_MIN
-    route = inspect.getsource(ll.review_answer)
+    route = inspect.getsource(services.loop.reviews.review_answer)
     assert "refloor=" in route and "_refloor(" in route and "mark_graded" in route

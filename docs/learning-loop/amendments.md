@@ -223,7 +223,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A38 | decision record | Owner decisions before PKG-07: step-state layout, compare-and-set saves, option-letter leak, one gate read per request | `backend/learning/loop_state_store.py::update_loop_state` |
 | A42 | decision record | Keep as built: the hand-offs' answers to open questions stand | — |
 | A45 | decision record | Recorded, not decided: two competing decision seams and ADR numbering (resolved by ADR 0032) | `docs/decisions/0032-separate-learning-decisions-from-tutor-observation.md` |
-| A72 | frontend | The loop status probe (`/review/active`) and a read-only review summary | `backend/routes/learn_loop.py::review_active` |
+| A72 | frontend | The loop status probe (`/review/active`) and a read-only review summary | `backend/services/loop/reviews.py::review_active` |
 | A73 | sessions | Review sessions are not tutor sessions; tutor-session readers skip them | `backend/services/session_modes.py::NOT_REVIEW` |
 | A78 | frontend | The student UI's server seams as built (status probe, resume, review) | `frontend/src/components/learn/useLoopStatus.ts::useLoopStatus` |
 | A91 | rollout | The cutover (PKG-14 half B) as built: kill-switch parse, legacy cost bound, E2E lanes | `backend/config.py::LEARNING_LOOP_ENABLED` |

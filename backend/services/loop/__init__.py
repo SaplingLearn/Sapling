@@ -107,6 +107,15 @@ Modules, lowest first (each imports only the ones above it):
 - ``teach``: The teach turns: POST /chat, /chat/stream, /action, /start-
   session and /start-session/stream (the legacy /api/learn routes delegate
   here).
+- ``reviews``: The /review/* handlers (PKG-12): the next due item, its answer,
+  the summary and the active check.
+- ``reports``: POST /rating and POST /report (A113, A123): the turn rating and
+  a student's report of a check item.
+- ``posttest_poses``: The post-test's poses (spec §10 rung 3, A87): its
+  window, exposure rules and the pose rows it opens, claims, answers and
+  releases.
+- ``posttest``: The post-test handlers (PKG-14): start, answer, shown and due
+  (with its per-process due cache, A126).
 
 The names below resolve lazily, so importing this package (the legacy tutor's
 hand-off and the integrity guard do, at call time) loads no module of it until
@@ -125,6 +134,16 @@ _PUBLIC = {
     "check_answer_stream": "grading",
     "list_open_sessions": "sessions",
     "posed_items": "posed",
+    "posttest_answer": "posttest",
+    "posttest_due": "posttest",
+    "posttest_shown": "posttest",
+    "posttest_start": "posttest",
+    "rating": "reports",
+    "report_item": "reports",
+    "review_active": "reviews",
+    "review_answer": "reviews",
+    "review_next": "reviews",
+    "review_summary": "reviews",
     "start_session": "teach",
     "start_session_stream": "teach",
     "status": "sessions",

@@ -15,6 +15,7 @@ import pytest
 
 from learning.params import POSTTEST_WINDOWS_DAYS
 import services.loop.posed
+import services.loop.posttest_poses
 
 pytestmark = pytest.mark.integration
 
@@ -69,7 +70,6 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     """A93 (owner decision 1) supersedes A88's open-only scan: an ENDED session's
     ungraded step and an EXPIRED pose are posed and ungraded, so they are scanned."""
     from db.connection import table
-    from routes import learn_loop
 
     now = _now()
     loop_sid, closed_sid, review_sid = (str(uuid.uuid4()) for _ in range(3))
@@ -111,7 +111,7 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     # A112: a pose belongs to a fixed follow-up window (window_days is part of
     # the key, NOT NULL)
     window = POSTTEST_WINDOWS_DAYS[0]
-    learn_loop._record_poses(
+    services.loop.posttest_poses._record_poses(
         [
             {
                 "user_id": USER,

@@ -27,6 +27,7 @@ from tests.test_learn_loop_routes import client
 from tests.split_patches import patch_loop
 import learning.loop_state_store
 import services.loop.posed
+import services.loop.posttest_poses
 import services.loop.reveals
 import services.loop.runner
 import services.loop.turn
@@ -475,7 +476,6 @@ def test_every_consumer_reads_the_persisted_reveal_with_nothing_consumed(path):
     first. Now nothing is pending: each reader sees the learning_reveals row
     directly, through loop_state_store.revealed_hashes."""
     from learning import loop_state_store, review
-    from routes import learn_loop
 
     rows = [{"id": "r1", "question_hash": "qh-base"}]
     with (
@@ -486,7 +486,7 @@ def test_every_consumer_reads_the_persisted_reveal_with_nothing_consumed(path):
             with patch_loop("unscanned_since", return_value=False):
                 assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
         elif path == "posttest_excluded":
-            assert "qh-base" in learn_loop._posttest_excluded("u1")
+            assert "qh-base" in services.loop.posttest_poses._posttest_excluded("u1")
         elif path == "check_activation":
             # _activate_next_item excludes revealed_hashes (its own route test)
             assert learning.loop_state_store.revealed_hashes is loop_state_store.revealed_hashes

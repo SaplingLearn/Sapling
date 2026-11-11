@@ -47,23 +47,20 @@ import hashlib
 import hmac
 import logging
 import re
-import threading
-import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
-from typing import get_args
+from collections.abc import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 import config
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.session_close import run_session_close, shape_close
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer
-from db.connection import page_all, pg_quote_value, table
-from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
-from learning import grade_checkpoint, item_reports
+from db.connection import pg_quote_value, table
+from learning import answer_guard, arms, gates, ladder, planner, policy, zpd_events
+from learning import grade_checkpoint
 from learning import prequestion as prequestion_rules
 from learning import self_explain
 from learning.prequestion_store import store_answer as store_prequestion_answer
@@ -71,53 +68,25 @@ from learning.prequestion_store import stored_answer as stored_prequestion_answe
 from learning.self_explain_store import LOST as SELF_EXPLAIN_LOST
 from learning.self_explain_store import close_prompt as close_self_explain_prompt
 from learning import probe as probe_policy
-from learning.checks import (
-    CheckItem,
-    PosttestChoice,
-    choose_posttest_item,
-    is_servable,
-    posttest_reserves,
-    posttest_skip_reason,
-    pretest_form,
-    pretest_match,
-)
-from learning.evidence import PlanningPersistenceUnavailable, flush_pending
-from learning.evidence_transaction import EvidenceItemRetired
+from learning.checks import is_servable, posttest_reserves, pretest_form
+from learning.evidence import PlanningPersistenceUnavailable
 from learning.void_store import voided_by_node, voided_event_ids
 from learning.gate import learning_loop_active
 from learning.goals import encode_goal, goal_version, attempted_nodes, progress as goal_progress
 from learning.ladder import Rung
 from learning.leak import detect_leak
-from learning.learning_gain import answer_latency_s, clamp_visibility, window_at
-from learning.posttest_store import posttest_anchors
 from learning.learner_brief import store_brief
 from learning.misconceptions import carry, is_key, open_for, recheck_after_release
-from learning.loop_state_store import (
-    LoopStateConflict,
-    evidence_spans,
-    recent_evidence,
-    reported_hashes,
-    revealed_hashes,
-    seen_hashes,
-)
-from services.loop.posed import _ts
-from learning.help_ledger import mark_graded, record_help, record_posed
+from learning.loop_state_store import reported_hashes, revealed_hashes, seen_hashes
+from learning.help_ledger import record_help, record_posed
 from learning.params import (
     BKT_L0,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_RUN_TIMEOUT_S,
     HELP_NOVELTY_DIGESTS_MAX,
-    LOOP_GRADING_CLAIM_STALE_S,
     PLAN_ORDER,
-    POSTTEST_DUE_CACHE_S,
-    POSTTEST_MAX_ITEMS,
-    POSTTEST_POSE_TTL_HOURS,
-    POSTTEST_WINDOWS_DAYS,
     PROBE_MAX_SKILLS,
     PROBE_SESSION_CAP,
-    RUNG_ASSISTED_MIN,
-    RUNG_NO_CREDIT_MIN,
-    ZPD_RATING_EVERY_N_CHECKS,
 )
 from learning.policy import StepState
 from learning.session_close import (
@@ -156,20 +125,17 @@ from services.tutor.pending import _consume_pending, _consume_pending_off_loop
 from services.tutor.turns import _agent_turn_or_http_error
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, get_pending
 from services import ai_budget, crisis_support, events_service
-from services.academics import user_offering_ids_for_course
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
-from services.check_item_service import get_check_item, items_for_concepts
+from services.check_item_service import get_check_item
 from services.feature_flags import flag_on
 from services import varied_practice
-from services.graph_service import _normalize_concept
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
-from services.request_limits import check_rate_limit
 import services.loop as loop_service
 from routes._docs import same_doc
-from services.loop.constants import _ALREADY_GRADED, _NOT_ENABLED, _WITHDRAWN_ITEM
+from services.loop.constants import _ALREADY_GRADED, _NOT_ENABLED
 from services.loop.flags import (
     _ANSWER_CLAIM,
     _GUESS_IN_FLIGHT,
@@ -188,7 +154,6 @@ from services.loop.state import (
     _CLOSE_STORE_FAILED,
     _closing,
     _gate,
-    _gate_value,
     _GRADING_IN_FLIGHT,
     _grading_in_flight,
     _item_like,
@@ -203,7 +168,6 @@ from services.loop.state import (
     _require_open,
     _require_teaching,
     _session_scope,
-    _StateConflict,
     _step_state,
     _steps,
     _update_loop_state,
@@ -220,7 +184,7 @@ from services.loop.learner import (
     _prereq_proficient,
     _seconds_since,
 )
-from services.loop.served import _item_check_kwargs, _POSES
+from services.loop.served import _item_check_kwargs
 from services.loop.reveals import _ledger, _refloor, _reveal_floor, _tag_planning_evidence
 from services.loop.guard import option_text
 from services.loop.planning import (
@@ -277,7 +241,6 @@ from services.loop.checkpoint import (
     _flush_grade_checkpoint,
     _ITEM_RETIRED,
     _open_grade_checkpoint,
-    _RETIRED_DETAIL,
     _save_grade_checkpoint,
 )
 
@@ -405,686 +368,22 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     return await loop_service.check_answer_stream(body, request)
 
 
-_NO_RATING_ASKED = "no rating was asked for"
-
-
 @router.post("/rating", dependencies=_RATE_LIMITED)
+@same_doc(loop_service.rating)
 def rating(body: LoopRatingBody, request: Request) -> dict:
-    """POST /api/learn/loop/rating (PKG-14; spec §3.4, §6): the student's
-    perceived difficulty, asked every ZPD_RATING_EVERY_N_CHECKS checks. Emits
-    zpd.rating {rating, checks_since_last} and resets the session's counter in
-    ONE compare-and-set write; the rating is stored nowhere else. Accepted only
-    on an open session whose counter reached ZPD_RATING_EVERY_N_CHECKS (else a
-    409, nothing written). Runs no model but is rate-limited (A20); require_self,
-    the gate's 404 and the session owner check run first."""
-    if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    _gate(body.user_id, request)
-    _session_scope(body.session_id, body.user_id)
-    seen: dict = {}
-
-    def reset(state: dict) -> None:
-        # review fix round: only an open session, and only when a rating was
-        # actually asked for (the counter reached the cadence) — else 409
-        _require_open(state)
-        count = int(state.get("checks_since_rating") or 0)
-        if count < ZPD_RATING_EVERY_N_CHECKS:
-            raise HTTPException(status_code=409, detail=_NO_RATING_ASKED)
-        seen["count"] = count
-        state["checks_since_rating"] = 0
-
-    _update_loop_state(body.session_id, reset)
-    zpd_events.emit_zpd_rating(
-        user_id=body.user_id,
-        request_id=_request_id(request),
-        rating=body.rating,
-        checks_since_last=seen.get("count", 0),
-    )
-    return {"ok": True}
-
-
-# ── "Report this question" (spec §13 A113, A123; GitHub #695) ──────────────
-#
-# A check item's key comes from a classmate's upload and no instructor reviews
-# it, so a student can report a question they were posed: wrong answer, unclear
-# or not from my course (enums only). The report is recorded first (the
-# database decides, under the item's lock, whether it is the
-# ITEM_REPORT_QUARANTINE_MIN_REPORTERS-th distinct reporter); then the item stops
-# being served to the reporter: every selection excludes
-# loop_state_store.reported_hashes, and the item is taken off the surface it was
-# reported from (the loop session's current check; the review session's open
-# entry). The report that reaches the threshold QUARANTINES the item
-# course-wide (A123): the database holds every row of it (`reports_threshold`,
-# A124's hold — every student read drops a held item), nothing is deleted and
-# no evidence changes, until staff approve it (restored) or retire it (deleted,
-# evidence voided) in the admin queue. A report never deletes anything.
-
-_REPORTED = "learn.check_item_reported"
-
-
-_QUARANTINED = "learn.check_item_quarantined"
-
-
-def _report_flag(user_id: str) -> None:
-    """The `item_reports` flag (spec §13 A113): off → the route's 404."""
-    if not flag_on(item_reports.ITEM_REPORTS_FLAG, user_id):
-        raise HTTPException(status_code=404, detail="Not found")
-
-
-def _posed_loop_item(body: LoopReportBody) -> CheckItem:
-    """The loop surface: an item this session posed (a step keyed by its
-    hash, the session the student's own). A withdrawn item is a 409."""
-    _session_scope(body.session_id, body.user_id)
-    entry = (_load_loop_state(body.session_id).get("steps") or {}).get(body.question_hash)
-    if not isinstance(entry, dict) or not entry.get("check_item_id"):
-        raise HTTPException(status_code=404, detail="No such check item in this session")
-    item = get_check_item(entry["check_item_id"])
-    if item is None:
-        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
-    return item
-
-
-def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
-    """The review surface: today's review session (the student's, its course
-    one they are enrolled in) served this item."""
-    _review_course(body.user_id, body.course_id)
-    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
-        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
-    try:
-        view = review.peek_review_session(body.user_id, body.course_id, now)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
-    item = get_check_item(body.item_id)
-    if item is None:
-        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
-    if item.question_hash not in ((view.get("review") or {}).get("served_hashes") or []):
-        raise HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])
-    return item
-
-
-def _clear_reported_current(session_id: str, question_hash: str, now: float) -> None:
-    """Take the reported check off the loop session: its step is marked
-    reported (a session never re-activates a hash it keyed), and it stops
-    being current while it still awaits an answer. A graded step (its feedback
-    must still be served) or one being graded is left as it is."""
-
-    def withdraw(state: dict) -> None:
-        entry = _steps(state).get(question_hash)
-        if not isinstance(entry, dict):
-            return
-        entry["reported"] = True
-        claimed = entry.get("grading_claim") and not (
-            now - float(entry.get("grading_claim_at") or 0) > LOOP_GRADING_CLAIM_STALE_S
-        )
-        if (
-            state.get("current") == question_hash
-            and entry.get("graded_at") is None
-            and grade_checkpoint.KEY not in entry
-            and not claimed
-        ):
-            state["current"] = None
-
-    _update_loop_state(session_id, withdraw)
+    return loop_service.rating(body, request)
 
 
 @router.post("/report", dependencies=_RATE_LIMITED)
+@same_doc(loop_service.report_item)
 def report_item(body: LoopReportBody, request: Request) -> dict:
-    """POST /api/learn/loop/report (spec §13 A113; GitHub #695): the student
-    reports a check item they were posed — on the loop's check card
-    (`surface: loop`, the session's step by `question_hash`) or on Study's
-    review queue (`surface: review`, today's review session's item by
-    `item_id`). The reason is an enum; nothing else the student writes is
-    stored. Idempotent: a repeat records nothing new. The report that reaches
-    ITEM_REPORT_QUARANTINE_MIN_REPORTERS quarantines the course item (A123:
-    `quarantined` — held from every student until staff decide; nothing is
-    deleted). Runs no model but is rate-limited (A20); require_self, the gate's
-    404, the `item_reports` flag's 404 and the owner checks run first. 503
-    when the report could not be recorded (nothing changed; retry)."""
-    if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    _gate(body.user_id, request)
-    _report_flag(body.user_id)
-    loop = body.surface == "loop"
-    review_now = None if loop else _review_now()
-    item = _posed_loop_item(body) if loop else _served_review_item(body, review_now)
-    request_id = _request_id(request)
-    try:
-        outcome = item_reports.record_report(
-            body.user_id,
-            item.course_id,
-            item.question_hash,
-            reason=body.reason,
-            surface=body.surface,
-        )
-    except Exception:
-        logger.warning("check item report not recorded (course=%s)", item.course_id, exc_info=True)
-        raise HTTPException(status_code=503, detail="report not recorded; retry") from None
-    # stop serving it to the reporter on the surface it came from (a refresh,
-    # /check/next or /review/next then moves on; every selection excludes it)
-    if loop:
-        _clear_reported_current(body.session_id, item.question_hash, _now_s())
-    else:
-        try:
-            review.drop_reported(body.session_id, item.id, review_now)
-        except LoopStateConflict:
-            raise _StateConflict() from None
-    events_service.log_event(
-        _REPORTED,
-        category="usage",
-        user_id=body.user_id,
-        request_id=request_id,
-        payload={
-            "course_id": item.course_id,
-            "question_hash": item.question_hash,
-            "reason": body.reason,
-            "surface": body.surface,
-            "first": outcome.first,
-            "reporters": outcome.reporters,
-        },
-    )
-    if outcome.quarantine:
-        events_service.log_event(
-            _QUARANTINED,
-            category="audit",
-            user_id=body.user_id,
-            request_id=request_id,
-            payload={
-                "course_id": item.course_id,
-                "question_hash": item.question_hash,
-                "reporters": outcome.reporters,
-            },
-        )
-    return {"reported": True, "first": outcome.first, "quarantined": outcome.quarantine}
-
-
-# ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23, A112, A113) ─
-
-#: Every value `zpd.step.phase` may carry (PKG-06's Phase; spec §13 A8 adds
-#: "posttest"). The `sessions.close_phase` CHECK is NOT widened: posttest is a
-#: step phase only.
-STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
-
-
-_NOT_A_POSTTEST_ITEM = "not a post-test item"
-
-
-_ONE_DAY = timedelta(days=1)
-
-
-def _posttest_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _iso_z(ts: datetime) -> str:
-    """A UTC ISO timestamp with no '+' (safe inside a PostgREST or=(…) filter)."""
-    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _posttest_window(anchor: datetime, now: datetime) -> int | None:
-    """A112/A126: the fixed follow-up window `now` falls in, counted from
-    `anchor`, the concept's FIRST graded evidence (practice cannot move it) —
-    learning_gain.window_at, the one rule the funnel reads too. A window runs
-    until the next one opens and the last closes POSTTEST_LAST_WINDOW_CLOSE_DAYS
-    after the anchor, so a window the student was away for is skipped, never
-    posed late under its label. None before the first window opens and after
-    the last one closes."""
-    return window_at(anchor, now)
-
-
-def _posttest_exposed(user_id: str) -> set[str]:
-    """seen ∪ revealed (A23): what a post-test never poses because the student
-    has answered it or been shown its answer."""
-    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
-
-
-def _posttest_excluded(user_id: str, reported: set[str] | None = None) -> set[str]:
-    """seen ∪ revealed (A23) ∪ reported (A113), read once per request (the
-    reported set is the caller's when it has read it already)."""
-    if reported is None:
-        reported = set(reported_hashes(user_id))
-    return _posttest_exposed(user_id) | reported
-
-
-class _CourseNodesRead:
-    """A read-only page_all handle over graph_nodes (invariant 1's ast half
-    allows the table only as a direct read — check_item_service's pattern)."""
-
-    def select_with_count(self, *args, **kwargs):
-        return table("graph_nodes").select_with_count(*args, **kwargs)
-
-
-def _course_nodes(user_id: str, course_id: str) -> dict[str, str]:
-    """node id → concept key of the student's nodes in the course (paged)."""
-    return {
-        row["id"]: _normalize_concept(row.get("concept_name") or "")
-        for row in page_all(
-            _CourseNodesRead(),
-            "id,concept_name",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-            order="id",
-        )
-        if row.get("id")
-    }
-
-
-def _read_poses(user_id: str, course_id: str) -> dict[str, dict[int, dict]]:
-    """node id → window → the student's post-test pose rows in the course (A87;
-    one row per (student, node, window) since A112)."""
-    rows = table(_POSES).select(
-        "node_id,window_days,question_hash,posed_at,answered_at,claim,claimed_at",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    )
-    poses: dict[str, dict[int, dict]] = {}
-    for r in rows or []:
-        if r.get("node_id"):
-            poses.setdefault(r["node_id"], {})[int(r["window_days"])] = r
-    return poses
-
-
-def _pose_open(pose: dict | None, now: datetime) -> bool:
-    """Unanswered and younger than POSTTEST_POSE_TTL_HOURS (A89): an expired
-    pose is void — it may be re-posed. An unreadable posed_at is void too."""
-    if not pose or pose.get("answered_at"):
-        return False
-    posed = _ts(pose.get("posed_at"))
-    return posed is not None and posed >= now - timedelta(hours=POSTTEST_POSE_TTL_HOURS)
-
-
-def _posed_order(pose: dict) -> tuple:
-    """Earliest posed first; an unreadable posed_at sorts first; then the window."""
-    return (_ts(pose.get("posed_at")) or datetime.min.replace(tzinfo=timezone.utc), int(pose["window_days"]))
-
-
-def _open_posed_item(node_poses: dict[int, dict], items: list, now: datetime, reported: set[str]):
-    """(pose, item) of the node's OPEN pose whose item is still in the bank — the
-    earliest posed, should a race have left two (A87: returned as posed, never
-    re-chosen); None when there is none. An open pose whose item was withdrawn
-    counts as no pose, as it did before A112, and so does one whose item is in
-    `reported` (A113: an item the student reported is never posed again — in
-    any window)."""
-    by_hash = {i.question_hash: i for i in items if i.question_hash not in reported}
-    posed = [
-        (p, by_hash[p.get("question_hash")])
-        for p in node_poses.values()
-        if _pose_open(p, now) and p.get("question_hash") in by_hash
-    ]
-    return min(posed, key=lambda pi: _posed_order(pi[0]), default=None)
-
-
-def _bound_item(items: list, node_poses: dict[int, dict], excluded: set[str]):
-    """A93 (minor 6), across windows since A112: the node's newest UNANSWERED
-    pose (expired, or open with a withdrawn or reported item) keeps its item
-    bound to the node — the next pose, a renewal in its window or a later
-    window's, is that SAME item, never a fresh one to dodge it — while the item
-    is still fresh (A23: neither seen nor revealed since; a stale item would
-    grade practice as a delayed outcome) and not reported (A113: `excluded`
-    holds the student's reported items, never posed again). None → the
-    window's choice (`_window_choice`, A126)."""
-    unanswered = [p for p in node_poses.values() if not p.get("answered_at")]
-    if not unanswered:
-        return None
-    qh = max(unanswered, key=_posed_order).get("question_hash")
-    if qh in excluded:
-        return None
-    return next((i for i in items if i.question_hash == qh), None)
-
-
-def _new_pose(user_id: str, course_id: str, node: str, window: int, choice, span, now: datetime) -> dict:
-    """A112: a pose row — its window, the window's fixed anchor (the concept's
-    first graded evidence: journal row id and time), and the concept's last
-    evidence before the pose with the days since it, the delay an analysis
-    stratifies on (truly delayed vs recently practised — practice no longer
-    postpones a window). A126: how its item was chosen (`choice`, a
-    checks.PosttestChoice: `item_match` against the student's pretest item,
-    `item_source` reserve or fallback). The outcome (`correct`, `max_rung`) and
-    what the answer reports (`served_at` once the client shows the item; the
-    latency and the page-hidden telemetry once it is answered) stay NULL — a
-    renewal (A89/A93) resets them all. Hashes, ids, codes, times and numbers
-    only."""
-    return {
-        "user_id": user_id,
-        "node_id": node,
-        "course_id": course_id,
-        "window_days": window,
-        "question_hash": choice.item.question_hash,
-        "posed_at": now.isoformat(),
-        "answered_at": None,
-        "claim": None,
-        "claimed_at": None,
-        "anchor_event_id": span.first_id,
-        "anchor_at": span.first_at.isoformat(),
-        "last_evidence_at": span.last_at.isoformat(),
-        "days_since_evidence": max(0.0, (now - span.last_at) / _ONE_DAY),
-        "correct": None,
-        "max_rung": None,
-        "item_match": choice.match,
-        "item_source": choice.source,
-        "served_at": None,
-        "answer_latency_s": None,
-        "hidden_count": None,
-        "hidden_s": None,
-    }
-
-
-def _record_poses(rows: list[dict]) -> None:
-    """Open (or renew, A89/A93) the poses — one upsert, one row per (student,
-    node, window) (A112)."""
-    if rows:
-        table(_POSES).upsert(rows, on_conflict="user_id,node_id,window_days")
-
-
-#: spec §13 A126: a due window with nothing fresh to pose, and why — one row
-#: per (student, node, window), the latest reason (written by /posttest/start)
-_SKIPS = "posttest_skips"
-
-
-def _skip_row(user_id: str, course_id: str, node: str, window: int, reason: str, now: datetime) -> dict:
-    return {
-        "user_id": user_id,
-        "node_id": node,
-        "course_id": course_id,
-        "window_days": window,
-        "reason": reason,
-        "skipped_at": now.isoformat(),
-    }
-
-
-def _record_skips(rows: list[dict]) -> None:
-    """A126: record the due windows /posttest/start had to skip, so the funnel
-    can count them. One upsert. A measurement record, not the pose: a failed
-    write logs and the start still answers (its poses are already committed)."""
-    if not rows:
-        return
-    try:
-        table(_SKIPS).upsert(rows, on_conflict="user_id,node_id,window_days")
-    except Exception:
-        logger.warning("post-test skips not recorded (%d)", len(rows), exc_info=True)
-
-
-def _stamp_served(user_id: str, node_id: str, question_hash: str, now: datetime) -> bool:
-    """A126: the first time the client SHOWS an open pose's item — one
-    conditional UPDATE of the open pose (unanswered, within its TTL) whose
-    served_at is still NULL, so a reload or a repeat call keeps the first
-    display. The server's clock: a latency is answered_at − served_at, both
-    stamped here. True when this call stamped it."""
-    rows = table(_POSES).update(
-        {"served_at": now.isoformat()},
-        filters={
-            "user_id": f"eq.{user_id}",
-            "node_id": f"eq.{node_id}",
-            "question_hash": f"eq.{question_hash}",
-            "answered_at": "is.null",
-            "served_at": "is.null",
-            "posed_at": f"gte.{_iso_z(now - timedelta(hours=POSTTEST_POSE_TTL_HOURS))}",
-        },
-    )
-    return bool(rows)
-
-
-def _claim_pose(
-    user_id: str, node_id: str, question_hash: str, claim: str, now: datetime
-) -> dict | None:
-    """The DB claim (A87): one conditional UPDATE — the OPEN pose of this item
-    (unanswered, posed within POSTTEST_POSE_TTL_HOURS, A89), unclaimed, with no
-    claim time (m10) or under a claim older than LOOP_GRADING_CLAIM_STALE_S — so
-    only one submission grades it, whatever the number of backend processes.
-    A112: a node has one row per window, so the open pose's window is read first
-    (the earliest posed, should a race have left two) and the UPDATE names it:
-    one answer never closes two windows. Returns the claimed row (its posed_at
-    and window_days), or None."""
-    open_pose = {
-        "user_id": f"eq.{user_id}",
-        "node_id": f"eq.{node_id}",
-        "question_hash": f"eq.{question_hash}",
-        "answered_at": "is.null",
-        "posed_at": f"gte.{_iso_z(now - timedelta(hours=POSTTEST_POSE_TTL_HOURS))}",
-    }
-    posed = table(_POSES).select("window_days,posed_at", filters=open_pose) or []
-    if not posed:
-        return None
-    window = int(min(posed, key=_posed_order)["window_days"])
-    stale = _iso_z(now - timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S))
-    rows = table(_POSES).update(
-        {"claim": claim, "claimed_at": now.isoformat()},
-        filters={
-            **open_pose,
-            "window_days": f"eq.{window}",
-            "or": f"(claim.is.null,claimed_at.is.null,claimed_at.lt.{stale})",
-        },
-    )
-    return rows[0] if rows else None
-
-
-def _answer_pose(
-    user_id: str,
-    node_id: str,
-    claim: str,
-    now: datetime,
-    *,
-    correct: bool,
-    max_rung: int,
-    latency_s: float | None = None,
-    hidden_count: int | None = None,
-    hidden_s: float | None = None,
-) -> bool:
-    """m1/m2: re-validate the claim and CLOSE the pose before the one flush —
-    a conditional UPDATE on this claim, still unanswered. The same write records
-    the post-test OUTCOME (A112): `correct` and the rung the grade carries
-    (`max_rung`, the floor after the in-claim re-read; above 0 it is no clean
-    delayed outcome) — and, A126, what the answer reports beside it: the
-    latency (answered_at − served_at, None when the item's display was never
-    stamped) and the page-hidden telemetry, already clamped
-    (learning_gain.clamp_visibility). None of it reaches the grade. True → the
-    pose is answered for good (a later failure never reopens it: fail closed);
-    False → the claim was taken over, and nothing may be written."""
-    rows = table(_POSES).update(
-        {
-            "answered_at": now.isoformat(),
-            "claim": None,
-            "claimed_at": None,
-            "correct": bool(correct),
-            "max_rung": int(max_rung),
-            "answer_latency_s": latency_s,
-            "hidden_count": hidden_count,
-            "hidden_s": hidden_s,
-        },
-        filters={
-            "user_id": f"eq.{user_id}",
-            "node_id": f"eq.{node_id}",
-            "claim": f"eq.{claim}",
-            "answered_at": "is.null",
-        },
-    )
-    return bool(rows)
-
-
-def _release_pose(user_id: str, node_id: str, claim: str) -> None:
-    """Nothing was graded: release this claim (an unanswered pose only)."""
-    table(_POSES).update(
-        {"claim": None, "claimed_at": None},
-        filters={
-            "user_id": f"eq.{user_id}",
-            "node_id": f"eq.{node_id}",
-            "claim": f"eq.{claim}",
-            "answered_at": "is.null",
-        },
-    )
-
-
-def _due_nodes(
-    nodes: Iterable[str], poses: Mapping[str, dict[int, dict]], anchors: Mapping[str, datetime], now: datetime
-) -> dict[str, int | None]:
-    """A112: candidate node → its due, unanswered window, or None when only an
-    open pose keeps it a candidate (an open pose stays posed until answered or
-    expired, even when no window is due). `anchors`: node → its FIRST graded
-    evidence time. Shared by /posttest/start and GET /posttest/due."""
-    due: dict[str, int | None] = {}
-    for node in nodes:
-        node_poses = poses.get(node) or {}
-        anchor = anchors.get(node)
-        window = _posttest_window(anchor, now) if anchor is not None else None
-        if window is not None and (node_poses.get(window) or {}).get("answered_at"):
-            window = None  # answered: a window is posed at most once
-        if window is not None or any(_pose_open(p, now) for p in node_poses.values()):
-            due[node] = window
-    return due
-
-
-def _posttest_plans(
-    due: Mapping[str, int | None],
-    poses: Mapping[str, dict[int, dict]],
-    anchors: Mapping[str, datetime],
-    items_of: Callable[[str], list],
-    now: datetime,
-    reported: set[str],
-) -> list[tuple]:
-    """(order, node, the open pose's item or None, the window to pose or None),
-    sorted: open poses first (A87: returned as posed), then the
-    earliest-opened windows. An open pose of a withdrawn or reported item
-    counts as no pose (A113), so its due window is posed afresh."""
-    plans = []
-    for node, window in due.items():
-        current = _open_posed_item(poses.get(node) or {}, items_of(node), now, reported)
-        if current is not None:
-            plans.append(((0, _posed_order(current[0])[0], node), node, current[1], None))
-        elif window is not None:
-            opened = anchors[node] + timedelta(days=window)
-            plans.append(((1, opened, node), node, None, window))
-    return sorted(plans, key=lambda p: p[0])
-
-
-def _window_choice(items: list, node_poses: dict[int, dict], excluded: set[str], window: int, pretest):
-    """The item a due window poses (A23, A93, A113, A126) — a
-    checks.PosttestChoice, or None (nothing fresh: the window is skipped). The
-    newest unanswered pose's item first while it is fresh (A93: bound across
-    windows, never shopped away); else checks.choose_posttest_item: a fresh
-    protected reserve matched to the student's pretest item, else a fallback."""
-    bound = _bound_item(items, node_poses, excluded)
-    if bound is not None:
-        source = "reserve" if bound.question_hash in posttest_reserves(items) else "fallback"
-        return PosttestChoice(bound, pretest_match(bound, pretest), source)
-    return choose_posttest_item(
-        items, excluded, window_index=POSTTEST_WINDOWS_DAYS.index(window), pretest=pretest
-    )
+    return loop_service.report_item(body, request)
 
 
 @router.post("/posttest/start", dependencies=_RATE_LIMITED)
+@same_doc(loop_service.posttest_start)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
-    """Rung 3 (spec §10) at FIXED follow-up windows (A112): this student's
-    post-test items for one course. A concept is due when `now` falls in one of
-    POSTTEST_WINDOWS_DAYS counted from its FIRST graded evidence (the journal's
-    earliest evidence row: practice cannot postpone it) and that window is not
-    answered yet — each window is posed at most once per student, concept and
-    window, a window the student was away for is skipped, and the last one
-    closes POSTTEST_LAST_WINDOW_CLOSE_DAYS after the anchor (A126). The item is
-    a fresh protected reserve matched to the student's pretest item, else a
-    fresh fallback (A126, `_window_choice`; a confirmed key, then the lint
-    tier, A124/A113, so an `unsourced` item comes after one with its sources,
-    A128) — never one seen or revealed (A23), reported (A113), or held or
-    retired (A124, A123: a held item is not in the course's items); an
-    unanswered pose's item stays bound to the node while it is fresh (A93) —
-    never once reported (an open pose of a reported item counts as no pose,
-    like a withdrawn one). A due window with nothing fresh is skipped and the
-    skip recorded with its reason (`posttest_skips`, A126). Open poses first,
-    then the earliest-opened
-    windows, at most POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the pose
-    records its window, its anchor, the days since the concept's last evidence
-    and how its item was chosen, and a repeat start returns the same item for a
-    node with an open pose — never a fresh one. The pose only: the prompt
-    verbatim and an mc_reason item's options, never a key or a reference. No
-    brief, no RAG, no tutor, no session row, no model call. Rate-limited (A20)."""
-    if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    _gate(body.user_id, request)
-    now = _posttest_now()
-    nodes = _course_nodes(body.user_id, body.course_id)
-    poses = _read_poses(body.user_id, body.course_id)
-    spans = evidence_spans(body.user_id, body.course_id)
-    anchors = {node: span.first_at for node, span in spans.items()}
-    due = _due_nodes(nodes, poses, anchors, now)
-    if not due:
-        return {"items": []}
-    by_key = items_for_concepts(body.course_id, sorted({nodes[n] for n in due}))
-    # A113: read once — an item the student reported is never posed again: an
-    # open pose of it counts as no pose, a bound one is excluded (the choice
-    # excludes it too; a held or retired item is gone from the course's items)
-    reported = set(reported_hashes(body.user_id))
-    plans = _posttest_plans(
-        due, poses, anchors, lambda node: by_key.get(nodes[node]) or [], now, reported
-    )
-    exposed = _posttest_exposed(body.user_id) if any(p[2] is None for p in plans) else set()
-    excluded = exposed | reported
-    out: list[dict] = []
-    new: list[dict] = []
-    skips: list[dict] = []
-    for _, node, item, window in plans:
-        if item is None:
-            items = by_key.get(nodes[node]) or []
-            span = spans[node]
-            # A126: the student's pretest item — the concept's first graded item
-            pretest = next((i for i in items if i.question_hash == span.first_hash), None)
-            choice = _window_choice(items, poses.get(node) or {}, excluded, window, pretest)
-            if choice is None:  # nothing fresh left for this concept: skipped, and why
-                reason = posttest_skip_reason(items, exposed=exposed)
-                skips.append(_skip_row(body.user_id, body.course_id, node, window, reason, now))
-                continue
-            new.append(_new_pose(body.user_id, body.course_id, node, window, choice, span, now))
-            item = choice.item
-        out.append({"node_id": node, **_pose_payload(item)})
-        if len(out) >= POSTTEST_MAX_ITEMS:
-            break
-    _record_poses(new)
-    _record_skips(skips)
-    for row in new:  # A93: posed — in the scan set until graded
-        _ledger(record_posed, body.user_id, row["question_hash"], source="posttest")
-    clear_posttest_due_cache(body.user_id)
-    return {"items": out}
-
-
-def _posttest_node(user_id: str, node_id: str) -> dict:
-    rows = (
-        table("graph_nodes").select(
-            "id,course_id,concept_name",
-            filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
-            limit=1,
-        )
-        or []
-    )
-    if not rows or not rows[0].get("course_id"):
-        raise HTTPException(status_code=404, detail="Node not found")
-    return rows[0]
-
-
-def _posttest_reported(user_id: str, question_hash: str) -> bool:
-    """A113 across A112's windows: an item the student reported is never posed
-    again, so an open pose of it is not answerable either — /posttest/start
-    replaces such a pose in its own window, but one left open in an EARLIER
-    window (the next window was posed with a fresh item) would otherwise still
-    be claimable. Read before the claim: a refusal claims and records nothing.
-    An unreadable reported set refuses too (503, fail closed)."""
-    try:
-        return question_hash in reported_hashes(user_id)
-    except Exception:
-        logger.warning("post-test: reported items unread; the answer is refused", exc_info=True)
-        raise HTTPException(status_code=503, detail="post-test unavailable; retry") from None
-
-
-def _posttest_floor(user_id: str, node_id: str, item, posed_at: datetime | None) -> int:
-    """A88/A89: the open post-test item's grading floor — `_reveal_floor`
-    (revealed → no credit; an unscanned marker since the pose → assisted), and
-    RUNG_NO_CREDIT_MIN when the node has ANY evidence journaled after the pose
-    (the student worked the concept in between; owner 2). An unreadable pose
-    time or evidence read is assisted at least (fail closed)."""
-    floor = _reveal_floor(user_id, item, posed_at)
-    if posed_at is None:
-        return max(floor, RUNG_ASSISTED_MIN)
-    since = recent_evidence(user_id, node_id, since=_iso_z(posed_at))
-    if since is None:
-        logger.warning("post-test evidence read failed; the grade is assisted")
-        return max(floor, RUNG_ASSISTED_MIN)
-    if since:
-        return max(floor, RUNG_NO_CREDIT_MIN)
-    return floor
+    return loop_service.posttest_start(body, request)
 
 
 # crisis support: a crisis answer leaves the pose open and unclaimed, nothing graded
@@ -1094,338 +393,21 @@ def _posttest_floor(user_id: str, node_id: str, item, posed_at: datetime | None)
         "loop_posttest_answer", "answer", "reason", respond=crisis_support.plain_response(graded=False)
     ),
 )
+@same_doc(loop_service.posttest_answer)
 async def posttest_answer(body: PosttestAnswerBody, request: Request):
-    """Grade the node's OPEN post-test pose (A87) through grade_answer (A16):
-    ceiling H0, max_rung 0, no session — unless the item was revealed or seen
-    since it was posed, when the grade carries no unassisted credit (A86). An
-    item the student reported is never graded here (A113, any window: 409
-    before the claim, `_posttest_reported`).
-    The pose is claimed by one conditional UPDATE, so it is graded once; a
-    refusal (A33) releases the claim and asks again (never an idk here); an
-    outage or the grade cap releases it too and is a 503 with nothing recorded
-    for either outcome (invariant 28). A126: the pose also records the answer
-    latency (answered_at − the served_at /posttest/shown stamped) and the
-    page-hidden telemetry the client sends — untrusted, clamped
-    (learning_gain.clamp_visibility), and never read by the grade."""
-    if not body.user_id:
-        body.user_id = await guard_off_loop(get_session_user_id, request)
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
-    course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
-    items = items_for_concepts(course_id, [key]).get(key) or []
-    item = next((i for i in items if i.question_hash == body.question_hash), None)
-    if item is None:
-        raise HTTPException(status_code=404, detail="check item not found")
-    if not body.idk:
-        if item.format == "mc_reason" and not body.selected_option:
-            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
-        if item.format != "mc_reason" and not body.answer:
-            raise HTTPException(status_code=422, detail="a free answer needs answer")
-    if _posttest_reported(body.user_id, item.question_hash):
-        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
-    now = _posttest_now()
-    claim = str(uuid.uuid4())
-    pose = await asyncio.to_thread(  # #117: off the event loop
-        _claim_pose, body.user_id, body.node_id, item.question_hash, claim, now
-    )
-    if pose is None:  # not posed, answered, claimed, or expired (A89) → 409
-        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
-    answered = False
-    try:
-        floor = Rung(_posttest_floor(body.user_id, body.node_id, item, _ts(pose.get("posed_at"))))
-        band, p_before = _band_for(body.user_id, body.node_id)
-        deps = SaplingDeps(
-            user_id=body.user_id,
-            course_id=course_id,
-            supabase=None,
-            request_id=_request_id(request),
-            session_id=None,
-            feature="loop_posttest",
-            learning_loop=loop_on,
-        )
-        answer = CheckAnswer(
-            question_hash=item.question_hash,
-            answer_text=body.answer,
-            selected_option=body.selected_option,
-            reason=body.reason,
-            idk=body.idk,
-        )
-        # A76: every grading caller decides the re-check through the one helper
-        # (no session log here: the node's journal decides)
-        recheck = recheck_after_release(body.user_id, body.node_id, None, now=now, item=item)
-        outcome = await grade_answer(
-            _item_like(item),
-            answer,
-            deps=deps,
-            node_id=body.node_id,
-            max_rung=int(floor),
-            same_session_recheck=recheck,
-        )
-        if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
-            return {"graded": False, "refused": True}
-        if outcome.unavailable:
-            raise HTTPException(status_code=503, detail="grader unavailable")
-        # m1/m2: the claim is re-validated and the pose CLOSED before the flush —
-        # a taken-over claim writes nothing; a failed flush never reopens the pose
-        # A93: the help floor re-read inside the claim, right before the write
-        floor = Rung(
-            _refloor(deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor))
-        )
-        answered_at = _posttest_now()
-        # A126: telemetry beside the outcome, bounded by the server's own clock:
-        # the item cannot have been hidden for longer than it was on screen
-        served = _ts(pose.get("served_at"))
-        shown_from = served or _ts(pose.get("posed_at"))
-        hidden_count, hidden_s = clamp_visibility(
-            body.hidden_count,
-            body.hidden_s,
-            (answered_at - shown_from).total_seconds() if shown_from else None,
-        )
-        answered = await asyncio.to_thread(  # #117: off the event loop
-            _answer_pose,
-            body.user_id,
-            body.node_id,
-            claim,
-            answered_at,
-            correct=bool(outcome.correct),
-            max_rung=int(floor),
-            latency_s=answer_latency_s(served, answered_at),
-            hidden_count=hidden_count,
-            hidden_s=hidden_s,
-        )
-        if not answered:
-            raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
-        try:
-            changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
-        except EvidenceItemRetired:
-            # A123: staff retired the item while it was graded — nothing was
-            # written (the grade is void); the pose stays answered, and its
-            # outcome is left out of the learning gain by the void rule
-            raise HTTPException(status_code=409, detail=_RETIRED_DETAIL) from None
-        _ledger(mark_graded, body.user_id, item.question_hash)
-    finally:
-        if not answered:
-            try:
-                await asyncio.to_thread(_release_pose, body.user_id, body.node_id, claim)
-            except Exception:
-                logger.warning("post-test claim on %s not released", body.node_id, exc_info=True)
-        clear_posttest_due_cache(body.user_id)
-    await asyncio.to_thread(  # #117: off the event loop
-        _emit_posttest_step, body, request, item, outcome, band, p_before, changes, floor
-    )
-    return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
-
-
-def _posttest_light_limit(user_id: str) -> None:
-    """A126: the cheap per-user limit (services/request_limits' in-process
-    sliding window) on the two no-model post-test routes — the display stamp
-    and the "due" read. Not the A20 rate limit: no model runs behind them."""
-    retry = check_rate_limit(
-        f"loop_posttest_light:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
-    )
-    if retry is not None:
-        raise HTTPException(
-            status_code=429, detail="too many requests", headers={"Retry-After": str(retry)}
-        )
+    return await loop_service.posttest_answer(body, request)
 
 
 @router.post("/posttest/shown")
+@same_doc(loop_service.posttest_shown)
 def posttest_shown(body: PosttestShownBody, request: Request) -> dict:
-    """A126: the client shows an open pose's item — stamp its `served_at` (the
-    first display only; the server's clock), so the answer's latency is
-    answered_at − served_at. Writes nothing else: no evidence, no ledger, no
-    model. An item with no open pose stamps nothing (`served: false`); a failed
-    stamp logs and leaves the latency unknown, never an error the student sees."""
-    if not body.user_id:
-        body.user_id = get_session_user_id(request)
-    _gate(body.user_id, request)
-    _posttest_light_limit(body.user_id)
-    try:
-        stamped = _stamp_served(body.user_id, body.node_id, body.question_hash, _posttest_now())
-    except Exception:
-        logger.warning("post-test display not stamped", exc_info=True)
-        stamped = False
-    return {"served": stamped}
-
-
-# ── "A retention check is due" (spec §13 A126) ───────────────────────────────
-
-#: Client-visible flag (services/feature_flags.py): off → GET /posttest/due
-#: 404s and the app shows no badge. Pushing students toward the retention check
-#: changes the measurement protocol (pull → push), so it is switched on
-#: deliberately — at a trial boundary — not by a deploy.
-RETENTION_DUE_FLAG = "retention_due_badge"
-
-
-#: user id → (monotonic expiry, payload): a per-process TTL cache (CLAUDE.md
-#: #98): POSTTEST_DUE_CACHE_S, cleared for the student by /posttest/start and
-#: /posttest/answer (the routes that change what is due); other workers and
-#: evidence written elsewhere converge within the TTL.
-_DUE_CACHE: dict[str, tuple[float, dict]] = {}
-
-
-_DUE_CACHE_MAX = 10_000
-
-
-_DUE_LOCK = threading.Lock()
-
-
-def clear_posttest_due_cache(user_id: str | None = None) -> None:
-    """Drop one student's cached "due" answer (every student's with None)."""
-    with _DUE_LOCK:
-        if user_id is None:
-            _DUE_CACHE.clear()
-        else:
-            _DUE_CACHE.pop(user_id, None)
-
-
-def _due_cache_get(user_id: str) -> dict | None:
-    with _DUE_LOCK:
-        hit = _DUE_CACHE.get(user_id)
-        if hit is None or hit[0] <= time.monotonic():
-            return None
-        return copy.deepcopy(hit[1])
-
-
-def _due_cache_put(user_id: str, payload: dict) -> None:
-    with _DUE_LOCK:
-        if len(_DUE_CACHE) >= _DUE_CACHE_MAX and user_id not in _DUE_CACHE:
-            _DUE_CACHE.pop(min(_DUE_CACHE, key=lambda k: _DUE_CACHE[k][0]))
-        _DUE_CACHE[user_id] = (time.monotonic() + POSTTEST_DUE_CACHE_S, copy.deepcopy(payload))
-
-
-def _read_student_poses(user_id: str) -> dict[str, dict[int, dict]]:
-    """node id → window → the student's pose rows, every course (one read)."""
-    rows = table(_POSES).select(
-        "node_id,course_id,window_days,question_hash,posed_at,answered_at",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    poses: dict[str, dict[int, dict]] = {}
-    for r in rows or []:
-        if r.get("node_id"):
-            poses.setdefault(r["node_id"], {})[int(r["window_days"])] = r
-    return poses
-
-
-def _retention_due(user_id: str, now: datetime) -> dict:
-    """Does the student have a retention check to take now — an open pose
-    whose item can still be answered, or a due, unanswered window with an item
-    /posttest/start would pose? The same rules as /posttest/start
-    (`_due_nodes`, `_open_posed_item`, `_window_choice`), never a pose: nothing
-    is written. Cheap first: one anchors read and one poses read; only when
-    some node is a candidate, its courses' items and the exclusion sets."""
-    rows, _ = posttest_anchors(user_id=user_id)
-    anchors: dict[str, dict] = {}
-    anchor_at: dict[str, datetime] = {}
-    for row in rows:
-        at = _ts(row.get("anchor_at"))
-        if row.get("node_id") and row.get("course_id") and at is not None:
-            anchors[row["node_id"]] = row
-            anchor_at[row["node_id"]] = at
-    poses = _read_student_poses(user_id)
-    due = _due_nodes(anchors, poses, anchor_at, now)
-    if not due:
-        return {"due": False, "course_ids": []}
-    by_course: dict[str, list[str]] = {}
-    for node in due:
-        by_course.setdefault(anchors[node]["course_id"], []).append(node)
-    reported = set(reported_hashes(user_id))
-    excluded: set[str] | None = None
-    courses = []
-    for course_id, course_nodes in sorted(by_course.items()):
-        keys = {n: _normalize_concept(anchors[n].get("concept_name") or "") for n in course_nodes}
-        by_key = items_for_concepts(course_id, sorted(set(keys.values())))
-        for node in course_nodes:
-            items = by_key.get(keys[node]) or []
-            node_poses = poses.get(node) or {}
-            if _open_posed_item(node_poses, items, now, reported) is not None:
-                courses.append(course_id)
-                break
-            if due[node] is None:
-                continue
-            if excluded is None:
-                excluded = _posttest_exposed(user_id) | reported
-            if _window_choice(items, node_poses, excluded, due[node], None) is not None:
-                courses.append(course_id)
-                break
-    return {"due": bool(courses), "course_ids": courses}
+    return loop_service.posttest_shown(body, request)
 
 
 @router.get("/posttest/due")
+@same_doc(loop_service.posttest_due)
 def posttest_due(request: Request, user_id: str = Query("")) -> dict:
-    """A126: {due, course_ids} — whether the student has a retention check to
-    take now (`_retention_due`), for the app's "retention check due" badge on
-    Study and the Dashboard. Behind the `retention_due_badge` flag (off → 404)
-    and the loop gate; cached per student for POSTTEST_DUE_CACHE_S. Read-only:
-    it never opens a pose. A failed read is a 503 (the badge stays hidden),
-    never a "nothing due" it cannot vouch for."""
-    if not user_id:
-        user_id = get_session_user_id(request)
-    _gate(user_id, request)
-    if not flag_on(RETENTION_DUE_FLAG, user_id):
-        raise HTTPException(status_code=404, detail="Not found")
-    cached = _due_cache_get(user_id)
-    if cached is not None:
-        return cached
-    _posttest_light_limit(user_id)
-    try:
-        payload = _retention_due(user_id, _posttest_now())
-    except Exception:
-        logger.warning("retention-due read failed", exc_info=True)
-        raise HTTPException(status_code=503, detail="retention status unavailable") from None
-    _due_cache_put(user_id, payload)
-    return payload
-
-
-def _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor: Rung) -> None:
-    """zpd.step for one graded post-test answer. p_known_after is read honestly
-    (m8): the flush's result, else the node's stored state now — never a prior
-    for a node with no row; when neither exists the step is not emitted (fail
-    closed, as _emit_step does)."""
-    correct = bool(outcome.correct)
-    after = next(
-        (c.get("after") for c in changes or [] if isinstance(c, dict) and c.get("after") is not None),
-        None,
-    )
-    try:
-        if after is None:
-            state = _learner_state(body.user_id, body.node_id)
-            if state is None:
-                raise LookupError("no learner-state row")
-            after = state.p_known
-        after = float(after)
-    except Exception:
-        logger.warning("zpd.step not emitted for post-test %s: no p_known_after", item.question_hash)
-        return
-    evidence = outcome.evidence or {}
-    zpd_events.emit_zpd_step(
-        user_id=body.user_id,
-        request_id=_request_id(request),
-        concept_id=body.node_id,
-        question_hash=item.question_hash,
-        phase="posttest",
-        channel=evidence.get("channel") or CHANNEL_FOR_FORMAT[item.format],
-        band=band,
-        # H0 — or, for an item a teach turn revealed, the rung it was graded at (A86)
-        ceiling=floor,
-        ceiling_reason=policy.CeilingReason.POSTTEST,
-        first_attempt_correct=correct,
-        n_attempts=1,
-        max_rung_used=floor,
-        rungs=[],
-        time_to_first_attempt_ms=None,
-        time_to_correct_ms=None,
-        independent_time_ms=None,
-        assisted=int(floor) >= RUNG_ASSISTED_MIN,
-        confidence=outcome.confidence,
-        fsrs_rating=policy.evidence_for_rung(correct, floor).fsrs_rating,
-        p_known_before=p_before,
-        p_known_after=after,
-        r_before=None,
-        item_difficulty=item.difficulty,
-        grader_backend=outcome.grader_backend,
-        variant=arms.variant_for(body.user_id, body.node_id, _arm_for(body.user_id, request)),
-    )  # no tier: no tutor turn ran (omitted, never zeroed)
+    return loop_service.posttest_due(request, user_id)
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────
@@ -3266,275 +2248,29 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
     return {"phase": "teach", "concept_ids": chosen, **({"prequestion": prequestion} if prequestion else {})}
 
 
-# ── PKG-12: the daily review queue (spec §3.2, §3.5, §5; A16, A20, A22, A23, A33, A52) ──
-# Every review route is require_self + the gate (`_gate`, 404 when the loop is off,
-# before any read). The review session (a `sessions` row with mode 'review', one per
-# user, course and UTC day) is keyed on the requesting user, and a row of another
-# student's is a 403. No review route gates on the tutor budget level: the only budget
-# reads are `pause_novice` (A20 — novice concepts pause, flashcards and the rest keep
-# working) and the rate limit on a CHECK answer, the one body that runs a model.
-
-
-_REVIEW_NOT_FOUND = "review item not found"
-
-
-_REVIEW_EXPIRED = "review session expired"
-
-
-_REVIEW_CLAIM_DETAIL = {"not_served": "review item not served", "already_graded": _ALREADY_GRADED}
-
-
-def _review_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _pause_novice(user_id: str) -> bool:
-    """A20: at the tutor hard level novice-band concepts are held back."""
-    return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
-
-
-def _review_deps(
-    user_id: str, course_id: str | None, session_id: str, request_id: str, loop_on: bool
-) -> SaplingDeps:
-    """The grader's deps, built as `_grade_submission` builds them, on the review
-    session."""
-    return SaplingDeps(
-        user_id=user_id,
-        course_id=course_id or None,
-        supabase=None,
-        request_id=request_id,
-        session_id=session_id,
-        feature="loop_review",
-        learning_loop=loop_on,
-    )
-
-
-def _review_course(user_id: str, course_id: str | None) -> None:
-    """A review scoped to a course is scoped to one the student is enrolled in
-    (404 otherwise, before any review read)."""
-    if course_id and not user_offering_ids_for_course(user_id, course_id):
-        raise HTTPException(status_code=404, detail="Course not found")
-
-
-def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple[str, dict]:
-    try:
-        return review.load_or_create_review_session(user_id, course_id, now)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
-
-
-def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, now: datetime):
-    """The client payload of `item`, re-loaded here (a check item withdrawn or a card
-    deleted since the queue was built → None, and the next item is served). An
-    item already open for its key is re-served without a write (review.serve)."""
-    if item.kind == "check":
-        check = get_check_item(item.id)
-        if check is None:
-            return None
-        return review.serve(
-            item, check_item=check, loop_state=loop_state, session_id=session_id, now=now
-        )
-    row = review.load_card(user_id, item.id)
-    if row is None:
-        return None
-    return review.serve(item, card_row=row, loop_state=loop_state, session_id=session_id, now=now)
-
-
 @router.get("/review/next")
+@same_doc(loop_service.review_next)
 def review_next(
     request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
 ) -> dict:
-    """The next item of today's review queue (or null). A served item stays the
-    answerable one until it is answered: a refresh re-serves it (no write, no
-    event) instead of choosing another — never item shopping. A new item is
-    opened for answering and `review.served` follows the successful serve.
-    `due_total` is everything due today; `in_budget` what the remaining budget
-    covers (null item + due_total > 0 = the budget is spent, not caught up)."""
-    _gate(user_id, request)
-    _review_course(user_id, course_id)
-    now = _review_now()
-    sid, loop_state = _review_session(user_id, course_id, now)
-    retention = review.review_retention(user_id, course_id)
-    queue, stats = review.due_queue_with_stats(
-        user_id,
-        course_id,
-        now,
-        loop_state=loop_state,
-        pause_novice=lambda: _pause_novice(user_id),
-        # spec §13 A140: passed only when on, so a flag-off build is the plain one
-        **({"varied": True} if varied_practice.varied_on(user_id) else {}),
-    )
-    # the item already open for its key first: a refresh never moves on
-    ordered = sorted(queue, key=lambda i: not review.is_open(loop_state, i, now))
-    payload = None
-    try:
-        for item in ordered:
-            fresh = not review.is_open(loop_state, item, now)
-            payload = _serve_review_item(user_id, item, loop_state, sid, now)
-            if payload is not None:
-                if fresh:
-                    review.log_served(
-                        user_id, queue, retention=retention, request_id=_request_id(request)
-                    )
-                    if item.kind == "check" and item.question_hash:  # A93: posed
-                        _ledger(record_posed, user_id, item.question_hash, source="review", session_id=sid)
-                break
-    except LoopStateConflict:
-        raise _StateConflict() from None
-    due = stats.get("due") or {}
-    return {
-        "item": payload,
-        "remaining_budget_s": review.remaining_budget_s(loop_state),
-        "session_id": sid,
-        "retention_target": retention,
-        "due_total": sum(due.values()),
-        "in_budget": len(queue),
-    }
-
-
-def _review_posed_at(loop_state: dict, item) -> datetime | None:
-    """When today's review served this item (loop_state["open"][key].served_at)."""
-    entry = (loop_state.get("open") or {}).get(review.sr_key(item)) or {}
-    return _ts(entry.get("served_at")) if isinstance(entry, dict) else None
+    return loop_service.review_next(request, user_id, course_id)
 
 
 @router.post("/review/answer")
+@same_doc(loop_service.review_answer)
 async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
-    """Grade one answer to the item today's session served for its key: a check
-    through PKG-05's grade_answer (inside review.grade_review — its ONE evidence
-    write), a flashcard through PKG-11's FSRS path. The item, its node (A2) and
-    its reference are re-loaded here. Grading is a claim (A52): a second submit of
-    the same served item is a 409 and is never graded or written twice."""
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
-    # crisis support: the item stays due and ungraded (a flashcard carries no text);
-    # `unavailable` is this route's "nothing was recorded, still answerable"
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_review_answer", body.answer, body.reason
-    ):
-        return crisis_support.json_body(crisis, correct=None, unavailable=True, refused=False)
-    if body.kind == "check":  # the one review body that runs a model (the grader)
-        ai_budget.enforce_rate_limit_for(body.user_id)
-    _review_course(body.user_id, body.course_id)
-    now = _review_now()
-    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
-        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
-    sid, loop_state = _review_session(body.user_id, body.course_id, now)
-    check = card_row = deps = None
-    if body.kind == "check":
-        check = get_check_item(body.item_id)
-        node_id = (  # #117: off the event loop
-            await asyncio.to_thread(_node_for_item, body.user_id, check)
-            if check is not None else None
-        )
-        if node_id is None:
-            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
-        if check.format == "mc_reason" and not body.selected_option:
-            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
-        if check.format != "mc_reason" and not body.answer:
-            raise HTTPException(status_code=422, detail="a free answer needs answer")
-        deps = _review_deps(body.user_id, body.course_id, sid, _request_id(request), loop_on)
-    else:
-        card_row = review.load_card(body.user_id, body.item_id)
-        if card_row is None:
-            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
-    try:  # a stored fsrs_s that is not a finite positive number → 422 (InvalidStability)
-        item = (
-            review.item_for_check(body.user_id, check, node_id, now)
-            if check is not None
-            else review.item_for_card(card_row, body.course_id, now)
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    retention = loop_state["review"].get("retention") or review.review_retention(
-        body.user_id, body.course_id
-    )
-    claim = str(uuid.uuid4())
-    try:
-        review.claim_item(sid, review.sr_key(item), item.id, claim, now)
-        outcome = await review.grade_review(
-            body.user_id,
-            item,
-            answer=body.answer,
-            rating=body.rating,
-            session_id=sid,
-            loop_state=loop_state,
-            now=now,
-            request_id=_request_id(request),
-            retention=retention,
-            check_item=_item_like(check) if check is not None else None,
-            card_row=card_row,
-            selected_option=body.selected_option,
-            reason=body.reason,
-            confidence=body.confidence,  # spec §13 A127 (a check's; a flashcard body has none)
-            deps=deps,
-            claim=claim,
-            # spec §13 A140: the interleave's anchor records the graded difficulty
-            **({"varied": True} if varied_practice.varied_on(body.user_id) else {}),
-            # A88/A93: an item with recorded help anywhere has no unassisted credit
-            max_rung=(review_floor := (
-                _reveal_floor(body.user_id, check, _review_posed_at(loop_state, item))
-                if check is not None
-                else 0
-            )),
-            # A93: re-read inside the claim, right before the one write
-            refloor=(
-                (lambda ev: _refloor([ev], body.user_id, check, _review_posed_at(loop_state, item), review_floor))
-                if check is not None
-                else None
-            ),
-        )
-        if check is not None and not outcome.unavailable:
-            _ledger(mark_graded, body.user_id, check.question_hash)
-    except review.ReviewClaimRefused as exc:
-        raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
-    except EvidenceItemRetired:
-        # A123: staff retired the item while it was graded: nothing was written
-        # (the grade is void) and the claim was released; the queue moves on
-        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM) from None
-    except LoopStateConflict:
-        raise _StateConflict() from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    return {
-        "correct": outcome.correct,
-        "hint": outcome.hint,
-        "next_due_at": outcome.next_due_at,
-        "rating": outcome.rating,
-        "remaining_budget_s": review.remaining_budget_s(loop_state),
-        "sr": outcome.sr,
-        "unavailable": outcome.unavailable,
-        "refused": outcome.refused,
-    }
+    return await loop_service.review_answer(body, request)
 
 
 @router.get("/review/summary")
+@same_doc(loop_service.review_summary)
 def review_summary(
     request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
 ) -> dict:
-    """Today's due counts, budget and retention target. Read-only: it never creates
-    the review session."""
-    _gate(user_id, request)
-    _review_course(user_id, course_id)
-    now = _review_now()
-    try:
-        loop_state = review.peek_review_session(user_id, course_id, now)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
-    return review.summary(
-        user_id,
-        course_id,
-        now,
-        loop_state=loop_state,
-        pause_novice=lambda: _pause_novice(user_id),
-    )
+    return loop_service.review_summary(request, user_id, course_id)
 
 
 @router.get("/review/active")
+@same_doc(loop_service.review_active)
 def review_active(request: Request, user_id: str = Query(...)) -> dict:
-    """The frontend's cheap loop probe (`getLoopStatus`): `{active}` — the gate's
-    answer, 200 either way (PKG-13 reopen). It is the one loop route that does not
-    404 when the gate is off: its job IS to answer the gate, and a 404 made every
-    legacy student's /learn and /study visit log an `error.4xx` event. Still
-    require_self first (403). Builds nothing (PKG-07's GET /status needs a loop
-    session id)."""
-    return {"active": _gate_value(user_id, request)}
+    return loop_service.review_active(request, user_id)

@@ -18,6 +18,7 @@ import pytest
 from learning import params
 from tests.split_patches import patch_loop, setattr_loop
 import learning.policy
+import services.loop.reviews
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
 USER = "user_andres"
@@ -2214,7 +2215,6 @@ def test_review_answer_concurrent_double_submit_writes_once(monkeypatch, store):
 
     from learning import review
     from models import ReviewAnswerBody
-    from routes import learn_loop
 
     _session(monkeypatch)
     _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"), deps=_deps)
@@ -2242,8 +2242,8 @@ def test_review_answer_concurrent_double_submit_writes_once(monkeypatch, store):
 
     async def both():
         return await asyncio.gather(
-            learn_loop.review_answer(body, request()),
-            learn_loop.review_answer(body, request()),
+            services.loop.reviews.review_answer(body, request()),
+            services.loop.reviews.review_answer(body, request()),
             return_exceptions=True,
         )
 

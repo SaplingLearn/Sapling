@@ -12,6 +12,7 @@ import pytest
 
 from tests.integration.conftest import COURSE_CS, USER_ACTIVE, USER_SECOND, _client_for
 import services.loop.history
+import services.loop.posttest
 
 pytestmark = pytest.mark.integration
 
@@ -19,10 +20,9 @@ LOOP = "/api/learn/loop"
 
 
 def _other_worker() -> None:
-    from routes import learn_loop
     from services import tutor_sessions as ts
 
-    for live in (ts.PENDING_SESSIONS, ts._DISCARDED, services.loop.history._BRIEF_FAILED, learn_loop._DUE_CACHE):
+    for live in (ts.PENDING_SESSIONS, ts._DISCARDED, services.loop.history._BRIEF_FAILED, services.loop.posttest._DUE_CACHE):
         live.clear()
 
 

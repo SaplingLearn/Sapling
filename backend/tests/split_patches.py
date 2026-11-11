@@ -271,6 +271,10 @@ LOOP_MODULES = (
     "services.loop.checkpoint",
     "services.loop.grading",
     "services.loop.teach",
+    "services.loop.reviews",
+    "services.loop.reports",
+    "services.loop.posttest_poses",
+    "services.loop.posttest",
 )
 
 

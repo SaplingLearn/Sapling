@@ -152,7 +152,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | DASH order | Serve first the items whose predicted recall is nearest 0.33 (overdue triage). | `backend/learning/fsrs.py::order_due` |
 | Confusable, interleave | Concepts easily mixed up (prerequisite siblings, or sharing an open wrong key) are served next to each other in review, A114. | `backend/learning/interleave.py::serve_order` |
 | Review session | A daily `sessions` row with `mode='review'`; not a tutor session, A73. | `backend/learning/review.py::review_session_id` |
-| Post-test | A delayed, tool-removed check: no hints, no course passages, no brief. The outcome measure. | `backend/routes/learn_loop.py::posttest_start` |
+| Post-test | A delayed, tool-removed check: no hints, no course passages, no brief. The outcome measure. | `backend/services/loop/posttest.py::posttest_start` |
 | Anchor | A concept's first graded evidence; post-test windows count from it. Practice cannot move it. | `backend/learning/posttest_store.py::posttest_anchors` |
 | Window | A fixed delay after the anchor at which the post-test is offered: 7 and 28 days; the last window closes at 56 days. | `backend/learning/learning_gain.py::window_at` |
 | Reserve | Up to two items per concept protected for the post-test: never used in the probe, checks or review. | `backend/learning/checks.py::posttest_reserve_hashes` |

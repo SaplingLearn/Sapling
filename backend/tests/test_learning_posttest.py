@@ -22,6 +22,7 @@ from main import app
 from services import ai_budget
 from tests.split_patches import patch_loop, setattr_loop
 import learning.policy
+import services.loop.posttest_poses
 
 client = TestClient(app)
 
@@ -527,9 +528,8 @@ def test_an_open_pose_stays_posed_when_the_node_is_no_longer_due(
     ],
 )
 def test_the_window_is_counted_from_the_fixed_anchor(age, window):
-    from routes import learn_loop
 
-    assert learn_loop._posttest_window(NOW - age, NOW) == window
+    assert services.loop.posttest_poses._posttest_window(NOW - age, NOW) == window
 
 
 def test_the_windows_are_strictly_increasing_positive_days():
@@ -959,7 +959,7 @@ def test_the_floor_reads_the_journal_from_posed_at(gate_on, one_item, grader_say
 
 
 def learn_loop_iso_z(ts):
-    from routes.learn_loop import _iso_z
+    from services.loop.posttest_poses import _iso_z
 
     return _iso_z(ts)
 
@@ -987,13 +987,12 @@ def test_a_second_submit_while_the_first_holds_the_claim_is_409(gate_on, one_ite
 def test_claim_pose_is_one_conditional_update():
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select.return_value = [{"window_days": W1, "posed_at": NOW.isoformat()}]
     handle.update.return_value = [{"node_id": "n1", "posed_at": NOW.isoformat()}]
     with patch_loop("table", return_value=handle) as tbl:
-        assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) == handle.update.return_value[0]
+        assert services.loop.posttest_poses._claim_pose("u", "n1", "q1", "c-1", NOW) == handle.update.return_value[0]
     tbl.assert_called_with("posttest_poses")
     handle.update.assert_called_once()
     (data,) = handle.update.call_args.args[:1]
@@ -1005,7 +1004,7 @@ def test_claim_pose_is_one_conditional_update():
     assert filters["or"].startswith("(claim.is.null,claimed_at.is.null,claimed_at.lt.")
     assert "+" not in filters["or"]
     ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
-    assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"  # A89
+    assert filters["posed_at"] == f"gte.{services.loop.posttest_poses._iso_z(ttl)}"  # A89
     # the window read asks for the same open pose: this item, unanswered, within the TTL
     read = handle.select.call_args.kwargs["filters"]
     assert {k: read[k] for k in ("question_hash", "answered_at", "posed_at")} == {
@@ -1013,7 +1012,7 @@ def test_claim_pose_is_one_conditional_update():
     }
     handle.update.return_value = []
     with patch_loop("table", return_value=handle):
-        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
+        assert services.loop.posttest_poses._claim_pose("u", "n1", "q1", "c-2", NOW) is None
 
 
 def test_a_claim_names_one_window_and_none_without_an_open_pose():
@@ -1022,7 +1021,6 @@ def test_a_claim_names_one_window_and_none_without_an_open_pose():
     → no UPDATE at all."""
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select.return_value = [
@@ -1031,29 +1029,28 @@ def test_a_claim_names_one_window_and_none_without_an_open_pose():
     ]
     handle.update.return_value = [{"node_id": "n1"}]
     with patch_loop("table", return_value=handle):
-        learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW)
+        services.loop.posttest_poses._claim_pose("u", "n1", "q1", "c-1", NOW)
     assert handle.update.call_args.kwargs["filters"]["window_days"] == f"eq.{W1}"
     handle.reset_mock()
     handle.select.return_value = []
     with patch_loop("table", return_value=handle):
-        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
+        assert services.loop.posttest_poses._claim_pose("u", "n1", "q1", "c-2", NOW) is None
     handle.update.assert_not_called()
 
 
 def test_answer_release_and_record_poses():
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.update.return_value = [{"node_id": "n1"}]
     with patch_loop("table", return_value=handle):
-        assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=True, max_rung=0) is True
+        assert services.loop.posttest_poses._answer_pose("u", "n1", "c-1", NOW, correct=True, max_rung=0) is True
         answered = handle.update.call_args
-        learn_loop._release_pose("u", "n1", "c-1")
+        services.loop.posttest_poses._release_pose("u", "n1", "c-1")
         released = handle.update.call_args
-        learn_loop._record_poses([{"user_id": "u", "node_id": "n1"}])
-        learn_loop._record_poses([])
+        services.loop.posttest_poses._record_poses([{"user_id": "u", "node_id": "n1"}])
+        services.loop.posttest_poses._record_poses([])
     assert answered.args[0] == {
         "answered_at": NOW.isoformat(),
         "claim": None,
@@ -1074,13 +1071,12 @@ def test_answer_release_and_record_poses():
     )
     handle.update.return_value = []
     with patch_loop("table", return_value=handle):
-        assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=False, max_rung=4) is False
+        assert services.loop.posttest_poses._answer_pose("u", "n1", "c-1", NOW, correct=False, max_rung=4) is False
 
 
 def test_read_poses_keys_each_node_by_window():
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select.return_value = [
@@ -1088,7 +1084,7 @@ def test_read_poses_keys_each_node_by_window():
         {"node_id": "n1", "window_days": W2, "question_hash": "q2"},
     ]
     with patch_loop("table", return_value=handle):
-        poses = learn_loop._read_poses("u", "c")
+        poses = services.loop.posttest_poses._read_poses("u", "c")
     assert {w: p["question_hash"] for w, p in poses["n1"].items()} == {W1: "q1", W2: "q2"}
     assert "window_days" in handle.select.call_args.args[0].split(",")
 
@@ -1096,12 +1092,11 @@ def test_read_poses_keys_each_node_by_window():
 def test_course_nodes_are_paged():
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.select_with_count.return_value = ([{"id": "n1", "concept_name": "Recursion"}], 1)
     with patch_loop("table", return_value=handle):
-        assert learn_loop._course_nodes("u", "c") == {"n1": "recursion"}
+        assert services.loop.posttest_poses._course_nodes("u", "c") == {"n1": "recursion"}
     assert handle.select_with_count.call_args.kwargs["order"] == "id"
 
 
@@ -1156,9 +1151,8 @@ def test_posttest_is_a_step_phase_value_not_a_close_phase():
     mig = Path(__file__).resolve().parents[1] / "db" / "migrations"
     sql = "".join(open(p).read() for p in glob.glob(str(mig / "*_learning_session_close.sql")))
     assert sql and "posttest" not in sql
-    from routes import learn_loop
 
-    assert "posttest" in learn_loop.STEP_PHASES
+    assert "posttest" in services.loop.posttest_poses.STEP_PHASES
     assert "posttest" not in params.CLOSE_PHASES
 
 
@@ -1489,16 +1483,15 @@ def test_a_due_window_with_nothing_fresh_is_skipped_with_its_reason(
 
 
 def test_the_skip_write_never_fails_the_start():
-    from routes import learn_loop
 
     class _Down:
         def upsert(self, *_a, **_kw):
             raise RuntimeError("db down")
 
     with patch_loop("table", return_value=_Down()):
-        learn_loop._record_skips([{"user_id": "u"}])  # logged, not raised
+        services.loop.posttest_poses._record_skips([{"user_id": "u"}])  # logged, not raised
     with patch_loop("table") as tbl:
-        learn_loop._record_skips([])
+        services.loop.posttest_poses._record_skips([])
     tbl.assert_not_called()
 
 
@@ -1578,12 +1571,11 @@ def test_shown_stamps_the_first_display_once():
     still NULL (a reload keeps the first display)."""
     from unittest.mock import MagicMock
 
-    from routes import learn_loop
 
     handle = MagicMock()
     handle.update.return_value = [{"node_id": "n1"}]
     with patch_loop("table", return_value=handle) as tbl:
-        assert learn_loop._stamp_served("u", "n1", "q1", NOW) is True
+        assert services.loop.posttest_poses._stamp_served("u", "n1", "q1", NOW) is True
     tbl.assert_called_with("posttest_poses")
     data = handle.update.call_args.args[0]
     filters = handle.update.call_args.kwargs["filters"]
@@ -1591,10 +1583,10 @@ def test_shown_stamps_the_first_display_once():
     assert filters["served_at"] == "is.null" and filters["answered_at"] == "is.null"
     assert filters["question_hash"] == "eq.q1" and filters["node_id"] == "eq.n1"
     ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
-    assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"
+    assert filters["posed_at"] == f"gte.{services.loop.posttest_poses._iso_z(ttl)}"
     handle.update.return_value = []
     with patch_loop("table", return_value=handle):
-        assert learn_loop._stamp_served("u", "n1", "q1", NOW) is False
+        assert services.loop.posttest_poses._stamp_served("u", "n1", "q1", NOW) is False
 
 
 def test_the_shown_route_stamps_and_never_fails_the_student(gate_on, freeze_now):
