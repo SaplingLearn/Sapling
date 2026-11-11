@@ -19,12 +19,23 @@ Deleted (directly, or through the FK cascades noted):
 * graph_nodes → graph_edges, node_mastery_events, note_concepts
 * xp_events, user_achievements
 * document_uploads, tutor_pending_sessions (in-flight work, never bundled)
+* the learning loop, every row the student owns (owner decision: erase):
+  learner_state, misconceptions (→ misconception_attempts), posttest_poses,
+  posttest_skips, quiz_evidence_claims, learning_reveals, check_item_reports,
+  learning_evidence_operations, ai_tutor_daily_calls, and, through the
+  `learning_account_erase` RPC (service_role holds no DELETE on these two
+  append-only records), learning_prequestions and learning_self_explanations.
+  learning_evidence_voids goes by cascade from node_mastery_events.
 
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
 oauth_tokens, gradescope_credentials, user_cosmetics, social (rooms,
 friendships, …), feedback, issue_reports, events, llm_usage, admin_audit_log,
-and class-wide aggregates (offering_concept_stats).
+the checklist budget ledger (checklist_budget_accounts/_reservations: spend
+records, see `KEPT_PER_USER`), and class-wide or course-shared rows
+(offering_concept_stats; check_items and their review/audit/draft records).
+`KEPT_PER_USER` names every kept table that has a `user_id` column, with its
+reason; tests/test_account_wipe.py fails on a `user_id` table in neither list.
 
 Not atomic — PostgREST has no transactions. Each step selects the ids it is
 about to delete and deletes exactly those, in bounded batches, so the counts
@@ -41,7 +52,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from db.connection import page_all, pg_quote_value, table
+from db.connection import page_all, pg_quote_value, rpc, table
 from services import chunk_visibility
 
 logger = logging.getLogger(__name__)
@@ -64,6 +75,20 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("study_guides", "id"),
     ("quiz_attempts", "id"),
     ("quiz_context", "id"),
+    # The learning loop's per-student rows, before the graph nodes two of them
+    # reference (learner_state and misconceptions also cascade from
+    # graph_nodes; misconceptions cascades misconception_attempts). Keys are
+    # one column of a composite primary key where the table has no id; the
+    # delete is owner-scoped, so a key shared with another student is safe.
+    ("learner_state", "node_id"),
+    ("misconceptions", "id"),
+    ("posttest_poses", "node_id"),
+    ("posttest_skips", "node_id"),
+    ("quiz_evidence_claims", "question_hash"),
+    ("learning_reveals", "id"),
+    ("check_item_reports", "question_hash"),
+    ("learning_evidence_operations", "operation_id"),
+    ("ai_tutor_daily_calls", "day"),
     ("graph_nodes", "id"),
     ("xp_events", "id"),
     ("user_achievements", "achievement_id"),
@@ -77,9 +102,16 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("tutor_pending_sessions", "session_id"),
 )
 
+#: The learning loop's append-only teach-prompt records. service_role holds
+#: no DELETE on them (20261108184825, 20261109032302), so the wipe erases them
+#: through this SECURITY DEFINER RPC (20261111030019_learning_account_erase.sql),
+#: which deletes exactly one student's rows and returns a count per table.
+_ERASE_RPC = "learning_account_erase"
+_ERASED_BY_RPC: tuple[str, ...] = ("learning_self_explanations", "learning_prequestions")
+
 #: Every table the wipe deletes from directly.
 WIPED_DIRECTLY: frozenset[str] = frozenset(
-    ("enrollments", "documents", *(name for name, _ in _USER_TABLES)),
+    ("enrollments", "documents", *(name for name, _ in _USER_TABLES), *_ERASED_BY_RPC),
 )
 
 #: Tables the wipe empties through an ON DELETE CASCADE, child -> parent (the
@@ -97,6 +129,45 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "note_concepts": "notes",
     "messages": "sessions",
     "quiz_responses": "quiz_attempts",
+    "misconception_attempts": "misconceptions",
+    # Append-only (service_role: SELECT + INSERT); "a delete happens only by
+    # cascade, when its journal row goes with the student's node or account".
+    "learning_evidence_voids": "node_mastery_events",
+}
+
+#: Per-user tables (a `user_id` column) the wipe deliberately keeps, each with
+#: its reason. Every `user_id` table in the migrations is either wiped
+#: (`wiped_tables()`) or listed here; tests/test_account_wipe.py enforces it.
+KEPT_PER_USER: dict[str, str] = {
+    "user_profiles": "the account's identity, not study data",
+    "user_settings": "the account's preferences and consent choices",
+    "user_roles": "access control, managed by admins",
+    "oauth_tokens": "sign-in credentials",
+    "gradescope_credentials": "credentials, managed by the student",
+    "user_cosmetics": "purchased/unlocked cosmetics belong to the account",
+    "friendships": "social graph, shared with another student",
+    "room_members": "social: study-room membership",
+    "room_messages": "social: messages other members read",
+    "room_reactions": "social: reactions on shared messages",
+    "room_activity": "social: study-room activity feed",
+    "room_bans": "moderation record, kept by design",
+    "feedback": "product feedback the student sent us",
+    "issue_reports": "bug reports the student sent us",
+    "events": "telemetry",
+    "llm_usage": "telemetry and the billing record of model spend",
+    "course_chunk_contributors": (
+        "removed per document by chunk_visibility.withdraw_document_chunks; a "
+        "row stays only while a chunk is still produced by another live document"
+    ),
+    "checklist_budget_accounts": (
+        "spend control, not study data: its own migration gives it no cascade so "
+        "removing a user cannot erase a possible bill, and `blocked` is the trip "
+        "an over-budget bill sets, which a wipe must not quietly reset"
+    ),
+    "checklist_budget_reservations": (
+        "spend holds against checklist_budget_accounts; an unsettled one is a "
+        "possibly billed call that no timer or wipe refunds"
+    ),
 }
 
 
@@ -147,7 +218,23 @@ def _delete_keys(name: str, keys: list[str], *, key: str = "id",
 
 
 def _delete_owned(name: str, user_id: str, key: str = "id") -> int:
-    return _delete_keys(name, _owned_keys(name, user_id, key), key=key, owner=user_id)
+    """Delete every row `user_id` owns in `name`; returns the rows deleted.
+
+    `key` need not be unique (one column of a composite key): the delete runs
+    over the distinct keys, owner-scoped, and the count is of rows."""
+    keys = _owned_keys(name, user_id, key)
+    _delete_keys(name, list(dict.fromkeys(keys)), key=key, owner=user_id)
+    return len(keys)
+
+
+def _erase_loop_records(user_id: str) -> dict[str, int]:
+    """The append-only teach-prompt records, through `_ERASE_RPC`."""
+    out = rpc(_ERASE_RPC, {"p_user_id": user_id})
+    if not isinstance(out, dict) or set(out) != set(_ERASED_BY_RPC):
+        raise AccountWipeIncomplete(
+            f"{_ERASE_RPC} returned an unexpected result for {user_id}; re-run the wipe"
+        )
+    return {name: int(out[name] or 0) for name in _ERASED_BY_RPC}
 
 
 def _wipe_documents(user_id: str) -> dict[str, int]:
@@ -224,6 +311,7 @@ def wipe_account_data(user_id: str) -> dict[str, int]:
     # order also never leaves an enrollment pointing at a deleted document.
     counts["enrollments"] = _delete_owned("enrollments", user_id)
     counts.update(_wipe_documents(user_id))
+    counts.update(_erase_loop_records(user_id))
     for name, key in _USER_TABLES:
         counts[name] = _delete_owned(name, user_id, key)
 

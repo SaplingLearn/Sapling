@@ -415,6 +415,7 @@ BACKEND_RPCS = frozenset({
     "checklist_budget_read",
     "checklist_budget_reconcile",
     "checklist_budget_start",
+    "learning_account_erase",        # services/account_wipe.py (_ERASE_RPC, admin account wipe)
     "learning_evidence_commit",      # learning/evidence_transaction.py
     "learning_evidence_receipt",
     "learning_evidence_snapshot",
