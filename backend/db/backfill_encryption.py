@@ -38,13 +38,13 @@ encryption module + the supabase client all resolve correctly.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from typing import Any, Callable
 
 from db.connection import table
 from services.encryption import (
     decrypt,
-    decrypt_json,
     encrypt,
     encrypt_if_present,
     encrypt_json,
@@ -71,8 +71,10 @@ def _is_already_encrypted_json(value: Any) -> bool:
     these are TEXT, so a legacy JSONB row is now a JSON string."""
     if value is None or not isinstance(value, str):
         return False
+    # Strict on purpose: decrypt_json falls back to json.loads(value), so it
+    # accepts plaintext JSON and would make every legacy row look encrypted.
     try:
-        decrypt_json(value)
+        json.loads(decrypt(value))
         return True
     except Exception:
         return False
@@ -146,8 +148,6 @@ def _encrypt_json_column(
 ) -> dict[str, int]:
     """Encrypt a JSON-shaped TEXT column (was JSONB before the schema
     migration, now stores a JSON string)."""
-    import json as _json
-
     rows = table(table_name).select(f"{pk},{column}") or []
     counts = {column: 0, "scanned": len(rows)}
     for row in rows:
@@ -160,7 +160,7 @@ def _encrypt_json_column(
         # so the on-disk shape matches what new writes produce.
         if isinstance(v, str):
             try:
-                parsed = _json.loads(v)
+                parsed = json.loads(v)
             except Exception:
                 # Corrupt JSON; encrypt the raw string so it still
                 # round-trips through decrypt_if_present.
@@ -213,18 +213,15 @@ def _encrypt_numeric_column(
 # ── Per-table runners ─────────────────────────────────────────────────────────
 
 def backfill_users(apply: bool) -> dict:
-    return _encrypt_text_column(
-        "users",
-        ["name", "first_name", "last_name", "email", "bio", "location"],
-        pk="id",
-        apply=apply,
-    )
+    # Only `email` is left on `users`: the 0024 identity split moved the
+    # profile fields to `user_profiles` and dropped them here.
+    return _encrypt_text_column("users", ["email"], pk="id", apply=apply)
 
 
-def backfill_user_settings(apply: bool) -> dict:
+def backfill_user_profiles(apply: bool) -> dict:
     return _encrypt_text_column(
-        "user_settings",
-        ["bio", "location"],
+        "user_profiles",
+        ["name", "first_name", "last_name", "bio", "location"],
         pk="user_id",
         apply=apply,
     )
@@ -316,7 +313,7 @@ def backfill_room_summaries(apply: bool) -> dict:
 
 RUNNERS: dict[str, Callable[[bool], dict]] = {
     "users": backfill_users,
-    "user_settings": backfill_user_settings,
+    "user_profiles": backfill_user_profiles,
     "oauth_tokens": backfill_oauth_tokens,
     "assignments": backfill_assignments,
     "documents": backfill_documents,
