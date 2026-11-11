@@ -11,7 +11,11 @@ import {
   fetchFriends, fetchFriendRequests, sendFriendRequest, acceptFriendRequest, cancelFriendRequest,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
-import type { UserProfile } from "@/lib/types";
+import type { UserAchievement, UserProfile } from "@/lib/types";
+import {
+  hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, sortRolesByPriority, studiesOf,
+  type StudyGroup,
+} from "./profileViewHelpers";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css).
 const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
@@ -189,21 +193,43 @@ export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
 }
 
 export function ProfileView({ profile, embedded = false }: { profile: UserProfile; embedded?: boolean }) {
-  const eq = profile.equipped_cosmetics || {};
-  const roles = [...(profile.roles || [])].sort(
-    (a, b) => (b.role.display_priority || 0) - (a.role.display_priority || 0),
-  );
+  const studies = studiesOf(profile);
 
-  const hero = (
+  const stats = profile.stats || ({} as UserProfile["stats"]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: embedded ? 0 : "20px 0", maxWidth: 900, margin: "0 auto" }}>
+      <ProfileHero profile={profile} />
+
+      {hasStatsStrip(stats) && <StatsStrip stats={stats} />}
+
+      {studies.length > 0 && <FieldsOfStudy studies={studies} />}
+
+      {(profile.featured_achievements?.length ?? 0) > 0 && (
+        <FeaturedAchievements achievements={profile.featured_achievements!} />
+      )}
+
+      {isPrivateProfile(profile.stats) ? (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", padding: 24 }}>
+          This profile is private.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileHero({ profile }: { profile: UserProfile }) {
+  const eq = profile.equipped_cosmetics || {};
+  const roles = sortRolesByPriority(profile.roles);
+
+  return (
     <section
       style={{
         display: "flex",
         gap: 20,
         alignItems: "flex-start",
         padding: "var(--pad-lg)",
-        background: eq.banner?.asset_url
-          ? `linear-gradient(135deg, color-mix(in oklab, ${eq.banner.css_value || "var(--accent)"} 35%, var(--bg-panel)) 0%, var(--bg-panel) 100%)`
-          : "var(--bg-panel)",
+        background: heroBackground(eq.banner),
         border: "1px solid var(--border)",
         borderRadius: "var(--r-xl)",
         position: "relative",
@@ -246,111 +272,107 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
             {profile.bio}
           </p>
         )}
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
-          {profile.school && <Meta icon="tree" text={profile.school} />}
-          {profile.year && <Meta icon="star" text={profile.year} />}
-          {profile.location && <Meta icon="home" text={profile.location} />}
-          {profile.website && (
-            <a
-              href={profile.website}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--accent)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
-            >
-              <Icon name="send" size={11} /> {prettyUrl(profile.website)}
-            </a>
-          )}
-        </div>
+        <ProfileMetaRow profile={profile} />
       </div>
     </section>
   );
+}
 
-  const studies = [
-    profile.majors?.length && { label: "Majors", values: profile.majors },
-    profile.minors?.length && { label: "Minors", values: profile.minors },
-  ].filter(Boolean) as { label: string; values: string[] }[];
-
-  const stats = profile.stats || ({} as UserProfile["stats"]);
-
+function ProfileMetaRow({ profile }: { profile: UserProfile }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: embedded ? 0 : "20px 0", maxWidth: 900, margin: "0 auto" }}>
-      {hero}
-
-      {(stats.streak_count !== undefined || stats.session_count !== undefined) && (
-        // One-line metric strip instead of a 4-card hero grid. Each
-        // number is serif, labels are sans, separators are middots.
-        <section
-          className="body-serif"
-          style={{
-            fontSize: 14, color: "var(--text-dim)",
-            padding: "10px 0", borderTop: "1px solid var(--border)",
-            borderBottom: "1px solid var(--border)",
-            display: "flex", flexWrap: "wrap", gap: "4px 14px",
-          }}
+    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
+      {profile.school && <Meta icon="tree" text={profile.school} />}
+      {profile.year && <Meta icon="star" text={profile.year} />}
+      {profile.location && <Meta icon="home" text={profile.location} />}
+      {profile.website && (
+        <a
+          href={profile.website}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--accent)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
         >
-          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.streak_count ?? 0}</span>-day streak</span>
-          <span>·</span>
-          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.session_count ?? 0}</span> sessions</span>
-          <span>·</span>
-          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.documents_count ?? 0}</span> documents</span>
-          <span>·</span>
-          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.achievements_count ?? 0}</span> achievements</span>
-        </section>
+          <Icon name="send" size={11} /> {prettyUrl(profile.website)}
+        </a>
       )}
+    </div>
+  );
+}
 
-      {studies.length > 0 && (
-        <section className="card" style={{ padding: "var(--pad-lg)" }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Fields of study</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {studies.map(s => (
-              <div key={s.label} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-                <div style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 60 }}>{s.label}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {s.values.map(v => (
-                    <span key={v} className="chip">{v}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
+// One-line metric strip instead of a 4-card hero grid. Each
+// number is serif, labels are sans, separators are middots.
+function StatsStrip({ stats }: { stats: UserProfile["stats"] }) {
+  return (
+    <section
+      className="body-serif"
+      style={{
+        fontSize: 14, color: "var(--text-dim)",
+        padding: "10px 0", borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
+        display: "flex", flexWrap: "wrap", gap: "4px 14px",
+      }}
+    >
+      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.streak_count ?? 0}</span>-day streak</span>
+      <span>·</span>
+      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.session_count ?? 0}</span> sessions</span>
+      <span>·</span>
+      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.documents_count ?? 0}</span> documents</span>
+      <span>·</span>
+      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.achievements_count ?? 0}</span> achievements</span>
+    </section>
+  );
+}
+
+function FieldsOfStudy({ studies }: { studies: StudyGroup[] }) {
+  return (
+    <section className="card" style={{ padding: "var(--pad-lg)" }}>
+      <div className="label-micro" style={{ marginBottom: 10 }}>Fields of study</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {studies.map(s => (
+          <div key={s.label} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 60 }}>{s.label}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {s.values.map(v => (
+                <span key={v} className="chip">{v}</span>
+              ))}
+            </div>
           </div>
-        </section>
-      )}
+        ))}
+      </div>
+    </section>
+  );
+}
 
-      {(profile.featured_achievements?.length ?? 0) > 0 && (
-        <section className="card" style={{ padding: "var(--pad-lg)" }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Featured achievements</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
-            {profile.featured_achievements!.map(ua => {
-              const c = rarityVar(ua.achievement.rarity);
-              return (
-                <div
-                  key={ua.achievement.id}
-                  style={{
-                    padding: 12,
-                    textAlign: "center",
-                    border: `1px solid color-mix(in srgb, ${c} 20%, transparent)`,
-                    background: `color-mix(in srgb, ${c} 6%, transparent)`,
-                    borderRadius: "var(--r-md)",
-                    borderTop: `3px solid ${c}`,
-                  }}
-                >
-                  <div style={{ fontSize: 26, marginBottom: 4 }}>{ua.achievement.icon || "★"}</div>
-                  <div style={{ fontSize: 11, fontWeight: 600 }}>{ua.achievement.name}</div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    {ua.achievement.rarity}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+function FeaturedAchievements({ achievements }: { achievements: UserAchievement[] }) {
+  return (
+    <section className="card" style={{ padding: "var(--pad-lg)" }}>
+      <div className="label-micro" style={{ marginBottom: 10 }}>Featured achievements</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+        {achievements.map(ua => (
+          <FeaturedAchievementCard key={ua.achievement.id} achievement={ua.achievement} />
+        ))}
+      </div>
+    </section>
+  );
+}
 
-      {profile.stats === undefined || Object.keys(profile.stats || {}).length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", padding: 24 }}>
-          This profile is private.
-        </div>
-      ) : null}
+function FeaturedAchievementCard({ achievement }: { achievement: UserAchievement["achievement"] }) {
+  const c = rarityVar(achievement.rarity);
+  return (
+    <div
+      style={{
+        padding: 12,
+        textAlign: "center",
+        border: `1px solid color-mix(in srgb, ${c} 20%, transparent)`,
+        background: `color-mix(in srgb, ${c} 6%, transparent)`,
+        borderRadius: "var(--r-md)",
+        borderTop: `3px solid ${c}`,
+      }}
+    >
+      <div style={{ fontSize: 26, marginBottom: 4 }}>{achievement.icon || "★"}</div>
+      <div style={{ fontSize: 11, fontWeight: 600 }}>{achievement.name}</div>
+      <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        {achievement.rarity}
+      </div>
     </div>
   );
 }
@@ -362,13 +384,4 @@ function Meta({ icon, text }: { icon: string; text: string }) {
       {text}
     </span>
   );
-}
-
-function prettyUrl(url: string) {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace(/^www\./, "") + (u.pathname !== "/" ? u.pathname : "");
-  } catch {
-    return url;
-  }
 }

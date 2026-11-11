@@ -26,7 +26,7 @@ Source-of-truth: `frontend/package.json`, `frontend/next.config.ts`, `frontend/t
 
 **No state-management library.** No Redux, no Zustand, no React Query, no SWR. State is React Context (one provider: `UserContext`) plus per-page `useState`/`useEffect`/`useRef`. Data is fetched through typed wrappers in `src/lib/api.ts`; caching is ad hoc.
 
-**No i18n library.** All copy is hard-coded English. There is no `next-intl`, `next-i18next`, or locale switch in the UI. Assume en-US only for now (flagged in `QUESTIONS.md`).
+**No i18n library.** All copy is hard-coded English. There is no `next-intl`, `next-i18next`, or locale switch in the UI. Assume en-US only for now (flagged in `questions.md`).
 
 **No feature-flag library.** The only runtime gate observed so far is `NEXT_PUBLIC_LOCAL_MODE=true`, which short-circuits `middleware.ts` to allow all routes (`src/middleware.ts:54-56`). Full flag audit deferred to Phase 4.
 
@@ -85,7 +85,7 @@ From `frontend/package.json:5-12`:
 | Test | `npm test` → `jest` | Always run with `--watchAll=false` in CI per `CLAUDE.md`. |
 | Test (watch) | `npm run test:watch` → `jest --watch` |  |
 
-**Docker.** `frontend/Dockerfile` + root `docker-compose.yml` orchestrate frontend + backend. Not audited here; flagged in `QUESTIONS.md` in case Dockerfile contains build-time env surprises.
+**Docker.** `frontend/Dockerfile` + root `docker-compose.yml` orchestrate frontend + backend. Not audited here; flagged in `questions.md` in case Dockerfile contains build-time env surprises.
 
 **Environment variables referenced by the frontend so far:**
 
@@ -180,7 +180,7 @@ Every component imported by in-scope routes. Every file under `src/lib/`, `src/c
 
 ### 6.3 Edge cases flagged for the user
 
-These are handled explicitly in `QUESTIONS.md` so we don't silently drift into or out of the marketing area:
+These are handled explicitly in `questions.md` so we don't silently drift into or out of the marketing area:
 
 1. **`OnboardingFlow` mounted inside `app/page.tsx`.** The landing page hosts the `<OnboardingFlow />` component for authenticated-but-not-onboarded users (`src/app/page.tsx:7`, used at line referenced in later audit). The onboarding component itself is **in scope** (it gates the authenticated app); the surrounding landing-page scaffolding is not. The audit will document `OnboardingFlow` as a standalone feature and treat the landing page only as its host.
 2. **`SpaceBackground.tsx` appears to be unused.** A case-insensitive grep across `src/` finds only its own definition (`src/components/SpaceBackground.tsx:3`). Candidate for `zz-dead-code.md`; will confirm in Phase 4 before declaring dead.
@@ -215,4 +215,4 @@ These are intentional gaps, not oversights. If the exclusion boundary above is a
 
 ## 8. Stop point
 
-Per the task brief: **stop here so the user can sanity-check the exclusion boundary before Phase 2.** Once the boundary is confirmed (and any additions/removals landed in `QUESTIONS.md` or this doc), Phase 2 will produce `01-routes.md`.
+Per the task brief: **stop here so the user can sanity-check the exclusion boundary before Phase 2.** Once the boundary is confirmed (and any additions/removals landed in `questions.md` or this doc), Phase 2 will produce `01-routes.md`.

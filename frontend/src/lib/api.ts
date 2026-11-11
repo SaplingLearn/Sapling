@@ -18,7 +18,7 @@ import type {
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
-import { createStreamPacer } from '@/lib/streamPacer';
+import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 
 export const API_URL = '';
 
@@ -490,21 +490,51 @@ export interface StreamChatHandlers {
 
 const STREAM_IDLE_MS = 45_000;
 
+/** The `ChatStreamError` a mid-stream `error` event throws. */
+function streamErrorOf(ev: StreamEvent): ChatStreamError {
+  const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+  // Only an explicit false clears the flag — absent/other values keep
+  // the default-true contract with older backends.
+  const retryable = ev.data?.retryable !== false;
+  return new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+}
+
+type StreamEventHandler = (ev: StreamEvent, pacer: StreamPacer, h: StreamChatHandlers) => void;
+
+/** Every event but `done` (which ends the turn): what each one does. An event
+ *  type not listed here is ignored. */
+const STREAM_EVENT_HANDLERS = new Map<string, StreamEventHandler>([
+  ['token', (ev, pacer) => pacer.push(String(ev.data?.delta ?? ''))],
+  ['graph_update', (ev, _p, h) => h.onGraphUpdate?.(ev.data as unknown as GraphDelta)],
+  ['progress', (ev, _p, h) => h.onProgress?.(ev.step)],
+  ['retract', (ev, pacer, h) => {
+    // Learning loop (PKG-07): the server withdrew what it streamed (a
+    // caught leak). Text still queued in the pacer must never reach the
+    // screen after the retract, so it is DROPPED, not flushed.
+    pacer.discard();
+    h.onRetract?.(String(ev.data?.reason ?? ''));
+  }],
+  ['phase', (ev, _p, h) => h.onPhase?.(String(ev.data?.phase ?? ''))],
+  ['check', (ev, _p, h) => h.onCheck?.(ev.data as unknown as LoopCheckItem)],
+  ['hint_offer', (ev, _p, h) => h.onHintOffer?.(Number(ev.data?.rung))],
+  ['learner_state', (ev, _p, h) => h.onLearnerState?.(ev.data as unknown as LoopLearnerState)],
+  ['budget', (ev, _p, h) => h.onBudget?.(loopBudgetNoticeOf(ev.data))],
+  ['error', ev => { throw streamErrorOf(ev); }],
+]);
+
 async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
-  {
-    onToken, onGraphUpdate, onProgress, signal,
-    onRetract, onPhase, onCheck, onHintOffer, onLearnerState, onBudget,
-  }: StreamChatHandlers,
+  handlers: StreamChatHandlers,
 ): Promise<ChatResult> {
+  const { signal } = handlers;
   const { streamSSE } = await import('./sse');
   // Tokens go out through the pacer, so a reply the model sends in one burst
   // still types out (lib/streamPacer.ts). It is drained before `done`
   // resolves, because callers swap the streamed bubble for the final message
   // then. Any other exit flushes it first, so a caller's partial-text
   // handling (ADR 0020) sees every token that arrived.
-  const pacer = createStreamPacer(delta => onToken?.(delta));
+  const pacer = createStreamPacer(delta => handlers.onToken?.(delta));
   let result: ChatResult | null = null;
 
   try {
@@ -520,29 +550,8 @@ async function consumeChatStream(
       { idleTimeoutMs: STREAM_IDLE_MS },
     )) {
       const ev = e.data;
-      if (ev.type === 'token') pacer.push(String(ev.data?.delta ?? ''));
-      else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
-      else if (ev.type === 'progress') onProgress?.(ev.step);
-      else if (ev.type === 'retract') {
-        // Learning loop (PKG-07): the server withdrew what it streamed (a
-        // caught leak). Text still queued in the pacer must never reach the
-        // screen after the retract, so it is DROPPED, not flushed.
-        pacer.discard();
-        onRetract?.(String(ev.data?.reason ?? ''));
-      }
-      else if (ev.type === 'phase') onPhase?.(String(ev.data?.phase ?? ''));
-      else if (ev.type === 'check') onCheck?.(ev.data as unknown as LoopCheckItem);
-      else if (ev.type === 'hint_offer') onHintOffer?.(Number(ev.data?.rung));
-      else if (ev.type === 'learner_state') onLearnerState?.(ev.data as unknown as LoopLearnerState);
-      else if (ev.type === 'budget') onBudget?.(loopBudgetNoticeOf(ev.data));
-      else if (ev.type === 'error') {
-        const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
-        // Only an explicit false clears the flag — absent/other values keep
-        // the default-true contract with older backends.
-        const retryable = ev.data?.retryable !== false;
-        throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
-      }
-      else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+      if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+      else STREAM_EVENT_HANDLERS.get(ev.type)?.(ev, pacer, handlers);
     }
   } catch (err) {
     pacer.flush();
@@ -1798,8 +1807,9 @@ export interface OnboardingProfilePayload {
   first_name: string;
   last_name: string;
   year: string;
-  majors: string[];
-  minors: string[];
+  /** No longer asked for by the redesigned onboarding; the backend defaults both. */
+  majors?: string[];
+  minors?: string[];
   course_ids: string[];
 }
 
