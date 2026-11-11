@@ -45,6 +45,14 @@ jobs:
       # with their reason in the config; a new violation fails here.
       - name: Lint (import-linter — boundary contracts)
         run: lint-imports
+      # Type-check ratchet: pyright (basic mode, pinned in the script) against
+      # backend/type_baseline.json. A new error fails; fixing one only warns
+      # and asks for `--shrink`. Runs against this job's lockfile install.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Typecheck (pyright — baselined ratchet)
+        run: python scripts/type_ratchet.py
       - name: Run pytest
         env:
           # Non-secret dummy values so config validation / DB-URL construction /

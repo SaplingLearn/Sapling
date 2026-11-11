@@ -47,6 +47,8 @@ python -m pytest tests/ -q --ignore=tests/evals \
   --ignore=tests/test_ocr_pipeline.py \
   --ignore=tests/test_extraction_backends.py
 ruff check .
+lint-imports
+python scripts/type_ratchet.py   # needs node; fails on a NEW pyright error
 ```
 
 Frontend (from `frontend/`):

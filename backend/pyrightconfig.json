@@ -1,0 +1,9 @@
+{
+  "include": ["routes", "services", "agents", "db", "models", "worker", "main.py", "config.py"],
+  "exclude": ["db/archive", "**/__pycache__"],
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}
