@@ -5,7 +5,6 @@
   "agents/_providers.py::reportIndexIssue": 6,
   "agents/document.py::reportAttributeAccessIssue": 1,
   "agents/document.py::reportReturnType": 1,
-  "agents/quiz.py::reportCallIssue": 1,
   "db/async_connection.py::reportArgumentType": 16,
   "db/async_connection.py::reportAttributeAccessIssue": 9,
   "db/backfill_encryption.py::reportArgumentType": 1,
