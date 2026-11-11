@@ -204,7 +204,6 @@ from learning.params import (
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
     LOOP_TEACH_TURNS_BEFORE_CHECK,
-    LOOP_FAILED_ANCHORS_MAX,
     PLAN_ORDER,
     POSTTEST_DUE_CACHE_S,
     POSTTEST_MAX_ITEMS,
@@ -278,7 +277,7 @@ from services.tutor.messages import (
 from services.tutor.pending import _consume_pending, _consume_pending_off_loop
 from services.tutor.run import _CONTINUATION_NUDGE, _CONTINUATION_RUN_KEYS, _observe_persisted_turn
 from services.tutor.turns import _agent_turn_or_http_error
-from services.tutor_sessions import PENDING_SESSIONS
+from services.tutor_sessions import PENDING_SESSIONS, claim_pending, get_pending, stash_pending
 from services import ai_budget, crisis_support, events_service
 from services.academics import (
     course_offering_ids,
@@ -1511,12 +1510,6 @@ _POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is ope
 # read leave an 'unscanned' marker: every item posed at or before it grades as
 # assisted. A failed write falls back to the session's loop_state.
 
-#: Conservative cache if a failure's durable update is unavailable. Materialised
-#: sessions also store turn_activity before any work; the cache grants no credit.
-_FAILED_TURN_ANCHORS: dict[str, float] = {}
-ANCHORS_MAX = LOOP_FAILED_ANCHORS_MAX
-
-
 def stated_items(text: str, items, *, rung: Rung, given: str) -> list[str]:
     """The sorted question hashes of the servable `items` whose answer `text`
     states (strict served mode). An item the check raises on counts as stated
@@ -2144,7 +2137,7 @@ class _LoopTurn:
             return False  # A crashed/unknown turn is not independent work time.
         if activity_at is not None:
             anchor = activity_at if anchor is None else max(float(anchor), activity_at)
-        failed = _FAILED_TURN_ANCHORS.get(self.session_id)
+        failed = turn_activity.failed_at(self.state)  # durable: any worker sees it
         if failed is not None:
             anchor = failed if anchor is None else max(float(anchor), failed)
         if anchor is None:
@@ -2869,16 +2862,12 @@ class _LoopTurn:
         request cannot overwrite a newer operation's activity.
         """
         now = _now_s()
-        _FAILED_TURN_ANCHORS.pop(self.session_id, None)
-        _FAILED_TURN_ANCHORS[self.session_id] = now
-        while len(_FAILED_TURN_ANCHORS) > ANCHORS_MAX:
-            _FAILED_TURN_ANCHORS.pop(next(iter(_FAILED_TURN_ANCHORS)))
         operation_id = getattr(self, "activity_id", None)
-        if operation_id is not None:
+        if operation_id is not None:  # None: the lazy opener (no row, no credit)
             try:
                 _update_loop_state(
                     self.session_id,
-                    lambda doc: turn_activity.interrupt(doc, operation_id, now),
+                    lambda doc: turn_activity.fail(doc, operation_id, now),
                     require_open=True,
                     require_existing=True,
                 )
@@ -3032,7 +3021,7 @@ class _LoopTurn:
                 if hashes or mark is not None:
                     _persist_reveals(
                         self.user_id,
-                        None if self.session_id in PENDING_SESSIONS else self.session_id,
+                        None if get_pending(self.session_id) is not None else self.session_id,
                         hashes,
                         unscanned=mark is not None,
                         source=f"{self.phase}:relayed",
@@ -3187,7 +3176,9 @@ def _probe_opener(course_id: str | None) -> str:
 class _LoopOpener(_LoopTurn):
     """The session opener (spec Behaviour 15): a fresh session, `teach` with no
     item and the BKT_L0 band, the catalog context (the opener only), and the
-    legacy lazy-session contract — `complete` stashes PENDING_SESSIONS and
+    legacy lazy-session contract — `complete` stashes the pending session
+    (`stash_pending`: process memory, or the table with
+    `stateless_tutor_sessions` on, #117) and
     persists and counts nothing (no sessions row exists yet). Spec §13 A121:
     while the session is in the probe phase (every session but a quiz-ask one)
     the opener is a template — a neutral welcome and the check-in's intro, no
@@ -3292,7 +3283,7 @@ class _LoopOpener(_LoopTurn):
         # and the concept's mark into the row the first turn materialises
         if self.retrieval_failed and _note_retrieval_failure(self.state, self.concept_node):
             notice["materials_notice"] = True
-        PENDING_SESSIONS[self.session_id] = {
+        payload = {
             "user_id": self.user_id,
             "mode": self.mode,
             "topic": self.start.topic,
@@ -3304,7 +3295,8 @@ class _LoopOpener(_LoopTurn):
             "loop": True,
         }
         if self.state:  # Preserve a private goal while the session is still lazy.
-            PENDING_SESSIONS[self.session_id]["loop_state"] = dict(self.state)
+            payload["loop_state"] = dict(self.state)
+        stash_pending(self.session_id, payload)  # #117: the table, flag on
         return {
             "reply": reply,
             "session_id": self.session_id,
@@ -4270,7 +4262,7 @@ async def _json_turn(make, what: str) -> dict:
 @router.get("/status")
 def status(request: Request, user_id: str = Query(...), session_id: str = Query(...)) -> dict:
     _gate(user_id, request)
-    pending = PENDING_SESSIONS.get(session_id)
+    pending = get_pending(session_id)
     if pending is not None:
         if pending.get("user_id") != user_id:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -7343,12 +7335,9 @@ async def close_session(
     finds the session already closed returns the stored close: no model call,
     no write, no event."""
     request_id = request_id or current_request_id() or str(uuid.uuid4())
-    pending = PENDING_SESSIONS.get(session_id)
+    pending = await asyncio.to_thread(claim_pending, session_id, user_id)  # 404 if foreign
     claim = ""
     if pending is not None:
-        if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail="Session not found")
-        PENDING_SESSIONS.pop(session_id, None)
         phase = "close"
         record = fallback_close(build_close([], [], [], measured_before=()))
         row_defaults = {
@@ -7610,7 +7599,7 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
     ):
         return crisis_support.json_body(crisis)
     _probe_plan_read_limit(body.user_id)
-    pending = PENDING_SESSIONS.get(body.session_id)
+    pending = get_pending(body.session_id)
     if pending is not None:
         if pending.get("user_id") != body.user_id:
             raise HTTPException(status_code=404, detail="Session not found")

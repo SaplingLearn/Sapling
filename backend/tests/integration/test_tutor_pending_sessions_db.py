@@ -5,6 +5,7 @@ SQL only (no app imports): tests/test_tutor_sessions_store.py pins what the
 app does with the answers; this pins the SQL — the atomic materialisation,
 the tombstones, the TTL/cap bounds and that the store is service-only.
 """
+import json
 from pathlib import Path
 
 import psycopg
@@ -12,18 +13,27 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-_MIGRATION = (Path(__file__).resolve().parents[2] / "db" / "migrations"
-              / "20261109024225_tutor_pending_sessions.sql")
+_MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
+_MIGRATION = _MIGRATIONS / "20261109024225_tutor_pending_sessions.sql"
+#: #117 part 3: learning-loop sessions carry their starting loop document.
+_LOOP_MIGRATION = _MIGRATIONS / "20261111030007_tutor_pending_loop_state.sql"
 
 USER, OTHER = "rich-user-active", "rich-user-second"
 TTL, TOMB, CAP = 43200, 600, 2000
 
 
-def _stash(conn, sid, *, user=USER, offering="", cap=CAP):
+def _stash(conn, sid, *, user=USER, offering="", cap=CAP, loop_state=None):
+    if loop_state is None:  # the 12-argument call a tutor session (and the old app) makes
+        conn.execute(
+            "SELECT public.stash_tutor_session(%s, %s, 'socratic', 'Recursion', 'c1', %s, "
+            "true, 'ENC:greeting', '{\"new_nodes\": []}'::jsonb, %s, %s, %s)",
+            (sid, user, offering, TTL, TOMB, cap),
+        )
+        return
     conn.execute(
         "SELECT public.stash_tutor_session(%s, %s, 'socratic', 'Recursion', 'c1', %s, "
-        "true, 'ENC:greeting', '{\"new_nodes\": []}'::jsonb, %s, %s, %s)",
-        (sid, user, offering, TTL, TOMB, cap),
+        "true, 'ENC:greeting', NULL, %s, %s, %s, %s::jsonb)",
+        (sid, user, offering, TTL, TOMB, cap, json.dumps(loop_state)),
     )
 
 
@@ -138,4 +148,80 @@ def test_the_migration_is_safe_to_apply_again(db_conn):
     with db_conn.transaction() as tx:
         db_conn.execute(_MIGRATION.read_text())
         assert _state(db_conn, "tps-again") == "pending"
+        raise psycopg.Rollback(tx)
+
+
+# ── learning-loop sessions (20261111030007_tutor_pending_loop_state.sql) ──
+
+
+def test_a_loop_session_materialises_with_its_starting_document(db_conn):
+    doc = {"phase": "teach", "origin": "quiz_ask", "concept": "n1",
+           "plan": {"approved": ["n1"], "cursor": 0}, "goal": {"text_encrypted": "ENC:g"}}
+    _stash(db_conn, "tps-loop", offering="rich-off-cs101-f25", loop_state=doc)
+    assert _materialize(db_conn, "tps-loop")["outcome"] == "materialized"
+    row = db_conn.execute("SELECT loop_state, loop_state_rev, offering_id FROM public.sessions "
+                          "WHERE id = 'tps-loop'").fetchone()
+    assert (row["loop_state"], row["loop_state_rev"], row["offering_id"]) == (
+        doc, 0, "rich-off-cs101-f25")
+
+
+def test_a_tutor_session_and_an_empty_loop_document_get_the_column_default(db_conn):
+    _stash(db_conn, "tps-tutor")
+    _stash(db_conn, "tps-probe", loop_state={})
+    assert db_conn.execute("SELECT loop_state FROM public.tutor_pending_sessions "
+                           "WHERE session_id = 'tps-tutor'").fetchone()["loop_state"] is None
+    for sid in ("tps-tutor", "tps-probe"):
+        assert _materialize(db_conn, sid)["outcome"] == "materialized"
+        assert db_conn.execute("SELECT loop_state FROM public.sessions WHERE id = %s",
+                               (sid,)).fetchone()["loop_state"] == {}
+
+
+def test_a_tombstone_keeps_no_loop_document(db_conn):
+    _stash(db_conn, "tps-loop-end", loop_state={"phase": "probe", "goal": {"text_encrypted": "x"}})
+    assert _discard(db_conn, "tps-loop-end", "ended", only_if_pending=True) is True
+    assert db_conn.execute("SELECT loop_state FROM public.tutor_pending_sessions "
+                           "WHERE session_id = 'tps-loop-end'").fetchone()["loop_state"] is None
+
+
+def test_a_loop_document_must_be_an_object(db_conn):
+    with db_conn.transaction() as tx:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _stash(db_conn, "tps-bad", loop_state=["not", "an", "object"])
+        raise psycopg.Rollback(tx)
+
+
+def test_one_stash_function_so_a_call_by_name_is_never_ambiguous(db_conn):
+    """PostgREST calls by argument name: the old 12-argument function was
+    replaced, not overloaded, and its 12 names still resolve (the 13th has a
+    default), so the previous release keeps working during a deploy."""
+    rows = db_conn.execute(
+        "SELECT pg_get_function_identity_arguments(p.oid) AS args FROM pg_proc p "
+        "JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = 'public' AND p.proname = 'stash_tutor_session'").fetchall()
+    assert len(rows) == 1 and rows[0]["args"].endswith("p_loop_state jsonb")
+    db_conn.execute(
+        "SELECT public.stash_tutor_session(p_session_id => 'tps-named', p_user_id => %s, "
+        "p_mode => 'socratic', p_topic => 'T', p_course_id => 'c1', p_offering_id => '', "
+        "p_use_shared_context => true, p_assistant_reply => 'ENC:g', p_graph_update => NULL, "
+        "p_ttl_seconds => %s, p_tombstone_ttl_seconds => %s, p_max_entries => %s)",
+        (USER, TTL, TOMB, CAP))
+    assert _state(db_conn, "tps-named") == "pending"
+
+
+def test_the_loop_migration_is_safe_to_apply_again(db_conn):
+    _stash(db_conn, "tps-loop-again", loop_state={"phase": "probe"})
+    with db_conn.transaction() as tx:
+        db_conn.execute(_LOOP_MIGRATION.read_text())
+        assert _materialize(db_conn, "tps-loop-again")["outcome"] == "materialized"
+        assert db_conn.execute("SELECT loop_state FROM public.sessions WHERE id = 'tps-loop-again'"
+                               ).fetchone()["loop_state"] == {"phase": "probe"}
+        raise psycopg.Rollback(tx)
+
+
+def test_the_loop_functions_stay_service_only(db_conn):
+    with db_conn.transaction() as tx:
+        db_conn.execute("SET LOCAL ROLE authenticated")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            db_conn.execute("SELECT public.stash_tutor_session('x', 'y', 'm', 't', 'c', '', true, "
+                            "'g', NULL, 1, 1, 1, '{}'::jsonb)")
         raise psycopg.Rollback(tx)

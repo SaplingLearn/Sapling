@@ -528,7 +528,7 @@ grep -c "export LEARNING_LOOP_ENABLED" scripts/e2e-up.sh                        
 
 Also before step 1 (half A preconditions, kept):
 
-- [ ] **One backend process until the in-memory maps move to the database.** `_FAILED_TURN_ANCHORS` (the A85 failed-turn anchors) lives in process memory (bounded by `LOOP_FAILED_ANCHORS_MAX`). Before production runs more than one backend process or replica, it must move to the database (`grep -n "_FAILED_TURN_ANCHORS" backend/routes/learn_loop.py`). The openers' reveals are already durable (`learning_reveals`, A88) and so is the post-test claim (A87/A89, `posttest_poses`).
+- [x] **One backend process until the in-memory maps move to the database.** Done (#117, branch `feat/loop-stateless-sessions`): the anchors are `loop_state.turn_failed_at` and pending loop sessions follow `stateless_tutor_sessions` (`docs/deploy/railway.md` audit). Original note: `_FAILED_TURN_ANCHORS` (the A85 failed-turn anchors) lives in process memory (bounded by `LOOP_FAILED_ANCHORS_MAX`). Before production runs more than one backend process or replica, it must move to the database (`grep -n "_FAILED_TURN_ANCHORS" backend/routes/learn_loop.py`). The openers' reveals are already durable (`learning_reveals`, A88) and so is the post-test claim (A87/A89, `posttest_poses`).
 - [ ] **Migrations before code** on each environment (A92): `llm_usage.session_id` is additive; code ahead of it degrades (drops the column and retries), but run the migrations first anyway — `dotenv -f .env.staging run -- python -m db.migrate` before the merge (#651: `migrate-staging.yml` races the deploy).
 
 §11.7, verbatim:

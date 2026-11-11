@@ -243,9 +243,19 @@ sequenceDiagram
 screen (with the `crisis_support` flag on, a crisis message gets a resources
 card and opens no session) and the rate limit. A new session's opener is a
 **template**, not a model turn: the probe opener, or the plan opener when the
-course has no check items yet (A121). The session is **lazy**: it lives in memory (`PENDING_SESSIONS` in
-`backend/services/tutor_sessions.py`) until the first loop write materialises the
-`sessions` row (`_consume_pending`). A session opened from the quiz's "Ask
+course has no check items yet (A121). The session is **lazy**: it is pending
+(`stash_pending` in `backend/services/tutor_sessions.py`) until the first loop
+write materialises the `sessions` row (`services/tutor/pending.py::_consume_pending`),
+with the loop document the session started with (a quiz-ask session's teach
+phase, a goal). Where it is pending follows the `stateless_tutor_sessions` flag
+(#117): off, in the starting worker's memory (`PENDING_SESSIONS`, one worker);
+on, in `tutor_pending_sessions` with its `loop_state`
+(`20261111030007_tutor_pending_loop_state.sql`), so any worker can read it
+(`/status`, `/goal`), materialise it (`materialize_tutor_session`, one
+transaction), close it (`/close` claims it atomically, `claim_pending`) or
+refuse it after an end or delete. A failed turn's timing anchor (A85) is in the
+loop document too (`turn_failed_at`, `backend/learning/turn_activity.py`), so no
+loop state lives only in one process. A session opened from the quiz's "Ask
 about this" panel (`backend/services/quiz_ask.py::open_quiz_ask`) skips the
 probe and plan, starts teaching the quiz's concept, gets a model opener, and
 records the quiz item's help in the ledger (A99).
