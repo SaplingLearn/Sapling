@@ -88,7 +88,8 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     never admits a second write (the item is moved past once the claim is
     stale)."""
     _, course_id = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
-    state = _load_loop_state(body.session_id)
+    # #117: every sync PostgREST read and write below hops off the event loop
+    state = await asyncio.to_thread(_load_loop_state, body.session_id)
     _require_phase(state, "probe")
     qh = body.question_hash
     posed = _probe_doc(state).get("current")
@@ -96,7 +97,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
     if grade_checkpoint.KEY in posed:
         checkpoint = _open_grade_checkpoint(posed, body, course_id, kind="probe")
-        return _finish_probe_checkpoint(checkpoint, request, loop_on=loop_on)
+        return await asyncio.to_thread(_finish_probe_checkpoint, checkpoint, request, loop_on=loop_on)
     if posed.get("grading_claim"):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     skills = list(_probe_doc(state).get("skills") or [])
@@ -126,9 +127,11 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
         take(doc["probe"], cur)
 
-    _update_loop_state(body.session_id, take_posed)
+    await asyncio.to_thread(_update_loop_state, body.session_id, take_posed)
     if item is None:  # A23 withdrawal: nothing is graded
-        _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
+        await asyncio.to_thread(
+            _update_loop_state, body.session_id, _under_probe_claim(qh, claim, _not_asked)
+        )
         return {"graded": False, "unavailable": True}
 
     text = body.answer or body.reason
@@ -148,7 +151,8 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     )
     # PKG-10 (spec §13 A76, fix round 3): a probe item is the next graded item
     # on its concept after a release too — the same rule as the check route
-    recheck = recheck_after_release(
+    recheck = await asyncio.to_thread(
+        recheck_after_release,
         body.user_id,
         node_id,
         state,
@@ -159,7 +163,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     synthetic_idk = False
     # A93: a probe item graded with help anywhere (another session's hints, a
     # reveal) carries no unassisted credit — the same help floor as every grade
-    floor = _reveal_floor(body.user_id, item.item, None)
+    floor = await asyncio.to_thread(_reveal_floor, body.user_id, item.item, None)
     answer = CheckAnswer(
         question_hash=qh,
         answer_text=body.answer,
@@ -189,8 +193,8 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 if disowned or pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
                     _release(pr, cur)  # nothing was graded: asked again
 
-            state = _update_loop_state(
-                body.session_id, _under_probe_claim(qh, claim, count_refusal)
+            state = await asyncio.to_thread(
+                _update_loop_state, body.session_id, _under_probe_claim(qh, claim, count_refusal)
             )
             if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
                 return {"graded": False, "refused": True}
@@ -207,11 +211,17 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 confront=False,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome
-            _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
+            await asyncio.to_thread(
+                _update_loop_state, body.session_id, _under_probe_claim(qh, claim, _not_asked)
+            )
             return {"graded": False, "unavailable": True}
 
-        floor = _refloor(deps.pending_evidence, body.user_id, item.item, None, floor)
-        previously_seen = bool(posed.get("previously_seen", False)) or qh in seen_hashes(body.user_id)
+        floor = await asyncio.to_thread(
+            _refloor, deps.pending_evidence, body.user_id, item.item, None, floor
+        )
+        previously_seen = bool(posed.get("previously_seen", False)) or qh in (
+            await asyncio.to_thread(seen_hashes, body.user_id)
+        )
         _tag_planning_evidence(deps.pending_evidence, item.item, synthetic_idk=synthetic_idk,
                                previously_seen=previously_seen, operation_id=claim, observed_at=now)
         correct = bool(outcome.correct)
@@ -235,12 +245,16 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                           "answer": answer.model_dump(mode="json")},
         )
         checkpointed = True
-        _save_grade_checkpoint(checkpoint)
-        return _finish_probe_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+        await asyncio.to_thread(_save_grade_checkpoint, checkpoint)
+        return await asyncio.to_thread(
+            _finish_probe_checkpoint, checkpoint, request, loop_on=loop_on, deps=deps
+        )
     except BaseException as exc:
         if not checkpointed:
             try:
-                _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _release))
+                await asyncio.to_thread(
+                    _update_loop_state, body.session_id, _under_probe_claim(qh, claim, _release)
+                )
             except Exception:
                 logger.warning("probe grading claim could not be released")
         if isinstance(exc, PlanningPersistenceUnavailable):
@@ -339,7 +353,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
         body.user_id, "loop_probe_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, graded=False)
-    ai_budget.enforce_rate_limit_for(body.user_id)
+    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)  # #117
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"

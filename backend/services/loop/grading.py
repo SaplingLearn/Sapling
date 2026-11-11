@@ -80,20 +80,26 @@ async def _grade_submission(
     record never admits a second flush."""
     scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
     course_id = scope[1]
-    state = _load_loop_state(body.session_id)
+    # #117: every sync PostgREST read and write below hops off the event loop
+    state = await asyncio.to_thread(_load_loop_state, body.session_id)
     _require_open(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)
     if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
         checkpoint = _open_grade_checkpoint(entry, body, course_id, kind="check")
-        return _finish_check_checkpoint(checkpoint, scope, request, loop_on=loop_on)
+        return await asyncio.to_thread(
+            _finish_check_checkpoint, checkpoint, scope, request, loop_on=loop_on
+        )
     if isinstance(entry, dict) and (
         entry.get("graded_at") is not None or entry.get("grading_claim") or entry.get("grading_superseded")
     ):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if not isinstance(entry, dict) or state.get("current") != qh:
         raise HTTPException(status_code=404, detail="No such check item in this session")
-    item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+    item = (
+        await asyncio.to_thread(get_check_item, entry["check_item_id"])
+        if entry.get("check_item_id") else None
+    )
     if item is None:  # A23 withdrawal: nothing is graded
         raise HTTPException(status_code=409, detail="check item withdrawn")
     text = body.answer or body.reason
@@ -104,7 +110,7 @@ async def _grade_submission(
     node_id = await asyncio.to_thread(_node_for_item, body.user_id, item)  # #117
     if node_id is None:  # evidence needs the student's node for this concept (A2)
         raise HTTPException(status_code=409, detail="no graph node for this item")
-    band, p_before = _band_for(body.user_id, node_id)
+    band, p_before = await asyncio.to_thread(_band_for, body.user_id, node_id)
     now = _now_s()
     # hint-unlock bookkeeping only: the independent-time gate never blocks grading (A16)
     arm = await asyncio.to_thread(_arm_for, body.user_id, request)  # #117
@@ -127,11 +133,14 @@ async def _grade_submission(
     # A88: a posed item a served turn revealed grades with no unassisted credit
     rung = max(
         int(entry.get("rung") or 0),
-        _reveal_floor(body.user_id, item, _ts(entry.get("first_shown_at"))),
+        await asyncio.to_thread(
+            _reveal_floor, body.user_id, item, _ts(entry.get("first_shown_at"))
+        ),
     )
     # PKG-10 (spec §13 A76): the next graded item on a concept after a release
     # is a re-check, never a full-weight unassisted first attempt
-    recheck = recheck_after_release(
+    recheck = await asyncio.to_thread(
+        recheck_after_release,
         body.user_id,
         node_id,
         state,
@@ -139,7 +148,7 @@ async def _grade_submission(
         item=item,
     )
     claim = str(uuid.uuid4())
-    _claim_grading(body.session_id, qh, claim, now)
+    await asyncio.to_thread(_claim_grading, body.session_id, qh, claim, now)
     checkpointed = False
     # spec §13 A141: a multi-concept item's answer is a partial observation on
     # its apex (node_id above); the keyword is passed only for one
@@ -178,8 +187,10 @@ async def _grade_submission(
                     e.pop("grading_claim", None)
                     e.pop("grading_claim_at", None)
 
-            state = _update_loop_state(
-                body.session_id, _under_claim(qh, claim, count_refusal, release=False)
+            state = await asyncio.to_thread(
+                _update_loop_state,
+                body.session_id,
+                _under_claim(qh, claim, count_refusal, release=False),
             )
             if (_steps(state).get(qh) or {}).get("grading_claim") != claim:
                 return _Submission("refused", state, rendered, scope, refused=True)
@@ -201,15 +212,22 @@ async def _grade_submission(
                 if genuine:
                     _record_attempt(e, now, failed=True)
 
-            state = _update_loop_state(
-                body.session_id, _under_claim(qh, claim, note_attempt, release=True)
+            state = await asyncio.to_thread(
+                _update_loop_state,
+                body.session_id,
+                _under_claim(qh, claim, note_attempt, release=True),
             )
             return _Submission("unavailable", state, rendered, scope, refused=refused)
         # A93: the help floor re-read inside the claim, right before the write
-        rung = _refloor(
-            deps.pending_evidence, body.user_id, item, _ts(entry.get("first_shown_at")), rung
+        rung = await asyncio.to_thread(
+            _refloor,
+            deps.pending_evidence,
+            body.user_id,
+            item,
+            _ts(entry.get("first_shown_at")),
+            rung,
         )
-        previously_seen = qh in seen_hashes(body.user_id)
+        previously_seen = qh in await asyncio.to_thread(seen_hashes, body.user_id)
         _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused),
                                previously_seen=previously_seen, operation_id=claim, observed_at=now)
         correct = bool(outcome.correct)
@@ -253,15 +271,23 @@ async def _grade_submission(
         # Treat a lost checkpoint acknowledgment as potentially saved. Never release
         # its claim or call the grader again while that uncertainty exists.
         checkpointed = True
-        _save_grade_checkpoint(checkpoint)
-        return _finish_check_checkpoint(
-            checkpoint, scope, request, loop_on=loop_on, deps=deps, difficulty=item.difficulty
+        await asyncio.to_thread(_save_grade_checkpoint, checkpoint)
+        return await asyncio.to_thread(
+            _finish_check_checkpoint,
+            checkpoint,
+            scope,
+            request,
+            loop_on=loop_on,
+            deps=deps,
+            difficulty=item.difficulty,
         )
     except BaseException as exc:
         if not checkpointed:
             try:
-                _update_loop_state(
-                    body.session_id, _under_claim(qh, claim, lambda e: None, release=True)
+                await asyncio.to_thread(
+                    _update_loop_state,
+                    body.session_id,
+                    _under_claim(qh, claim, lambda e: None, release=True),
                 )
             except Exception:
                 logger.warning("grading claim could not be released")
@@ -307,4 +333,5 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
-    return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
+    # #117: building the feedback turn reads the session's state; off the loop
+    return _sse(await asyncio.to_thread(_submission_turn, sub, body, request, loop_on=loop_on))

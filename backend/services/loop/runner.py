@@ -37,9 +37,13 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     — the run is still billed) is finished by the tool-less continuation.
     Persist ordering mirrors routes.learn._chat_turn_json."""
     await asyncio.to_thread(turn.begin_activity)
-    decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
+    # #117: the budget read, the plan's reads and the turn's writes are sync
+    # PostgREST calls; each hops off the event loop, in the same order
+    decision = await asyncio.to_thread(
+        ai_budget.check, turn.user_id, "tutor", turn.band, **turn.budget_counters()
+    )
     try:
-        turn.plan(decision)
+        await asyncio.to_thread(turn.plan, decision)
     except BaseException:
         await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise
@@ -47,11 +51,15 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
         await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise _BudgetPaused(decision)
     if turn.tier == "none":
-        return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
+        return {
+            "graph_update": {},
+            "mastery_changes": [],
+            **(await asyncio.to_thread(turn.complete, turn.text, {}, [])),
+        }
     try:
         reply = None
         usage = RunUsage()
-        ai_budget.count_tutor_call(turn.user_id)
+        await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)
         with capture_run_messages() as messages:
             try:
                 result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
@@ -63,7 +71,11 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
                 reply = turn.render(result.output)
         if reply is None:
             reply = await _continue_turn(turn, list(messages))
-        return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
+        return {
+            "graph_update": {},
+            "mastery_changes": [],
+            **(await asyncio.to_thread(turn.complete, reply, {}, [])),
+        }
     except BaseException:
         await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise
@@ -114,8 +126,11 @@ async def _stream_turn(turn: _LoopTurn):
     Its Rung-1 fallback is the tool-less JSON turn (#646)."""
     try:
         await asyncio.to_thread(turn.begin_activity)
-        decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-        turn.plan(decision)
+        # #117: the budget read and the plan's reads, off the event loop
+        decision = await asyncio.to_thread(
+            ai_budget.check, turn.user_id, "tutor", turn.band, **turn.budget_counters()
+        )
+        await asyncio.to_thread(turn.plan, decision)
     except Exception:
         # ADR 0024 honest degrade: nothing was shown or written — one terminal error
         logger.exception("Loop turn could not be planned")
@@ -133,7 +148,7 @@ async def _stream_turn(turn: _LoopTurn):
         yield sapling_event_to_sse(_budget_event(decision))
     if turn.tier == "none":
         try:
-            extra = turn.complete(turn.text, {}, [])
+            extra = await asyncio.to_thread(turn.complete, turn.text, {}, [])  # #117
         except Exception:
             # Behaviour 19: stream_agent_turn's on_complete guard, for the template path
             logger.warning("Deterministic loop turn failed to persist", exc_info=True)
@@ -159,9 +174,13 @@ async def _stream_turn(turn: _LoopTurn):
         retrieval — billed for the failed streamed run and continued from its
         messages (tool results) by the tool-less continuation."""
         reply = await _continue_turn(turn, messages)
-        return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
+        return {
+            "graph_update": {},
+            "mastery_changes": [],
+            **(await asyncio.to_thread(turn.complete, reply, {}, [])),
+        }
 
-    ai_budget.count_tutor_call(turn.user_id)
+    await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)  # #117
     shown = ""  # A88 (M1): the text the student has been shown
     scanned = ""  # the last `shown` whose scan returned (A105, review m3)
     attempts: list[str] = []  # A93 (M4): retracted attempts relayed but never scanned
@@ -253,7 +272,8 @@ async def _json_turn(make, what: str) -> dict:
     429."""
 
     async def _turn() -> dict:
-        return await _run_turn_json(make())
+        # #117: building the turn reads the session's state; off the event loop
+        return await _run_turn_json(await asyncio.to_thread(make))
 
     try:
         return await _agent_turn_or_http_error(_turn(), what=what)

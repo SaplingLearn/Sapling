@@ -209,7 +209,8 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
     course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
-    items = items_for_concepts(course_id, [key]).get(key) or []
+    # #117: every sync PostgREST read and write below hops off the event loop
+    items = (await asyncio.to_thread(items_for_concepts, course_id, [key])).get(key) or []
     item = next((i for i in items if i.question_hash == body.question_hash), None)
     if item is None:
         raise HTTPException(status_code=404, detail="check item not found")
@@ -218,7 +219,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if item.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
-    if _posttest_reported(body.user_id, item.question_hash):
+    if await asyncio.to_thread(_posttest_reported, body.user_id, item.question_hash):
         raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     now = _posttest_now()
     claim = str(uuid.uuid4())
@@ -229,8 +230,10 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     answered = False
     try:
-        floor = Rung(_posttest_floor(body.user_id, body.node_id, item, _ts(pose.get("posed_at"))))
-        band, p_before = _band_for(body.user_id, body.node_id)
+        floor = Rung(await asyncio.to_thread(
+            _posttest_floor, body.user_id, body.node_id, item, _ts(pose.get("posed_at"))
+        ))
+        band, p_before = await asyncio.to_thread(_band_for, body.user_id, body.node_id)
         deps = SaplingDeps(
             user_id=body.user_id,
             course_id=course_id,
@@ -249,7 +252,9 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         )
         # A76: every grading caller decides the re-check through the one helper
         # (no session log here: the node's journal decides)
-        recheck = recheck_after_release(body.user_id, body.node_id, None, now=now, item=item)
+        recheck = await asyncio.to_thread(
+            recheck_after_release, body.user_id, body.node_id, None, now=now, item=item
+        )
         outcome = await grade_answer(
             _item_like(item),
             answer,
@@ -265,9 +270,9 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         # m1/m2: the claim is re-validated and the pose CLOSED before the flush —
         # a taken-over claim writes nothing; a failed flush never reopens the pose
         # A93: the help floor re-read inside the claim, right before the write
-        floor = Rung(
-            _refloor(deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor))
-        )
+        floor = Rung(await asyncio.to_thread(
+            _refloor, deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor)
+        ))
         answered_at = _posttest_now()
         # A126: telemetry beside the outcome, bounded by the server's own clock:
         # the item cannot have been hidden for longer than it was on screen
@@ -293,13 +298,14 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         if not answered:
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
         try:
-            changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+            # ONE call: the post-test's only evidence write
+            changes = await asyncio.to_thread(flush_pending, deps, course_id)
         except EvidenceItemRetired:
             # A123: staff retired the item while it was graded — nothing was
             # written (the grade is void); the pose stays answered, and its
             # outcome is left out of the learning gain by the void rule
             raise HTTPException(status_code=409, detail=_RETIRED_DETAIL) from None
-        _ledger(mark_graded, body.user_id, item.question_hash)
+        await asyncio.to_thread(_ledger, mark_graded, body.user_id, item.question_hash)
     finally:
         if not answered:
             try:

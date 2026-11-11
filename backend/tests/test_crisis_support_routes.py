@@ -549,8 +549,9 @@ SCREENED_INLINE = [
     ("/api/learn/start-session/stream", "crisis_support.screen_async",
      ("enforce_rate_limit_for,", "_kill_switch_budget,")),
     ("/api/learn/loop/goal", "crisis_support.screen(", ("_probe_plan_read_limit(",)),
-    ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
-    ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for(",)),
+    # #117: the loop's limiter read hops off the event loop, as the tutor's does
+    ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
+    ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
 ]
 
 

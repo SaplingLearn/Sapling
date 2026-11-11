@@ -171,16 +171,17 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         body.user_id, "loop_review_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, correct=None, unavailable=True, refused=False)
+    # #117: every sync PostgREST read and write below hops off the event loop
     if body.kind == "check":  # the one review body that runs a model (the grader)
-        ai_budget.enforce_rate_limit_for(body.user_id)
-    _review_course(body.user_id, body.course_id)
+        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+    await asyncio.to_thread(_review_course, body.user_id, body.course_id)
     now = _review_now()
     if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
         raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
-    sid, loop_state = _review_session(body.user_id, body.course_id, now)
+    sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now)
     check = card_row = deps = None
     if body.kind == "check":
-        check = get_check_item(body.item_id)
+        check = await asyncio.to_thread(get_check_item, body.item_id)
         node_id = (  # #117: off the event loop
             await asyncio.to_thread(_node_for_item, body.user_id, check)
             if check is not None else None
@@ -193,23 +194,23 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
         deps = _review_deps(body.user_id, body.course_id, sid, _request_id(request), loop_on)
     else:
-        card_row = review.load_card(body.user_id, body.item_id)
+        card_row = await asyncio.to_thread(review.load_card, body.user_id, body.item_id)
         if card_row is None:
             raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
     try:  # a stored fsrs_s that is not a finite positive number → 422 (InvalidStability)
         item = (
-            review.item_for_check(body.user_id, check, node_id, now)
+            await asyncio.to_thread(review.item_for_check, body.user_id, check, node_id, now)
             if check is not None
             else review.item_for_card(card_row, body.course_id, now)
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    retention = loop_state["review"].get("retention") or review.review_retention(
-        body.user_id, body.course_id
+    retention = loop_state["review"].get("retention") or await asyncio.to_thread(
+        review.review_retention, body.user_id, body.course_id
     )
     claim = str(uuid.uuid4())
     try:
-        review.claim_item(sid, review.sr_key(item), item.id, claim, now)
+        await asyncio.to_thread(review.claim_item, sid, review.sr_key(item), item.id, claim, now)
         outcome = await review.grade_review(
             body.user_id,
             item,
@@ -228,10 +229,12 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             deps=deps,
             claim=claim,
             # spec §13 A140: the interleave's anchor records the graded difficulty
-            **({"varied": True} if varied_practice.varied_on(body.user_id) else {}),
+            **({"varied": True} if await asyncio.to_thread(varied_practice.varied_on, body.user_id) else {}),
             # A88/A93: an item with recorded help anywhere has no unassisted credit
             max_rung=(review_floor := (
-                _reveal_floor(body.user_id, check, _review_posed_at(loop_state, item))
+                await asyncio.to_thread(
+                    _reveal_floor, body.user_id, check, _review_posed_at(loop_state, item)
+                )
                 if check is not None
                 else 0
             )),
@@ -243,7 +246,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             ),
         )
         if check is not None and not outcome.unavailable:
-            _ledger(mark_graded, body.user_id, check.question_hash)
+            await asyncio.to_thread(_ledger, mark_graded, body.user_id, check.question_hash)
     except review.ReviewClaimRefused as exc:
         raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
     except EvidenceItemRetired:

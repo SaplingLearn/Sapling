@@ -30,7 +30,11 @@ async def chat_stream(body: ChatBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
-    return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
+    # #117: building the turn reads the session's state; off the event loop
+    turn = await asyncio.to_thread(
+        _LoopTurn, body=body, request=request, message=body.message, loop_on=loop_on
+    )
+    return _sse(turn)
 
 
 async def action(body: ActionBody, request: Request):
@@ -83,4 +87,5 @@ async def start_session(body: StartSessionBody, request: Request):
 
 async def start_session_stream(body: StartSessionBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    return _sse(_LoopOpener(body=body, request=request, loop_on=loop_on))
+    # #117: the opener's reads, off the event loop
+    return _sse(await asyncio.to_thread(_LoopOpener, body=body, request=request, loop_on=loop_on))

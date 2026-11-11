@@ -3,6 +3,7 @@ without a structured turn, and the run's request count.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
@@ -101,8 +102,12 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
     tool removed — the safety property, `override(tools=[], toolsets=[])`
     (pinned). Returns the rendered turn (the output validator still judges it
     against deps.loop_turn)."""
-    decision = ai_budget.check(
-        turn.user_id, "tutor", turn.band, **turn.budget_counters(include_current_run=True)
+    decision = await asyncio.to_thread(  # #117: off the event loop
+        ai_budget.check,
+        turn.user_id,
+        "tutor",
+        turn.band,
+        **turn.budget_counters(include_current_run=True),
     )
     if decision.level == "hard" or (turn.tier == "deep" and decision.tier_ceiling != "deep"):
         # Never rescue on the old deep slot after the known primary work has
@@ -111,7 +116,7 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
     plan = continuation_plan(
         assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
     )
-    ai_budget.count_tutor_call(turn.user_id)
+    await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)  # #117
     usage = RunUsage()
     result = None
     try:

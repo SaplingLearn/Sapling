@@ -359,14 +359,14 @@ async def close_session(
         had_state = bool(rows[0].get("loop_state"))
         claim = uuid.uuid4().hex
         try:
-            doc = _claim_close(session_id, claim, _now_s())
+            doc = await asyncio.to_thread(_claim_close, session_id, claim, _now_s())  # #117
         except _AlreadyClosed:
             return await asyncio.to_thread(_reread_close, session_id)
         phase = _close_phase(doc) if had_state else "close"
         row_defaults = None
         try:
             transcript, evidence = await asyncio.to_thread(_session_record, session_id)  # #117
-            keys = _close_misconception_keys(user_id, evidence)
+            keys = await asyncio.to_thread(_close_misconception_keys, user_id, evidence)
             # A117: honest baselines, and check-in answers counted apart
             # (the probe history is the claimed document's)
             measured = await asyncio.to_thread(_measured_before, user_id, session_id, evidence)
@@ -381,13 +381,14 @@ async def close_session(
                 probe_hashes=session_probe_hashes(doc),
                 concept_names=names,
             )
-            items = _unreleased_items(doc)
+            items = await asyncio.to_thread(_unreleased_items, doc)
             out = None
             if evidence:  # A25: no model without graded evidence
                 limited = False
                 if rate_limit:
                     try:
-                        ai_budget.enforce_rate_limit_for(user_id)  # A20 inline: a model may run
+                        # A20 inline: a model may run (#117: the read, off the event loop)
+                        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)
                     except AIBudgetExceeded:
                         if rate_limit == "raise":
                             raise
@@ -402,16 +403,18 @@ async def close_session(
                 else _served_fallback(draft, items)
             )
         except BaseException:
-            _finish_close(session_id, claim, closed=False)
+            await asyncio.to_thread(_finish_close, session_id, claim, closed=False)
             raise
     try:
-        stored = store_close(session_id, user_id, record, phase, row_defaults=row_defaults)
+        stored = await asyncio.to_thread(  # #117: off the event loop
+            store_close, session_id, user_id, record, phase, row_defaults=row_defaults
+        )
     except Exception as exc:
         if claim:
-            _finish_close(session_id, claim, closed=False)
+            await asyncio.to_thread(_finish_close, session_id, claim, closed=False)
         logger.warning("session close not stored (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
-    _finish_close(session_id, claim, closed=True)  # a pending session's phase too
+    await asyncio.to_thread(_finish_close, session_id, claim, closed=True)  # a pending session's phase too
     if not stored:  # another close's write landed first: serve it, emit nothing
         return await asyncio.to_thread(_reread_close, session_id)
     events_service.log_event(

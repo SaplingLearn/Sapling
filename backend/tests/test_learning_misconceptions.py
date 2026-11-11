@@ -1700,12 +1700,22 @@ def test_every_grading_caller_decides_the_recheck_through_the_one_helper():
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
+            def _name(node):
+                return getattr(node, "id", None) or getattr(node, "attr", None)
+
             calls = [
                 n
                 for n in ast.walk(fn)
                 if isinstance(n, ast.Call)
-                and (getattr(n.func, "id", None) or getattr(n.func, "attr", None))
-                in ("grade_answer", "recheck_after_release")
+                and (
+                    _name(n.func) in ("grade_answer", "recheck_after_release")
+                    # #117: the same decision, hopped off the event loop
+                    or (
+                        _name(n.func) in ("to_thread", "run_in_threadpool")
+                        and n.args
+                        and _name(n.args[0]) == "recheck_after_release"
+                    )
+                )
             ]
             grades = [
                 c

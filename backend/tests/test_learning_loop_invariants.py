@@ -2137,7 +2137,15 @@ def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
                 runs.append(node.lineno)
             elif isinstance(node, ast.Call) and _last_name(node.func) in _STREAM_RUNNERS:
                 runs.append(node.lineno)
-            elif isinstance(node, ast.Call) and _dotted(node.func).endswith("ai_budget.check"):
+            elif isinstance(node, ast.Call) and (
+                _dotted(node.func).endswith("ai_budget.check")
+                # #117: the same read hopped off the event loop
+                or (
+                    _last_name(node.func) in ("to_thread", "run_in_threadpool")
+                    and node.args
+                    and _dotted(node.args[0]).endswith("ai_budget.check")
+                )
+            ):
                 checks.append(node.lineno)
         found += len(runs)
         bad += [
@@ -2186,6 +2194,11 @@ def test_inv_23_loop_run_scan_self_test():
         "    return g\n"
     )
     assert _loop_run_scan(good, "good") == (1, [])
+    hopped = good.replace(
+        "d = ai_budget.check(turn.user_id, 'tutor', 'develop')",
+        "d = await asyncio.to_thread(ai_budget.check, turn.user_id, 'tutor', 'develop')",
+    )
+    assert hopped != good and _loop_run_scan(hopped, "hopped") == (1, [])
     assert _loop_run_scan(late, "late")[1] == ["late:run_json:2"]
     assert _loop_run_scan(stream, "stream") == (1, ["stream:s:2"])
     structured = stream.replace("stream_agent_turn", "stream_structured_turn")

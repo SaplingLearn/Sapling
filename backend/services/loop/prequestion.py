@@ -85,9 +85,10 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
     the plan's current concept — or the flag is off for the student."""
     scope = await asyncio.to_thread(_session_scope, body.session_id, body.user_id)  # #117
     course_id = scope[1]
-    if not _prequestion_on(body.user_id):
+    # #117: every sync PostgREST read and write below hops off the event loop
+    if not await asyncio.to_thread(_prequestion_on, body.user_id):
         raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-    state = _load_loop_state(body.session_id)
+    state = await asyncio.to_thread(_load_loop_state, body.session_id)
     _require_teaching(state)
     if _pending_grade(state):
         raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
@@ -100,7 +101,10 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         or rec.get("status") not in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
     ):
         raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-    item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
+    item = (
+        await asyncio.to_thread(get_check_item, rec["check_item_id"])
+        if rec.get("check_item_id") else None
+    )
     if item is None:  # A23 withdrawal / A124, A123 holds: nothing left to explain
         raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
     if rec.get("status") == prequestion_rules.ANSWERED:
@@ -142,7 +146,9 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
             records[node] = _without_claim(cur)
             doc[prequestion_rules.KEY] = records
 
-    _update_loop_state(body.session_id, take, require_open=True, require_existing=True)
+    await asyncio.to_thread(
+        _update_loop_state, body.session_id, take, require_open=True, require_existing=True
+    )
     posed = rec.get("posed_at")
     posed_at = datetime.fromtimestamp(
         float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
@@ -164,7 +170,7 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
             raise RuntimeError("the stored prequestion answer could not be read back")
     except Exception as exc:
         logger.warning("prequestion guess not stored", exc_info=True)
-        _give_back_quietly(body.session_id, give_back)
+        await asyncio.to_thread(_give_back_quietly, body.session_id, give_back)
         raise HTTPException(status_code=503, detail="Your guess could not be saved; try again") from exc
     if (bool(stored["no_idea"]), stored["guess"]) != (no_idea, guess):
         logger.info("prequestion answer: a stored earlier guess stands and is the one explained")
@@ -208,7 +214,8 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
             reason=str(stored_guess.get("reason") or ""),
         ),
     )
-    _emit_prequestion(
+    await asyncio.to_thread(
+        _emit_prequestion,
         body.user_id,
         _request_id(request),
         body.session_id,
@@ -263,4 +270,7 @@ async def prequestion_answer_stream(body: PrequestionAnswerBody, request: Reques
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
-    return _sse(_prequestion_turn(state, scope, body, request, loop_on=loop_on))
+    # #117: building the turn reads the session's state; off the event loop
+    return _sse(
+        await asyncio.to_thread(_prequestion_turn, state, scope, body, request, loop_on=loop_on)
+    )
