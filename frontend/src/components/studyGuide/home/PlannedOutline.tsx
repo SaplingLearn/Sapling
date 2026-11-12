@@ -8,13 +8,18 @@ import type { PlanState } from "./usePlan";
 /**
  * What the guide will cover for the choices as they stand: each planned
  * section with its mastery colour and share, and how long it reads.
- * `ready` is false while there is no class and material to plan for.
+ * `ready` is false while there is no class and material to plan for, which
+ * is also the case while the class's materials are still `loading`.
  */
-export function PlannedOutline({ ready, state }: { ready: boolean; state: PlanState }) {
+export function PlannedOutline({ ready, loading, state }: { ready: boolean; loading: boolean; state: PlanState }) {
   return (
     <section className={m.outline} aria-label="Planned outline" aria-busy={state.loading} data-testid="guide-new-outline">
       <span className="label-micro">Planned outline</span>
-      <OutlineBody ready={ready} state={state} />
+      {loading ? (
+        <p className={m.outlineNote}>Loading this class&apos;s materials…</p>
+      ) : (
+        <OutlineBody ready={ready} state={state} />
+      )}
     </section>
   );
 }

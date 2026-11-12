@@ -52,7 +52,7 @@ export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
   );
 }
 
-/** The date, then what is worth knowing: still writing, new lectures, saved. */
+/** The date, then what is worth knowing: not finished, new lectures, saved. */
 function Meta({ guide, now }: { guide: Guide; now: Date }) {
   const status = statusText(guide.status);
   const lectures = newLecturesText(guide.new_materials);
@@ -60,7 +60,7 @@ function Meta({ guide, now }: { guide: Guide; now: Date }) {
     <div className={s.meta}>
       <span>{dateText(guide, now)}</span>
       {status && (
-        <span className={guide.status === "failed" ? s.metaFailed : s.metaWriting} data-testid={`guides-card-status-${guide.id}`}>
+        <span className={guide.status === "failed" ? s.metaFailed : s.metaUnfinished} data-testid={`guides-card-status-${guide.id}`}>
           {status}
         </span>
       )}

@@ -101,7 +101,7 @@
 .meta > span + span::before { content: "·"; margin: 0 6px; color: var(--text-muted); font-weight: 400; }
 .metaNew { color: var(--warn); font-weight: 600; }
 .metaSaved { color: var(--brand-forest); font-weight: 600; }
-.metaWriting { color: var(--text-dim); font-weight: 600; }
+.metaUnfinished { color: var(--text-dim); font-weight: 600; }
 .metaFailed { color: var(--err); font-weight: 600; }
 
 .room { display: flex; flex-direction: column; gap: 6px; min-height: 35px; }

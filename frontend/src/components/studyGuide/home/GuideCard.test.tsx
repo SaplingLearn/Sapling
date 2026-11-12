@@ -84,7 +84,7 @@ describe("GuideCard", () => {
     });
     expect(card).toHaveAttribute("href", "/study/guide/g1");
     expect(card).toHaveAttribute("data-status", "generating");
-    expect(screen.getByTestId("guides-card-status-g1")).toHaveTextContent("Writing…");
+    expect(screen.getByTestId("guides-card-status-g1")).toHaveTextContent("Not finished");
     expect(within(card).getByText("Today")).toBeTruthy();
     // No sections yet: no bar and no "most room".
     expect(within(card).queryByRole("img")).toBeNull();

@@ -49,9 +49,13 @@ export function dateText(guide: GuideCard, now: Date): string {
   return when && year !== now.getFullYear() ? `${when}, ${year}` : when;
 }
 
-/** What a guide that is not ready says in its place. */
+/**
+ * What a guide that is not ready says in its place. A `generating` guide is
+ * only written while a reader has it open, so the card does not claim it is
+ * being written now. Opening it resumes the writing.
+ */
 export function statusText(status: GuideStatus): string {
-  if (status === "generating") return "Writing…";
+  if (status === "generating") return "Not finished";
   return status === "failed" ? "Could not finish" : "";
 }
 

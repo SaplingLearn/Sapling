@@ -52,7 +52,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, onClose
         <div className={m.dialog} data-testid="guide-new-dialog">
           <div className={m.body}>
             <div className={m.form}>
-              <div className={m.pair}>
+              <div className={m.pair} onKeyDown={closeOpenList}>
                 <ClassField courses={courses} ready={coursesReady} value={form.courseId} onChange={guide.pickCourse} />
                 <ScopeField scopes={guide.scopes} placeholder={scopePlaceholder(guide)} value={form.scope ? scopeKey(form.scope) : ""} onChange={guide.pickScope} />
               </div>
@@ -69,7 +69,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, onClose
                 <Switch checked={form.useHistory} onChange={guide.setUseHistory} label={HISTORY_LABEL} testid="guide-new-history" />
               </div>
             </div>
-            <PlannedOutline ready={request !== null} state={plan} />
+            <PlannedOutline ready={request !== null} loading={guide.loading} state={plan} />
           </div>
           <footer className={m.foot}>
             {create.error && <p className={m.error} role="alert" data-testid="guide-new-error">{create.error}</p>}
@@ -96,6 +96,21 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, onClose
       />
     </>
   );
+}
+
+/**
+ * Escape on an open Class or Studying-for list closes that list. Without
+ * this the dialog takes the key first and closes itself, list and all. The
+ * list is closed through its own button, which then has the focus, so the
+ * next Escape still reaches the dialog.
+ */
+function closeOpenList(event: React.KeyboardEvent<HTMLDivElement>) {
+  if (event.key !== "Escape") return;
+  const button = event.currentTarget.querySelector<HTMLElement>('[aria-haspopup="listbox"][aria-expanded="true"]');
+  if (!button) return;
+  event.stopPropagation();
+  button.click();
+  button.focus();
 }
 
 function scopePlaceholder(guide: NewGuide): string {

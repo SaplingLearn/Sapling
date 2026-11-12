@@ -91,7 +91,8 @@ describe("dateText", () => {
 describe("statusText", () => {
   it("speaks only for a guide that is not ready", () => {
     expect(statusText("ready")).toBe("");
-    expect(statusText("generating")).toBe("Writing…");
+    // Nothing may be writing it: the card only knows it is not done.
+    expect(statusText("generating")).toBe("Not finished");
     expect(statusText("failed")).toBe("Could not finish");
   });
 });
