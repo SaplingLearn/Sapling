@@ -3,11 +3,13 @@ import React from "react";
 
 import { Icon } from "@/components/Icon";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
+import { Button } from "@/components/ui";
 import type { Item, Section } from "@/lib/studyGuide/types";
 
 import { BlockView } from "./blocks/BlockView";
 import { Prose } from "./Prose";
 import s from "./reader.module.css";
+import { useReader } from "./ReaderContext";
 import { sectionAnchor, sectionNumber, type SectionPhase } from "./readerModel";
 import { ReadMark } from "./ReadMark";
 
@@ -60,10 +62,21 @@ function SectionWaiting({ writing }: { writing: boolean }) {
   );
 }
 
-function SectionBody({ section, phase }: { section: Section; phase: SectionPhase }) {
-  if (phase === "failed") {
-    return <p className={s.note}>This section could not be written. Regenerate the guide to try again.</p>;
-  }
+/** A section the writer gave up on. Try again writes what the guide is missing. */
+function SectionFailed({ sectionId, onRetry }: { sectionId: string; onRetry: () => void }) {
+  const { generating } = useReader();
+  return (
+    <div className={s.failed}>
+      <p className={s.note}>This section could not be written.</p>
+      <Button size="sm" data-testid={`guide-section-retry-${sectionId}`} disabled={generating} onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+function SectionBody({ section, phase, onRetry }: { section: Section; phase: SectionPhase; onRetry: () => void }) {
+  if (phase === "failed") return <SectionFailed sectionId={section.id} onRetry={onRetry} />;
   if (phase !== "written") return <SectionWaiting writing={phase === "writing"} />;
   if (section.tier === "mastered") return <MasteredSection section={section} />;
   return <SectionItems items={section.items} />;
@@ -75,12 +88,15 @@ export function SectionView({
   phase,
   read,
   onToggleRead,
+  onRetry,
 }: {
   section: Section;
   index: number;
   phase: SectionPhase;
   read: boolean;
   onToggleRead: () => void;
+  /** Runs the generation that writes a section that failed. */
+  onRetry: () => void;
 }) {
   const anchor = sectionAnchor(section.id);
   return (
@@ -102,7 +118,7 @@ export function SectionView({
           {read ? "Read" : "Mark as read"}
         </button>
       </div>
-      <SectionBody section={section} phase={phase} />
+      <SectionBody section={section} phase={phase} onRetry={onRetry} />
     </section>
   );
 }

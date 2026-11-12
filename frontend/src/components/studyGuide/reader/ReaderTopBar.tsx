@@ -3,7 +3,7 @@ import { BackLink } from "@/components/BackLink";
 import { AIDisclaimerChip } from "@/components/chat/AIDisclaimerChip";
 import { TopBar } from "@/components/TopBar";
 import { Toggle } from "@/components/ui";
-import { studyHref } from "@/lib/toolHrefs";
+import { studyGuideHref } from "@/lib/toolHrefs";
 
 import type { ViewMode } from "./readerModel";
 
@@ -12,16 +12,8 @@ const MODES: { value: ViewMode; label: string; title: string }[] = [
   { value: "skim", label: "Skim", title: "One line per passage, blocks kept" },
 ];
 
-export function ReaderTopBar({
-  mode,
-  onMode,
-  courseId,
-}: {
-  mode: ViewMode;
-  onMode: (mode: ViewMode) => void;
-  /** The guide's class, once loaded: Back returns to the hub on it. */
-  courseId?: string;
-}) {
+/** The reader is one level inside the tool, so Back goes to the tool's home. */
+export function ReaderTopBar({ mode, onMode }: { mode: ViewMode; onMode: (mode: ViewMode) => void }) {
   return (
     <TopBar
       title="Study"
@@ -31,7 +23,7 @@ export function ReaderTopBar({
             <Toggle testid="guide-mode" options={MODES} value={mode} onChange={onMode} />
           </div>
           <AIDisclaimerChip />
-          <BackLink href={studyHref(courseId)} label="Study" />
+          <BackLink href={studyGuideHref()} label="Study Guides" />
         </>
       }
     />

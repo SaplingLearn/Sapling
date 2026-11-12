@@ -45,9 +45,11 @@ interface ArticleProps extends Pick<GuideViewProps, "guide" | "onToggleRead" | "
   days: number | null;
   generating: boolean;
   onRegenerate: () => void;
+  /** Writes what is still missing (a section that failed). */
+  onResume: () => void;
 }
 
-function Article({ guide, phases, days, generating, onToggleRead, onSave, onFeedback, onRegenerate }: ArticleProps) {
+function Article({ guide, phases, days, generating, onToggleRead, onSave, onFeedback, onRegenerate, onResume }: ArticleProps) {
   const { content } = guide;
   // A new guide has nothing to show until its outline arrives.
   if (generating && content.sections.length === 0) return <ArticleSkeleton />;
@@ -63,6 +65,7 @@ function Article({ guide, phases, days, generating, onToggleRead, onSave, onFeed
           phase={phases[section.id]}
           read={guide.read_sections.includes(section.id)}
           onToggleRead={() => onToggleRead(section.id)}
+          onRetry={onResume}
         />
       ))}
       <Sources sources={content.sources} />
@@ -79,32 +82,39 @@ export function GuideView({ userId, guide, mode, today, update, onToggleRead, on
   const phases = sectionPhases(guide.content.sections, generating);
   const days = daysUntil(guide.due_date, today);
   const reader: Reader = { userId, guide, mode, generating, update, askTutor: tutor.ask, tutorBusy: tutor.busy };
+  const resume = () => generation.start("resume");
+  // A generation that ended with nothing written leaves no guide to draw:
+  // the error and its Retry are the page.
+  const nothingWritten = generation.error !== null && guide.content.sections.length === 0;
 
   return (
     <ReaderProvider value={reader}>
-      {generation.error && <GenerationError message={generation.error} onRetry={() => generation.start("resume")} />}
-      <div className={`${s.shell} tool-enter`}>
-        {generating && <GenerationBanner label={generation.label} step={generation.step} />}
-        <div className={s.layout}>
-          <Article
-            guide={guide}
-            phases={phases}
-            days={days}
-            generating={generating}
-            onToggleRead={onToggleRead}
-            onSave={onSave}
-            onFeedback={onFeedback}
-            onRegenerate={() => generation.start("regenerate")}
-          />
-          <Rail
-            phases={phases}
-            days={days}
-            updated={generation.updated}
-            onToggleRead={onToggleRead}
-            onUpdate={() => generation.start("update")}
-          />
+      {generation.error && <GenerationError message={generation.error} onRetry={resume} />}
+      {!nothingWritten && (
+        <div className={`${s.shell} tool-enter`}>
+          {generating && <GenerationBanner label={generation.label} step={generation.step} />}
+          <div className={s.layout}>
+            <Article
+              guide={guide}
+              phases={phases}
+              days={days}
+              generating={generating}
+              onToggleRead={onToggleRead}
+              onSave={onSave}
+              onFeedback={onFeedback}
+              onRegenerate={() => generation.start("regenerate")}
+              onResume={resume}
+            />
+            <Rail
+              phases={phases}
+              days={days}
+              updated={generation.updated}
+              onToggleRead={onToggleRead}
+              onUpdate={() => generation.start("update")}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </ReaderProvider>
   );
 }

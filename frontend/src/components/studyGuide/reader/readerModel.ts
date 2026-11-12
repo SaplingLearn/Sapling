@@ -77,6 +77,18 @@ export const conceptTier = (concept: string, mastery: Record<string, Tier>): Tie
 export const findSource = (sources: Source[], id: string | null): Source | null =>
   sources.find(source => source.id === id) ?? null;
 
+/** A line that opens a block: a code fence, display math, a list item, a heading, a quote, a table row. */
+const BLOCK_START = /^ {0,3}(```|~~~|\$\$|[-*+] |\d+[.)] |#{1,6} |>|\|)/m;
+
+/**
+ * Whether a paragraph's Markdown is more than one run of text: a fenced code
+ * block, a list (the upgraded old guides' `- a\n- b`), or several blocks.
+ */
+export function isBlockMarkdown(text: string): boolean {
+  const body = text.trim();
+  return BLOCK_START.test(body) || /\n\s*\n/.test(body);
+}
+
 export type SectionPhase = "written" | "writing" | "queued" | "failed";
 
 /**

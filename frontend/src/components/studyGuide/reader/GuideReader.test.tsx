@@ -105,6 +105,14 @@ describe("the contract", () => {
 });
 
 describe("what the reader draws", () => {
+  it("is titled Study, with the way back to the Study Guides home", async () => {
+    await open();
+    expect(screen.getByRole("heading", { level: 1, name: "Study" })).toBeInTheDocument();
+    const back = screen.getByTestId("back-link");
+    expect(back).toHaveAttribute("href", "/study/guide");
+    expect(back).toHaveAccessibleName("Back to Study Guides");
+  });
+
   it("renders every item of the fixture: each prose passage and each block type", async () => {
     await open();
     const items = fixtureGuide().content.sections.flatMap(section => section.items);

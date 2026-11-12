@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
  * The reader while a guide is being written: the stream (outline, then
- * sections, then done), the banner and skeletons, polling when another tab
- * holds the claim, an error with Retry, and the two modes the reader starts
- * itself (Regenerate, and a guide that failed).
+ * sections, then done), the banner and skeletons, waiting on (and taking over
+ * from) another run that holds the guide, an error with Retry, a section that
+ * failed, and Regenerate.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -37,7 +37,7 @@ import type { GuideDetail } from "@/lib/studyGuide/types";
 
 import { GuideReader } from "./GuideReader";
 import { deferred, fixtureGuide, newGuide, outlineOf, renderReader, sectionOf } from "./readerTestKit";
-import { POLL_MS } from "./useGeneration";
+import { RETRY_MS } from "./useGeneration";
 
 const mocks = { getGuide: vi.mocked(getGuide), generateGuide: vi.mocked(generateGuide) };
 const GUIDE_ID = "guide-fixture-1";
@@ -165,58 +165,119 @@ describe("a guide that is still being written", () => {
   });
 });
 
-describe("another tab is writing the guide", () => {
-  it("polls the guide every three seconds until it is no longer generating", async () => {
+describe("another run holds the guide", () => {
+  const flush = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
+  const partial = () => fixtureGuide({ status: "generating", read_sections: [] });
+
+  it("shows what that run has written, and asks to resume every three seconds until it is done", async () => {
     vi.useFakeTimers();
-    const flush = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
     const finished = finishedGuide();
-    const partial = fixtureGuide({ status: "generating", read_sections: [] });
     mocks.generateGuide.mockRejectedValue(conflict());
     mocks.getGuide
       .mockResolvedValueOnce(newGuide(finished))
-      .mockResolvedValueOnce(partial)
+      .mockResolvedValueOnce(partial())
       .mockResolvedValueOnce(finished);
     renderReader();
     await flush();
 
+    // The 409 is followed at once by a re-read: the other run's sections show.
     expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(mocks.getGuide).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
     expect(screen.getByTestId("guide-generating")).not.toHaveTextContent("Step");
-    expect(mocks.getGuide).toHaveBeenCalledTimes(1);
-
-    // Not before three seconds.
-    await flush(POLL_MS - 1);
-    expect(mocks.getGuide).toHaveBeenCalledTimes(1);
-
-    // First poll: still generating, and what the other tab has written shows.
-    await flush(1);
-    expect(mocks.getGuide).toHaveBeenCalledTimes(2);
-    expect(screen.getByTestId("guide-generating")).toBeInTheDocument();
     expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
     expect(within(screen.getByTestId("guide-section-s3")).getByText("Writing this section")).toBeInTheDocument();
 
-    // Second poll: ready.
-    await flush(POLL_MS);
+    // Not before three seconds.
+    await flush(RETRY_MS - 1);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+
+    // Then it asks to resume. Still held: the re-read says the guide is ready.
+    await flush(1);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(mocks.generateGuide).toHaveBeenLastCalledWith("u1", GUIDE_ID, "resume", expect.any(Object));
     expect(mocks.getGuide).toHaveBeenCalledTimes(3);
     expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
     expect(screen.getByText("Guide ready.")).toBeInTheDocument();
-    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
 
     // And it stops there.
-    await flush(POLL_MS * 2);
+    await flush(RETRY_MS * 2);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
     expect(mocks.getGuide).toHaveBeenCalledTimes(3);
   });
 
-  it("stops polling when the reader is left", async () => {
+  it("takes the guide over when the run that held it has stopped", async () => {
     vi.useFakeTimers();
-    const flush = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
+    const run = deferred<GuideDetail>();
+    let handlers: GenerationHandlers = {};
+    mocks.generateGuide.mockRejectedValueOnce(conflict()).mockImplementationOnce((_user, _guide, _mode, given = {}) => {
+      handlers = given;
+      return run.promise;
+    });
+    // The tab that was writing closed: the guide stays `generating`, half written.
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+    expect(within(screen.getByTestId("guide-section-s3")).getByText("Writing this section")).toBeInTheDocument();
+
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(mocks.generateGuide).toHaveBeenLastCalledWith("u1", GUIDE_ID, "resume", expect.any(Object));
+
+    // This reader's own stream now: its status, then the missing section.
+    act(() => handlers.onStatus?.("Writing section 3 of 4: Scope", { step: 4, total: 6 }));
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("Writing section 3 of 4: Scope");
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("Step 4 of 6");
+
+    await act(async () => run.resolve(finishedGuide()));
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("guide-section-s3")).queryByText("Writing this section")).not.toBeInTheDocument();
+    expect(screen.getByText("Guide ready.")).toBeInTheDocument();
+
+    await flush(RETRY_MS * 2);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the error banner when asking again fails for another reason", async () => {
+    vi.useFakeTimers();
+    mocks.generateGuide
+      .mockRejectedValueOnce(conflict())
+      .mockRejectedValueOnce(new GuideGenerationError("The model is busy. Try again.", true));
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+    await flush(RETRY_MS);
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("The model is busy. Try again.");
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    await flush(RETRY_MS * 2);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops when the reader is left while it waits", async () => {
+    vi.useFakeTimers();
     mocks.generateGuide.mockRejectedValue(conflict());
-    mocks.getGuide.mockResolvedValue(newGuide(fixtureGuide()));
+    mocks.getGuide.mockResolvedValue(partial());
+    const view = renderReader();
+    await flush();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await flush(RETRY_MS * 3);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(mocks.getGuide).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops when the reader is left while the guide is being re-read", async () => {
+    vi.useFakeTimers();
+    const reread = deferred<GuideDetail>();
+    mocks.generateGuide.mockRejectedValue(conflict());
+    mocks.getGuide.mockResolvedValueOnce(partial()).mockReturnValueOnce(reread.promise);
     const view = renderReader();
     await flush();
     view.unmount();
-    await flush(POLL_MS * 3);
-    expect(mocks.getGuide).toHaveBeenCalledTimes(1);
+    await act(async () => reread.resolve(partial()));
+    await flush(RETRY_MS * 3);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -250,6 +311,64 @@ describe("a generation that fails", () => {
     renderReader();
     expect(await screen.findByTestId("guide-generation-error")).toHaveTextContent("The guide could not be written.");
     expect(mocks.generateGuide).not.toHaveBeenCalled();
+    // What had been written is still shown under the banner.
+    expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
+  });
+
+  it("shows only the error and Retry for a failed guide with nothing written, and Retry resumes", async () => {
+    const { run } = controlledRun();
+    mocks.getGuide.mockResolvedValue({ ...newGuide(finishedGuide()), status: "failed" });
+    const user = userEvent.setup();
+    renderReader();
+
+    expect(await screen.findByTestId("guide-generation-error")).toHaveTextContent("The guide could not be written.");
+    // No empty guide under it: no title, no rail, no skeleton standing in.
+    expect(screen.queryByTestId("guide-title")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-progress")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-ask-input")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("guide-generation-retry"));
+    await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledWith("u1", GUIDE_ID, "resume", expect.any(Object)));
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("guide-generating")).toBeInTheDocument();
+
+    await act(async () => run.resolve(finishedGuide()));
+    expect(screen.getByTestId("guide-title")).toBeInTheDocument();
+  });
+});
+
+describe("a section that could not be written", () => {
+  /** A ready guide whose third section failed. */
+  function guideWithFailedSection(): GuideDetail {
+    const guide = fixtureGuide({ read_sections: [] });
+    Object.assign(sectionOf(guide, "s3"), { status: "failed", items: [] });
+    return guide;
+  }
+
+  it("says so in place, with Try again that runs a resume", async () => {
+    const { run } = controlledRun();
+    mocks.getGuide.mockResolvedValue(guideWithFailedSection());
+    const user = userEvent.setup();
+    renderReader();
+
+    const section = await screen.findByTestId("guide-section-s3");
+    expect(within(section).getByText("This section could not be written.")).toBeInTheDocument();
+    expect(screen.getByTestId("guide-section-read-s3")).toBeDisabled();
+    // The rest of the guide is there, and nothing is generating.
+    expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-section-retry-s1")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("guide-section-retry-s3"));
+    await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledWith("u1", GUIDE_ID, "resume", expect.any(Object)));
+    expect(screen.getByTestId("guide-generating")).toBeInTheDocument();
+    // One run at a time: the button waits for it.
+    expect(screen.getByTestId("guide-section-retry-s3")).toBeDisabled();
+
+    await act(async () => run.resolve(finishedGuide()));
+    expect(screen.queryByTestId("guide-section-retry-s3")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("guide-section-s3")).queryByText("This section could not be written.")).not.toBeInTheDocument();
   });
 });
 

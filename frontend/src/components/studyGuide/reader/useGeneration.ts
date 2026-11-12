@@ -2,23 +2,25 @@
 /**
  * The guide's generation, as the reader follows it: the outline arrives, then
  * each section, then the finished guide. A guide that is still `generating`
- * when it loads is resumed; Update and Regenerate run the same stream.
+ * when it loads is resumed; Update and Regenerate run the same stream. While
+ * another run holds the guide, the reader shows what that run has written and
+ * keeps asking to resume, so it takes over if that run stops.
  */
 import React from "react";
 
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError, statusOf } from "@/lib/errorMessage";
-import { generateGuide, getGuide, GuideGenerationError } from "@/lib/studyGuide/api";
+import { generateGuide, getGuide, GuideGenerationError, type GenerationHandlers } from "@/lib/studyGuide/api";
 import type { GenerateMode, GenerationStep, GuideDetail, GuideStatus } from "@/lib/studyGuide/types";
 
 import { applyOutline, applySection } from "./guideEdits";
 import type { GuideUpdate } from "./useGuide";
 
 export interface GenerationState {
-  /** A stream is running, or another tab's run is being followed. */
+  /** A stream is running, or another run is being waited on. */
   active: boolean;
   label: string;
-  /** Null until the first status event, and while following another tab. */
+  /** Null until the first status event, and while another run is writing. */
   step: GenerationStep | null;
   error: string | null;
 }
@@ -27,11 +29,14 @@ const IDLE: GenerationState = { active: false, label: "", step: null, error: nul
 const STARTING: GenerationState = { ...IDLE, active: true, label: "Getting your guide ready" };
 const ELSEWHERE: GenerationState = { ...IDLE, active: true, label: "This guide is being written in another tab" };
 const FAILED = "The guide could not be written.";
-export const POLL_MS = 3000;
+/** How long to wait before asking again while another run holds the guide. */
+export const RETRY_MS = 3000;
 
 /** Resolves after `ms`, or rejects as soon as the signal aborts. */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    // An abort that has already happened fires no event.
+    if (signal.aborted) return reject(signal.reason);
     const timer = setTimeout(resolve, ms);
     signal.addEventListener(
       "abort",
@@ -52,30 +57,34 @@ interface Run {
   setState: (state: GenerationState) => void;
 }
 
-/** Another tab is writing the guide: re-read it until that run ends. */
-async function follow({ userId, guideId, signal, update }: Run): Promise<GuideDetail> {
-  for (;;) {
-    await wait(POLL_MS, signal);
+/**
+ * Write the guide and resolve with it once it is done.
+ *
+ * A 409 means another run holds the guide. Re-read it, so the sections that
+ * run has written show, then wait and ask to resume. Asking again, not only
+ * re-reading, is what picks the guide up when the tab that was writing it
+ * closes: its claim lapses and this request takes it.
+ */
+async function write(run: Run, mode: GenerateMode): Promise<GuideDetail> {
+  const { userId, guideId, signal, update, setState } = run;
+  const handlers: GenerationHandlers = {
+    signal,
+    onStatus: (label, step) => setState({ ...IDLE, active: true, label, step }),
+    onOutline: content => update(guide => applyOutline(guide, content)),
+    onSection: section => update(guide => applySection(guide, section)),
+  };
+  for (let next = mode; ; next = "resume") {
+    try {
+      return await generateGuide(userId, guideId, next, handlers);
+    } catch (err) {
+      if (statusOf(err) !== 409) throw err;
+    }
+    setState(ELSEWHERE);
     const fresh = await getGuide(userId, guideId);
     if (fresh.status !== "generating") return fresh;
     if (!signal.aborted) update(() => fresh);
+    await wait(RETRY_MS, signal);
   }
-}
-
-async function write(run: Run, mode: GenerateMode): Promise<GuideDetail> {
-  const { userId, guideId, signal, update, setState } = run;
-  try {
-    return await generateGuide(userId, guideId, mode, {
-      signal,
-      onStatus: (label, step) => setState({ ...IDLE, active: true, label, step }),
-      onOutline: content => update(guide => applyOutline(guide, content)),
-      onSection: section => update(guide => applySection(guide, section)),
-    });
-  } catch (err) {
-    if (statusOf(err) !== 409) throw err;
-  }
-  setState(ELSEWHERE);
-  return follow(run);
 }
 
 const AT_LOAD: Record<GuideStatus, GenerationState> = {

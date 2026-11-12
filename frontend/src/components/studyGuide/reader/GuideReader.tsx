@@ -36,7 +36,7 @@ export function GuideReader({
   return (
     // `data-guide-reader` is what print.css keys the app shell's print rules on.
     <div className={s.page} data-guide-reader="">
-      <ReaderTopBar mode={mode} onMode={setMode} courseId={guide?.course_id} />
+      <ReaderTopBar mode={mode} onMode={setMode} />
       {error ? (
         <p className={s.loadError} role="alert" data-testid="guide-load-error">
           {error}
