@@ -18,7 +18,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from db.connection import table
-from models.study_guide import GUIDE_FORMAT, CheckAnswer, GuideContent
+from models.study_guide import (
+    GUIDE_FORMAT,
+    CheckAnswer,
+    Depth,
+    Feedback,
+    Goal,
+    GuideContent,
+    GuideStatus,
+    ScopeKind,
+)
 from services.encryption import decrypt_json_column, encrypt_json
 from services.study_guides.errors import GuideBusy, GuideNotFound
 from services.study_guides.legacy import UNTITLED, content_from_topics
@@ -60,17 +69,17 @@ class GuideRow:
     user_id: str
     offering_id: str
     exam_id: str | None
-    scope_kind: str
-    goal: str
-    depth: str
+    scope_kind: ScopeKind
+    goal: Goal
+    depth: Depth
     use_history: bool
-    status: str
+    status: GuideStatus
     format: int
     content: GuideContent
     material_ids: list[str]
     read_sections: list[str]
     answers: dict[str, CheckAnswer]
-    feedback: str | None
+    feedback: Feedback | None
     saved_at: str | None
     generating_at: str | None
     generated_at: str | None
@@ -190,10 +199,10 @@ async def ainsert_guide(
     *,
     user_id: str,
     offering_id: str,
-    scope_kind: str,
+    scope_kind: ScopeKind,
     exam_id: str | None,
-    goal: str,
-    depth: str,
+    goal: Goal,
+    depth: Depth,
     use_history: bool,
     material_ids: list[str],
     content: GuideContent,
@@ -229,7 +238,7 @@ async def asave_content(
     **columns: Any,
 ) -> GuideRow:
     """Write ``content`` and, in the same update, any of ``status``,
-    ``generated_at``, ``material_ids`` and ``read_sections``.
+    ``generated_at`` (an ISO string), ``material_ids`` and ``read_sections``.
 
     ``keep_previous`` moves the content ``guide`` was loaded with into
     ``previous_content`` (Update and Regenerate keep one step back);
@@ -257,7 +266,7 @@ async def apatch_state(
     *,
     read_sections: list[str] | None = None,
     saved: bool | None = None,
-    feedback: str | None = None,
+    feedback: Feedback | None = None,
 ) -> GuideRow:
     """Change the reader's small state; an argument left as None is left
     alone. ``saved`` True stamps ``saved_at`` with now, False clears it."""
