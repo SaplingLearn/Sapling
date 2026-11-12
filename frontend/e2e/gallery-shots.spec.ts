@@ -36,6 +36,8 @@ test.use({ viewport: { width: 1440, height: 900 } });
 
 /** The seeded struggling concept, from db/seed_local_rich.py. */
 const NODE_RECURSION = "rich-node-cs-recursion";
+/** Its course, which also holds the seeded "CS Basics" flashcards. */
+const COURSE_CS = "rich-course-cs101";
 
 /**
  * Acknowledge the AI-disclosure modal before every shot.
@@ -123,19 +125,27 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 60_000 });
   },
 
-  // The two /study shots are one route in two modes — `/flashcards` is only a
-  // redirect to `?mode=cards`, and Study.tsx reads that param. Going straight
-  // to the URL beats clicking the toggle: no animation to wait out.
+  // Flashcards and the Study Guide are pages of their own since #870: the two
+  // panes of the old /study screen moved to /flashcards and /study/guide, and
+  // `/study?mode=cards|guide` only redirects there. Going straight to each URL
+  // beats clicking through the hub: no hand-off fade to wait out.
+  //
+  // The card is "a flashcard mid-review", and /flashcards opens on its home (a
+  // grid of decks), so the shot plays one: the course's "All of <course>" deck
+  // holds the rich seed's cards and never generates (study-semester.spec.ts
+  // drives the same control).
   "shot-study": async (page) => {
-    await page.goto("/study?mode=cards");
-    await expect(page.getByText("Flashcards", { exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
+    await page.goto(`/flashcards?course=${COURSE_CS}`);
+    const everything = page.getByTestId("flashcards-deck-auto:all");
+    await expect(everything).toBeVisible({ timeout: 30_000 });
+    await everything.getByRole("button", { name: /^Review All of / }).click();
+    await expect(page.getByText(/^Card 1 of \d+$/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("flashcards-card")).toBeVisible();
   },
 
   "shot-guide": async (page) => {
-    await page.goto("/study");
-    await expect(page.getByText("Study Guide", { exact: true })).toBeVisible({
+    await page.goto("/study/guide");
+    await expect(page.getByRole("heading", { name: "Study Guide", exact: true })).toBeVisible({
       timeout: 30_000,
     });
   },

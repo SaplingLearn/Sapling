@@ -161,6 +161,12 @@ const eslintConfig = [
       // New files, no baselined backlog.
       "src/components/screens/admin/AllowlistTab.tsx",
       "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Study hub + Flashcards (#870): the two files whose one <button> a
+      // journey clicks by testid (a roadmap tile's "..." menu, the tool
+      // headers' way back). No baselined backlog. The surfaces' other files
+      // are not enrolled: see docs/frontend-testids.md "Enforcement".
+      "src/components/study/RoadmapTile.tsx",
+      "src/components/BackLink.tsx",
       // Admin "Account tools" dialog (seed / wipe / copy an account). New file,
       // no baselined backlog.
       "src/components/screens/admin/AccountToolsDialog.tsx",

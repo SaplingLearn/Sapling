@@ -483,11 +483,14 @@ const STUDY_EXAMS = `/api/study-guide/${U}/exams`;
 const STUDY_GUIDE = `/api/study-guide/${U}/guide`;
 const STUDY_REGEN = "/api/study-guide/regenerate";
 
-/** Guide pane listbox triggers, in DOM order: course, exam. */
+// The Study Guide is a page of its own since #870 (/study/guide; /study is the
+// hub now). Its course and exam pickers, rail and empty states are the old
+// guide pane's, so these recipes only moved route.
+/** Study Guide listbox triggers, in DOM order: course, exam. */
 const guidePicker = (page: Page, i: 0 | 1) => page.locator('button[aria-haspopup="listbox"]').nth(i);
 
 async function pickCourseCs(page: Page) {
-  await page.goto("/study");
+  await page.goto("/study/guide");
   await expect(page.getByText("Pick a course to get started")).toBeVisible({ timeout: LONG });
   await guidePicker(page, 0).click();
   await page.getByRole("option", { name: /CS101/ }).first().click();
@@ -495,7 +498,7 @@ async function pickCourseCs(page: Page) {
 
 /** Open the seeded cached guide off the Recent guides rail. */
 async function openRecentGuide(page: Page) {
-  await page.goto("/study");
+  await page.goto("/study/guide");
   const entry = page.getByRole("button", { name: /Midterm Exam/ }).first();
   await expect(entry).toBeVisible({ timeout: LONG });
   await entry.click();
@@ -1178,11 +1181,11 @@ export const RECIPES_STUDY: RecipeBook = {
     },
   },
 
-  // ════════════════════════════ /study — guide ══════════════════════════════
+  // ════════════════════════════ /study/guide ════════════════════════════════
 
   "study/guide-no-course": {
     run: async (page) => {
-      await page.goto("/study");
+      await page.goto("/study/guide");
       await expect(page.getByText("Pick a course to get started")).toBeVisible({ timeout: LONG });
       await expect(guidePicker(page, 1)).toHaveText(/Select a course first/);
     },
@@ -1191,7 +1194,7 @@ export const RECIPES_STUDY: RecipeBook = {
   "study/guide-recent-empty": {
     run: async (page) => {
       await json(page, "GET", STUDY_CACHED, { guides: [] });
-      await page.goto("/study");
+      await page.goto("/study/guide");
       await expect(page.getByText("No generated guides yet.")).toBeVisible({ timeout: LONG });
     },
   },

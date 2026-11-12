@@ -103,6 +103,8 @@ renders the element.
 | Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Settings | `settings` | `frontend/src/components/screens/Settings.tsx` (the `/settings` screen — tab rail + the Data tab's product-analytics opt-out) — added with the PostHog frontend integration |
+| Study hub | none shared (see its inventory note) | `frontend/src/components/study/*.tsx` (the `/study` hub since #870: `ReadinessBand.tsx`, `RoadmapTile.tsx`, `DailyGoalCard.tsx`, `FocusCard.tsx`, `RecentActivity.tsx`, `StudyModal.tsx`), rendered by `screens/Study.tsx` through `study/StudyHub.tsx` |
+| Flashcards | `flashcards` (+ the shared `back-link`) | `frontend/src/components/screens/Flashcards.tsx` (the `/flashcards` page frame and header), `frontend/src/components/flashcards/home/*.tsx` (the home: hero figures, deck grid, mix bar; and the set builder: concept map, tray) and `frontend/src/components/flashcards/review/Review.tsx` (the flip-card review). The header's way back is `frontend/src/components/BackLink.tsx`, shared with the Quiz and Study Guide headers — added with #870 |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
@@ -624,6 +626,58 @@ screen; don't add a fifth prefix here without a reason as strong as these.
 | `leaderboard-row-you` | the current viewer's row in the leaderboard list (`achievements/LeaderboardTab.tsx::RankRow`), present only when `row.is_you` |
 | `activity-week-total` | the "Week total" stat tile's value on the Activity tab (`achievements/ActivityTab.tsx`) |
 
+### Study hub (`/study`)
+
+Added with the #870 hub journey (`study-hub.spec.ts`). The ids were written
+with the hub's own unit suite (`study/StudyHub.test.tsx`), before any browser
+journey, and are **not** `study-`-prefixed: each names the panel it is on
+(`readiness-`, `daily-goal`, `tile-`). They are unique to the hub (no other
+screen renders these panels), and renaming them is a breaking change to that
+suite as well as to the journey. A new id on the hub takes the `study-` prefix
+(`study-modal-backdrop` already does).
+
+Only the ids a browser journey uses are listed; the hub carries a few more
+for its unit suite (`focus-card`, `recent-toggle`, `recent-all`,
+`study-modal-backdrop`). Most of the hub's controls have no testid: a journey
+reaches them by role and a name built from DATA — the Daily Goal's target
+button (`Daily goal: {n} minutes. Change daily goal`) and its preset radios
+(`{n} minutes`), a tile menu's items inside `role="menu"` named
+`{concept} actions`, the course field (the page's only
+`button[aria-haspopup="listbox"]`).
+
+| testid | element |
+| --- | --- |
+| `readiness-pct` | the readiness figure (`ReadinessBand.tsx`): the mean mastery of the concepts it is over as `{n}%`, or `–` when there are none to measure |
+| `daily-goal` | the Daily Goal card root (`DailyGoalCard.tsx`): today's minutes "of" the goal (the goal is the edit button), the week's bars, today by activity |
+| `tile-{conceptId}` | one concept on the roadmap (`RoadmapTile.tsx`; a `role="button"` that selects it), suffixed with the graph node id |
+| `tile-actions-{conceptId}` | that tile's "..." button, which opens its menu: "Quiz Me" (absent under `hide_quiz`) and "Make Flashcards" / "{n} Flashcards", each a link INTO the tool for that concept (`start=1`, `lib/toolHrefs.ts`) |
+
+### `flashcards`
+
+Added with #870, when Flashcards became a page of its own (`/flashcards`; the
+old `/study?mode=cards` pane redirects to it). Driven by
+`study-semester.spec.ts` (the semester selector scopes the card read, #141)
+and `study-hub.spec.ts` (the hub's "Make Flashcards" arrives with `start=1`).
+
+The page has three states — home, set builder, review — and one header. Only
+the ids a browser journey uses are listed; the files carry more for their
+unit suites (`flashcards-home-status`, `flashcards-mix`, `flashcards-tally-*`,
+`flashcards-segment`, `flashcards-summary`, …). The decks' controls have no
+testid of their own: a journey scopes to the deck by its testid and takes the
+control by role and name (`Review {deck name}` plays it, `Open {deck name}`
+opens a saved set in the builder, the `Select {deck name}` checkbox ticks it
+for the mix bar).
+
+| testid | element |
+| --- | --- |
+| `flashcards-figure-{kind}` | one of the home hero's three figures (`home/Hero.tsx`), `kind` = `cards` / `concepts` / `sets`; a `<dt>` label and a `<dd>` number (`–` while loading). `cards` counts the chosen course's cards under the active term |
+| `flashcards-deck-{deckId}` | one deck on the home (`home/Decks.tsx`), suffixed with the saved set's id, or `auto:all` ("All of {course}": every concept of the course, never generates) / `auto:due` ("Due today") for the two decks that are not stored |
+| `flashcards-deck-name` | in the page header (`screens/Flashcards.tsx`), what is being reviewed or built: the deck's title in a review, "New set" / the set's name in the builder. Absent on the home, where the course field stands in its place |
+| `flashcards-card` | the review's flip card (`review/Review.tsx`); `data-flipped` says which face is up. Holds both faces' text |
+| `flashcards-topic` | the card's topic, on its front face (absent for a card with none) |
+| `flashcards-selection` | the builder tray's headline (`home/Tray.tsx`): "{n} concepts · {m} cards" for what is ticked |
+| `back-link` | the header's one way back, last in its actions (`BackLink.tsx`, shared by the Quiz, Flashcards and Study Guide headers): a link to Study on a tool's home, a button ("All sets" / "Back") inside a review or the builder |
+
 ### `library`
 
 Added with the upload → SSE → library journey (#387).
@@ -817,6 +871,14 @@ form, avatar picker, accent swatches, export/delete, cosmetics manager) are
 baselined in `frontend/eslint-suppressions.json`, so only NEW interactive
 elements there must carry a testid. The tab rail and the shared `Toggle`
 switch (analytics opt-out and the Notifications toggles) entered tagged.
+
+The Study hub and Flashcards (#870) are only partly in the `files` list:
+`study/RoadmapTile.tsx` and `BackLink.tsx`, whose one `<button>` each a
+journey clicks by testid and already carried it. Their other files hold
+dozens of untagged buttons and inputs (the deck grid, the set builder, the review's
+rating row, the dates editor) that journeys reach by role and name, as the
+inventory notes say; enrolling those files means tagging each control, which
+is for whoever first needs one by id.
 
 ### Adding a surface
 
