@@ -7,8 +7,6 @@ up, counting them: the list must not read once per guide.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-
 import pytest
 
 from models.study_guide import (
@@ -160,10 +158,8 @@ def test_a_guide_never_generated_has_no_new_materials():
 
 
 def test_an_unreadable_guide_is_a_failed_card():
-    guide = _guide(content=GuideContent(title="Study guide"))
-    if not hasattr(guide, "unreadable"):
-        pytest.skip("GuideRow.unreadable has not landed in store.py yet")
-    out = cards.card(replace(guide, unreadable=True), CS, [])
+    guide = _guide(content=GuideContent(title="Study guide"), unreadable=True)
+    out = cards.card(guide, CS, [])
     assert (out.status, out.title, out.bars) == ("failed", "Study guide", [])
 
 

@@ -77,7 +77,7 @@ def counts(content: GuideContent) -> GuideCounts:
 def _status(guide: GuideRow) -> GuideStatus:
     """A guide whose content could not be read is shown as failed, so the
     reader says so instead of drawing an empty guide."""
-    return "failed" if getattr(guide, "unreadable", False) else guide.status
+    return "failed" if guide.unreadable else guide.status
 
 
 def card(guide: GuideRow, guide_class: GuideClass, lecture_docs: list[dict]) -> GuideCard:

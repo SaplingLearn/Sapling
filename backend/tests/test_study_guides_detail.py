@@ -7,8 +7,6 @@ where the module looks them up.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-
 import pytest
 
 from models.study_guide import (
@@ -235,9 +233,9 @@ def test_an_unreadable_guide_opens_as_failed(monkeypatch):
     from services.study_guides import cards
     from services.study_guides.cards import GuideClass
 
-    guide = _guide(content=GuideContent(title="Study guide"), scope_kind="course", exam_id=None)
-    if not hasattr(guide, "unreadable"):
-        pytest.skip("GuideRow.unreadable has not landed in store.py yet")
+    guide = _guide(
+        content=GuideContent(title="Study guide"), scope_kind="course", exam_id=None, unreadable=True,
+    )
 
     async def alist_lecture_docs(user_id):
         return []
@@ -247,7 +245,7 @@ def test_an_unreadable_guide_opens_as_failed(monkeypatch):
 
     monkeypatch.setattr(cards.materials, "alist_lecture_docs", alist_lecture_docs)
     monkeypatch.setattr(cards, "_aclasses", aclasses)
-    out = asyncio.run(detail.abuild_detail(replace(guide, unreadable=True)))
+    out = asyncio.run(detail.abuild_detail(guide))
     assert (out.status, out.title, out.content.sections) == ("failed", "Study guide", [])
 
 
