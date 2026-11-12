@@ -429,6 +429,25 @@ def test_a_save_under_the_claim_refreshes_it(db):
         run(store.atouch_generation(ME, "g1", token))
 
 
+def test_a_runs_last_save_gives_the_claim_up_in_the_same_write(db):
+    db.add("g1")
+    token = run(store.aclaim_generation(ME, "g1"))
+    guide = run(store.aload_guide(ME, "g1"))
+
+    saved = run(store.asave_content(
+        guide, _content("Finished"), claim=token, release=True, status="ready",
+    ))
+
+    assert saved.generating_at is None and saved.content.title == "Finished"
+    assert db.stored("g1")["generating_at"] is None
+    assert run(store.aclaim_generation(ME, "g1")) is not None
+    # Still fenced by the token: a run that lost the guide frees nothing.
+    with pytest.raises(store.ClaimLost):
+        run(store.asave_content(guide, _content("Late"), claim=token, release=True))
+    assert db.stored("g1")["generating_at"] is not None
+    assert run(store.aload_guide(ME, "g1")).content.title == "Finished"
+
+
 def test_an_overtaken_run_cannot_touch_save_or_release(db):
     """A run went silent past the stale window and another took the guide.
     Nothing the first run does afterwards may reach the row or free the new

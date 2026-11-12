@@ -28,7 +28,7 @@ from models.study_guide import (
 from services import request_limits
 from services.encryption import encrypt_json
 from services.llm_budget import LLMBudgetExceeded
-from services.study_guides import blocks, prompts, writer
+from services.study_guides import blocks, limits, prompts, writer
 from services.study_guides.errors import (
     GuideBusy,
     GuideGenerationFailed,
@@ -353,10 +353,10 @@ def test_a_rewrite_that_loses_the_claim_writes_nothing(world, monkeypatch):  # n
 
 
 def test_the_hourly_limit_is_its_own(world, monkeypatch):  # noqa: F811
-    assert blocks.STUDY_GUIDE_BLOCK_LIMIT == 40
+    assert limits.STUDY_GUIDE_BLOCK_LIMIT == 40
     _guide(world)
     Rewriter(monkeypatch, KEY_TERMS.model_copy(update={"title": "Again"}))
-    monkeypatch.setattr(blocks, "STUDY_GUIDE_BLOCK_LIMIT", 2)
+    monkeypatch.setattr(limits, "STUDY_GUIDE_BLOCK_LIMIT", 2)
 
     _regenerate("s1-i2")
     _regenerate("s1-i2")

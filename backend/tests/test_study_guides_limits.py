@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -88,3 +89,13 @@ def test_a_charge_counts_per_student_and_action_and_can_be_given_back(per_proces
 
     assert (limited.status_code, limited.detail) == (429, limits.RATE_LIMITED_DETAIL)
     assert len(request_limits._rate_state[f"study-guide-create:{ME}"]) == 2
+
+
+@pytest.mark.parametrize("lane", ["scripts/e2e-up.sh", ".github/workflows/e2e.yml"])
+def test_the_e2e_lanes_raise_every_limit(lane):
+    """A held stack re-runs its journeys inside one hour, on one backend
+    process. A limit a lane forgets to raise turns up there as a 429."""
+    text = (Path(__file__).resolve().parents[2] / lane).read_text()
+
+    for variable, _ in NAMES.values():
+        assert variable in text, f"{lane} does not set {variable}"

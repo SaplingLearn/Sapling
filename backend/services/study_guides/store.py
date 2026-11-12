@@ -273,6 +273,7 @@ async def asave_content(
     content: GuideContent,
     *,
     claim: str | None = None,
+    release: bool = False,
     keep_previous: bool = False,
     answers: dict[str, CheckAnswer] | None = None,
     **columns: Any,
@@ -282,7 +283,9 @@ async def asave_content(
 
     With ``claim`` (a run's token) the write only lands while the row still
     holds that claim, and refreshes it: the returned row's ``generating_at``
-    is the run's new token. ``ClaimLost`` when the token is gone.
+    is the run's new token. ``ClaimLost`` when the token is gone. With
+    ``release`` as well, the same write gives the claim up instead (a run's
+    last save), so the guide is free the moment it is finished.
 
     ``keep_previous`` moves the content ``guide`` was loaded with into
     ``previous_content`` (Update and Regenerate keep one step back).
@@ -308,7 +311,7 @@ async def asave_content(
         patch["answers"] = _encrypt_answers(answers) if answers else None
     filters = _own(guide.user_id, guide.id)
     if claim is not None:
-        patch["generating_at"] = _now().isoformat()
+        patch["generating_at"] = None if release else _now().isoformat()
         filters = _held(guide.user_id, guide.id, claim)
     rows = await table(TABLE).aupdate(patch, filters=filters)
     if claim is not None and not rows:

@@ -18,7 +18,6 @@ import pytest
 import agents._providers as providers
 from agents._providers import clear_function_handlers, model_for
 from agents.study_guide import (
-    MAX_OUTLINE_SECTIONS,
     GuideOutline,
     study_guide_block_agent,
     study_guide_outline_agent,
@@ -38,7 +37,7 @@ from models.study_guide import (
 from services import academics, events_service, request_limits
 from services.encryption import decrypt_json, encrypt_json
 from services.llm_budget import LLMBudgetExceeded
-from services.study_guides import generation, materials, signals, store, writer
+from services.study_guides import generation, limits, materials, signals, store, writer
 from services.study_guides.errors import (
     GuideBusy,
     GuideGenerationFailed,
@@ -50,7 +49,11 @@ from services.study_guides.legacy import content_from_topics
 from services.study_guides.materials import SourceText
 from services.study_guides.signals import QuizMistake
 from tests.db_fakes import TWINS
+from tests.test_study_guides_materials import _Documents
 from tests.test_study_guides_store import ME, OFFERING, FakeGuides
+
+#: The real loader, before the `world` fixture stands in for it.
+LOAD_SOURCES = materials.aload_sources
 
 COURSE = "course-cs"
 GUIDE = "g1"
@@ -206,6 +209,10 @@ def _shape(events) -> list[tuple]:
     return [(e.type, e.step) for e in events]
 
 
+def _sections_sent(events) -> list[str]:
+    return [e.message for e in events if (e.type, e.step) == ("progress", "section")]
+
+
 # ── A whole run through the function-mode seam ────────────────────────────────
 
 
@@ -226,8 +233,9 @@ def test_a_new_guide_is_written_outline_first_then_section_by_section(world, fun
     ]
     statuses = [(e.message, e.data) for e in events if e.type == "status"]
     assert statuses == [
-        ("Reading your 1 material", {"step": 1, "total": 6}),
-        ("Planning the outline", {"step": 2, "total": 6}),
+        # Until the outline is planned the guide may have the depth's five.
+        ("Reading your 1 material", {"step": 1, "total": 8}),
+        ("Planning the outline", {"step": 2, "total": 8}),
         ("Outline ready. Writing section 1 of 3", {"step": 3, "total": 6}),
         ("Writing section 2 of 3: Control flow", {"step": 4, "total": 6}),
         ("Writing section 3 of 3: Variables and types", {"step": 5, "total": 6}),
@@ -300,9 +308,11 @@ def test_a_finished_guide_is_ready_with_no_queued_section_and_the_claim_free(wor
     assert row["material_ids"] == ["doc-1"]
     assert row["previous_content"] is None and row["answers"] is None
     assert [s.status for s in world.content().sections] == ["written"] * 3
-    # The claim was held for the whole run, and refreshed along the way.
+    # The claim was held for the whole run, refreshed along the way, and
+    # given up with the last save: the guide is free when `done` arrives.
     held = [r["generating_at"] for r in rows]
-    assert all(held) and len(set(held)) > 3
+    assert all(held[:-1]) and len(set(held)) > 3
+    assert (events[-1].type, held[-1], rows[-1]["status"]) == ("done", None, "ready")
     assert events[-1].data == {
         "guide": {"id": GUIDE, "status": "ready", "generated_at": row["generated_at"]},
     }
@@ -355,6 +365,18 @@ def test_concepts_the_tree_does_not_have_are_cleared(world, function_mode):
         assert section.items[-1].type == "check" and section.items[-1].concept == "recursion"
 
 
+def test_the_outline_is_not_capped_by_the_concepts_the_materials_name(world, function_mode):
+    """The outline is planned from the source text. A class whose one
+    document names one concept still gets the sections the depth allows."""
+    world.documents["doc-1"] = ("recursion.pdf", "A recursive function calls itself.", ["Recursion"])
+    world.guide(depth="cram")
+
+    run(_follow(world))
+
+    assert [s.title for s in world.content().sections] == [
+        "Recursion", "Control flow", "Variables and types"]
+
+
 def test_quiz_history_is_a_source_when_there_are_mistakes_to_cite(world, function_mode):
     world.guide()
     world.mistakes = [QuizMistake(id="m1", concept="Recursion", text="Forgets the base case")]
@@ -385,8 +407,16 @@ def test_regenerate_keeps_the_previous_version_and_clears_read_state_and_answers
     assert [(s.id, s.status) for s in content.sections] == [
         ("s1", "written"), ("s2", "written"), ("s3", "written")]
     assert _shape(events)[:3] == [("status", "read"), ("status", "outline"), ("progress", "outline")]
-    # Nothing is replaced until the new outline exists.
-    assert rows[1]["content"] == old and rows[1]["status"] == "ready"
+    # The outline is sent, but nothing is replaced until a section is written.
+    assert GuideContent.model_validate(events[2].data["content"]).title == content.title
+    for row in rows[:4]:
+        assert row["content"] == old and row["status"] == "ready"
+        assert row["previous_content"] is None and row["read_sections"] == ["s1"]
+    # The first written section is saved before its event, with the old
+    # version beside it.
+    assert _shape(events)[4] == ("progress", "section")
+    assert [s.status for s in rows[4]["content"].sections] == ["written", "queued", "queued"]
+    assert rows[4]["status"] == "generating" and rows[4]["previous_content"] is not None
     assert world.logged[0]["payload"]["mode"] == "regenerate"
 
 
@@ -640,6 +670,178 @@ def test_an_unexpected_error_is_an_error_event_not_an_exception(world, monkeypat
     assert any("generation failed" in record.getMessage() for record in caplog.records)
 
 
+# ── A run that replaces a guide ───────────────────────────────────────────────
+
+
+def _ready(world: World, **over) -> GuideContent:
+    """A finished guide the student has read and answered on."""
+    old = _written_guide()
+    fields = dict(
+        status="ready", generated_at=MADE_AT, read_sections=["s1"],
+        content=encrypt_json(old.model_dump(mode="json")),
+        answers=encrypt_json({"s1-i2": {"option_id": "a", "correct": False}}),
+    )
+    world.guide(**{**fields, **over})
+    return old
+
+
+def _unchanged(world: World, before: dict) -> bool:
+    """Whether the row is as it was, the claim's own stamps aside."""
+    after = world.stored()
+    return {**after, "updated_at": None} == {**before, "updated_at": None}
+
+
+@pytest.mark.parametrize(
+    ("failure", "retryable"),
+    [(GuideGenerationFailed("no"), True), (RuntimeError("boom"), True), ("budget", False)],
+    ids=["every section fails", "an unexpected error", "the daily budget"],
+)
+def test_a_regenerate_that_writes_no_section_leaves_the_guide_exactly_as_it_was(
+    world, monkeypatch, failure, retryable,
+):
+    """The new outline is planned and sent, then the first section cannot be
+    written. The student still has the guide they had."""
+    _ready(world)
+    before = dict(world.stored())
+    failure = _budget_refusal() if failure == "budget" else failure
+    Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
+           sections={"One": failure, "Two": failure})
+
+    events, rows = run(_follow(world, "regenerate"))
+
+    assert ("progress", "outline") in _shape(events)
+    assert _shape(events)[-1] == ("error", "error")
+    assert events[-1].data == {"retryable": retryable}
+    assert _unchanged(world, before)
+    # Not for a moment was it anything else.
+    assert all(row["content"] == rows[0]["content"] and row["status"] == "ready" for row in rows)
+
+
+def test_an_update_that_writes_no_section_leaves_the_guide_exactly_as_it_was(world, monkeypatch):
+    _updatable(world)
+    before = dict(world.stored())
+    Script(monkeypatch, sections={"Types": GuideGenerationFailed("no")}, outline=_outline(
+        _planned("Recursion", keep_id="s1"), _planned("Types")))
+
+    events, _ = run(_follow(world, "update"))
+
+    assert _shape(events)[-1] == ("error", "error")
+    assert _unchanged(world, before)
+    # The lecture was not folded in, so it is still new.
+    assert world.stored()["material_ids"] == ["doc-1"]
+
+
+def test_a_regenerate_that_fails_after_a_section_can_be_resumed(world, monkeypatch):
+    old = _ready(world)
+    script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
+                    sections={"Two": RuntimeError("boom")})
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    row = world.stored()
+    assert events[-1].type == "error" and row["status"] == "failed"
+    assert [s.status for s in world.content().sections] == ["written", "queued"]
+    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    script.sections.clear()
+    events, _ = run(_follow(world))
+    assert events[-1].type == "done" and script.written == ["One", "Two", "Two"]
+    assert [s.status for s in world.content().sections] == ["written", "written"]
+
+
+def test_a_failed_first_section_is_not_saved_until_a_later_one_is_written(world, monkeypatch):
+    old = _ready(world)
+    Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
+           sections={"One": GuideGenerationFailed("no")})
+
+    events, rows = run(_follow(world, "regenerate"))
+
+    sections = [(e, row) for e, row in zip(events, rows) if (e.type, e.step) == ("progress", "section")]
+    (failed, held), (written, saved) = sections
+    # The reader is told about the failed section, and the row still holds
+    # the old guide.
+    assert failed.data["section"]["status"] == "failed" and held["content"] == old
+    assert written.data["section"]["status"] == "written"
+    assert [s.status for s in saved["content"].sections] == ["failed", "written"]
+    row = world.stored()
+    assert row["status"] == "ready" and events[-1].type == "done"
+    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+
+
+def test_the_previous_version_is_never_a_half_written_guide(world, monkeypatch):
+    """A regenerate that failed half way left a guide that is not worth
+    keeping. The next one must not put it where the last good version is."""
+    old = _ready(world)
+    script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
+                    sections={"Two": RuntimeError("boom")})
+    run(_follow(world, "regenerate"))
+    assert world.stored()["status"] == "failed"
+
+    script.sections.clear()
+    events, _ = run(_follow(world, "regenerate"))
+
+    row = world.stored()
+    assert events[-1].type == "done" and row["status"] == "ready"
+    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+
+
+def test_a_guide_with_nothing_written_has_no_previous_version_to_keep(world, monkeypatch):
+    world.guide(status="failed")
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    assert events[-1].type == "done" and world.stored()["previous_content"] is None
+
+
+# ── Filling in what a finished guide is missing ───────────────────────────────
+
+
+def _missing_one(world: World) -> GuideContent:
+    """A finished guide whose second section failed."""
+    content = _written_guide()
+    content.sections[1] = content.sections[1].model_copy(update={"status": "failed", "items": []})
+    world.guide(status="ready", generated_at=MADE_AT, read_sections=["s1"],
+                content=encrypt_json(content.model_dump(mode="json")))
+    return content
+
+
+def test_retrying_a_failed_section_never_makes_a_readable_guide_unreadable(world, monkeypatch):
+    content = _missing_one(world)
+    Script(monkeypatch, sections={"Control flow": GuideGenerationFailed("no")})
+
+    events, rows = run(_follow(world))
+
+    # The section failed again: the guide is finished as it stands.
+    assert _shape(events)[-2:] == [("status", "check"), ("done", "done")]
+    assert all(row["status"] == "ready" for row in rows)
+    assert world.content() == content and world.stored()["status"] == "ready"
+
+
+def test_a_refusal_while_retrying_a_section_leaves_the_guide_ready(world, monkeypatch):
+    content = _missing_one(world)
+    Script(monkeypatch, sections={"Control flow": _budget_refusal()})
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "error" and events[-1].data == {"retryable": False}
+    row = world.stored()
+    assert (row["status"], row["generating_at"]) == ("ready", None)
+    assert world.content() == content
+
+
+def test_filling_in_a_section_keeps_the_guide_ready_and_its_date(world, monkeypatch):
+    """`generated_at` is what a lecture is new against. A resume read no new
+    lecture, so it must not make the ones added since look folded in."""
+    _missing_one(world)
+    Script(monkeypatch)
+
+    events, rows = run(_follow(world))
+
+    assert events[-1].type == "done" and all(row["status"] == "ready" for row in rows)
+    assert [s.status for s in world.content().sections] == ["written", "written"]
+    assert world.stored()["generated_at"] == MADE_AT
+
+
 # ── Update ────────────────────────────────────────────────────────────────────
 
 
@@ -708,8 +910,8 @@ def test_the_update_outline_is_asked_with_the_current_sections_and_the_new_sourc
     assert call["current"] == old.sections
     assert call["new_labels"] == ["S2"]
     assert [s.label for s in call["brief"].sources] == ["S1", "S2"]
-    # Room for every section it could keep, and one per new lecture.
-    assert (call["low"], call["high"]) == (2, 4)
+    # The depth's five: more than the two it could keep and the one lecture.
+    assert (call["low"], call["high"]) == (3, 5)
 
 
 def test_the_outline_sent_on_an_update_shows_kept_sections_as_the_reader_may_see_them(
@@ -782,6 +984,72 @@ def test_an_update_that_keeps_everything_writes_nothing(world, monkeypatch):
     row = world.stored()
     assert row["read_sections"] == ["s1", "s2"] and row["material_ids"] == ["doc-1", "doc-2"]
     assert row["generated_at"] != MADE_AT
+
+
+def test_an_update_gives_its_new_lectures_last_so_the_budget_never_cuts_them(world, monkeypatch):
+    """Past the source budget the last ids given are read
+    (`materials._arows`): the guide's own, oldest first, then the new."""
+    _updatable(world, material_ids=["doc-1", "doc-0"])
+    asked: list[list[str]] = []
+    loaded = world.aload_sources
+
+    async def aload_sources(user_id, offering_id, material_ids):
+        asked.append(list(material_ids))
+        return await loaded(user_id, offering_id, material_ids)
+
+    monkeypatch.setattr(materials, "aload_sources", aload_sources)
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "update"))
+
+    assert asked == [["doc-1", "doc-0", "doc-2"]]
+    assert prepared.material_ids == ["doc-1", "doc-0", "doc-2"]
+
+
+def test_an_update_reads_a_new_lecture_on_a_guide_already_at_the_source_budget(world, monkeypatch):
+    """Thirty materials and one new lecture: the lecture is read and the
+    oldest material makes room. It used to be the lecture that was cut, and
+    the update answered that there was nothing new."""
+    documents = _Documents()
+    own = [f"doc-{n:02d}" for n in range(1, 31)]
+    for n, doc_id in enumerate(own, start=1):
+        documents.add(doc_id, user_id=ME, offering_id=OFFERING, text="Old.",
+                      created_at=f"2026-09-{n:02d}T09:00:00+00:00")
+    documents.add("doc-new", user_id=ME, offering_id=OFFERING, text="New.",
+                  created_at="2026-11-05T00:00:00+00:00")
+    monkeypatch.setattr(materials, "table", lambda name: {"documents": documents}[name])
+    monkeypatch.setattr(materials, "aload_sources", LOAD_SOURCES)
+    world.lectures = [{"id": "doc-new", "offering_id": OFFERING,
+                       "created_at": "2026-11-05T00:00:00+00:00"}]
+    world.guide(status="ready", generated_at=MADE_AT, material_ids=own,
+                content=encrypt_json(_written_guide().model_dump(mode="json")))
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "update"))
+
+    read = [source.source.id for source in prepared.inputs.brief.sources]
+    assert read == [f"document:{doc_id}" for doc_id in [*own[1:], "doc-new"]]
+    assert prepared.new_labels == ["S30"]
+    # The material that was not read this time is still the guide's.
+    assert prepared.material_ids == [*own, "doc-new"]
+
+
+def test_an_old_guide_made_from_all_the_classs_documents_can_be_updated(world, monkeypatch):
+    """It recorded no materials, so every lecture since it was made is new,
+    and one that cannot be read yet stays new."""
+    _updatable(world, material_ids=[])
+    world.documents["doc-3"] = ("lecture-10.pdf", "", [])
+    world.lectures.append({"id": "doc-3", "offering_id": OFFERING,
+                           "created_at": "2026-11-06T00:00:00+00:00"})
+    unreadable = world.aload_sources
+
+    async def aload_sources(user_id, offering_id, material_ids):
+        assert material_ids == ["doc-1", "doc-2", "doc-3"]
+        return await unreadable(user_id, offering_id, [i for i in material_ids if i != "doc-3"])
+
+    monkeypatch.setattr(materials, "aload_sources", aload_sources)
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "update"))
+
+    assert prepared.new_labels == ["S2"] and prepared.material_ids == ["doc-1", "doc-2"]
 
 
 def test_update_with_nothing_new_is_invalid(world, monkeypatch):
@@ -896,6 +1164,125 @@ def test_two_prepared_runs_cannot_both_write(world, monkeypatch):
     assert won[-1].type == "done" and len(script.outline_calls) == 1
 
 
+def test_a_run_prepared_before_another_finished_does_not_write_the_guide_again(world, monkeypatch):
+    """Both were prepared from the same row; the first ran to the end before
+    the second started. The second finds the work done and says so."""
+    world.guide()
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        first = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        second = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        won = [event async for event in first]
+        finished = dict(world.stored())
+        late = [(event, world.stored()["generating_at"]) async for event in second]
+        return won, finished, late
+
+    won, finished, late = run(scenario())
+
+    assert won[-1].type == "done"
+    ((event, held),) = late
+    # `done` for the guide as it is, with the claim already given back.
+    assert (event.type, held) == ("done", None)
+    assert event.data == won[-1].data
+    assert len(script.outline_calls) == 1 and script.written == ["One"]
+    assert world.stored()["content"] == finished["content"]
+    assert world.stored()["generated_at"] == finished["generated_at"]
+    # The run that did nothing was not counted.
+    assert len(request_limits._rate_state[f"study-guide-generate:{ME}"]) == 1
+
+
+def test_a_second_regenerate_fired_with_the_first_keeps_the_real_previous_version(
+    world, monkeypatch,
+):
+    old = _ready(world)
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        first = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "regenerate"))
+        second = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "regenerate"))
+        return [e async for e in first], [e async for e in second]
+
+    won, late = run(scenario())
+
+    assert won[-1].type == "done" and _shape(late) == [("done", "done")]
+    assert len(script.outline_calls) == 1
+    assert GuideContent.model_validate(decrypt_json(world.stored()["previous_content"])) == old
+
+
+def test_a_run_writes_from_the_row_as_it_is_under_the_claim(world, monkeypatch):
+    """Another request wrote section one after this run was prepared and
+    before it took the claim. This run goes on from there."""
+    world.guide()
+    script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")))
+
+    async def scenario():
+        cut = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        late = await generation.aprepare_generation(ME, GUIDE, "resume")
+        async for event in cut:
+            if (event.type, event.step) == ("progress", "section"):
+                break
+        await cut.aclose()
+        return [event async for event in generation.stream_generation(late)]
+
+    events = run(scenario())
+
+    assert _sections_sent(events) == ["Two"] and events[-1].type == "done"
+    assert len(script.outline_calls) == 1 and script.written == ["One", "Two"]
+    assert [s.status for s in world.content().sections] == ["written", "written"]
+
+
+@pytest.mark.parametrize(
+    ("gone", "message", "retryable"),
+    [
+        # Nothing to claim: the reader asks again and is told it is gone.
+        ("deleted", "Another tab is writing this guide.", True),
+        ("unreadable", store.GUIDE_UNREADABLE_DETAIL, False),
+    ],
+)
+def test_a_guide_that_went_away_before_the_claim_ends_the_stream_at_once(
+    world, monkeypatch, gone, message, retryable,
+):
+    garbage = "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
+    world.guide()
+    world.guide(guide_id="other")
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "resume"))
+    if gone == "deleted":
+        world.db.rows.remove(world.stored())
+    else:
+        world.stored()["content"] = garbage
+
+    async def scenario():
+        return [event async for event in generation.stream_generation(prepared)]
+
+    (event,) = run(scenario())
+
+    assert (event.type, event.message, event.data) == ("error", message, {"retryable": retryable})
+    assert script.outline_calls == []
+    assert request_limits._rate_state[f"study-guide-generate:{ME}"] == []
+    if gone == "unreadable":
+        row = world.stored()
+        assert (row["content"], row["status"], row["generating_at"]) == (garbage, "generating", None)
+
+
+def test_the_guide_is_free_for_another_request_the_moment_done_arrives(world, monkeypatch):
+    """The reader may regenerate a block as soon as it sees `done`."""
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        stream = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        async for event in stream:
+            if event.type == "done":
+                return await store.aclaim_generation(ME, GUIDE)
+
+    taken = run(scenario())
+
+    # And the finished run does not give the other request's claim back.
+    assert taken is not None and world.stored()["generating_at"] == taken
+
+
 def test_a_stale_claim_does_not_block_a_new_run(world, monkeypatch):
     stale = (datetime.now(timezone.utc) - store.CLAIM_STALE_AFTER - timedelta(seconds=1)).isoformat()
     world.guide(generating_at=stale)
@@ -907,9 +1294,9 @@ def test_a_stale_claim_does_not_block_a_new_run(world, monkeypatch):
 
 
 def test_the_hourly_limit(world, monkeypatch):
-    assert generation.STUDY_GUIDE_GENERATE_LIMIT == 20
+    assert limits.STUDY_GUIDE_GENERATE_LIMIT == 20
     world.guide()
-    monkeypatch.setattr(generation, "STUDY_GUIDE_GENERATE_LIMIT", 2)
+    monkeypatch.setattr(limits, "STUDY_GUIDE_GENERATE_LIMIT", 2)
 
     for _ in range(2):
         run(generation.aprepare_generation(ME, GUIDE, "resume"))
@@ -1010,6 +1397,44 @@ def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch)
     assert world.logged == []
 
 
+def test_the_claim_is_kept_fresh_before_each_block_rescue(world, monkeypatch):
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    tokens: list[str] = []
+
+    async def rescuing(brief, content, section, *, deps, beat):
+        for _ in range(2):
+            tokens.append(world.stored()["generating_at"])
+            await beat()
+        tokens.append(world.stored()["generating_at"])
+        return [_prose(section.id)]
+
+    monkeypatch.setattr(writer, "awrite_section", rescuing)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done" and len(set(tokens)) == 3
+
+
+def test_a_run_overtaken_between_rescues_stops_there(world, monkeypatch):
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    paid: list[str] = []
+
+    async def overtaken_mid_section(brief, content, section, *, deps, beat):
+        world.stored()["generating_at"] = "2026-11-12T12:00:00+00:00"
+        await beat()
+        paid.append(section.title)
+        return [_prose(section.id)]
+
+    monkeypatch.setattr(writer, "awrite_section", overtaken_mid_section)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].message == "Another request took over writing this guide."
+    assert paid == [] and world.stored()["generating_at"] == "2026-11-12T12:00:00+00:00"
+
+
 def test_an_overtaken_run_does_not_pay_for_another_section(world, monkeypatch):
     world.guide()
     script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")))
@@ -1032,26 +1457,15 @@ def test_an_overtaken_run_does_not_pay_for_another_section(world, monkeypatch):
 # ── The section count ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    ("depth", "concepts", "expected"),
-    [
-        ("cram", 10, (1, 3)),
-        ("standard", 10, (3, 5)),
-        ("deep", 10, (6, 8)),
-        ("deep", 4, (2, 4)),
-        ("standard", 1, (1, 1)),
-        # Materials that name no concept do not cap the count.
-        ("standard", 0, (3, 5)),
-    ],
-)
-def test_the_section_range_follows_depth_and_the_concepts_there_are(depth, concepts, expected):
-    assert generation.section_range(depth, concepts) == expected
+def test_a_guide_is_asked_for_the_sections_its_depth_allows(world, monkeypatch):
+    world.documents["doc-1"] = ("recursion.pdf", "A recursive function calls itself.", ["Recursion"])
+    world.guide()
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
 
+    run(_follow(world))
 
-def test_an_update_has_room_for_what_it_keeps_but_never_past_the_outlines_cap():
-    assert generation.section_range("cram", 2, room_for=6) == (4, 6)
-    assert generation.section_range("deep", 20, room_for=40) == (
-        MAX_OUTLINE_SECTIONS - 2, MAX_OUTLINE_SECTIONS)
+    # One concept named in the materials does not make it a one-section guide.
+    assert (script.outline_calls[0]["low"], script.outline_calls[0]["high"]) == (3, 5)
 
 
 def test_an_outline_longer_than_asked_is_cut_to_the_range(world, monkeypatch):
@@ -1062,23 +1476,3 @@ def test_an_outline_longer_than_asked_is_cut_to_the_range(world, monkeypatch):
 
     assert (script.outline_calls[0]["low"], script.outline_calls[0]["high"]) == (1, 3)
     assert [s.title for s in world.content().sections] == ["Section 1", "Section 2", "Section 3"]
-
-
-def test_a_block_regenerated_later_can_use_the_same_inputs(world):
-    """`blocks` builds its prompt from what the run read: the loader and the
-    facts are shared."""
-    world.guide()
-    world.mistakes = [QuizMistake(id="m1", concept="Recursion", text="Forgets the base case")]
-    guide = run(store.aload_guide(ME, GUIDE))
-
-    inputs = run(generation.aload_inputs(guide, guide.material_ids))
-    section = Section(id="s1", title="Recursion", concept="recursion")
-
-    assert inputs.brief.concepts == CONCEPTS
-    assert inputs.brief.tiers == {
-        "Recursion": "struggling", "Control Flow": "learning", "Variables and Types": "mastered"}
-    assert (inputs.deps.user_id, inputs.deps.course_id, inputs.deps.feature) == (
-        ME, COURSE, "study_guide")
-    facts = generation.facts_for(inputs.brief, section)
-    assert facts.sources == {"document:doc-1": "A recursive function calls itself."}
-    assert facts.mistakes == world.mistakes and facts.concepts == CONCEPTS

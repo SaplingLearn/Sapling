@@ -4,94 +4,63 @@
 status: it loads the guide, refuses one that another run is writing, reads
 what the run needs and charges the hourly limit. `stream_generation` is the
 run itself. It takes the guide's claim as its first act, so a stream that is
-never started holds nothing. Then the outline, and the sections one at a
-time, each checked (`verify`) and saved before its event is sent, so a cut
-stream resumes at the next unwritten section. It never raises, and it always
-gives the claim back.
+never started holds nothing, and reads the guide again under the claim, so it
+works from the row as it is and not as it was prepared. Then the outline, and
+the sections one at a time, each checked (`verify`) and saved before its
+event is sent, so a cut stream resumes at the next unwritten section. It
+never raises, and it always gives the claim back: with its last save when it
+finishes, so the guide is free before `done` is sent.
 
 Modes: `resume` writes whatever is not written yet (the outline first, when
 the guide has no sections). `regenerate` plans and writes the whole guide
 again. `update` folds in the lectures added since the guide was made: the
 outline agent says which sections to keep as written, and only the rest are
-written. The last two keep the version they replace.
+written.
+
+An Update or Regenerate replaces a guide the student may be reading, so it
+holds its outline in memory and saves nothing until its first section is
+written. That first save is the one that keeps the previous version. A run
+that fails before it leaves the guide exactly as it was.
 """
 from __future__ import annotations
 
 import logging
-import re
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from itertools import count
 from typing import Any
 
 import anyio
-from starlette.concurrency import run_in_threadpool
 
-from agents.deps import SaplingDeps
-from agents.study_guide import MAX_OUTLINE_SECTIONS, OutlineSection
-from models.study_guide import (
-    QUIZ_HISTORY_SOURCE,
-    Depth,
-    GuideContent,
-    Section,
-    Source,
-)
-from services import academics, events_service
+from models.study_guide import GuideContent, GuideStatus, Section
+from services import events_service
 from services.agent_events import SaplingEvent
 from services.llm_budget import budget_error_in
-from services.request_context import current_request_id
-from services.request_limits import RateLimitClaim, aclaim_rate_limit, refund_rate_limit
-from services.study_guides import materials, plan, signals, store, verify, writer
+from services.study_guides import limits, outline, store, verify, writer
 from services.study_guides.detail import abuild_detail, reader_content, reader_section
-from services.study_guides.errors import (
-    GuideBusy,
-    GuideGenerationFailed,
-    GuideInvalid,
-    GuideRateLimited,
+from services.study_guides.errors import GuideBusy, GuideGenerationFailed, GuideInvalid
+from services.study_guides.inputs import (
+    Inputs,
+    aload_inputs,
+    amaterial_ids,
+    anew_lectures,
+    facts_for,
 )
-from services.study_guides.prompts import Brief
+from services.study_guides.limits import Charge
 from services.study_guides.store import GuideRow
 
 logger = logging.getLogger(__name__)
 
 MODES = ("resume", "update", "regenerate")
-#: Generation runs one student may start in an hour.
-STUDY_GUIDE_GENERATE_LIMIT = 20
-RATE_WINDOW_S = 3600
 #: How long a finished run waits on the write that gives its claim back.
 RELEASE_TIMEOUT_S = 5.0
 
 UNKNOWN_MODE_DETAIL = "Unknown generation mode."
 ALREADY_WRITTEN_DETAIL = "This guide is already written."
 NOTHING_NEW_DETAIL = "There is nothing new to add to this guide."
-NO_SOURCES_DETAIL = "None of this guide's materials can be read."
-RATE_LIMITED_DETAIL = "You have asked for a lot of writing this hour. Try again later."
 BUSY_DETAIL = "Another tab is writing this guide."
 OVERTAKEN_DETAIL = "Another request took over writing this guide."
-
-_SECTION_NUMBER = re.compile(r"s(\d+)")
-
-
-@dataclass(frozen=True)
-class Inputs:
-    """What the writers read for one guide, and who they run for."""
-
-    brief: Brief
-    deps: SaplingDeps
-
-
-@dataclass(frozen=True)
-class Charge:
-    """One action counted against a student's hourly limit."""
-
-    key: str
-    hit: RateLimitClaim
-
-    def refund(self) -> None:
-        refund_rate_limit(self.key, self.hit.slot)
 
 
 @dataclass(frozen=True)
@@ -112,19 +81,20 @@ class Generation:
 
 @dataclass
 class _Run:
-    """A run in progress: the row as last saved, and the claim as last
-    refreshed (None until the run has taken it)."""
+    """A run in progress: the row as last read or saved, the guide as the run
+    has it, and the claim as last refreshed (None while the run holds none)."""
 
     generation: Generation
     guide: GuideRow
+    content: GuideContent
     claim: str | None = None
+    #: Whether the row holds this run's content. False until the guide is read
+    #: again under the claim, and for an Update or Regenerate until its first
+    #: section is written: the row is then still the guide as it was.
+    on_row: bool = False
     #: Sections this run wrote, and tried to.
     written: int = 0
     attempted: int = 0
-
-    @property
-    def content(self) -> GuideContent:
-        return self.guide.content
 
     async def aclaim(self) -> bool:
         self.claim = await store.aclaim_generation(self.guide.user_id, self.guide.id)
@@ -133,75 +103,20 @@ class _Run:
     async def atouch(self) -> None:
         self.claim = await store.atouch_generation(self.guide.user_id, self.guide.id, self.claim)
 
-    async def asave(self, content: GuideContent, **changes: Any) -> None:
-        self.guide = await store.asave_content(self.guide, content, claim=self.claim, **changes)
+    async def asave(self, *, release: bool = False, **changes: Any) -> None:
+        """Save the run's content. The first save of an Update or Regenerate
+        is the one that replaces the guide, and carries what that takes."""
+        if not self.on_row:
+            changes = {**await _areplacement(self), **changes}
+        self.guide = await store.asave_content(
+            self.guide, self.content, claim=self.claim, release=release, **changes,
+        )
         self.claim = self.guide.generating_at
+        self.on_row = True
 
-
-# ── What a run reads ──────────────────────────────────────────────────────────
-
-
-async def amaterial_ids(guide: GuideRow) -> list[str]:
-    """The documents the guide is made from. A guide from before the redesign
-    recorded none: it was made from all of the class's, and still is."""
-    if guide.material_ids:
-        return guide.material_ids
-    return [m.id for m in await materials.alist_materials(guide.user_id, guide.offering_id)]
-
-
-async def aload_inputs(guide: GuideRow, material_ids: list[str]) -> Inputs:
-    """The sources, the student's concepts and, with history on, their
-    mastery and quiz mistakes. `GuideInvalid` when no source can be read."""
-    sources = await materials.aload_sources(guide.user_id, guide.offering_id, material_ids)
-    if not sources:
-        raise GuideInvalid(NO_SOURCES_DETAIL)
-    # The graph is keyed on the abstract course. The lookup is cached, but its
-    # first call per offering reads the database.
-    course_id = await run_in_threadpool(academics.offering_course_id, guide.offering_id)
-    scores = await signals.amastery(guide.user_id, course_id) if course_id else {}
-    taught = [name for source in sources for name in source.concepts]
-    history = guide.use_history and bool(scores)
-    brief = Brief(
-        scope_kind=guide.scope_kind,
-        scope_label=guide.content.scope_label,
-        goal=guide.goal,
-        depth=guide.depth,
-        sources=sources,
-        concepts=list(scores),
-        tiers=signals.tiers(scores) if history else {},
-        mistakes=await signals.amistakes(guide.user_id, course_id, taught) if history else [],
-    )
-    deps = SaplingDeps(
-        user_id=guide.user_id,
-        course_id=course_id,
-        supabase=None,
-        # Captured here, in the request: the stream runs after its context.
-        request_id=current_request_id() or str(uuid.uuid4()),
-        feature=writer.FEATURE,
-    )
-    return Inputs(brief=brief, deps=deps)
-
-
-def facts_for(brief: Brief, section: Section) -> verify.Facts:
-    """What `verify` holds a section of this guide to."""
-    return verify.Facts(
-        sources={source.source.id: source.text for source in brief.sources},
-        mistakes=brief.mistakes_for(section),
-        concepts=brief.concepts,
-    )
-
-
-# ── The hourly limit and the claim ────────────────────────────────────────────
-
-
-async def acharge(user_id: str, *, action: str, limit: int) -> Charge:
-    """Count one `action` against the student's hourly limit.
-    `GuideRateLimited` past it."""
-    key = f"study-guide-{action}:{user_id}"
-    hit = await aclaim_rate_limit(key, limit=limit, window_sec=RATE_WINDOW_S)
-    if hit.retry_after is not None:
-        raise GuideRateLimited(RATE_LIMITED_DETAIL)
-    return Charge(key=key, hit=hit)
+    async def arelease(self) -> None:
+        claim, self.claim = self.claim, None
+        await arelease_guide(self.guide.user_id, self.guide.id, claim)
 
 
 async def arelease_guide(user_id: str, guide_id: str, claim: str) -> None:
@@ -220,28 +135,13 @@ async def arelease_guide(user_id: str, guide_id: str, claim: str) -> None:
 # ── Prepare ───────────────────────────────────────────────────────────────────
 
 
-def _unwritten(content: GuideContent) -> list[Section]:
-    return [section for section in content.sections if section.status != "written"]
-
-
 def _refuse(guide: GuideRow, mode: str) -> None:
     if guide.unreadable:
         raise GuideInvalid(store.GUIDE_UNREADABLE_DETAIL)
     if store.claim_is_held(guide):
         raise GuideBusy(BUSY_DETAIL)
-    if mode == "resume" and guide.status == "ready" and not _unwritten(guide.content):
+    if mode == "resume" and guide.status == "ready" and not outline.unwritten(guide.content):
         raise GuideInvalid(ALREADY_WRITTEN_DETAIL)
-
-
-async def _anew_lectures(guide: GuideRow) -> list[str]:
-    """The class's lecture documents added since the guide was made."""
-    lectures = await materials.alist_lecture_docs(guide.user_id)
-    return materials.new_material_ids(
-        lectures,
-        offering_id=guide.offering_id,
-        material_ids=guide.material_ids,
-        since=guide.generated_at,
-    )
 
 
 async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generation:
@@ -256,9 +156,10 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
         raise GuideInvalid(UNKNOWN_MODE_DETAIL)
     guide = await store.aload_guide(user_id, guide_id)
     _refuse(guide, mode)
-    own = await amaterial_ids(guide)
-    new = await _anew_lectures(guide) if mode == "update" else []
-    inputs = await aload_inputs(guide, list(dict.fromkeys([*own, *new])))
+    new = await anew_lectures(guide) if mode == "update" else []
+    own = [material_id for material_id in await amaterial_ids(guide) if material_id not in new]
+    # The new lectures last: past the source budget the last ids are read.
+    inputs = await aload_inputs(guide, [*own, *new])
     added = {f"document:{material_id}" for material_id in new}
     read = [source for source in inputs.brief.sources if source.source.id in added]
     if mode == "update" and not read:
@@ -266,141 +167,82 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
     return Generation(
         guide=guide,
         mode=mode,
-        charge=await acharge(user_id, action="generate", limit=STUDY_GUIDE_GENERATE_LIMIT),
+        charge=await limits.acharge(
+            user_id, action="generate", limit=limits.STUDY_GUIDE_GENERATE_LIMIT,
+        ),
         inputs=inputs,
         # A new lecture that could not be read yet stays new for a later update.
-        material_ids=list(dict.fromkeys(
-            [*own, *(source.source.id.removeprefix("document:") for source in read)],
-        )),
+        material_ids=[*own, *(source.source.id.removeprefix("document:") for source in read)],
         new_labels=[source.label for source in read],
     )
+
+
+# ── Start ─────────────────────────────────────────────────────────────────────
+
+
+def _written_meanwhile(run: _Run, prepared: GuideRow) -> bool:
+    """Whether another run did this one's work between its prepare and its
+    claim: it finished the guide, or left a resume nothing to write."""
+    guide = run.guide
+    if guide.generated_at != prepared.generated_at:
+        return True
+    resumed = run.generation.mode == "resume" and guide.status == "ready"
+    return resumed and not outline.unwritten(guide.content)
+
+
+async def _astart(run: _Run) -> SaplingEvent | None:
+    """Take the claim, then read the guide again under it: a run prepared
+    before another one finished must not write over that one's work from the
+    row it loaded. Returns the event the stream ends with when there is
+    nothing for this run to do, else None."""
+    if not await run.aclaim():
+        return _error(BUSY_DETAIL, retryable=True)
+    prepared = run.guide
+    run.guide = await store.aload_guide(prepared.user_id, prepared.id)
+    run.content = run.guide.content
+    if run.guide.unreadable:
+        return _error(store.GUIDE_UNREADABLE_DETAIL, retryable=False)
+    if _written_meanwhile(run, prepared):
+        # The other request did the work: this one ends with the guide as it is.
+        await run.arelease()
+        return await _adone(run)
+    run.on_row = run.generation.mode == "resume"
+    return None
 
 
 # ── The outline ───────────────────────────────────────────────────────────────
 
 
-def section_range(depth: Depth, concepts: int, *, room_for: int = 0) -> tuple[int, int]:
-    """`(fewest, most)` sections the outline may plan: up to the depth's
-    count, and no more than the materials have concepts to teach (when they
-    name any). An update needs `room_for` the sections it could keep plus one
-    per new lecture."""
-    most = min(plan.SECTION_COUNT[depth], concepts or MAX_OUTLINE_SECTIONS)
-    most = min(max(most, room_for), MAX_OUTLINE_SECTIONS)
-    return max(1, most - 2), most
-
-
-def _keepable(run: _Run) -> list[Section]:
-    """The sections an update may keep as written. No other mode keeps any."""
-    if run.generation.mode != "update":
-        return []
-    return [section for section in run.content.sections if section.status == "written"]
-
-
-def _range(run: _Run) -> tuple[int, int]:
+async def _aplan(run: _Run) -> None:
+    """Plan the guide again. A guide with nothing written has nothing to
+    lose, so its outline is saved at once and a cut stream resumes from it.
+    An Update or Regenerate holds its outline until a section is written."""
     generation = run.generation
-    taught = {
-        signals.concept_key(name)
-        for source in generation.inputs.brief.sources for name in source.concepts
+    run.content = await outline.anew_content(
+        run.guide, generation.inputs,
+        updating=generation.mode == "update", new_labels=generation.new_labels,
+    )
+    if run.on_row:
+        await run.asave(status="generating", material_ids=generation.material_ids)
+
+
+async def _areplacement(run: _Run) -> dict[str, Any]:
+    """What the save that replaces a guide changes besides its content: the
+    materials it is now made from, the previous version (kept only when it
+    was a finished guide with something to read, so a half-written one never
+    takes the place of the last good version), and the read marks and check
+    answers, which go with the sections they were on."""
+    loaded, generation = run.guide, run.generation
+    changes: dict[str, Any] = {
+        "material_ids": generation.material_ids,
+        "keep_previous": loaded.status == "ready" and bool(outline.written(loaded.content)),
     }
-    keepable = _keepable(run)
-    room_for = len(keepable) + len(generation.new_labels) if keepable else 0
-    return section_range(run.guide.depth, len(taught), room_for=room_for)
-
-
-def _first_free_number(sections: list[Section]) -> int:
-    used = [int(m.group(1)) for s in sections if (m := _SECTION_NUMBER.fullmatch(s.id))]
-    return max(used, default=0) + 1
-
-
-def _new_section(section_id: str, planned: OutlineSection, brief: Brief) -> Section:
-    concept = verify.tree_name(planned.concept, brief.concepts)
-    return Section(
-        id=section_id,
-        title=planned.title,
-        concept=concept,
-        tier=brief.tiers.get(concept, "unexplored"),
-        one_line=planned.one_line,
-    )
-
-
-def planned_sections(
-    outline: list[OutlineSection],
-    current: list[Section],
-    brief: Brief,
-    *,
-    use_history: bool,
-) -> list[Section]:
-    """The outline as the guide's sections. The server decides ids, tiers and
-    weights. A section the outline keeps (`keep_id` names a written section
-    of `current`, once) stays exactly as it is; every other one is new,
-    `queued`, and numbered after every id `current` uses, so nothing the
-    student did on an old section can land on a new one."""
-    kept = {section.id: section for section in current if section.status == "written"}
-    numbers = count(_first_free_number(current))
-    sections = [
-        kept.pop(planned.keep_id, None) or _new_section(f"s{next(numbers)}", planned, brief)
-        for planned in outline
-    ]
-    shares = plan.weights([section.tier for section in sections], use_history=use_history)
-    return [
-        section.model_copy(update={"weight": share}) for section, share in zip(sections, shares)
-    ]
-
-
-def _guide_sources(brief: Brief) -> list[Source]:
-    sources = [source.source for source in brief.sources]
-    if brief.mistakes:
-        sources.append(Source(id=QUIZ_HISTORY_SOURCE, name="Your quiz history", kind="Sapling"))
-    return sources
-
-
-async def _akept_state(run: _Run, sections: list[Section]) -> dict[str, Any]:
-    """The read marks and check answers that survive an update: those on the
-    sections it keeps. Read again now, so what the student did while the
-    outline was being planned is not lost."""
-    fresh = await store.aload_guide(run.guide.user_id, run.guide.id)
-    kept = [section for section in sections if section.status == "written"]
-    kept_ids = {section.id for section in kept}
-    checks = {item.id for section in kept for item in section.items if item.type == "check"}
-    return {
-        "read_sections": [section_id for section_id in fresh.read_sections if section_id in kept_ids],
-        "answers": {
-            block_id: answer for block_id, answer in fresh.answers.items() if block_id in checks
-        },
-    }
-
-
-async def _aplan(run: _Run, fewest: int, most: int) -> None:
-    """Write the outline and save the guide with it: every section present,
-    `queued` unless it is kept."""
-    generation = run.generation
-    brief = generation.inputs.brief
-    updating = generation.mode == "update"
-    outline = await writer.awrite_outline(
-        brief, low=fewest, high=most, deps=generation.inputs.deps,
-        current=_keepable(run), new_labels=generation.new_labels,
-    )
-    sections = planned_sections(
-        outline.sections[:most], run.content.sections if updating else [], brief,
-        use_history=run.guide.use_history,
-    )
-    content = GuideContent(
-        # An update keeps the name the student knows the guide by.
-        title=run.content.title if updating else outline.title,
-        deck=outline.deck,
-        takeaways=outline.takeaways,
-        sections=sections,
-        sources=_guide_sources(brief),
-        scope_label=run.content.scope_label,
-    )
-    changes: dict[str, Any] = {}
     if generation.mode == "regenerate":
-        changes = {"keep_previous": True, "answers": {}, "read_sections": []}
-    elif updating:
-        changes = {"keep_previous": True, **await _akept_state(run, sections)}
-    await run.asave(
-        content, status="generating", material_ids=generation.material_ids, **changes,
-    )
+        return {**changes, "answers": {}, "read_sections": []}
+    # Read again now, so what the student did while the run was writing is
+    # not lost.
+    fresh = await store.aload_guide(loaded.user_id, loaded.id)
+    return {**changes, **outline.kept_state(fresh, run.content.sections)}
 
 
 # ── One section ───────────────────────────────────────────────────────────────
@@ -411,9 +253,17 @@ def _with_section(content: GuideContent, section: Section) -> GuideContent:
     return content.model_copy(update={"sections": sections})
 
 
+def _status_while_writing(run: _Run) -> GuideStatus:
+    """A finished guide whose missing sections are being filled in stays
+    `ready`: the student can read it throughout. Any other is `generating`."""
+    return "ready" if run.on_row and run.guide.status == "ready" else "generating"
+
+
 async def _awrite(run: _Run, section: Section) -> Section:
     """Write, check and save one section. A section the writer fails on, or
-    that has nothing left after the check, is saved as `failed`."""
+    that has nothing left after the check, is `failed`. An Update or
+    Regenerate that has written nothing yet saves nothing for a failed one:
+    the guide it would replace is still the better read."""
     inputs = run.generation.inputs
     # Before the model is paid for: an overtaken run stops here.
     await run.atouch()
@@ -428,10 +278,34 @@ async def _awrite(run: _Run, section: Section) -> Section:
         section.model_copy(update={"items": items}), facts_for(inputs.brief, section),
     )
     written = checked.model_copy(update={"status": "written" if checked.items else "failed"})
-    await run.asave(_with_section(run.content, written), status="generating")
+    run.content = _with_section(run.content, written)
     if written.status == "written":
         run.written += 1
+    if run.on_row or written.status == "written":
+        await run.asave(status=_status_while_writing(run))
     return written
+
+
+def _refuse_nothing_to_read(run: _Run, todo: list[Section]) -> None:
+    """`GuideGenerationFailed` when the run has no guide to leave: none of
+    its sections is written, or it set out to replace a guide and wrote
+    nothing. A guide with something to read is finished, failed sections
+    and all."""
+    replaced_nothing = bool(todo) and not run.on_row
+    if replaced_nothing or not outline.written(run.content):
+        raise GuideGenerationFailed(writer.FAILED_DETAIL)
+
+
+async def _afinish(run: _Run, *, planned: bool) -> None:
+    """The run's last save: the guide is ready and the claim is given up in
+    the same write."""
+    changes: dict[str, Any] = {"status": "ready"}
+    # `generated_at` is when the guide was made from its materials: the
+    # lectures added after it are the new ones. A resume that only fills in
+    # sections of a finished guide read nothing new, so it leaves it alone.
+    if planned or not run.guide.generated_at:
+        changes["generated_at"] = datetime.now(timezone.utc).isoformat()
+    await run.asave(release=True, **changes)
 
 
 # ── Events ────────────────────────────────────────────────────────────────────
@@ -445,6 +319,14 @@ def _status(step: str, message: str, number: int, total: int) -> SaplingEvent:
 
 def _error(message: str, *, retryable: bool) -> SaplingEvent:
     return SaplingEvent(type="error", step="error", message=message, data={"retryable": retryable})
+
+
+async def _adone(run: _Run) -> SaplingEvent:
+    detail = await abuild_detail(run.guide)
+    return SaplingEvent(
+        type="done", step="done", message="Guide ready",
+        data={"guide": detail.model_dump(mode="json")},
+    )
 
 
 def _reading(sources: int) -> str:
@@ -482,20 +364,22 @@ def _log_generated(run: _Run) -> None:
 async def _aevents(run: _Run) -> AsyncIterator[SaplingEvent]:
     generation = run.generation
     planning = generation.mode != "resume" or not run.content.sections
-    fewest, most = _range(run)
+    _, most = outline.plan_range(
+        run.guide, updating=generation.mode == "update", new_labels=generation.new_labels,
+    )
     before = 2 if planning else 1
-    total = before + (most if planning else len(_unwritten(run.content))) + 1
+    total = before + (most if planning else len(outline.unwritten(run.content))) + 1
     yield _status("read", _reading(len(generation.inputs.brief.sources)), 1, total)
 
     if planning:
         yield _status("outline", "Planning the outline", 2, total)
-        await _aplan(run, fewest, most)
+        await _aplan(run)
         yield SaplingEvent(
             type="progress", step="outline", message="Outline ready",
             data={"content": reader_content(run.content, run.guide.answers).model_dump(mode="json")},
         )
 
-    todo = _unwritten(run.content)
+    todo = outline.unwritten(run.content)
     total = before + len(todo) + 1
     for number, section in enumerate(todo, start=1):
         label = _writing(run.content, section, outline_ready=planning and number == 1)
@@ -505,31 +389,24 @@ async def _aevents(run: _Run) -> AsyncIterator[SaplingEvent]:
             type="progress", step="section", message=written.title,
             data={"section": reader_section(written, run.guide.answers).model_dump(mode="json")},
         )
-    if todo and not run.written:
-        raise GuideGenerationFailed(writer.FAILED_DETAIL)
+    _refuse_nothing_to_read(run, todo)
 
     yield _status("check", "Checking citations and blocks", total, total)
-    await run.asave(
-        run.content, status="ready", generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    detail = await abuild_detail(run.guide)
+    await _afinish(run, planned=planning)
     _log_generated(run)
-    yield SaplingEvent(
-        type="done", step="done", message="Guide ready",
-        data={"guide": detail.model_dump(mode="json")},
-    )
+    yield await _adone(run)
 
 
 async def _afailed(run: _Run, exc: Exception) -> SaplingEvent:
-    """The `error` event a failed run ends with. A guide the run had already
-    started on (or that was never written) is saved as `failed`; one whose
-    outline could not be planned again is left as it was."""
+    """The `error` event a failed run ends with. A guide the run was writing
+    is saved as `failed`. One it had not replaced yet, or that the student
+    could read all along, is left as it is."""
     refusal = budget_error_in(exc)
     if refusal is None and not isinstance(exc, GuideGenerationFailed):
         logger.error("study guide %s: generation failed", run.guide.id, exc_info=exc)
-    if run.claim and run.guide.status == "generating":
+    if run.claim and run.on_row and run.guide.status == "generating":
         try:
-            await run.asave(run.content, status="failed")
+            await run.asave(status="failed")
         except Exception as save_error:
             logger.warning(
                 "study guide %s: could not be marked failed (%s)",
@@ -542,19 +419,22 @@ async def _afailed(run: _Run, exc: Exception) -> SaplingEvent:
 
 async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEvent]:
     """The run as events: `status` before each step, `progress` with the
-    outline and then with each section once it is saved, and `done` with the
-    finished guide. A failure is an `error` event, never an exception.
+    outline and then with each section, and `done` with the finished guide.
+    A failure is an `error` event, never an exception.
 
     The guide's claim is taken here, not in `aprepare_generation`, so a
-    stream nobody iterates holds nothing. It is given back when the stream
-    ends, is closed or is cancelled. A stream that finds the guide claimed
-    (another request got there since this one was prepared) ends with one
-    `error` event and gives its charge back."""
-    run = _Run(generation=generation, guide=generation.guide)
+    stream nobody iterates holds nothing. A finished run gives it back with
+    its last save, before `done`; any other way the stream ends, is closed or
+    is cancelled gives it back on the way out. A stream that cannot start
+    (the guide is claimed, can no longer be read, or was written by another
+    request since this one was prepared) ends with one event and gives its
+    charge back."""
+    run = _Run(generation=generation, guide=generation.guide, content=generation.guide.content)
     try:
-        if not await run.aclaim():
+        ended = await _astart(run)
+        if ended is not None:
             generation.charge.refund()
-            yield _error(BUSY_DETAIL, retryable=True)
+            yield ended
             return
         async with aclosing(_aevents(run)) as events:
             async for event in events:
@@ -567,4 +447,4 @@ async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEven
         yield await _afailed(run, exc)
     finally:
         if run.claim:
-            await arelease_guide(run.guide.user_id, run.guide.id, run.claim)
+            await run.arelease()

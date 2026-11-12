@@ -12,24 +12,16 @@ from __future__ import annotations
 
 from models.study_guide import Block, GuideContent, ProseItem, Section
 from services import events_service
-from services.study_guides import prompts, store, verify, writer
+from services.study_guides import limits, prompts, store, verify, writer
 from services.study_guides.errors import (
     GuideBusy,
     GuideGenerationFailed,
     GuideInvalid,
     GuideNotFound,
 )
-from services.study_guides.generation import (
-    acharge,
-    aload_inputs,
-    amaterial_ids,
-    arelease_guide,
-    facts_for,
-)
+from services.study_guides.generation import arelease_guide
+from services.study_guides.inputs import aload_inputs, amaterial_ids, facts_for
 from services.study_guides.store import GuideRow
-
-#: Block rewrites one student may ask for in an hour.
-STUDY_GUIDE_BLOCK_LIMIT = 40
 
 BLOCK_NOT_FOUND_DETAIL = "Block not found."
 CHECK_DETAIL = "A check question cannot be regenerated."
@@ -87,7 +79,7 @@ async def aregenerate_block(user_id: str, guide_id: str, block_id: str) -> Block
     if guide.unreadable:
         raise GuideInvalid(store.GUIDE_UNREADABLE_DETAIL)
     _find(guide.content, block_id)
-    charge = await acharge(user_id, action="block", limit=STUDY_GUIDE_BLOCK_LIMIT)
+    charge = await limits.acharge(user_id, action="block", limit=limits.STUDY_GUIDE_BLOCK_LIMIT)
     claim = await store.aclaim_generation(user_id, guide_id)
     if claim is None:
         charge.refund()
