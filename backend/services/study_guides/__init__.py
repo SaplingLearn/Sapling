@@ -3,6 +3,7 @@ with typed blocks. ``routes/study_guide.py`` is the HTTP layer over the
 functions exported here; the shapes live in ``models/study_guide.py`` and the
 plan in ``docs/design/study-guide-redesign.md``."""
 from services.study_guides.answers import aanswer_check
+from services.study_guides.blocks import aregenerate_block
 from services.study_guides.cards import alist_cards
 from services.study_guides.create import acreate_guide
 from services.study_guides.detail import aget_detail
@@ -14,6 +15,7 @@ from services.study_guides.errors import (
     GuideRateLimited,
     StudyGuideError,
 )
+from services.study_guides.generation import aprepare_generation, stream_generation
 from services.study_guides.legacy import content_from_topics
 from services.study_guides.options import aget_options
 from services.study_guides.plan import aplan
@@ -33,5 +35,8 @@ __all__ = [
     "alist_cards",
     "apatch_guide",
     "aplan",
+    "aprepare_generation",
+    "aregenerate_block",
     "content_from_topics",
+    "stream_generation",
 ]

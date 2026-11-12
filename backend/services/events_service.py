@@ -68,10 +68,10 @@ flashcard.generated           usage     card_count, documents_used, weak_concept
                                         (topic: /generate | paste | library_doc: /import/generate;
                                         /import/commit persists, it does not emit)
 flashcard.reviewed            usage     card_id, rating (1 forgot | 2 hard | 3 easy)
-study_guide.generated         usage     one finished generation run (emitted by
-                                        services/study_guides/generation.py)
-study_guide.block_regenerated usage     one block rewritten on request (emitted by
-                                        services/study_guides/blocks.py)
+study_guide.generated         usage     guide_id, mode (resume | update | regenerate),
+                                        scope_kind, goal, depth, use_history, sources,
+                                        sections, sections_written, sections_failed
+study_guide.block_regenerated usage     guide_id, block_type
 study_guide.check_answered    usage     guide_id, block_id, correct, counted (false = a
                                         repeat answer, which moves no mastery)
 study_guide.saved             usage     guide_id (a guide became saved to the Library;
