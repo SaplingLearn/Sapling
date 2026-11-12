@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
  * An Update or a Regenerate that does not go through: what the banner says,
- * what Retry asks for, when the banner can be put away, and a guide that is
- * held by another request (a 409).
+ * the guide shown under it (read again from the server), what Retry asks for,
+ * when the banner can be put away, and a guide that is held by another
+ * request (a 409).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
@@ -27,7 +28,7 @@ import { generateGuide, getGuide, GuideGenerationError, type GenerationHandlers 
 import type { GuideDetail } from "@/lib/studyGuide/types";
 
 import { MAX_TRIES, RETRY_MS } from "./generationRun";
-import { deferred, fixtureGuide, outlineOf, renderReader } from "./readerTestKit";
+import { deferred, fixtureGuide, outlineOf, renderReader, sectionOf } from "./readerTestKit";
 
 const mocks = { getGuide: vi.mocked(getGuide), generateGuide: vi.mocked(generateGuide) };
 const lastMode = () => mocks.generateGuide.mock.calls.at(-1)?.[2];
@@ -102,8 +103,10 @@ describe("a request the server turns away", () => {
 });
 
 describe("a run that stops part way", () => {
-  /** Regenerate, and hand back the stream's callbacks and its end. */
-  async function regenerating() {
+  const BUSY = "The model is busy. Try again.";
+
+  /** Update or Regenerate, and hand back the stream's callbacks and its end. */
+  async function running(mode: "update" | "regenerate" = "regenerate") {
     const run = deferred<GuideDetail>();
     let handlers: GenerationHandlers = {};
     mocks.generateGuide.mockImplementationOnce((_user, _guide, _mode, given = {}) => {
@@ -111,43 +114,126 @@ describe("a run that stops part way", () => {
       return run.promise;
     });
     const user = await open();
-    await regenerate(user);
+    if (mode === "update") await user.click(screen.getByTestId("guide-update"));
+    else await regenerate(user);
     await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledTimes(1));
     return { user, run, handlers: () => handlers };
   }
 
-  it("resumes on Retry once its outline has replaced the guide, and cannot be dismissed", async () => {
-    const { user, run, handlers } = await regenerating();
-    act(() => handlers().onOutline?.(outlineOf(fixtureGuide())));
-    await act(async () => run.reject(new GuideGenerationError("The model is busy. Try again.", true)));
+  /** The guide as the server has it once a rewrite has saved its first section and stopped. */
+  function partlyRewritten(status: "failed" | "generating"): GuideDetail {
+    const guide = fixtureGuide({ status, read_sections: [], answers: {} });
+    for (const section of guide.content.sections.slice(1)) Object.assign(section, { status: "queued", items: [] });
+    return guide;
+  }
 
-    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("The model is busy. Try again.");
-    // The sections are queued on the server now: only a resume writes them.
-    expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
-
+  /** Press Retry and say which mode it asked for. */
+  async function retryMode(user: ReturnType<typeof userEvent.setup>) {
     mocks.generateGuide.mockReturnValue(deferred<GuideDetail>().promise);
     await user.click(screen.getByTestId("guide-generation-retry"));
     await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledTimes(2));
-    expect(lastMode()).toBe("resume");
+    return lastMode();
+  }
+
+  it.each(["update", "regenerate"] as const)(
+    "shows the guide the server still has when the %s stopped after its outline, and Retry asks for the same again",
+    async mode => {
+      const { user, run, handlers } = await running(mode);
+      act(() => handlers().onOutline?.(outlineOf(fixtureGuide())));
+      expect(screen.queryByTestId("guide-block-s1-i2")).not.toBeInTheDocument();
+      await act(async () => run.reject(new GuideGenerationError(BUSY, true)));
+
+      expect(screen.getByTestId("guide-generation-error")).toHaveTextContent(BUSY);
+      // Nothing of that outline was saved. The guide is read again and shown as it is.
+      expect(mocks.getGuide).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
+      expect(screen.getByTestId("guide-generation-dismiss")).toBeInTheDocument();
+      expect(await retryMode(user)).toBe(mode);
+    },
+  );
+
+  it("can put the banner away once the untouched guide is back", async () => {
+    const { user, run, handlers } = await running();
+    act(() => handlers().onOutline?.(outlineOf(fixtureGuide())));
+    await act(async () => run.reject(new GuideGenerationError(BUSY, true)));
+
+    await user.click(screen.getByTestId("guide-generation-dismiss"));
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes on Retry once a section has replaced the guide on the server, and cannot be dismissed", async () => {
+    const { user, run, handlers } = await running();
+    const rewritten = fixtureGuide();
+    act(() => {
+      handlers().onOutline?.(outlineOf(rewritten));
+      handlers().onSection?.(sectionOf(rewritten, "s1"));
+    });
+    mocks.getGuide.mockResolvedValue(partlyRewritten("failed"));
+    await act(async () => run.reject(new GuideGenerationError(BUSY, true)));
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent(BUSY);
+    // What the server kept: the first section, and the rest still to write.
+    expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-block-s2-i2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
+    expect(await retryMode(user)).toBe("resume");
+  });
+
+  it("waits for Retry when the stream was cut and the guide still says it is being written", async () => {
+    const { user, run, handlers } = await running();
+    const rewritten = fixtureGuide();
+    act(() => {
+      handlers().onOutline?.(outlineOf(rewritten));
+      handlers().onSection?.(sectionOf(rewritten, "s1"));
+    });
+    mocks.getGuide.mockResolvedValue(partlyRewritten("generating"));
+    await act(async () => run.reject(new TypeError("network error")));
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("The guide could not be written.");
+    // The reader does not resume by itself: it only does that for a guide it loads unfinished.
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
+    expect(await retryMode(user)).toBe("resume");
   });
 
   it("asks for the same thing again when it stopped before the outline", async () => {
-    const { user, run } = await regenerating();
-    await act(async () => run.reject(new GuideGenerationError("The model is busy. Try again.", true)));
+    const { user, run } = await running();
+    await act(async () => run.reject(new GuideGenerationError(BUSY, true)));
 
     expect(screen.getByTestId("guide-generation-dismiss")).toBeInTheDocument();
-    mocks.generateGuide.mockReturnValue(deferred<GuideDetail>().promise);
-    await user.click(screen.getByTestId("guide-generation-retry"));
-    await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledTimes(2));
-    expect(lastMode()).toBe("regenerate");
+    expect(await retryMode(user)).toBe("regenerate");
   });
 
-  it("offers no Retry when the stream says trying again will not help", async () => {
-    const { run } = await regenerating();
+  it.each([
+    ["the guide is as it was", () => fixtureGuide(), true],
+    ["the guide is partly rewritten", () => partlyRewritten("failed"), false],
+  ])("offers no Retry when the stream says trying again will not help (%s)", async (_name, onServer, dismissible) => {
+    const { run } = await running();
+    mocks.getGuide.mockResolvedValue(onServer());
     await act(async () => run.reject(new GuideGenerationError("You are out of AI credit for today.", false)));
 
     expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("You are out of AI credit for today.");
     expect(screen.queryByTestId("guide-generation-retry")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-dismiss") !== null).toBe(dismissible);
+  });
+
+  it("keeps what it shows, under the run's own error, when the guide cannot be read again", async () => {
+    const { user, run, handlers } = await running();
+    act(() => handlers().onOutline?.(outlineOf(fixtureGuide())));
+    mocks.getGuide.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => run.reject(new GuideGenerationError(BUSY, true)));
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent(BUSY);
+    expect(screen.queryByTestId("guide-load-error")).not.toBeInTheDocument();
+    // Still the outline the stream had shown.
+    expect(screen.getByTestId("guide-section-s1")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-block-s1-i2")).not.toBeInTheDocument();
+    // What the server has is not known, so the banner stays and Retry asks again.
+    expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
+    expect(await retryMode(user)).toBe("regenerate");
   });
 });
 

@@ -120,6 +120,44 @@ describe("a guide that is still being written", () => {
     expect(screen.getByTestId("guide-feedback-yes")).toBeInTheDocument();
   });
 
+  it("keeps the step within its total when the total shrinks once the outline is planned", async () => {
+    const { handlers } = controlledRun();
+    mocks.getGuide.mockResolvedValue(newGuide(finishedGuide()));
+    renderReader();
+    const banner = await screen.findByTestId("guide-generating");
+    await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalled());
+    const shown = (step: number, total: number) => {
+      act(() => handlers().onStatus?.("Working", { step, total }));
+      const bar = banner.querySelector<HTMLElement>("div[aria-hidden] > div");
+      return [banner.textContent?.match(/Step \d+ of \d+/)?.[0], bar?.style.width];
+    };
+
+    // As the server counts them: before the outline is planned the guide may
+    // still have every section its depth allows, and then it has three.
+    expect(shown(1, 8)).toEqual(["Step 1 of 8", "13%"]);
+    expect(shown(2, 8)).toEqual(["Step 2 of 8", "25%"]);
+    expect(shown(3, 6)).toEqual(["Step 3 of 6", "50%"]);
+    expect(shown(4, 6)).toEqual(["Step 4 of 6", "67%"]);
+    expect(shown(5, 6)).toEqual(["Step 5 of 6", "83%"]);
+    expect(shown(6, 6)).toEqual(["Step 6 of 6", "100%"]);
+  });
+
+  it("shows the guide and says it is ready when the stream is only its `done`", async () => {
+    // Another request finished the guide first: this one is told so at once.
+    const finished = finishedGuide();
+    mocks.generateGuide.mockResolvedValue(finished);
+    mocks.getGuide.mockResolvedValue(newGuide(finished));
+    renderReader();
+
+    expect(await screen.findByText("Guide ready.")).toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(mocks.getGuide).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("guide-title")).toHaveTextContent("Control flow and functions");
+    expect(screen.getByTestId("guide-block-s2-i2")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+  });
+
   it("resumes a guide that already has its outline", async () => {
     controlledRun();
     mocks.getGuide.mockResolvedValue(fixtureGuide({ status: "generating" }));
@@ -399,5 +437,23 @@ describe("regenerating the whole guide", () => {
     await act(async () => run.resolve(finishedGuide()));
     expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
     expect(screen.queryByTestId("guide-updated")).not.toBeInTheDocument();
+  });
+
+  it("shows the guide another Regenerate wrote when this one's stream is only its `done`", async () => {
+    const rewritten = { ...finishedGuide(), title: "Loops, rewritten" };
+    rewritten.content = { ...rewritten.content, title: rewritten.title };
+    mocks.generateGuide.mockResolvedValue(rewritten);
+    mocks.getGuide.mockResolvedValue(fixtureGuide());
+    const user = userEvent.setup();
+    renderReader();
+    await screen.findByTestId("guide-title");
+
+    await user.click(screen.getByTestId("guide-menu"));
+    await user.click(screen.getByTestId("guide-menu-regenerate"));
+
+    expect(await screen.findByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.getByTestId("guide-title")).toHaveTextContent("Loops, rewritten");
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
   });
 });

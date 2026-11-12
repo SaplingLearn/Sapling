@@ -95,9 +95,6 @@ export function GuideView({ userId, guide, mode, today, update, onToggleRead, on
   // A generation that ended with nothing written leaves no guide to draw:
   // the error and its Retry are the page.
   const nothingWritten = failure !== null && guide.content.sections.length === 0;
-  // A request that was turned away left a ready guide as it was: the banner
-  // can go. Once a run has replaced the outline, only a resume finishes it.
-  const untouched = guide.status === "ready" && failure !== null && !failure.replanned;
 
   return (
     <ReaderProvider value={reader}>
@@ -105,7 +102,7 @@ export function GuideView({ userId, guide, mode, today, update, onToggleRead, on
         <GenerationError
           message={failure.message}
           onRetry={retry ? () => generation.start(retry) : undefined}
-          onDismiss={untouched ? generation.dismiss : undefined}
+          onDismiss={failure.dismissible ? generation.dismiss : undefined}
           busy={block.rewriting !== null}
         />
       )}

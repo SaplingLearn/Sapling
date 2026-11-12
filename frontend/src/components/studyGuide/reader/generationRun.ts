@@ -4,7 +4,7 @@
  */
 import { humanizeError, statusOf } from "@/lib/errorMessage";
 import { generateGuide, getGuide, GuideGenerationError, type GenerationHandlers } from "@/lib/studyGuide/api";
-import type { GenerateMode, GuideDetail } from "@/lib/studyGuide/types";
+import type { GenerateMode, GuideDetail, GuideStatus } from "@/lib/studyGuide/types";
 
 export const FAILED = "The guide could not be written.";
 const STILL_HELD = "This guide is still being written somewhere else. Try again in a moment.";
@@ -73,24 +73,42 @@ export interface Failure {
   message: string;
   /** What Retry asks for. Null when asking again cannot help. */
   retry: GenerateMode | null;
-  /** The run's outline had replaced the guide's sections before it stopped. */
-  replanned: boolean;
+  /** The server still has a finished guide, so the banner can be put away. */
+  dismissible: boolean;
 }
 
 /**
- * A run that stopped before its outline arrived changed nothing, so Retry
- * asks for the same thing again. After the outline the guide is half
- * rewritten on the server, and only a resume finishes it.
+ * `status` is the guide's as the server has it once the run has stopped, or
+ * null when it could not be read.
+ *
+ * A guide that is still `ready` was not replaced: an Update or a Regenerate
+ * saves nothing until its first section is written. Retry asks for the same
+ * thing again. One that is `generating` or `failed` is partly written, and
+ * only a resume finishes it.
  *
  * A 422 is the server saying the request itself cannot work (an Update with
  * nothing new to add): Retry would get the same answer.
  */
-export function failureOf(err: unknown, mode: GenerateMode, replanned: boolean): Failure {
+export function failureOf(err: unknown, mode: GenerateMode, status: GuideStatus | null): Failure {
   const streamed = err instanceof GuideGenerationError;
   const retryable = streamed ? err.retryable : statusOf(err) !== 422;
+  const partlyWritten = status === "generating" || status === "failed";
   return {
     message: streamed ? err.message : humanizeError(err, FAILED),
-    retry: retryable ? (replanned ? "resume" : mode) : null,
-    replanned,
+    retry: retryable ? (partlyWritten ? "resume" : mode) : null,
+    dismissible: status === "ready",
   };
+}
+
+/**
+ * A run stopped. What its stream showed is not always what was saved (the
+ * outline of a failed Update or Regenerate never was), so the guide is read
+ * again. `guide` is null when that fails too: the reader keeps what it has.
+ */
+export async function failedRun(
+  { userId, guideId, mode }: Pick<Run, "userId" | "guideId" | "mode">,
+  err: unknown,
+): Promise<{ guide: GuideDetail | null; failure: Failure }> {
+  const guide = await getGuide(userId, guideId).catch(() => null);
+  return { guide, failure: failureOf(err, mode, guide?.status ?? null) };
 }
