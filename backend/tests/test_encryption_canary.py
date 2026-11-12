@@ -65,6 +65,23 @@ def test_empty_table_seeds_then_verifies():
     assert seeded["id"] == 1
 
 
+def test_read_only_check_never_seeds_an_empty_table():
+    """seed=False is for ops scripts: one holding the wrong key must not write
+    a canary that then locks the real backend out."""
+    t = _tbl([])
+    with patch("services.encryption_canary.table", return_value=t):
+        assert encryption_canary.verify_encryption_key(seed=False) == "skipped"
+    t.upsert.assert_not_called()
+
+
+def test_read_only_check_still_refuses_a_foreign_key():
+    t = _tbl([{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(encryption_canary.EncryptionKeyMismatch):
+            encryption_canary.verify_encryption_key(seed=False)
+    t.upsert.assert_not_called()
+
+
 def test_lost_seed_race_to_another_key_refuses_to_boot():
     # Our DO NOTHING insert lost to a concurrent boot holding a different key.
     t = _tbl([], [{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])

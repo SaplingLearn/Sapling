@@ -20,9 +20,13 @@ class _FakeTable:
     def __init__(self, db, name):
         self.db, self.name = db, name
 
-    def select(self, cols):
-        self.db.selected.append((self.name, cols.split(",")))
-        return [dict(r) for r in self.db.rows.get(self.name, [])]
+    def select_with_count(self, cols, *, filters=None, order, limit, offset):
+        # PostgREST's contract: at most `limit` rows from `offset`, in `order`.
+        if offset == 0:
+            self.db.selected.append((self.name, cols.split(",")))
+        self.db.pages.append((self.name, offset))
+        rows = sorted(self.db.rows.get(self.name, []), key=lambda r: str(r[order]))
+        return [dict(r) for r in rows[offset:offset + limit]], len(rows)
 
     def update(self, values, *, filters):
         (pk, cond), = filters.items()
@@ -37,6 +41,7 @@ class _FakeDB:
     def __init__(self, rows=None):
         self.rows = rows or {}
         self.selected = []
+        self.pages = []
         self.updates = []
 
     def __call__(self, name):
@@ -47,6 +52,9 @@ class _FakeDB:
 def db(monkeypatch):
     fake = _FakeDB()
     monkeypatch.setattr(bf, "table", fake)
+    # main() checks the key canary first; these tests have no canary table.
+    monkeypatch.setattr(bf, "verify_encryption_key", lambda *, seed: "ok")
+    bf.UNDECRYPTABLE.clear()
     return fake
 
 
@@ -135,11 +143,98 @@ def test_main_keeps_going_when_one_table_fails(db, monkeypatch, capsys):
     monkeypatch.setattr(bf, "RUNNERS", {"broken": boom, "messages": bf.backfill_messages})
     db.rows["messages"] = [{"id": 1, "content": "x"}]
     monkeypatch.setattr("sys.argv", ["backfill_encryption"])
-    assert bf.main() == 0
+    # The other tables still run, but the run is not a success: the dropped-
+    # column runners failed on every run for months behind an exit 0.
+    assert bf.main() == 1
     out = capsys.readouterr().out
     assert "FAILED: PostgREST 400" in out
+    assert "FAILED tables (not backfilled): broken" in out
     assert "Would encrypt 1 cells total." in out
     assert db.updates == []
+
+
+def test_main_exits_zero_when_every_table_ran(db, monkeypatch):
+    monkeypatch.setattr(bf, "RUNNERS", {"messages": bf.backfill_messages})
+    db.rows["messages"] = [{"id": 1, "content": "x"}]
+    monkeypatch.setattr("sys.argv", ["backfill_encryption"])
+    assert bf.main() == 0
+
+
+def test_a_table_larger_than_one_page_is_backfilled_whole(db):
+    """One unpaged select returns PostgREST's first 1,000 rows. The script
+    encrypted those, and every later run saw only that page, already
+    encrypted, and reported nothing left to do."""
+    db.rows["messages"] = [{"id": f"m{i:05d}", "content": f"text {i}"} for i in range(2500)]
+    counts = bf.backfill_messages(apply=True)
+    assert counts == {"content": 2500, "scanned": 2500}
+    assert [offset for _name, offset in db.pages] == [0, 1000, 2000]
+    assert all(bf._is_already_encrypted(r["content"]) for r in db.rows["messages"])
+
+    db.updates.clear()
+    assert bf.backfill_messages(apply=True) == {"content": 0, "scanned": 2500}
+    assert db.updates == []
+
+
+def _sealed_under_another_key(text: str) -> str:
+    import base64
+    import os
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    nonce = os.urandom(12)
+    return base64.b64encode(nonce + AESGCM(b"\x07" * 32).encrypt(nonce, text.encode(), None)).decode()
+
+
+def test_ciphertext_under_another_key_is_left_alone_and_reported(db, monkeypatch, capsys):
+    """A cell that fails to decrypt is not always plaintext. Encrypting one
+    written under another key buries it a layer deeper, and the read helpers
+    then hand ciphertext back as the value."""
+    foreign = _sealed_under_another_key("someone@example.com")
+    foreign_json = _sealed_under_another_key('{"a":1}')
+    db.rows["messages"] = [{"id": 1, "content": foreign}, {"id": 2, "content": "plain text"}]
+    db.rows["sessions"] = [{"id": 1, "summary_json": foreign_json}]
+    db.rows["assignments"] = [{"id": 1, "notes": None, "points_possible": foreign, "points_earned": 1000}]
+    db.rows["oauth_tokens"] = [{"user_id": "u", "access_token": foreign, "refresh_token": "1//0g-plain_token"}]
+    monkeypatch.setattr(bf, "RUNNERS", {
+        "messages": bf.backfill_messages, "sessions": bf.backfill_sessions,
+        "assignments": bf.backfill_assignments, "oauth_tokens": bf.backfill_oauth_tokens,
+    })
+    monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
+
+    assert bf.main() == 0
+    assert db.rows["messages"][0]["content"] == foreign
+    assert decrypt(db.rows["messages"][1]["content"]) == "plain text"
+    assert db.rows["sessions"][0]["summary_json"] == foreign_json
+    assert db.rows["assignments"][0]["points_possible"] == foreign
+    assert decrypt(db.rows["assignments"][0]["points_earned"]) == "1000"
+    assert db.rows["oauth_tokens"][0]["access_token"] == foreign
+    assert decrypt(db.rows["oauth_tokens"][0]["refresh_token"]) == "1//0g-plain_token"
+    out = capsys.readouterr().out
+    for cell in ("messages.content: 1", "sessions.summary_json: 1",
+                 "assignments.points_possible: 1", "oauth_tokens.access_token: 1"):
+        assert cell in out
+
+
+def test_ordinary_plaintext_never_looks_like_ciphertext():
+    for value in ("hello there", "Ada", "7.5", "1000", '{"a": 1}', "ya29.a0AfH6-token_value",
+                  "a" * 36, 12, None):
+        assert bf._looks_like_ciphertext(value) is False, value
+    assert bf._looks_like_ciphertext(encrypt("x")) is True
+
+
+def test_main_refuses_to_run_with_the_wrong_key(db, monkeypatch, capsys):
+    """With the wrong key EVERY cell fails to decrypt, which is what legacy
+    plaintext looks like; --apply would wrap the whole database a second time."""
+    def mismatch(*, seed):
+        assert seed is False  # an ops script must never write the canary
+        raise bf.EncryptionKeyMismatch("ENCRYPTION_KEY does not match the database")
+
+    monkeypatch.setattr(bf, "verify_encryption_key", mismatch)
+    db.rows["messages"] = [{"id": 1, "content": "x"}]
+    monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
+    assert bf.main() == 2
+    assert "REFUSING to run" in capsys.readouterr().out
+    assert db.selected == [] and db.updates == []
 
 
 def test_plaintext_json_text_is_not_mistaken_for_ciphertext(db):
