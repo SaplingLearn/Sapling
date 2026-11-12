@@ -43,19 +43,15 @@ import {
   relatedDash,
 } from "./knowledgeGraph2DPaint";
 import {
-  COURSE_MARGIN,
-  RING0,
-  RING_REACH,
-  clearOfCourses,
   courseLinks,
   forceOrbit,
   importanceRadii,
   labelOpacityAt,
-  nearestSeat,
   planBounds,
   planRadial,
+  pushCoursesApart,
+  reachByCourse,
   splitEdges,
-  swapSeats,
   type RadialPlan,
 } from "@/lib/graph/radialLayout";
 
@@ -137,24 +133,32 @@ type DragState =
 // The furthest zoom-out, and the floor of the opening fit: a large course
 // planned with room around every concept still opens whole.
 const MIN_ZOOM = 0.25;
-// Layout. Every concept has a seat, planned with room for its caption
-// (`lib/graph/radialLayout`), and is drawn to it; that alone sets the
-// spacing. Links are drawn, not simulated: a link that pulled its ends
-// together would drag them off their seats and onto their neighbours.
+// Layout. Every concept has a seat: a place relative to its course's centre,
+// planned with room for its caption (`lib/graph/radialLayout`), and it is
+// drawn to it. Links are drawn, not simulated: a link that pulled its ends
+// together would drag them off their places and onto their neighbours.
+//
+// The student can move anything, and it stays where they leave it. A concept
+// let go anywhere takes that spot as its seat; whatever it lands on steps
+// aside, and keeps the spot it stepped to. A course carries its concepts
+// with it, and shoves aside any course it is dragged into. Nothing snaps back.
 /** How firmly each concept is drawn to its seat. */
 const SEAT_PULL = 0.3;
-/** The share of the way home a course root's pin slides each tick. */
-const HOME_GLIDE = 0.25;
 /** Collide radius of a course root: its mark plus room for its label. */
 const ROOT_CLEARANCE = 58;
 /**
- * Added to a concept's radius for its collide radius. The seats give every
- * concept room for its caption; this is kept small enough that concepts on
- * neighbouring seats never touch (two of the largest, 23 across, fit in the
- * 66 between rings), so at rest the seats alone set the spacing, and only a
- * concept being moved is kept from passing over another.
+ * Collide radius of a concept: two concepts keep at least twice this between
+ * their centres, room for their marks and captions. It is under half the
+ * planned spacing (68 between rings), so concepts on their planned seats
+ * never touch, and only a move pushes anything aside.
  */
-const COLLIDE_PAD = 10;
+const CONCEPT_CLEARANCE = 32;
+/** Space kept between two courses' outermost concepts' clearances. */
+const COURSE_GAP = 40;
+/** The share of two courses' overlap closed each tick while pushing them apart. */
+const COURSE_PUSH = 0.15;
+/** A concept this far or less from its seat is on it: nothing to adopt. */
+const ON_SEAT = 0.5;
 /** Smallest on-screen node radius (px) in legible mode. */
 const MIN_SCREEN_R = 7;
 
@@ -487,9 +491,34 @@ function KnowledgeGraph2DImpl({
   const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map() });
   // Course roots the student dragged keep their spot across re-plans.
   const movedRootsRef = React.useRef(new Set<string>());
-  // Where each course root makes for: its planned centre, or where the
-  // student left it.
+  // Where each course root rests: its planned centre, or where the student
+  // (or another course shoving it) left it.
   const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
+  // Seats the student made, by moving concepts or pushing them aside: they
+  // override the plan, here and in every later plan (a window re-measured,
+  // a concept added), so nothing is ever put back where it was planned.
+  const placedRef = React.useRef(new Map<string, { radius: number; angle: number }>());
+  /** Where a course's centre is now (set with each plan; read off the event loop). */
+  const centerOfRef = React.useRef<(rootId: string | null) => { x: number; y: number }>(() => ({ x: 0, y: 0 }));
+  /**
+   * Make where each concept is now its seat, if it has moved off it. Runs when
+   * the simulation comes to rest and before each new drag, so whatever
+   * stepped aside for a move keeps the spot it stepped to.
+   */
+  const adoptPlaces = React.useCallback(() => {
+    const orbit = planRef.current.orbit;
+    for (const n of simNodesRef.current) {
+      const seat = orbit.get(n.id);
+      if (!seat || n.is_subject_root || n.x == null || n.y == null) continue;
+      const c = centerOfRef.current(seat.rootId);
+      const sx = c.x + Math.cos(seat.angle) * seat.radius;
+      const sy = c.y + Math.sin(seat.angle) * seat.radius;
+      if (Math.hypot(n.x - sx, n.y - sy) <= ON_SEAT) continue;
+      const place = { radius: Math.hypot(n.x - c.x, n.y - c.y), angle: Math.atan2(n.y - c.y, n.x - c.x) };
+      Object.assign(seat, place);
+      placedRef.current.set(n.id, place);
+    }
+  }, []);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
   /** Re-assigned every render (it closes over the current size and zoom);
@@ -504,6 +533,13 @@ function KnowledgeGraph2DImpl({
     // only real concept-to-concept edges join the simulation and the render.
     const { concept: conceptEdges } = splitEdges(nodes, edges);
     const plan = planRadial(nodes, conceptEdges, width, height);
+    // A course's size for keeping courses apart is its planned rings: a
+    // concept the student carried far off does not make its course bigger.
+    const courseReach = reachByCourse(plan.orbit);
+    for (const [id, seat] of placedRef.current) {
+      const o = plan.orbit.get(id);
+      if (o) Object.assign(o, seat);
+    }
     planRef.current = plan;
 
     // Open on the whole graph: when the planned rings overflow the window,
@@ -611,7 +647,9 @@ function KnowledgeGraph2DImpl({
     if (!simRef.current) {
       simRef.current = forceSimulation<SimNode>(nextNodes)
         .on("tick", applyPositions)
-        .on("tick.frame", () => frameContentRef.current());
+        .on("tick.frame", () => frameContentRef.current())
+        // Whatever stepped aside keeps the spot it stepped to.
+        .on("end", adoptPlaces);
     } else {
       simRef.current.nodes(nextNodes);
     }
@@ -622,30 +660,59 @@ function KnowledgeGraph2DImpl({
       if (root && root.x != null && root.y != null) return { x: root.x, y: root.y };
       return { x: width / 2, y: height / 2 };
     };
+    centerOfRef.current = centerOf;
 
     const sim = simRef.current;
     sim
       .force(
         "collide",
-        // Concepts in passing keep clear of each other (see COLLIDE_PAD).
-        forceCollide<SimNode>().radius((d) =>
-          d.is_subject_root ? ROOT_CLEARANCE : (radiusRef.current.get(d.id) ?? 8) + COLLIDE_PAD,
-        ),
+        // Nothing passes over anything else (see CONCEPT_CLEARANCE).
+        forceCollide<SimNode>().radius((d) => (d.is_subject_root ? ROOT_CLEARANCE : CONCEPT_CLEARANCE)),
       )
-      // Every concept is drawn to its seat. A concept the student is holding
-      // is pinned to the pointer, so the pull does nothing to it until they
-      // let go — then it carries the concept to the seat it was dropped on,
-      // and the concept it traded with to the seat it left.
+      // Every concept is drawn to its seat, round its course's centre as it
+      // is now, so a course being dragged pulls its concepts after it. A
+      // concept the student is holding is pinned to the pointer instead.
       .force("orbit", forceOrbit<SimNode>(() => planRef.current, centerOf, SEAT_PULL))
-      .force("home", () => {
-        // Each course root's pin slides to its home: where it was planned, or
-        // where the student last left it (clear of the other courses).
+      // Courses that overlap push apart; one being held stays put and shoves
+      // the other along. A course root is pinned, so the push moves its pin,
+      // and the place it is pushed to becomes its home.
+      .force("courses", () => {
+        const roots = nextNodes.filter((n) => n.is_subject_root && n.fx != null && n.fy != null);
+        if (roots.length < 2) return;
         const held = dragRef.current?.kind === "node" ? dragRef.current.nodeId : null;
-        for (const [id, home] of rootHomeRef.current) {
-          const root = nodeById.get(id);
-          if (!root || id === held || root.fx == null || root.fy == null) continue;
-          root.fx += (home.x - root.fx) * HOME_GLIDE;
-          root.fy += (home.y - root.fy) * HOME_GLIDE;
+        const moves = pushCoursesApart(
+          roots.map((r) => ({
+            id: r.id,
+            x: r.fx!,
+            y: r.fy!,
+            reach: Math.max(ROOT_CLEARANCE, (courseReach.get(r.id) ?? 0) + CONCEPT_CLEARANCE),
+            held: r.id === held,
+          })),
+          COURSE_GAP,
+          COURSE_PUSH,
+        );
+        if (!moves.size) return;
+        // A course in the window is not pushed out of it: it slides along the
+        // edge instead. One the student has panned out of view stays free.
+        const v = viewNowRef.current;
+        const box = {
+          minX: -v.tx / v.scale + ROOT_CLEARANCE,
+          minY: -v.ty / v.scale + ROOT_CLEARANCE,
+          maxX: (width - v.tx) / v.scale - ROOT_CLEARANCE,
+          maxY: (height - v.ty) / v.scale - ROOT_CLEARANCE,
+        };
+        const inBox = (x: number, y: number) => x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY;
+        for (const [id, m] of moves) {
+          const root = nodeById.get(id)!;
+          const wasIn = inBox(root.fx!, root.fy!);
+          root.fx! += m.dx;
+          root.fy! += m.dy;
+          if (wasIn && box.minX <= box.maxX && box.minY <= box.maxY) {
+            root.fx = Math.min(box.maxX, Math.max(box.minX, root.fx!));
+            root.fy = Math.min(box.maxY, Math.max(box.minY, root.fy!));
+          }
+          rootHomeRef.current.set(id, { x: root.fx!, y: root.fy! });
+          movedRootsRef.current.add(id);
         }
       });
 
@@ -923,37 +990,22 @@ function KnowledgeGraph2DImpl({
     const root = rootId ? simNodesRef.current.find((sn) => sn.id === rootId) : undefined;
     return root && root.x != null && root.y != null ? { x: root.x, y: root.y } : { x: width / 2, y: height / 2 };
   };
-  /** Seat a concept the student just let go of (see `nearestSeat`). */
-  const seatDropped = (n: SimNode) => {
-    const orbit = planRef.current.orbit;
-    const seat = orbit.get(n.id);
+  /** Make where a concept is now its seat, here and in every later plan. */
+  const placeHere = (n: SimNode) => {
+    const seat = planRef.current.orbit.get(n.id);
     if (!seat || n.x == null || n.y == null) return;
     const c = courseCentre(seat.rootId);
-    swapSeats(orbit, n.id, nearestSeat(orbit, n.id, n.x - c.x, n.y - c.y));
-  };
-  /** The part of the canvas in the window, less a margin (in the graph's units) on each side. */
-  const inView = (padX: number, padY: number) => ({
-    minX: -view.tx / view.scale + padX,
-    minY: -view.ty / view.scale + padY,
-    maxX: (width - view.tx) / view.scale - padX,
-    maxY: (height - view.ty) / view.scale - padY,
-  });
-  /** Every other course, and how far a dropped course's centre must stay from its centre. */
-  const coursesToClear = (rootId: string) => {
-    const reach = (id: string) => planned.outer.get(id) ?? RING0;
-    return simNodesRef.current
-      .filter((sn) => sn.is_subject_root && sn.id !== rootId && sn.x != null && sn.y != null)
-      .map((sn) => {
-        // Where the course is headed (its pin may still be sliding there).
-        const home = rootHomeRef.current.get(sn.id) ?? { x: sn.x!, y: sn.y! };
-        return { x: home.x, y: home.y, keep: reach(rootId) + reach(sn.id) + 2 * COURSE_MARGIN };
-      });
+    const place = { radius: Math.hypot(n.x - c.x, n.y - c.y), angle: Math.atan2(n.y - c.y, n.x - c.x) };
+    Object.assign(seat, place);
+    placedRef.current.set(n.id, place);
   };
 
   const onNodePointerDown = (e: React.PointerEvent, n: SimNode) => {
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     movedRef.current = false;
+    // Anything still stepping aside from the last move stops where it is.
+    adoptPlaces();
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     // Only the node in hand moves. Everything else keeps its seat, stepping
     // aside while the node passes and back again after.
@@ -1034,34 +1086,23 @@ function KnowledgeGraph2DImpl({
           n.x = n.fx;
           n.y = n.fy;
         }
-        if (n.is_subject_root && movedRef.current && n.x != null && n.y != null) {
-          // A dragged course moves its home: it settles where the student put
-          // it — or as near as leaves it clear of the other courses — and its
-          // concepts' rings follow it there.
-          movedRootsRef.current.add(n.id);
-          const reach = planned.outer.get(n.id) ?? RING0;
-          rootHomeRef.current.set(
-            n.id,
-            clearOfCourses({ x: n.x, y: n.y }, coursesToClear(n.id), [
-              inView(reach + RING_REACH.x, reach + RING_REACH.y),
-              inView(ROOT_CLEARANCE, ROOT_CLEARANCE),
-            ]),
-          );
-        }
         if (n.is_subject_root) {
-          // A course root stays pinned; the pin slides to its home.
+          // A course stays where it is let go: its root stays pinned there,
+          // and its concepts settle round it. One dropped on another course
+          // pushes it aside (the "courses" force).
           n.fx = n.x;
           n.fy = n.y;
+          if (movedRef.current && n.x != null && n.y != null) {
+            movedRootsRef.current.add(n.id);
+            rootHomeRef.current.set(n.id, { x: n.x, y: n.y });
+          }
         } else {
-          // A dropped concept takes the seat nearest to where it was let go,
-          // and whatever sat there takes the seat it left. Every concept is
-          // always on a seat, so however they are moved about they stay as
-          // far apart as they were planned.
+          // A concept stays where it is let go: that spot becomes its seat.
           n.fx = null;
           n.fy = null;
           n.vx = 0;
           n.vy = 0;
-          if (movedRef.current) seatDropped(n);
+          if (movedRef.current) placeHere(n);
         }
       }
       // Reheat so the release plays out; alphaTarget 0 lets it settle again.

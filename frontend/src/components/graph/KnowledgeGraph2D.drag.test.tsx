@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Moving nodes about keeps the graph spaced out.
+ * Moving nodes about is free and fluid, and keeps the graph spaced out.
  *
- * Every concept sits on a seat its course planned with room for its caption.
  * A concept the student drags moves alone (nothing linked to it is pulled
- * along), and when it is let go it takes the seat nearest to where it was
- * dropped, trading places with whatever sat there. However the concepts are
- * moved about, they stay as far apart as planned. A course dropped onto
- * another is set down beside it.
+ * along) and stays wherever it is let go; whatever it lands on steps aside,
+ * keeps the spot it stepped to, and nothing snaps back. A course carries its
+ * concepts with it, stays where it is let go, and shoves aside a course it is
+ * dragged into. However things are moved about, no two concepts end up
+ * closer than their clearance.
  *
  * The simulation runs on d3-timer, which reads its clock and picks how to
  * wait for a frame when it first loads. Here it loads under fake timers and
@@ -121,8 +121,30 @@ function drag(container: HTMLElement, id: string, to: Pt, { hold = false } = {})
 const W = 1240;
 const H = 900;
 
+/** Two concepts never end up closer than this (twice the concept clearance). */
+const CLEAR = 64;
+
+/** Press on a node and let go where it was: a click. */
+function click(container: HTMLElement, id: string) {
+  const svg = container.querySelector("svg[role=img]")!;
+  const g = container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"]`)!;
+  const p = positions(container).get(id)!;
+  fireEvent.pointerDown(g, { pointerId: 1, button: 0, clientX: p.x, clientY: p.y });
+  fireEvent.pointerUp(svg, { pointerId: 1, clientX: p.x, clientY: p.y });
+  frames(400);
+}
+
+/** The smallest distance between any two of the given points. */
+function closest(pts: Pt[]): number {
+  let nearest = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) nearest = Math.min(nearest, dist(pts[i], pts[j]));
+  }
+  return nearest;
+}
+
 describe("KnowledgeGraph2D — dragging a concept", SLOW, () => {
-  it("drags only the concept in hand: what is linked to it only leans after it", () => {
+  it("drags only the concept in hand: what is linked to it stays put", () => {
     const nodes = [root("c1"), ...concepts(12)];
     const ids = nodes.slice(1).map((n) => n.id);
     const edges = chain(ids.slice(0, 6));
@@ -134,69 +156,69 @@ describe("KnowledgeGraph2D — dragging a concept", SLOW, () => {
     drag(container, held, to, { hold: true });
     const now = positions(container);
     expect(dist(now.get(held)!, to)).toBeLessThan(1);
-    // Its neighbours on the chain lean after it, held back by their seats:
-    // less than a seat's width. On ropes they were hauled all the way along.
-    for (const id of [ids[1], ids[3]]) expect(dist(now.get(id)!, before.get(id)!), id).toBeLessThan(70);
-    // What is not linked to it does not move, and neither does its course.
-    for (const id of ids.slice(6)) expect(dist(now.get(id)!, before.get(id)!), id).toBeLessThan(15);
+    // Its neighbours on the chain are not pulled after it. A concept it
+    // brushed past on the way may still be stepping back, a little.
+    for (const id of ids.filter((i) => i !== held)) expect(dist(now.get(id)!, before.get(id)!), id).toBeLessThan(20);
     expect(dist(now.get("root-c1")!, before.get("root-c1")!)).toBeLessThan(1);
-    // Let go, they spring back.
+    // Let go: everything else is back where it was.
     const svg = container.querySelector("svg[role=img]")!;
     fireEvent.pointerUp(svg, { pointerId: 1, clientX: to.x, clientY: to.y });
     frames(600);
     const after = positions(container);
-    // It took the outer seat on that side; they lean a little toward it.
-    for (const id of [ids[1], ids[3]]) expect(dist(after.get(id)!, before.get(id)!), id).toBeLessThan(20);
+    for (const id of ids.filter((i) => i !== held)) expect(dist(after.get(id)!, before.get(id)!), id).toBeLessThan(1);
   });
 
-  it("trades places with the concept it is let go on; nothing else moves", () => {
+  it("stays where it is let go, and is still there after other moves", () => {
+    const nodes = [root("c1"), ...concepts(12)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={chain(ids.slice(0, 4))} width={W} height={H} />);
+    const before = positions(container);
+    const centre = before.get("root-c1")!;
+    // Out past the course's edge, in open space.
+    const spot = { x: centre.x + 330, y: centre.y + 120 };
+    drag(container, ids[1], spot);
+    expect(dist(positions(container).get(ids[1])!, spot)).toBeLessThan(1);
+    // Moving something else, and clicking a third, leave it where it is.
+    drag(container, ids[7], { x: centre.x - 300, y: centre.y - 150 });
+    click(container, ids[9]);
+    expect(dist(positions(container).get(ids[1])!, spot)).toBeLessThan(1);
+  });
+
+  it("goes nowhere when let go near where it was: no snapping back", () => {
+    const nodes = [root("c1"), ...concepts(12)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
+    const at = positions(container);
+    const centre = at.get("root-c1")!;
+    // A concept on the outer ring, nudged a little further out: nothing is in
+    // the way there, so nothing makes it move.
+    const id = ids.reduce((far, i) => (dist(at.get(i)!, centre) > dist(at.get(far)!, centre) ? i : far));
+    const p = at.get(id)!;
+    const d = dist(p, centre);
+    const spot = { x: p.x + ((p.x - centre.x) / d) * 17, y: p.y + ((p.y - centre.y) / d) * 17 };
+    drag(container, id, spot);
+    expect(dist(positions(container).get(id)!, spot)).toBeLessThan(1);
+  });
+
+  it("makes room when let go on another concept, and both keep their new spots", () => {
     const nodes = [root("c1"), ...concepts(12)];
     const ids = nodes.slice(1).map((n) => n.id);
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
     const before = positions(container);
-    // Two concepts on opposite sides of the course.
-    const centre = before.get("root-c1")!;
-    const [a, b] = [...ids]
-      .map((id) => ({ id, a: Math.atan2(before.get(id)!.y - centre.y, before.get(id)!.x - centre.x) }))
-      .sort((p, q) => p.a - q.a)
-      .filter((_, i, all) => i === 0 || i === Math.floor(all.length / 2))
-      .map((p) => p.id);
+    const [a, b] = [ids[0], ids[6]];
     drag(container, a, before.get(b)!);
     const after = positions(container);
-    // Straight across the course, past its centre, each to the other's seat.
-    expect(dist(after.get(a)!, before.get(b)!)).toBeLessThan(4);
-    expect(dist(after.get(b)!, before.get(a)!)).toBeLessThan(4);
-    for (const id of ids) {
-      if (id === a || id === b) continue;
-      expect(dist(after.get(id)!, before.get(id)!), id).toBeLessThan(4);
-    }
-  });
-
-  it("goes back to its own seat when let go near it", () => {
-    const nodes = [root("c1"), ...concepts(12)];
-    const ids = nodes.slice(1).map((n) => n.id);
-    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
-    const before = positions(container);
-    const p = before.get(ids[4])!;
-    drag(container, ids[4], { x: p.x + 14, y: p.y - 10 });
-    const after = positions(container);
-    for (const id of ids) expect(dist(after.get(id)!, before.get(id)!), id).toBeLessThan(8);
-  });
-
-  it("takes the nearest seat when let go outside its course, not a spot off on its own", () => {
-    const nodes = [root("c1"), ...concepts(30)];
-    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
-    const before = positions(container);
-    const centre = before.get("root-c1")!;
-    const outer = Math.max(...[...before].filter(([id]) => id !== "root-c1").map(([, p]) => dist(p, centre)));
-    // The concept nearest the centre, dropped far off to the right.
-    const id = [...before].filter(([k]) => k !== "root-c1").sort((p, q) => dist(p[1], centre) - dist(q[1], centre))[0][0];
-    drag(container, id, { x: centre.x + 520, y: centre.y + 30 });
-    const after = positions(container).get(id)!;
-    // On the outer ring, on the side it was dropped.
-    expect(dist(after, centre)).toBeGreaterThan(outer - 12);
-    expect(dist(after, centre)).toBeLessThan(outer + 12);
-    expect(after.x - centre.x).toBeGreaterThan(outer * 0.8);
+    // They part to a caption's width, splitting the difference: neither is
+    // sent back to where it came from.
+    expect(dist(after.get(a)!, after.get(b)!)).toBeGreaterThanOrEqual(CLEAR - 1);
+    expect(dist(after.get(a)!, before.get(b)!)).toBeLessThan(CLEAR);
+    expect(dist(after.get(b)!, before.get(b)!)).toBeLessThan(CLEAR);
+    // Another move elsewhere leaves both where they settled.
+    const centre = after.get("root-c1")!;
+    drag(container, ids[9], { x: centre.x + 360, y: centre.y });
+    const later = positions(container);
+    expect(dist(later.get(a)!, after.get(a)!)).toBeLessThan(1);
+    expect(dist(later.get(b)!, after.get(b)!)).toBeLessThan(1);
   });
 
   it("keeps every concept a caption apart, however many are moved about", () => {
@@ -204,39 +226,52 @@ describe("KnowledgeGraph2D — dragging a concept", SLOW, () => {
     const ids = nodes.slice(1).map((n) => n.id);
     const edges = [...chain(ids.slice(0, 10)), ...chain([ids[3], ids[14], ids[15], ids[16]])];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} />);
-    const centre = positions(container).get("root-c1")!;
+    const start = positions(container);
+    const centre = start.get("root-c1")!;
+    // Each dropped right on top of another concept, or near the course's centre.
     const moves: Array<[string, Pt]> = [
-      [ids[0], { x: centre.x + 300, y: centre.y }],
+      [ids[0], start.get(ids[20])!],
       [ids[9], { x: centre.x - 40, y: centre.y + 30 }],
-      [ids[20], { x: centre.x, y: centre.y - 260 }],
-      [ids[14], { x: centre.x - 250, y: centre.y + 200 }],
+      [ids[21], start.get(ids[22])!],
+      [ids[14], start.get(ids[2])!],
       [ids[5], { x: centre.x + 60, y: centre.y + 60 }],
-      [ids[27], { x: centre.x + 20, y: centre.y - 20 }],
+      [ids[27], start.get(ids[28])!],
     ];
     for (const [id, to] of moves) drag(container, id, to);
     const pts = [...positions(container)].filter(([id]) => id !== "root-c1").map(([, p]) => p);
-    let nearest = Infinity;
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) nearest = Math.min(nearest, dist(pts[i], pts[j]));
-    }
-    // As planned: neighbours about 66 or more apart. Pulled along on ropes,
-    // concepts used to end up on top of one another.
-    expect(nearest).toBeGreaterThan(58);
-    for (const p of pts) expect(dist(p, centre)).toBeLessThan(232 + 15);
+    expect(closest(pts)).toBeGreaterThanOrEqual(CLEAR - 1);
+    // Nothing went in under the course's root.
+    for (const p of pts) expect(dist(p, centre)).toBeGreaterThanOrEqual(58 + 32 - 1);
   });
 
   it("moves nothing on a click", () => {
     const nodes = [root("c1"), ...concepts(12)];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
     const before = positions(container);
-    const svg = container.querySelector("svg[role=img]")!;
-    const g = container.querySelector('[data-testid="graph-node"][data-node-id="c1-n03"]')!;
-    const p = before.get("c1-n03")!;
-    fireEvent.pointerDown(g, { pointerId: 1, button: 0, clientX: p.x, clientY: p.y });
-    fireEvent.pointerUp(svg, { pointerId: 1, clientX: p.x, clientY: p.y });
-    frames(400);
+    click(container, "c1-n03");
     const after = positions(container);
-    for (const [id, q] of before) expect(dist(after.get(id)!, q), id).toBeLessThan(2);
+    for (const [id, q] of before) expect(dist(after.get(id)!, q), id).toBeLessThan(1);
+  });
+
+  it("keeps where it was put when the window is re-measured", () => {
+    const nodes = [root("c1"), ...concepts(12)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const shown = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
+    const before = positions(shown.container);
+    const centre = before.get("root-c1")!;
+    const spot = { x: centre.x + 300, y: centre.y - 140 };
+    drag(shown.container, ids[3], spot);
+    // A wider window re-plans the graph and moves the course to the new middle.
+    shown.rerender(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W + 200} height={H} />);
+    frames(400);
+    const after = positions(shown.container);
+    const moved = { x: after.get("root-c1")!.x - centre.x, y: after.get("root-c1")!.y - centre.y };
+    // Where it was put, relative to its course: not back on its planned seat.
+    expect(dist(after.get(ids[3])!, { x: spot.x + moved.x, y: spot.y + moved.y })).toBeLessThan(1);
+    for (const id of ids.filter((i) => i !== ids[3])) {
+      const was = before.get(id)!;
+      expect(dist(after.get(id)!, { x: was.x + moved.x, y: was.y + moved.y }), id).toBeLessThan(1);
+    }
   });
 });
 
@@ -244,32 +279,60 @@ describe("KnowledgeGraph2D — dragging a course", SLOW, () => {
   it.each([
     ["plain", false],
     ["legible", true],
-  ])("sets a course dropped onto another down beside it (%s)", (_name, legible) => {
+  ])("carries its concepts with it and stays where it is let go (%s)", (_name, legible) => {
     const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
     const { container } = render(
       <KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} legible={legible} />,
     );
     const before = positions(container);
-    drag(container, "root-c1", { x: before.get("root-c2")!.x + 10, y: before.get("root-c2")!.y + 10 });
+    const from = before.get("root-c1")!;
+    const to = { x: from.x - 30, y: from.y + 180 };
+    drag(container, "root-c1", to);
     const after = positions(container);
-    const plan = layout.planRadial(nodes, [], W, H);
-    const reach = Math.max(...[...plan.orbit.values()].map((o) => o.radius));
-    // Each course keeps its rings and a margin to itself.
-    expect(dist(after.get("root-c1")!, after.get("root-c2")!)).toBeGreaterThan(2 * reach + 2 * layout.COURSE_MARGIN - 6);
-    // The course it landed on did not move.
-    expect(dist(after.get("root-c2")!, before.get("root-c2")!)).toBeLessThan(6);
-    // Its concepts came with it, around it.
+    expect(dist(after.get("root-c1")!, to)).toBeLessThan(1);
+    // Every concept of the course kept its place round it.
     for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === "c1")) {
-      expect(dist(after.get(n.id)!, after.get("root-c1")!), n.id).toBeLessThan(reach + 15);
+      const was = before.get(n.id)!;
+      expect(dist(after.get(n.id)!, { x: was.x + to.x - from.x, y: was.y + to.y - from.y }), n.id).toBeLessThan(1);
+    }
+    // The other course did not move.
+    expect(dist(after.get("root-c2")!, before.get("root-c2")!)).toBeLessThan(1);
+  });
+
+  it("pulls its concepts after it while it is being dragged", () => {
+    const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
+    const before = positions(container);
+    const from = before.get("root-c1")!;
+    const to = { x: from.x, y: from.y + 200 };
+    drag(container, "root-c1", to, { hold: true });
+    const held = positions(container);
+    // Still holding on: the concepts have followed it most of the way.
+    for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === "c1")) {
+      expect(held.get(n.id)!.y - before.get(n.id)!.y, n.id).toBeGreaterThan(150);
     }
   });
 
-  it("stays where it is dropped in open space", () => {
-    const nodes = [root("c1"), root("c2"), ...concepts(5, "c1"), ...concepts(5, "c2")];
-    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
+  it.each([
+    ["plain", false],
+    ["legible", true],
+  ])("shoves aside a course it is dropped onto, and stays where it is let go (%s)", (_name, legible) => {
+    const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
+    const { container } = render(
+      <KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} legible={legible} />,
+    );
     const before = positions(container);
-    const to = { x: before.get("root-c1")!.x - 40, y: before.get("root-c1")!.y + 120 };
-    drag(container, "root-c1", to);
-    expect(dist(positions(container).get("root-c1")!, to)).toBeLessThan(2);
+    const target = { x: before.get("root-c2")!.x - 40, y: before.get("root-c2")!.y + 20 };
+    drag(container, "root-c1", target);
+    const after = positions(container);
+    const plan = layout.planRadial(nodes, [], W, H);
+    const reach = Math.max(...[...plan.orbit.values()].map((o) => o.radius)) + 32;
+    // Clear of each other: both courses' concepts plus a gap.
+    expect(dist(after.get("root-c1")!, after.get("root-c2")!)).toBeGreaterThan(2 * reach + 40 - 2);
+    // No two concepts overlap, across the two courses.
+    const pts = [...after].filter(([id]) => !id.startsWith("root-")).map(([, p]) => p);
+    expect(closest(pts)).toBeGreaterThanOrEqual(CLEAR - 1);
+    // The pushed course stays in the window.
+    expect(after.get("root-c2")!.x).toBeLessThanOrEqual(W - 58 + 1);
   });
 });

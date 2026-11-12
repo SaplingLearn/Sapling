@@ -7,20 +7,19 @@ import {
   RING0,
   RING_REACH,
   RING_STEP,
-  clearOfCourses,
   computeDepths,
   courseLinks,
   forceOrbit,
   importanceRadii,
   isDirected,
   labelOpacityAt,
-  nearestSeat,
   packCourses,
   planBounds,
   planRadial,
+  pushCoursesApart,
+  reachByCourse,
   ringsFor,
   splitEdges,
-  swapSeats,
   type RadialPlan,
 } from "./radialLayout";
 
@@ -806,132 +805,116 @@ describe("planRadial — untangling", () => {
   });
 });
 
-describe("nearestSeat / swapSeats", () => {
-  // Four seats a quarter turn apart on one ring, and one on a second course.
-  const orbit = (): RadialPlan["orbit"] =>
-    new Map([
-      ["e", { rootId: "r", radius: 100, angle: 0, depth: 0 }],
-      ["s", { rootId: "r", radius: 100, angle: Math.PI / 2, depth: 0 }],
-      ["w", { rootId: "r", radius: 100, angle: Math.PI, depth: 1 }],
-      ["n", { rootId: "r", radius: 100, angle: -Math.PI / 2, depth: 2 }],
-      ["far", { rootId: "r2", radius: 100, angle: Math.PI, depth: 0 }],
-    ]);
-
-  it("finds the concept on the seat nearest to where a concept was let go", () => {
-    expect(nearestSeat(orbit(), "e", -90, 10)).toBe("w");
-    expect(nearestSeat(orbit(), "e", 5, 95)).toBe("s");
-    expect(nearestSeat(orbit(), "e", 0, -300)).toBe("n");
+describe("reachByCourse", () => {
+  it("is each course's furthest seat", () => {
+    const plan = planRadial([root("c1"), root("c2"), ...concepts(30, "c1"), ...concepts(4, "c2")], [], 1240, 744);
+    const reach = reachByCourse(plan.orbit);
+    expect(reach.get("root-c1")).toBe(232);
+    expect(reach.get("root-c2")).toBe(RING0);
+    expect(reach.has("root-c3")).toBe(false);
   });
 
-  it("keeps a concept on its own seat when that is still the nearest", () => {
-    expect(nearestSeat(orbit(), "e", 100, 0)).toBe("e");
-    expect(nearestSeat(orbit(), "e", 60, 30)).toBe("e");
-    // Exactly between its own seat and another: it stays.
-    expect(nearestSeat(orbit(), "e", 50, 50)).toBe("e");
-  });
-
-  it("only ever takes a seat in its own course", () => {
-    // Dropped right on the other course's seat (relative to its own centre).
-    expect(nearestSeat(orbit(), "e", -100, 0)).toBe("w");
-    expect(nearestSeat(orbit(), "far", 100, 0)).toBe("far");
-  });
-
-  it("leaves a concept with no seat where it is", () => {
-    expect(nearestSeat(orbit(), "ghost", 0, 0)).toBe("ghost");
-  });
-
-  it("trades two seats, each concept keeping its own depth", () => {
-    const o = orbit();
-    swapSeats(o, "e", "w");
-    expect(o.get("e")).toEqual({ rootId: "r", radius: 100, angle: Math.PI, depth: 0 });
-    expect(o.get("w")).toEqual({ rootId: "r", radius: 100, angle: 0, depth: 1 });
-  });
-
-  it("trades nothing across courses, with itself, or with no one", () => {
-    const o = orbit();
-    const before = JSON.stringify([...o]);
-    swapSeats(o, "e", "far");
-    swapSeats(o, "e", "e");
-    swapSeats(o, "e", "ghost");
-    expect(JSON.stringify([...o])).toBe(before);
-  });
-
-  it("keeps every seat filled however concepts are moved about", () => {
-    const o = orbit();
-    const seats = () => [...o.values()].filter((v) => v.rootId === "r").map((v) => v.angle.toFixed(6)).sort();
-    const before = seats();
-    for (const [id, x, y] of [["e", -100, 0], ["w", 0, 100], ["s", 0, -100], ["n", 100, 5]] as const) {
-      swapSeats(o, id, nearestSeat(o, id, x, y));
-    }
-    expect(seats()).toEqual(before);
+  it("groups concepts with no course under null", () => {
+    const plan = planRadial(concepts(7), [], 500, 340);
+    expect([...reachByCourse(plan.orbit).keys()]).toEqual([null]);
   });
 });
 
-describe("clearOfCourses", () => {
-  const A = { x: 0, y: 0, keep: 300 };
-  const B = { x: 600, y: 0, keep: 300 };
+describe("pushCoursesApart", () => {
+  const course = (id: string, x: number, y: number, reach = 100, held = false) => ({ id, x, y, reach, held });
 
-  it("leaves a course dropped in open space where it was let go", () => {
-    expect(clearOfCourses({ x: 0, y: 400 }, [A, B])).toEqual({ x: 0, y: 400 });
-    expect(clearOfCourses({ x: 5, y: 5 }, [])).toEqual({ x: 5, y: 5 });
+  it("leaves courses that are clear of each other alone", () => {
+    expect(pushCoursesApart([course("a", 0, 0), course("b", 240, 0)], 40, 0.5).size).toBe(0);
+    expect(pushCoursesApart([course("a", 0, 0)], 40, 0.5).size).toBe(0);
   });
 
-  it("sets a course dropped onto another down beside it, moved as little as it takes", () => {
-    // Dropped 100 below A's centre: straight out below it, to the edge of A's space.
-    const p = clearOfCourses({ x: 0, y: 100 }, [A]);
-    expect(p.x).toBeCloseTo(0, 6);
-    expect(p.y).toBeCloseTo(300, 6);
+  it("pushes two overlapping courses straight apart, half each", () => {
+    // 200 apart, 240 wanted: 40 of overlap, half of it closed this step.
+    const moves = pushCoursesApart([course("a", 0, 0), course("b", 200, 0)], 40, 0.5);
+    expect(moves.get("a")).toEqual({ dx: -10, dy: 0 });
+    expect(moves.get("b")).toEqual({ dx: 10, dy: 0 });
   });
 
-  it("finds a spot clear of every course, not just the one it landed on", () => {
-    // Dropped between A and B: out of A's space to the right is into B's.
-    const p = clearOfCourses({ x: 300, y: 10 }, [A, B]);
-    expect(Math.hypot(p.x - A.x, p.y - A.y)).toBeGreaterThanOrEqual(A.keep - 1e-6);
-    expect(Math.hypot(p.x - B.x, p.y - B.y)).toBeGreaterThanOrEqual(B.keep - 1e-6);
-    // Above or below the gap between them, not off past either end.
-    expect(p.x).toBeGreaterThan(100);
-    expect(p.x).toBeLessThan(500);
+  it("moves only the other course when one is held", () => {
+    const moves = pushCoursesApart([course("a", 0, 0, 100, true), course("b", 0, 150)], 40, 0.5);
+    expect(moves.has("a")).toBe(false);
+    expect(moves.get("b")!.dx).toBeCloseTo(0, 9);
+    expect(moves.get("b")!.dy).toBeCloseTo(45, 9);
+    const other = pushCoursesApart([course("a", 0, 0), course("b", 0, 150, 100, true)], 40, 0.5);
+    expect(other.has("b")).toBe(false);
+    expect(other.get("a")!.dy).toBeCloseTo(-45, 9);
   });
 
-  it("copes with a course dropped dead on another's centre", () => {
-    const p = clearOfCourses({ x: 0, y: 0 }, [A]);
-    expect(Math.hypot(p.x, p.y)).toBeCloseTo(300, 6);
+  it("separates two courses on exactly the same spot", () => {
+    const moves = pushCoursesApart([course("a", 50, 50), course("b", 50, 50)], 40, 1);
+    expect(moves.get("a")!.dx).toBeLessThan(0);
+    expect(moves.get("b")!.dx).toBeGreaterThan(0);
   });
 
-  it("prefers a spot in view to a nearer one out of it", () => {
-    // The nearest clear spot is above A, off the top of the view.
-    const view = { minX: -1000, minY: -100, maxX: 1000, maxY: 1000 };
-    const p = clearOfCourses({ x: 0, y: -50 }, [A], [view]);
-    expect(p.y).toBeGreaterThanOrEqual(view.minY);
-    expect(Math.hypot(p.x, p.y)).toBeCloseTo(300, 6);
+  it("adds up the pushes from every course a course overlaps", () => {
+    const moves = pushCoursesApart([course("a", -150, 0), course("b", 0, 0), course("c", 150, 0)], 40, 1);
+    // b is pushed both ways equally: it stays.
+    expect(moves.get("b")!.dx).toBeCloseTo(0, 9);
+    expect(moves.get("a")!.dx).toBeLessThan(0);
+    expect(moves.get("c")!.dx).toBeGreaterThan(0);
   });
 
-  it("falls back to the next area, then anywhere clear", () => {
-    const nowhere = { minX: 5000, minY: 5000, maxX: 5001, maxY: 5001 };
-    const below = { minX: -1000, minY: 200, maxX: 1000, maxY: 1000 };
-    const p = clearOfCourses({ x: 0, y: -50 }, [A], [nowhere, below]);
-    expect(p.y).toBeGreaterThanOrEqual(200);
-    const q = clearOfCourses({ x: 0, y: -50 }, [A], [nowhere]);
-    expect(q.x).toBeCloseTo(0, 6);
-    expect(q.y).toBeCloseTo(-300, 6);
-  });
-
-  it("always finds a spot clear of every course, however crowded", () => {
-    // Courses packed close round the drop point, of mixed sizes.
-    let seed = 7;
-    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let trial = 0; trial < 50; trial++) {
-      const others = Array.from({ length: 2 + (trial % 6) }, () => ({
-        x: (rand() - 0.5) * 800,
-        y: (rand() - 0.5) * 800,
-        keep: 200 + rand() * 300,
-      }));
-      const at = { x: (rand() - 0.5) * 400, y: (rand() - 0.5) * 400 };
-      const p = clearOfCourses(at, others);
-      for (const o of others) {
-        expect(Math.hypot(p.x - o.x, p.y - o.y), `trial ${trial}`).toBeGreaterThanOrEqual(o.keep - 1e-6);
+  it("clears every overlap when run step after step", () => {
+    let courses = [course("a", 0, 0), course("b", 30, 10), course("c", -20, 40), course("d", 10, -30)];
+    for (let i = 0; i < 200; i++) {
+      const moves = pushCoursesApart(courses, 40, 0.15);
+      courses = courses.map((c) => ({ ...c, x: c.x + (moves.get(c.id)?.dx ?? 0), y: c.y + (moves.get(c.id)?.dy ?? 0) }));
+    }
+    for (let i = 0; i < courses.length; i++) {
+      for (let j = i + 1; j < courses.length; j++) {
+        expect(Math.hypot(courses[i].x - courses[j].x, courses[i].y - courses[j].y)).toBeGreaterThan(240 - 1);
       }
     }
+  });
+});
+
+describe("planRadial — four courses of fifty", () => {
+  const W = 1240;
+  const H = 744;
+  const courses = ["c1", "c2", "c3", "c4"];
+  const nodes = [...courses.map(root), ...courses.flatMap((c) => concepts(50, c))];
+  const plan = () => planRadial(nodes, [], W, H);
+
+  it("seats each course on four rings, every concept with its own room", () => {
+    const p = plan();
+    for (const c of courses) {
+      const radii = [...p.orbit.values()].filter((o) => o.rootId === `root-${c}`).map((o) => o.radius);
+      expect(radii).toHaveLength(50);
+      expect([...new Set(radii)].sort((a, b) => a - b)).toEqual([96, 164, 232, 300]);
+    }
+    const pts = [...p.orbit.values()].map((o) => {
+      const centre = p.centers.get(o.rootId!)!;
+      return { x: centre.x + Math.cos(o.angle) * o.radius, y: centre.y + Math.sin(o.angle) * o.radius };
+    });
+    let nearest = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) nearest = Math.min(nearest, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y));
+    }
+    expect(nearest).toBeGreaterThanOrEqual(64);
+  });
+
+  it("lays the four courses out in two rows of two, clear of each other", () => {
+    const centres = [...plan().centers.values()];
+    const rows = new Set(centres.map((c) => Math.round(c.y)));
+    expect(rows.size).toBe(2);
+    for (let i = 0; i < centres.length; i++) {
+      for (let j = i + 1; j < centres.length; j++) {
+        const d = Math.hypot(centres[i].x - centres[j].x, centres[i].y - centres[j].y);
+        expect(d).toBeGreaterThanOrEqual(2 * (300 + COURSE_MARGIN) - 1e-6);
+      }
+    }
+  });
+
+  it("opens at about half size in a 1240 × 744 window", () => {
+    const b = planBounds(plan(), W, H)!;
+    const scale = Math.min(W / (b.maxX - b.minX), H / (b.maxY - b.minY));
+    expect(scale).toBeGreaterThan(0.45);
+    expect(scale).toBeLessThan(0.6);
   });
 });
 

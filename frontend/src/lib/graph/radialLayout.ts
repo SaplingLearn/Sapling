@@ -252,8 +252,6 @@ function rowLengths(count: number, rows: number): number[] {
   return out;
 }
 
-/** How many spots round each course a dropped course is tried at (`clearOfCourses`). */
-const SPOTS_ROUND = 72;
 /** Rounds of seat trading; a large course gets fewer, to bound the work. */
 const UNTANGLE_ROUNDS = 16;
 const UNTANGLE_LARGE = 400;
@@ -570,99 +568,57 @@ export function planBounds(plan: RadialPlan, width: number, height: number) {
 }
 
 /**
- * The seat a dropped concept takes: of all the seats in its own course, the
- * one nearest to where it was let go (`dx`, `dy` from the course's centre).
- * Returns the concept sitting there now, which is the dropped concept itself
- * while its own seat is still the nearest.
- *
- * A seat is a place (a ring and an angle on it), and a course's seats are
- * what the plan spaced out. Concepts only ever trade them (`swapSeats`), so
- * however a student moves concepts about, they stay as far apart as planned.
+ * How far each course's concepts reach from its centre: the furthest seat
+ * among them. Courses with no concepts are absent.
  */
-export function nearestSeat(orbit: RadialPlan["orbit"], id: string, dx: number, dy: number): string {
-  const own = orbit.get(id);
-  if (!own) return id;
-  const reach = (o: { radius: number; angle: number }) =>
-    Math.hypot(Math.cos(o.angle) * o.radius - dx, Math.sin(o.angle) * o.radius - dy);
-  let best = id;
-  // Its own seat wins a tie: a concept let go where it sat stays put.
-  let nearest = reach(own);
-  for (const [other, o] of orbit) {
-    if (other === id || o.rootId !== own.rootId) continue;
-    const d = reach(o);
-    if (d < nearest - 1e-9) {
-      nearest = d;
-      best = other;
-    }
-  }
-  return best;
+export function reachByCourse(orbit: RadialPlan["orbit"]): Map<string | null, number> {
+  const reach = new Map<string | null, number>();
+  for (const o of orbit.values()) reach.set(o.rootId, Math.max(reach.get(o.rootId) ?? 0, o.radius));
+  return reach;
 }
 
 /**
- * Two concepts of one course trade seats. Each keeps its own depth, which
- * says what leads into the concept, not where it sits.
+ * One step of pushing overlapping courses apart, as moves to apply to their
+ * centres. Two courses overlap when their centres are closer than both
+ * `reach`es plus `gap`; each step closes `share` of the overlap. A course
+ * the student is holding (`held`) stays put and the other gives way all of
+ * that; otherwise the two give way half each. Run every tick, so a course
+ * dragged into another shoves it along, and courses dropped on top of each
+ * other drift apart until they are clear.
  */
-export function swapSeats(orbit: RadialPlan["orbit"], a: string, b: string): void {
-  const first = orbit.get(a);
-  const second = orbit.get(b);
-  if (!first || !second || a === b || first.rootId !== second.rootId) return;
-  [first.radius, second.radius] = [second.radius, first.radius];
-  [first.angle, second.angle] = [second.angle, first.angle];
-}
-
-/**
- * Where a dropped course comes to rest: where it was let go when that is
- * clear of every other course, else the nearest spot that is. `keep` is the
- * least distance allowed between its centre and that course's. A course
- * dropped onto another is set down beside it rather than left tangled in it.
- *
- * The spots tried are those right at the allowed distance from some course,
- * all the way round it. `within` lists areas to keep to, most wanted first
- * (the part of the window the whole course fits in, then the part its centre
- * is visible in): a spot inside one is preferred to a nearer spot outside,
- * so a course is not set down off the edge of the window while there is
- * room in it. Courses take up a bounded space, so there is always a clear
- * spot on its edge.
- */
-export function clearOfCourses(
-  at: { x: number; y: number },
-  others: ReadonlyArray<{ x: number; y: number; keep: number }>,
-  within: ReadonlyArray<{ minX: number; minY: number; maxX: number; maxY: number }> = [],
-): { x: number; y: number } {
-  const clear = (p: { x: number; y: number }) =>
-    others.every((o) => Math.hypot(p.x - o.x, p.y - o.y) >= o.keep - 1e-6);
-  if (clear(at)) return at;
-  const spots: Array<{ x: number; y: number }> = [];
-  for (const o of others) {
-    // Starting straight out from that course through the drop point: with
-    // nothing else in the way, that is the least the course can be moved.
-    const out = Math.atan2(at.y - o.y, at.x - o.x);
-    for (let i = 0; i < SPOTS_ROUND; i++) {
-      const a = out + (i / SPOTS_ROUND) * Math.PI * 2;
-      const spot = { x: o.x + Math.cos(a) * o.keep, y: o.y + Math.sin(a) * o.keep };
-      if (clear(spot)) spots.push(spot);
+export function pushCoursesApart(
+  courses: ReadonlyArray<{ id: string; x: number; y: number; reach: number; held?: boolean }>,
+  gap: number,
+  share: number,
+): Map<string, { dx: number; dy: number }> {
+  const moves = new Map<string, { dx: number; dy: number }>();
+  const move = (id: string, dx: number, dy: number) => {
+    const m = moves.get(id) ?? { dx: 0, dy: 0 };
+    moves.set(id, { dx: m.dx + dx, dy: m.dy + dy });
+  };
+  for (let i = 0; i < courses.length; i++) {
+    for (let j = i + 1; j < courses.length; j++) {
+      const a = courses[i];
+      const b = courses[j];
+      if (a.held && b.held) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy);
+      const overlap = a.reach + b.reach + gap - d;
+      if (overlap <= 0) continue;
+      // Straight apart; from exactly on top of each other, side by side.
+      const ux = d > 1e-6 ? dx / d : 1;
+      const uy = d > 1e-6 ? dy / d : 0;
+      const step = overlap * share;
+      if (a.held) move(b.id, ux * step, uy * step);
+      else if (b.held) move(a.id, -ux * step, -uy * step);
+      else {
+        move(a.id, (-ux * step) / 2, (-uy * step) / 2);
+        move(b.id, (ux * step) / 2, (uy * step) / 2);
+      }
     }
   }
-  // Only if every sampled spot were covered; kept so the answer is always a point.
-  if (!spots.length) return at;
-  let pool = spots;
-  for (const area of within) {
-    const inside = spots.filter((p) => p.x >= area.minX && p.x <= area.maxX && p.y >= area.minY && p.y <= area.maxY);
-    if (inside.length) {
-      pool = inside;
-      break;
-    }
-  }
-  let best = at;
-  let nearest = Infinity;
-  for (const spot of pool) {
-    const d = Math.hypot(spot.x - at.x, spot.y - at.y);
-    if (d < nearest - 1e-9) {
-      nearest = d;
-      best = spot;
-    }
-  }
-  return best;
+  return moves;
 }
 
 type Positioned = { id: string; x?: number; y?: number; vx?: number; vy?: number };
