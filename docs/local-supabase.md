@@ -170,29 +170,76 @@ The chunks use encrypted text and deterministic synthetic 768-dimensional
 embeddings: the fixtures exercise storage and retrieval without calling a
 model, and are not a semantic-search relevance benchmark.
 
-#### A live Study page: `seed_local_study`
+#### A full Study Guides, Study, Quiz and Flashcards account: `seed_local_study`
 
-The rich dataset is fixed (the E2E journeys and oracles assert on it row for
-row), so its dates never move: every exam in it is in the past and nothing was
-studied "this week". On its own the Study page therefore shows zero minutes, no
-upcoming exam and no per-exam readiness. To fill it with a week of activity
-dated relative to today, run this after the rich seed, with the same owner flag:
+The rich dataset is fixed and small. The E2E journeys, the oracles and the
+integration suite assert on it row for row, the copy the watcher puts on your
+account included (`frontend/e2e/local-seed.spec.ts` counts its rows), so its
+dates never move and it cannot grow: one study guide, six flashcards, three
+quizzes, every exam in the past. On its own the Study Guides home shows one
+card and the Study page shows zero minutes and no upcoming exam.
+
+To fill your own account with a term of study data dated relative to today,
+run this from `backend/` once you have signed in (the owner flag is required;
+it never defaults to a fixture account):
 
 ```bash
 python -m db.seed_local_study --owner-email you@gmail.com   # or --owner-user-id
 ```
 
-It adds, in CS101 only: seven more concepts with their prerequisites (twelve in
-all), two upcoming exams and a homework due tomorrow, four completed quizzes,
-concept-named flashcard decks with recent reviews, three tutor sessions (two
-never "ended", the common case), this week's mastery changes, and a course
-outline grouped into four units (the roadmap's four columns) and linked to the
-two exams
-(stored under the outline's real evidence hash, so the page does not regenerate
-it with the model). Every row has a deterministic `study-…` id and is upserted:
-re-run it on a later day to move the same rows back to "this week". Local only,
-like the rich seed. It is NOT part of `scripts/local-up.sh`, a reset or any E2E
-lane, which all keep the fixed dataset.
+It writes into three of the sample classes, CS101, MATH210 and BIO110. Per
+class:
+
+- **Concept tree**: 16 to 18 concepts with prerequisites, spread over all four
+  mastery tiers, with a mastery event for every quiz and tutor session.
+- **Documents**: 11 or 12 lectures, slides, a reading, an assignment and a
+  syllabus, uploaded over the last eleven weeks, each with a summary, concept
+  notes and a few paragraphs of text.
+- **Coursework**: an exam already sat, one inside two weeks and a final inside
+  thirty days, with homework, quizzes and a project around them.
+- **Quiz**: 11 to 15 finished quizzes over the last month (38 in all), one
+  waiting to be resumed and two abandoned, with their per-answer responses
+  and a quiz digest (common mistakes, weak areas) per concept.
+- **Flashcards**: a deck per concept (196 cards in all), from never reviewed to
+  well worn, and three saved sets, some tied to an exam.
+- **Tutor**: four or five sessions. The Study page's daily minutes come from
+  these, the quizzes and the card reviews.
+- **Study guides**: four or five guides (thirteen in all). Between them they
+  cover every scope, goal and depth, three to eight sections, every block
+  type, saved and unsaved, read marks, answered checks and feedback. At least
+  two say "2 new lectures", one is still generating, one has a section that
+  failed and one is in the pre-redesign format.
+- **Course outline**: four units (the roadmap's columns) linked to the exams,
+  stored under the outline's real evidence hash so the Study page does not
+  regenerate it with the model.
+
+The content lives in `backend/db/local_study_data/`, one module per class. A
+guide is built the way a generation run leaves it: the server's own check
+decides whether each chart is plotted from data (three are, from numbers in
+the lecture they cite) and stamps the evidence line on a quiz mistake.
+
+Every row has a deterministic `study-…` id and every write is an upsert, so
+the command is safe to re-run: on a later day it moves the same rows back to
+"now", and it puts them back as seeded (a check you answered, a guide you
+regenerated). A concept or prerequisite your account already has is updated
+under the id it has. Rows that are not the seed's are left alone, apart from
+the quiz digest and the course outline of the concepts and classes it fills.
+A sample class you dropped is skipped.
+
+Things worth knowing:
+
+- The guide left generating holds a fresh generation claim. Open it within
+  fifteen minutes to see the outline waiting; after that the reader resumes
+  it with the real model, as it does for any guide left that way.
+- Flashcards carry no due date: the app stores none
+  (`services/flashcards/cards.py`), so "review state" is the review count,
+  the last rating and when.
+- Lecture counts on your own account also include lectures the seed did not
+  write (the rich seed's `linear-algebra-notes.pdf`, your uploads).
+
+Local only, like the rich seed. It is NOT part of the sign-in watcher,
+`scripts/local-up.sh`, a reset or any E2E lane, which all keep the fixed
+dataset.
 
 `scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
 `SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your

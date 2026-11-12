@@ -21,17 +21,19 @@ Per class it writes (content in ``db/local_study_data/``):
                        a syllabus, uploaded over the last eleven weeks
 - assignments ........ a past exam, one inside two weeks, a final, and
                        homework, quizzes and a project around them
-- quiz_attempts ...... 11 to 15 finished quizzes over the last month, plus one
-                       unfinished and two abandoned; quiz_responses for each
+- quiz_attempts ...... 11 to 15 finished quizzes over the last month, with
+                       their quiz_responses (and, between the classes, one
+                       waiting to be resumed and two abandoned)
 - quiz_context ....... the digest (common mistakes, weak areas) per concept
 - flashcards ......... a deck per concept, from never reviewed to well worn
 - flashcard_sets ..... three saved sets, some tied to an exam
 - sessions/messages .. four or five tutor sessions; tutor time is read from
                        their MESSAGE times (services/study/daily.py)
-- study_guides ....... four or five guides: every scope, goal and depth, every
-                       block type, some saved, some with new lectures since,
-                       one still generating, one with a failed section and
-                       one in the pre-redesign format
+- study_guides ....... four or five guides. Between the classes: every
+                       scope, goal and depth, every block type, some saved,
+                       some with new lectures since, one still generating,
+                       one with a failed section and one in the pre-redesign
+                       format
 - topic_checklists ... the course outline, grouped into four units and linked
                        to the exams, stored under the outline's REAL evidence
                        hash so the Study page does not regenerate it
