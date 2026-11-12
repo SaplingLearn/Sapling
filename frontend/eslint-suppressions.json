@@ -1,9 +1,4 @@
 {
-  "src/app/(shell)/notetaker/page.tsx": {
-    "max-lines": {
-      "count": 1
-    }
-  },
   "src/components/CustomSelect.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -34,11 +29,6 @@
       "count": 12
     }
   },
-  "src/components/Gradebook/GradescopeSyncModal.tsx": {
-    "max-lines": {
-      "count": 1
-    }
-  },
   "src/components/SessionFeedbackGlobal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -60,9 +50,6 @@
     }
   },
   "src/components/graph/KnowledgeGraph2D.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "react-hooks/exhaustive-deps": {
       "count": 1
     }
@@ -73,9 +60,6 @@
     }
   },
   "src/components/screens/Admin.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "react-hooks/exhaustive-deps": {
       "count": 2
     },
@@ -84,17 +68,11 @@
     }
   },
   "src/components/screens/Calendar.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "no-restricted-syntax": {
       "count": 20
     }
   },
   "src/components/screens/Dashboard.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "no-restricted-syntax": {
       "count": 13
     },
@@ -103,9 +81,6 @@
     }
   },
   "src/components/screens/Gradebook/Course.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "no-restricted-syntax": {
       "count": 9
     }
@@ -113,9 +88,6 @@
   "src/components/screens/Learn.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "max-lines": {
-      "count": 1
     },
     "no-restricted-syntax": {
       "count": 17
@@ -127,9 +99,6 @@
     }
   },
   "src/components/screens/Settings.tsx": {
-    "max-lines": {
-      "count": 1
-    },
     "no-restricted-syntax": {
       "count": 15
     }
@@ -137,14 +106,6 @@
   "src/components/screens/Social.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "src/components/screens/Study.tsx": {
-    "max-lines": {
-      "count": 1
     }
   },
   "src/components/screens/Tree.tsx": {
@@ -163,9 +124,6 @@
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 21
-    },
-    "max-lines": {
-      "count": 1
     }
   },
   "src/lib/useActiveSemester.ts": {

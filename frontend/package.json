@@ -16,6 +16,8 @@
     "lint:baseline": "eslint --suppress-all",
     "complexity": "node scripts/complexity_ratchet.mjs",
     "complexity:shrink": "node scripts/complexity_ratchet.mjs --shrink",
+    "max-lines": "node scripts/max_lines_ratchet.mjs",
+    "max-lines:shrink": "node scripts/max_lines_ratchet.mjs --shrink",
     "typecheck": "tsc --noEmit",
     "check:lockfile": "node scripts/check-lockfile-version.mjs",
     "test": "vitest run",

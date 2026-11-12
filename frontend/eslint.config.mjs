@@ -13,6 +13,29 @@ const complexityBaselinedFiles = [
   ),
 ].sort();
 
+// The file-size limit, and the files already over it with the line count each
+// may not pass (max-lines-baseline.json, see scripts/max_lines_ratchet.mjs).
+const MAX_LINES = { max: 800, skipBlankLines: true, skipComments: true };
+const maxLinesBaseline = JSON.parse(
+  fs.readFileSync(new URL("./max-lines-baseline.json", import.meta.url), "utf8"),
+)["max-lines"];
+
+// Bulk suppressions can only baseline a rule that is an ERROR, and CI runs
+// with --max-warnings=0, so a rule left at "warn" has no baseline: the day a
+// dependency bump adds one (eslint-config-next does, in minor releases), its
+// hits in files already on main turn CI red with no way to hold them. Every
+// "warn" is therefore promoted to "error" below, where the whole config is
+// exported. To take on such a rule: `npx eslint . --suppress-rule <rule>`.
+const isWarn = (severity) => severity === "warn" || severity === 1;
+function promoteWarnings(block) {
+  if (!block.rules) return block;
+  const rules = Object.entries(block.rules).map(([id, setting]) => {
+    if (Array.isArray(setting)) return [id, isWarn(setting[0]) ? ["error", ...setting.slice(1)] : setting];
+    return [id, isWarn(setting) ? "error" : setting];
+  });
+  return { ...block, rules: Object.fromEntries(rules) };
+}
+
 // Next 16 removed `next lint`, so linting runs through the ESLint CLI (eslint 9
 // flat config). eslint-config-next 16 ships native flat-config arrays, spread
 // directly here (this replaces the old
@@ -40,11 +63,12 @@ const eslintConfig = [
   ...nextTypescript,
   {
     rules: {
-      // exhaustive-deps is warn-by-default in eslint-config-next; promote it to
-      // error so a NEW missing dependency fails CI (the existing ones are
-      // baselined). It's the rule most likely to fire on an intentional pattern
-      // — if that starts forcing eslint-disable comments on legitimate cases,
-      // downgrade THIS single rule back to "warn" (don't relax the others).
+      // exhaustive-deps is warn-by-default in eslint-config-next; an error
+      // here so a NEW missing dependency fails CI (the existing ones are
+      // baselined). It's the rule most likely to fire on an intentional
+      // pattern: if that starts forcing eslint-disable comments on legitimate
+      // cases, turn THIS single rule off (a "warn" would be promoted back to
+      // an error, see promoteWarnings).
       "react-hooks/exhaustive-deps": "error",
       // Architecture-hardening Phase 4 (Trov #118): no function above
       // cyclomatic complexity 25. Today's offenders are held per function by
@@ -52,14 +76,15 @@ const eslintConfig = [
       // eslint-suppressions.json.
       complexity: ["error", 25],
       // File size: the big screens (Learn, notetaker, Social, ...) passed 1,500
-      // to 2,700 lines with nothing stopping them. Files already over the
-      // limit are baselined in eslint-suppressions.json, so a NEW file over it
-      // fails, and splitting a baselined one lets `--prune-suppressions` drop
-      // its entry. Tests are exempt (below): long table-driven suites are fine.
-      "max-lines": ["error", { max: 800, skipBlankLines: true, skipComments: true }],
+      // to 2,700 lines with nothing stopping them. A NEW file over the limit
+      // fails here. The files already over it are held to their own line
+      // count by the generated blocks below (max-lines/ratchet-baselined), not
+      // by eslint-suppressions.json: the rule reports once per file, so a
+      // suppressed file could keep growing. Tests are exempt (below): long
+      // table-driven suites are fine.
+      "max-lines": ["error", MAX_LINES],
       // The codebase's convention for an intentionally unused binding is a
-      // leading underscore (`predictedPercent: _predictedPercent`). Errors,
-      // not warnings, so CI can run with --max-warnings=0.
+      // leading underscore (`predictedPercent: _predictedPercent`).
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
@@ -81,6 +106,18 @@ const eslintConfig = [
     files: ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "scripts/**"],
     rules: { "max-lines": "off" },
   },
+  // Generated from max-lines-baseline.json at load: each file already over the
+  // limit gets its own ceiling, its line count when it was baselined, so it
+  // cannot grow. `npm run max-lines:shrink` lowers a ceiling after a split and
+  // deletes the entry once the file is back under the limit; the ratchet
+  // (scripts/max_lines_ratchet.test.ts in `npm test`) checks the same numbers
+  // with inline eslint-disable comments ignored. Do not edit this list; edit
+  // the baseline.
+  ...Object.entries(maxLinesBaseline).map(([file, ceiling]) => ({
+    name: `max-lines/ratchet-baselined/${file}`,
+    files: [file],
+    rules: { "max-lines": ["error", { ...MAX_LINES, max: ceiling }] },
+  })),
   // The landing-page animation engine is exempt from the complexity limit by
   // decision of its owner (Trov #118 phase 4): it is frame-loop and physics
   // code for the marketing hero, where one long tick function is clearer than
@@ -211,4 +248,4 @@ const eslintConfig = [
   },
 ];
 
-export default eslintConfig;
+export default eslintConfig.map(promoteWarnings);
