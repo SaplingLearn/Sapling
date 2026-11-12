@@ -422,7 +422,7 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   await expect(sections, THREE_SECTIONS_HINT).toHaveCount(SECTIONS.length);
   for (const section of SECTIONS) {
     await expect(
-      page.getByTestId(`guide-section-${section.id}`).getByRole("heading", { level: 2 }),
+      page.getByTestId(`guide-section-${section.id}`).getByRole("heading", { level: 3 }),
     ).toHaveText(section.title);
     await expect(page.getByTestId(`guide-section-read-${section.id}`)).toBeEnabled();
     // The rail shows live mastery once nothing is being written.
@@ -701,7 +701,7 @@ test("the seeded guide opens whole, with nothing generated", async ({ page }) =>
   await expect(page.locator('section[data-testid^="guide-section-"]')).toHaveCount(3);
   for (const [id, title] of Object.entries(titles)) {
     await expect(
-      page.getByTestId(`guide-section-${id}`).getByRole("heading", { level: 2 }),
+      page.getByTestId(`guide-section-${id}`).getByRole("heading", { level: 3 }),
     ).toHaveText(title);
     await expect(page.getByTestId(`guide-section-read-${id}`)).toBeEnabled();
   }

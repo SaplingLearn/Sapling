@@ -129,8 +129,8 @@ function dispatch(event: StreamEvent, handlers: GenerationHandlers): GuideDetail
 
 /**
  * Run (or resume) a guide's generation and resolve with the finished guide.
- * A 409 means another tab is already writing it: re-read the guide, wait,
- * and ask to resume again.
+ * A 409 means another request is already writing it: re-read the guide,
+ * wait, and ask again.
  */
 export async function generateGuide(
   userId: string,
