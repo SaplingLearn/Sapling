@@ -399,6 +399,20 @@ def test_touch_keeps_a_claim_fresh_and_release_frees_it(db):
     assert run(store.aclaim_generation(ME, "g1")) is not None
 
 
+def test_a_loaded_guide_says_whether_a_run_holds_it(db):
+    db.add("free")
+    db.add("held", generating_at=_minutes_ago(14))
+    db.add("stale", generating_at=_minutes_ago(16))
+
+    held = {name: store.claim_is_held(run(store.aload_guide(ME, name)))
+            for name in ("free", "held", "stale")}
+
+    assert held == {"free": False, "held": True, "stale": False}
+    # The same answer the claim itself gives.
+    assert run(store.aclaim_generation(ME, "held")) is None
+    assert run(store.aclaim_generation(ME, "stale")) is not None
+
+
 def test_a_save_under_the_claim_refreshes_it(db):
     db.add("g1")
     token = run(store.aclaim_generation(ME, "g1"))

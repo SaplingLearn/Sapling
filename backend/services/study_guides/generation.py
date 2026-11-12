@@ -88,10 +88,10 @@ class Charge:
     """One action counted against a student's hourly limit."""
 
     key: str
-    claim: RateLimitClaim
+    hit: RateLimitClaim
 
     def refund(self) -> None:
-        refund_rate_limit(self.key, self.claim.slot)
+        refund_rate_limit(self.key, self.hit.slot)
 
 
 @dataclass(frozen=True)
@@ -198,10 +198,10 @@ async def acharge(user_id: str, *, action: str, limit: int) -> Charge:
     """Count one `action` against the student's hourly limit.
     `GuideRateLimited` past it."""
     key = f"study-guide-{action}:{user_id}"
-    claim = await aclaim_rate_limit(key, limit=limit, window_sec=RATE_WINDOW_S)
-    if claim.retry_after is not None:
+    hit = await aclaim_rate_limit(key, limit=limit, window_sec=RATE_WINDOW_S)
+    if hit.retry_after is not None:
         raise GuideRateLimited(RATE_LIMITED_DETAIL)
-    return Charge(key=key, claim=claim)
+    return Charge(key=key, hit=hit)
 
 
 async def arelease_guide(user_id: str, guide_id: str, claim: str) -> None:
