@@ -1,13 +1,16 @@
 """
 backend/routes/auth.py
 
-Google OAuth sign-in with unified calendar access.
-Restricts sign-in to @bu.edu email accounts only.
+Google OAuth sign-in. Identity only (openid, email, profile): calendar access
+has its own consent flow (routes/calendar.py), and a student who granted it
+before keeps it (services/auth/signin.py). Restricts sign-in to the configured
+email domains (default @bu.edu).
 """
 
 import asyncio
 import hmac as _hmac
 import logging
+import re
 import secrets
 from urllib.parse import urlencode
 
@@ -93,7 +96,11 @@ def get_me(request: Request):
 
 @router.get("/google")
 def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
-    """Redirect to Google consent screen with identity + calendar scopes."""
+    """Redirect to Google's consent screen for the identity scopes.
+
+    ``include_granted_scopes`` makes the grant (and its tokens) also cover the
+    scopes the student granted us before, so a student who connected the
+    calendar keeps calendar-capable tokens across sign-ins."""
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth not configured")
 
@@ -109,6 +116,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     auth_url, _ = flow.authorization_url(
         prompt="consent",
         access_type="offline",
+        include_granted_scopes="true",
         state=_encode_state({"action": "signin", "n": nonce}),
         code_challenge=code_challenge,
         code_challenge_method="S256",
@@ -133,14 +141,26 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     return response
 
 
+#: The sign-in error code for a student who backed out of Google's screen.
+SIGNIN_CANCELLED = "cancelled"
+
+_GOOGLE_ERROR_RE = re.compile(r"^[a-z_]{1,64}$")
+
+
 @router.get("/google/callback")
 def google_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    code: str = Query(...),
+    code: str = Query(None),
     state: str = Query(None),
+    error: str = Query(None),
 ):
-    """Exchange auth code for tokens, validate @bu.edu, upsert user."""
+    """Exchange auth code for tokens, validate @bu.edu, upsert user.
+
+    Google comes back with ``error=access_denied`` and no ``code`` when the
+    student cancels on its screen. That is a cancelled sign-in, not a bad
+    request: it goes back through the sign-in error path as ``cancelled``
+    (popup and same-tab alike), with nothing exchanged or written."""
     cookie_payload = _decode_oauth_cookie(request.cookies.get(OAUTH_STATE_COOKIE))
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
@@ -194,6 +214,13 @@ def google_callback(
         )
         return resp
 
+    if error or not code:
+        logger.info(
+            "google sign-in cancelled (%s)",
+            error if error and _GOOGLE_ERROR_RE.match(error) else "no code",
+        )
+        return _fail_redirect(SIGNIN_CANCELLED)
+
     if not GOOGLE_AVAILABLE:
         return _fail_redirect("google_not_configured")
 
@@ -206,7 +233,11 @@ def google_callback(
     if not _consume_oauth_nonce(str(cookie_nonce)):
         return _fail_redirect("invalid_state")
 
-    flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
+    # No scopes on the exchange Flow: Google answers with the scopes granted,
+    # which under include_granted_scopes is more than AUTH_SCOPES, and oauthlib
+    # raises on any difference. record_google_sign_in reads the granted set
+    # (oauth_state.granted_scopes) instead.
+    flow = Flow.from_client_config(_google_client_config(), scopes=None)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     try:
         flow.fetch_token(code=code, code_verifier=code_verifier)
