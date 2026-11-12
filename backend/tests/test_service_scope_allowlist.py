@@ -136,6 +136,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: an inline run records its outcome",
     ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/legal.py", "record_acceptances", "service_scope"):
+        "legal_acceptances is service-only (bucket E): the Terms/Privacy versions accepted at onboarding",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",

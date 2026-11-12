@@ -103,6 +103,7 @@ BUCKETS = {
         "llm_budgets",
         "rate_limit_hits", "feature_flags_version",
         "tutor_pending_sessions",
+        "legal_acceptances",
     ],
 }
 # room_messages is bucket C but gets its policy and grants in step 2e (the
