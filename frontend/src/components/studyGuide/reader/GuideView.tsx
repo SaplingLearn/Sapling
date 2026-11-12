@@ -2,12 +2,12 @@
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import type { Feedback, GuideDetail } from "@/lib/studyGuide/types";
 
+import { useBlockRegenerate } from "./blocks/useBlockRegenerate";
 import { FeedbackRow } from "./FeedbackRow";
 import { GenerationBanner, GenerationError } from "./GenerationBanner";
 import { GuideHeader } from "./GuideHeader";
 import { Rail } from "./rail/Rail";
 import s from "./reader.module.css";
-import { useBlockRegenerate } from "./blocks/useBlockRegenerate";
 import { ReaderProvider, type Reader } from "./ReaderContext";
 import { daysUntil, sectionPhases, type SectionPhase, type ViewMode } from "./readerModel";
 import { SectionView } from "./SectionView";
