@@ -1,6 +1,6 @@
 # Study guide redesign
 
-Status: in build on `feat/study-guide-redesign`, stacked on #870 (`feat/study-page`).
+Status: built on `feat/study-guide-redesign`, stacked on #870 (`feat/study-page`); in review.
 Design reference: Trov artifact `sapling-study-guide-redesign-study-guide-reader` (reader screen).
 The Study Guides home and the New study guide modal have no artifact; they follow the written spec in Trov handoff #30.
 
@@ -59,7 +59,7 @@ One table, reshaped in place. No new table.
 | `feedback` | TEXT, nullable | `yes` / `no` |
 | `saved_at` | TIMESTAMPTZ, nullable | set = saved to the Library |
 | `generating_at` | TIMESTAMPTZ, nullable | the generation claim's heartbeat |
-| `generated_at` | as before, now nullable | NULL until the first generation finishes |
+| `generated_at` | as before, now nullable | NULL until the first generation finishes; then when a run last made the guide (section 5, step 6) |
 | `created_at`, `updated_at` | TIMESTAMPTZ | `created_at` backfilled from `generated_at`; `updated_at` by the shared trigger |
 
 Also in the migration: drop the index `study_guides_user_offering_exam_key` if an environment has it, and drop `ensure_study_guides_unique_key()`. Existing rows are not touched beyond the defaults.
@@ -114,10 +114,17 @@ Modes: `resume` writes whatever is still queued (a new guide, or one whose strea
 
 1. **Claim.** `generating_at` is the claim. The request is refused with 409 while a claim is held; the stream then takes the claim as its first act (so a client that disconnects before the stream starts leaves nothing held), and a run that loses that race ends with an `error` event. A run takes it when it is NULL or older than fifteen minutes (longer than the slowest model call with its retries), refreshes it after every section, and clears it on exit, including a cancelled stream. The claim's timestamp is the run's token: a run that finds its token gone was overtaken and stops without writing. A second request while a claim is fresh gets 409; the reader re-reads the guide, waits, and asks to resume again.
 2. **Read.** The chosen documents' `summary`, `concept_notes` and `extracted_text`, budgeted (30 documents, 10k characters each, 60k in total) and wrapped with `prompt_safety.wrap_untrusted`. Each source gets a short label (`S1`, `S2`, ...). With history on: the student's mastery per concept and their `quiz_context` mistakes for those concepts.
-3. **Outline.** `study_guide_outline_agent` (structured, small): title, deck, takeaways, and sections as `{title, concept, one_line, keep_id}`. `concept` must be one of the student's concept names or null. The server, not the model, sets each section's tier and weight from mastery: struggling 5, learning 3, unexplored 3, mastered 1, scaled to 100. With history off every section weighs the same. For a new guide the outline is saved and sent before any section is written. An Update or Regenerate of a finished guide sends the outline but saves nothing until its first section is written, so a run that fails early leaves the guide exactly as it was.
+3. **Outline.** `study_guide_outline_agent` (structured, small): title, deck, takeaways, and sections as `{title, concept, one_line, keep_id}`. `concept` must be one of the student's concept names or null. The server, not the model, sets each section's tier and weight from mastery: struggling 5, learning 3, unexplored 3, mastered 1, scaled to 100. With history off every section weighs the same. The server also sets each section's id: a new section is numbered after every id the guide has, on an Update and on a Regenerate alike, so an id never names two pieces of text and an answer or read mark sent by a tab still showing the old guide finds nothing to land on. For a new guide the outline is saved and sent before any section is written. An Update or Regenerate of a finished guide sends the outline but saves nothing until its first section is written, so a run that fails early leaves the guide exactly as it was.
 4. **Sections, one at a time.** `study_guide_section_agent` is a text agent. It writes prose with fenced JSON blocks; `services/study_guides/markup.py` turns the text into items and maps `[S1]` to source ids. A rejected block is rewritten once by `study_guide_block_agent`, then dropped. Each section is saved as soon as it is written, so a cut stream resumes at the next queued section.
 5. **Check.** `verify.py` drops citations to unknown sources, stamps each mistake's evidence from the real quiz history (and drops one that cites none), drops a check question whose answer is not among its options, clears concept names the student's tree does not have, and decides every chart's `illustrative` flag.
-6. **Finish.** `status = ready`, `generated_at = now`, and the claim cleared, all in one write; then the `done` event, so the guide is free the moment the reader hears it is ready. A guide is failed only when no section at all could be written; a section that could not be written is marked `failed` and `resume` tries it again.
+6. **Finish.** `status = ready`, `generated_at = now`, and the claim cleared, all in one write; then the `done` event, so the guide is free the moment the reader hears it is ready. `generated_at` is stamped by every run that planned the guide and by a `resume` that makes it ready from `generating` or `failed` (a first generation, an Update or a Regenerate that was cut short). A `resume` that only fills in failed sections of a guide that stayed `ready` leaves it alone: it read nothing new.
+
+   A section the writer could not write is marked `failed` and the run goes on; `resume` tries it again. The guide itself is saved as `failed` in two cases, and only while its row holds this run's content and says `generating` (a new guide, a resumed one, or an Update or Regenerate after its first saved section):
+
+   - the run reached its end and no section at all was written;
+   - the run stopped part way on an error (the outline could not be planned, an unexpected exception, a daily-budget refusal). The sections it had already written stay on the failed guide, and `resume` writes the rest.
+
+   A run leaves the guide as it was when it had not replaced it yet (an Update or Regenerate before its first saved section), when it was filling in sections of a guide that stayed `ready`, and when it was overtaken and lost its claim.
 
 `update` gives the outline agent the current outline and the new documents; a section it returns with `keep_id` is kept as written, with its read state. Everything else is written fresh.
 
@@ -130,7 +137,7 @@ All three agents run on the existing `study_guide` slot. One function-mode handl
 | File | Job |
 |---|---|
 | `errors.py` | domain errors with a status and a detail |
-| `store.py` | the only code that reads or writes `study_guides`: rows to `GuideRow`, encryption, the generation claim, the once-only answer write |
+| `store.py` | the request path's only reader and writer of `study_guides` (the account wipe, bundle and seeder, the rich seed and the encryption backfill touch the table too): rows to `GuideRow`, encryption, the generation claim, the once-only answer write |
 | `legacy.py` | a format-1 row's content as `GuideContent` |
 | `scopes.py` | course to offering and enrollments; what a guide can be for; a scope's title and date |
 | `materials.py` | the class's documents, the suggested set per scope, source text for the prompt, the new-materials count |
@@ -184,4 +191,5 @@ A reviewer that wrote none of the code reviews each wave against the handoff.
 - **Takeaways** arrive with the outline, not after the last section as in the mockup's animation.
 - **Check questions** withhold the answer until the student picks one. Only the first answer moves mastery; later picks are graded but not counted.
 - **Tutor.** "Ask about this guide" starts a tutor session on the guide's title and sends the question with the section outline as the first message, then opens the tutor on that session. A true attachment field on the tutor API was not added.
+- **Back link.** The reader's back link goes to the Study Guides home and is labelled "Study Guides". The handoff's mockup says "Study", but the hub is one more step back and the home is where the student's guides are.
 - **PR #735** (draft, 907 commits behind) edits the old route and adds a separate saved-plans table. It conflicts with this rebuild and was not built on.

@@ -185,7 +185,7 @@ COMMENT ON COLUMN public.study_guides.format IS
 COMMENT ON COLUMN public.study_guides.generating_at IS
     'The generation claim: held while newer than fifteen minutes; NULL when no run holds the guide.';
 COMMENT ON COLUMN public.study_guides.generated_at IS
-    'When the last generation finished; NULL until the first one does.';
+    'When a run last made the guide ready: any run that planned it, or a resume that finished one left generating or failed. A resume that only fills in sections of a guide that stayed ready leaves it alone. NULL until the first generation finishes.';
 
 -- ── the per-exam unique key goes ────────────────────────────────────────────
 
