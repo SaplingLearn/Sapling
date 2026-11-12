@@ -46,7 +46,7 @@ _MATH_FIELDS = ("latex", "math")
 #: `## A heading` or a `---` rule: a model's habit, not part of the markup.
 _NOISE = re.compile(r"\s{0,3}(#{1,6}\s.*|([-*_])(\s*\2){2,})\s*")
 #: `[S1]` or `[S1, S3]`, with the space before it.
-_CITATION = re.compile(r"\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]", re.IGNORECASE)
+CITATION = re.compile(r"\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]", re.IGNORECASE)
 _TYPE_IN_BROKEN_JSON = re.compile(r'"type"\s*:\s*"(\w+)"')
 _PASSAGE_PARAGRAPHS = 3
 #: Fields the server decides, whatever the model wrote: `id` here, `source_id`
@@ -204,7 +204,7 @@ def _prose(paragraphs: list[str], summary: str | None, item_id: str, sources: di
         "type": "prose",
         "id": item_id,
         "paragraphs": [paragraph for paragraph in written if paragraph["text"]],
-        "summary": _CITATION.sub("", summary or "").strip() or None,
+        "summary": CITATION.sub("", summary or "").strip() or None,
     }
 
 
@@ -213,12 +213,12 @@ def _paragraph(text: str, sources: dict[str, str]) -> dict:
         # A code sample: `a[S1]` in it is an index, not a citation.
         return {"text": text, "citations": []}
     cited: list[str] = []
-    for match in _CITATION.finditer(text):
+    for match in CITATION.finditer(text):
         for label in match.group(1).split(","):
             source_id = sources.get(label.strip().upper())
             if source_id and source_id not in cited:
                 cited.append(source_id)
-    return {"text": _CITATION.sub("", text).strip(), "citations": cited}
+    return {"text": CITATION.sub("", text).strip(), "citations": cited}
 
 
 # ── Blocks ────────────────────────────────────────────────────────────────────
