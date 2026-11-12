@@ -68,6 +68,14 @@ flashcard.generated           usage     card_count, documents_used, weak_concept
                                         (topic: /generate | paste | library_doc: /import/generate;
                                         /import/commit persists, it does not emit)
 flashcard.reviewed            usage     card_id, rating (1 forgot | 2 hard | 3 easy)
+study_guide.generated         usage     one finished generation run (emitted by
+                                        services/study_guides/generation.py)
+study_guide.block_regenerated usage     one block rewritten on request (emitted by
+                                        services/study_guides/blocks.py)
+study_guide.check_answered    usage     guide_id, block_id, correct, counted (false = a
+                                        repeat answer, which moves no mastery)
+study_guide.saved             usage     guide_id (a guide became saved to the Library;
+                                        saving a saved guide again emits nothing)
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
@@ -197,6 +205,13 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # here so BOTH pipelines get them from the one taxonomy.
     "flashcard.generated",
     "flashcard.reviewed",
+    # The study-guide redesign: a guide written, one block rewritten, a check
+    # question answered, a guide saved to the Library. Ids, counts and enums
+    # only, never guide text.
+    "study_guide.generated",
+    "study_guide.block_regenerated",
+    "study_guide.check_answered",
+    "study_guide.saved",
     "session.started",
     "session.ended",
     "rag.retrieval_failed",
