@@ -10,6 +10,9 @@ import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { legalDateLabel, type LegalDocument, type LegalSection } from "@/lib/legal/documents";
 import { ScreenHead } from "./ScreenHead";
 
+/** The end counts as reached within this many pixels of the bottom. */
+const END_SLACK_PX = 8;
+
 function Clause({ section: s }: { section: LegalSection }) {
   return (
     <div className="ob-clause">
@@ -54,10 +57,12 @@ export function LegalStep({ doc, reachedEnd, agreed, notice, onReachEnd, onAgree
     const el = bodyRef.current;
     if (!el) return;
     const room = el.scrollHeight - el.clientHeight;
-    // A panel tall enough to show the whole document has nothing to scroll.
-    const p = room <= 2 ? 1 : Math.min(1, el.scrollTop / room);
-    setPct(p);
-    if (p > 0.985 && !reachedEnd) onReachEnd();
+    // Pixels left below the view, not a share of the scroll: on a long
+    // document even 1.5% is a paragraph unread. A panel tall enough to show
+    // the whole document has nothing left, so it is at the end at once.
+    const atEnd = room - el.scrollTop <= END_SLACK_PX;
+    setPct(atEnd ? 1 : el.scrollTop / room);
+    if (atEnd && !reachedEnd) onReachEnd();
   }, [reachedEnd, onReachEnd]);
 
   useEffect(() => {

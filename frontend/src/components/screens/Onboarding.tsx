@@ -28,7 +28,9 @@ import { OnboardingGraph } from "@/components/onboarding/OnboardingGraph";
 import type { GraphPhase, GraphZoom } from "@/components/onboarding/chapterLayer";
 import { ageOn, isMinor, isUnder13, rememberUnder13, under13Remembered } from "@/components/onboarding/age";
 import { CONNECTIONS, LAST, SCREENS, screenIndex, type ConnKey, type ScreenId } from "@/components/onboarding/flow";
-import { EMPTY_DRAFT, advance, canAdvance, finished, type Draft } from "@/components/onboarding/draft";
+import {
+  EMPTY_DRAFT, advance, canAdvance, finished, legalAccepted, withCurrentLegal, type Draft,
+} from "@/components/onboarding/draft";
 import { useOnboardingDraft } from "@/components/onboarding/useOnboardingDraft";
 import { useStage } from "@/components/onboarding/useStage";
 import { useHiddenConnections, visibleChoices } from "@/components/onboarding/useHiddenConnections";
@@ -46,6 +48,7 @@ import "@/components/onboarding/onboarding.css";
 const SIGN_IN_ROUTE = "/?signin=1";
 
 const PRIMARY_LABEL: Partial<Record<ScreenId, string>> = { features: "Read the terms", connect: "Finish" };
+const BIRTHDAY = screenIndex("birthday");
 
 /** A save that sent the student back to fix something, shown on that screen. */
 type NoticeKind = "courses" | "legal";
@@ -113,14 +116,16 @@ function ScreenBody({ draft: d, patch, blocked, minor, notice, hidden, onDob, on
       return (
         <LegalStep
           key="terms" doc={TERMS} reachedEnd={d.termsEnd} agreed={d.termsOk} notice={noticeHere}
-          onReachEnd={() => patch({ termsEnd: true })} onAgree={v => patch({ termsOk: v })}
+          onReachEnd={() => patch({ termsEnd: true, termsVersion: TERMS.version })}
+          onAgree={v => patch({ termsOk: v, termsVersion: TERMS.version })}
         />
       );
     case "privacy":
       return (
         <LegalStep
           key="privacy" doc={PRIVACY} reachedEnd={d.privEnd} agreed={d.privOk}
-          onReachEnd={() => patch({ privEnd: true })} onAgree={v => patch({ privOk: v })}
+          onReachEnd={() => patch({ privEnd: true, privacyVersion: PRIVACY.version })}
+          onAgree={v => patch({ privOk: v, privacyVersion: PRIVACY.version })}
         />
       );
     case "connect":
@@ -197,7 +202,7 @@ export function Onboarding() {
   const toast = useToast();
   const { phase, zoom, introText, outroText, whiteout, enter, outro, abort } = useStage();
   const [ageGate, setAgeGate] = useState(false);
-  const { draft, setDraft, patch, discard } = useOnboardingDraft(userId, userName, resumed => {
+  const { draft, hydrated, setDraft, patch, discard } = useOnboardingDraft(userId, userName, resumed => {
     setAgeGate(under13Remembered());
     enter(resumed);
   });
@@ -219,7 +224,9 @@ export function Onboarding() {
   const screen = SCREENS[draft.screen];
   const age = ageOn(new Date(), draft.dobM, draft.dobD, draft.dobY);
   const blocked = ageGate || isUnder13(age);
-  const active = phase === "active";
+  // Not before the signed-in account's own draft is in: after a switch of
+  // account nothing can be answered or finished until it is.
+  const active = phase === "active" && hydrated;
   const canNext = active && canAdvance(screen.id, draft, age, blocked);
 
   // Each screen's heading takes focus as it arrives (and reads out the notice
@@ -240,6 +247,8 @@ export function Onboarding() {
       // #757: finished in another tab or a stale page; the server keeps the
       // profile it has. Nothing to save, nothing to wait for.
       discard();
+      // The greeting and the nav show the name that was saved there.
+      void refreshProfile();
       markOnboarded();
       toast.info("Your account was already set up.");
       go({ route: "/dashboard" });
@@ -260,10 +269,32 @@ export function Onboarding() {
     } else {
       toast.error(failure.message);
     }
-  }, [abort, discard, go, markOnboarded, patch, toast]);
+  }, [abort, discard, go, markOnboarded, patch, refreshProfile, toast]);
+
+  // Under 13: the birthday screen says so, and nothing the student entered
+  // is kept, the birthday included.
+  const blockUnder13 = useCallback(() => {
+    setAgeGate(true);
+    setDraft({ ...EMPTY_DRAFT, screen: BIRTHDAY });
+  }, [setDraft]);
+
+  // Checked again at Finish, as both can change after their own screens:
+  // another tab may have recorded an under-13 birthday in this browser since,
+  // and only an acceptance of the Terms and Privacy Policy in force is sent.
+  const refuseFinish = useCallback((): boolean => {
+    if (under13Remembered()) {
+      blockUnder13();
+      return true;
+    }
+    if (legalAccepted(draft)) return false;
+    setDraft(withCurrentLegal);
+    return true;
+  }, [draft, blockUnder13, setDraft]);
 
   const finish = useCallback((skipConnections: boolean) => {
+    // Not `active` while the draft in state is another account's.
     if (!userId || !active) return;
+    if (refuseFinish()) return;
     // "Skip for now" finishes with nothing chosen.
     const final = finished(skipConnections ? { ...draft, conn: {} } : draft);
     setDraft(final);
@@ -290,7 +321,7 @@ export function Onboarding() {
         go(handoffFor(userId, visibleChoices(final.conn, hiddenNow())));
       });
     });
-  }, [userId, userName, active, draft, age, setDraft, discard, refreshProfile, recover, outro, markOnboarded, hiddenNow, go]);
+  }, [userId, userName, active, refuseFinish, draft, age, setDraft, discard, refreshProfile, recover, outro, markOnboarded, hiddenNow, go]);
 
   const next = useCallback(() => {
     if (!canNext) return;
@@ -320,15 +351,13 @@ export function Onboarding() {
 
   const onDob = useCallback((dob: Dob) => {
     if (isUnder13(ageOn(new Date(), dob.m, dob.d, dob.y))) {
-      // Remembered in this browser for a day (age.ts), and nothing the
-      // student entered is kept, the birthday included.
+      // Remembered in this browser for a day (age.ts).
       rememberUnder13();
-      setAgeGate(true);
-      setDraft(prev => ({ ...EMPTY_DRAFT, screen: prev.screen }));
+      blockUnder13();
       return;
     }
     patch({ dobM: dob.m, dobD: dob.d, dobY: dob.y });
-  }, [patch, setDraft]);
+  }, [patch, blockUnder13]);
 
   useOnboardingKeys(next, back, consent !== null);
 

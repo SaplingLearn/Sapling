@@ -321,7 +321,7 @@ export const WIKI_CLASS_TERMS = [
 
 export const WIKI_ONBOARDING_SPECS = [
   { label:'Sign-in', value:'Google, domain-gated', note:'Gated to a school email domain, bu.edu by default. You sign in first; setup comes after.' },
-  { label:'Asked once', value:'Name, birthday, year', note:'Your birthday only checks that you are 13 or older and is never sent to us. Under 18, your profile starts private and class sharing starts off.' },
+  { label:'Asked once', value:'Name, birthday, year', note:'Your birthday checks that you are 13 or older and stays in your browser. Only whether you are under 18 is sent, so your profile can start private with class sharing off.' },
   { label:'Courses', value:'From the catalog', note:'Searched by name or code, then enrolled into this term. If yours are not listed, you can add them later.' },
 ] as const;
 

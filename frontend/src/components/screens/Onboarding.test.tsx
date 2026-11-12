@@ -57,13 +57,14 @@ import { onboardingDraftKey, GUEST_DRAFT_KEY, DRAFT_TTL_MS } from "@/lib/onboard
 import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
 import { PRIVACY, TERMS } from "@/lib/legal/documents";
 import { PRIVACY_VERSION, TERMS_VERSION } from "@/lib/legal/versions";
-import { AGE_GATE_MS } from "@/components/onboarding/age";
+import { AGE_GATE_MS, rememberUnder13 } from "@/components/onboarding/age";
 import { ApiError } from "@/lib/api";
 
 const CONNECT = 8; // index of the last screen
 const AT_CONNECT = {
   name: "Ada", dobM: "4", dobD: "12", dobY: "2000", school: "bu", year: "junior",
-  courses: [COURSES[0]], coursesLater: false, termsEnd: true, termsOk: true, privEnd: true, privOk: true,
+  courses: [COURSES[0]], coursesLater: false,
+  termsEnd: true, termsOk: true, termsVersion: TERMS_VERSION, privEnd: true, privOk: true, privacyVersion: PRIVACY_VERSION,
   conn: {}, screen: CONNECT, done: [0, 1, 2, 3, 4],
 };
 
@@ -164,6 +165,54 @@ describe("Onboarding: the draft", () => {
     seedDraft("user_a", { first_name: "Ada", step: 5, course_ids: ["c1"] });
     render(<Onboarding />);
     expect(await screen.findByTestId("onboarding-name")).toBeTruthy();
+  });
+
+  it("a draft that accepted an older Terms resumes on the Terms, unticked, and can't be finished", async () => {
+    seedDraft("user_a", { ...AT_CONNECT, termsVersion: "2026-01-01" });
+    render(<Onboarding />);
+    await screen.findByRole("heading", { level: 1, name: "Terms of Service" });
+    // (Its end must be reached again too: draft.test.ts. jsdom lays nothing
+    // out, so here the document "fits" and unlocks at once.)
+    expect(screen.getByTestId("onboarding-agree").getAttribute("aria-checked")).toBe("false");
+    expect(continueBtn().disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(heading().textContent).toBe("Terms of Service");
+    expect(submitOnboardingProfile).not.toHaveBeenCalled();
+    await waitFor(() => expect(storedDraft()).toMatchObject({ screen: 6, termsOk: false }));
+  });
+
+  it("a draft that accepted an older Privacy Policy resumes on the Privacy Policy", async () => {
+    seedDraft("user_a", { ...AT_CONNECT, privacyVersion: "2026-01-01" });
+    render(<Onboarding />);
+    await screen.findByRole("heading", { level: 1, name: "Privacy Policy" });
+    expect(screen.getByTestId("onboarding-agree").getAttribute("aria-checked")).toBe("false");
+    expect(continueBtn().disabled).toBe(true);
+  });
+
+  it("a switch of account never finishes with the previous account's answers", async () => {
+    seedDraft("user_a", AT_CONNECT);
+    // Presses Finish in the very commit that brings the new account, before
+    // the draft's own effect has loaded that account's draft.
+    let pressed = false;
+    function FinishOnSwitch() {
+      React.useLayoutEffect(() => {
+        if (user.userId !== "user_b" || pressed) return;
+        pressed = true;
+        continueBtn().click();
+      });
+      return null;
+    }
+    const view = render(<><Onboarding /><FinishOnSwitch /></>);
+    await screen.findByText("Finish");
+    user = { userId: "user_b", userName: "Bob Builder" };
+    view.rerender(<><Onboarding /><FinishOnSwitch /></>);
+    await act(async () => {});
+    expect(pressed).toBe(true);
+    expect(submitOnboardingProfile).not.toHaveBeenCalled();
+    // The new account starts on its own first screen; nothing of Ada's is kept under its key.
+    expect(((await screen.findByTestId("onboarding-name")) as HTMLInputElement).value).toBe("Bob");
+    await waitFor(() => expect(storedDraft("user_b")).toMatchObject({ name: "Bob", screen: 0, courses: [] }));
+    expect(storedDraft("user_a").name).toBe("Ada");
   });
 });
 
@@ -381,6 +430,30 @@ describe("Onboarding: screens", () => {
     expect(screen.getByText("What are you taking this term?")).toBeTruthy();
   });
 
+  it("Enter adds nothing while the results on show are still the previous query's", async () => {
+    let answerMa: (v: SearchReply) => void = () => {};
+    onboardingCoursesSearch.mockImplementation((q: string) =>
+      q === "ma" ? new Promise<SearchReply>(res => { answerMa = res; }) : allCourses(),
+    );
+    seedDraft("user_a", { ...AT_CONNECT, courses: [], screen: 3, done: [0, 1] });
+    render(<Onboarding />);
+    const input = await screen.findByTestId("onboarding-course-search");
+    await screen.findByTestId("onboarding-course-result-c1");
+    // The new query is typed; the results (c1 first) are still the empty query's.
+    fireEvent.change(input, { target: { value: "ma" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByTestId("onboarding-course-remove-c1")).toBeNull();
+    await waitFor(() => expect(onboardingCoursesSearch).toHaveBeenCalledWith("ma"), { timeout: 2000 });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByTestId("onboarding-course-remove-c1")).toBeNull();
+    // Once "ma" answers, Enter adds its top result.
+    await act(async () => { answerMa({ courses: [COURSES[1]] }); });
+    expect(screen.queryByTestId("onboarding-course-result-c1")).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("onboarding-course-remove-c2")).toBeTruthy();
+    expect(screen.queryByTestId("onboarding-course-remove-c1")).toBeNull();
+  });
+
   it("'My courses aren't listed' moves on with no courses, and saves none", async () => {
     seedDraft("user_a", { ...AT_CONNECT, courses: [COURSES[1]], screen: 3, done: [0, 1] });
     submitOnboardingProfile.mockResolvedValue({ ok: true, courses_linked: 0 });
@@ -438,8 +511,12 @@ describe("Onboarding: screens", () => {
       expect(screen.getByTestId("onboarding-legal-updated").textContent).toBe("Last updated: November 3, 2026");
       expect(within(screen.getByTestId("onboarding-legal-body")).getByText(PRIVACY.sections[5].bodyAfter!)).toBeTruthy();
     } finally {
+      // jsdom keeps both on Element.prototype, so there is usually nothing here
+      // to restore: delete the stand-ins and later tests read the real ones.
       if (scrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
       if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+      else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
     }
   });
 
@@ -637,7 +714,24 @@ describe("Onboarding: Finish", () => {
     expect(toast.info).toHaveBeenCalledWith("Your account was already set up.");
     expect(toast.error).not.toHaveBeenCalled();
     expect(markOnboarded).toHaveBeenCalled();
+    // The name saved in the other tab shows, as after a save here.
+    expect(refreshProfile).toHaveBeenCalled();
     expect(storedDraft()).toBeNull();
+  });
+
+  it("an under-13 birthday given in another tab since stops Finish: nothing is saved, and the birthday screen says why", async () => {
+    seedDraft("user_a", AT_CONNECT);
+    render(<Onboarding />);
+    await screen.findByText("Finish");
+    // Another tab in this browser was told an under-13 birthday.
+    rememberUnder13();
+    fireEvent.click(continueBtn());
+    expect(await screen.findByTestId("onboarding-blocked")).toBeTruthy();
+    expect(heading().textContent).toBe("When's your birthday?");
+    expect(continueBtn().disabled).toBe(true);
+    expect(submitOnboardingProfile).not.toHaveBeenCalled();
+    // As on the birthday screen: nothing the student entered is kept.
+    await waitFor(() => expect(storedDraft()).toMatchObject({ screen: 1, name: "", dobY: "", courses: [] }));
   });
 
   it("an account that isn't approved (403 not_approved) goes to /pending", async () => {
@@ -679,8 +773,8 @@ describe("Onboarding: Finish", () => {
     await screen.findByRole("heading", { level: 1, name: "Terms of Service" });
     expect(screen.getByTestId("onboarding-notice").textContent).toContain("changed after this page opened");
     expect(screen.getByTestId("onboarding-legal-reload")).toBeTruthy();
-    const stored = storedDraft();
-    expect([stored.termsOk, stored.privOk]).toEqual([false, false]);
+    // The draft is written in an effect after the screen shows.
+    await waitFor(() => expect([storedDraft().termsOk, storedDraft().privOk]).toEqual([false, false]));
     expect(replace).not.toHaveBeenCalled();
   });
 

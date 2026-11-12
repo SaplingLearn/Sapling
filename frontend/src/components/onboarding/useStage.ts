@@ -61,10 +61,9 @@ export function useStage(): Stage {
     setIntroText(false);
     setOutroText(false);
     setWhiteout(false);
-    if (resume) {
+    if (resume || prefersReducedMotion()) {
+      // At once, and at the screens' zoom (as abort() leaves them).
       setZoom("active");
-      setPhase("active");
-    } else if (prefersReducedMotion()) {
       setPhase("active");
     } else {
       setZoom("rest");

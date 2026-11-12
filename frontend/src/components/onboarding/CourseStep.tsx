@@ -21,6 +21,9 @@ function statusLine(status: SearchStatus, count: number): string {
 
 function useCourseSearch(query: string) {
   const [results, setResults] = useState<OnboardingCourse[]>([]);
+  // The query (trimmed) the results answer. Until a new search lands, the
+  // results on show are still the previous query's.
+  const [resultsFor, setResultsFor] = useState<string | null>(null);
   const [status, setStatus] = useState<SearchStatus>("loading");
   const [attempt, setAttempt] = useState(0);
   // Latest query wins (#802/#769, as in ManageCoursesModal). The debounce only
@@ -31,17 +34,20 @@ function useCourseSearch(query: string) {
 
   useEffect(() => {
     const run = searchReq.begin();
+    const q = query.trim();
     const t = setTimeout(() => {
-      onboardingCoursesSearch(query.trim())
+      onboardingCoursesSearch(q)
         .then(r => {
           if (!run.isCurrent()) return;
           setResults(r.courses ?? []);
+          setResultsFor(q);
           setStatus("ok");
         })
         .catch(() => {
           // Said as a failure with a retry, never as "no matches".
           if (!run.isCurrent()) return;
           setResults([]);
+          setResultsFor(q);
           setStatus("error");
         });
     }, 200);
@@ -55,7 +61,10 @@ function useCourseSearch(query: string) {
     setStatus("loading");
     setAttempt(a => a + 1);
   };
-  return { results, status, retry };
+  // What "pick the first result" picks: nothing while the results on show
+  // belong to an earlier query.
+  const top = resultsFor === query.trim() ? results[0] : undefined;
+  return { results, top, status, retry };
 }
 
 export function CourseStep({ year, courses, later, notice, onYear, onCourses, onLater }: {
@@ -68,18 +77,18 @@ export function CourseStep({ year, courses, later, notice, onYear, onCourses, on
   onLater: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const { results, status, retry } = useCourseSearch(query);
+  const { results, top, status, retry } = useCourseSearch(query);
   const picked = new Set(courses.map(c => c.id));
   const toggle = (c: OnboardingCourse) =>
     onCourses(picked.has(c.id) ? courses.filter(x => x.id !== c.id) : [...courses, c]);
 
   // Enter picks the top result rather than leaving the screen (the flow's own
-  // Enter-for-Next skips a key a control has already used).
+  // Enter-for-Next skips a key a control has already used). Only a result for
+  // what is in the box now: before the new search lands, Enter adds nothing.
   const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    const first = results[0];
-    if (first && !picked.has(first.id)) toggle(first);
+    if (top && !picked.has(top.id)) toggle(top);
   };
 
   return (

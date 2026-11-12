@@ -9,7 +9,11 @@ import { clearOnboardingDraft, writeOnboardingDraft } from "@/lib/onboardingDraf
 import { EMPTY_DRAFT, loadDraft, type Draft } from "./draft";
 
 export interface DraftState {
+  /** The signed-in account's draft; empty until it is loaded (`hydrated`). */
   draft: Draft;
+  /** Whether the draft in state is the signed-in account's own: false until
+   * it is loaded, and again after a switch of account until the new one's is. */
+  hydrated: boolean;
   setDraft: React.Dispatch<React.SetStateAction<Draft>>;
   patch: (p: Partial<Draft>) => void;
   /** Stop saving and remove the stored draft (the profile is saved). */
@@ -26,10 +30,13 @@ export function useOnboardingDraft(
   onHydrate: (resumed: boolean) => void,
 ): DraftState {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  // Whose draft is in state. Saving only when it matches the signed-in user
-  // keeps one account's answers from being written under another's key in
-  // the render between a user switch and the re-hydrate.
+  // Whose draft is in state: its tag. In the render between a switch of
+  // account and the re-hydrate it is still the previous account's, so until
+  // it matches the signed-in user the draft reads as empty and is not saved
+  // (and Onboarding won't finish it): one account's answers never go out
+  // under another's.
   const [hydratedFor, setHydratedFor] = useState<string | null>(null);
+  const hydrated = !!userId && hydratedFor === userId;
   const discarded = useRef(false);
   // Read when an account hydrates, not tracked: a name refreshed from
   // /api/auth/me must not reload the draft or replay the intro.
@@ -52,9 +59,9 @@ export function useOnboardingDraft(
   }, [userId]);
 
   useEffect(() => {
-    if (!hydratedFor || hydratedFor !== userId || discarded.current) return;
-    writeOnboardingDraft(hydratedFor, draft);
-  }, [draft, hydratedFor, userId]);
+    if (!hydrated || discarded.current) return;
+    writeOnboardingDraft(userId, draft);
+  }, [draft, hydrated, userId]);
 
   const patch = useCallback((p: Partial<Draft>) => setDraft(prev => ({ ...prev, ...p })), []);
 
@@ -63,5 +70,5 @@ export function useOnboardingDraft(
     if (userId) clearOnboardingDraft(userId);
   }, [userId]);
 
-  return { draft, setDraft, patch, discard };
+  return { draft: hydrated ? draft : EMPTY_DRAFT, hydrated, setDraft, patch, discard };
 }

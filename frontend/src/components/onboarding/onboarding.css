@@ -58,9 +58,11 @@
  * (WCAG AA). Firefox dims placeholders by default, hence the opacity reset. */
 .ob-root input::placeholder { color: var(--ob-mut); opacity: 1; }
 .ob-root :focus-visible { outline: 2px solid var(--ob-acc); outline-offset: 2px; }
-/* Headings take focus only so a screen reader starts there; they aren't
- * controls, so no focus ring. */
-.ob-root [data-screen-heading]:focus, .ob-root .ob-blocked-title:focus { outline: none; }
+/* Headings take focus so a screen reader starts there. After a click they
+ * draw no ring; after a key (Enter, Esc, Back pressed from the keyboard) the
+ * :focus-visible ring above still shows where focus went. */
+.ob-root [data-screen-heading]:focus:not(:focus-visible),
+.ob-root .ob-blocked-title:focus:not(:focus-visible) { outline: none; }
 .ob-sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
