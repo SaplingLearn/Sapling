@@ -1124,7 +1124,9 @@ def _new_lectures(world: World) -> int:
     """How many new lectures the guide's card reports, as the home and the
     reader show it."""
     guide = run(store.aload_guide(ME, GUIDE))
-    its_class = cards.GuideClass(course_id=COURSE, course_name="Intro to CS", semester=None)
+    its_class = cards.GuideClass(
+        course_id=COURSE, course_name="Intro to CS", course_code="CS 101", semester=None,
+    )
     return cards.card(guide, its_class, world.lectures).new_materials
 
 

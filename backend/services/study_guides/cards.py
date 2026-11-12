@@ -1,8 +1,8 @@
 """A guide as its card on the Study Guides home: the title, where its space
 goes, four counts, and how many lectures arrived since it was made.
 
-The card is built from the stored row. The class's name and term and the
-lecture documents are read once for the whole list, never per guide.
+The card is built from the stored row. The class's name, code and term and
+the lecture documents are read once for the whole list, never per guide.
 """
 from __future__ import annotations
 
@@ -35,6 +35,8 @@ class GuideClass:
 
     course_id: str
     course_name: str
+    #: The short code ("CS 101"), or the name when the course has none.
+    course_code: str
     semester: str | None
 
 
@@ -95,6 +97,7 @@ def card(guide: GuideRow, guide_class: GuideClass, lecture_docs: list[dict]) -> 
         title=content.title,
         course_id=guide_class.course_id,
         course_name=guide_class.course_name,
+        course_code=guide_class.course_code,
         semester=guide_class.semester,
         scope_kind=guide.scope_kind,
         scope_label=content.scope_label,
@@ -120,30 +123,42 @@ def _course_and_term(offering_id: str) -> tuple[str, str | None]:
     return course_id, (academics.term_for_offering(offering_id) or {}).get("label")
 
 
-async def acourse_names(course_ids: set[str]) -> dict[str, str]:
-    """Course name per abstract course id, in one read."""
+async def _acourses(course_ids: set[str]) -> dict[str, dict]:
+    """Each course's name and code per abstract course id, in one read."""
     ids = sorted(course_id for course_id in course_ids if course_id)
     if not ids:
         return {}
     rows = await table("courses").aselect(
-        "id,course_name",
+        "id,course_name,course_code",
         filters={"id": f"in.({','.join(pg_quote_value(i) for i in ids)})"},
     ) or []
-    return {row["id"]: row.get("course_name") or "" for row in rows}
+    return {row["id"]: row for row in rows}
+
+
+async def acourse_names(course_ids: set[str]) -> dict[str, str]:
+    """Course name per abstract course id, in one read."""
+    courses = await _acourses(course_ids)
+    return {course_id: row.get("course_name") or "" for course_id, row in courses.items()}
+
+
+def _guide_class(course_id: str, semester: str | None, course: dict) -> GuideClass:
+    name = course.get("course_name") or ""
+    return GuideClass(
+        course_id=course_id, course_name=name,
+        course_code=course.get("course_code") or name, semester=semester,
+    )
 
 
 async def _aclasses(offering_ids: set[str]) -> dict[str, GuideClass]:
     """The class of each offering: one lookup per distinct offering and one
-    read for every course name."""
+    read for every course's name and code."""
     resolved = {
         offering_id: await run_in_threadpool(_course_and_term, offering_id)
         for offering_id in sorted(offering_ids)
     }
-    names = await acourse_names({course_id for course_id, _ in resolved.values()})
+    courses = await _acourses({course_id for course_id, _ in resolved.values()})
     return {
-        offering_id: GuideClass(
-            course_id=course_id, course_name=names.get(course_id, ""), semester=semester,
-        )
+        offering_id: _guide_class(course_id, semester, courses.get(course_id, {}))
         for offering_id, (course_id, semester) in resolved.items()
     }
 

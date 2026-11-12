@@ -77,7 +77,8 @@ def _guide(**over) -> GuideRow:
 def _card(guide: GuideRow) -> GuideCard:
     return GuideCard(
         id=guide.id, title=guide.content.title, course_id="course-cs",
-        course_name="Intro to CS", semester="Fall 2026", scope_kind=guide.scope_kind,
+        course_name="Intro to CS", course_code="CS 101", semester="Fall 2026",
+        scope_kind=guide.scope_kind,
         scope_label=guide.content.scope_label, goal=guide.goal, depth=guide.depth,
         status=guide.status, generated_at=guide.generated_at, created_at=guide.created_at,
         saved_at=guide.saved_at, new_materials=2, bars=[],
@@ -241,7 +242,10 @@ def test_an_unreadable_guide_opens_as_failed(monkeypatch):
         return []
 
     async def aclasses(offering_ids):
-        return {OFFERING: GuideClass("course-cs", "Intro to CS", "Fall 2026")}
+        return {OFFERING: GuideClass(
+            course_id="course-cs", course_name="Intro to CS", course_code="CS 101",
+            semester="Fall 2026",
+        )}
 
     monkeypatch.setattr(cards.materials, "alist_lecture_docs", alist_lecture_docs)
     monkeypatch.setattr(cards, "_aclasses", aclasses)

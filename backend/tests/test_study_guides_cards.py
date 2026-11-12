@@ -27,7 +27,9 @@ from tests.db_fakes import fake_table
 ME = "user_cards_me"
 OFFERING = "off-cs-f26"
 MADE_AT = "2026-10-01T12:00:00+00:00"
-CS = GuideClass(course_id="course-cs", course_name="Intro to CS", semester="Fall 2026")
+CS = GuideClass(
+    course_id="course-cs", course_name="Intro to CS", course_code="CS 101", semester="Fall 2026",
+)
 
 
 def _prose(item_id: str, words: int) -> ProseItem:
@@ -128,7 +130,8 @@ def test_card_carries_the_row_the_class_and_the_bars():
     out = cards.card(_guide(saved_at="2026-10-02T08:00:00+00:00"), CS, [])
     assert out.model_dump(exclude={"bars", "counts"}) == {
         "id": "g1", "title": "Control flow", "course_id": "course-cs",
-        "course_name": "Intro to CS", "semester": "Fall 2026", "scope_kind": "exam",
+        "course_name": "Intro to CS", "course_code": "CS 101", "semester": "Fall 2026",
+        "scope_kind": "exam",
         "scope_label": "Midterm 1", "goal": "exam_prep", "depth": "standard",
         "status": "ready", "generated_at": MADE_AT, "created_at": MADE_AT,
         "saved_at": "2026-10-02T08:00:00+00:00", "new_materials": 0,
@@ -192,9 +195,11 @@ def reads(monkeypatch):
     courses = fake_table()
 
     def select(columns, filters=None, **_):
+        assert columns == "id,course_name,course_code"
         seen["courses"].append(filters["id"])
-        return [{"id": "course-cs", "course_name": "Intro to CS"},
-                {"id": "course-bio", "course_name": "Cell Biology"}]
+        # Cell Biology has no code: its card falls back to the name.
+        return [{"id": "course-cs", "course_name": "Intro to CS", "course_code": "CS 101"},
+                {"id": "course-bio", "course_name": "Cell Biology", "course_code": ""}]
 
     courses.select.side_effect = select
     monkeypatch.setattr(cards.store, "alist_guides", alist_guides)
@@ -211,6 +216,7 @@ def test_list_keeps_the_stores_order_and_names_each_class(reads):
         ("g-mid", "course-bio", "Cell Biology", None),
         ("g-old", "course-cs", "Intro to CS", "Fall 2026"),
     ]
+    assert [c.course_code for c in out] == ["CS 101", "Cell Biology", "CS 101"]
     assert [c.new_materials for c in out] == [1, 0, 1]
 
 
@@ -232,7 +238,16 @@ def test_no_guides_reads_nothing_else(reads):
 def test_a_class_whose_course_row_is_missing_still_lists(monkeypatch, reads):
     monkeypatch.setattr(cards, "_course_and_term", lambda offering_id: ("", None))
     out = asyncio.run(cards.alist_cards(ME))
-    assert {(c.course_id, c.course_name, c.semester) for c in out} == {("", "", None)}
+    assert {(c.course_id, c.course_name, c.course_code, c.semester) for c in out} == {
+        ("", "", "", None),
+    }
+
+
+def test_course_names_are_read_once_for_all_the_ids(reads):
+    seen, _ = reads
+    names = asyncio.run(cards.acourse_names({"course-cs", "course-bio", ""}))
+    assert names == {"course-cs": "Intro to CS", "course-bio": "Cell Biology"}
+    assert seen["courses"] == ['in.("course-bio","course-cs")']
 
 
 def test_course_and_term_come_from_academics(monkeypatch):

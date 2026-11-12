@@ -416,6 +416,8 @@ class GuideCard(BaseModel):
     title: str
     course_id: str
     course_name: str
+    #: The class's short code ("CS 101"); its name when it has none.
+    course_code: str
     semester: str | None = None
     scope_kind: ScopeKind
     scope_label: str
