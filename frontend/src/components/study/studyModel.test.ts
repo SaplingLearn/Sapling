@@ -10,7 +10,6 @@ import {
   readinessBand,
   studyQueue,
   quickReviews,
-  pace,
   daysTo,
   fmtDow,
 } from "./studyModel";
@@ -151,6 +150,21 @@ describe("conceptsForCourse", () => {
     ] })];
     expect(conceptsForCourse(n, [], "c1", NOW)[0].weekDelta).toBeCloseTo(0.1);
   });
+
+  it("takes the server's week_delta over the event sum, which only sees the last five events", () => {
+    // Six +0.05 moves this week; the payload carries the last five of them.
+    const lastFive = Array.from({ length: 5 }, () => ({ delta: 0.05, created_at: new Date(2026, 10, 6).toISOString() }));
+    const withTotal = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: 0.3 })], [], "c1", NOW);
+    expect(withTotal[0].weekDelta).toBeCloseTo(0.3);
+    // A node that did not move says 0, and that is taken as said.
+    const still = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: 0 })], [], "c1", NOW);
+    expect(still[0].weekDelta).toBe(0);
+    // An older payload without the field keeps the event sum.
+    const older = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive })], [], "c1", NOW);
+    expect(older[0].weekDelta).toBeCloseTo(0.25);
+    const odd = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: null })], [], "c1", NOW);
+    expect(odd[0].weekDelta).toBeCloseTo(0.25);
+  });
 });
 
 describe("assessments", () => {
@@ -266,30 +280,5 @@ describe("readinessBand", () => {
   it("with no exam selected it is the course's mastery", () => {
     const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101");
     expect(band).toEqual({ concepts: cs, label: "CS101 Mastery" });
-  });
-});
-
-describe("pace", () => {
-  it("is silent at the target or with no exam ahead", () => {
-    expect(pace({ examTitle: "M", days: 5, readiness: 92, weekGain: 0, weekMinutes: 0 })).toBeNull();
-    expect(pace({ examTitle: "M", days: -1, readiness: 50, weekGain: 0, weekMinutes: 0 })).toBeNull();
-  });
-  it("says on pace when the weekly rate reaches the target", () => {
-    const p = pace({ examTitle: "Midterm", days: 10, readiness: 70, weekGain: 14, weekMinutes: 120 })!;
-    expect(p.ok).toBe(true);
-    expect(p.title).toBe("On pace for Midterm");
-  });
-  it("converts the gap into minutes per day from the observed rate", () => {
-    // 7 points over 140 minutes = 0.05 pts/min; 1 pt/day for 5 days -> 65%;
-    // 25 points short = 500 minutes over 5 days = 100/day = 1.7 hours.
-    const p = pace({ examTitle: "Midterm", days: 5, readiness: 60, weekGain: 7, weekMinutes: 140 })!;
-    expect(p.ok).toBe(false);
-    expect(p.title).toBe("You need to spend more time");
-    expect(p.body).toContain("about 65% readiness");
-    expect(p.body).toContain("1.7 more hours per day");
-  });
-  it("names the next concept when nothing moved this week", () => {
-    const p = pace({ examTitle: "Midterm", days: 5, readiness: 40, weekGain: 0, weekMinutes: 0, nextConcept: "Determinants" })!;
-    expect(p.body).toContain("Start with Determinants.");
   });
 });

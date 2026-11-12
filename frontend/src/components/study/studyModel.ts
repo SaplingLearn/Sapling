@@ -23,7 +23,8 @@
  *    Otherwise (no outline, a past exam, nothing linked) it is the whole
  *    course, and says so: "<course> Readiness".
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
- *    days, averaged over the same concepts, in percentage points.
+ *    days (the node's `week_delta`), averaged over the same concepts, in
+ *    percentage points.
  */
 
 export type Status = "mastered" | "progress" | "review" | "new";
@@ -158,26 +159,28 @@ const TIER: Record<string, Status> = {
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- getGraph is untyped (any[]) */
-export function conceptsForCourse(
-  nodes: any[],
-  edges: any[],
-  courseId: string,
-  now: Date = new Date(),
-  categories?: Map<string, string>,
-): Concept[] {
-  const own = nodes.filter(n => n && n.course_id === courseId && !n.is_subject_root && n.mastery_tier !== "subject_root");
-  const ids = new Set(own.map(n => String(n.id)));
-  const pre: Record<string, string[]> = {};
-  const post: Record<string, string[]> = {};
+type Links = Record<string, string[]>;
+
+/** Prerequisite links between the course's own concepts, each listed once. */
+function prereqLinks(edges: any[], ids: Set<string>): { pre: Links; post: Links } {
+  const pre: Links = {};
+  const post: Links = {};
+  const link = (map: Links, from: string, to: string) => {
+    const list = (map[from] ||= []);
+    if (!list.includes(to)) list.push(to);
+  };
   for (const e of edges) {
     if (!e || !PREREQ_TYPES.has(e.relationship_type)) continue;
     const s = String(e.source), t = String(e.target);
-    if (!ids.has(s) || !ids.has(t) || s === t) continue;
-    pre[t] ||= [];
-    post[s] ||= [];
-    if (!pre[t].includes(s)) pre[t].push(s);
-    if (!post[s].includes(t)) post[s].push(t);
+    if (s === t || !ids.has(s) || !ids.has(t)) continue;
+    link(pre, t, s);
+    link(post, s, t);
   }
+  return { pre, post };
+}
+
+/** A concept's depth in the prerequisite chain: 0 when nothing is needed first. */
+function depthFinder(pre: Links): (id: string) => number {
   const depth: Record<string, number> = {};
   const visiting = new Set<string>();
   const d = (id: string): number => {
@@ -190,29 +193,70 @@ export function conceptsForCourse(
     depth[id] = v;
     return v;
   };
+  return d;
+}
+
+/** The summed mastery deltas of the events since `since` (0..1 units). */
+function deltaSince(events: unknown, since: number): number {
+  if (!Array.isArray(events)) return 0;
+  return events.reduce((sum: number, ev: any) => {
+    const t = Date.parse(ev?.created_at ?? "");
+    return Number.isFinite(t) && t >= since ? sum + (Number(ev.delta) || 0) : sum;
+  }, 0);
+}
+
+/**
+ * A concept's mastery change over the last 7 days. The graph read sends it as
+ * `week_delta`, summed over every event of the week. A payload without it
+ * falls back to summing `mastery_events`, which holds only the node's last
+ * five and so under-counts a busy week.
+ */
+const weekDeltaOf = (node: any, weekAgo: number): number =>
+  typeof node.week_delta === "number" ? node.week_delta : deltaSince(node.mastery_events, weekAgo);
+
+const masteryPct = (st: Status, score: unknown) =>
+  st === "new" ? 0 : Math.max(0, Math.min(100, Math.round((Number(score) || 0) * 100)));
+
+/** The sentence on an unmastered concept that rests on unmastered prerequisites. */
+function gapSentence(weak: string[]): string {
+  const one = weak.length === 1;
+  return `Based on ${weak.join(" and ")}, which ${one ? "isn't" : "aren't"} mastered yet. You can still start, but expect to revisit ${one ? "it" : "them"}.`;
+}
+
+/** A concept's gap sentence, or "" when nothing unmastered sits under it. */
+function gapFor(c: Concept, byId: Map<string, Concept>): string {
+  if (c.st === "mastered") return "";
+  const weak = c.pre.map(p => byId.get(p)!).filter(p => p.st !== "mastered").map(p => p.name);
+  return weak.length ? gapSentence(weak) : "";
+}
+
+export function conceptsForCourse(
+  nodes: any[],
+  edges: any[],
+  courseId: string,
+  now: Date = new Date(),
+  categories?: Map<string, string>,
+): Concept[] {
+  const own = nodes.filter(n => n && n.course_id === courseId && !n.is_subject_root && n.mastery_tier !== "subject_root");
+  const { pre, post } = prereqLinks(edges, new Set(own.map(n => String(n.id))));
+  const depth = depthFinder(pre);
   const weekAgo = now.getTime() - 7 * 86400000;
-  const base = own.map(n => {
+  const base = own.map((n): Concept => {
     const id = String(n.id);
     const st: Status = TIER[n.mastery_tier] ?? "new";
-    const score = Number(n.mastery_score) || 0;
-    const events: any[] = Array.isArray(n.mastery_events) ? n.mastery_events : [];
-    const weekDelta = events.reduce((sum, ev) => {
-      const t = Date.parse(ev?.created_at ?? "");
-      return Number.isFinite(t) && t >= weekAgo ? sum + (Number(ev.delta) || 0) : sum;
-    }, 0);
     return {
       id,
       name: String(n.concept_name ?? ""),
       st,
-      m: st === "new" ? 0 : Math.max(0, Math.min(100, Math.round(score * 100))),
+      m: masteryPct(st, n.mastery_score),
       lastStudied: n.last_studied_at ?? null,
       pre: pre[id] || [],
       post: post[id] || [],
-      step: d(id),
+      step: depth(id),
       group: "",
       gap: "",
-      weekDelta,
-    } as Concept;
+      weekDelta: weekDeltaOf(n, weekAgo),
+    };
   });
   const byId = new Map(base.map(c => [c.id, c]));
   // Real categories, but only when the outline speaks for this course: at
@@ -223,22 +267,22 @@ export function conceptsForCourse(
   const useCategories = placed > 0 && placed * 2 >= base.length;
   for (const c of base) {
     c.group = useCategories ? categories!.get(c.id) ?? OTHER_GROUP : layerLabel(c.step);
-    const weak = c.pre.filter(p => byId.get(p)?.st !== "mastered").map(p => byId.get(p)!.name);
-    if (c.st !== "mastered" && weak.length) {
-      const one = weak.length === 1;
-      c.gap = `Based on ${weak.join(" and ")}, which ${one ? "isn't" : "aren't"} mastered yet. You can still start, but expect to revisit ${one ? "it" : "them"}.`;
-    }
+    c.gap = gapFor(c, byId);
   }
   return base.sort((a, b) => a.step - b.step || a.name.localeCompare(b.name));
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+const TYPE_BY_RAW = new Map<string, AssessType>([
+  ["exam", "Exam"], ["midterm", "Exam"], ["final", "Exam"],
+  ["quiz", "Quiz"],
+  ["homework", "Homework"], ["project", "Homework"], ["reading", "Homework"], ["lab", "Homework"], ["assignment", "Homework"],
+]);
+
 /** Exams/quizzes vs homework, from the stored type or (for "other" rows) the title. */
 export function classifyAssessment(rawType: string | null | undefined, title: string): AssessType {
-  const t = (rawType || "").toLowerCase();
-  if (t === "exam" || t === "midterm" || t === "final") return "Exam";
-  if (t === "quiz") return "Quiz";
-  if (t === "homework" || t === "project" || t === "reading" || t === "lab" || t === "assignment") return "Homework";
+  const known = TYPE_BY_RAW.get((rawType || "").toLowerCase());
+  if (known) return known;
   if (/\b(midterm|final|exam)\b/i.test(title)) return "Exam";
   if (/\bquiz\b/i.test(title)) return "Quiz";
   return "Homework";
@@ -355,56 +399,6 @@ export function quickReviews(topics: Concept[], today: Date) {
     .filter(x => x.ago >= 7 || x.t.st === "review" || x.t.m < 70)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
-}
-
-export interface PaceInput {
-  examTitle: string;
-  days: number;
-  readiness: number;
-  /** Readiness points gained over the last 7 days. */
-  weekGain: number;
-  /** Minutes studied over the last 7 days (all courses). */
-  weekMinutes: number;
-  nextConcept?: string;
-}
-
-const PACE_TARGET = 90;
-
-/**
- * The AI pace pill. Projects readiness at the exam from the last week's real
- * rate (points/day), and when short of the 90% target converts the gap into
- * minutes per day using the observed points-per-minute. Returns null when
- * there's nothing honest to say (no exam ahead, or already at the target).
- */
-export function pace(p: PaceInput): { ok: boolean; title: string; body: string } | null {
-  if (p.days < 0 || p.readiness >= PACE_TARGET) return null;
-  const when = p.days === 0 ? "today" : p.days === 1 ? "tomorrow" : `in ${p.days} days`;
-  const perDay = Math.max(0, p.weekGain) / 7;
-  const proj = Math.min(100, Math.round(p.readiness + perDay * Math.max(p.days, 0)));
-  if (proj >= PACE_TARGET) {
-    return {
-      ok: true,
-      title: `On pace for ${p.examTitle}`,
-      body: `${p.examTitle} is ${when}. At your current pace you'll reach about ${proj}% readiness, above the ${PACE_TARGET}% target.`,
-    };
-  }
-  const gap = PACE_TARGET - proj;
-  if (perDay > 0 && p.weekMinutes > 0 && p.days > 0) {
-    const pointsPerMin = p.weekGain / p.weekMinutes;
-    const extra = Math.max(5, Math.round(gap / pointsPerMin / p.days / 5) * 5);
-    const amount = extra >= 60 ? `${Math.round((extra / 60) * 10) / 10} more hours` : `${extra} more minutes`;
-    return {
-      ok: false,
-      title: "You need to spend more time",
-      body: `${p.examTitle} is ${when} and you're on track for about ${proj}% readiness. Plan on an average of ${amount} per day to reach ${PACE_TARGET}%.`,
-    };
-  }
-  const start = p.nextConcept ? ` Start with ${p.nextConcept}.` : "";
-  return {
-    ok: false,
-    title: "You need to spend more time",
-    body: `${p.examTitle} is ${when} and you're at ${p.readiness}% readiness. Your mastery hasn't moved this week, so you're not on pace for ${PACE_TARGET}%.${start}`,
-  };
 }
 
 export const ring = (m: number, r: number) => {

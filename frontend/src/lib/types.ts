@@ -5,6 +5,8 @@ export interface GraphNode {
   mastery_tier: 'mastered' | 'learning' | 'struggling' | 'unexplored' | 'subject_root';
   times_studied: number;
   last_studied_at: string | null;
+  /** Summed mastery-event deltas over the last 7 days (0..1 units, 0 when none); absent on older payloads. */
+  week_delta?: number;
   subject: string;
   description?: string | null;
   course_id?: string | null;

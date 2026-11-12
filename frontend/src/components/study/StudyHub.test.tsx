@@ -223,9 +223,22 @@ describe("StudyHub", () => {
     expect(within(screen.getByTestId("focus-card")).queryByText(/study guide/i)).toBeNull();
   });
 
-  it("the header's Study Guide opens the guide page on this course, no exam picked for you", async () => {
+  it("the header's Study Guide opens the guide page on this course and the selected exam", async () => {
     renderHub();
     await hubLoaded();
+    // Exam 2's tab is the default; the guide opens on it.
+    fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
+    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=e2");
+    // Another tab, another guide.
+    fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
+    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=q1");
+  });
+
+  it("with no exam on the course, Study Guide opens on the course alone", async () => {
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [] });
+    renderHub();
+    await screen.findByText("CS101 Mastery");
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
     expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1");
   });
@@ -257,7 +270,7 @@ describe("StudyHub", () => {
     renderHub();
     await hubLoaded();
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1");
+    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=e2");
     fireEvent.click(screen.getByRole("button", { name: "Flashcards" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(push).toHaveBeenLastCalledWith("/flashcards?course=c1");
@@ -672,5 +685,287 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"); // mean of 96, 60, 30, 0
     expect(squares()).toHaveLength(4);
     expect(legend()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
+  });
+});
+
+describe("StudyHub shows only what its data backs", () => {
+  it("Quick Reviews are named for the course they are picked over, and their time is an estimate", async () => {
+    // The outline puts Loops on Exam 2, and Exam 2's tab is selected. The list
+    // is still the whole course's (Loops and Recursion), so it says "CS101",
+    // not "2 on Exam 2".
+    vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [topic("t-loop", "Loops", null, "loop", ["e2"])], needs_refresh: false } as never);
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
+    expect(within(row).getByText("~4 min")).toBeTruthy();
+    fireEvent.focus(row); // the list opens on focus as well as hover
+    const list = screen.getByRole("dialog", { name: "Quick reviews" });
+    expect(within(list).getByText("~4 min · CS101")).toBeTruthy();
+    expect(within(list).queryByText(/on Exam 2/)).toBeNull();
+    expect(within(list).getByText("Loops")).toBeTruthy();
+    expect(within(list).getByText("Recursion")).toBeTruthy();
+  });
+
+  it("a tile's ... tooltip names what its menu offers", async () => {
+    renderHub();
+    await hubLoaded();
+    expect(screen.getByTestId("tile-actions-loop").getAttribute("title")).toBe("Quiz or flashcards for this concept");
+    cleanup();
+
+    flagState.hideQuiz = true;
+    try {
+      renderHub();
+      await hubLoaded();
+      expect(screen.getByTestId("tile-actions-loop").getAttribute("title")).toBe("Flashcards for this concept");
+    } finally {
+      flagState.hideQuiz = false;
+    }
+  });
+
+  it("a first read of the dates that lands after a save does not undo what the save showed", async () => {
+    const before = await vi.mocked(api.getAllAssignments).getMockImplementation()!("u1");
+    let landFirstRead!: () => void;
+    vi.mocked(api.getAllAssignments).mockImplementationOnce(() => new Promise(res => { landFirstRead = () => res(before); }));
+    // The read the save triggers answers with the new exam in it.
+    vi.mocked(api.getAllAssignments).mockResolvedValue({
+      assignments: [...before.assignments, { id: "fin", user_id: "u1", title: "Final", due_date: iso(15), assignment_type: "exam", course_id: "c1" }],
+    });
+    renderHub();
+    // No exams yet (the first read is still out): add one from the empty row.
+    fireEvent.click(await screen.findByText("+ Add Exam or Deadline"));
+    const dlg = screen.getByRole("dialog", { name: "Exams and deadlines" });
+    fireEvent.change(within(dlg).getByLabelText("Name"), { target: { value: "Final" } });
+    fireEvent.click(within(dlg).getByText("Save Dates"));
+    expect(await screen.findByRole("tab", { name: /Final/ })).toBeTruthy();
+    await act(async () => { landFirstRead(); });
+    expect(screen.getByRole("tab", { name: /Final/ })).toBeTruthy();
+  });
+
+  it("a goal saved while the daily read is down still shows as the goal", async () => {
+    vi.mocked(getStudyDaily).mockRejectedValue(new Error("down"));
+    renderHub();
+    await hubLoaded();
+    // The server's default until a read answers.
+    fireEvent.click(screen.getByRole("button", { name: /Daily goal: 30 minutes/ }));
+    fireEvent.click(screen.getByRole("radio", { name: "60 minutes" }));
+    expect(await screen.findByRole("button", { name: /Daily goal: 60 minutes/ })).toBeTruthy();
+    expect(setStudyDailyGoal).toHaveBeenCalledWith("u1", 60);
+  });
+
+  it("a flashcard with an unreadable review date does not take the hub down", async () => {
+    vi.mocked(api.getFlashcards).mockResolvedValue({ flashcards: [
+      { id: "bad", topic: "Loops", last_reviewed_at: "not a date" },
+      { id: "ok", topic: "Recursion", last_reviewed_at: new Date(2026, 10, 8, 9).toISOString() },
+    ] });
+    renderHub();
+    await hubLoaded();
+    const rail = screen.getByRole("region", { name: "Recent activity" });
+    await waitFor(() => expect(within(rail).getByText("1 card")).toBeTruthy());
+    expect(within(rail).queryByText("Loops")).toBeNull();
+  });
+
+  it("a course with no concepts shows no readiness figure, not 0%", async () => {
+    vi.mocked(api.getGraph).mockResolvedValue({ nodes: [], edges: [], stats: {} });
+    renderHub();
+    await hubLoaded();
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("–");
+    expect(screen.queryByText("0%")).toBeNull();
+    // Nothing to draw or filter either; the block beside it says why.
+    const band = screen.getByLabelText("Readiness");
+    expect(within(band).queryByRole("img")).toBeNull();
+    expect(within(band).queryByRole("button", { name: /Mastered/ })).toBeNull();
+    expect(within(band).getByText("No concepts yet")).toBeTruthy();
+  });
+
+  it("this week's trend is the server's week_delta, not the sum of the five events it sends", async () => {
+    // Loops moved +0.05 six times this week; the payload carries five of them.
+    const lastFive = Array.from({ length: 5 }, () => ({ delta: 0.05, created_at: new Date(2026, 10, 6).toISOString() }));
+    vi.mocked(api.getGraph).mockResolvedValue({
+      nodes: [
+        { ...node("var", "Variables", "mastered", 0.96), week_delta: 0 },
+        { ...node("loop", "Loops", "learning", 0.6), mastery_events: lastFive, week_delta: 0.3 },
+      ],
+      edges: [], stats: {},
+    });
+    renderHub();
+    await hubLoaded();
+    // 0.3 over two concepts = +15 points; the five events alone would say +13.
+    expect(screen.getByText("+15% this week")).toBeTruthy();
+  });
+
+  it("cards made for another course's same-named concept are not counted or listed here", async () => {
+    vi.mocked(api.getFlashcards).mockResolvedValue({ flashcards: [
+      { id: "theirs", topic: "Loops", course_id: "c2", last_reviewed_at: new Date(2026, 10, 8, 9).toISOString() },
+      { id: "ours", topic: "Recursion", course_id: "c1", last_reviewed_at: new Date(2026, 10, 8, 9).toISOString() },
+    ] });
+    renderHub();
+    await hubLoaded();
+    fireEvent.click(screen.getByTestId("tile-actions-loop"));
+    expect(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Make Flashcards" })).toBeTruthy();
+    fireEvent.click(screen.getByTestId("tile-actions-rec"));
+    expect(within(screen.getByRole("menu")).getByRole("menuitem", { name: "1 Flashcards" })).toBeTruthy();
+    const rail = screen.getByRole("region", { name: "Recent activity" });
+    expect(within(rail).getAllByText("1 card")).toHaveLength(1); // Recursion's review only
+    expect(within(rail).queryByText("Loops")).toBeNull();
+  });
+
+  it("the hub still works when the dates cannot be read", async () => {
+    vi.mocked(api.getAllAssignments).mockRejectedValue(new Error("calendar is down"));
+    renderHub();
+    // No exam to speak for: the course's own mastery, and every other panel.
+    expect(await screen.findByText("CS101 Mastery")).toBeTruthy();
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("47%");
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    expect(screen.getByText("+ Add Exam or Deadline")).toBeTruthy();
+    for (const id of ["var", "loop", "rec", "arr"]) expect(screen.getByTestId(`tile-${id}`)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Upcoming deadlines, 0 this week"));
+    expect(within(screen.getByRole("dialog", { name: "Upcoming deadlines" })).getByText("Nothing due for this course.")).toBeTruthy();
+    expect(console.error).toHaveBeenCalledWith("study assignments load failed", expect.anything());
+  });
+});
+
+describe("StudyHub saves exams and deadlines", () => {
+  const FINAL = { id: "fin", user_id: "u1", title: "Final", due_date: iso(15), assignment_type: "exam", course_id: "c1" };
+  /** Adds a row named `name` in the dates editor and saves it. */
+  const addExam = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "Add exam or deadline" }));
+    const dlg = screen.getByRole("dialog", { name: "Exams and deadlines" });
+    if (name) fireEvent.change(within(dlg).getAllByLabelText("Name").at(-1)!, { target: { value: name } });
+    fireEvent.click(within(dlg).getByText("Save Dates"));
+  };
+  /** The dates the next reads answer with: the fixture's, plus `extra`. */
+  const nextReadsAdd = async (...extra: unknown[]) => {
+    const before = await vi.mocked(api.getAllAssignments).getMockImplementation()!("u1");
+    vi.mocked(api.getAllAssignments).mockResolvedValueOnce(before);
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [...before.assignments, ...extra] } as never);
+  };
+
+  it("says what the calendar skipped instead of 'Dates saved'", async () => {
+    vi.mocked(api.saveAssignments).mockResolvedValueOnce({
+      saved_count: 0, skipped_count: 1, skipped: [{ title: "Exam 2", due_date: iso(15), reason: "duplicate" }],
+    } as never);
+    renderHub();
+    await hubLoaded();
+    addExam("Exam 2");
+    expect(await screen.findByText('Not saved: "Exam 2" (already on your calendar).')).toBeTruthy();
+    expect(screen.queryByText("Dates saved")).toBeNull();
+  });
+
+  it("does not claim a save when fewer rows went in than were sent, even with no list of them", async () => {
+    vi.mocked(api.saveAssignments).mockResolvedValueOnce({ saved_count: 0 });
+    renderHub();
+    await hubLoaded();
+    addExam("Final");
+    expect(await screen.findByText("1 of 1 new date was not saved.")).toBeTruthy();
+    expect(screen.queryByText("Dates saved")).toBeNull();
+  });
+
+  it("says 'Dates saved' when every row went in", async () => {
+    renderHub();
+    await hubLoaded();
+    addExam("Final");
+    expect(await screen.findByText("Dates saved")).toBeTruthy();
+  });
+
+  it("a blank row's default name does not repeat one already there", async () => {
+    // "Exam 4" is where a fourth row's default would land.
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [
+      { id: "hw", user_id: "u1", title: "Lab 5", due_date: iso(10), assignment_type: "homework", course_id: "c1" },
+      { id: "e2", user_id: "u1", title: "Exam 2", due_date: iso(18), assignment_type: "exam", course_id: "c1" },
+      { id: "e4", user_id: "u1", title: "Exam 4", due_date: iso(20), assignment_type: "exam", course_id: "c1" },
+    ] });
+    renderHub();
+    await hubLoaded();
+    addExam("");
+    await waitFor(() => expect(api.saveAssignments).toHaveBeenCalledWith(
+      "u1", [{ title: "Exam 5", course_id: "c1", due_date: iso(15), assignment_type: "exam" }],
+    ));
+  });
+
+  it("re-reads the course's outline after a save, and shows what it now says", async () => {
+    await nextReadsAdd(FINAL);
+    // Before the save the outline links nothing; after it, Loops is on the Final.
+    vi.mocked(getTopicChecklist).mockResolvedValueOnce({ topics: [], needs_refresh: false } as never);
+    vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [topic("t-loop", "Loops", null, "loop", ["fin"])], needs_refresh: false } as never);
+    renderHub();
+    await hubLoaded();
+    expect(getTopicChecklist).toHaveBeenCalledTimes(1);
+    addExam("Final");
+    // The new exam's tab is selected, and its readiness is over its own concept.
+    expect(await screen.findByText("Ready for Final")).toBeTruthy();
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("60%");
+    expect(vi.mocked(getTopicChecklist).mock.calls.map(c => c[1])).toEqual(["c1", "c1"]);
+  });
+
+  it("the roadmap keeps its columns while the outline is re-read", async () => {
+    await nextReadsAdd(FINAL);
+    let land!: () => void;
+    vi.mocked(getTopicChecklist).mockResolvedValueOnce({ topics: CATEGORISED, needs_refresh: false } as never);
+    vi.mocked(getTopicChecklist).mockReturnValue(new Promise(res => { land = () => res({ topics: CATEGORISED, needs_refresh: false }); }) as never);
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(roadmapText("Programming Fundamentals")).toBeTruthy());
+    addExam("Final");
+    await screen.findByRole("tab", { name: /Final/ });
+    await waitFor(() => expect(getTopicChecklist).toHaveBeenCalledTimes(2));
+    // Still in flight: no flash back to the fallback layers.
+    expect(roadmapText("Programming Fundamentals")).toBeTruthy();
+    expect(roadmapText("Foundations")).toBeNull();
+    await act(async () => { land(); });
+    expect(roadmapText("Programming Fundamentals")).toBeTruthy();
+  });
+
+  it("a save lets the outline be generated again for the course's new exams", async () => {
+    await nextReadsAdd(FINAL);
+    vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [], needs_refresh: true } as never);
+    vi.mocked(refreshTopicChecklist).mockResolvedValueOnce({ topics: CATEGORISED, needs_refresh: false } as never);
+    vi.mocked(refreshTopicChecklist).mockResolvedValue({ topics: [topic("t-loop", "Loops", null, "loop", ["fin"])], needs_refresh: false } as never);
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(roadmapText("Programming Fundamentals")).toBeTruthy());
+    expect(refreshTopicChecklist).toHaveBeenCalledTimes(1);
+    addExam("Final");
+    expect(await screen.findByText("Ready for Final")).toBeTruthy();
+    expect(refreshTopicChecklist).toHaveBeenCalledTimes(2);
+  });
+
+  it("saving with nothing changed re-reads nothing", async () => {
+    renderHub();
+    await hubLoaded();
+    fireEvent.click(screen.getByLabelText(/^Upcoming deadlines, /));
+    fireEvent.click(screen.getByText("Manage Dates"));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Exams and deadlines" })).getByText("Save Dates"));
+    expect(await screen.findByText("Dates saved")).toBeTruthy();
+    expect(getTopicChecklist).toHaveBeenCalledTimes(1);
+    expect(api.saveAssignments).not.toHaveBeenCalled();
+  });
+});
+
+describe("StudyHub never shows an older outline over a newer one", () => {
+  const OLD = [
+    topic("old", "Old Unit", null, null),
+    topic("t-var", "Variables", "old", "var"),
+    topic("t-loop", "Loops", "old", "loop"),
+    topic("t-rec", "Recursion", "old", "rec"),
+    topic("t-arr", "Arrays", "old", "arr"),
+  ];
+
+  it("a generation that already finished is not laid over a later read", async () => {
+    // First visit: nothing saved, so the hub generates; that lands as OLD.
+    vi.mocked(getTopicChecklist).mockResolvedValueOnce({ topics: [], needs_refresh: true } as never);
+    vi.mocked(refreshTopicChecklist).mockResolvedValue({ topics: OLD, needs_refresh: false } as never);
+    renderHub({ courses: [COURSE, COURSE2] });
+    await hubLoaded();
+    await waitFor(() => expect(roadmapText("Old Unit")).toBeTruthy());
+    // Away and back: the read is newer than that generation, and still says
+    // the outline could be refreshed. What it returned is what shows.
+    vi.mocked(getTopicChecklist).mockResolvedValue({ topics: CATEGORISED, needs_refresh: true } as never);
+    pickCourse("MA225");
+    pickCourse("CS101");
+    await waitFor(() => expect(roadmapText("Programming Fundamentals")).toBeTruthy());
+    await act(async () => {}); // let the memoised generation's reply run, if it were going to
+    expect(roadmapText("Old Unit")).toBeNull();
+    expect(roadmapText("Programming Fundamentals")).toBeTruthy();
+    expect(refreshTopicChecklist).toHaveBeenCalledTimes(1); // and it is not asked for again
   });
 });
