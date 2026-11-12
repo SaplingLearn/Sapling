@@ -56,7 +56,8 @@ DOMAIN_PACKAGES = tuple(
     BACKEND / "services" / name
     for name in (
         "admin", "auth", "documents", "flashcards", "gradebook",
-        "gradescope", "profile", "quiz", "social", "study", "tutor",
+        "gradescope", "profile", "quiz", "social", "study", "study_guides",
+        "tutor",
     )
 )
 
