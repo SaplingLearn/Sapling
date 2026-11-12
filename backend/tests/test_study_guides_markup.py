@@ -280,11 +280,31 @@ def test_a_reply_cut_inside_a_code_sample_closes_it():
     assert [p.text for p in passage.paragraphs] == ["Before.", "```python\nx = 1\n```"]
 
 
-def test_a_code_sample_does_not_swallow_the_block_after_it():
-    parsed = parse("```python\nx = 1\n" + fenced(BLOCKS["key_terms"]))
+def test_a_block_fence_inside_a_code_sample_is_code():
+    """A code sample ends at a bare fence and nowhere else, as Markdown reads
+    it: a block fence before that is a line of the sample, and what follows
+    the sample is prose again."""
+    inner = json.dumps(BLOCKS["formula"])
+    parsed = parse(f"Before.\n\n```python\nx = 1\n```block\n{inner}\n```\n\nAfter.\n\n>> Short.\n")
 
-    assert kinds(parsed) == ["prose", "key_terms"]
+    (passage,) = parsed.items
     assert parsed.rejected == []
+    assert [p.text for p in passage.paragraphs] == [
+        "Before.", f"```python\nx = 1\n```block\n{inner}\n```", "After.",
+    ]
+    assert passage.summary == "Short."
+
+
+def test_a_stray_closing_fence_does_not_swallow_the_prose_after_it():
+    """A bare fence nothing closes, with no JSON after it, opened no block."""
+    parsed = parse(f"Before.\n\n```python\nx = 1\n```\ny = 2\n```\n\nAfter.\n\n{fenced(BLOCKS['check'])}\n")
+
+    # Four paragraphs: a passage of three, then one more.
+    assert kinds(parsed) == ["prose", "prose", "check"]
+    assert parsed.rejected == []
+    assert [p.text for item in parsed.items[:2] for p in item.paragraphs] == [
+        "Before.", "```python\nx = 1\n```", "y = 2", "After.",
+    ]
 
 
 # ── Blocks ────────────────────────────────────────────────────────────────────
@@ -357,6 +377,23 @@ def test_an_unclosed_block_does_not_swallow_the_next_one():
     text = "```block\n" + json.dumps(BLOCKS["formula"]) + "\n" + fenced(BLOCKS["key_terms"])
 
     assert kinds(parse(text)) == ["formula", "key_terms"]
+
+
+def test_an_unclosed_block_ends_with_its_json_and_the_prose_after_it_is_kept():
+    text = (
+        "Before.\n\n```block\n" + json.dumps(BLOCKS["formula"], indent=2)
+        + "\n\nAfter the block [S1].\n\n>> Short.\n\n" + fenced(BLOCKS["key_terms"])
+        + "\n\n```json\n" + json.dumps(BLOCKS["check"]) + "\nThe last words.\n"
+    )
+
+    parsed = parse(text)
+
+    assert kinds(parsed) == ["prose", "formula", "prose", "key_terms", "check", "prose"]
+    assert parsed.rejected == []
+    after, last = parsed.items[2], parsed.items[5]
+    assert after.paragraphs[0].text == "After the block."
+    assert after.paragraphs[0].citations == ["document:doc-1"] and after.summary == "Short."
+    assert last.paragraphs[0].text == "The last words."
 
 
 def test_a_malformed_block_is_rejected_and_its_neighbours_survive():
@@ -455,6 +492,20 @@ def test_a_line_break_in_ordinary_text_is_not_a_latex_slip():
     (block,) = parse(fenced(example)).items
 
     assert block.problem == "A loop starts at 2.\nHow many passes?"
+
+
+@pytest.mark.parametrize("coordinate", ['"x": 10, "y": true', '"x": false, "y": 100'])
+def test_a_boolean_is_not_a_coordinate(coordinate):
+    """Validation would read `true` as 1.0 and draw a point nobody wrote."""
+    body = json.dumps(BLOCKS["chart"]).replace('"x": 10, "y": 100', coordinate)
+    assert coordinate in body
+
+    parsed = parse(fenced(body))
+
+    assert parsed.items == []
+    assert [r.type for r in parsed.rejected] == ["chart"]
+    # A boolean where the contract has one is still fine.
+    assert kinds(parse(fenced(BLOCKS["comparison"]))) == ["comparison"]
 
 
 def test_a_number_too_large_to_be_finite_is_rejected():

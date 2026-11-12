@@ -12,7 +12,10 @@ small markup (its system prompt is the other half of this file):
   JSON, a closing ```` ``` ````. It names its source by label: `"source": "S2"`.
 - A fence with any other language (```` ```python ````) is a code sample. It
   stays in the prose as a paragraph of its own, fence included, so the
-  reader's Markdown shows it as code.
+  reader's Markdown shows it as code. It ends at a bare fence and nowhere
+  else, so nothing inside it is a block.
+- A block fence that is never closed ends where its JSON object does, and the
+  text after it is prose.
 
 A passage is the run of paragraphs up to the next summary line or block. A run
 longer than three paragraphs is split into further passages, and its summary
@@ -43,6 +46,9 @@ _CODE_MAX = 1200
 #: Fields that hold LaTeX. A newline there is `\neq` or `\nu` written with
 #: one backslash, never a line break.
 _MATH_FIELDS = ("latex", "math")
+#: Fields that hold a chart coordinate. Validation would read a JSON `true`
+#: there as 1.0.
+_COORDINATE_FIELDS = ("x", "y")
 #: `## A heading` or a `---` rule: a model's habit, not part of the markup.
 _NOISE = re.compile(r"\s{0,3}(#{1,6}\s.*|([-*_])(\s*\2){2,})\s*")
 #: `[S1]` or `[S1, S3]`, with the space before it.
@@ -124,48 +130,93 @@ def _chunks(text: str) -> list[tuple[str, str]]:
     """The text in order as `("paragraph" | "summary" | "block", content)`.
     A code sample is a paragraph whose content starts with a fence."""
     chunks: list[tuple[str, str]] = []
-    lines: list[str] = []
+    prose: list[str] = []
     fenced: list[str] | None = None
     language = ""
-
-    def close_paragraph() -> None:
-        if lines:
-            chunks.append(("paragraph", " ".join(lines)))
-            lines.clear()
-
-    def close_fence() -> None:
-        if language in _BLOCK_LANGUAGES:
-            chunks.append(("block", "\n".join(fenced)))
-            return
-        code = "\n".join([_FENCE + language, *fenced, _FENCE])
-        if len(code) <= _CODE_MAX:
-            chunks.append(("paragraph", code))
-
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         stripped = line.strip()
-        if stripped.startswith(_FENCE):
-            close_paragraph()
-            if fenced is not None:
-                close_fence()
-            # A bare fence closes a block. One with a language opens the next,
-            # even when the block before it was never closed.
-            fenced = [] if fenced is None or stripped != _FENCE else None
-            language = stripped[len(_FENCE):].strip().lower()
-        elif fenced is not None:
+        opens = stripped.startswith(_FENCE)
+        if fenced is None and not opens:
+            prose.append(line)
+        elif fenced is None:
+            chunks += _prose_chunks(prose)
+            prose = []
+            fenced, language = [], _language(stripped)
+        elif stripped == _FENCE:
+            chunks += _fence_chunks(language, fenced, closed=True)
+            fenced = None
+        elif opens and language in _BLOCK_LANGUAGES:
+            # The block before was never closed, and the next fence opens.
+            chunks += _fence_chunks(language, fenced, closed=False)
+            fenced, language = [], _language(stripped)
+        else:
+            # A code sample ends at a bare fence only, as Markdown reads it,
+            # so a fence line inside it is one of its lines.
             fenced.append(line)
-        elif not stripped or _NOISE.fullmatch(line):
+    chunks += _prose_chunks(prose)
+    if fenced is not None:
+        chunks += _fence_chunks(language, fenced, closed=False)
+    return chunks
+
+
+def _language(fence_line: str) -> str:
+    return fence_line[len(_FENCE):].strip().lower()
+
+
+def _prose_chunks(lines: list[str]) -> list[tuple[str, str]]:
+    """Lines outside any fence as paragraphs and summary lines."""
+    chunks: list[tuple[str, str]] = []
+    paragraph: list[str] = []
+
+    def close_paragraph() -> None:
+        if paragraph:
+            chunks.append(("paragraph", " ".join(paragraph)))
+            paragraph.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or _NOISE.fullmatch(line):
             close_paragraph()
         elif stripped.startswith(">>") and not stripped.startswith(">>>"):
             close_paragraph()
             chunks.append(("summary", stripped[2:].strip()))
         else:
-            lines.append(stripped)
+            paragraph.append(stripped)
     close_paragraph()
-    if fenced is not None:
-        # The reply was cut inside a fence: a block that will reject, or a
-        # code sample that ends where the reply did.
-        close_fence()
     return chunks
+
+
+def _fence_chunks(language: str, lines: list[str], *, closed: bool) -> list[tuple[str, str]]:
+    """One fence's lines as chunks: a block, or a code sample (a paragraph).
+    A fence that was never closed may hold prose after its block."""
+    if language not in _BLOCK_LANGUAGES:
+        # A reply cut inside a code sample ends the sample where it stopped.
+        code = "\n".join([_FENCE + language, *lines, _FENCE])
+        return [("paragraph", code)] if len(code) <= _CODE_MAX else []
+    body = "\n".join(lines)
+    if closed:
+        return [("block", body)]
+    block, after = _unclosed(language, body)
+    blocks = [("block", block)] if block is not None else []
+    return [*blocks, *_prose_chunks(after.split("\n"))]
+
+
+def _unclosed(language: str, body: str) -> tuple[str | None, str]:
+    """`(the block, the text after it)` of a block fence nothing closed.
+
+    The block ends where its JSON object does, and the rest is ordinary text.
+    A body that does not hold a whole object is all block: the reply was cut
+    inside it, and it rejects. A bare fence followed by no JSON at all opened
+    nothing (it is a closing fence with no partner), so its body is all text.
+    """
+    start = len(body) - len(body.lstrip())
+    if not language and not body.startswith("{", start):
+        return None, body
+    try:
+        value, end = json.JSONDecoder().raw_decode(body, start)
+    except (ValueError, RecursionError):
+        return body, ""
+    return (body[:end], body[end:]) if isinstance(value, dict) else (body, "")
 
 
 def _entries(chunks: list[tuple[str, str]]) -> list[tuple[str, object, str | None]]:
@@ -266,8 +317,11 @@ def _unusable(value, field: str | None = None) -> bool:
     backslash (`\\text`, `\\frac`), which JSON reads as an escape: the
     formula would be silently wrong. A newline is allowed in ordinary text but
     not in a LaTeX field, where it is `\\neq` or `\\nu`. A number that is not
-    finite (`1e999` parses to infinity) could not be drawn or sent as JSON.
+    finite (`1e999` parses to infinity) could not be drawn or sent as JSON,
+    and a boolean is not a coordinate.
     """
+    if isinstance(value, bool):
+        return field in _COORDINATE_FIELDS
     if isinstance(value, str):
         newline_ok = field not in _MATH_FIELDS
         return any(ord(char) < 32 and not (char == "\n" and newline_ok) for char in value)

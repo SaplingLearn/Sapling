@@ -4,10 +4,11 @@ blocks are held to what the guide was really made from.
 The writer is a model, so nothing it says about the student or the sources is
 taken on trust. A citation must name one of the guide's sources. A mistake
 must cite a mistake the quiz history really holds, and its evidence line is
-written here. A check question must have its answer among its options. A
-concept name must be one in the student's tree, in the tree's spelling,
-because mastery is looked up and moved by that name. A chart counts as plotted
-from data only when every number in it appears in the source it cites.
+written here. A check question must have its answer among its options, and a
+section keeps one, last. A concept name must be one in the student's tree, in
+the tree's spelling, because mastery is looked up and moved by that name. A
+chart counts as plotted from data only when every number in it appears in the
+source it cites.
 
 Pure functions, no I/O.
 """
@@ -69,9 +70,18 @@ def tree_name(name: str | None, concepts: list[str]) -> str | None:
 def check_section(section: Section, facts: Facts) -> Section:
     """The section with every item checked. An item that fails is dropped."""
     items = [checked for item in section.items if (checked := _item(item, facts)) is not None]
-    return section.model_copy(
-        update={"concept": tree_name(section.concept, facts.concepts), "items": items},
-    )
+    return section.model_copy(update={
+        "concept": tree_name(section.concept, facts.concepts),
+        "items": _one_check_last(items),
+    })
+
+
+def _one_check_last(items: list[Item]) -> list[Item]:
+    """The items with the first check question after everything else, and no
+    other. Each check can be answered, and a first answer moves mastery, so
+    two in one section would move it twice."""
+    checks = [item for item in items if item.type == "check"]
+    return [*(item for item in items if item.type != "check"), *checks[:1]]
 
 
 def check_block(block: Block, facts: Facts) -> Block | None:
@@ -129,13 +139,20 @@ def _numbers_in(text: str) -> set[float]:
 
 
 def _chart_numbers(chart: ChartBlock) -> set[float]:
+    """Every number the chart shows: the coordinates it draws, and the ones
+    written in a marker's labels and a readout's values."""
     points = [point for series in chart.series for point in series.points]
-    return {n for at in [*points, *chart.markers] for n in (at.x, at.y)}
+    drawn = {n for at in [*points, *chart.markers] for n in (at.x, at.y)}
+    written = [
+        *(label for marker in chart.markers for label in (marker.x_label, marker.y_label)),
+        *(value for readout in chart.readouts for value in (readout.before, readout.after)),
+    ]
+    return drawn.union(*(_numbers_in(text) for text in written))
 
 
 def _chart(chart: ChartBlock, facts: Facts) -> ChartBlock:
     """Plotted from data only when the chart cites a source and every number
-    it draws is in that source's text. Numbers are compared as numbers."""
+    it shows is in that source's text. Numbers are compared as numbers."""
     text = facts.sources.get(chart.source_id) if chart.source_id else None
     plotted = text is not None and _chart_numbers(chart) <= _numbers_in(text)
     return chart.model_copy(update={"illustrative": not plotted})

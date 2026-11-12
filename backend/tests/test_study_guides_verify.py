@@ -7,6 +7,7 @@ from models.study_guide import (
     ChartBlock,
     ChartMarker,
     ChartPoint,
+    ChartReadout,
     ChartSeries,
     CheckBlock,
     CheckOption,
@@ -295,6 +296,24 @@ def test_any_other_chart_is_illustrative_whatever_the_model_said(chart):
     assert check_block(chart, FACTS).illustrative is True
 
 
+def test_a_charts_readouts_and_marker_labels_are_held_to_the_source_too():
+    """A readout or a marker label shows a number as plainly as a point does."""
+    sourced = _chart([(4, 40), (5.5, 25)], markers=[(4, 40)]).model_copy(update={
+        "markers": [ChartMarker(x=4, y=40, x_label="P = $4", y_label="Q = 40")],
+        "readouts": [ChartReadout(label="Price", before="$4", after="$5.50", change="Rises")],
+    })
+    invented_readout = sourced.model_copy(update={
+        "readouts": [ChartReadout(label="Revenue", before="$999", after="$12345", change="Rises")],
+    })
+    invented_label = sourced.model_copy(update={
+        "markers": [ChartMarker(x=4, y=40, x_label="P", y_label="Q=777")],
+    })
+
+    assert check_block(sourced, FACTS).illustrative is False
+    assert check_block(invented_readout, FACTS).illustrative is True
+    assert check_block(invented_label, FACTS).illustrative is True
+
+
 @pytest.mark.parametrize(
     ("text", "numbers"),
     [
@@ -327,3 +346,19 @@ def test_a_section_keeps_its_order_and_loses_only_what_fails():
     assert [item.id for item in checked.items] == ["s1-i1", "s1-i2", "s1-i3", "s1-i10"]
     assert checked.concept == "Elasticity"
     assert (checked.tier, checked.weight, checked.status) == ("struggling", 40, "written")
+
+
+def test_a_section_keeps_one_check_and_it_comes_last():
+    """Every check can be answered and each first answer moves mastery, so a
+    section has one: the first that holds up, after everything else."""
+    prose = ProseItem(id="s1-i1", paragraphs=[Paragraph(text="Elasticity measures response.")])
+    after = ProseItem(id="s1-i5", paragraphs=[Paragraph(text="One more thing.")])
+    section = Section(id="s1", title="Elasticity", items=[
+        prose, _check(id="s1-i2", correct_id=None), _check(id="s1-i3"), _check(id="s1-i4"), after,
+    ])
+
+    checked = check_section(section, FACTS)
+
+    assert [item.id for item in checked.items] == ["s1-i1", "s1-i5", "s1-i3"]
+    # A section with one check, already last, is left as it is.
+    assert check_section(checked, FACTS).items == checked.items
