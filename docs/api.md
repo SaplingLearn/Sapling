@@ -32,6 +32,10 @@ Every route is mounted under `/api/<name>` in `backend/main.py`. Unless noted, r
 - `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
 - `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
 - `DELETE` `/api/flashcards/{card_id}` — Delete a card
+- `GET` `/api/flashcards/sets/{user_id}` — List a user's saved sets (optional `?course_id=`)
+- `POST` `/api/flashcards/sets` — Save a set (name, course, concept names, options)
+- `PATCH` `/api/flashcards/sets/{set_id}` — Change a saved set's name, concepts, options, or exam
+- `DELETE` `/api/flashcards/sets/{set_id}` — Delete a saved set (its cards stay)
 
 **Gradebook**
 
@@ -176,7 +180,7 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 
 ## Complete route index
 
-Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09: 236 operations. Regenerate it from the running backend's `/openapi.json` when routers change.
+Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09: 236 operations; the four `/api/flashcards/sets` routes were added by hand on 2026-11-12. Regenerate it from the running backend's `/openapi.json` when routers change.
 
 <details><summary><code>/api/admin</code> (71)</summary>
 
@@ -329,7 +333,7 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 
 </details>
 
-<details><summary><code>/api/flashcards</code> (9)</summary>
+<details><summary><code>/api/flashcards</code> (13)</summary>
 
 - `POST /api/flashcards/generate`
 - `POST /api/flashcards/import/cleanup`
@@ -338,6 +342,10 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 - `POST /api/flashcards/import/generate`
 - `POST /api/flashcards/import/parse`
 - `POST /api/flashcards/rate`
+- `POST /api/flashcards/sets`
+- `DELETE /api/flashcards/sets/{set_id}`
+- `PATCH /api/flashcards/sets/{set_id}`
+- `GET /api/flashcards/sets/{user_id}`
 - `GET /api/flashcards/user/{user_id}`
 - `DELETE /api/flashcards/{card_id}`
 

@@ -31,6 +31,10 @@ History:
         snapshot, which does not contain the row being inserted, so the
         draft's predicate refused the RETURNING of a user's own join.
     Both are the caller's own rows, so neither widens cross-user access.
+  * 2026-11-12 flashcard_sets joins bucket A (owned directly, the same shape
+    as flashcards). Its four policies and its grant ship in the table's own
+    migration (20261112060028_flashcard_sets.sql), written as this generator
+    prints them; the applied step-2b/2c migrations are not regenerated.
 """
 import json
 import sys
@@ -78,6 +82,7 @@ BUCKETS = {
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
+        "flashcard_sets",
     ],
     "B_via_parent": [
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -117,6 +122,9 @@ for t in ("oauth_tokens", "gradescope_credentials", "enrollments", "notes",
           "flashcards", "sessions", "quiz_attempts", "quiz_context",
           "study_guides", "graph_nodes", "graph_edges"):
     owner(t, own); grant(t, "SELECT, INSERT, UPDATE, DELETE")
+# Added after steps 2b/2c were applied: policies + grant live in the table's
+# own migration (20261112060028_flashcard_sets.sql), not in those two.
+owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, DELETE")
 owner("documents", own)
 grant("documents", "SELECT, INSERT, DELETE")
 # Not the index_* lease columns (document_indexing owns them, svc), nor id /

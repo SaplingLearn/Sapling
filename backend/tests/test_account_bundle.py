@@ -308,6 +308,17 @@ def source_db() -> FakeDB:
             "id": "fc-1", "user_id": UID, "offering_id": None, "topic": "CS",
             "front": enc(A, "What is recursion?"), "back": enc(A, "A self call"),
         }],
+        # Plaintext labels (no 🔒 column). `course_id` is a catalog UUID;
+        # `exam_id` is an assignment id, which keeps its value across the copy.
+        "flashcard_sets": [
+            {"id": "fset-1", "user_id": UID, "course_id": SRC_CS, "name": "Midterm 1",
+             "concepts": ["Recursion", "Base cases"],
+             "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+             "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z"},
+            {"id": "fset-2", "user_id": UID, "course_id": SRC_BIO, "name": "Cells",
+             "concepts": ["Cells"], "options": {}, "exam_id": None,
+             "created_at": "2026-11-03T00:00:00Z", "updated_at": "2026-11-03T00:00:00Z"},
+        ],
         "sessions": [{
             "id": "sess-1", "user_id": UID, "offering_id": SRC_OFF_BIO, "mode": "socratic",
             "topic": "Cells", "summary_json": enc_json(A, {"bullets": ["mitochondria"]}),
@@ -500,6 +511,18 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert created["section"] == ""
     assert d["sessions"][0]["offering_id"] == bio_off
     assert d["flashcards"][0]["offering_id"] is None
+    # Saved sets: the course is remapped by course_code, the labels travel as
+    # the plaintext they are, and exam_id still names the (id-preserved) assignment.
+    sets = {s["id"]: s for s in d["flashcard_sets"]}
+    assert sets["fset-1"] == {
+        "id": "fset-1", "user_id": UID, "course_id": DST_CS, "name": "Midterm 1",
+        "concepts": ["Recursion", "Base cases"],
+        "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+        "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z",
+    }
+    assert sets["fset-1"]["exam_id"] == d["assignments"][0]["id"]
+    assert (sets["fset-2"]["course_id"], sets["fset-2"]["exam_id"]) == (DST_BIO, None)
+    assert counts["flashcard_sets"] == 2
     # Graph course ids remapped by course_code; row ids preserved.
     nodes = {n["id"]: n["course_id"] for n in d["graph_nodes"]}
     assert nodes == {"node-1": DST_CS, "node-2": DST_BIO}
@@ -789,5 +812,41 @@ def test_malformed_achievement_catalog_is_refused_before_the_wipe(use, wipes, ba
     bundle["catalog"]["achievements"] = bad
     use(target_db(), KEY_B, "production")
     with pytest.raises(BundleError, match="achievements"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+# ── Saved flashcard sets: course-keyed, no offering ─────────────────────────
+
+
+def test_flashcard_set_course_reaches_the_catalog_without_an_offering(use, wipes, consent_clears):
+    """A set keys on the abstract course alone, so its course must reach the
+    bundle's catalog even when no exported row names an offering of it."""
+    src = source_db()
+    src.data["courses"].append({"id": "src-course-ma", "course_code": "CAS MA 123",
+                                "course_name": "Calculus", "school_id": SRC_SCHOOL})
+    src.data["flashcard_sets"].append({
+        "id": "fset-3", "user_id": UID, "course_id": "src-course-ma", "name": "Limits",
+        "concepts": ["Limits"], "options": {}, "exam_id": None,
+    })
+    use(src, KEY_A, "staging")
+    bundle = json.loads(json.dumps(account_bundle.export_account(UID)))
+    assert bundle["catalog"]["courses"]["src-course-ma"]["course_code"] == "CAS MA 123"
+
+    dst = target_db()
+    dst.data["courses"].append({"id": "dst-course-ma", "course_code": "CAS MA 123",
+                                "school_id": DST_SCHOOL})
+    use(dst, KEY_B, "production")
+    account_bundle.import_account(UID, bundle)
+
+    moved = {s["id"]: s["course_id"] for s in dst.data["flashcard_sets"]}
+    assert moved["fset-3"] == "dst-course-ma"
+
+
+def test_flashcard_set_course_outside_the_catalog_is_refused_before_the_wipe(use, wipes):
+    bundle = export_from_source(use)
+    bundle["tables"]["flashcard_sets"][0]["course_id"] = "src-course-unknown"
+    use(target_db(), KEY_B, "production")
+    with pytest.raises(BundleError, match="flashcard_sets: course src-course-unknown"):
         account_bundle.import_account(UID, bundle)
     assert wipes == []

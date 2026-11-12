@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -19,10 +20,16 @@ from services.encryption import decrypt_if_present, encrypt_if_present
 from services.llm_budget import reraise_budget_refusal
 from services.tutor_sessions import session_owned_by
 from services.flashcards import (
+    FlashcardSetError,
+    create_flashcard_set,
     dedup_against_existing,
+    delete_flashcard_set,
     check_rate_limit,
     library_doc_source_text,
+    list_flashcard_sets,
+    suggest_flashcard_set,
     list_flashcards,
+    update_flashcard_set,
     parse_xlsx,
     parse_anki_apkg,
     scrape_quizlet_url,
@@ -108,6 +115,26 @@ class ImportClozeBody(BaseModel):
     paragraph: str
 
 
+class FlashcardSetCreateBody(BaseModel):
+    """A saved set. Field rules (lengths, de-duplication, the option keys) are
+    `services/flashcards/sets.py`'s, answered as 422 with a readable detail."""
+    user_id: str
+    name: str
+    course_id: str
+    concepts: list[str]
+    options: dict | None = None
+    exam_id: str | None = None
+
+
+class FlashcardSetPatchBody(BaseModel):
+    """Only the fields SENT change; `exam_id: null` clears the exam."""
+    user_id: str
+    name: str | None = None
+    concepts: list[str] | None = None
+    options: dict | None = None
+    exam_id: str | None = None
+
+
 def llm_http_error(exc: BaseException) -> HTTPException:
     """The HTTP error a flashcard route raises when a generation failed: the
     routes' long-standing 502 — except that a budget refusal in `exc` is
@@ -168,10 +195,14 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         raise llm_http_error(e) from e
 
     now = datetime.now(timezone.utc).isoformat()
+    # Generated for a course: file the cards under it (as the import route
+    # does), or the list cannot say which course they belong to.
+    offering_id = resolve_offering(body.course_id) if body.course_id else None
     rows_to_insert = [
         {
             "id": str(uuid.uuid4()),
             "user_id": body.user_id,
+            "offering_id": offering_id,
             "topic": body.topic,
             "front": encrypt_if_present(c["front"]),
             "back": encrypt_if_present(c["back"]),
@@ -317,6 +348,71 @@ def delete_card(card_id: str, user_id: str, request: Request):
 
     table("flashcards").delete(filters={"id": f"eq.{card_id}"})
     return {"ok": True}
+
+
+# ── Saved sets ─────────────────────────────────────────────────────────────────
+#
+# A set is a name, a course, concept names and options; it owns no cards. The
+# logic is `services/flashcards/sets.py`. `/sets/...` is two segments, so it
+# never collides with `DELETE /{card_id}` above.
+
+def _set_http_error(exc: FlashcardSetError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.get("/sets/{user_id}")
+def get_flashcard_sets(user_id: str, request: Request, course_id: str | None = None):
+    require_self(user_id, request)
+    return {"sets": list_flashcard_sets(user_id, course_id)}
+
+
+@router.post("/sets")
+def create_set(body: FlashcardSetCreateBody, request: Request):
+    require_self(body.user_id, request)
+    try:
+        return {"set": create_flashcard_set(
+            body.user_id, name=body.name, course_id=body.course_id,
+            concepts=body.concepts, options=body.options, exam_id=body.exam_id,
+        )}
+    except FlashcardSetError as e:
+        raise _set_http_error(e) from e
+
+
+class FlashcardSetSuggestBody(BaseModel):
+    user_id: str
+    description: str
+    course_id: str | None = None
+
+
+@router.post("/sets/suggest")
+async def suggest_set(body: FlashcardSetSuggestBody, request: Request):
+    """Concepts a described set should hold (a suggestion; nothing is saved)."""
+    # The guard can read the DB: off the event loop in an async handler (#756).
+    await run_in_threadpool(require_self, body.user_id, request)
+    try:
+        return await suggest_flashcard_set(body.user_id, body.description, body.course_id)
+    except FlashcardSetError as e:
+        raise _set_http_error(e) from e
+
+
+@router.patch("/sets/{set_id}")
+def update_set(set_id: str, body: FlashcardSetPatchBody, request: Request):
+    require_self(body.user_id, request)
+    changes = body.model_dump(exclude_unset=True, exclude={"user_id"})
+    try:
+        return {"set": update_flashcard_set(body.user_id, set_id, changes)}
+    except FlashcardSetError as e:
+        raise _set_http_error(e) from e
+
+
+@router.delete("/sets/{set_id}")
+def delete_set(set_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    try:
+        delete_flashcard_set(user_id, set_id)
+    except FlashcardSetError as e:
+        raise _set_http_error(e) from e
+    return {"deleted": True}
 
 
 # ── Import routes ──────────────────────────────────────────────────────────────

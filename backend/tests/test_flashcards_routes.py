@@ -288,6 +288,35 @@ def _table_recording_flashcard_inserts(captured_inserts):
     return side_effect
 
 
+class TestGeneratedCardsAreFiledUnderTheirCourse:
+    """A card generated for a course is stamped with that course's offering
+    (as imported cards are), so the list can say which course it belongs to.
+    Before this every generated card came back with no course at all."""
+
+    def _generate(self, body, offering="off-1"):
+        captured: list[dict] = []
+        with patch("routes.flashcards._get_course_documents", return_value=[]), \
+             patch("routes.flashcards._get_weak_concepts", return_value=[]), \
+             patch("routes.flashcards._generate", return_value=[{"front": "Q", "back": "A"}]), \
+             patch("routes.flashcards.resolve_offering", return_value=offering) as resolve, \
+             patch("routes.flashcards.table",
+                   side_effect=_table_recording_flashcard_inserts(captured)), \
+             patch("services.achievement_service.check_achievements"):
+            r = client.post("/api/flashcards/generate", json={"user_id": USER_ID, "count": 1, **body})
+        assert r.status_code == 200
+        return captured, resolve
+
+    def test_with_a_course_the_offering_is_stamped(self):
+        rows, resolve = self._generate({"topic": "Recursion", "course_id": "c1"})
+        resolve.assert_called_once_with("c1")
+        assert [r["offering_id"] for r in rows] == ["off-1"]
+
+    def test_without_a_course_the_card_stays_unfiled(self):
+        rows, resolve = self._generate({"topic": "Anything"})
+        resolve.assert_not_called()
+        assert [r["offering_id"] for r in rows] == [None]
+
+
 class TestFlashcardEncryption:
     def test_generated_cards_encrypted_at_write(self):
         from services.encryption import decrypt

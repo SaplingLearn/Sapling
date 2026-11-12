@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from db.connection import table
-from services.academics import term_id_for_label
+from services.academics import offering_course_id, term_id_for_label
 from services.encryption import decrypt_if_present, decrypt_json
+
+#: What a listed card carries (plus the derived `course_id`). `due_at` is an
+#: ISO timestamp or None; see the read in `list_flashcards`.
+_CARD_FIELDS = (
+    "id", "user_id", "topic", "offering_id", "front", "back", "times_reviewed",
+    "last_rating", "last_reviewed_at", "created_at", "due_at",
+)
 
 
 def list_flashcards(
@@ -17,13 +24,31 @@ def list_flashcards(
     if topic:
         filters["topic"] = f"eq.{topic}"
 
-    rows = table("flashcards").select(
-        "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
-        filters=filters, order="created_at.desc"
-    ) or []
+    # `*`, then projected to _CARD_FIELDS: `due_at` is not a column every
+    # database has. No migration in this repository adds it (it came with the
+    # reverted learning-loop series, 20260927035346_learning_flashcards_fsrs,
+    # which some databases still carry), and naming a missing column in
+    # `select=` is a 400 from PostgREST that would take the whole card list
+    # down. Read this way the list works on both shapes and `due_at` is None
+    # wherever the column is absent. Nothing writes it today (`rate_card`
+    # records only the review count, rating and time), so it is None on every
+    # card until a scheduler lands.
+    rows = [
+        {field: r.get(field) for field in _CARD_FIELDS}
+        for r in table("flashcards").select(
+            "*", filters=filters, order="created_at.desc"
+        ) or []
+    ]
     for r in rows:
         r["front"] = decrypt_if_present(r.get("front"))
         r["back"] = decrypt_if_present(r.get("back"))
+        # The abstract course the card's offering belongs to (the id the rest
+        # of the API speaks), so the Flashcards page can show a course's cards
+        # by what they belong to. It used to match on the card's TOPIC
+        # containing the course's name, which hid every deck named for a
+        # concept ("Recursion") the moment a course was picked. None for a card
+        # with no offering.
+        r["course_id"] = offering_course_id(r["offering_id"]) if r.get("offering_id") else None
     if semester:
         # Term scoping (#141). This route is user-wide (no course id), so
         # the filter works on the cards' offering: cards from the selected

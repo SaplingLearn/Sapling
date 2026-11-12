@@ -74,6 +74,9 @@ PUBLIC_ROOM = "rich-matrix-room-public"
 PUBLIC_ROOM_INVITE = "MTX-PUB-A"
 PRIVATE_CHUNK_ID = "rich-matrix-chunk-private-a"
 PRIVATE_CHUNK_TEXT = "MATRIX-PRIVATE-CHUNK-91c2 A's private upload text"
+#: A saved flashcard set of A's (the rich seed has none), in COURSE_SHARED.
+FLASHCARD_SET_ID = "rich-matrix-flashcard-set-a"
+FLASHCARD_SET_NAME = "MATRIX-FLASHCARD-SET-4be1 only A saved this"
 
 #: Plaintext that only A's rows hold. If one shows up in a response to B (and B
 #: did not send it), that response leaked A's data. Deliberately long and
@@ -102,6 +105,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     PRIVATE_ROOM_NAME,
     PRIVATE_ROOM_INVITE,
     PRIVATE_CHUNK_TEXT,
+    FLASHCARD_SET_NAME,                                  # flashcard_sets.name
 )
 
 
@@ -184,12 +188,13 @@ ID_SOURCES: dict[str, IdSource] = {
     "document_id": _owned(_DOCUMENT),
     "doc_id": _owned(_DOCUMENT),            # /api/gradebook/syllabus/apply
     "card_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    "set_id": _owned("SELECT id::text FROM flashcard_sets WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "node_id": _owned(_NODE),
     "concept_node_id": _owned(_NODE),
     "anchor_node_id": _owned(_NODE),
     "assignment_id": _owned(_ASSIGNMENT),
     "assignment_ids": _owned(_ASSIGNMENT, many=True),
-    "exam_id": _owned(_ASSIGNMENT),         # study guides key on an exam assignment
+    "exam_id": _owned(_ASSIGNMENT),         # study guides and flashcard sets name an exam assignment
     "category_id": _owned(
         "SELECT c.id::text FROM gradebook_categories c JOIN enrollments e "
         "ON e.id = c.enrollment_id WHERE e.user_id = %(a)s ORDER BY c.id LIMIT 1"
@@ -376,6 +381,10 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/notes/{note_id}/chat"): {"message": "matrix probe"},
     ("POST", "/api/flashcards/import/generate"): {"source": "library_doc"},
     ("POST", "/api/flashcards/import/parse"): {"source": "anki", "payload": "front\tback"},
+    # `concepts` is a bare list[str]: the synthesized [] fails the service's
+    # 1-100 rule (422) before the exam's ownership is looked at.
+    ("POST", "/api/flashcards/sets"): {"name": "Matrix set", "concepts": ["Matrix probe"]},
+    ("PATCH", "/api/flashcards/sets/{set_id}"): {"name": "matrix"},
     ("POST", "/api/gradebook/courses/{course_id}/categories"): {"name": "Matrix", "weight": 10},
     ("PATCH", "/api/gradebook/courses/{course_id}/categories"):
         {"categories": [{"name": "Matrix", "weight": 100}]},

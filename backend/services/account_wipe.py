@@ -12,6 +12,7 @@ Deleted (directly, or through the FK cascades noted):
   then any private `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
 * flashcards
+* flashcard_sets (saved selections; they own no cards)
 * sessions → messages (feedback.session_id is SET NULL; feedback is kept)
 * study_guides
 * quiz_attempts → quiz_responses
@@ -60,6 +61,9 @@ _BATCH = 100
 _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("notes", "id"),
     ("flashcards", "id"),
+    # Saved flashcard selections (a name, a course, concept names). Account
+    # data like the cards themselves: wiped here AND copied by the bundle.
+    ("flashcard_sets", "id"),
     ("sessions", "id"),
     ("study_guides", "id"),
     ("quiz_attempts", "id"),
