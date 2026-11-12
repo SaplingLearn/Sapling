@@ -2,14 +2,20 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { SESSION_COOKIE_NAME, verifySession } from '@/lib/sessionToken'
 import { resolveFrontendEnv, detectHostConfigMismatch } from '@/lib/deployGuard'
-import { isAppShellRoute } from '@/lib/appRoutes'
+import { isAppShellRoute, isOnboardingRoute } from '@/lib/appRoutes'
 
 // Every route in the (shell) group is gated here — the list is
 // lib/appRoutes.ts SHELL_PREFIXES (one source for middleware, robots, the
 // UserProvider and analytics). #189: /profile/[userId] was once missing from
 // both this list and config.matcher, so the middleware never ran there and an
 // unauthenticated visitor could enumerate /profile/<any-id>; middleware.test.ts
-// now pins config.matcher to SHELL_PREFIXES.
+// now pins config.matcher to SHELL_PREFIXES plus /onboarding.
+//
+// Onboarding is enforced (owner decision, 2026-11-12) off the same /me read:
+// an approved account that hasn't finished onboarding is sent from the shell
+// to /onboarding, and one that has finished is sent from /onboarding to
+// /dashboard. /onboarding is gated like the shell otherwise (sign-in first).
+// Only a definite answer redirects; a missing field lets the request through.
 
 // This middleware runs on the SERVER, so it needs an origin reachable from the
 // server — which is not always the browser-facing one. Under docker compose the
@@ -45,10 +51,18 @@ function redirectToSignin(request: NextRequest, errorCode?: string) {
   return NextResponse.redirect(u)
 }
 
+/** Where an approved account's onboarding state sends this request, if anywhere. */
+function onboardingGate(request: NextRequest, completed: unknown): NextResponse | null {
+  const onboarding = isOnboardingRoute(request.nextUrl.pathname)
+  if (onboarding && completed === true) return NextResponse.redirect(new URL('/dashboard', request.url))
+  if (!onboarding && completed === false) return NextResponse.redirect(new URL('/onboarding', request.url))
+  return null
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  const isProtected = isAppShellRoute(pathname)
+  const isProtected = isAppShellRoute(pathname) || isOnboardingRoute(pathname)
   if (!isProtected) return NextResponse.next()
 
   // Defence-in-depth for the "wrong environment on this worker" deploy footgun:
@@ -98,7 +112,7 @@ export async function middleware(request: NextRequest) {
   }
   if (res.status === 401 || res.status === 404) return redirectToSignin(request, 'session_expired')
   if (!res.ok) return NextResponse.next()
-  let data: { is_approved?: unknown }
+  let data: { is_approved?: unknown; onboarding_completed?: unknown }
   try {
     data = await res.json()
   } catch {
@@ -106,7 +120,7 @@ export async function middleware(request: NextRequest) {
   }
   if (data?.is_approved !== true) return NextResponse.redirect(new URL('/pending', request.url))
 
-  return NextResponse.next()
+  return onboardingGate(request, data.onboarding_completed) ?? NextResponse.next()
 }
 
 export const config = {
@@ -117,6 +131,7 @@ export const config = {
     '/settings/:path*', '/achievements/:path*',
     '/admin/:path*',
     '/gradebook/:path*', '/course-planner/:path*', '/notetaker/:path*',
-    '/profile/:path*'
+    '/profile/:path*',
+    '/onboarding/:path*'
   ]
 }

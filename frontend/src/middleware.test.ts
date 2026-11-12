@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from './middleware';
-import { SHELL_PREFIXES } from '@/lib/appRoutes';
+import { ONBOARDING_PREFIX, SHELL_PREFIXES } from '@/lib/appRoutes';
 
 const ORIGIN = 'https://app.saplinglearn.com';
 
@@ -28,8 +28,16 @@ describe('middleware — /profile gating (#189)', () => {
     expect(config.matcher).toContain('/profile/:path*');
   });
 
-  it('config.matcher (a static literal Next requires) covers exactly lib/appRoutes SHELL_PREFIXES', () => {
-    expect([...config.matcher].sort()).toEqual(SHELL_PREFIXES.map((p) => `${p}/:path*`).sort());
+  it('config.matcher (a static literal Next requires) covers exactly SHELL_PREFIXES plus /onboarding', () => {
+    expect([...config.matcher].sort()).toEqual(
+      [...SHELL_PREFIXES, ONBOARDING_PREFIX].map((p) => `${p}/:path*`).sort(),
+    );
+  });
+
+  it('sends a signed-out visitor to /onboarding through sign-in', async () => {
+    const res = await middleware(req('/onboarding'));
+    expect(res.headers.get('location')).toBeTruthy();
+    expect(res.status).toBe(307);
   });
 });
 
@@ -73,13 +81,13 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     return { mw, ...tokens };
   }
 
-  async function run(me: Response | Error) {
+  async function run(me: Response | Error, path = '/dashboard') {
     const { mw, signSession } = await load();
     vi.stubGlobal('fetch', vi.fn(async () => {
       if (me instanceof Error) throw me;
       return me;
     }));
-    return mw(new NextRequest(`${LOCAL}/dashboard`, {
+    return mw(new NextRequest(`${LOCAL}${path}`, {
       headers: { cookie: `sapling_session=${await signSession('user_1')}` },
     }));
   }
@@ -115,6 +123,46 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
 
   it('an approved account passes', async () => {
     expect((await run(json(200, { is_approved: true }))).headers.get('location')).toBeNull();
+  });
+
+  // Onboarding is enforced (owner decision, 2026-11-12), off the same /me read.
+  const pathOf = (res: Response) => {
+    const location = res.headers.get('location');
+    return location ? new URL(location).pathname : null;
+  };
+
+  it('sends an approved account that has not finished onboarding from the app to /onboarding', async () => {
+    const res = await run(json(200, { is_approved: true, onboarding_completed: false }));
+    expect(pathOf(res)).toBe('/onboarding');
+  });
+
+  it('lets an onboarded account into the app', async () => {
+    const res = await run(json(200, { is_approved: true, onboarding_completed: true }));
+    expect(pathOf(res)).toBeNull();
+  });
+
+  it('sends an onboarded account away from /onboarding to the dashboard', async () => {
+    const res = await run(json(200, { is_approved: true, onboarding_completed: true }), '/onboarding');
+    expect(pathOf(res)).toBe('/dashboard');
+  });
+
+  it('lets an account that has not finished onboarding onto /onboarding', async () => {
+    const res = await run(json(200, { is_approved: true, onboarding_completed: false }), '/onboarding');
+    expect(pathOf(res)).toBeNull();
+  });
+
+  it('sends an unapproved account from /onboarding to /pending first', async () => {
+    const res = await run(json(200, { is_approved: false, onboarding_completed: false }), '/onboarding');
+    expect(pathOf(res)).toBe('/pending');
+  });
+
+  it('acts only on a definite answer: no onboarding field lets the request through', async () => {
+    expect(pathOf(await run(json(200, { is_approved: true })))).toBeNull();
+    expect(pathOf(await run(json(200, { is_approved: true }), '/onboarding'))).toBeNull();
+  });
+
+  it('a /me blip on /onboarding lets the request through (#756)', async () => {
+    expect(pathOf(await run(json(503), '/onboarding'))).toBeNull();
   });
 
   it('a handoff token in the cookie is not a session', async () => {

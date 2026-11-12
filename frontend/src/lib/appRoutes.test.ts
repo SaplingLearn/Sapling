@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { SHELL_PREFIXES, isAppShellRoute } from "./appRoutes";
+import { SHELL_PREFIXES, isAppShellRoute, isOnboardingRoute } from "./appRoutes";
 
 describe("isAppShellRoute", () => {
   it("matches every shell prefix and paths below it", () => {
@@ -22,6 +22,16 @@ describe("isAppShellRoute", () => {
   it("public pages, auth and onboarding are not the shell", () => {
     for (const p of ["/", "/privacy", "/about", "/news/x", "/auth/callback", "/onboarding", "/pending", null, undefined, ""]) {
       expect(isAppShellRoute(p as string), String(p)).toBe(false);
+    }
+  });
+});
+
+describe("isOnboardingRoute", () => {
+  it("matches /onboarding and below it, on segment boundaries", () => {
+    expect(isOnboardingRoute("/onboarding")).toBe(true);
+    expect(isOnboardingRoute("/onboarding/x")).toBe(true);
+    for (const p of ["/onboardings", "/onboarding-help", "/", "/dashboard", null, undefined, ""]) {
+      expect(isOnboardingRoute(p as string), String(p)).toBe(false);
     }
   });
 });
