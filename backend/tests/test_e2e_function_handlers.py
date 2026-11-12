@@ -848,3 +848,141 @@ def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
     assert [t.source_ids for t in topics] == [["concept:n1"], ["concept:n2"]]
     validate_evidence(result.output, payload)
     assert "topic_checklist" in providers._FUNCTION_HANDLERS
+
+
+# ── Study guide (redesign) ────────────────────────────────────────────────
+#
+# services/study_guides runs three agents on the one `study_guide` task: the
+# structured outline, the text section writer and the text block rewriter. One
+# handler answers all three, and frontend/e2e's study-guide journey reads the
+# result, so the constants must stay valid against the real outline schema and
+# the real markup parser.
+
+
+def _study_guide_env(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+
+def test_study_guide_outline_agent_gets_the_scripted_outline(monkeypatch):
+    from agents.study_guide import study_guide_outline_agent
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_outline_agent.override(model=model_for("study_guide")):
+        result = study_guide_outline_agent.run_sync("SCOPE: Midterm Exam", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_OUTLINE
+
+    # Through the REAL output tool, so GuideOutline validated the constant.
+    assert result.output.model_dump() == E2E_STUDY_GUIDE_OUTLINE
+    assert len(result.output.sections) == 3
+    assert len(result.output.takeaways) == 3
+    assert "study_guide" in providers._FUNCTION_HANDLERS
+
+
+def test_study_guide_outline_concepts_are_the_rich_seeds_cs101_nodes():
+    """Each section's concept must be a graph node the rich seed gives
+    rich-user-active in CS101, or the server finds no mastery for it and
+    clears it (services/study_guides/verify.py)."""
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_OUTLINE
+    from db import seed_local_rich as seed
+
+    seeded = {name for _, name, _ in seed._GRAPH_NODES[seed.COURSE_CS]}
+    concepts = [section["concept"] for section in E2E_STUDY_GUIDE_OUTLINE["sections"]]
+
+    assert concepts == ["Recursion", "Control Flow", "Variables and Types"]
+    assert set(concepts) <= seeded
+
+
+def test_study_guide_section_agent_gets_the_scripted_section(monkeypatch):
+    from agents.study_guide import study_guide_section_agent
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_section_agent.override(model=model_for("study_guide")):
+        result = study_guide_section_agent.run_sync("SECTION: Recursion", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_SECTION_TEXT
+
+    assert result.output == E2E_STUDY_GUIDE_SECTION_TEXT
+
+
+def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
+    """Both text agents share the task; only the block agent's message carries
+    BLOCK_REWRITE_MARKER, and that is what picks the reply."""
+    from agents.study_guide import BLOCK_REWRITE_MARKER, study_guide_block_agent
+    from services.study_guides.markup import parse_block
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_block_agent.override(model=model_for("study_guide")):
+        result = study_guide_block_agent.run_sync(
+            f"SECTION: Recursion\n\n{BLOCK_REWRITE_MARKER}\n{{}}", deps=_deps()
+        )
+
+    from agents.function_handlers_e2e import (
+        _E2E_STUDY_GUIDE_BLOCKS,
+        E2E_STUDY_GUIDE_BLOCK_TEXT,
+    )
+
+    assert result.output == E2E_STUDY_GUIDE_BLOCK_TEXT
+    block = parse_block(result.output, block_id="s1-i6", sources={})
+    assert block is not None and block.type == "key_terms"
+    # A regenerate has to be visible: not the section body's own key terms.
+    assert block.title != _E2E_STUDY_GUIDE_BLOCKS["key_terms"]["title"]
+
+
+def test_study_guide_section_constant_parses_into_the_journeys_blocks():
+    """The body the Playwright journey reads: two passages and six blocks, no
+    reject (so generation never needs the block agent), the first passage
+    summarised and cited, and a check the journey can answer."""
+    from agents.function_handlers_e2e import (
+        E2E_STUDY_GUIDE_OUTLINE,
+        E2E_STUDY_GUIDE_SECTION_TEXT,
+    )
+    from services.study_guides.markup import parse_section
+
+    parsed = parse_section(
+        E2E_STUDY_GUIDE_SECTION_TEXT, section_id="s2", sources={"S1": "document:d1"}
+    )
+
+    assert parsed.rejected == []
+    assert [item.type for item in parsed.items] == [
+        "prose",
+        "formula",
+        "worked_example",
+        "prose",
+        "comparison",
+        "key_terms",
+        "concept_map",
+        "check",
+    ]
+    assert [item.id for item in parsed.items] == [f"s2-i{n}" for n in range(1, 9)]
+
+    first, formula, _, second, _, _, concept_map, check = parsed.items
+    assert first.summary and second.summary is None
+    assert first.paragraphs[0].citations == ["document:d1"]
+    assert "[S1]" not in first.paragraphs[0].text
+    assert "**base case**" in first.paragraphs[0].text
+    assert formula.source_id == "document:d1"
+
+    concepts = {section["concept"] for section in E2E_STUDY_GUIDE_OUTLINE["sections"]}
+    assert {node.concept for node in concept_map.nodes} <= concepts
+    assert check.concept in concepts
+    assert [option.id for option in check.options] == ["a", "b", "c"]
+    assert check.correct_id == "b"
+    assert check.explain_correct and check.explain_incorrect
+
+
+def test_study_guide_handler_does_not_script_the_pre_redesign_agent(monkeypatch):
+    """The old one-shot StudyGuide agent shares the task until its route is
+    replaced. It was never scripted, and the outline's payload would not fit
+    its output: it keeps failing as an unregistered task does."""
+    from agents.study_guide import study_guide_agent
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_agent.override(model=model_for("study_guide")):
+        with pytest.raises(providers.UnregisteredHandlerError):
+            study_guide_agent.run_sync("Exam: Midterm", deps=_deps())
