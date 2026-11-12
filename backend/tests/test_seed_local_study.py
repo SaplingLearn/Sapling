@@ -1,143 +1,236 @@
-"""The local study seed's plan: a week of activity dated relative to `now`.
+"""The local study seed (`db/seed_local_study.py`) against an in-memory
+database: what it writes is encrypted where the schema says so, a second run
+writes the same rows instead of more, rows the account already has keep
+their ids, and nothing is written off a local stack.
 
-`plan` is pure, so this pins the shape the Study page depends on without a
-database: recent activity lands inside the 7-day window, the exams are ahead,
-and a re-run produces the SAME ids (it re-dates rows, never adds more)."""
+What the dataset CONTAINS is pinned in `test_local_study_data.py`."""
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from agents.topic_checklist import TopicOutline
-from db import seed_local_study as seed
+import pytest
 
-NOW = datetime(2026, 11, 11, 21, 30, tzinfo=timezone(timedelta(hours=-5)))
-NODES = {name: f"node-{i}" for i, name in enumerate(seed.CONCEPTS)}
+import db.seed_local_study as seed
+import services.topic_checklist_service as checklist_service
+from db import local_study_data as data
+from db import seed_helpers as h, seed_local_owner as owner_seed
+from e2e_oracles import judges
+from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
+from models.study_guide import GUIDE_FORMAT, GuideContent
+from services.encryption import decrypt, decrypt_json, encrypt
+from tests.seed_memory_db import MemoryDatabase
 
-
-def _plan(now=NOW, owner="user_1"):
-    return seed.plan(now, owner_id=owner, enrollment_id="enr-1", offering_id="off-1", nodes=NODES)
-
-
-def _at(value: str) -> datetime:
-    return datetime.fromisoformat(value)
-
-
-def test_exams_are_ahead_and_inside_the_outline_window():
-    rows = {r["title"]: r for r in _plan()["assignments"]}
-    today = NOW.date()
-    assert rows["Homework 6: Recursion"]["due_date"] == (today + timedelta(days=1)).isoformat()
-    for title in ("Midterm 2", "Final Exam"):
-        ahead = (datetime.fromisoformat(rows[title]["due_date"]).date() - today).days
-        # present() only links exams due within 30 days.
-        assert 0 < ahead <= 30
-        assert rows[title]["assignment_type"] == "exam"
+NOW = datetime(2026, 11, 12, 15, 30, tzinfo=timezone(timedelta(hours=-5)))
+OWNER = "user-personal"
+COURSES = {c.course_id: c.key for c in data.CLASSES}
 
 
-def test_recent_activity_sits_inside_the_seven_day_window_and_never_in_the_future():
-    plan = _plan()
-    week_ago = NOW - timedelta(days=7)
-    stamps = (
-        [_at(r["completed_at"]) for r in plan["quiz_attempts"]]
-        + [_at(r["last_reviewed_at"]) for r in plan["flashcards"] if r["last_reviewed_at"]]
-        + [_at(r["started_at"]) for r in plan["sessions"]]
-        + [_at(r["created_at"]) for r in plan["messages"]]
-        + [_at(r["created_at"]) for r in plan["node_mastery_events"]]
+def _enrolled_everywhere() -> dict:
+    return {c.key: data.Enrolled(f"enr-{c.key}", f"off-{c.key}") for c in data.CLASSES}
+
+
+@pytest.fixture
+def local_database(monkeypatch):
+    """A local account enrolled in the three sample classes, as the rich
+    owner seed leaves it. The enrollment lookup and the outline's evidence
+    hash are the app's own services, stood in for here."""
+    db = MemoryDatabase()
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    for module in (seed, h, owner_seed):
+        monkeypatch.setattr(module, "table", db.table)
+    db.rows["users"] = [{"id": OWNER, "email": encrypt("developer@gmail.com"), "onboarding_completed": True}]
+    monkeypatch.setattr(seed, "_scope", lambda owner_id, course_id: {
+        "enrollment_id": f"enr-{COURSES[course_id]}", "offering_id": f"off-{COURSES[course_id]}",
+    })
+    monkeypatch.setattr(
+        checklist_service, "build_snapshot",
+        lambda owner_id, scope: {"hash": f"hash-of-{scope['enrollment_id']}"},
     )
-    assert stamps and all(week_ago < s <= NOW for s in stamps)
+    return db
 
 
-def test_a_quiz_starts_before_it_ends():
-    for row in _plan()["quiz_attempts"]:
-        spent = _at(row["completed_at"]) - _at(row["created_at"])
-        assert timedelta(0) < spent <= timedelta(minutes=30)
+def _readable(db: MemoryDatabase) -> dict:
+    """Every row with its encrypted columns decrypted (a nonce makes two
+    encryptions of one value differ), less the one clock the seed reads."""
+    out = {}
+    for table_name, rows in db.rows.items():
+        out[table_name] = []
+        for row in rows:
+            plain = dict(row)
+            for column in seed._ENCRYPTED_TEXT.get(table_name, ()):
+                plain[column] = None if plain[column] is None else decrypt(plain[column])
+            for column in seed._ENCRYPTED_JSON.get(table_name, ()):
+                plain[column] = None if plain[column] is None else decrypt_json(plain[column])
+            if table_name == "topic_checklists":
+                plain["content"] = decrypt_json(plain["content"])
+                plain.pop("generated_at")
+            out[table_name].append(plain)
+    return out
 
 
-def test_unended_sessions_have_messages_that_span_time():
-    plan = _plan()
-    open_sessions = [s for s in plan["sessions"] if s["ended_at"] is None]
-    assert len(open_sessions) == 2  # the common real-world case
-    for session in open_sessions:
-        times = sorted(_at(m["created_at"]) for m in plan["messages"] if m["session_id"] == session["id"])
-        assert times[0] == _at(session["started_at"])
-        assert times[-1] - times[0] >= timedelta(minutes=10)
+def test_apply_writes_every_table_and_reports_what_it_wrote(local_database, capsys):
+    written = seed.apply(OWNER, NOW)
+    assert set(written) == {*data.TABLES, "topic_checklists"}
+    for table_name, count in written.items():
+        assert len(local_database.rows[table_name]) == count > 0, table_name
+    assert written["topic_checklists"] == len(data.CLASSES)
+    report = capsys.readouterr().out
+    assert f"owner {OWNER}" in report and "study_guides" in report
 
 
-def test_flashcard_topics_are_concept_names():
-    # The Study page counts a concept's cards by matching the topic to its name.
-    assert {r["topic"] for r in _plan()["flashcards"]} <= set(seed.CONCEPTS)
+def test_every_encrypted_column_is_ciphertext_at_rest(local_database):
+    seed.apply(OWNER, NOW)
+    checked = set()
+    for table_name, pk, column in _CIPHERTEXT_MANIFEST:
+        pairs = [(row.get(pk), row[column]) for row in local_database.rows.get(table_name, [])
+                 if row.get(column) is not None]
+        assert judges.ciphertext_findings(table_name, column, pairs, decrypt) == []
+        if pairs and table_name != "users":
+            checked.add((table_name, column))
+    # Every column the seed says it encrypts was really checked above, and
+    # the oracle's manifest names no column of these tables the seed forgot.
+    declared = {
+        (table_name, column)
+        for columns in (seed._ENCRYPTED_TEXT, seed._ENCRYPTED_JSON)
+        for table_name, names in columns.items() for column in names
+    }
+    assert declared | {("topic_checklists", "content")} == checked
 
 
-def test_a_rerun_on_a_later_day_reuses_every_id():
-    first, later = _plan(), _plan(now=NOW + timedelta(days=3))
-    for table_name in first:
-        assert [r["id"] for r in first[table_name]] == [r["id"] for r in later[table_name]]
-        ids = [r["id"] for r in first[table_name]]
-        assert len(ids) == len(set(ids))
-    assert first["quiz_attempts"][0]["completed_at"] != later["quiz_attempts"][0]["completed_at"]
+def test_what_is_stored_reads_back_as_what_was_planned(local_database):
+    seed.apply(OWNER, NOW)
+    planned = data.plan(NOW, OWNER, _enrolled_everywhere())
+    stored = _readable(local_database)
+    for table_name in data.TABLES:
+        assert stored[table_name] == planned[table_name], table_name
+    guides = [g for g in stored["study_guides"] if g["format"] == GUIDE_FORMAT]
+    assert guides and all(GuideContent.model_validate(g["content"]) for g in guides)
 
 
-def test_two_accounts_never_share_rows():
-    mine, theirs = _plan(owner="user_1"), _plan(owner="user_2")
-    assert not {r["id"] for r in mine["assignments"]} & {r["id"] for r in theirs["assignments"]}
+def test_a_second_run_writes_the_same_rows_and_no_more(local_database):
+    seed.apply(OWNER, NOW)
+    first = deepcopy(_readable(local_database))
+    writes = len(local_database.writes)
+    seed.apply(OWNER, NOW)
+    assert _readable(local_database) == first
+    assert [verb for _, verb in local_database.writes[writes:] if verb == "insert"] == []
 
 
-def test_the_outline_is_valid_grouped_and_links_the_seeded_exams():
-    prefix = seed.id_prefix("user_1")
-    topics = seed.outline_topics(prefix, "document:d1")
-    outline = TopicOutline.model_validate({"topics": topics})
-    units = [t for t in outline.topics if not t.parent]
-    assert len(units) == 4  # the roadmap's columns: as many as it shows across
-    assert {t.name for t in outline.topics if t.parent} == set(seed.ALL_CONCEPTS)
-    for unit in units:
-        assert len([t for t in outline.topics if t.parent == unit.name]) == 3
-    exam_ids = {r["id"] for r in _plan()["assignments"] if r["assignment_type"] == "exam"}
-    linked = {a for t in outline.topics for a in t.assessment_ids}
-    assert linked == exam_ids
-    by_name = {t.name: t for t in outline.topics}
-    assert f"{prefix}-asg-midterm2" not in by_name[seed.VARIABLES].assessment_ids
-    assert f"{prefix}-asg-midterm2" in by_name[seed.RECURSION].assessment_ids
+def test_a_run_on_a_later_day_moves_the_same_rows(local_database):
+    seed.apply(OWNER, NOW)
+    counts = {name: len(rows) for name, rows in local_database.rows.items()}
+    before = {r["id"]: r["due_date"] for r in local_database.rows["assignments"]}
+    seed.apply(OWNER, NOW + timedelta(days=5))
+    assert {name: len(rows) for name, rows in local_database.rows.items()} == counts
+    after = {r["id"]: r["due_date"] for r in local_database.rows["assignments"]}
+    assert after.keys() == before.keys() and all(after[i] > before[i] for i in before)
 
 
-def test_adds_seven_concepts_and_links_all_twelve():
-    plan = _plan()
-    names = [r["concept_name"] for r in plan["graph_nodes"]]
-    assert names == list(seed.EXTRA_CONCEPTS) and len(seed.ALL_CONCEPTS) == 12
-    # The rich seed's five are read, never rewritten.
-    assert not set(names) & set(seed.CONCEPTS)
-    tiers = {r["mastery_tier"] for r in plan["graph_nodes"]}
-    assert {"mastered", "learning", "struggling", "unexplored"} <= tiers
-    for row in plan["graph_nodes"]:
-        # "Never studied" has neither a count nor a date.
-        assert (row["times_studied"] == 0) == (row["last_studied_at"] is None)
-    known = set(NODES.values()) | {r["id"] for r in plan["graph_nodes"]}
-    for edge in plan["graph_edges"]:
-        assert edge["source_node_id"] in known and edge["target_node_id"] in known
-        assert edge["source_node_id"] != edge["target_node_id"]
+def test_the_outline_is_stored_under_the_real_evidence_hash(local_database):
+    seed.apply(OWNER, NOW)
+    seed.apply(OWNER, NOW)  # a re-run replaces the class's one row
+    outlines = local_database.rows["topic_checklists"]
+    assert len(outlines) == len(data.CLASSES)
+    for row in outlines:
+        assert row["input_hash"] == f"hash-of-{row['enrollment_id']}"
+        assert decrypt_json(row["content"])["topics"]
 
 
-def test_edge_ids_name_the_pair_so_adding_one_never_renumbers_the_rest():
-    ids = [e["id"] for e in _plan()["graph_edges"]]
-    assert len(ids) == len(set(ids))
-    assert any(i.endswith("-edge-control-flow--functions") for i in ids)
+def test_rows_the_account_already_has_are_updated_in_place(local_database):
+    # As the rich owner seed and the app leave CS101: a concept, a
+    # prerequisite, a quiz digest and one recorded answer, under ids of their own.
+    waiting = next(a for a in data.plan(NOW, OWNER, _enrolled_everywhere())["quiz_attempts"]
+                   if not a["completed_at"] and not a["abandoned_at"])
+    local_database.rows["graph_nodes"] = [
+        {"id": "rich-variables", "user_id": OWNER, "course_id": "rich-course-cs101",
+         "concept_name": "Variables and Types", "mastery_score": 0.1},
+        {"id": "rich-controlflow", "user_id": OWNER, "course_id": "rich-course-cs101",
+         "concept_name": "Control Flow", "mastery_score": 0.1},
+    ]
+    local_database.rows["graph_edges"] = [
+        {"id": "rich-edge", "user_id": OWNER, "source_node_id": "rich-variables",
+         "target_node_id": "rich-controlflow", "relationship_type": "prerequisite"},
+    ]
+    local_database.rows["quiz_context"] = [
+        {"id": "rich-digest", "user_id": OWNER, "concept_node_id": "rich-controlflow",
+         "context_json": "old"},
+    ]
+    local_database.rows["quiz_responses"] = [
+        {"id": "from-the-app", "attempt_id": waiting["id"], "question_index": 0, "selected_index": 3},
+    ]
+    seed.apply(OWNER, NOW)
+
+    cs = [n for n in local_database.rows["graph_nodes"] if n["course_id"] == "rich-course-cs101"]
+    assert len({n["concept_name"] for n in cs}) == len(cs)  # none added twice
+    by_name = {n["concept_name"]: n for n in cs}
+    assert by_name["Control Flow"]["id"] == "rich-controlflow"
+    assert by_name["Control Flow"]["mastery_score"] == 0.6
+    pair = [e for e in local_database.rows["graph_edges"]
+            if (e["source_node_id"], e["target_node_id"]) == ("rich-variables", "rich-controlflow")]
+    assert [e["id"] for e in pair] == ["rich-edge"]
+    digests = [d for d in local_database.rows["quiz_context"] if d["concept_node_id"] == "rich-controlflow"]
+    assert [d["id"] for d in digests] == ["rich-digest"]
+    assert decrypt_json(digests[0]["context_json"])["common_mistakes"]
+    answers = [r for r in local_database.rows["quiz_responses"]
+               if (r["attempt_id"], r["question_index"]) == (waiting["id"], 0)]
+    assert [r["id"] for r in answers] == ["from-the-app"] and "is_correct" in answers[0]
 
 
-def test_a_concept_that_already_exists_keeps_its_id():
-    existing = {**NODES, seed.FUNCTIONS: "node-the-student-made"}
-    plan = seed.plan(NOW, owner_id="user_1", enrollment_id="enr-1", offering_id="off-1", nodes=existing)
-    functions = next(r for r in plan["graph_nodes"] if r["concept_name"] == seed.FUNCTIONS)
-    assert functions["id"] == "node-the-student-made"
-    assert any(e["target_node_id"] == "node-the-student-made" for e in plan["graph_edges"])
+def test_a_class_the_account_dropped_is_skipped(local_database, monkeypatch, capsys):
+    enrolled_in = {"rich-course-cs101": {"enrollment_id": "enr-cs101", "offering_id": "off-cs101"}}
+    monkeypatch.setattr(seed, "_scope", lambda owner_id, course_id: enrolled_in.get(course_id))
+    written = seed.apply(OWNER, NOW)
+    assert written["topic_checklists"] == 1
+    assert {d["offering_id"] for d in local_database.rows["documents"]} == {"off-cs101"}
+    assert "not enrolled in rich-course-math210" in capsys.readouterr().out
 
 
-def test_run_just_after_midnight_still_lands_todays_activity_on_today():
-    # 00:10: "50 minutes ago" is yesterday. Today's rows must stay on today,
-    # and nothing may be dated in the future.
-    late = NOW.replace(hour=0, minute=10)
-    plan = _plan(now=late)
-    today = late.date()
-    local = lambda value: _at(value).astimezone(late.tzinfo)  # noqa: E731
-    assert local(plan["quiz_attempts"][0]["completed_at"]).date() == today
-    todays_session = plan["sessions"][-1]
-    assert local(todays_session["started_at"]).date() == today
-    reviewed_today = [r for r in plan["flashcards"] if r["last_reviewed_at"] and local(r["last_reviewed_at"]).date() == today]
-    assert len(reviewed_today) == 3
-    stamps = [_at(m["created_at"]) for m in plan["messages"]] + [_at(r["completed_at"]) for r in plan["quiz_attempts"]]
-    assert all(s <= late for s in stamps)
+def test_an_account_in_none_of_the_classes_is_told_what_to_run(local_database, monkeypatch):
+    monkeypatch.setattr(seed, "_scope", lambda owner_id, course_id: None)
+    with pytest.raises(SystemExit, match="seed_local_rich"):
+        seed.apply(OWNER, NOW)
+    assert local_database.writes == []
+
+
+# ── Local only ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("env, url", [
+    ("production", "http://127.0.0.1:54321"),
+    ("staging", "http://127.0.0.1:54321"),
+    ("local", "https://prod.supabase.co"),
+    ("local", "https://127.0.0.1.evil.example"),
+])
+def test_apply_refuses_anything_but_a_local_stack(local_database, monkeypatch, env, url):
+    monkeypatch.setenv("APP_ENV", env)
+    monkeypatch.setenv("SUPABASE_URL", url)
+    with pytest.raises(RuntimeError, match="local"):
+        seed.apply(OWNER, NOW)
+    assert local_database.writes == [] and local_database.selects == []
+
+
+def test_the_cli_checks_the_environment_before_it_looks_anyone_up(local_database, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://prod.supabase.co")
+    with pytest.raises(SystemExit, match="not local"):
+        seed.main(["--owner-user-id", OWNER])
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(SystemExit, match="APP_ENV=local"):
+        seed.main(["--owner-user-id", OWNER])
+    assert local_database.writes == [] and local_database.selects == []
+
+
+def test_the_cli_needs_an_owner_and_never_defaults_to_a_fixture_account(local_database):
+    with pytest.raises(SystemExit):
+        seed.main([])
+    with pytest.raises(SystemExit):
+        seed.main(["--owner-user-id", "nobody"])
+    assert local_database.writes == []
+
+
+def test_the_cli_seeds_the_account_it_is_given(local_database, monkeypatch):
+    seeded = []
+    monkeypatch.setattr(seed, "apply", lambda owner_id: seeded.append(owner_id))
+    seed.main(["--owner-email", " Developer@Gmail.com "])
+    seed.main(["--owner-user-id", OWNER])
+    assert seeded == [OWNER, OWNER]

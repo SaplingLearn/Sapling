@@ -72,6 +72,8 @@ class MemoryDatabase:
                 return self._read(filters)
 
             def upsert(self, row, on_conflict):
+                if isinstance(row, list):  # a bulk write: one row at a time
+                    return [saved for one in row for saved in self.upsert(one, on_conflict)]
                 filters = {key: f"eq.{row[key]}" for key in on_conflict.split(",")}
                 if self._read(filters):
                     return self.update(row, filters)
