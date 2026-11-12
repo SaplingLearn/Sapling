@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The Study Guides home: the toolbar (search, sort), the states that stand in
- * for the grid, and the links that open the New study guide dialog.
+ * for the grid, and the buttons that open the New study guide dialog.
  *
  * A card's own content is pinned in GuideCard.test.tsx and the dialog in
  * NewGuideModal.test.tsx; the pure rules are in guidesModel.test.ts.
@@ -11,10 +11,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const push = vi.hoisted(() => vi.fn());
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
-  useSearchParams: () => new URLSearchParams(window.location.search),
-}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/components/DocumentUploadModal", () => ({ DocumentUploadModal: () => null }));
 vi.mock("@/lib/api", () => ({ getCourses: vi.fn() }));
@@ -25,7 +22,7 @@ vi.mock("@/lib/studyGuide/api", () => ({
   createGuide: vi.fn(),
 }));
 
-import { arriveAt, deferred, guide, mocks, renderHome, resetMocks } from "./testKit";
+import { deferred, guide, mocks, renderHome, resetMocks } from "./testKit";
 
 const THREE = [
   guide({ id: "a", title: "Loops and recursion", generated_at: "2026-11-10T12:00:00Z" }),
@@ -56,12 +53,6 @@ describe("the page", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Study Guides" })).toBeTruthy();
     expect(screen.getByTestId("back-link")).toHaveAttribute("href", "/study");
     expect(screen.getByRole("button", { name: "Review AI guidelines" })).toBeTruthy();
-  });
-
-  it("goes back to the hub on the course it was opened for", async () => {
-    arriveAt("course=c2");
-    await home();
-    expect(screen.getByTestId("back-link")).toHaveAttribute("href", "/study?course=c2");
   });
 
   it("lists every guide, newest first, each a link to its reader", async () => {
@@ -184,37 +175,12 @@ describe("opening the New study guide dialog", () => {
     expect(screen.queryByTestId("guide-new-dialog")).toBeNull();
   });
 
-  it("?new=1 opens it on arrival and leaves the URL", async () => {
-    arriveAt("new=1");
-    await home();
-    expect(await screen.findByTestId("guide-new-dialog")).toBeTruthy();
-    expect(window.location.search).toBe("");
-    // No class named: the first of the term's courses.
-    await waitFor(() => expect(screen.getByTestId("guide-new-class")).toHaveTextContent("CS101"));
-  });
-
-  it("?new=1&course= opens it with that class chosen, and keeps the course in the URL", async () => {
-    arriveAt("new=1&course=c2");
-    await home();
-    await screen.findByTestId("guide-new-dialog");
-    await waitFor(() => expect(screen.getByTestId("guide-new-class")).toHaveTextContent("MA225"));
-    expect(mocks.options).toHaveBeenCalledWith("u1", "c2", null);
-    expect(window.location.search).toBe("?course=c2");
-  });
-
   it("Generate guide creates the guide and goes to its reader", async () => {
-    arriveAt("new=1&course=c1");
     const user = await home();
+    await user.click(screen.getByTestId("guides-new"));
     await screen.findByTestId("guide-new-material-d1");
     await user.click(screen.getByTestId("guide-new-generate"));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/study/guide/g-new"));
     expect(mocks.create).toHaveBeenCalledWith("u1", expect.objectContaining({ course_id: "c1", material_ids: ["d1", "d2", "d3"] }));
-  });
-
-  it("a plain arrival opens nothing", async () => {
-    arriveAt("course=c2");
-    await home();
-    expect(screen.queryByTestId("guide-new-dialog")).toBeNull();
-    expect(mocks.options).not.toHaveBeenCalled();
   });
 });

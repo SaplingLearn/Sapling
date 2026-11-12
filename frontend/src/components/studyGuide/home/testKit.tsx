@@ -89,15 +89,9 @@ export function deferred<T>() {
 
 // ── harness ───────────────────────────────────────────────────────────────
 
-/** The URL the page reads on mount, and the live one `new` is consumed from. */
-export function arriveAt(qs: string) {
-  window.history.replaceState(null, "", qs ? `/study/guide?${qs}` : "/study/guide");
-}
-
 /** Every mock back to the fixtures. Call in `beforeEach`. */
 export function resetMocks() {
   vi.resetAllMocks();
-  arriveAt("");
   vi.spyOn(console, "error").mockImplementation(() => {});
   mocks.courses.mockResolvedValue({ courses: [CS, MATH] });
   mocks.list.mockResolvedValue({ guides: [guide()] });

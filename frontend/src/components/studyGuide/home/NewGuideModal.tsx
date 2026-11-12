@@ -29,8 +29,6 @@ export interface NewGuideModalProps {
   coursesReady: boolean;
   /** The active term's label, "" when no term is picked. */
   semester: string;
-  /** The class to open on, when the page was opened for one. */
-  initialCourseId?: string | null;
   onClose: () => void;
   /** The guide's row exists: the reader takes it from here. */
   onCreated: (guideId: string) => void;
@@ -41,8 +39,8 @@ export interface NewGuideModalProps {
  * from, beside the outline those choices plan. Mounted while open, so every
  * opening starts from the defaults.
  */
-export function NewGuideModal({ userId, courses, coursesReady, semester, initialCourseId, onClose, onCreated }: NewGuideModalProps) {
-  const guide = useNewGuide({ userId, courses, semester, initialCourseId });
+export function NewGuideModal({ userId, courses, coursesReady, semester, onClose, onCreated }: NewGuideModalProps) {
+  const guide = useNewGuide({ userId, courses, semester });
   const plan = usePlan(userId, guide.request);
   const create = useCreateGuide(userId, onCreated);
   const [uploading, setUploading] = React.useState(false);

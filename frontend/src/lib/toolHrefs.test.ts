@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   CONCEPTS_PARAM,
   STUDY_TOOL_PATHS,
-  consumeNewParam,
   decodeConcepts,
   encodeConcepts,
   flashcardsHref,
@@ -22,16 +21,10 @@ describe("studyHref", () => {
 describe("studyGuideHref", () => {
   it("opens the Study Guides home", () => {
     expect(studyGuideHref()).toBe("/study/guide");
-    expect(studyGuideHref(null)).toBe("/study/guide");
-  });
-
-  it("opens the New study guide dialog on a course when given one", () => {
-    expect(studyGuideHref("c1")).toBe("/study/guide?new=1&course=c1");
-    expect(studyGuideHref("a b")).toBe("/study/guide?new=1&course=a+b");
   });
 
   it("lives under /study, so the shell's auth and hide_study gates cover it", () => {
-    expect(studyGuideHref("c1").startsWith("/study/")).toBe(true);
+    expect(studyGuideHref().startsWith("/study/")).toBe(true);
   });
 });
 
@@ -39,12 +32,6 @@ describe("studyGuideReaderHref", () => {
   it("opens one guide in the reader, under the home", () => {
     expect(studyGuideReaderHref("g1")).toBe("/study/guide/g1");
     expect(studyGuideReaderHref("a/b")).toBe("/study/guide/a%2Fb");
-  });
-});
-
-describe("consumeNewParam", () => {
-  it("does nothing where there is no window", () => {
-    expect(() => consumeNewParam()).not.toThrow();
   });
 });
 

@@ -56,13 +56,12 @@ export interface NewGuideInput {
   courses: EnrolledCourse[];
   /** The active term's label, "" when no term is picked. */
   semester: string;
-  initialCourseId?: string | null;
 }
 
 /** The New study guide dialog's choices, and the class options behind them. */
-export function useNewGuide({ userId, courses, semester, initialCourseId }: NewGuideInput): NewGuide {
-  // The class asked for, else the first: the form always has one to plan for.
-  const [picked, setPicked] = React.useState(initialCourseId || "");
+export function useNewGuide({ userId, courses, semester }: NewGuideInput): NewGuide {
+  // The class picked, else the first: the form always has one to plan for.
+  const [picked, setPicked] = React.useState("");
   const course = courses.find(c => c.course_id === picked) ?? courses[0];
   const courseId = course?.course_id ?? "";
 

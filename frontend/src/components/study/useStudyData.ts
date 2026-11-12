@@ -8,23 +8,23 @@
  *   flashcards ......... getFlashcards(userId, -, semester)  useConceptGraph
  *   exams/deadlines .... getAllAssignments                   useStudyRecords
  *   quiz history ....... listAttempts                        useStudyRecords
- *   study guides ....... getCachedStudyGuides                useStudyRecords
+ *   study guides ....... listGuides                          useStudyRecords
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal   useStudyRecords
  *   course outline ..... getTopicChecklist (+ refresh)       useCourseOutline
  */
 import React from "react";
 import {
   getAllAssignments,
-  getCachedStudyGuides,
   getFlashcards,
   getGraph,
   type Assignment,
-  type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
 import { listAttempts } from "@/lib/quiz/api";
 import type { AttemptSummary } from "@/lib/quiz/types";
 import { getStudyDaily, setStudyDailyGoal, type StudyDaily } from "@/lib/studyApi";
+import { listGuides } from "@/lib/studyGuide/api";
+import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useToast } from "../ToastProvider";
@@ -73,7 +73,7 @@ export interface StudyRecords {
   /** Re-reads the dated work (after the Exams and Deadlines editor writes). */
   reloadAssignments: () => Promise<void>;
   attempts: AttemptSummary[];
-  guides: StudyGuideCacheEntry[];
+  guides: GuideCard[];
   /** null until it loads (or when it failed). */
   daily: StudyDaily | null;
   /** Persist a new daily goal; resolves true when it saved. */
@@ -86,7 +86,7 @@ export function useStudyRecords(userId: string): StudyRecords {
   const toast = useToast();
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [attempts, setAttempts] = React.useState<AttemptSummary[]>([]);
-  const [guides, setGuides] = React.useState<StudyGuideCacheEntry[]>([]);
+  const [guides, setGuides] = React.useState<GuideCard[]>([]);
   const [daily, setDaily] = React.useState<StudyDaily | null>(null);
 
   // Latest read wins: the first load can still be in flight when a save
@@ -110,7 +110,7 @@ export function useStudyRecords(userId: string): StudyRecords {
     listAttempts(userId, { limit: 100 })
       .then(r => { if (live) setAttempts(r.attempts || []); })
       .catch(err => console.error("study quiz history load failed", err));
-    getCachedStudyGuides(userId)
+    listGuides(userId)
       .then(r => { if (live) setGuides(r.guides || []); })
       .catch(err => console.error("study guides load failed", err));
     getStudyDaily(userId)

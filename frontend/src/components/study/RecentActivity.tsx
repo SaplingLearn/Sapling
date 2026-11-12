@@ -6,6 +6,7 @@
  * that scrolls inside itself.
  */
 import React from "react";
+import Link from "next/link";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { RECENT_SHOWN, type RecentRow } from "./hubModel";
 import { ELLIPSIS, Glyph, TOOL } from "./hubUi";
@@ -25,11 +26,14 @@ function DeltaChip({ chip, onPick }: { chip: Chip; onPick: () => void }) {
   );
 }
 
-/** One row: the rail shows the newest few, the "Show all" modal every one. */
+const ROW: React.CSSProperties = { display: "grid", gridTemplateColumns: "28px minmax(0, 1fr)", columnGap: 10, padding: "8px 0" };
+
+/** One row: the rail shows the newest few, the "Show all" modal every one.
+ *  A row that leads somewhere (a study guide, to its reader) is a link. */
 function Row({ row, onPickConcept }: { row: RecentRow; onPickConcept: (conceptId: string) => void }) {
   const look = TOOL[row.kind];
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr)", columnGap: 10, padding: "8px 0" }}>
+  const inside = (
+    <>
       <span style={{ width: 28, height: 28, borderRadius: 7, background: look.bg, color: look.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={look.icon} size={13} /></span>
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -45,7 +49,13 @@ function Row({ row, onPickConcept }: { row: RecentRow; onPickConcept: (conceptId
           </div>
         )}
       </div>
-    </div>
+    </>
+  );
+  if (!row.href) return <div style={ROW}>{inside}</div>;
+  return (
+    <Link href={row.href} data-testid={`recent-${row.key}`} style={{ ...ROW, color: "inherit", textDecoration: "none" }}>
+      {inside}
+    </Link>
   );
 }
 

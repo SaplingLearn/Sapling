@@ -9,10 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(window.location.search),
-}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/lib/api", () => ({ getCourses: vi.fn() }));
 vi.mock("@/lib/studyGuide/api", () => ({
@@ -101,12 +98,6 @@ describe("class and scope", () => {
     const options = within(screen.getByRole("listbox")).getAllByRole("option").map(option => option.textContent);
     // The whole course, the exam with its due date, the assignment.
     expect(options).toEqual(["Whole courseWhole course✓", "Midterm 2Exam · due Nov 21", "Lab 5Assignment"]);
-  });
-
-  it("opens on the class it was given", async () => {
-    await modal({ initialCourseId: "c2" });
-    expect(mocks.options).toHaveBeenCalledWith("u1", "c2", null);
-    expect(screen.getByTestId("guide-new-class")).toHaveTextContent("MA225");
   });
 
   it("reads the options of the active term", async () => {

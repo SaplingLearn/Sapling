@@ -44,14 +44,8 @@ beforeEach(() => { search.qs = ""; replace.mockReset(); });
 afterEach(cleanup);
 
 describe("Study — the retired ?mode= panes", () => {
-  it("sends ?mode=guide to the Study Guides home, with a new guide open on the course", async () => {
+  it("sends ?mode=guide to the Study Guides home, with or without a course", async () => {
     search.qs = "mode=guide&course=c1";
-    renderStudy();
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide?new=1&course=c1"));
-  });
-
-  it("sends a course-less ?mode=guide to the plain Study Guides home", async () => {
-    search.qs = "mode=guide";
     renderStudy();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide"));
   });

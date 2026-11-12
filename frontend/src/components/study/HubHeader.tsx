@@ -20,7 +20,7 @@ export function HubHeader({ courses, courseId, onPickCourse, upcomingIn, isMobil
   upcomingIn: (courseId: string) => number;
   isMobile: boolean;
   quizShown: boolean;
-  /** Opens a tool's home on this course. */
+  /** Opens a tool's home. */
   onTool: (tool: ToolKey) => void;
 }) {
   const upcomingNote = (c: EnrolledCourse) => {

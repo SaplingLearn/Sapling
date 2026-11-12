@@ -5,8 +5,10 @@
  * Exams and Deadlines editor. Nothing here renders or fetches, so every rule
  * the hub applies is testable on its own.
  */
-import type { Assignment, EnrolledCourse, StudyGuideCacheEntry } from "@/lib/api";
+import type { Assignment, EnrolledCourse } from "@/lib/api";
 import type { AttemptSummary } from "@/lib/quiz/types";
+import type { GuideCard } from "@/lib/studyGuide/types";
+import { studyGuideReaderHref } from "@/lib/toolHrefs";
 import {
   classifyAssessment,
   daysTo,
@@ -299,6 +301,8 @@ export interface RecentRow {
   resultColor: string;
   /** Mastery change per concept, in percentage points. */
   chips: { id: string; name: string; delta: number }[];
+  /** Where the row leads, when it leads somewhere (a guide opens its reader). */
+  href?: string;
 }
 
 const DIM = "var(--text-dim)";
@@ -342,13 +346,18 @@ function deckRows(cards: FlashcardRow[], names: Set<string>, today: Date): Recen
   }));
 }
 
-function guideRows(guides: StudyGuideCacheEntry[], courseId: string, today: Date): RecentRow[] {
-  return guides.filter(g => g.course_id === courseId).map(g => ({
-    key: `g${g.id}`, at: Date.parse(g.generated_at), kind: "guide" as const,
-    title: `${g.exam_title || "Exam"} Study Guide`,
-    meta: `Study Guide · ${fmtWhen(g.generated_at, today)}`,
-    result: "", resultColor: DIM, chips: [],
-  }));
+/** A guide still being written has no finished date yet: it sorts by when it was made. */
+function guideRows(guides: GuideCard[], courseId: string, today: Date): RecentRow[] {
+  return guides.filter(g => g.course_id === courseId).map(g => {
+    const ts = g.generated_at ?? g.created_at;
+    return {
+      key: `g${g.id}`, at: Date.parse(ts), kind: "guide" as const,
+      title: g.title,
+      meta: `Study Guide · ${fmtWhen(ts, today)}`,
+      result: "", resultColor: DIM, chips: [],
+      href: studyGuideReaderHref(g.id),
+    };
+  });
 }
 
 /**
@@ -360,7 +369,7 @@ function guideRows(guides: StudyGuideCacheEntry[], courseId: string, today: Date
 export function recentActivity(input: {
   attempts: AttemptSummary[];
   cards: FlashcardRow[];
-  guides: StudyGuideCacheEntry[];
+  guides: GuideCard[];
   topics: Concept[];
   course: Pick<EnrolledCourse, "course_id" | "course_code" | "course_name"> | null;
   today: Date;

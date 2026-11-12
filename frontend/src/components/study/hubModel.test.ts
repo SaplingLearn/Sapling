@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { Assignment, StudyGuideCacheEntry } from "@/lib/api";
+import type { Assignment } from "@/lib/api";
 import type { AttemptSummary } from "@/lib/quiz/types";
+import type { GuideCard } from "@/lib/studyGuide/types";
 import {
   assessmentsForCourse,
   cardCounts,
@@ -268,8 +269,11 @@ describe("recentActivity", () => {
     score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, mastery_delta: 0.05,
     created_at: at(7, 10), completed_at: at(7, 11), ...over,
   });
-  const guide = (id: string, over: Partial<StudyGuideCacheEntry> = {}): StudyGuideCacheEntry => ({
-    id, course_id: "c1", exam_id: "e1", course_name: "Intro to CS", exam_title: "Exam 2", overview: "", generated_at: at(6, 9), ...over,
+  const guide = (id: string, over: Partial<GuideCard> = {}): GuideCard => ({
+    id, title: "Exam 2 guide", course_id: "c1", course_name: "Intro to CS", semester: null,
+    scope_kind: "exam", scope_label: "Exam 2", goal: "exam_prep", depth: "standard", status: "ready",
+    generated_at: at(6, 9), created_at: at(5, 9), saved_at: null, new_materials: 0, bars: [],
+    counts: { sections: 0, blocks: 0, practice: 0, minutes: 0 }, ...over,
   });
   const course = { course_id: "c1", course_code: "CS101", course_name: "Intro to CS" };
   const topics = [concept("rec", "review", { name: "Recursion" }), concept("loop", "progress", { name: "Loops" })];
@@ -331,12 +335,17 @@ describe("recentActivity", () => {
     expect(out.map(r => r.title)).toEqual(["Recursion"]);
   });
 
-  it("lists this course's study guides", () => {
-    const out = rows({ guides: [guide("g1"), guide("g2", { course_id: "c2" }), guide("g3", { exam_title: "" })] });
-    expect(out.map(r => [r.key, r.title, r.meta, r.result])).toEqual([
-      ["gg1", "Exam 2 Study Guide", "Study Guide · Nov 6", ""],
-      ["gg3", "Exam Study Guide", "Study Guide · Nov 6", ""],
+  it("lists this course's study guides, each linked to its reader", () => {
+    const out = rows({ guides: [guide("g1"), guide("g2", { course_id: "c2" }), guide("g3", { title: "Loops review" })] });
+    expect(out.map(r => [r.key, r.title, r.meta, r.result, r.href])).toEqual([
+      ["gg1", "Exam 2 guide", "Study Guide · Nov 6", "", "/study/guide/g1"],
+      ["gg3", "Loops review", "Study Guide · Nov 6", "", "/study/guide/g3"],
     ]);
+  });
+
+  it("a guide still being written is dated by when it was made", () => {
+    const out = rows({ guides: [guide("g1", { status: "generating", generated_at: null })] });
+    expect(out.map(r => [r.at, r.meta])).toEqual([[Date.parse(at(5, 9)), "Study Guide · Nov 5"]]);
   });
 
   it("is newest first across kinds, capped at RECENT_MAX", () => {

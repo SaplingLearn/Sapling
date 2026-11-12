@@ -11,7 +11,7 @@
  *   exams/deadlines .... getAllAssignments (+ save/update/deleteAssignment)
  *   quiz history ....... listAttempts (GET /api/quiz/attempts)
  *   flashcards ......... getFlashcards
- *   study guides ....... getCachedStudyGuides
+ *   study guides ....... listGuides
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
  *   roadmap categories . getTopicChecklist, and refreshTopicChecklist when the
  *                        course has no current outline (routes/topic_checklist.py)
@@ -129,7 +129,7 @@ function HubPage(props: {
   const { course, userId, today, isMobile, quizShown, records, st, set } = props;
   const cid = course.course_id;
   const view = useHubView({ course, graph: props.graph, cards: props.cards, records, outline: props.outline, st, today });
-  const nav = useToolNav(cid, view.exam?.id ?? null);
+  const nav = useToolNav(cid);
   const editor = useDatesEditor({
     userId, courseId: cid, list: view.list, today,
     reload: records.reloadAssignments, onWritten: props.reloadOutline,

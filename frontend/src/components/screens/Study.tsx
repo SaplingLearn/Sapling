@@ -23,9 +23,10 @@ import { getCourses, type EnrolledCourse } from "@/lib/api";
 import { StudyHub } from "../study/StudyHub";
 import { studyGuideHref } from "@/lib/toolHrefs";
 
-/** Where a retired `?mode=` lands, carrying the course along when it has one. */
+/** Where a retired `?mode=` lands. Flashcards keeps the course; the Study
+ *  Guides home lists every class, so it takes none. */
 function retiredModeHref(mode: string, course: string | null): string | null {
-  if (mode === "guide") return studyGuideHref(course);
+  if (mode === "guide") return studyGuideHref();
   if (mode === "cards") {
     const p = new URLSearchParams();
     if (course) p.set("course", course);

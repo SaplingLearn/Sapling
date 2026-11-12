@@ -23,8 +23,8 @@ vi.mock("@/lib/api", () => ({
   updateAssignment: vi.fn(async () => ({ updated: true })),
   deleteAssignment: vi.fn(async () => ({ deleted: true })),
   getFlashcards: vi.fn(),
-  getCachedStudyGuides: vi.fn(),
 }));
+vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn() }));
 vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn() }));
 vi.mock("@/lib/studyApi", () => ({ getStudyDaily: vi.fn(), setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })) }));
 vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn(), refreshTopicChecklist: vi.fn() }));
@@ -38,6 +38,8 @@ import { ToastProvider } from "../ToastProvider";
 import * as api from "@/lib/api";
 import { listAttempts } from "@/lib/quiz/api";
 import { getStudyDaily, setStudyDailyGoal } from "@/lib/studyApi";
+import { listGuides } from "@/lib/studyGuide/api";
+import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist } from "@/lib/topicChecklistApi";
 import type { EnrolledCourse } from "@/lib/api";
 
@@ -94,7 +96,7 @@ beforeEach(() => {
     ],
   });
   vi.mocked(api.getFlashcards).mockResolvedValue({ flashcards: [{ id: "f1", topic: "Loops", last_reviewed_at: new Date(2026, 10, 8, 9).toISOString() }] });
-  vi.mocked(api.getCachedStudyGuides).mockResolvedValue({ guides: [] });
+  vi.mocked(listGuides).mockResolvedValue({ guides: [] });
   vi.mocked(listAttempts).mockResolvedValue({
     total: 1, limit: 100, offset: 0,
     attempts: [{
@@ -218,29 +220,39 @@ describe("StudyHub", () => {
       within(menu).getByRole("menuitem", { name }).getAttribute("href");
     expect(href(/Quiz Me/)).toContain("concept=rec");
     expect(href(/Flashcards/)).toBe("/flashcards?course=c1&concepts=Recursion&start=1");
-    // No Study Guide here: a guide is per exam, not per concept (header only).
+    // No Study Guide here: a guide is not per concept (header only).
     expect(within(menu).queryByRole("menuitem", { name: /Study Guide/i })).toBeNull();
     expect(within(screen.getByTestId("focus-card")).queryByText(/study guide/i)).toBeNull();
   });
 
-  it("the header's Study Guide opens the guide page on this course and the selected exam", async () => {
+  it("the header's Study Guide opens the Study Guides home, whatever exam is selected", async () => {
     renderHub();
     await hubLoaded();
-    // Exam 2's tab is the default; the guide opens on it.
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=e2");
-    // Another tab, another guide.
+    expect(push).toHaveBeenLastCalledWith("/study/guide");
+    push.mockClear();
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
     fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=q1");
+    expect(push).toHaveBeenLastCalledWith("/study/guide");
   });
 
-  it("with no exam on the course, Study Guide opens on the course alone", async () => {
-    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [] });
+  it("Recent Activity links each of the course's guides to its reader", async () => {
+    const guide = (id: string, over: Partial<GuideCard> = {}): GuideCard => ({
+      id, title: "Recursion for Exam 2", course_id: "c1", course_name: "Intro to CS", semester: null,
+      scope_kind: "exam", scope_label: "Exam 2", goal: "exam_prep", depth: "standard", status: "ready",
+      generated_at: new Date(2026, 10, 6, 9).toISOString(), created_at: new Date(2026, 10, 6, 8).toISOString(),
+      saved_at: null, new_materials: 0, bars: [], counts: { sections: 0, blocks: 0, practice: 0, minutes: 0 }, ...over,
+    });
+    vi.mocked(listGuides).mockResolvedValue({ guides: [guide("g1"), guide("g2", { course_id: "c2", title: "Limits" })] });
     renderHub();
-    await screen.findByText("CS101 Mastery");
-    fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1");
+    await hubLoaded();
+    const row = await screen.findByTestId("recent-gg1");
+    expect(listGuides).toHaveBeenCalledWith("u1");
+    expect(row.getAttribute("href")).toBe("/study/guide/g1");
+    expect(within(row).getByText("Recursion for Exam 2")).toBeTruthy();
+    expect(within(row).getByText("Study Guide · Nov 6")).toBeTruthy();
+    // Another course's guide is not this course's activity.
+    expect(screen.queryByTestId("recent-gg2")).toBeNull();
   });
 
   it("bell lists every deadline with a colored countdown", async () => {
@@ -266,11 +278,9 @@ describe("StudyHub", () => {
     expect(push).toHaveBeenLastCalledWith("/quiz?course=c1&from=link&return=%2Fstudy%3Fcourse%3Dc1");
   });
 
-  it("the header's Flashcards and Study Guide open their pages on this course", async () => {
+  it("the header's Flashcards opens its page on this course", async () => {
     renderHub();
     await hubLoaded();
-    fireEvent.click(screen.getByRole("button", { name: "Study Guide" }));
-    expect(push).toHaveBeenLastCalledWith("/study/guide?course=c1&exam=e2");
     fireEvent.click(screen.getByRole("button", { name: "Flashcards" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(push).toHaveBeenLastCalledWith("/flashcards?course=c1");

@@ -3,16 +3,16 @@
  * Where the hub's links go, and how it leaves.
  *
  * Two depths, on purpose.
- *   The header's tool buttons open the TOOL: its own home, on this course,
- *   with nothing started. That is where you browse decks or pick what to quiz.
- *   Study Guide opens on the exam whose tab is selected (a guide is per exam,
- *   and the guide page takes `?exam=`), and on the course alone with none.
+ *   The header's tool buttons open the TOOL: its own home, with nothing
+ *   started. That is where you browse decks, pick what to quiz or find a
+ *   guide. Quiz and Flashcards open on this course; Study Guide opens the
+ *   Study Guides home, which lists every class's guides.
  *   A concept's "..." menu, the Up Next block and Quick Reviews go straight
  *   INTO it: the quiz starts on that concept, flashcards open on its deck
  *   (`start=1`).
- * The hub owns "which course"; each tool opens on it and comes back to it.
- * Study Guide is not offered per concept: a guide is built for an exam, so it
- * is reached from the header only.
+ * The hub owns "which course"; Quiz and Flashcards open on it and come back
+ * to it. Study Guide is not offered per concept: a guide covers an exam, an
+ * assignment or the whole course, so it is reached from the header only.
  */
 import React from "react";
 import { useRouter } from "next/navigation";
@@ -21,10 +21,10 @@ import { flashcardsHref, studyGuideHref, studyHref } from "@/lib/toolHrefs";
 
 export type ToolKey = "quiz" | "cards" | "guide";
 
-const TOOL_HOME: Record<ToolKey, (courseId: string, examId: string | null) => string> = {
+const TOOL_HOME: Record<ToolKey, (courseId: string) => string> = {
   quiz: cid => buildQuizHref({ course: cid }, { kind: "link", returnTo: studyHref(cid) }),
   cards: cid => flashcardsHref(cid),
-  guide: (cid, examId) => studyGuideHref(cid, examId),
+  guide: () => studyGuideHref(),
 };
 
 /** How long the hub's fade-out runs before the route changes (`.leaving`). */
@@ -35,7 +35,7 @@ export interface ToolNav {
   leaving: boolean;
   /** Fades the hub out, then navigates (at once under reduced motion). */
   leaveTo: (href: string) => void;
-  /** A tool's home on this course (Study Guide: on the selected exam too). */
+  /** A tool's home: Quiz and Flashcards on this course, the Study Guides home. */
   toolHome: (tool: ToolKey) => string;
   /** A quiz started on one concept, returning to this course. */
   quizHref: (conceptId: string) => string;
@@ -43,7 +43,7 @@ export interface ToolNav {
   cardsHref: (conceptNames: string[]) => string;
 }
 
-export function useToolNav(courseId: string, examId: string | null): ToolNav {
+export function useToolNav(courseId: string): ToolNav {
   const router = useRouter();
   // Leaving for a tool fades the hub out first, so the tool's arrival
   // (`tool-enter`) reads as one hand-off rather than a cut.
@@ -58,11 +58,11 @@ export function useToolNav(courseId: string, examId: string | null): ToolNav {
   return React.useMemo(() => ({
     leaving,
     leaveTo,
-    toolHome: tool => TOOL_HOME[tool](courseId, examId),
+    toolHome: tool => TOOL_HOME[tool](courseId),
     quizHref: conceptId =>
       buildQuizHref({ concept: conceptId }, { kind: "link", returnTo: studyHref(courseId) }, { start: true }),
     cardsHref: names => flashcardsHref(courseId, names, { start: true }),
-  }), [leaving, leaveTo, courseId, examId]);
+  }), [leaving, leaveTo, courseId]);
 }
 
 /**
