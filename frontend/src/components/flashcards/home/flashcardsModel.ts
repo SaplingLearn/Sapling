@@ -7,10 +7,12 @@
  *    (trimmed, case-insensitive) and the card is in the chosen course.
  *  - "In the chosen course" is the card's `course_id` when it has one. A card
  *    with NO course is placed by its topic instead (see `cardsInCourse`):
- *    every AI-generated card is one today, because the generate route stores
- *    no offering, and the Study hub counts a concept's cards by topic alone.
- *    Leaving them out would show "No cards yet" for decks the hub says exist,
- *    and Start would pay to generate them again.
+ *    cards generated before the generate route filed them under a course
+ *    (#829), or generated from a link that names none, and the Study hub
+ *    counts a concept's cards by topic alone. Leaving them out would show "No
+ *    cards yet" for decks the hub says exist, and Start would pay to generate
+ *    them again. (The rows the generate call itself answers with are placed
+ *    the same way: by `course_id` when they carry one, else by topic.)
  *  - Topics that are not one of the course's concepts (imported decks, decks
  *    named for the course, the old "A, B" decks made for several concepts at
  *    once) stay reachable in "Your own", the last column of the map. The same
@@ -27,7 +29,7 @@
  * from `study/studyModel`.
  */
 import type { Assignment } from "@/lib/api";
-import type { FlashcardSet } from "@/lib/flashcardSetsApi";
+import { SET_CONCEPTS_MAX, type FlashcardSet } from "@/lib/flashcardSetsApi";
 import {
   classifyAssessment,
   daysTo,
@@ -490,43 +492,38 @@ const loaded = (draft: Draft, set: FlashcardSet, names: string[], custom: string
   examId: set.exam_id,
 });
 
+/** One handler per action, each given its own action's fields. */
+type DraftHandlers = {
+  [K in DraftAction["type"]]: (draft: Draft, action: Extract<DraftAction, { type: K }>) => Draft;
+};
+
+const DRAFT_HANDLERS: DraftHandlers = {
+  toggle: (draft, { name }) =>
+    reselected(draft, hasName(draft.selected, name) ? withoutNames(draft.selected, [name]) : withNames(draft.selected, [name])),
+  many: (draft, { names, on, custom = [] }) =>
+    (on
+      ? { ...reselected(draft, withNames(draft.selected, names)), custom: withNames(draft.custom, custom) }
+      : reselected(draft, withoutNames(draft.selected, names))),
+  custom: (draft, { name }) =>
+    ({ ...reselected(draft, withNames(draft.selected, [name])), custom: withNames(draft.custom, [name]) }),
+  uncustom: (draft, { name }) =>
+    ({ ...reselected(draft, withoutNames(draft.selected, [name])), custom: withoutNames(draft.custom, [name]) }),
+  describe: (draft, { names, name }) => described(draft, names, name),
+  clear: draft => detached(draft, [], null),
+  load: (draft, { set, names, custom }) => loaded(draft, set, names, custom),
+  option: (draft, { patch }) => ({ ...draft, ...patch }),
+  name: (draft, { value }) => ({ ...draft, name: value }),
+  saved: (draft, { set }) => ({ ...draft, name: set.name, givenName: set.name, setId: set.id, examId: set.exam_id }),
+  renamed: (draft, { set }) => (draft.setId === set.id ? { ...draft, name: set.name, givenName: set.name } : draft),
+  deleted: (draft, { setId }) => (draft.setId === setId ? { ...draft, setId: null } : draft),
+  restore: (_draft, { draft }) => draft,
+  reset: () => emptyDraft(),
+};
+
 export function draftReducer(draft: Draft, action: DraftAction): Draft {
-  switch (action.type) {
-    case "toggle":
-      return reselected(draft, hasName(draft.selected, action.name)
-        ? withoutNames(draft.selected, [action.name])
-        : withNames(draft.selected, [action.name]));
-    case "many":
-      return action.on
-        ? { ...reselected(draft, withNames(draft.selected, action.names)), custom: withNames(draft.custom, action.custom ?? []) }
-        : reselected(draft, withoutNames(draft.selected, action.names));
-    case "custom":
-      return { ...reselected(draft, withNames(draft.selected, [action.name])), custom: withNames(draft.custom, [action.name]) };
-    case "uncustom":
-      return { ...reselected(draft, withoutNames(draft.selected, [action.name])), custom: withoutNames(draft.custom, [action.name]) };
-    case "describe":
-      return described(draft, action.names, action.name);
-    case "clear":
-      return detached(draft, [], null);
-    case "load":
-      return loaded(draft, action.set, action.names, action.custom);
-    case "option":
-      return { ...draft, ...action.patch };
-    case "name":
-      return { ...draft, name: action.value };
-    case "saved":
-      return { ...draft, name: action.set.name, givenName: action.set.name, setId: action.set.id, examId: action.set.exam_id };
-    case "renamed":
-      return draft.setId === action.set.id ? { ...draft, name: action.set.name, givenName: action.set.name } : draft;
-    case "deleted":
-      return draft.setId === action.setId ? { ...draft, setId: null } : draft;
-    case "restore":
-      return action.draft;
-    case "reset":
-      return emptyDraft();
-    default:
-      return draft;
-  }
+  const handle = DRAFT_HANDLERS[action.type] as ((draft: Draft, action: DraftAction) => Draft) | undefined;
+  // An action this reducer does not know leaves the draft as it is.
+  return handle ? handle(draft, action) : draft;
 }
 
 /** What the review's header calls the deck: the set's name, the one concept,
@@ -558,9 +555,18 @@ export interface SaveState {
   canSaveAsNew: boolean;
 }
 
+/** How many concepts a selection is over what one saved set may hold (the
+ *  server refuses more than `SET_CONCEPTS_MAX`). 0: it fits. */
+export const overSetLimit = (selected: string[]): number => Math.max(0, selected.length - SET_CONCEPTS_MAX);
+
+/** What the tray says of a selection too large to save. It can still be reviewed. */
+export function setLimitNote(over: number): string {
+  return over > 0 ? `A set holds up to ${SET_CONCEPTS_MAX} concepts. Untick ${over} to save this one.` : "";
+}
+
 /** What the tray's save button does for this draft. */
 export function saveState(draft: Draft, sets: FlashcardSet[] | null): SaveState {
-  const valid = draft.name.trim().length > 0 && draft.selected.length > 0;
+  const valid = draft.name.trim().length > 0 && draft.selected.length > 0 && !overSetLimit(draft.selected);
   const loaded = (sets ?? []).find(s => s.id === draft.setId);
   if (!loaded) return { mode: "create", label: "Save set", enabled: valid, canSaveAsNew: false };
   if (!draftChanged(loaded, draft)) return { mode: "update", label: "Save set", enabled: false, canSaveAsNew: false };

@@ -55,14 +55,28 @@ const BACK_LABELS: Record<string, string> = {
   "/notetaker": "Notes",
 };
 
+/** Where a back link lands when the page it would return to is hidden from
+ *  this student: where NavFeatureGate sends a hidden feature's routes. */
+const VISIBLE_FALLBACK = "/dashboard";
+
 /**
  * The back button in the quiz page's header: where it goes and what it says.
  *
  * It returns to wherever the quiz was opened from. With no origin (the URL
  * typed in, a bare `/quiz`) it goes to the Study hub, which is where the quiz
  * lives in the nav and the one page every quiz can be started from.
+ *
+ * `isHidden` says whether a path's feature is switched off for this student
+ * (a `hide_*` flag, lib/useNavHidden.ts). Quiz has a flag of its own, so it
+ * can be open while Study (or the page it was opened from) is hidden: the
+ * link then goes to the Dashboard instead of a page that would only bounce
+ * there.
  */
-export function backLink(source: QuizSource): { href: string; label: string } {
-  const href = isSafeReturnPath(source.returnTo) ? source.returnTo : "/study";
+export function backLink(
+  source: QuizSource,
+  isHidden: (path: string) => boolean = () => false,
+): { href: string; label: string } {
+  const wanted = isSafeReturnPath(source.returnTo) ? source.returnTo : "/study";
+  const href = isHidden(wanted) ? VISIBLE_FALLBACK : wanted;
   return { href, label: BACK_LABELS[href.split(/[?#]/)[0]] ?? "Back" };
 }

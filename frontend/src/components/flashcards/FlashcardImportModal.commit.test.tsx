@@ -396,6 +396,23 @@ describe("FlashcardImportModal layout", () => {
     expect(screen.getByRole("button", { name: /Clean up with AI/ })).not.toBeDisabled();
   });
 
+  it("a clean-up that answers after the dialog was closed and reopened does not fill the new deck", async () => {
+    let resolve!: (v: unknown) => void;
+    api.importCleanup.mockReturnValue(new Promise(r => { resolve = r; }));
+    const { rerender } = render(modal());
+    fireEvent.change(pasteTextarea(), { target: { value: VALID_AND_FLAGGED } });
+    fireEvent.click(screen.getByRole("button", { name: /Clean up with AI/ }));
+
+    rerender(modal({ open: false }));
+    rerender(modal());
+    expect(screen.getByText("Cards show up here as you add them.")).toBeTruthy();
+
+    await act(async () => { resolve({ cards: [{ front: "Alpha", back: "Beta" }] }); });
+    expect(screen.getByText("Cards show up here as you add them.")).toBeTruthy();
+    expect(screen.queryByLabelText("Term, row 1")).toBeNull();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("reports a failed clean-up and keeps the deck", async () => {
     api.importCleanup.mockRejectedValue(new Error("boom"));
     render(modal());

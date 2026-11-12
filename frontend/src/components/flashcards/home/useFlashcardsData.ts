@@ -36,7 +36,7 @@ import { examsForCourse, type Card, type ExamRef } from "./flashcardsModel";
 
 export interface CardsState {
   cards: Card[];
-  /** The first load has answered (or failed). */
+  /** The load for this term has answered (or failed). */
   loaded: boolean;
   loading: boolean;
   /** The last load failed: what is shown is not the student's real deck. */
@@ -48,18 +48,21 @@ export interface CardsState {
   reload: () => Promise<Card[] | null>;
 }
 
+type CardsSlot = { key: string; cards: Card[]; failed: boolean };
+
 /**
  * The student's cards for the active term. Fetches gate on `semesterReady` so
  * a stored term never double-fetches (#141), and a term switch or a reload
- * racing an older one resolves to the latest (#769).
+ * racing an older one resolves to the latest (#769). What is loaded is kept
+ * under the term it was loaded for: after a term switch the list reads as not
+ * loaded until the new term's answers, never as the old term's cards.
  */
 export function useCards(userId: string, semester: string, semesterReady: boolean, fixedNow?: Date): CardsState {
-  const [cards, setCards] = React.useState<Card[]>([]);
-  const [loaded, setLoaded] = React.useState(false);
+  const [slot, setSlot] = React.useState<CardsSlot | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [failed, setFailed] = React.useState(false);
   const [now, setNow] = React.useState(() => fixedNow?.getTime() ?? Date.now());
   const req = useLatestRequest();
+  const key = `${userId}|${semester}`;
 
   const reload = React.useCallback(async (): Promise<Card[] | null> => {
     if (!userId) return null;
@@ -69,27 +72,27 @@ export function useCards(userId: string, semester: string, semesterReady: boolea
       const res = await getFlashcards(userId, undefined, semester || undefined);
       if (!run.isCurrent()) return null;
       const list: Card[] = res.flashcards || [];
-      setCards(list);
-      setFailed(false);
-      setLoaded(true);
+      setSlot({ key, cards: list, failed: false });
       setNow(fixedNow?.getTime() ?? Date.now());
       return list;
     } catch (err) {
       if (!run.isCurrent()) return null;
       console.error("flashcards load failed", err);
-      setFailed(true);
-      setLoaded(true);
+      // A failed re-read keeps the list it could not replace, flagged.
+      setSlot(prev => ({ key, cards: prev?.key === key ? prev.cards : [], failed: true }));
       return null;
     } finally {
       if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, semester, req, fixedNow]);
+  }, [userId, semester, key, req, fixedNow]);
 
   React.useEffect(() => {
     if (semesterReady) void reload();
   }, [reload, semesterReady]);
 
-  return { cards, loaded, loading, failed, now, reload };
+  const live = slot?.key === key ? slot : null;
+  const cards = React.useMemo(() => live?.cards ?? [], [live]);
+  return { cards, loaded: live !== null, loading, failed: live?.failed ?? false, now, reload };
 }
 
 // ── concepts ─────────────────────────────────────────────────────────────────
@@ -221,9 +224,12 @@ export function useFlashcardSets(userId: string, courseId: string): SetsState {
 
   const live = slot?.key === key ? slot : null;
 
-  /** Applies a write to the list for the course it was made on. */
+  /** Applies a write to the list for the course it was made on. A write that
+   *  answers after the page has moved to another course leaves that course's
+   *  list alone: taking its slot would leave the new course with no list (and
+   *  nothing to fetch one again), so its home would never finish loading. */
   const patch = React.useCallback((change: (sets: FlashcardSet[]) => FlashcardSet[]) => {
-    setSlot(prev => ({ key, sets: change(prev?.key === key ? prev.sets ?? [] : []) }));
+    setSlot(prev => (prev?.key === key ? { key, sets: change(prev.sets ?? []) } : prev));
   }, [key]);
 
   const create = React.useCallback(async (set: Omit<NewFlashcardSet, "course_id">) => {

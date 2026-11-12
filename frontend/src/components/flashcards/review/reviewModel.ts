@@ -71,3 +71,23 @@ export function roundDeck(deck: Card[], round: string[] | null): Card[] {
   // Every card of the round was deleted: back to the whole deck.
   return subset.length ? subset : deck;
 }
+
+// ── the keyboard ─────────────────────────────────────────────────────────────
+
+/** What a key asks of the review. */
+export type KeyIntent =
+  | { kind: "flip" }
+  | { kind: "step"; by: -1 | 1 }
+  | { kind: "rate"; n: 1 | 2 | 3 };
+
+const STEP_KEYS = new Map<string, -1 | 1>([["ArrowLeft", -1], ["ArrowRight", 1]]);
+const RATE_KEYS = new Map<string, 1 | 2 | 3>(RATING_OPTIONS.map(o => [o.hint, o.n]));
+
+/** Space or up/down flips; left/right move between cards; 1/2/3 rate. */
+export function keyIntent(e: Pick<KeyboardEvent, "key" | "code">): KeyIntent | null {
+  if (e.code === "Space" || e.key === "ArrowUp" || e.key === "ArrowDown") return { kind: "flip" };
+  const by = STEP_KEYS.get(e.key);
+  if (by) return { kind: "step", by };
+  const n = RATE_KEYS.get(e.key);
+  return n ? { kind: "rate", n } : null;
+}

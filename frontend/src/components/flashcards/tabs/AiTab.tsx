@@ -11,7 +11,14 @@ interface LibraryDoc { id: string; file_name: string; category?: string }
 
 interface Props {
   documents: LibraryDoc[];
+  /** The library is still being read: not yet "no documents". */
+  documentsLoading?: boolean;
   onCards: (cards: ParsedCard[]) => void;
+}
+
+function documentPlaceholder(loading: boolean, count: number): string {
+  if (count) return "Pick a document…";
+  return loading ? "Loading your documents…" : "No library documents yet";
 }
 
 const COUNT_OPTIONS = [
@@ -27,7 +34,7 @@ const DIFFICULTY_OPTIONS = [
   { value: "conceptual", label: "Conceptual" },
 ];
 
-export function AiTab({ documents, onCards }: Props) {
+export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
   const toast = useToast();
   const { userId } = useUser();
   const [mode, setMode] = React.useState<"paste" | "library_doc">("paste");
@@ -73,7 +80,7 @@ export function AiTab({ documents, onCards }: Props) {
             size="sm"
             value={docId}
             onChange={setDocId}
-            placeholder={documents.length ? "Pick a document…" : "No library documents yet"}
+            placeholder={documentPlaceholder(documentsLoading, documents.length)}
             options={documents.map(d => ({ value: d.id, label: d.file_name, description: d.category }))}
           />
         </div>

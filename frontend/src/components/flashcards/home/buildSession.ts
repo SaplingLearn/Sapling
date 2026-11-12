@@ -7,7 +7,7 @@
  * sessionStorage. A reload reads it back; leaving the builder clears both.
  */
 import React from "react";
-import { markParam, useLeaveOnBack } from "../review/reviewSession";
+import { markParam, parseStored, strings, text, useLeaveOnBack } from "../review/reviewSession";
 import { PER_CONCEPT, type Draft, type DraftAction, type PerConcept } from "./flashcardsModel";
 
 export const BUILD_PARAM = "build";
@@ -20,10 +20,6 @@ export interface BuildSession {
   note: string;
   draft: Draft;
 }
-
-const strings = (value: unknown): string[] | null =>
-  Array.isArray(value) && value.every(x => typeof x === "string") ? (value as string[]) : null;
-const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
 /** A stored draft back into one, or null when it is not one. */
 export function parseDraft(value: unknown): Draft | null {
@@ -46,10 +42,8 @@ export function parseDraft(value: unknown): Draft | null {
 }
 
 export function parseBuild(raw: string | null): BuildSession | null {
-  if (!raw) return null;
-  let v: Record<string, unknown>;
-  try { v = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
-  if (!v || typeof v !== "object") return null;
+  const v = parseStored(raw);
+  if (!v) return null;
   const draft = parseDraft(v.draft);
   const userId = text(v.userId);
   const courseId = text(v.courseId);

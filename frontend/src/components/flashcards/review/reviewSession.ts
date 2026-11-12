@@ -38,28 +38,52 @@ export interface ReviewSession extends ReviewProgress {
   ids: string[];
 }
 
-const strings = (value: unknown): string[] | null =>
-  Array.isArray(value) && value.every(x => typeof x === "string") ? (value as string[]) : null;
+// What is read back from sessionStorage is checked field by field: it is this
+// tab's own, but it may be from an older build, or not ours at all. (The
+// builder's session reads its own the same way: home/buildSession.ts.)
+
+export const strings = (value: unknown): string[] | null =>
+  (Array.isArray(value) && value.every(x => typeof x === "string") ? (value as string[]) : null);
+
+export const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+/** A stored JSON object, or null when the value is missing or is not one. */
+export function parseStored(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The ratings among what was stored: an unknown kind is dropped. */
+function parseRatings(value: unknown): Record<string, Rated> {
+  const ratings: Record<string, Rated> = {};
+  for (const [id, kind] of Object.entries((value as Record<string, unknown>) ?? {})) {
+    if (TALLY_ORDER.includes(kind as Rated)) ratings[id] = kind as Rated;
+  }
+  return ratings;
+}
+
+const cardIndex = (value: unknown): number => (Number.isInteger(value) && (value as number) >= 0 ? (value as number) : 0);
 
 /** A stored value back into a session, or null when it is not one. */
 export function parseSession(raw: string | null): ReviewSession | null {
-  if (!raw) return null;
-  let v: Record<string, unknown>;
-  try { v = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
-  if (!v || typeof v !== "object") return null;
+  const v = parseStored(raw);
+  if (!v) return null;
   const ids = strings(v.ids);
-  if (!ids || !ids.length || typeof v.userId !== "string" || typeof v.courseId !== "string") return null;
-  const ratings: Record<string, Rated> = {};
-  for (const [id, kind] of Object.entries((v.ratings as Record<string, unknown>) ?? {})) {
-    if (TALLY_ORDER.includes(kind as Rated)) ratings[id] = kind as Rated;
-  }
+  const userId = text(v.userId);
+  const courseId = text(v.courseId);
+  if (!ids?.length || userId === null || courseId === null) return null;
   return {
-    userId: v.userId,
-    courseId: v.courseId,
-    title: typeof v.title === "string" ? v.title : "",
+    userId,
+    courseId,
+    title: text(v.title) ?? "",
     ids,
-    idx: Number.isInteger(v.idx) && (v.idx as number) >= 0 ? (v.idx as number) : 0,
-    ratings,
+    idx: cardIndex(v.idx),
+    ratings: parseRatings(v.ratings),
     round: strings(v.round),
     done: v.done === true,
   };

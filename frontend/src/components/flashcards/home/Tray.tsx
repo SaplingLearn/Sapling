@@ -9,7 +9,8 @@
 import React from "react";
 import { SegmentedControl } from "../../ui/SegmentedControl";
 import { Switch } from "../../ui/Switch";
-import { PER_CONCEPT, plural, type Draft, type PerConcept, type SaveState } from "./flashcardsModel";
+import { SET_NAME_MAX } from "@/lib/flashcardSetsApi";
+import { PER_CONCEPT, overSetLimit, plural, setLimitNote, type Draft, type PerConcept, type SaveState } from "./flashcardsModel";
 import h from "./home.module.css";
 import { startStatus, type StartProgress } from "./useStart";
 
@@ -35,9 +36,11 @@ export interface TrayProps {
   onClear: () => void;
 }
 
-/** The line under the count: what Start will do about concepts with no cards. */
-function selectionLine(summary: TrayProps["summary"], onlyDue: boolean): string {
+/** The line under the count: why this selection cannot be saved as a set, else
+ *  what Start will do about concepts with no cards. */
+function selectionLine(summary: TrayProps["summary"], onlyDue: boolean, over: number): string {
   if (!summary.concepts) return "Tick concepts or a whole column.";
+  if (over) return setLimitNote(over);
   const bare = summary.missing.length;
   if (!bare) return "";
   const verb = bare === 1 ? "has" : "have";
@@ -74,7 +77,7 @@ export function Tray(props: TrayProps) {
           <i key={part.label} className={h.trayMixSeg} data-palette={part.palette} style={{ flexGrow: part.count }} title={`${part.label}: ${part.count}`} />
         ))}
       </div>
-      <div className={h.trayLine}>{selectionLine(summary, onlyDue)}</div>
+      <div className={h.trayLine} data-testid="flashcards-selection-note">{selectionLine(summary, onlyDue, overSetLimit(draft.selected))}</div>
 
       <div className={h.opts}>
         {showDue && (
@@ -110,7 +113,7 @@ export function Tray(props: TrayProps) {
           className={h.field}
           placeholder="Name this set (optional)"
           value={draft.name}
-          maxLength={80}
+          maxLength={SET_NAME_MAX}
           autoComplete="off"
           onChange={e => props.onName(e.target.value)}
         />

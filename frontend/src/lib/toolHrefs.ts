@@ -19,7 +19,7 @@ export function studyHref(courseId?: string | null): string {
  * Where "Study Guide" goes: the Study Guide page (/study/guide), opened on
  * the course, and on the exam when one is selected. Under /study, so it is
  * auth-gated, flag-gated (hide_study) and keeps Study lit in the nav with no
- * list of its own to maintain.
+ * list of its own to maintain (unlike /flashcards: see `flashcardsHref`).
  */
 export function studyGuideHref(courseId?: string | null, examId?: string | null): string {
   const p = new URLSearchParams();
@@ -37,8 +37,50 @@ export function studyGuideHref(courseId?: string | null, examId?: string | null)
  */
 export const START_PARAM = "start";
 
+/** The Flashcards link's concept selection: `concepts=A|B`. */
+export const CONCEPTS_PARAM = "concepts";
+
+/**
+ * Concept names as one `concepts=` value: joined with "|". A "|" or a "\"
+ * INSIDE a name is written with a "\" before it, so the list reads back
+ * exactly (a name may hold either; "&", "," and "%" are the URL encoding's
+ * to carry). A name with neither is written as it always was, so links made
+ * before the escape still read the same.
+ */
+export function encodeConcepts(names: string[]): string {
+  return names.map(name => name.replace(/[\\|]/g, "\\$&")).join("|");
+}
+
+/** The names in a `concepts=` value (see `encodeConcepts`), trimmed, blanks dropped. */
+export function decodeConcepts(value: string | null | undefined): string[] {
+  const text = value ?? "";
+  const names: string[] = [];
+  let name = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === "\\" && (next === "|" || next === "\\")) {
+      // An escaped "|" or "\": part of the name.
+      name += next;
+      i++;
+    } else if (ch === "|") {
+      names.push(name);
+      name = "";
+    } else {
+      name += ch;
+    }
+  }
+  names.push(name);
+  return names.map(x => x.trim()).filter(Boolean);
+}
+
 /** Flashcards, optionally seeded with a course and a concept selection;
- *  `start` asks the page to begin (see `START_PARAM`). */
+ *  `start` asks the page to begin (see `START_PARAM`).
+ *
+ *  /flashcards is NOT under /study, so nothing comes with the prefix: it is
+ *  auth-gated by its own entry in lib/appRoutes.ts SHELL_PREFIXES (and the
+ *  middleware matcher), flag-gated (hide_study) by lib/navFeatures.ts
+ *  NAV_PATH_ALIASES, and keeps Study lit through `STUDY_TOOL_PATHS` below. */
 export function flashcardsHref(
   courseId?: string | null,
   concepts: string[] = [],
@@ -46,7 +88,7 @@ export function flashcardsHref(
 ): string {
   const p = new URLSearchParams();
   if (courseId) p.set("course", courseId);
-  if (concepts.length) p.set("concepts", concepts.join("|"));
+  if (concepts.length) p.set(CONCEPTS_PARAM, encodeConcepts(concepts));
   if (opts.start) p.set(START_PARAM, "1");
   return p.size ? `/flashcards?${p.toString()}` : "/flashcards";
 }
@@ -69,5 +111,7 @@ export function consumeStartParam(): void {
 }
 
 /** Pages that are Study tools rather than destinations of their own: the nav
- *  keeps Study selected while a student is in one of them. */
+ *  keeps Study selected while a student is in one of them. This is selection
+ *  only; which flag hides each page is lib/navFeatures.ts (Quiz has its own,
+ *  hide_quiz; Flashcards follows Study through NAV_PATH_ALIASES). */
 export const STUDY_TOOL_PATHS = ["/quiz", "/flashcards"];

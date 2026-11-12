@@ -17,7 +17,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({
@@ -149,5 +149,36 @@ describe("Flashcards fetch respects the active semester", () => {
     expect(await screen.findByText("Card 1 of 1")).toBeTruthy();
     // The reload after generating is scoped like the first read.
     expect(mockedFlashcards).toHaveBeenLastCalledWith("u1", undefined, "Fall 2025");
+  });
+
+  it("a term switch never shows the old term's cards while the new term's load", async () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+    // One course, taken in both terms: the page stays on it across the switch.
+    mockedCourses.mockResolvedValue({ courses: [{ ...course("c1", "CS101", "Fall 2025"), terms: ["Fall 2025", "Spring 2026"] }] });
+    mockedGraph.mockResolvedValue({
+      nodes: [{ id: "n1", course_id: "c1", concept_name: "Recursion", mastery_tier: "learning", mastery_score: 0.4 }],
+      edges: [], stats: {},
+    });
+    const fall = [1, 2].map(i => ({ id: `f${i}`, topic: "Recursion", front: "Q", back: "A", course_id: "c1" }));
+    mockedFlashcards.mockResolvedValueOnce({ flashcards: fall });
+    renderFlashcards();
+    expect(await screen.findByText("1 concept · 2 cards")).toBeTruthy();
+
+    let answer!: (r: { flashcards: unknown[] }) => void;
+    mockedFlashcards.mockReturnValueOnce(new Promise(resolve => { answer = resolve; }) as ReturnType<typeof getFlashcards>);
+    act(() => {
+      window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Spring 2026");
+      window.dispatchEvent(new Event("sapling-active-semester-change"));
+    });
+
+    // The new term's map is in; its cards are not. Fall's two are not shown as Spring's.
+    await waitFor(() => expect(mockedGraph).toHaveBeenLastCalledWith("u1", "Spring 2026"));
+    await act(async () => {});
+    expect(mockedFlashcards).toHaveBeenLastCalledWith("u1", undefined, "Spring 2026");
+    expect(screen.queryByText("1 concept · 2 cards")).toBeNull();
+    expect(screen.getByTestId("flashcards-home-loading")).toBeTruthy();
+
+    await act(async () => { answer({ flashcards: [] }); });
+    expect(await screen.findByText("1 concept · 0 cards")).toBeTruthy();
   });
 });

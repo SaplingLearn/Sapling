@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { Card } from "../home/flashcardsModel";
-import { SEGMENT_CAP, missed, ratedAs, roundDeck, segments, tally, tallyLabel, type Ratings } from "./reviewModel";
+import { SEGMENT_CAP, keyIntent, missed, ratedAs, roundDeck, segments, tally, tallyLabel, type Ratings } from "./reviewModel";
 
 const card = (id: string): Card => ({ id, topic: "T", front: `Q-${id}`, back: `A-${id}` });
 const DECK = ["a", "b", "c", "d"].map(card);
@@ -51,5 +51,25 @@ describe("the ones you missed", () => {
     expect(roundDeck(DECK, null)).toBe(DECK);
     expect(roundDeck(DECK, ["c", "b"]).map(c => c.id)).toEqual(["b", "c"]);
     expect(roundDeck(DECK, ["gone"])).toBe(DECK);
+  });
+});
+
+describe("the keyboard", () => {
+  const key = (k: string, code = "") => keyIntent({ key: k, code });
+
+  it("Space and the up/down arrows flip", () => {
+    expect(key(" ", "Space")).toEqual({ kind: "flip" });
+    expect(key("ArrowUp")).toEqual({ kind: "flip" });
+    expect(key("ArrowDown")).toEqual({ kind: "flip" });
+  });
+
+  it("left and right step back and forth", () => {
+    expect(key("ArrowLeft")).toEqual({ kind: "step", by: -1 });
+    expect(key("ArrowRight")).toEqual({ kind: "step", by: 1 });
+  });
+
+  it("1, 2 and 3 rate; nothing else means anything", () => {
+    expect(["1", "2", "3"].map(k => key(k, `Digit${k}`))).toEqual([1, 2, 3].map(n => ({ kind: "rate", n })));
+    for (const k of ["4", "0", "a", "Enter", "constructor"]) expect(key(k)).toBeNull();
   });
 });

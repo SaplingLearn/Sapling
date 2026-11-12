@@ -66,6 +66,35 @@ function trimmed(params: URLSearchParams, key: string): string | undefined {
   return value ? value : undefined;
 }
 
+type EntryTarget = Pick<EntryRequest, "concept" | "topic" | "course" | "scope" | "attempt">;
+
+/** What the link asks to be quizzed on: the target params that are present. */
+function entryTarget(params: URLSearchParams): EntryTarget {
+  const target: EntryTarget = {};
+  for (const key of ["concept", "topic", "course"] as const) {
+    const value = trimmed(params, key);
+    if (value) target[key] = value;
+  }
+  if (trimmed(params, "scope") === "due") target.scope = "due";
+  const attempt = trimmed(params, "attempt");
+  if (attempt) target.attempt = attempt;
+  return target;
+}
+
+/** Where the link came from. A link with a target but no `from` is a legacy
+ *  deep link (`{kind: "link"}`, §6); a bare `/quiz` is nav. */
+function entrySource(params: URLSearchParams, target: EntryTarget): QuizSource {
+  const from = params.get("from");
+  const fallback: SourceKind = Object.keys(target).length > 0 ? "link" : "nav";
+  const source: QuizSource = { kind: isSourceKind(from) ? from : fallback };
+  const returnTo = trimmed(params, "return");
+  if (isSafeReturnPath(returnTo)) source.returnTo = returnTo;
+  if (target.concept) source.conceptId = target.concept;
+  const noteId = trimmed(params, "note");
+  if (noteId) source.noteId = noteId;
+  return source;
+}
+
 /**
  * Reads the quiz entry out of the URL.
  *
@@ -74,29 +103,8 @@ function trimmed(params: URLSearchParams, key: string): string | undefined {
  * a legacy deep link (`{kind: "link"}`, §6); a bare `/quiz` is nav.
  */
 export function parseEntry(params: URLSearchParams): EntryRequest {
-  const concept = trimmed(params, "concept");
-  const topic = trimmed(params, "topic");
-  const course = trimmed(params, "course");
-  const attempt = trimmed(params, "attempt");
-  const scope = trimmed(params, "scope") === "due" ? ("due" as const) : undefined;
-  const noteId = trimmed(params, "note");
-  const returnTo = trimmed(params, "return");
-
-  const from = params.get("from");
-  const hasTarget = Boolean(concept || topic || course || attempt || scope);
-  const kind: SourceKind = isSourceKind(from) ? from : hasTarget ? "link" : "nav";
-
-  const source: QuizSource = { kind };
-  if (isSafeReturnPath(returnTo)) source.returnTo = returnTo;
-  if (concept) source.conceptId = concept;
-  if (noteId) source.noteId = noteId;
-
-  const entry: EntryRequest = { source };
-  if (concept) entry.concept = concept;
-  if (topic) entry.topic = topic;
-  if (course) entry.course = course;
-  if (scope) entry.scope = scope;
-  if (attempt) entry.attempt = attempt;
+  const target = entryTarget(params);
+  const entry: EntryRequest = { source: entrySource(params, target), ...target };
   if (trimmed(params, START_PARAM) === "1") entry.start = true;
   return entry;
 }

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { Assignment } from "@/lib/api";
-import type { FlashcardSet } from "@/lib/flashcardSetsApi";
+import { SET_CONCEPTS_MAX, type FlashcardSet } from "@/lib/flashcardSetsApi";
 import type { Concept, Status } from "../../study/studyModel";
 import {
   YOUR_OWN,
@@ -35,8 +35,10 @@ import {
   isDue,
   mapColumns,
   orderNames,
+  overSetLimit,
   resolveSet,
   saveState,
+  setLimitNote,
   setMeta,
   shuffled,
   summarize,
@@ -445,6 +447,26 @@ describe("the tray's draft", () => {
   it("sends a draft as the API stores it", () => {
     const d = run(emptyDraft(["Variables"]), { type: "name", value: " Mine " }, { type: "option", patch: { onlyDue: true } });
     expect(draftPayload(d)).toEqual({ name: "Mine", concepts: ["Variables"], options: { only_due: true, shuffle: true }, exam_id: null });
+  });
+});
+
+describe("a set's size limit", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => `Concept ${i + 1}`);
+  const named = (n: number) => draftReducer(emptyDraft(many(n)), { type: "name", value: "Everything" });
+
+  it("a selection of up to 100 concepts fits; past it, it says by how many", () => {
+    expect(SET_CONCEPTS_MAX).toBe(100);
+    expect(overSetLimit(many(100))).toBe(0);
+    expect(overSetLimit(many(103))).toBe(3);
+    expect(setLimitNote(0)).toBe("");
+    expect(setLimitNote(3)).toBe("A set holds up to 100 concepts. Untick 3 to save this one.");
+  });
+
+  it("a selection over the limit cannot be saved, as new or over the loaded set", () => {
+    expect(saveState(named(100), []).enabled).toBe(true);
+    expect(saveState(named(101), [])).toMatchObject({ mode: "create", enabled: false, canSaveAsNew: false });
+    const loaded = { ...named(101), setId: "s1" };
+    expect(saveState(loaded, [set()])).toMatchObject({ mode: "update", enabled: false, canSaveAsNew: false });
   });
 });
 

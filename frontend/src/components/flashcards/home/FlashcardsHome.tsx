@@ -13,6 +13,7 @@ import React from "react";
 import Link from "next/link";
 import type { FlashcardSet } from "@/lib/flashcardSetsApi";
 import type { ChecklistTopic } from "@/lib/topicChecklistApi";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 import type { Concept } from "../../study/studyModel";
 import { DeckGrid, MixBar } from "./Decks";
 import {
@@ -134,13 +135,7 @@ export function FlashcardsHome(props: FlashcardsHomeProps) {
         onSorted={sorted}
       />
 
-      {concepts.length === 0 && (
-        <p className={h.quiet} style={{ marginTop: 20 }}>
-          {hasCourse
-            ? <>No concepts for this course yet. Upload its material in the <Link href="/library">Library</Link> and you can make sets of them here.</>
-            : <>Add a course to make flashcards for it. Material you upload in the <Link href="/library">Library</Link> becomes the concepts your sets are made of.</>}
-        </p>
-      )}
+      {concepts.length === 0 && <NoConcepts hasCourse={hasCourse} />}
 
       {(decks.length > 0 || hasMap) && (
         <section className={h.sets} aria-label="Your sets">
@@ -180,6 +175,25 @@ export function FlashcardsHome(props: FlashcardsHomeProps) {
         />
       )}
     </div>
+  );
+}
+
+/** Nothing to make a set of yet, and where the concepts come from. The way
+ *  there is the Library; a student it is hidden from (`hide_library`) is told
+ *  the same without a link that would only land on the Dashboard. */
+function NoConcepts({ hasCourse }: { hasCourse: boolean }) {
+  const libraryHidden = useIsNavHidden()("/library");
+  const library = libraryHidden ? null : <Link href="/library">Library</Link>;
+  return (
+    <p className={h.quiet} style={{ marginTop: 20 }} data-testid="flashcards-no-concepts">
+      {hasCourse
+        ? library
+          ? <>No concepts for this course yet. Upload its material in the {library} and you can make sets of them here.</>
+          : <>No concepts for this course yet. Once its material is uploaded you can make sets of them here.</>
+        : library
+          ? <>Add a course to make flashcards for it. Material you upload in the {library} becomes the concepts your sets are made of.</>
+          : <>Add a course to make flashcards for it. Its material becomes the concepts your sets are made of.</>}
+    </p>
   );
 }
 

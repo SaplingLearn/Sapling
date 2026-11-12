@@ -15,7 +15,7 @@
  * their concepts, or to merge them into a new set in the builder.
  */
 import React from "react";
-import type { FlashcardSet } from "@/lib/flashcardSetsApi";
+import { SET_NAME_MAX, type FlashcardSet } from "@/lib/flashcardSetsApi";
 import { useConfirm } from "@/lib/useConfirm";
 import { mixable, type Deck } from "./decksModel";
 import { masteryLegend, plural, type MasteryCounts } from "./flashcardsModel";
@@ -130,22 +130,29 @@ function DeckCard({
           )}
         </div>
 
-        {/* The paper body: what is in it, how it is going, one fact, play. */}
-        <div className={h.deckBody}>
-          <div className={h.deckMeta}>{deck.meta}</div>
-          <Peek peek={deck.peek} />
-          <Mastery counts={deck.mastery} />
-          <div className={h.deckFoot}>
-            <span className={`${h.deckFact}${deck.fact?.urgent ? ` ${h.deckFactUrgent}` : ""}`} data-testid="flashcards-deck-fact">
-              {deck.fact?.text ?? ""}
-            </span>
-            <button type="button" className={h.play} aria-label={`Review ${deck.name}`} title="Review now" disabled={busy} onClick={() => onPlay(deck)}>
-              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /></svg>
-            </button>
-          </div>
-        </div>
+        <DeckBody deck={deck} busy={busy} onPlay={onPlay} />
       </div>
     </li>
+  );
+}
+
+/** The paper body: what is in it, how it is going, one fact, play. */
+function DeckBody({ deck, busy, onPlay }: { deck: Deck; busy: boolean; onPlay: (deck: Deck) => void }) {
+  const fact = deck.fact;
+  return (
+    <div className={h.deckBody}>
+      <div className={h.deckMeta}>{deck.meta}</div>
+      <Peek peek={deck.peek} />
+      <Mastery counts={deck.mastery} />
+      <div className={h.deckFoot}>
+        <span className={`${h.deckFact}${fact?.urgent ? ` ${h.deckFactUrgent}` : ""}`} data-testid="flashcards-deck-fact">
+          {fact?.text ?? ""}
+        </span>
+        <button type="button" className={h.play} aria-label={`Review ${deck.name}`} title="Review now" disabled={busy} onClick={() => onPlay(deck)}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /></svg>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -254,7 +261,7 @@ function RenameForm({ name, onSubmit, onCancel }: { name: string; onSubmit: (nam
         className={h.field}
         aria-label="Rename set"
         value={value}
-        maxLength={80}
+        maxLength={SET_NAME_MAX}
         onChange={e => setValue(e.target.value)}
         onBlur={onCancel}
         onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}

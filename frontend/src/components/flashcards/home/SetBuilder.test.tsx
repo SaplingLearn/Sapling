@@ -55,6 +55,7 @@ vi.mock("@/lib/flashcardSetsApi", async importOriginal => ({
   suggestFlashcardSet: vi.fn(),
 }));
 
+import { encodeConcepts } from "@/lib/toolHrefs";
 import {
   CARDS,
   CARDS_NO_DUE,
@@ -311,6 +312,50 @@ describe("Flashcards builder: saved sets", () => {
     expect(screen.getByRole("button", { name: "Save set" })).toBeEnabled();
   });
 
+  it("a selection past 100 concepts can be reviewed but not saved, and the tray says why", async () => {
+    // 101 names on the link: more than one set may hold (the server refuses it).
+    const names = Array.from({ length: 101 }, (_, i) => `Topic ${i + 1}`);
+    arriveAt(`course=c1&concepts=${encodeURIComponent(encodeConcepts(names))}`);
+    renderPage();
+    await findTile("Variables");
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Set name" }), "Everything");
+
+    expect(selection()).toMatch(/^101 concepts/);
+    expect(screen.getByTestId("flashcards-selection-note").textContent).toBe("A set holds up to 100 concepts. Untick 1 to save this one.");
+    expect(screen.getByRole("button", { name: "Save set" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
+
+    // One fewer fits.
+    await user.click(tile("Topic 101"));
+    expect(screen.getByTestId("flashcards-selection-note").textContent).not.toMatch(/A set holds up to/);
+    expect(screen.getByRole("button", { name: "Save set" })).toBeEnabled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  const refused = (detail: string) => Object.assign(new Error(JSON.stringify({ detail })), { status: 422 });
+
+  it("a 422 on a new set shows the server's own sentence", async () => {
+    mocks.create.mockRejectedValue(refused("concepts must list 1 to 100 concept names."));
+    const user = await builder();
+    await user.click(tile("Variables"));
+    await user.type(screen.getByRole("textbox", { name: "Set name" }), "Mine");
+    await user.click(screen.getByRole("button", { name: "Save set" }));
+    expect(await screen.findByText("concepts must list 1 to 100 concept names.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save set" })).toBeEnabled();
+  });
+
+  it("a 422 on an update shows the server's own sentence", async () => {
+    mocks.sets.mockResolvedValue({ sets: [POINTERS_SET] });
+    mocks.update.mockRejectedValue(refused("name must be 1 to 80 characters."));
+    const user = await home();
+    await user.click(screen.getByRole("button", { name: "Open Pointers only" }));
+    await user.click(await findTile("Variables"));
+    await user.click(screen.getByRole("button", { name: "Update set" }));
+    expect(await screen.findByText("name must be 1 to 80 characters.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Update set" })).toBeEnabled();
+  });
+
   it("going back to all sets lets an unsaved selection go", async () => {
     const user = await builder();
     await user.click(tile("Variables"));
@@ -390,6 +435,39 @@ describe("Flashcards builder: Start", () => {
     await user.click(backToSelection());
     await findTile("Sorting");
     expect(within(screen.getByTestId("flashcards-tile-n3")).getByText("1 card")).toBeTruthy();
+  });
+
+  it("places the cards a generate call answers with by their course when they carry one, else by topic", async () => {
+    // The re-read fails, so the generate call's own rows are what the review is built from.
+    const user = await builder();
+    await user.click(tile("Sorting"));
+    await user.click(tile("Trees"));
+    mocks.generate
+      // Filed under this course: placed by it.
+      .mockResolvedValueOnce(generated([card("g1", "Sorting", { course_id: "c1" }), card("g9", "Sorting", { course_id: "c2" })]))
+      // No course on the row (an older server, or a card with no offering): placed by its topic.
+      .mockResolvedValueOnce(generated([card("g2", "Trees", { course_id: null })]));
+    mocks.cards.mockRejectedValue(new Error("boom"));
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    // g9 says it belongs to another course: it is not this course's card.
+    expect(await screen.findByText("Card 1 of 2")).toBeTruthy();
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("a set saved to review only what's due starts with all its cards while due dates are not tracked", async () => {
+    // `due_at` is null on every card today; "only due" would otherwise mean an empty review.
+    mocks.cards.mockResolvedValue({ flashcards: CARDS_NO_DUE });
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ concepts: ["Variables", "Recursion"], options: { only_due: true, shuffle: false } })] });
+    const user = await home();
+    await user.click(screen.getByRole("button", { name: "Open Midterm crunch" }));
+    await findTile("Variables");
+
+    expect(screen.queryByRole("switch", { name: "Only what's due" })).toBeNull();
+    expect(selection()).toBe("2 concepts · 3 cards");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(mocks.generate).not.toHaveBeenCalled();
   });
 
   it("a failed generation says so and moves on to the next concept", async () => {

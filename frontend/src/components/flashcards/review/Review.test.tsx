@@ -262,6 +262,39 @@ describe("Review: deleting a card", () => {
     expect(counts()).toEqual([0, 0, 1]);
   });
 
+  it("Delete pressed twice while it saves deletes the card once, and reports no failure", async () => {
+    let done!: (r: { ok: boolean }) => void;
+    mockedDelete.mockReturnValueOnce(new Promise(resolve => { done = resolve; }));
+    // What the server says to a second delete of the same card.
+    mockedDelete.mockRejectedValue(Object.assign(new Error('{"detail":"Flashcard not found"}'), { status: 404 }));
+    render(<Harness deck={DECK} />);
+    const del = screen.getByRole("button", { name: /delete card/i });
+
+    fireEvent.click(del);
+    fireEvent.click(del);
+    await act(async () => { done({ ok: true }); });
+
+    expect(await screen.findByText("Card 1 of 2")).toBeTruthy();
+    expect(mockedDelete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Couldn't delete that card|couldn't find that/i)).toBeNull();
+  });
+
+  it("a card is not deleted while its rating is still saving", async () => {
+    let saved!: (r: { ok: boolean }) => void;
+    mockedRate.mockReturnValueOnce(new Promise(resolve => { saved = resolve; }));
+    render(<Harness deck={DECK} />);
+    await flipCard();
+    act(() => { press("3"); });
+
+    fireEvent.click(screen.getByRole("button", { name: /delete card/i }));
+    expect(mockedDelete).not.toHaveBeenCalled();
+
+    // The rating lands on the card it was given to, and moves on from it.
+    await act(async () => { saved({ ok: true }); });
+    expect(await screen.findByText("Card 2 of 3")).toBeTruthy();
+    expect(counts()).toEqual([1, 0, 0]);
+  });
+
   it("deleting the last card says the deck is empty and offers the way back", async () => {
     render(<Harness deck={DECK.slice(0, 1)} />);
     await userEvent.click(screen.getByRole("button", { name: /delete card/i }));

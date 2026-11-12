@@ -26,6 +26,7 @@ import rv from "./review.module.css";
 import {
   RATING_OPTIONS,
   TALLY_ORDER,
+  keyIntent,
   missed,
   ratedAs,
   roundDeck,
@@ -62,6 +63,10 @@ export interface ReviewProps {
 
 const FROM_THE_TOP: ReviewProgress = { idx: 0, ratings: {}, round: null, done: false };
 
+/** A key pressed while typing in a field is the field's, not the review's. */
+const typingIn = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+
 export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, initial = FROM_THE_TOP, onProgress }: ReviewProps) {
   const toast = useToast();
   const { userId } = useUser();
@@ -77,6 +82,8 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
   // silently back to card 1.
   const [rating, setRating] = React.useState(false);
   const ratingRef = React.useRef(false);
+  /** A delete is in flight (see `remove`). */
+  const deletingRef = React.useRef(false);
   const [done, setDone] = React.useState(initial.done);
   /** How each card was rated in this pass. */
   const [ratings, setRatings] = React.useState<Ratings>(initial.ratings);
@@ -90,7 +97,7 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
   const card = active[idx];
 
   const rate = React.useCallback(async (r: number) => {
-    if (!card || ratingRef.current) return;
+    if (!card || ratingRef.current || deletingRef.current) return;
     ratingRef.current = true;
     setRating(true);
     try {
@@ -122,8 +129,13 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
     setFlipped(false);
   };
 
+  // One delete per card, and never across a rating that is still saving: a
+  // second press would ask the server to delete a card that is already gone
+  // (and say it failed), and a delete under a saving rating would restart the
+  // deck just before the rating moves it on.
   const remove = React.useCallback(async () => {
-    if (!card) return;
+    if (!card || deletingRef.current || ratingRef.current) return;
+    deletingRef.current = true;
     try {
       await deleteFlashcard(userId, card.id);
       toast.success("Card deleted");
@@ -136,6 +148,8 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
     } catch (err) {
       console.error("flashcard delete failed", err);
       toast.error(humanizeError(err, "Couldn't delete that card."));
+    } finally {
+      deletingRef.current = false;
     }
   }, [card, userId, toast, onDeleted]);
 
@@ -151,28 +165,24 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
   }, [done, idx, active.length]);
 
   // Keyboard: Space or up/down flips; left/right move between cards; 1/2/3 rate when flipped.
+  const canRate = flipped && !!card && !done;
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       // A held key auto-repeats: one physical press = one action.
-      if (e.repeat) return;
-      if (e.code === "Space" || e.key === "ArrowUp" || e.key === "ArrowDown") {
-        e.preventDefault(); setFlipped(f => !f); return;
-      }
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        e.preventDefault();
-        step(e.key === "ArrowLeft" ? -1 : 1);
+      if (typingIn(e.target) || e.repeat) return;
+      const intent = keyIntent(e);
+      if (!intent) return;
+      if (intent.kind === "rate") {
+        if (canRate) rate(intent.n);
         return;
       }
-      if (!flipped || !card || done) return;
-      if (e.key === "1") rate(1);
-      else if (e.key === "2") rate(2);
-      else if (e.key === "3") rate(3);
+      e.preventDefault();
+      if (intent.kind === "flip") setFlipped(f => !f);
+      else step(intent.by);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flipped, rate, step, card, done]);
+  }, [canRate, rate, step]);
 
   const stage = { "--fc-accent": accent } as React.CSSProperties;
 

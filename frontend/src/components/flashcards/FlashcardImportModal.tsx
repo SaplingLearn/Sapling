@@ -7,6 +7,7 @@ import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCleanup, importCommit, type EnrolledCourse, type ImportCard } from "@/lib/api";
 import { courseSelectOptions } from "@/lib/courseSelectOptions";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { CoursePicker } from "../study/CoursePicker";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import { PasteTab } from "./tabs/PasteTab";
@@ -33,6 +34,8 @@ interface Props {
   defaultCourseId?: string;
   defaultTopic?: string;
   documents: LibraryDoc[];
+  /** `documents` is still being read (the page reads it when this opens). */
+  documentsLoading?: boolean;
   onImported: (count: number) => void;
 }
 
@@ -139,25 +142,33 @@ function useCommit(
   return { committing, commit };
 }
 
-/** "Clean up with AI": sends the filled-in rows and replaces the deck with the reply. */
+/**
+ * "Clean up with AI": sends the filled-in rows and replaces the deck with the
+ * reply. The reply belongs to the open of the dialog it was asked in: closing
+ * the dialog unmounts this, and a reply that lands afterwards is dropped (it
+ * used to replace the deck of the NEXT open, #769's race by another door).
+ */
 function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void) {
   const toast = useToast();
   const { userId } = useUser();
   const [cleaning, setCleaning] = React.useState(false);
+  const req = useLatestRequest();
 
   const cleanup = async () => {
     if (!userId) return;
     const valid = cleanupPayload(cards);
     if (valid.length === 0) { toast.warn("No valid cards to clean up."); return; }
+    const run = req.begin();
     setCleaning(true);
     try {
       const res = await importCleanup(userId, valid);
+      if (!run.isCurrent()) return;
       onChange(numberedCards(res.cards));
       toast.success("Cleaned up.");
     } catch (err) {
-      toast.error(`Cleanup failed: ${String(err)}`);
+      if (run.isCurrent()) toast.error(`Cleanup failed: ${String(err)}`);
     } finally {
-      setCleaning(false);
+      if (run.isCurrent()) setCleaning(false);
     }
   };
 
@@ -180,17 +191,18 @@ interface SourceInputProps {
   cards: ParsedCard[];
   onCards: (next: ParsedCard[]) => void;
   documents: LibraryDoc[];
+  documentsLoading: boolean;
   /** Receives the Paste textarea: where focus goes when the dialog opens. */
   pasteRef: React.Ref<HTMLTextAreaElement>;
 }
 
 /** The active source's own input. Only one is mounted at a time. */
-function SourceInput({ tab, cards, onCards, documents, pasteRef }: SourceInputProps) {
+function SourceInput({ tab, cards, onCards, documents, documentsLoading, pasteRef }: SourceInputProps) {
   switch (tab) {
     case "paste": return <PasteTab cards={cards} onCards={onCards} textareaRef={pasteRef} />;
     case "upload": return <UploadTab onCards={onCards} />;
     case "url": return <UrlTab onCards={onCards} />;
-    case "ai": return <AiTab documents={documents} onCards={onCards} />;
+    case "ai": return <AiTab documents={documents} documentsLoading={documentsLoading} onCards={onCards} />;
     case "photo": return <PhotoTab onCards={onCards} />;
   }
 }
@@ -391,7 +403,7 @@ function ImportFooter({ summary, onClose, onCommit, commitDisabled, commitText }
 }
 
 export function FlashcardImportModal({
-  open, onClose, courses, defaultCourseId, defaultTopic, documents, onImported,
+  open, onClose, courses, defaultCourseId, defaultTopic, documents, documentsLoading = false, onImported,
 }: Props) {
   const {
     tab, selectTab, cards, setCards, onTabCards, reverse, setReverse,
@@ -425,6 +437,7 @@ export function FlashcardImportModal({
             cards={cards}
             onCards={onTabCards}
             documents={documents}
+            documentsLoading={documentsLoading}
             pasteRef={pasteRef}
           />
           <PreviewPane

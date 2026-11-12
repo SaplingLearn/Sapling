@@ -5,11 +5,16 @@
  * A set owns no cards. It stores concept NAMES; the page matches cards to
  * them by topic, so a set keeps working as cards are added and removed.
  *
- * Limits are enforced by the server (name 1-80 characters, 1-100 concepts); a
- * rejected write throws the `ApiError` `fetchJSON` builds, for the caller to
- * surface.
+ * Limits are enforced by the server (name 1-80 characters, 1-100 concepts,
+ * `SET_NAME_MAX` / `SET_CONCEPTS_MAX` below); a rejected write throws the
+ * `ApiError` `fetchJSON` builds, for the caller to surface.
  */
 import { fetchJSON } from "@/lib/api";
+
+/** The server's limits on a saved set (backend/services/flashcards/sets.py:
+ *  NAME_MAX, CONCEPTS_MAX). The page holds a set to them before it is sent. */
+export const SET_NAME_MAX = 80;
+export const SET_CONCEPTS_MAX = 100;
 
 export interface FlashcardSetOptions {
   only_due: boolean;

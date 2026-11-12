@@ -12,7 +12,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Study reads ?mode= at mount; per-describe control without remocking.
@@ -160,6 +160,33 @@ describe("Study guide path threads the right term", () => {
     await waitFor(() =>
       expect(mockedGuide).toHaveBeenCalledWith("u1", "c1", "e1", undefined),
     );
+  });
+
+  it("clicking the recent entry that is already open does not pin the next picker load to its term", async () => {
+    // Fall 2025 is active; the rail's guide is a Spring 2026 one. Opening it
+    // pins THAT load to Spring. Clicking it again changes nothing, so no load
+    // runs, and the term must not stay armed for the exam picked next.
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+    mockedCourses.mockResolvedValue({ courses: [COURSE_C1] });
+    mockedCached.mockResolvedValue({ guides: [{ ...RECENT, semester: "Spring 2026" }] });
+    mockedExams.mockResolvedValue({
+      exams: [
+        { id: "e1", title: "Midterm 1", due_date: "2026-04-01" },
+        { id: "e2", title: "Final", due_date: "2026-05-01" },
+      ],
+    });
+
+    renderStudy();
+    const rail = () => within(screen.getByRole("complementary")).getByText("Midterm 1");
+    await userEvent.click(await screen.findByRole("complementary").then(rail));
+    await waitFor(() => expect(mockedGuide).toHaveBeenCalledWith("u1", "c1", "e1", "Spring 2026"));
+    await userEvent.click(rail());
+
+    await userEvent.click(await screen.findByRole("button", { name: /Midterm 1/, expanded: false }));
+    await userEvent.click(await screen.findByRole("option", { name: /Final/ }));
+
+    await waitFor(() => expect(mockedGuide).toHaveBeenCalledWith("u1", "c1", "e2", "Fall 2025"));
+    expect(mockedGuide).not.toHaveBeenCalledWith("u1", "c1", "e2", "Spring 2026");
   });
 
   it("picker-driven loads use the active semester", async () => {

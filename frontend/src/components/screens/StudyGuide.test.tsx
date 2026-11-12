@@ -10,7 +10,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // The page reads ?course= / ?exam= at mount; per-test control without remocking.
@@ -22,6 +22,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
+
+// The student's nav flags (#620): nothing hidden unless a spec says so.
+const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
+vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => flagState }));
 
 const mobile = { value: false };
 vi.mock("@/lib/useIsMobile", () => ({
@@ -129,6 +133,7 @@ async function pickCourse(code = "CS101") {
 beforeEach(() => {
   search.qs = "";
   mobile.value = false;
+  flagState.flags = {};
   mockedCourses.mockResolvedValue({ courses: [course("c1", "CS101", "Intro to CS")] });
   mockedCached.mockResolvedValue({ guides: [] });
   mockedExams.mockResolvedValue({ exams: [] });
@@ -217,6 +222,30 @@ describe("Study guide pane — a course is picked", () => {
     await userEvent.click(examTrigger());
     expect(await screen.findByRole("option", { name: /Midterm 1/ })).toHaveTextContent("Due 2026-05-01");
     expect(screen.getByRole("option", { name: /Final/ })).not.toHaveTextContent("Due");
+  });
+});
+
+describe("Study guide pane — with the Calendar hidden from this student (hide_calendar)", () => {
+  beforeEach(() => { flagState.flags = { hide_calendar: "on" }; });
+
+  it("a course with no exams points to the Study hub's Add Exam or Deadline, not the Calendar", async () => {
+    renderStudy();
+    await pickCourse();
+    expect(await screen.findByText("No exams for this course yet")).toBeTruthy();
+    expect(screen.getByText(/Add Exam or Deadline.* on the Study page/)).toBeTruthy();
+    expect(screen.queryByText(/Calendar/)).toBeNull();
+  });
+
+  it("an exam that is gone says the same", async () => {
+    mockedExams.mockResolvedValue({ exams: [{ id: "e1", title: "Midterm 1", due_date: "2026-05-01" }] });
+    mockedGuide.mockRejectedValue(Object.assign(new Error('{"detail":"Exam not found. It may have been deleted — pick another exam."}'), { status: 404 }));
+    renderStudy();
+    await pickCourse();
+    await userEvent.click(await screen.findByRole("button", { name: /pick an exam/i }));
+    await userEvent.click(await screen.findByRole("option", { name: /Midterm 1/ }));
+    expect(await screen.findByText(/isn.t around anymore/i)).toBeTruthy();
+    expect(screen.getByText(/Add Exam or Deadline.* on the Study page/)).toBeTruthy();
+    expect(screen.queryByText(/Calendar/)).toBeNull();
   });
 });
 
@@ -421,6 +450,26 @@ describe("Study Guide page — opened from the Study hub", () => {
     await userEvent.click(examTrigger());
     await userEvent.click(await screen.findByRole("option", { name: /Midterm 1/ }));
     expect(await screen.findByText(/isn.t around anymore/i)).toBeTruthy();
+  });
+
+  it("a recent guide opened while the hub's exam is still loading is not replaced by it", async () => {
+    search.qs = "course=c1&exam=e1";
+    const exams = deferred<{ exams: { id: string; title: string; due_date: string }[] }>();
+    mockedExams.mockReturnValue(exams.promise);
+    mockedCached.mockResolvedValue({ guides: [entry("g2", "e2", "Final")] });
+    renderStudy();
+
+    await userEvent.click(await screen.findByText("Final"));
+    await waitFor(() => expect(mockedGuide).toHaveBeenCalledWith("u1", "c1", "e2", undefined));
+    await act(async () => {
+      exams.resolve({ exams: [
+        { id: "e1", title: "Midterm 1", due_date: "2026-05-01" },
+        { id: "e2", title: "Final", due_date: "2026-06-01" },
+      ] });
+    });
+
+    await waitFor(() => expect(examTrigger().textContent).toContain("Final"));
+    expect(mockedGuide).not.toHaveBeenCalledWith("u1", "c1", "e1", undefined);
   });
 
   it("with nothing in the URL it starts on empty pickers and backs out to the plain hub", async () => {

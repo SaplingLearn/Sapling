@@ -23,6 +23,10 @@ vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
 
+// The student's nav flags (#620): nothing hidden unless a spec says so.
+const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
+vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => flagState }));
+
 vi.mock("@/components/flashcards/FlashcardImportModal", () => ({
   FlashcardImportModal: () => null,
 }));
@@ -82,7 +86,10 @@ import {
   ticked,
 } from "./pageTestKit";
 
-beforeEach(resetMocks);
+beforeEach(() => {
+  resetMocks();
+  flagState.flags = {};
+});
 
 afterEach(() => {
   cleanup();
@@ -99,6 +106,7 @@ const legend = (id: string) => within(deck(id)).getByTestId("flashcards-deck-leg
 const peek = (id: string) => [...within(deck(id)).getByTestId("flashcards-deck-peek").children].map(el => el.textContent);
 const fact = (id: string) => within(deck(id)).getByTestId("flashcards-deck-fact").textContent;
 const mixBar = () => screen.queryByTestId("flashcards-mix");
+const homeStatusOrNull = () => screen.queryByTestId("flashcards-home-status");
 const describeField = () => screen.getByRole("textbox", { name: "Describe a set" });
 const sortIt = () => screen.getByRole("button", { name: /Sort it|Sorting…/ });
 
@@ -382,6 +390,46 @@ describe("Flashcards home: decks", () => {
     expect(new URLSearchParams(window.location.search).has("review")).toBe(false);
   });
 
+  /** Opens the "Vars and recursion" review, then drops the page as a reload does. */
+  const reloadInsideReview = async () => {
+    mocks.sets.mockResolvedValue({ sets: [VARS_SET, POINTERS_SET] });
+    const user = await home();
+    await user.click(screen.getByRole("button", { name: "Review Vars and recursion" }));
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    cleanup();
+  };
+
+  it("a reload inside a review waits for the course list: the cards answering first does not lose it", async () => {
+    // The URL of a review opened from a bare /flashcards names no course, and
+    // the review is kept under the course it was started on.
+    await reloadInsideReview();
+    const courses = deferred<{ courses: (typeof COURSE)[] }>();
+    mocks.courses.mockReturnValue(courses.promise);
+    renderPage();
+
+    await waitFor(() => expect(mocks.cards).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(screen.queryByRole("heading", { name: "What do you want to study?" })).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("review")).toBe("1");
+
+    await act(async () => { courses.resolve({ courses: [COURSE] }); });
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(screen.getByTestId("flashcards-deck-name").textContent).toBe("Vars and recursion");
+  });
+
+  it("a reload inside a review whose card list fails keeps the review for the retry", async () => {
+    await reloadInsideReview();
+    mocks.cards.mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+
+    expect(await screen.findByText("Couldn't load your flashcards")).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get("review")).toBe("1");
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(screen.getByTestId("flashcards-deck-name").textContent).toBe("Vars and recursion");
+  });
+
   it("play reviews the set's cards right away, and All sets comes back to the home", async () => {
     mocks.sets.mockResolvedValue({ sets: [VARS_SET, POINTERS_SET] });
     const user = await home();
@@ -463,6 +511,32 @@ describe("Flashcards home: decks", () => {
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith("u1", "s2", { name: "Memory" }));
     expect(await within(deck("s2")).findByText("Memory")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review Memory" })).toBeTruthy();
+  });
+
+  it("a set write that answers after a course switch leaves the new course's home up", async () => {
+    const other = { ...COURSE, enrollment_id: "enr-c0", course_id: "c0", course_code: "MA123", course_name: "Calculus" };
+    mocks.courses.mockResolvedValue({ courses: [COURSE, other] });
+    mocks.sets.mockImplementation(async (_user, courseId) => ({ sets: courseId === "c1" ? [POINTERS_SET] : [] }));
+    const renamed = deferred<{ set: typeof POINTERS_SET }>();
+    mocks.update.mockReturnValue(renamed.promise);
+    const user = await home();
+
+    await user.click(screen.getByRole("button", { name: "More for Pointers only" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Rename set" });
+    await user.clear(input);
+    await user.type(input, "Memory{Enter}");
+    await waitFor(() => expect(mocks.update).toHaveBeenCalled());
+
+    // On to the other course (no concepts there), whose own list lands first.
+    await user.click(screen.getByRole("button", { name: /CS101/, expanded: false }));
+    await user.click(screen.getByRole("option", { name: /MA123/ }));
+    expect(await screen.findByText(/No concepts for this course yet/)).toBeTruthy();
+    await waitFor(() => expect(mocks.sets).toHaveBeenCalledWith("u1", "c0"));
+
+    await act(async () => { renamed.resolve({ set: { ...POINTERS_SET, name: "Memory" } }); });
+    expect(screen.queryByTestId("flashcards-home-loading")).toBeNull();
+    expect(screen.getByText(/No concepts for this course yet/)).toBeTruthy();
   });
 
   it("deletes a set only after a second, confirming click", async () => {
@@ -555,6 +629,21 @@ describe("Flashcards home: the automatic decks", () => {
     expect(deckIds()).toEqual(["auto:all", "s1"]);
     expect(screen.queryByText(/\bdue\b/i)).toBeNull();
     expect(within(deck("s1")).getByText("3 concepts · 3 cards")).toBeTruthy();
+  });
+
+  it("a set saved to review only what's due plays all its cards while due dates are not tracked", async () => {
+    // `due_at` is null on every card today: the option cannot be seen or
+    // changed, so it must not turn the set's review into an empty one.
+    mocks.cards.mockResolvedValue({ flashcards: CARDS_NO_DUE });
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ concepts: ["Variables", "Recursion"], options: { only_due: true, shuffle: false } })] });
+    const user = await home();
+
+    expect(within(deck("s1")).getByText("2 concepts · 3 cards")).toBeTruthy();
+    expect(deck("s1").textContent).not.toMatch(/due/i);
+    await user.click(screen.getByRole("button", { name: "Review Midterm crunch" }));
+
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(homeStatusOrNull()).toBeNull();
   });
 
   it("a set saved to review only what's due plays only that", async () => {
@@ -731,6 +820,24 @@ describe("Flashcards home: loading, failing and empty", () => {
     expect([figure("cards"), figure("concepts"), figure("sets")]).toEqual(["0", "0", "0"]);
   });
 
+  it("with the Library hidden from this student, the empty home does not link to it", async () => {
+    flagState.flags = { hide_library: "on" };
+    mocks.graph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
+    mocks.cards.mockResolvedValue({ flashcards: [] });
+    renderPage();
+
+    expect(await screen.findByText(/No concepts for this course yet/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Library" })).toBeNull();
+    expect(screen.getByTestId("flashcards-no-concepts").textContent).not.toMatch(/Library/);
+
+    // The same for a student with no course at all.
+    cleanup();
+    mocks.courses.mockResolvedValue({ courses: [] });
+    renderPage();
+    expect(await screen.findByText(/Add a course to make flashcards for it/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Library" })).toBeNull();
+  });
+
   it("a student with no courses gets the hero and the way to the Library", async () => {
     mocks.courses.mockResolvedValue({ courses: [] });
     mocks.cards.mockResolvedValue({ flashcards: [] });
@@ -740,6 +847,34 @@ describe("Flashcards home: loading, failing and empty", () => {
     expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
     expect(screen.queryByTestId(/^flashcards-deck-/)).toBeNull();
     expect(mocks.sets).not.toHaveBeenCalled();
+  });
+
+  it("a course list that fails to load says so (not 'add a course'), and Try again loads it", async () => {
+    mocks.courses.mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+
+    expect(await screen.findByText("Couldn't load your flashcards")).toBeTruthy();
+    expect(screen.queryByText(/Add a course to make flashcards for it/)).toBeNull();
+    expect(screen.queryByTestId(/^flashcards-deck-/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await within(await screen.findByTestId("flashcards-deck-auto:all")).findByText("All of CS101")).toBeTruthy();
+    expect(mocks.courses).toHaveBeenCalledTimes(2);
+    // Only what failed is read again.
+    expect(mocks.cards).toHaveBeenCalledTimes(1);
+  });
+
+  it("start=1 survives a course list that fails first: the retry starts what the link asked for", async () => {
+    mocks.courses.mockRejectedValueOnce(new Error("boom"));
+    arriveAt("course=c1&concepts=Variables|Recursion&start=1");
+    renderPage();
+
+    expect(await screen.findByText("Couldn't load your flashcards")).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get("start")).toBe("1");
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get("start")).toBeNull();
   });
 
   it("does not offer decks over a card list it could not read", async () => {
