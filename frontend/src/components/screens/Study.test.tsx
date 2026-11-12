@@ -45,10 +45,10 @@ beforeEach(() => { search.qs = ""; replace.mockReset(); });
 afterEach(cleanup);
 
 describe("Study — the retired ?mode= panes", () => {
-  it("sends ?mode=guide to the course's study guides in the Library", async () => {
+  it("sends ?mode=guide to the Study Guide page, keeping the course", async () => {
     search.qs = "mode=guide&course=c1";
     renderStudy();
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/library?course=c1&type=study_guide"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide?course=c1"));
   });
 
   it("sends ?mode=cards to the Flashcards page, keeping the course", async () => {

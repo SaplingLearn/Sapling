@@ -5,22 +5,25 @@
  * seven days, and today's split across quiz / flashcards / tutor.
  *
  * The goal is edited in place: the target ("30 min") is itself the button,
- * and it opens a small stepper on the same line (Enter saves, Esc cancels).
- * There used to be a gear beside the label that opened a floating popover,
- * which read as a settings screen bolted onto the card.
+ * and it turns its line into a row of presets. One tap on a preset saves it;
+ * the pencil at the end is for any other number. Esc, or a press anywhere
+ * else, cancels.
+ * Earlier versions: a gear that opened a floating popover (it read as a
+ * settings screen bolted onto the card), then a - / + stepper with Cancel and
+ * Save (four controls and two clicks to do what one tap does here).
  *
  * Sizes and colours come from the app tokens (globals.css), matching the
  * side cards on the other screens (Dashboard's TodayColumn, Calendar).
  */
 import React from "react";
 import type { StudyDaily } from "@/lib/studyApi";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { fmtDow } from "./studyModel";
 import s from "./DailyGoalCard.module.css";
 
 export const GOAL_MIN = 5;
 export const GOAL_MAX = 600;
-const STEP = 5;
+/** The goals most students pick, in minutes a day. Anything else is "custom". */
+const PRESETS = [15, 30, 45, 60, 90];
 
 const ACTIVITIES = [
   { key: "quiz", label: "Quiz", color: "#7A4A78" },
@@ -28,9 +31,8 @@ const ACTIVITIES = [
   { key: "tutor", label: "Tutor", color: "#B8873F" },
 ] as const;
 
-const SERIF = "var(--font-serif), 'Aleo', georgia, serif";
-
-const clampGoal = (n: number) => Math.min(GOAL_MAX, Math.max(GOAL_MIN, n));
+/** Figures use the display face, as the Dashboard's (`.h-serif`) do. */
+const SERIF = "var(--font-display)";
 
 function PencilIcon() {
   return (
@@ -59,47 +61,59 @@ export function DailyGoalCard({
   const weekTotal = week.reduce((n, d) => n + d.minutes, 0);
   const MAX = Math.max(goal * 1.25, ...week.map(d => d.minutes), 1);
 
-  const [editing, setEditing] = React.useState(false);
+  // false = the figure; "presets" = the row of presets; "custom" = a number.
+  const [editing, setEditing] = React.useState<false | "presets" | "custom">(false);
   const [draft, setDraft] = React.useState(String(goal));
   const [saving, setSaving] = React.useState(false);
   const targetRef = React.useRef<HTMLButtonElement>(null);
+  const rowRef = React.useRef<HTMLDivElement | HTMLFormElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const returnFocus = React.useRef(false);
+  const isCustom = !PRESETS.includes(goal);
 
   React.useEffect(() => {
-    if (editing) {
+    if (editing === "custom") {
       inputRef.current?.focus();
       inputRef.current?.select();
+    } else if (editing === "presets") {
+      const row = rowRef.current;
+      (row?.querySelector<HTMLElement>('[aria-checked="true"]') ?? row?.querySelector<HTMLElement>("button"))?.focus();
     } else if (returnFocus.current) {
       returnFocus.current = false;
       targetRef.current?.focus();
     }
   }, [editing]);
 
-  const open = () => { setDraft(String(goal)); setEditing(true); };
+  // A press anywhere outside the open editor cancels it.
+  React.useEffect(() => {
+    if (!editing) return;
+    const onDown = (e: Event) => {
+      const row = rowRef.current;
+      if (row && e.target instanceof Node && row.contains(e.target)) return;
+      setEditing(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [editing]);
+
+  const open = () => { setDraft(String(goal)); setEditing("presets"); };
   const close = () => { returnFocus.current = true; setEditing(false); };
-  const step = (dir: 1 | -1) => {
-    const n = Math.round(Number(draft));
-    const base = Number.isFinite(n) ? n : goal;
-    // Snap to the step grid first, so 33 goes to 35 / 30 rather than 38 / 28.
-    const next = dir > 0 ? Math.floor(base / STEP) * STEP + STEP : Math.ceil(base / STEP) * STEP - STEP;
-    setDraft(String(clampGoal(next)));
-  };
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (saving) return;
-    const n = Math.round(Number(draft));
-    if (n === goal) { close(); return; }
+  /** Save `n` and close; on failure stay open so it can be tried again. */
+  const choose = async (n: number): Promise<boolean> => {
+    if (saving) return false;
+    if (n === goal) { close(); return true; }
     setSaving(true);
     const ok = await onSave(n);
     setSaving(false);
     if (ok) close();
-    else inputRef.current?.focus();
+    return ok;
   };
-
-  const smallBtn: React.CSSProperties = {
-    height: 28, padding: "0 10px", borderRadius: "var(--r-sm)", ...INHERIT_FONT,
-    fontSize: "var(--fs-sm)", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+  const submitCustom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!(await choose(Math.round(Number(draft))))) inputRef.current?.focus();
+  };
+  const onEscape = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { e.stopPropagation(); close(); }
   };
 
   return (
@@ -107,30 +121,33 @@ export function DailyGoalCard({
       {/* ── today ── */}
       <div className={s.head}>
         <span className="label-micro">Daily goal</span>
-        {!editing && (
-          met
+        {editing
+          ? <span className={s.note}>minutes a day</span>
+          : met
             ? <span className={s.met}>Goal met</span>
-            : <span className={s.note}>{goal - done} min to go</span>
-        )}
+            : <span className={s.note}>{goal - done} min to go</span>}
       </div>
 
-      {editing ? (
-        <form className={s.editRow} onSubmit={submit}
-          onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); close(); } }}>
-          <span className={s.stepper}>
-            <button type="button" className={s.stepBtn} aria-label="Decrease goal" onClick={() => step(-1)}
-              disabled={Number(draft) <= GOAL_MIN}>−</button>
-            <input ref={inputRef} className={s.stepInput} type="number" inputMode="numeric"
-              min={GOAL_MIN} max={GOAL_MAX} step={STEP} required
-              value={draft} onChange={e => setDraft(e.target.value)} aria-label="Daily goal in minutes" />
-            <button type="button" className={s.stepBtn} aria-label="Increase goal" onClick={() => step(1)}
-              disabled={Number(draft) >= GOAL_MAX}>+</button>
-          </span>
+      {editing === "presets" ? (
+        <div ref={rowRef as React.RefObject<HTMLDivElement>} className={s.editRow} role="radiogroup"
+          aria-label="Daily goal, minutes a day" onKeyDown={onEscape}>
+          {PRESETS.map(n => (
+            <button key={n} type="button" role="radio" aria-checked={n === goal} aria-label={`${n} minutes`}
+              className={s.preset} disabled={saving} onClick={() => choose(n)}>{n}</button>
+          ))}
+          <button type="button" className={s.preset} aria-pressed={isCustom} disabled={saving}
+            aria-label={isCustom ? `Custom goal: ${goal} minutes. Change it` : "Set a custom goal"} title="Another number"
+            onClick={() => setEditing("custom")}>
+            {isCustom ? goal : <PencilIcon />}
+          </button>
+        </div>
+      ) : editing === "custom" ? (
+        <form ref={rowRef as React.RefObject<HTMLFormElement>} className={s.editRow} onSubmit={submitCustom} onKeyDown={onEscape}>
+          <input ref={inputRef} className={s.customInput} type="number" inputMode="numeric"
+            min={GOAL_MIN} max={GOAL_MAX} step={1} required
+            value={draft} onChange={e => setDraft(e.target.value)} aria-label="Daily goal in minutes" />
           <span className={s.unit}>min a day</span>
-          <span className={s.editActions}>
-            <button type="button" className={s.cancel} onClick={close} style={smallBtn}>Cancel</button>
-            <button type="submit" className={s.save} disabled={saving} style={smallBtn}>{saving ? "Saving" : "Save"}</button>
-          </span>
+          <button type="submit" className={`btn btn--primary btn--sm ${s.set}`} disabled={saving}>{saving ? "Saving" : "Set"}</button>
         </form>
       ) : (
         <div className={s.figure}>

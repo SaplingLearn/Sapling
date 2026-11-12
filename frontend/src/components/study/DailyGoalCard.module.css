@@ -94,39 +94,43 @@
   color: var(--brand-forest);
 }
 
-.stepper {
-  display: inline-flex;
-  align-items: stretch;
+/* The presets: equal shares of the row, so five numbers and the pencil fit the
+   card at its narrowest (a 280px rail) without wrapping. */
+.editRow { gap: 5px; }
+.preset {
+  flex: 1 1 0;
+  min-width: 0;
   height: 28px;
-  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);
-  overflow: hidden;
-}
-.stepper:focus-within {
-  border-color: var(--sap-400);
-  box-shadow: 0 0 0 3px var(--sap-50);
-}
-.stepBtn {
-  width: 24px;
-  border: 0;
-  background: transparent;
   font: inherit;
-  font-size: var(--fs-base);
-  line-height: 1;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   cursor: pointer;
+  transition: background-color var(--dur-fast, 120ms) ease, border-color var(--dur-fast, 120ms) ease, color var(--dur-fast, 120ms) ease;
 }
-.stepBtn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
-.stepBtn:disabled { color: var(--ink-300); cursor: default; }
-.stepBtn:focus-visible { outline-offset: -2px; }
-.stepInput {
-  width: 38px;
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  padding: 0;
-  background: transparent;
+.preset:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-subtle); color: var(--text); }
+.preset:disabled { cursor: default; opacity: 0.6; }
+.preset[aria-checked="true"],
+.preset[aria-pressed="true"] {
+  border-color: var(--brand-forest);
+  background: var(--brand-forest);
+  color: var(--accent-fg, #fff);
+}
+
+/* Any other number. */
+.customInput {
+  width: 64px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
   font: inherit;
   font-size: var(--fs-md);
   font-weight: 600;
@@ -136,34 +140,16 @@
   -moz-appearance: textfield;
   appearance: textfield;
 }
-.stepInput:focus { outline: none; }
-.stepInput::-webkit-outer-spin-button,
-.stepInput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.customInput:focus { outline: none; border-color: var(--sap-400); box-shadow: 0 0 0 3px var(--sap-50); }
+.customInput::-webkit-outer-spin-button,
+.customInput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 .unit {
   font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
-
-.editActions {
-  display: inline-flex;
-  gap: 4px;
-  margin-left: auto;
-}
-.save {
-  border: 0;
-  background: var(--brand-forest);
-  color: var(--accent-fg, #fff);
-}
-.save:hover:not(:disabled) { background: var(--brand-forest-hover); }
-.save:disabled { opacity: 0.6; cursor: default; }
-.cancel {
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-}
-.cancel:hover { background: var(--bg-subtle); color: var(--text); }
+.set { height: 28px; margin-left: auto; padding: 0 12px; }
 
 .progress {
   position: relative;

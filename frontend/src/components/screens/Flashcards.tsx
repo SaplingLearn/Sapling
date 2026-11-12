@@ -1,74 +1,99 @@
 "use client";
 /**
- * Flashcards: spaced review with ratings and a 3D flip, on its own route.
+ * Flashcards: say or pick what to study, then review it with ratings and a
+ * 3D flip.
  *
- * This was `/study?mode=cards` — a pane inside the pre-redesign Study screen's
- * tab strip. The Study hub (Sapling Study v3) sends students straight here
- * instead, so the pane owns the page: it loads the courses itself and scopes
- * them to the active term exactly as its old host did.
+ * The page has three states.
  *
- * Deep link from the hub: /flashcards?course=<id>&concepts=A|B[&start=1].
- * `start=1` is the hub's "Flashcards" / "Make Flashcards": the student asked
- * to study, so a deck with no cards for those concepts generates them on
- * arrival instead of waiting on the Generate button. The page itself enters
- * with the Study tools' `study-mode-enter` fade.
+ *   HOME (the default): an olive hero that asks what the student wants to
+ *   study (describe a set, and it is sorted into one), and the course's sets
+ *   as a grid of decks to play, tick together or open.
+ *
+ *   BUILD: the course's concept map (the Study hub's roadmap columns) and a
+ *   tray with the options a review starts with. A step entered on purpose:
+ *   from "Sort it", a deck, "Merge into one" or "Build one by hand". Saving
+ *   returns to the home; so does "All sets", letting an unsaved selection go.
+ *
+ *   REVIEW: the flip card for whatever was chosen (components/flashcards/
+ *   review). Its way back goes to where it was started from: the home, or the
+ *   builder with the selection as it was.
+ *
+ * The first two live in components/flashcards/home; their rules are pure
+ * functions in home/flashcardsModel.ts and home/decksModel.ts.
+ *
+ * Deep links:
+ *   /flashcards?course=<id>                       the home, on that course
+ *   /flashcards?course=<id>&concepts=A|B&start=1  straight into the review of
+ *     those concepts (the Study hub's "Flashcards" / "Make Flashcards"). A
+ *     concept with no cards gets them generated on arrival. `start` leaves the
+ *     URL once acted on, so a reload or a Back never starts a second time.
+ *   /flashcards?course=<id>&concepts=A|B          the builder, on those concepts
+ *
+ * The page loads the courses itself and scopes them to the active term. It
+ * enters with the Study tools' `tool-enter` fade.
  */
 import React from "react";
-import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 
-// Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext server
-// bundle. See ChatPanel.tsx for the rationale.
-const MarkdownChat = dynamic(
-  () => import("../chat/MarkdownChat").then((m) => m.MarkdownChat),
-  { ssr: false, loading: () => null },
-);
-import { TopBar } from "../TopBar";
+import { BackLink } from "../BackLink";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
-import { FilterPills } from "@/components/ui";
+import { CoursePicker } from "../study/CoursePicker";
+import fc from "./Flashcards.module.css";
 import { FlashcardsSkeleton } from "../Skeleton";
-import { useLatestRequest } from "@/lib/useLatestRequest";
-import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
-import { humanizeError } from "@/lib/errorMessage";
-import {
-  getCourses,
-  getDocuments,
-  getFlashcards,
-  generateFlashcards,
-  rateFlashcard,
-  deleteFlashcard,
-  type EnrolledCourse,
-} from "@/lib/api";
+import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
-import { START_PARAM, consumeStartParam, startStillRequested } from "@/lib/toolHrefs";
+import { namesInSets } from "../flashcards/home/decksModel";
+import { FlashcardsHome, FlashcardsHomeSkeleton } from "../flashcards/home/FlashcardsHome";
+import {
+  deckTitle,
+  draftReducer,
+  emptyDraft,
+  homeModel,
+  orderNames,
+  shuffled,
+  type Card,
+  type Draft,
+} from "../flashcards/home/flashcardsModel";
+import { SetBuilder } from "../flashcards/home/SetBuilder";
+import {
+  useCards,
+  useCourseConcepts,
+  useCourseExams,
+  useFlashcardSets,
+} from "../flashcards/home/useFlashcardsData";
+import { useStart, type StartPlan, type StartProgress } from "../flashcards/home/useStart";
+import { Review } from "../flashcards/review/Review";
+import { BUILD_PARAM, useBuildSession } from "../flashcards/home/buildSession";
+import { REVIEW_PARAM, useReviewSession } from "../flashcards/review/reviewSession";
+import rv from "../flashcards/review/review.module.css";
+import { START_PARAM, consumeStartParam, startStillRequested, studyHref } from "@/lib/toolHrefs";
 
-type RawCard = {
-  id: string;
-  topic?: string;
-  front: string;
-  back: string;
-};
-const ratingOptions: { n: number; label: string; color: string; emoji: string; hint: string }[] = [
-  { n: 1, label: "forgot", color: "var(--err)", emoji: "🙈", hint: "1" },
-  { n: 2, label: "hard", color: "var(--warn)", emoji: "🤔", hint: "2" },
-  { n: 3, label: "easy", color: "var(--accent)", emoji: "✨", hint: "3" },
-];
-export function Flashcards() {
+export function Flashcards({
+  now,
+  random = Math.random,
+}: {
+  /** Test seam: a fixed "now" for due dates and exam countdowns. */
+  now?: Date;
+  /** Test seam: the shuffle's random source. */
+  random?: () => number;
+}) {
   const isMobile = useIsMobile();
   const { userId, userReady } = useUser();
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  /** The course list has answered: an empty one now means "no courses". */
+  const [coursesReady, setCoursesReady] = React.useState(false);
   const [activeSemester, , semesterHydrated] = useActiveSemester();
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
     getCourses(userId)
       .then(r => setCourses(r.courses || []))
-      .catch(err => console.error("flashcards courses load failed", err));
+      .catch(err => console.error("flashcards courses load failed", err))
+      .finally(() => setCoursesReady(true));
   }, [userReady, userId]);
 
   // Same term scoping the old Study host applied before handing the pane its
@@ -79,79 +104,342 @@ export function Flashcards() {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
-      <TopBar
-        title="Flashcards"
-        subtitle="Spaced review with ratings and a 3D flip"
-        actions={
-          <>
-            <Link href="/study" className="btn btn--sm btn--ghost" aria-label="Back to the Study hub">
-              <Icon name="chevron-left" size={12} /> Study
-            </Link>
-            <AIDisclaimerChip />
-          </>
-        }
+    // `tool-enter`: the Study tools' arrival fade (globals.css).
+    <div className={`tool-enter ${fc.page}`}>
+      <FlashcardsPage
+        courses={scopedCourses}
+        coursesReady={coursesReady && semesterHydrated}
+        isMobile={isMobile}
+        semester={activeSemester}
+        semesterReady={semesterHydrated}
+        now={now}
+        random={random}
       />
-      <div className="tool-enter" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <FlashcardsMode
-          courses={scopedCourses}
-          isMobile={isMobile}
-          semester={activeSemester}
-          semesterReady={semesterHydrated}
-        />
-      </div>
     </div>
   );
 }
 
-// ── the review pane ──────────────────────────────────────────────────────────
+// ── the page: which course, which state ─────────────────────────────────────
 
-function FlashcardsMode({
-  courses,
-  isMobile,
-  semester,
-  semesterReady,
-}: {
+interface PageProps {
   courses: EnrolledCourse[];
+  /** The (term-scoped) course list is final. */
+  coursesReady: boolean;
   isMobile: boolean;
   // "" = All semesters (unscoped); fetches gate on
   // semesterReady so a stored term never double-fetches (#141).
   semester: string;
   semesterReady: boolean;
-}) {
-  const toast = useToast();
-  const { userId } = useUser();
-  const [cards, setCards] = React.useState<RawCard[]>([]);
+  now?: Date;
+  random: () => number;
+}
+
+/** What the URL asked for on arrival. */
+function useArrival() {
   const searchParams = useSearchParams();
-  // Deep link from the Study hub: /flashcards?course=…&concepts=A|B
-  const [courseId, setCourseId] = React.useState<string>(searchParams.get("course") || "all");
-  const [concepts, setConcepts] = React.useState<string[]>(
-    (searchParams.get("concepts") || "").split("|").map(x => x.trim()).filter(Boolean),
+  const [arrival] = React.useState(() => ({
+    courseId: searchParams.get("course") || "",
+    concepts: (searchParams.get("concepts") || "").split("|").map(x => x.trim()).filter(Boolean),
+    // Arrived with `start=1`, and the live URL still says so (see toolHrefs).
+    start: searchParams.get(START_PARAM) === "1" && startStillRequested(),
+    // A reload inside a review (reviewSession.ts).
+    review: searchParams.get(REVIEW_PARAM) === "1",
+    // A reload inside the set builder (buildSession.ts).
+    build: searchParams.get(BUILD_PARAM) === "1",
+  }));
+  return arrival;
+}
+
+/**
+ * The course the page is on: the one picked (or named in the URL), else the
+ * first. There is no "all courses" here, because the concept map is one
+ * course's. Until the list is in, the URL's id stands, so its reads can start.
+ */
+function useCourse(courses: EnrolledCourse[], coursesReady: boolean, initialId: string) {
+  const [picked, setPicked] = React.useState(initialId);
+  const fallback = coursesReady ? courses[0] : undefined;
+  const course = courses.find(c => c.course_id === picked) ?? fallback;
+  const pending = coursesReady ? "" : picked;
+  return { course, courseId: course ? course.course_id : pending, pick: setPicked };
+}
+
+function FlashcardsPage({ courses, coursesReady, isMobile, semester, semesterReady, now, random }: PageProps) {
+  const { userId } = useUser();
+  const arrival = useArrival();
+  const { course, courseId, pick } = useCourse(courses, coursesReady, arrival.courseId);
+  const courseName = course?.course_name;
+  const today = React.useMemo(() => now ?? new Date(), [now]);
+
+  const cards = useCards(userId, semester, semesterReady, now);
+  const map = useCourseConcepts(userId, courseId, semester, semesterReady, today);
+  const exams = useCourseExams(userId, courseId);
+  const sets = useFlashcardSets(userId, courseId);
+  const [draft, dispatch] = React.useReducer(draftReducer, arrival.concepts, emptyDraft);
+  const inSets = React.useMemo(() => namesInSets(sets.sets), [sets.sets]);
+  const model = React.useMemo(
+    () => homeModel({ cards: cards.cards, courseId, courseName, concepts: map.concepts, custom: draft.custom, known: inSets, now: cards.now }),
+    [cards.cards, cards.now, courseId, courseName, map.concepts, draft.custom, inSets],
   );
-  const [topicFilter, setTopicFilter] = React.useState<string>("all");
-  const [idx, setIdx] = React.useState(0);
-  const [flipped, setFlipped] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
-  /** The first card load has answered: an empty `filtered` means "none yet". */
-  const [loaded, setLoaded] = React.useState(false);
-  /** Arrived with `start=1`, not yet acted on (see the file header). */
-  const startRequested = React.useRef(searchParams.get(START_PARAM) === "1" && startStillRequested());
-  const [generating, setGenerating] = React.useState(false);
-  const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
+  const conceptNames = React.useMemo(() => map.concepts.map(c => c.name), [map.concepts]);
+
+  /** BUILD is open (over the home); `note` is what a sort said on the way in.
+   *  A link that names concepts without `start` opens it on them. */
+  const [build, setBuild] = React.useState<{ note: string } | null>(
+    () => (arrival.concepts.length > 0 && !arrival.start ? { note: "" } : null),
+  );
+  const [review, setReview] = React.useState<{ deck: Card[]; title: string; from: "home" | "build" | "link" } | null>(null);
+  /** Arrived with `start=1`: nothing is shown as the home until it resolves. */
+  const [arriving, setArriving] = React.useState(arrival.start);
+  /** The deck on the home a review is being started from. */
+  const [playing, setPlaying] = React.useState<string | null>(null);
+  /** A rating was saved in the review: the home's due counts are stale. */
+  const reviewed = React.useRef(false);
+  const markReviewed = React.useCallback(() => { reviewed.current = true; }, []);
+  /** Where the run in flight was asked from: the URL's `start=1`, the builder's
+   *  Start, or a deck on the home. */
+  const origin = React.useRef<"home" | "build" | "link">("home");
+  const onDeck = React.useCallback(
+    (deck: Card[], title: string) => setReview({ deck, title, from: origin.current }),
+    [],
+  );
+  const { start, cancel, clearNotice, progress, running, notice } = useStart({
+    userId, courseId, courseName, semester, cards, conceptNames, random, onDeck,
+  });
+
+  // A different course is a different map: the selection, a run in flight, an
+  // open builder and an open review all belong to the one that was left.
+  const lastCourse = React.useRef(courseId);
+  React.useEffect(() => {
+    const left = lastCourse.current;
+    lastCourse.current = courseId;
+    if (!left || left === courseId) return;
+    cancel();
+    dispatch({ type: "reset" });
+    setBuild(null);
+    setReview(null);
+    setArriving(false);
+  }, [courseId, cancel]);
+
+  // "Why nothing started" is about the selection it was said of.
+  React.useEffect(() => { clearNotice(); }, [draft, clearNotice]);
+
+  const startSelection = (from: "build" | "link" = "build") => {
+    origin.current = from;
+    return start({
+      names: orderNames(draft.selected, model.columns),
+      onlyDue: model.index.showDue && draft.onlyDue,
+      shuffle: draft.shuffle,
+      perConcept: draft.perConcept,
+      title: deckTitle(draft),
+    });
+  };
+
+  // `start=1`: once the first card load has answered (and the course list,
+  // which scopes generation to the course's documents, is in), go straight to
+  // the review of what the hub asked for. Once only: the marker leaves the URL
+  // either way. `startSelection` is rebuilt every render, so the effect
+  // reaches the current one by ref.
+  const startRef = React.useRef(startSelection);
+  React.useEffect(() => { startRef.current = startSelection; });
+  const startRequested = React.useRef(arrival.start);
+  const cardsAnswered = cards.loaded && !cards.loading;
+  const courseKnown = !arrival.courseId || coursesReady;
+  React.useEffect(() => {
+    if (!startRequested.current || !cardsAnswered || !courseKnown) return;
+    startRequested.current = false;
+    consumeStartParam();
+    // Nothing named, the deck could not be read, or the link's course is not
+    // one of the student's (the page fell back to another, whose concepts
+    // these are not): the home opens instead, and nothing is generated.
+    const elsewhere = !!arrival.courseId && arrival.courseId !== courseId;
+    if (!arrival.concepts.length || cards.failed || elsewhere) { setArriving(false); return; }
+    // The arrival is over when its run is: in the review, or on the home with
+    // the reason nothing started.
+    void startRef.current("link").finally(() => setArriving(false));
+  }, [cardsAnswered, courseKnown, arrival.concepts.length, arrival.courseId, courseId, cards.failed]);
+
+  /** A deck (or a mix of decks) played from the home. */
+  const playFromHome = (plan: StartPlan, deckId: string | null) => {
+    origin.current = "home";
+    setPlaying(deckId);
+    void start(plan).finally(() => setPlaying(null));
+  };
+
+  const playDue = () => {
+    const deck = shuffled(model.dueCards, random);
+    if (deck.length) setReview({ deck, title: "Due today", from: "home" });
+  };
+
+  const openBuild = (note = "") => {
+    clearNotice();
+    setBuild({ note });
+  };
+  /** Back to the home. A selection that was not saved is let go. */
+  const closeBuild = () => {
+    cancel();
+    dispatch({ type: "reset" });
+    setBuild(null);
+  };
+
+  // A review started in the builder returns to it (the selection is still
+  // there); any other returns to the home.
+  const leaveReview = () => {
+    setReview(null);
+    if (!reviewed.current) return;
+    reviewed.current = false;
+    void cards.reload();
+  };
+
+  // A review survives a reload: it is kept while open and read back here.
+  const session = useReviewSession({
+    userId, courseId, requested: arrival.review && !arrival.start, ready: cardsAnswered && courseKnown, cards: cards.cards, review,
+    // Started in the builder, and the builder is coming back too: Back
+    // returns to it, as before the reload.
+    onRestore: (deck, title) => setReview({ deck, title, from: arrival.build ? "build" : "home" }),
+    onLeave: leaveReview,
+  });
+  useBuildSession({
+    userId, courseId, requested: arrival.build && !arrival.start, build, draft, dispatch,
+    onRestore: note => setBuild({ note }),
+    onLeave: closeBuild,
+  });
+
+  const removeFromDeck = (cardId: string) => {
+    setReview(prev => (prev ? { ...prev, deck: prev.deck.filter(c => c.id !== cardId) } : prev));
+    void cards.reload();
+  };
+
+  const homeReady = coursesReady && cards.loaded && map.ready && sets.settled;
+  const courseLabel = course ? course.course_code || course.course_name : "";
+  const view = pageView({ review: !!review, arriving: arriving || session.pending, failed: cards.failed, ready: homeReady, build: !!build });
+
+  return (
+    <>
+      <PageHeader
+        isMobile={isMobile}
+        courses={courses}
+        courseId={courseId}
+        onCourse={pick}
+        place={headerPlace(view, review, draft)}
+        onBack={review ? leaveReview : closeBuild}
+        importTopic={draft.selected.length === 1 ? draft.selected[0] : ""}
+        onImported={() => { void cards.reload(); }}
+      />
+      {view === "review" && review && (
+        <Review
+          deck={review.deck}
+          accent={course?.color || "var(--brand-forest)"}
+          fromHome={review.from === "home"}
+          onRated={markReviewed}
+          onDeleted={removeFromDeck}
+          onAllSets={leaveReview}
+          initial={session.initial}
+          onProgress={session.onProgress}
+        />
+      )}
+      {view === "arriving" && <Arriving progress={progress} />}
+      {view === "failed" && <LoadFailed onRetry={() => { void cards.reload(); }} />}
+      {view === "loading" && <FlashcardsHomeSkeleton />}
+      {view === "build" && build && (
+        <SetBuilder
+          // A course's builder is its own.
+          key={courseId}
+          courseId={courseId}
+          hasConcepts={map.concepts.length > 0}
+          model={model}
+          exams={exams}
+          sets={sets}
+          draft={draft}
+          dispatch={dispatch}
+          progress={progress}
+          running={running}
+          notice={notice}
+          note={build.note}
+          onStart={() => { void startSelection(); }}
+          onSaved={closeBuild}
+        />
+      )}
+      {view === "home" && (
+        <FlashcardsHome
+          // A course's home is its own: what was typed or ticked on one is not
+          // carried to the next, and a sort in flight for it is dropped.
+          key={courseId}
+          courseLabel={courseLabel}
+          courseId={courseId}
+          concepts={map.concepts}
+          outline={map.outline}
+          model={model}
+          exams={exams}
+          today={today}
+          sets={sets}
+          dispatch={dispatch}
+          progress={progress}
+          running={running}
+          notice={notice}
+          playing={playing}
+          onPlay={playFromHome}
+          onPlayDue={playDue}
+          onBuild={openBuild}
+        />
+      )}
+    </>
+  );
+}
+
+type View = "review" | "arriving" | "failed" | "loading" | "build" | "home";
+
+/** Which of the page's states is showing. */
+function pageView(is: { review: boolean; arriving: boolean; failed: boolean; ready: boolean; build: boolean }): View {
+  if (is.review) return "review";
+  if (is.arriving) return "arriving";
+  if (is.failed) return "failed";
+  if (!is.ready) return "loading";
+  return is.build ? "build" : "home";
+}
+
+/** What the header shows where the course field is on the home, and the way
+ *  back that replaces Import. null: the home (course field, Import). */
+interface Place {
+  /** What is being reviewed or built. */
+  label: string;
+  back: string;
+  backLabel?: string;
+}
+
+function headerPlace(view: View, review: { title: string; from: string } | null, draft: Draft): Place | null {
+  if (view === "review" && review) {
+    return review.from === "build"
+      ? { label: review.title, back: "Back", backLabel: "Back to your selection" }
+      : { label: review.title, back: "All sets" };
+  }
+  if (view === "build") return { label: draft.setId ? draft.givenName || "Edit set" : "New set", back: "All sets" };
+  return null;
+}
+
+// ── the header ───────────────────────────────────────────────────────────────
+
+/**
+ * The hub's header: the title in its line box, the course field beside it,
+ * the page's actions on the right. In a review or in the builder the course
+ * field gives way to what is being reviewed or built, and Import to the way
+ * back.
+ */
+function PageHeader({
+  isMobile, courses, courseId, onCourse, place, onBack, importTopic, onImported,
+}: {
+  isMobile: boolean;
+  courses: EnrolledCourse[];
+  courseId: string;
+  onCourse: (id: string) => void;
+  /** null on the home. */
+  place: Place | null;
+  onBack: () => void;
+  importTopic: string;
+  onImported: () => void;
+}) {
+  const { userId } = useUser();
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
-  // Review-session state (#769). `rating` is the in-flight guard: one rating
-  // per card, however many times the button/key fires while it's saving
-  // (the ref closes the same-tick gap before the state re-renders). `done`
-  // is the explicit end-of-deck state — rating the last card used to wrap
-  // silently back to card 1.
-  const [rating, setRating] = React.useState(false);
-  const ratingRef = React.useRef(false);
-  const [done, setDone] = React.useState(false);
-  // Card id to re-anchor on after a reload that must keep the reviewer's
-  // place (generate): indexes shift when cards are added, ids don't.
-  const anchorRef = React.useRef<string | null>(null);
-  const cardsReq = useLatestRequest();
 
   React.useEffect(() => {
     if (!userId) return;
@@ -160,435 +448,69 @@ function FlashcardsMode({
       .catch(() => setDocs([]));
   }, [userId]);
 
-  const load = React.useCallback(async (keepCardId?: string) => {
-    if (!userId) return;
-    // A term switch or a reload racing an older one: latest wins (#769).
-    const run = cardsReq.begin();
-    setLoading(true);
-    try {
-      const res = await getFlashcards(userId, undefined, semester || undefined);
-      if (!run.isCurrent()) return;
-      setCards(res.flashcards || []);
-      setLoaded(true);
-      if (keepCardId) {
-        anchorRef.current = keepCardId;
-      } else {
-        setIdx(0);
-        setFlipped(false);
-        setDone(false);
-      }
-    } catch (err) {
-      if (!run.isCurrent()) return;
-      console.error("flashcards load failed", err);
-    } finally {
-      if (run.isCurrent()) setLoading(false);
-    }
-  }, [userId, semester, cardsReq]);
-
-  React.useEffect(() => {
-    if (semesterReady) load();
-  }, [load, semesterReady]);
-
-  const topics = React.useMemo(() => {
-    const set = new Set<string>();
-    for (const c of cards) { if (c.topic) set.add(c.topic); }
-    return Array.from(set).sort();
-  }, [cards]);
-
-  const filtered = React.useMemo(() => {
-    let out = cards;
-    if (concepts.length) {
-      // Concepts picked on the hub: a card belongs when its topic names one.
-      const wanted = concepts.map(c => c.toLowerCase());
-      return out.filter(c => wanted.some(w => (c.topic || "").toLowerCase().includes(w)));
-    }
-    if (courseId !== "all") {
-      const course = courses.find(c => c.course_id === courseId);
-      const courseName = course?.course_name;
-      if (courseName) out = out.filter(c => (c.topic || "").toLowerCase().includes(courseName.toLowerCase()));
-    }
-    if (topicFilter !== "all") out = out.filter(c => c.topic === topicFilter);
-    return out;
-  }, [cards, courseId, topicFilter, courses, concepts]);
-
-  React.useEffect(() => {
-    if (idx >= filtered.length) setIdx(0);
-    setFlipped(false);
-  }, [filtered.length, idx]);
-
-  // Re-anchor after a keep-position reload (generate): declared after the
-  // overflow reset above so its setIdx wins within the same commit.
-  React.useEffect(() => {
-    const id = anchorRef.current;
-    if (!id) return;
-    anchorRef.current = null;
-    const at = filtered.findIndex(c => c.id === id);
-    if (at >= 0) setIdx(at);
-  }, [filtered]);
-
-  // A different deck (course/topic filter) is a fresh review, not a finished one.
-  React.useEffect(() => { setDone(false); }, [courseId, topicFilter, concepts]);
-
-  const card = filtered[idx];
-
-  const rate = React.useCallback(async (r: number) => {
-    if (!card || ratingRef.current) return;
-    ratingRef.current = true;
-    setRating(true);
-    try {
-      await rateFlashcard(userId, card.id, r);
-    } catch (err) {
-      // On failure the card does NOT advance (#769): it stays up and
-      // flipped, so pressing the rating again retries it. Advancing would
-      // silently drop the review from the student's schedule.
-      console.error("rate failed", err);
-      toast.error(humanizeError(err, "Couldn't save that rating. Try again."));
-      return;
-    } finally {
-      ratingRef.current = false;
-      setRating(false);
-    }
-    setFlipped(false);
-    if (idx >= filtered.length - 1) setDone(true);
-    else setIdx(idx + 1);
-  }, [card, userId, idx, filtered.length, toast]);
-
-  const restart = () => {
-    setDone(false);
-    setIdx(0);
-    setFlipped(false);
-  };
-
-  const remove = React.useCallback(async () => {
-    if (!card) return;
-    try {
-      await deleteFlashcard(userId, card.id);
-      toast.success("Card deleted");
-      await load();
-    } catch (err) {
-      console.error("flashcard delete failed", err);
-      toast.error(humanizeError(err, "Couldn't delete that card."));
-    }
-  }, [card, userId, toast, load]);
-
-  // Keyboard: Space flips; 1/2/3 rate when flipped.
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      // A held key auto-repeats: one physical press = one action.
-      if (e.repeat) return;
-      if (e.code === "Space") { e.preventDefault(); setFlipped(f => !f); return; }
-      if (!flipped || !card || done) return;
-      if (e.key === "1") rate(1);
-      else if (e.key === "2") rate(2);
-      else if (e.key === "3") rate(3);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [flipped, rate, card, done]);
-
-  const generate = async () => {
-    if (!userId) return;
-    const course = courses.find(c => c.course_id === courseId);
-    const topic = concepts.length
-      ? concepts.join(", ")
-      : course ? course.course_name : (topicFilter !== "all" ? topicFilter : "");
-    if (!topic) {
-      toast.warn("Pick a course or topic before generating.");
-      return;
-    }
-    setGenerating(true);
-    setDocsUsed(null);
-    try {
-      // Term-scoped generation context: the selected term's course documents,
-      // resolved by the selected course's id (#829) — the name is only the
-      // prompt's label. A free-text topic sends no id.
-      const r = await generateFlashcards(userId, topic, 5, semester || undefined, course?.course_id);
-      setDocsUsed(r.context_used?.documents_found ?? 0);
-      // Keep the reviewer's place (#769): mid-deck, stay on the current card;
-      // past the end, continue at the first new card. Only an empty deck
-      // starts over at card 1.
-      const keepId: string | undefined = done ? r.flashcards[0]?.id : card?.id;
-      if (done && keepId) setDone(false);
-      await load(keepId);
-      toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
-    } catch (err) {
-      console.error("flashcard generate failed", err);
-      toast.error(humanizeError(err, "Couldn't generate cards right now."));
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  // `start=1`: once the first load has answered (and the course list, which
-  // scopes generation to the course's documents, is in), an empty deck for
-  // what the hub asked for generates; a deck with cards is already the
-  // review. Once only: the marker leaves the URL either way. `generate` is
-  // rebuilt every render, so the effect reaches the current one by ref.
-  const generateRef = React.useRef(generate);
-  React.useEffect(() => { generateRef.current = generate; });
-  React.useEffect(() => {
-    if (!startRequested.current || !loaded || loading) return;
-    if (courseId !== "all" && courses.length === 0) return;
-    startRequested.current = false;
-    consumeStartParam();
-    if (filtered.length === 0) void generateRef.current();
-  }, [loaded, loading, courseId, courses.length, filtered.length]);
-
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
-          <FilterPills
-            options={[
-              { value: "all", label: "All topics" },
-              ...topics.map((t) => ({ value: t, label: t })),
-            ]}
-            value={topicFilter}
-            onChange={v => { setTopicFilter(v); setConcepts([]); }}
-            gap={8}
-          />
-          {concepts.length > 0 && (
-            <button
-              className="chip chip--accent"
-              onClick={() => setConcepts([])}
-              title="Show every card again"
-            >
-              {concepts.join(", ")} <Icon name="x" size={10} />
+    <>
+      <header className={fc.head}>
+        <h1 className="h-serif" style={{ margin: 0, fontSize: isMobile ? 34 : 42, letterSpacing: "-0.02em", lineHeight: 1.15, color: "var(--text)" }}>Flashcards</h1>
+        {place && <span className={fc.deckName} data-testid="flashcards-deck-name">{place.label}</span>}
+        {!place && courses.length > 0 && (
+          <CoursePicker courses={courses} value={courseId} onChange={onCourse} fullWidth={isMobile} />
+        )}
+        <div className={fc.actions}>
+          <AIDisclaimerChip />
+          {!place && (
+            <button type="button" className={`btn btn--sm ${fc.action}`} onClick={() => setImportOpen(true)} disabled={!userId}>
+              <Icon name="upload" size={13} /> Import
             </button>
           )}
-          <div style={{ flex: 1 }} />
-          {docsUsed !== null && (
-            <span className="chip chip--accent" title="Library documents used as context for generation">
-              Generated using {docsUsed} library doc{docsUsed === 1 ? "" : "s"}
-            </span>
-          )}
-          <button
-            className="btn btn--sm"
-            onClick={() => setImportOpen(true)}
-            disabled={!userId}
-          >
-            <Icon name="upload" size={12} /> Import
-          </button>
-          <button
-            className="btn btn--sm btn--primary"
-            onClick={generate}
-            disabled={generating || !userId}
-          >
-            <Icon name="sparkle" size={12} /> {generating ? "Generating…" : "Generate cards"}
-          </button>
+          {/* One way back, last in the row as on every tool page. It goes up
+              one level: a review or the builder to the home, the home to the
+              hub (on the course this page is showing). */}
+          {place
+            ? <BackLink label={place.back} ariaLabel={place.backLabel} onClick={onBack} />
+            : <BackLink href={studyHref(courseId || null)} label="Study" />}
         </div>
-
-        <div style={{ flex: 1, padding: "40px 32px", display: "flex", flexDirection: "column", alignItems: "center", gap: 22, overflowY: "auto" }}>
-          {loading && <FlashcardsSkeleton />}
-          {filtered.length === 0 && !loading && (
-            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
-              <div className="h-serif" style={{ fontSize: 20 }}>
-                {generating
-                  ? `Making cards${concepts.length ? ` for ${concepts.join(", ")}` : ""}…`
-                  : concepts.length ? `No cards for ${concepts.join(", ")} yet` : "No cards here yet"}
-              </div>
-              <div style={{ fontSize: 13, marginTop: 6 }}>
-                {/* Arriving from a concept's "Make Flashcards", the generate
-                    button already targets that concept — say so, instead of
-                    the course-level copy that reads as though the concept was
-                    dropped on the way in. */}
-                {generating
-                  ? "From your course material. Review starts as soon as they're ready."
-                  : concepts.length
-                  ? `Generate cards to start reviewing ${concepts.length === 1 ? "it" : "them"}.`
-                  : courseId === "all"
-                    ? "Pick a course and generate cards from your library material."
-                    : "Generate cards for this course to start reviewing."}
-              </div>
-            </div>
-          )}
-
-          {done && filtered.length > 0 && !loading && (
-            <div style={{ textAlign: "center", padding: "40px 0" }}>
-              <div className="h-serif" style={{ fontSize: 20 }}>Deck complete</div>
-              <div style={{ fontSize: 13, marginTop: 6, color: "var(--text-muted)" }}>
-                You reviewed all {filtered.length} card{filtered.length === 1 ? "" : "s"}.
-              </div>
-              <button className="btn btn--sm btn--primary" style={{ marginTop: 16 }} onClick={restart}>
-                Review again
-              </button>
-            </div>
-          )}
-
-          {filtered.length > 0 && card && !done && (
-            <>
-              <div style={{ width: "100%", maxWidth: 620 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
-                  <span>Card {idx + 1} of {filtered.length}</span>
-                  <span className="mono">{card.topic || ""}</span>
-                </div>
-                <div style={{ height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
-                  <div style={{
-                    width: "100%", height: "100%",
-                    background: "var(--accent)",
-                    transformOrigin: "left",
-                    transform: `scaleX(${(idx + 1) / filtered.length})`,
-                    transition: "transform var(--dur) var(--ease)",
-                  }} />
-                </div>
-              </div>
-
-              <FlipCard flipped={flipped} onFlip={() => setFlipped(f => !f)} front={card.front} back={card.back} />
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
-                {ratingOptions.map(r => (
-                  <button
-                    key={r.n}
-                    onClick={() => rate(r.n)}
-                    disabled={!flipped || rating}
-                    title={`${r.label} (press ${r.hint})`}
-                    style={{
-                      padding: "10px 20px", borderRadius: "var(--r-sm)",
-                      border: `1.5px solid ${r.color}`,
-                      background: "transparent", color: r.color,
-                      fontWeight: 600, fontSize: 13, textTransform: "capitalize",
-                      display: "flex", alignItems: "center", gap: 8,
-                      opacity: flipped ? 1 : 0.4, cursor: flipped ? "pointer" : "not-allowed",
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}>{r.emoji}</span>
-                    {r.label}
-                    <span className="mono" style={{
-                      fontSize: 10, padding: "1px 5px", borderRadius: "var(--r-xs)",
-                      background: `${r.color}22`,
-                    }}>{r.hint}</span>
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={remove}
-                className="btn btn--sm btn--ghost"
-                style={{ color: "var(--err)", fontSize: 11 }}
-                title="Delete this card"
-              >
-                <Icon name="x" size={11} /> Delete card
-              </button>
-
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Space to flip · 1 / 2 / 3 to rate
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-      {!isMobile && (
-        <aside style={{
-          width: 220, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
-          padding: 16, overflowY: "auto", flexShrink: 0,
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Course</div>
-          <CourseFilterRow
-            label="All courses"
-            active={courseId === "all"}
-            onClick={() => { setCourseId("all"); setTopicFilter("all"); setConcepts([]); }}
-          />
-          {courses.map(c => (
-            <CourseFilterRow
-              key={c.course_id}
-              label={c.course_code || c.course_name}
-              subLabel={c.course_code ? c.course_name : undefined}
-              color={c.color || undefined}
-              active={courseId === c.course_id}
-              onClick={() => { setCourseId(c.course_id); setTopicFilter("all"); setConcepts([]); }}
-            />
-          ))}
-        </aside>
-      )}
+      </header>
       <FlashcardImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
         courses={courses}
-        defaultCourseId={courseId !== "all" ? courseId : courses[0]?.course_id}
-        defaultTopic={topicFilter !== "all" ? topicFilter : ""}
+        defaultCourseId={courseId || courses[0]?.course_id}
+        defaultTopic={importTopic}
         documents={docs}
-        onImported={() => { load(); }}
+        onImported={onImported}
       />
-    </div>
+    </>
   );
 }
 
-function FlipCard({ flipped, onFlip, front, back }: { flipped: boolean; onFlip: () => void; front: string; back: string }) {
+// ── between the URL and the review ───────────────────────────────────────────
+
+/** Arrived with `start=1`: the deck is loading, or its cards are being made. */
+function Arriving({ progress }: { progress: StartProgress | null }) {
+  if (!progress) return <div className={rv.stage}><FlashcardsSkeleton /></div>;
   return (
-    <div
-      onClick={onFlip}
-      style={{
-        width: "100%", maxWidth: 620, minHeight: 320,
-        perspective: 1400, cursor: "pointer",
-      }}
-    >
-      <div
-        style={{
-          position: "relative", width: "100%", minHeight: 320,
-          transformStyle: "preserve-3d",
-          transition: "transform 500ms cubic-bezier(.2,.85,.35,1)",
-          transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
-        }}
-      >
-        <Face label="Question" text={front} />
-        <Face label="Answer" text={back} back />
+    <div className={rv.stage}>
+      <div className={rv.message} role="status">
+        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Making cards for {progress.name}…</div>
+        <div style={{ marginTop: 6 }}>
+          {progress.of > 1 ? `${progress.at} of ${progress.of}. ` : ""}From your course material. Review starts as soon as they&apos;re ready.
+        </div>
       </div>
     </div>
   );
 }
 
-function Face({ label, text, back = false }: { label: string; text: string; back?: boolean }) {
+/** The card list could not be read. Offering the map now would call every
+ *  concept "no cards yet" and generate over a deck that is really there. */
+function LoadFailed({ onRetry }: { onRetry: () => void }) {
   return (
-    <div
-      style={{
-        position: back ? "absolute" : "relative",
-        inset: back ? 0 : undefined,
-        width: "100%", minHeight: 320,
-        background: "var(--bg-panel)", border: "1px solid var(--border)",
-        borderRadius: "var(--r-xl)", padding: 36,
-        boxShadow: "var(--shadow-md)",
-        display: "flex", flexDirection: "column", justifyContent: "center",
-        backfaceVisibility: "hidden",
-        transform: back ? "rotateY(180deg)" : undefined,
-      }}
-    >
-      <div className="label-micro" style={{ marginBottom: 14 }}>{label}</div>
-      <div className="h-serif" style={{ fontSize: back ? 20 : 24, lineHeight: 1.35, fontWeight: 500 }}>
-        <MarkdownChat>{text}</MarkdownChat>
+    <div className={rv.stage}>
+      <div className={rv.message} role="alert">
+        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Couldn&apos;t load your flashcards</div>
+        <div style={{ marginTop: 6 }}>Check your connection and try again.</div>
+        <button type="button" className="btn btn--primary" style={{ marginTop: 16 }} onClick={onRetry}>Try again</button>
       </div>
-      {!back && (
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 18 }}>Click or press Space to reveal</div>
-      )}
     </div>
-  );
-}
-
-function CourseFilterRow({
-  label, subLabel, color, active, onClick,
-}: {
-  label: string; subLabel?: string; color?: string; active: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: "100%", display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 10px", borderRadius: "var(--r-sm)", marginBottom: 4,
-        background: active ? "var(--bg-panel)" : "transparent",
-        border: active ? "1px solid var(--border)" : "1px solid transparent",
-        textAlign: "left",
-      }}
-    >
-      <span style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: color || "var(--text-muted)",
-      }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: active ? 600 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-        {subLabel && <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{subLabel}</div>}
-      </div>
-    </button>
   );
 }

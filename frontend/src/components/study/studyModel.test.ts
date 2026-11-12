@@ -6,6 +6,8 @@ import {
   OTHER_GROUP,
   classifyAssessment,
   readiness,
+  conceptIdsForExam,
+  readinessBand,
   studyQueue,
   quickReviews,
   pace,
@@ -188,6 +190,82 @@ describe("readiness and queue", () => {
     const qr = quickReviews(stale, NOW);
     expect(qr.map(x => x.t.id)).toEqual(["a"]);
     expect(qr[0].ago).toBe(19);
+  });
+});
+
+describe("conceptIdsForExam", () => {
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is empty with no outline, or no exam", () => {
+    expect(conceptIdsForExam([], "e1").size).toBe(0);
+    expect(conceptIdsForExam([{ node_id: "a", assessments: on("e1") }], null).size).toBe(0);
+    expect(conceptIdsForExam([{ node_id: "a", assessments: on("e1") }], undefined).size).toBe(0);
+  });
+
+  it("is empty when the outline links nothing to that exam", () => {
+    const outline = [
+      { node_id: "a", assessments: on("e2") },
+      { node_id: "b", assessments: [] },
+      // A partial payload (no `assessments` at all) is read as "on nothing".
+      { node_id: "c" },
+      { node_id: "d", assessments: null },
+    ];
+    expect(conceptIdsForExam(outline, "e1").size).toBe(0);
+  });
+
+  it("skips topics the graph never matched", () => {
+    const outline = [
+      { node_id: null, assessments: on("e1") },
+      { node_id: "b", assessments: on("e1") },
+    ];
+    expect([...conceptIdsForExam(outline, "e1")]).toEqual(["b"]);
+    expect(conceptIdsForExam([{ node_id: null, assessments: on("e1") }], "e1").size).toBe(0);
+  });
+
+  it("returns the nodes of the topics on that exam, once each", () => {
+    const outline = [
+      { node_id: "a", assessments: on("e1", "e2") },
+      { node_id: "b", assessments: on("e2") },
+      { node_id: "c", assessments: on("e1") },
+      { node_id: "a", assessments: on("e1") }, // two topics on one node
+    ];
+    expect([...conceptIdsForExam(outline, "e1")].sort()).toEqual(["a", "c"]);
+    expect([...conceptIdsForExam(outline, "e2")].sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("readinessBand", () => {
+  const cs = conceptsForCourse(
+    [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
+    [], "c1", NOW,
+  );
+  const exam = { id: "e1", title: "Midterm" };
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is the exam's own concepts, named for the exam, when the outline links some", () => {
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }, { node_id: "c", assessments: on("e1") }], exam, "CS101");
+    expect(band.label).toBe("Ready for Midterm");
+    expect(band.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
+    expect(readiness(band.concepts).pct).toBe(45); // not the course's 60
+  });
+
+  it("is the whole course, named for the course, when the exam has no concepts", () => {
+    for (const outline of [
+      [],
+      [{ node_id: "b", assessments: on("other") }],
+      [{ node_id: null, assessments: on("e1") }],
+      // Linked, but to a node that is not one of this course's concepts.
+      [{ node_id: "elsewhere", assessments: on("e1") }],
+    ]) {
+      const band = readinessBand(cs, outline, exam, "CS101");
+      expect(band.label).toBe("CS101 Readiness");
+      expect(band.concepts).toBe(cs);
+    }
+  });
+
+  it("with no exam selected it is the course's mastery", () => {
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101");
+    expect(band).toEqual({ concepts: cs, label: "CS101 Mastery" });
   });
 });
 

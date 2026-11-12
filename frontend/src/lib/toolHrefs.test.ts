@@ -1,28 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { libraryHref, flashcardsHref, studyGuideHref, STUDY_TOOL_PATHS } from "./toolHrefs";
+import { flashcardsHref, studyGuideHref, studyHref, STUDY_TOOL_PATHS } from "./toolHrefs";
 
-describe("libraryHref", () => {
-  it("narrows by course, type and search", () => {
-    expect(libraryHref("c1", "study_guide")).toBe("/library?course=c1&type=study_guide");
-    expect(libraryHref("c1", undefined, "Recursion")).toBe("/library?course=c1&q=Recursion");
-    expect(libraryHref()).toBe("/library");
-  });
-
-  it("escapes a concept name with spaces", () => {
-    expect(libraryHref("c1", undefined, "Pointers and Memory"))
-      .toBe("/library?course=c1&q=Pointers+and+Memory");
+describe("studyHref", () => {
+  it("opens the hub on a course, or plainly", () => {
+    expect(studyHref("c1")).toBe("/study?course=c1");
+    expect(studyHref()).toBe("/study");
+    expect(studyHref(null)).toBe("/study");
   });
 });
 
 describe("studyGuideHref", () => {
-  it("searches the course's material for ONE concept", () => {
-    // Not type=study_guide: that answers "which uploads are study guides",
-    // which on a course without one is an empty shelf and a dead end.
-    expect(studyGuideHref("c1", "Recursion")).toBe("/library?course=c1&q=Recursion");
+  it("opens the Study Guide page on the course and the selected exam", () => {
+    expect(studyGuideHref("c1", "e2")).toBe("/study/guide?course=c1&exam=e2");
   });
 
-  it("falls back to the course's study-guide shelf with no concept", () => {
-    expect(studyGuideHref("c1")).toBe("/library?course=c1&type=study_guide");
+  it("carries only what it is given", () => {
+    expect(studyGuideHref("c1")).toBe("/study/guide?course=c1");
+    expect(studyGuideHref()).toBe("/study/guide");
+  });
+
+  it("lives under /study, so the shell's auth and hide_study gates cover it", () => {
+    expect(studyGuideHref("c1").startsWith("/study/")).toBe(true);
   });
 });
 

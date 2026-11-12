@@ -6,7 +6,7 @@
  * Guide / Flashcards / Quiz tab strip wrapping two panes — is gone. Its panes
  * are pages of their own now, which is where the hub's tool buttons point:
  *
- *   Study Guide .... /library (the course's study-guide documents)
+ *   Study Guide .... /study/guide
  *   Flashcards ..... /flashcards
  *   Quiz ........... /quiz
  *
@@ -21,11 +21,11 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getCourses, type EnrolledCourse } from "@/lib/api";
 import { StudyHub } from "../study/StudyHub";
-import { libraryHref } from "@/lib/toolHrefs";
+import { studyGuideHref } from "@/lib/toolHrefs";
 
 /** Where a retired `?mode=` lands, carrying the course along when it has one. */
 function retiredModeHref(mode: string, course: string | null): string | null {
-  if (mode === "guide") return libraryHref(course, "study_guide");
+  if (mode === "guide") return studyGuideHref(course);
   if (mode === "cards") {
     const p = new URLSearchParams();
     if (course) p.set("course", course);

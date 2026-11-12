@@ -507,14 +507,16 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
       style={{
         height: isMobile ? "auto" : "100%", minHeight: isMobile ? "100%" : 640,
         display: "grid",
-        gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 360px",
-        columnGap: 56, alignContent: "start",
-        padding: isMobile ? "20px 16px 24px" : "32px 48px 0 56px",
-        boxSizing: "border-box", background: "#FAF8F3",
+        // The hub's own frame (StudyHub.module.css .hub): the Dashboard's page
+        // padding, a 340px rail, a 40px gap.
+        gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 340px",
+        columnGap: 40, alignContent: "start",
+        padding: isMobile ? "8px 20px 16px" : "18px 32px 0",
+        boxSizing: "border-box", background: "var(--bg)",
       }}
     >
-      <div style={{ gridColumn: isMobile ? "1" : "1 / 3", display: "flex", alignItems: "center", gap: 20, paddingBottom: 18 }}>
-        <Skeleton width={110} height={34} radius={10} />
+      <div style={{ gridColumn: isMobile ? "1" : "1 / 3", display: "flex", alignItems: "center", gap: 16, padding: "6px 0 18px" }}>
+        <Skeleton width={120} height={48} radius={10} />
         <Skeleton width={240} height={20} />
         <Skeleton width={120} height={20} style={{ marginLeft: "auto" }} />
       </div>
@@ -542,7 +544,7 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
               ))}
             </div>
           </div>
-          <Skeleton height={180} radius={20} style={{ opacity: 0.75 }} />
+          <Skeleton height={170} radius={16} style={{ opacity: 0.75 }} />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -553,7 +555,7 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
                 <Skeleton width="70%" height={15} />
                 <Skeleton width="100%" height={4} radius={2} />
                 {Array.from({ length: 2 }).map((_, row) => (
-                  <Skeleton key={row} height={62} radius={12} />
+                  <Skeleton key={row} height={50} radius={10} />
                 ))}
               </div>
             ))}
@@ -566,7 +568,7 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
           <Skeleton width={120} height={11} />
           <Skeleton width={150} height={40} />
           <Skeleton height={96} radius={12} />
-          <Skeleton height={56} radius={14} />
+          <Skeleton height={58} radius={10} />
           <Skeleton width={130} height={11} />
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} height={38} radius={10} />

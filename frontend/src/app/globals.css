@@ -583,36 +583,6 @@ body { font-size: 14px; line-height: 1.5; }
   right: 24px;
   z-index: 20;
 }
-.study-tabs {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-subtle);
-  isolation: isolate;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.study-tabs a {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 30px;
-  padding: 6px 12px;
-  border-radius: var(--r-xs);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.study-tabs a[aria-current="page"] {
-  color: var(--accent);
-}
-.study-tabs a:hover { color: var(--accent); }
-
 /* The rail is the one olive-filled surface in the shell. Rather than thread
    light-on-dark colours through every row, it re-declares the semantic tokens
    its children already read (text, border, the --bg-soft active fill, the

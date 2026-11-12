@@ -15,8 +15,13 @@
  *    needed first) is "Foundations", then "Core Methods", "Building On",
  *    "Advanced", and deeper is "Goal". Those are the design's own fallback
  *    labels for a course without categories, never a claim about the course.
- *  - Readiness = mean mastery % of the exam's concepts (assessments carry no
- *    concept list, so an exam covers every concept of its course).
+ *  - Readiness = mean mastery % of a set of concepts. An exam's set comes from
+ *    the same topic checklist: a topic lists the assessments it is on
+ *    (`assessments`, upcoming ones only) and the graph node it describes
+ *    (`node_id`). When the checklist links the selected exam to at least one of
+ *    the course's concepts, the readiness band is "Ready for <exam>" over those.
+ *    Otherwise (no outline, a past exam, nothing linked) it is the whole
+ *    course, and says so: "<course> Readiness".
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
  *    days, averaged over the same concepts, in percentage points.
  */
@@ -59,17 +64,19 @@ export const ST_LABEL: Record<Status, string> = {
 };
 /** Status fill colors (squares, rings, bars). */
 export const TC: Record<Status, string> = {
-  mastered: "#60842C",
-  progress: "#D9A93A",
-  review: "#C4534B",
-  new: "#D6D0C3",
+  // The app's mastery-state tokens (globals.css), the same four the
+  // Dashboard's mastery bar and legend use.
+  mastered: "var(--state-mastery)",
+  progress: "var(--state-progress)",
+  review: "var(--state-struggle)",
+  new: "var(--state-neutral)",
 };
 /** Status text colors. */
 export const SC: Record<Status, string> = {
-  mastered: "#49671D",
-  progress: "#8A6414",
-  review: "#A8443F",
-  new: "#6F6857",
+  mastered: "var(--sap-600)",
+  progress: "var(--warn)",
+  review: "var(--err)",
+  new: "var(--text-muted)",
 };
 export const STATUS_ORDER: Status[] = ["mastered", "progress", "review", "new"];
 const W: Record<Status, number> = { mastered: 1, progress: 0.6, review: 0.3, new: 0 };
@@ -263,14 +270,59 @@ export function fmtWhen(ts: string, today: Date): string {
   return `${MON[t.getMonth()]} ${t.getDate()}`;
 }
 export const countdown = (n: number) => (n === 0 ? "Today" : n === 1 ? "Tomorrow" : `in ${n} days`);
-export const countFg = (n: number) => (n <= 3 ? "#A8443F" : n <= 7 ? "#8A6414" : "#6F6857");
-export const scoreColor = (p: number) => (p >= 80 ? "#49671D" : p >= 60 ? "#8A6414" : "#A8443F");
+export const countFg = (n: number) => (n <= 3 ? "var(--err)" : n <= 7 ? "var(--warn)" : "var(--text-muted)");
+export const scoreColor = (p: number) => (p >= 80 ? "var(--sap-600)" : p >= 60 ? "var(--warn)" : "var(--err)");
 
 export function readiness(topics: Concept[]) {
   if (!topics.length) return { pct: 0, trend: 0 };
   const pct = Math.round(topics.reduce((n, t) => n + t.m, 0) / topics.length);
   const trend = Math.round((topics.reduce((n, t) => n + t.weekDelta, 0) / topics.length) * 100);
   return { pct, trend };
+}
+
+/** The slice of a topic-checklist topic that ties a concept to an exam. */
+export interface ExamTopic {
+  /** The graph node this topic describes, when the names matched. */
+  node_id: string | null;
+  /** The assessments this topic is on. The server attaches upcoming ones only. */
+  assessments?: { id: string }[] | null;
+}
+
+/**
+ * The concepts an exam covers, per the course's topic checklist: the graph
+ * nodes of the topics that list this exam. Empty when the outline says nothing
+ * about it (no outline, a past exam, no topic linked, or none of the linked
+ * topics matched a graph node).
+ */
+export function conceptIdsForExam(outline: ExamTopic[], examId: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!examId) return out;
+  for (const t of outline) {
+    if (t.node_id && (t.assessments || []).some(a => a.id === examId)) out.add(t.node_id);
+  }
+  return out;
+}
+
+/**
+ * What the readiness band speaks for, and the label that says so.
+ *
+ * The selected exam's own concepts when the outline links it to at least one
+ * concept of this course: "Ready for <exam>". Otherwise every concept of the
+ * course under the course's name, because a course-wide average under an
+ * exam's title reads as a claim about that exam.
+ */
+export function readinessBand(
+  topics: Concept[],
+  outline: ExamTopic[],
+  exam: { id: string; title: string } | null,
+  courseLabel: string,
+): { concepts: Concept[]; label: string } {
+  if (!exam) return { concepts: topics, label: `${courseLabel} Mastery` };
+  const ids = conceptIdsForExam(outline, exam.id);
+  const covered = topics.filter(t => ids.has(t.id));
+  return covered.length
+    ? { concepts: covered, label: `Ready for ${exam.title}` }
+    : { concepts: topics, label: `${courseLabel} Readiness` };
 }
 
 /** Up Next: struggling first, then learning, then not started; a not-started

@@ -30,11 +30,14 @@ export interface StudyModalProps {
   top: number;
   /** Gap between the card's direct children. */
   gap: number;
+  /** Focused when the modal opens, if it is mounted by then; otherwise the
+   *  first focusable element is (Dialog's default). */
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
   children: React.ReactNode;
 }
 
-export function StudyModal({ open, onClose, label, width, maxHeight, top, gap, children }: StudyModalProps) {
-  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose });
+export function StudyModal({ open, onClose, label, width, maxHeight, top, gap, initialFocusRef, children }: StudyModalProps) {
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose, initialFocusRef });
 
   if (!mounted || !open) return null;
 

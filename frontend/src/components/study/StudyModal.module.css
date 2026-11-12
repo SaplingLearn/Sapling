@@ -52,14 +52,15 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   box-sizing: border-box;
-  padding: 26px 28px;
-  background: #FDFCF9;
-  border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(25, 37, 11, 0.28);
+  padding: 22px 24px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
   /* Portalled out of the hub, so it re-declares the hub's text defaults. */
-  color: #1A1814;
-  font-family: var(--font-sans), 'SUSE', system-ui, sans-serif;
-  font-size: 15px;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   outline: none;
