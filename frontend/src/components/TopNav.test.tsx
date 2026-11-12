@@ -120,7 +120,6 @@ describe("TopNav — dropdown behavior", () => {
   // is identical regardless of trigger.
 
   it("opens a panel with the group's items on click", async () => {
-    userEvent.setup();
     render(<TopNav />);
     const learn = screen.getByRole("button", { name: /^Learn/ });
 
@@ -154,7 +153,6 @@ describe("TopNav — dropdown behavior", () => {
   });
 
   it("opens different panels for different groups (no leak)", async () => {
-    userEvent.setup();
     render(<TopNav />);
     const community = screen.getByRole("button", { name: /^Community/ });
 
@@ -235,7 +233,6 @@ describe("TopNav — dropdown behavior", () => {
   });
 
   it("renders the right items inside each group", async () => {
-    userEvent.setup();
     render(<TopNav />);
 
     // Tools group has 3 items.

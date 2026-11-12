@@ -6,4 +6,6 @@ venv
 .venv
 tests
 .import_linter_cache
-node_modules
+# .dockerignore patterns are anchored at the context root: a bare
+# `node_modules` would miss scripts/pyright/node_modules (type_ratchet.py).
+**/node_modules

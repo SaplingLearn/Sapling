@@ -70,8 +70,16 @@ def _pyright() -> str:
 
 
 def measure() -> tuple[Counter[str], list[dict]]:
+    # --pythonpath: resolve third-party imports against THIS interpreter's
+    # packages, not whichever `python` is first on PATH. Run without the venv
+    # activated, pyright would otherwise see none of the dependencies; with
+    # reportMissingImports off that is silent, the types go Unknown and the
+    # counts drop, so the ratchet would pass and ask for a --shrink CI cannot meet.
     proc = subprocess.run(
-        [_pyright(), "--outputjson", "-p", str(BACKEND / "pyrightconfig.json")],
+        [
+            _pyright(), "--outputjson", "--pythonpath", sys.executable,
+            "-p", str(BACKEND / "pyrightconfig.json"),
+        ],
         cwd=BACKEND, capture_output=True, text=True,
     )
     try:
@@ -79,6 +87,15 @@ def measure() -> tuple[Counter[str], list[dict]]:
     except json.JSONDecodeError:
         sys.stderr.write(proc.stdout + proc.stderr)
         raise SystemExit("type_ratchet: pyright did not produce a JSON report") from None
+    # 0 = no errors, 1 = errors reported; anything else is pyright failing to
+    # run. And a run that analysed nothing (the `include` paths moved) must not
+    # read as "no type errors".
+    if proc.returncode not in (0, 1) or not report.get("summary", {}).get("filesAnalyzed"):
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(
+            f"type_ratchet: pyright exited {proc.returncode} having analysed "
+            f"{report.get('summary', {}).get('filesAnalyzed', 0)} files"
+        )
     errors = [d for d in report["generalDiagnostics"] if d["severity"] == "error"]
     counts: Counter[str] = Counter()
     for d in errors:

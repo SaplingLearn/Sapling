@@ -112,15 +112,24 @@ export function collect(results, root) {
   return current;
 }
 
-/** Every linted, git-tracked file over the limit, with its line count. */
+/**
+ * Every linted, git-tracked file over the limit, with its line count.
+ *
+ * Only files with more RAW lines than the limit are parsed: the rule counts a
+ * subset of a file's lines (blank lines and comments may be skipped), so a
+ * file that short cannot be over it. That keeps this to a handful of files
+ * instead of a second full-tree lint inside `npm test`.
+ */
 export async function measure(root = FRONTEND, baselined = [], options) {
   const opts = options ?? (await configuredOptions(root));
   const eslint = measuringESLint(root, opts, baselined);
   const files = [];
   for (const rel of trackedFiles(root)) {
-    if (!(await eslint.isPathIgnored(path.join(root, rel)))) files.push(rel);
+    const full = path.join(root, rel);
+    if (fs.readFileSync(full, "utf8").split("\n").length <= opts.max) continue;
+    if (!(await eslint.isPathIgnored(full))) files.push(rel);
   }
-  return collect(await eslint.lintFiles(files), root);
+  return files.length ? collect(await eslint.lintFiles(files), root) : {};
 }
 
 /** Keys and counts for one snippet (tests). */
