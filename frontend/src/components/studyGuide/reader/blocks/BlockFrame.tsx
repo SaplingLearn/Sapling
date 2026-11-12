@@ -50,7 +50,7 @@ export function BlockFrame({
           <span className={`${s.tile} ${s[tone]}`} aria-hidden="true">
             {icon}
           </span>
-          <span className={s.label}>{label}</span>
+          <span className="label-micro">{label}</span>
           {title && <span className={s.title}>{title}</span>}
         </div>
         <div className={s.actions}>

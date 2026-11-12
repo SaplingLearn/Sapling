@@ -20,7 +20,7 @@ export function Sources({ sources }: { sources: Source[] }) {
               <Icon name="file" size={14} />
             </span>
             <span className={s.sourceName}>{source.name}</span>
-            <span className={s.sourceKind}>{source.kind}</span>
+            <span className="label-micro">{source.kind}</span>
           </li>
         ))}
       </ul>

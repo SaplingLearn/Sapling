@@ -93,7 +93,7 @@ export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
               aria-pressed={picked === i}
               onClick={() => setPicked(picked === i ? null : i)}
             >
-              <span className={s.conceptStep}>{node.step}</span>
+              <span className="label-micro">{node.step}</span>
               <span className={s.conceptName}>{node.concept}</span>
               <span className={s.tier} style={{ color: tierText(tier) }}>
                 <span className={s.tierDot} style={{ background: tierFill(tier) }} aria-hidden="true" />

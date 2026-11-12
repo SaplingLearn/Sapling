@@ -37,11 +37,11 @@
 .bannerRow { display: flex; align-items: center; gap: 12px; }
 .bannerLabel { flex: 1; min-width: 0; font-weight: 700; }
 .bannerStep { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--sap-200); white-space: nowrap; }
-.bannerTrack { height: 4px; border-radius: 2px; background: rgba(250, 248, 243, 0.16); overflow: hidden; }
+.bannerTrack { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink-0) 16%, transparent); overflow: hidden; }
 .bannerBar { height: 100%; border-radius: 2px; background: var(--sap-300); transition: width 520ms var(--ease); }
 .spinner {
   flex: none; width: 18px; height: 18px; border-radius: 50%;
-  border: 2.5px solid rgba(250, 248, 243, 0.25); border-top-color: var(--sap-300);
+  border: 2.5px solid color-mix(in srgb, var(--ink-0) 25%, transparent); border-top-color: var(--sap-300);
   animation: guideSpin 0.9s linear infinite;
 }
 @keyframes guideSpin { to { transform: rotate(360deg); } }
@@ -52,7 +52,7 @@
 .titleRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .header .title {
   flex: 1; min-width: 0; margin: 0;
-  font-size: clamp(34px, 4.4vw, 52px); font-weight: 400; line-height: 1.04; color: var(--sap-900);
+  font-size: clamp(34px, 4.4vw, 52px); font-weight: 400; line-height: 1.04; color: var(--text);
 }
 .deck { margin: 0; max-width: 58ch; font-style: italic; font-size: 19px; line-height: 1.5; color: var(--text-dim); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-family: var(--font-sans); }
@@ -79,7 +79,7 @@
 .menu {
   position: absolute; right: 0; top: 52px; z-index: 8; width: 250px; padding: 6px;
   display: flex; flex-direction: column; gap: 2px;
-  border-radius: var(--r-md); background: var(--bg-panel); border: 1px solid var(--border-strong);
+  border-radius: var(--r-md); background: var(--bg-panel); border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
 }
 .menuItem {
@@ -101,7 +101,7 @@
 .takeawayList { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .takeawayList li {
   display: flex; gap: 18px; align-items: baseline; padding: 14px 0;
-  border-bottom: 1px solid var(--border); font-size: 18px; line-height: 1.45;
+  border-bottom: 1px solid var(--border); font-size: var(--fs-xl); line-height: 1.45;
 }
 .takeawayList li:first-child { padding-top: 4px; }
 .takeawayList li:last-child { border-bottom: 0; }
@@ -168,12 +168,12 @@
 .list { margin: 0; padding: 0 0 0 22px; line-height: 1.7; }
 .code {
   margin: 0; padding: 12px 14px; overflow-x: auto;
-  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-inset);
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-subtle);
   font-family: var(--font-mono); font-size: var(--fs-md); line-height: 1.55;
 }
 .citeLine { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; line-height: 1; }
 /* A key term: highlighted in the Learning amber, not bold. */
-.term { font-weight: inherit; padding: 0 3px; border-radius: 3px; background: color-mix(in srgb, var(--state-progress) 30%, transparent); }
+.term { font-weight: inherit; padding: 0 3px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--state-progress) 30%, transparent); }
 .cite {
   display: inline-block; max-width: 24ch; padding: 2px 6px; vertical-align: middle;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -200,7 +200,6 @@
 .sourceList li { display: flex; align-items: center; gap: 10px; min-height: 46px; border-bottom: 1px solid var(--border); }
 .sourceIcon { flex: none; width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center; background: var(--bg-soft); color: var(--text-dim); }
 .sourceName { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
-.sourceKind { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
 
 .feedback {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding-top: 22px;
@@ -216,7 +215,12 @@
 .feedbackButton[aria-pressed="true"] { border-color: var(--brand-forest); background: var(--sap-100); }
 
 @container (max-width: 520px) {
-  .article { font-size: 16px; }
+  .article { font-size: var(--fs-lg); }
+}
+
+/* The Study Guides home's phone padding. */
+@media (max-width: 768px) {
+  .shell { padding: 16px 20px 40px; }
 }
 
 /* ── print (Export PDF) ──────────────────────────────────────────────────── */

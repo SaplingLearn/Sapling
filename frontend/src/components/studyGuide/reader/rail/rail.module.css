@@ -56,7 +56,7 @@
 .outlineLink:hover .outlineTitle { text-decoration: underline; }
 .outlineTitle { font-weight: 700; line-height: 1.25; }
 .outlineStatus { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 700; color: var(--text-muted); }
-.dot { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--ink-200); }
+.dot { flex: none; width: 10px; height: 10px; border-radius: var(--r-xs); background: var(--ink-200); }
 .dotWriting { background: var(--sap-300); }
 
 /* ── ask about this guide ────────────────────────────────────────────────── */

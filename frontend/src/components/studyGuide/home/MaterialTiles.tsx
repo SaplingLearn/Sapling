@@ -53,7 +53,7 @@ export function MaterialTiles({ materials, selected, onToggle, onSuggested, onAl
                 <span className={m.tileCheck} aria-hidden="true">{on && <Icon name="check" size={11} />}</span>
                 <span className={m.tileText}>
                   <span className={m.tileName}>{material.file_name}</span>
-                  <span className={m.tileMeta}>{material.category.replace(/_/g, " ")}</span>
+                  <span className="label-micro">{material.category.replace(/_/g, " ")}</span>
                 </span>
               </button>
             </li>

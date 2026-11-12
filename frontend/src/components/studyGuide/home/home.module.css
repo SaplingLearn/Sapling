@@ -10,6 +10,7 @@
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
   font-size: var(--fs-md);
   color: var(--text);
 }
@@ -83,6 +84,7 @@
   flex: 1; min-width: 0; box-sizing: border-box;
   display: flex; flex-direction: column; gap: 12px; padding: 18px;
   border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
   color: var(--text); text-decoration: none;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur) var(--ease);
 }
@@ -116,7 +118,7 @@
 .chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .course { flex-shrink: 0; max-width: 45%; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.ghost { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel); }
+.ghost { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel); box-shadow: var(--shadow-sm); }
 
 /* ── states ──────────────────────────────────────────────────────────────── */
 

@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 
-import { Toggle } from "@/components/ui";
+import { Chip, Toggle } from "@/components/ui";
 import type { ChartBlock, ChartReadout } from "@/lib/studyGuide/types";
 
 import { useReader } from "../ReaderContext";
@@ -17,7 +17,7 @@ import { SourceLine } from "./SourceLine";
 function Readout({ readout, moved }: { readout: ChartReadout; moved: boolean | null }) {
   return (
     <div className={s.readout}>
-      <span className={s.label}>{readout.label}</span>
+      <span className="label-micro">{readout.label}</span>
       <span className={s.readoutValue}>{moved ? `${readout.before} to ${readout.after}` : readout.before}</span>
       {moved !== null && (
         <span className={moved ? s.readoutMoved : s.readoutNote}>{moved ? readout.change : "Starting point"}</span>
@@ -62,7 +62,7 @@ export function ChartBlockView({ block }: { block: ChartBlock }) {
   const caption = (source || block.illustrative) && (
     <>
       {source && <SourceLine source={source} />}
-      {block.illustrative && <span className={s.illustrative}>Illustrative shape, not plotted from data</span>}
+      {block.illustrative && <Chip variant="info">Illustrative shape, not plotted from data</Chip>}
     </>
   );
 
