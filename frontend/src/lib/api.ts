@@ -712,8 +712,14 @@ export const importGoogleEvents = (userId: string, daysAhead = 60) =>
     `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
   );
 
-export const calendarAuthUrl = (userId: string) =>
-  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}`;
+/** The Google Calendar consent flow: a backend route that redirects to Google,
+ * so open it with a full page load (`window.location`), never the in-app
+ * router. `next` is where the callback lands after a successful connect; the
+ * backend honours only its allowlist (/dashboard, /gradebook, /calendar). */
+export const calendarAuthUrl = (userId: string, next?: string) =>
+  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}${
+    next ? `&next=${encodeURIComponent(next)}` : ''
+  }`;
 
 export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) =>
   fetchJSON<{ exported_count: number; skipped_count: number }>('/api/calendar/export', {
@@ -1168,17 +1174,34 @@ export interface OnboardingProfilePayload {
   first_name: string;
   last_name: string;
   year: string;
-  /** No longer asked for by the redesigned onboarding; the backend defaults both. */
-  majors?: string[];
-  minors?: string[];
+  /** Catalog course ids; empty when the student will add their courses later. */
   course_ids: string[];
-  learning_style?: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
+  /** Under 18: the account starts with a private profile and class sharing off. */
+  under_18: boolean;
+  /** The Terms and Privacy Policy versions agreed to (lib/legal/versions.ts).
+   * Anything but the current ones is a 422 `legal_outdated`. */
+  accepted_terms_version: string;
+  accepted_privacy_version: string;
 }
 
-export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
-  fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
+export interface OnboardingProfileResult {
+  ok: boolean;
+  user_id: string;
+  /** How many of `course_ids` the student was enrolled in. */
+  courses_linked: number;
+}
+
+/** 409 when the account finished onboarding already; 403 `not_approved` (in
+ * `detail.code`); 422 `legal_outdated` / `no_known_courses` (in `detail.code`)
+ * save nothing; a malformed body is a plain validation 422 (`detail: [...]`). */
+export const submitOnboardingProfile = (
+  payload: OnboardingProfilePayload,
+  init?: { signal?: AbortSignal },
+) =>
+  fetchJSON<OnboardingProfileResult>('/api/onboarding/profile', {
     method: 'POST',
     body: JSON.stringify(payload),
+    signal: init?.signal,
   });
 
 // Profile
