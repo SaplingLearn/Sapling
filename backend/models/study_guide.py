@@ -90,9 +90,14 @@ class ProseItem(BaseModel):
 # ── Blocks ────────────────────────────────────────────────────────────────────
 
 
+#: A coordinate the reader can draw: never NaN or an infinity (which JSON
+#: cannot carry either).
+Coordinate = Annotated[float, Field(allow_inf_nan=False)]
+
+
 class ChartPoint(BaseModel):
-    x: float
-    y: float
+    x: Coordinate
+    y: Coordinate
 
 
 class ChartSeries(BaseModel):
@@ -109,8 +114,8 @@ class ChartSeries(BaseModel):
 class ChartMarker(BaseModel):
     """A labelled point with guide lines to both axes (an equilibrium, a peak)."""
 
-    x: float
-    y: float
+    x: Coordinate
+    y: Coordinate
     x_label: str = Field(max_length=16)
     y_label: str = Field(max_length=16)
     state: Literal["before", "after"] = "before"
