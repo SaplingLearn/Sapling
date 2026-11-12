@@ -16,16 +16,28 @@ export function studyHref(courseId?: string | null): string {
 }
 
 /**
- * Where "Study Guide" goes: the Study Guide page (/study/guide), opened on
- * the course, and on the exam when one is selected. Under /study, so it is
- * auth-gated, flag-gated (hide_study) and keeps Study lit in the nav with no
- * list of its own to maintain (unlike /flashcards: see `flashcardsHref`).
+ * The marker for "open the New study guide dialog" on the Study Guides home.
+ * The home drops it from the URL once the dialog is open (`consumeNewParam`),
+ * so a reload or a Back into the page does not open it a second time.
  */
-export function studyGuideHref(courseId?: string | null, examId?: string | null): string {
-  const p = new URLSearchParams();
-  if (courseId) p.set("course", courseId);
-  if (examId) p.set("exam", examId);
-  return p.size ? `/study/guide?${p.toString()}` : "/study/guide";
+export const NEW_PARAM = "new";
+
+/**
+ * Where "Study Guide" goes: the Study Guides home (/study/guide). Given a
+ * course it opens the New study guide dialog on that class, which is how the
+ * Study hub hands its course over. Under /study, so it is auth-gated,
+ * flag-gated (hide_study) and keeps Study lit in the nav with no list of its
+ * own to maintain (unlike /flashcards: see `flashcardsHref`).
+ */
+export function studyGuideHref(courseId?: string | null): string {
+  if (!courseId) return "/study/guide";
+  const p = new URLSearchParams({ [NEW_PARAM]: "1", course: courseId });
+  return `/study/guide?${p.toString()}`;
+}
+
+/** One guide, in the reader. */
+export function studyGuideReaderHref(guideId: string): string {
+  return `/study/guide/${encodeURIComponent(guideId)}`;
 }
 
 /**
@@ -137,6 +149,15 @@ export function consumeStartParam(): void {
   const url = new URL(window.location.href);
   if (!url.searchParams.has(START_PARAM)) return;
   url.searchParams.delete(START_PARAM);
+  editUrlInPlace(url);
+}
+
+/** Drop `NEW_PARAM` from the current URL without a navigation. */
+export function consumeNewParam(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(NEW_PARAM)) return;
+  url.searchParams.delete(NEW_PARAM);
   editUrlInPlace(url);
 }
 

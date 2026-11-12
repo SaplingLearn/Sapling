@@ -2,10 +2,9 @@
 /**
  * Study screen: the hub, and what became of the retired `?mode=` panes.
  *
- * The tabbed Study screen is gone — Study Guide lives in the Library,
- * Flashcards and Quiz have pages of their own. `?mode=guide` / `?mode=cards`
- * survive only as redirects, so a bookmark or an open tab still lands
- * somewhere real.
+ * The tabbed Study screen is gone: Study Guide, Flashcards and Quiz have
+ * pages of their own. `?mode=guide` / `?mode=cards` survive only as
+ * redirects, so a bookmark or an open tab still lands somewhere real.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -28,8 +27,8 @@ vi.mock("@/lib/api", () => ({
   updateAssignment: vi.fn(),
   deleteAssignment: vi.fn(),
   getFlashcards: vi.fn(async () => ({ flashcards: [] })),
-  getCachedStudyGuides: vi.fn(async () => ({ guides: [] })),
 }));
+vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn(async () => ({ attempts: [] })) }));
 vi.mock("@/lib/studyApi", () => ({
   getStudyDaily: vi.fn(async () => ({ goal_minutes: 30, days: [] })),
@@ -45,10 +44,16 @@ beforeEach(() => { search.qs = ""; replace.mockReset(); });
 afterEach(cleanup);
 
 describe("Study — the retired ?mode= panes", () => {
-  it("sends ?mode=guide to the Study Guide page, keeping the course", async () => {
+  it("sends ?mode=guide to the Study Guides home, with a new guide open on the course", async () => {
     search.qs = "mode=guide&course=c1";
     renderStudy();
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide?course=c1"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide?new=1&course=c1"));
+  });
+
+  it("sends a course-less ?mode=guide to the plain Study Guides home", async () => {
+    search.qs = "mode=guide";
+    renderStudy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide"));
   });
 
   it("sends ?mode=cards to the Flashcards page, keeping the course", async () => {
