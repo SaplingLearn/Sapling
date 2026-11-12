@@ -90,7 +90,7 @@
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-lg); }
 
 .card .title {
-  font-size: var(--fs-xl); line-height: 1.25; color: var(--text);
+  margin: 0; font-size: var(--fs-xl); line-height: 1.25; color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
@@ -103,7 +103,7 @@
 .metaFailed { color: var(--err); font-weight: 600; }
 
 .room { display: flex; flex-direction: column; gap: 6px; min-height: 35px; }
-.roomLine { font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roomLine { display: block; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .roomTier { font-weight: 700; }
 
 /* Four numbers over their mono labels, as on the Flashcards hero. */

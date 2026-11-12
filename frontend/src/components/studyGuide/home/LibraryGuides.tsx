@@ -23,11 +23,11 @@ export function LibraryGuides({ guides }: { guides: GuideCard[] }) {
               className={`${s.card} ${s.libraryCard}`}
               data-testid={`library-guide-${guide.id}`}
             >
-              <span className={`h-serif ${s.title}`}>{guide.title}</span>
-              <span className={s.foot}>
+              <h3 className={`h-serif ${s.title}`}>{guide.title}</h3>
+              <div className={s.foot}>
                 <Chip variant="accent">Study guide</Chip>
                 <span className={s.course}>{guide.course_name}</span>
-              </span>
+              </div>
             </Link>
           </li>
         ))}

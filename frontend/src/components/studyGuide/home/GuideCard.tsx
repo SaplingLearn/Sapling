@@ -27,7 +27,7 @@ export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
         data-testid={`guides-card-${guide.id}`}
         data-status={guide.status}
       >
-        <span className={`h-serif ${s.title}`}>{guide.title}</span>
+        <h2 className={`h-serif ${s.title}`}>{guide.title}</h2>
         <Meta guide={guide} now={now} />
         <Room guide={guide} />
         <dl className={s.figures}>
@@ -38,14 +38,14 @@ export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
             </div>
           ))}
         </dl>
-        <span className={s.foot}>
+        <div className={s.foot}>
           <span className={s.chips}>
             <Chip>{guide.scope_label}</Chip>
             <Chip variant="accent">{GOAL_LABEL[guide.goal]}</Chip>
             <Chip>{DEPTH_LABEL[guide.depth]}</Chip>
           </span>
           <span className={s.course}>{guide.course_name}</span>
-        </span>
+        </div>
       </Link>
     </li>
   );
@@ -56,7 +56,7 @@ function Meta({ guide, now }: { guide: Guide; now: Date }) {
   const status = statusText(guide.status);
   const lectures = newLecturesText(guide.new_materials);
   return (
-    <span className={s.meta}>
+    <div className={s.meta}>
       <span>{dateText(guide, now)}</span>
       {status && (
         <span className={guide.status === "failed" ? s.metaFailed : s.metaWriting} data-testid={`guides-card-status-${guide.id}`}>
@@ -69,7 +69,7 @@ function Meta({ guide, now }: { guide: Guide; now: Date }) {
           <Icon name="check" size={11} /> Saved
         </span>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -77,7 +77,7 @@ function Meta({ guide, now }: { guide: Guide; now: Date }) {
 function Room({ guide }: { guide: Guide }) {
   const widest = widestBar(guide.bars);
   return (
-    <span className={s.room}>
+    <div className={s.room}>
       <SpaceBar bars={guide.bars} />
       {widest && (
         <span className={s.roomLine} data-testid={`guides-card-room-${guide.id}`}>
@@ -85,6 +85,6 @@ function Room({ guide }: { guide: Guide }) {
           <span className={s.roomTier} style={{ color: tierText(widest.tier) }}>{tierLabel(widest.tier)}</span>
         </span>
       )}
-    </span>
+    </div>
   );
 }
