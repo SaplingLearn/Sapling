@@ -28,7 +28,9 @@ function renderProse(paragraphs: Paragraph[], mode: ViewMode = "read") {
     guide: fixtureGuide(),
     mode,
     generating: false,
+    rewriting: null,
     update: () => {},
+    regenerateBlock: () => {},
     askTutor: async () => {},
     tutorBusy: false,
   };

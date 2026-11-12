@@ -51,7 +51,7 @@ export function GuideMenu({
   onRegenerate,
 }: {
   saved: boolean;
-  /** The guide is being written: it cannot be regenerated on top of that. */
+  /** The guide or one of its blocks is being written: it cannot be regenerated on top of that. */
   busy: boolean;
   onSave: () => void;
   onRegenerate: () => void;

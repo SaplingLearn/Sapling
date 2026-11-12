@@ -92,14 +92,21 @@ export function isBlockMarkdown(text: string): boolean {
 export type SectionPhase = "written" | "writing" | "queued" | "failed";
 
 /**
- * Where each section stands. While the guide is being written the first
- * queued section is the one in progress.
+ * Where each section stands. A generation writes the sections that are not
+ * written in order, failed ones included, so while one runs the first of
+ * them is the one in progress and the rest wait. `tried` names the sections
+ * this run is already done with: one of those that failed stays failed.
  */
-export function sectionPhases(sections: Section[], generating: boolean): Record<string, SectionPhase> {
+export function sectionPhases(
+  sections: Section[],
+  generating: boolean,
+  tried: readonly string[],
+): Record<string, SectionPhase> {
   const phases: Record<string, SectionPhase> = {};
   let writing = generating;
   for (const section of sections) {
-    if (section.status !== "queued") {
+    const waits = generating && section.status !== "written" && !tried.includes(section.id);
+    if (!waits) {
       phases[section.id] = section.status;
     } else {
       phases[section.id] = writing ? "writing" : "queued";

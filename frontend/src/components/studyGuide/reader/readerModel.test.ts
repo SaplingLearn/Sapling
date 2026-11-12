@@ -1,12 +1,11 @@
 /**
- * The reader's pure derivations and edits: labels, the countdown, progress,
- * section phases, and the changes a stream or an answer makes to the guide.
+ * The reader's pure derivations: labels, the countdown, progress, section
+ * phases and the tutor question. The edits are in guideEdits.test.ts.
  */
 import { describe, expect, it } from "vitest";
 
-import type { Block, Section } from "@/lib/studyGuide/types";
+import type { Section } from "@/lib/studyGuide/types";
 
-import { applyOutline, applySection, recordAnswer, replaceBlock, toggleRead } from "./guideEdits";
 import { fixtureGuide } from "./readerFixture";
 import {
   conceptTier,
@@ -107,20 +106,31 @@ describe("mastery", () => {
 
 describe("section phases", () => {
   const sections = guide().content.sections;
+  const withStatus = (id: string, status: "queued" | "failed") =>
+    sections.map(s => (s.id === id ? { ...s, status } : s));
 
-  it("calls a queued section queued when nothing is being written", () => {
-    expect(sectionPhases(sections, false)).toEqual({ s1: "written", s2: "written", s3: "queued", s4: "written" });
+  it("is each section's own status when nothing is being written", () => {
+    expect(sectionPhases(sections, false, [])).toEqual({ s1: "written", s2: "written", s3: "queued", s4: "written" });
+    expect(sectionPhases(withStatus("s3", "failed"), false, []).s3).toBe("failed");
   });
 
   it("calls the first queued section the one being written", () => {
     const queued = sections.map(s => ({ ...s, status: "queued" as const }));
-    expect(sectionPhases(queued, true)).toEqual({ s1: "writing", s2: "queued", s3: "queued", s4: "queued" });
-    expect(sectionPhases(sections, true).s3).toBe("writing");
+    expect(sectionPhases(queued, true, [])).toEqual({ s1: "writing", s2: "queued", s3: "queued", s4: "queued" });
+    expect(sectionPhases(sections, true, []).s3).toBe("writing");
   });
 
-  it("keeps a failed section failed", () => {
-    const failed = sections.map(s => (s.id === "s3" ? { ...s, status: "failed" as const } : s));
-    expect(sectionPhases(failed, true).s3).toBe("failed");
+  it("writes a section that failed before in its turn: first it is being written, later ones wait", () => {
+    // s2 failed on an earlier run and s3 is still queued: the server takes s2 first.
+    const cut = withStatus("s2", "failed");
+    expect(sectionPhases(cut, true, [])).toEqual({ s1: "written", s2: "writing", s3: "queued", s4: "written" });
+    const both = cut.map(s => (s.id === "s3" ? { ...s, status: "failed" as const } : s));
+    expect(sectionPhases(both, true, [])).toMatchObject({ s2: "writing", s3: "queued" });
+  });
+
+  it("keeps a section failed once this run has tried it, and moves on", () => {
+    const cut = withStatus("s2", "failed");
+    expect(sectionPhases(cut, true, ["s2"])).toEqual({ s1: "written", s2: "failed", s3: "writing", s4: "written" });
   });
 });
 
@@ -132,43 +142,5 @@ describe("the tutor question", () => {
     expect(message).toContain("1. Loops: A loop repeats a block until its condition turns false.");
     expect(message).toContain("4. Variables: A variable is a name bound to a value.");
     expect(message).toContain("My question: Why does a loop stop?");
-  });
-});
-
-describe("edits to the guide", () => {
-  it("replaces the content when the outline arrives", () => {
-    const content = { ...guide().content, title: "A new title", sections: [] };
-    const next = applyOutline(guide(), content);
-    expect(next.title).toBe("A new title");
-    expect(next.content).toBe(content);
-  });
-
-  it("puts a written section where its queued one was", () => {
-    const written: Section = { ...guide().content.sections[2], status: "written", one_line: "Now written." };
-    const next = applySection(guide(), written);
-    expect(next.content.sections.map(s => s.status)).toEqual(["written", "written", "written", "written"]);
-    expect(next.content.sections[2].one_line).toBe("Now written.");
-  });
-
-  it("replaces one block and leaves every other item alone", () => {
-    const before = guide();
-    const block: Block = { type: "key_terms", id: "s2-i2", title: "Rewritten", terms: [] };
-    const next = replaceBlock(before, "s2-i2", block);
-    expect(next.content.sections[1].items[1]).toBe(block);
-    expect(next.content.sections[1].items[0]).toEqual(before.content.sections[1].items[0]);
-    expect(next.content.sections[0]).toEqual(before.content.sections[0]);
-  });
-
-  it("toggles a read mark", () => {
-    expect(toggleRead(["s2"], "s1")).toEqual(["s2", "s1"]);
-    expect(toggleRead(["s2", "s1"], "s2")).toEqual(["s1"]);
-  });
-
-  it("records an answer, and moves mastery only when it changed", () => {
-    const answer = { option_id: "b", correct: true };
-    const moved = recordAnswer(guide(), "s1-i8", answer, { concept: "Loops", before: "struggling", after: "learning" });
-    expect(moved.answers["s1-i8"]).toEqual(answer);
-    expect(moved.mastery.Loops).toBe("learning");
-    expect(recordAnswer(guide(), "s1-i8", answer, null).mastery).toEqual(guide().mastery);
   });
 });

@@ -7,6 +7,7 @@ import { GenerationBanner, GenerationError } from "./GenerationBanner";
 import { GuideHeader } from "./GuideHeader";
 import { Rail } from "./rail/Rail";
 import s from "./reader.module.css";
+import { useBlockRegenerate } from "./blocks/useBlockRegenerate";
 import { ReaderProvider, type Reader } from "./ReaderContext";
 import { daysUntil, sectionPhases, type SectionPhase, type ViewMode } from "./readerModel";
 import { SectionView } from "./SectionView";
@@ -55,7 +56,7 @@ function Article({ guide, phases, days, generating, onToggleRead, onSave, onFeed
   if (generating && content.sections.length === 0) return <ArticleSkeleton />;
   return (
     <article className={s.article}>
-      <GuideHeader guide={guide} days={days} generating={generating} onSave={onSave} onRegenerate={onRegenerate} />
+      <GuideHeader guide={guide} days={days} onSave={onSave} onRegenerate={onRegenerate} />
       <Takeaways takeaways={content.takeaways} generating={generating} />
       {content.sections.map((section, i) => (
         <SectionView
@@ -77,19 +78,37 @@ function Article({ guide, phases, days, generating, onToggleRead, onSave, onFeed
 /** A loaded guide: the article, the rail, and the generation that fills them. */
 export function GuideView({ userId, guide, mode, today, update, onToggleRead, onSave, onFeedback }: GuideViewProps) {
   const generation = useGeneration(userId, guide.id, guide.status, update);
+  const block = useBlockRegenerate(userId, guide.id, update);
   const tutor = useTutorHandoff(userId, guide.course_id);
   const generating = generation.active;
-  const phases = sectionPhases(guide.content.sections, generating);
+  const { failure } = generation;
+  const retry = failure?.retry ?? null;
+  const phases = sectionPhases(guide.content.sections, generating, generation.tried);
   const days = daysUntil(guide.due_date, today);
-  const reader: Reader = { userId, guide, mode, generating, update, askTutor: tutor.ask, tutorBusy: tutor.busy };
-  const resume = () => generation.start("resume");
+  const reader: Reader = {
+    userId, guide, mode, generating, update,
+    rewriting: block.rewriting,
+    regenerateBlock: block.regenerate,
+    askTutor: tutor.ask,
+    tutorBusy: tutor.busy,
+  };
   // A generation that ended with nothing written leaves no guide to draw:
   // the error and its Retry are the page.
-  const nothingWritten = generation.error !== null && guide.content.sections.length === 0;
+  const nothingWritten = failure !== null && guide.content.sections.length === 0;
+  // A request that was turned away left a ready guide as it was: the banner
+  // can go. Once a run has replaced the outline, only a resume finishes it.
+  const untouched = guide.status === "ready" && failure !== null && !failure.replanned;
 
   return (
     <ReaderProvider value={reader}>
-      {generation.error && <GenerationError message={generation.error} onRetry={resume} />}
+      {failure && (
+        <GenerationError
+          message={failure.message}
+          onRetry={retry ? () => generation.start(retry) : undefined}
+          onDismiss={untouched ? generation.dismiss : undefined}
+          busy={block.rewriting !== null}
+        />
+      )}
       {!nothingWritten && (
         <div className={`${s.shell} tool-enter`}>
           {generating && <GenerationBanner label={generation.label} step={generation.step} />}
@@ -103,7 +122,7 @@ export function GuideView({ userId, guide, mode, today, update, onToggleRead, on
               onSave={onSave}
               onFeedback={onFeedback}
               onRegenerate={() => generation.start("regenerate")}
-              onResume={resume}
+              onResume={() => generation.start("resume")}
             />
             <Rail
               phases={phases}

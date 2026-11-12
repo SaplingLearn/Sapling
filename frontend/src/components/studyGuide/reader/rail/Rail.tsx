@@ -1,7 +1,7 @@
 "use client";
 import { dueDateText } from "@/components/studyGuide/shared/dates";
 
-import { useReader } from "../ReaderContext";
+import { useReader, useWriting } from "../ReaderContext";
 import { readCount, type SectionPhase } from "../readerModel";
 import { AskBox } from "./AskBox";
 import { Outline } from "./Outline";
@@ -26,6 +26,7 @@ export function Rail({
   onUpdate: () => void;
 }) {
   const { guide, generating } = useReader();
+  const writing = useWriting();
   return (
     <aside aria-label="Guide details" className={s.rail}>
       <ProgressRing
@@ -35,7 +36,7 @@ export function Rail({
         dueLabel={dueDateText(guide.due_date)}
         days={days}
       />
-      {guide.new_materials > 0 && <StaleBanner count={guide.new_materials} busy={generating} onUpdate={onUpdate} />}
+      {guide.new_materials > 0 && <StaleBanner count={guide.new_materials} busy={writing} onUpdate={onUpdate} />}
       {guide.new_materials === 0 && updated && <UpdatedNotice />}
       <Outline guide={guide} phases={phases} generating={generating} onToggleRead={onToggleRead} />
       <AskBox />

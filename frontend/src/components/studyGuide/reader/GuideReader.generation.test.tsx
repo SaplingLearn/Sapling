@@ -3,7 +3,8 @@
  * The reader while a guide is being written: the stream (outline, then
  * sections, then done), the banner and skeletons, waiting on (and taking over
  * from) another run that holds the guide, an error with Retry, a section that
- * failed, and Regenerate.
+ * failed, and Regenerate. Requests that are turned away, and which marks a
+ * rewrite keeps, are in GuideReader.refusal.test.tsx and .rewrite.test.tsx.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -35,9 +36,9 @@ import {
 import { ToastProvider } from "@/components/ToastProvider";
 import type { GuideDetail } from "@/lib/studyGuide/types";
 
+import { RETRY_MS } from "./generationRun";
 import { GuideReader } from "./GuideReader";
 import { deferred, fixtureGuide, newGuide, outlineOf, renderReader, sectionOf } from "./readerTestKit";
-import { RETRY_MS } from "./useGeneration";
 
 const mocks = { getGuide: vi.mocked(getGuide), generateGuide: vi.mocked(generateGuide) };
 const GUIDE_ID = "guide-fixture-1";
@@ -363,8 +364,9 @@ describe("a section that could not be written", () => {
     await user.click(screen.getByTestId("guide-section-retry-s3"));
     await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledWith("u1", GUIDE_ID, "resume", expect.any(Object)));
     expect(screen.getByTestId("guide-generating")).toBeInTheDocument();
-    // One run at a time: the button waits for it.
-    expect(screen.getByTestId("guide-section-retry-s3")).toBeDisabled();
+    // The run writes the failed section: it is the one in progress now.
+    expect(within(screen.getByTestId("guide-section-s3")).getByText("Writing this section")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-section-retry-s3")).not.toBeInTheDocument();
 
     await act(async () => run.resolve(finishedGuide()));
     expect(screen.queryByTestId("guide-section-retry-s3")).not.toBeInTheDocument();

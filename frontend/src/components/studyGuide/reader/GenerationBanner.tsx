@@ -24,16 +24,39 @@ export function GenerationBanner({ label, step }: { label: string; step: Generat
   );
 }
 
-/** The generation stopped. Retry picks up at the first section not written. */
-export function GenerationError({ message, onRetry }: { message: string; onRetry: () => void }) {
+/**
+ * A generation stopped, or was turned away. Retry is there when asking again
+ * can help; Dismiss when the guide under the banner is whole without it.
+ */
+export function GenerationError({
+  message,
+  onRetry,
+  onDismiss,
+  busy,
+}: {
+  message: string;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+  /** Something else is being written: Retry waits for it. */
+  busy: boolean;
+}) {
   return (
     <InlineBanner
       tone="neutral"
       testid="guide-generation-error"
       actions={
-        <Button size="sm" data-testid="guide-generation-retry" onClick={onRetry}>
-          Retry
-        </Button>
+        <>
+          {onRetry && (
+            <Button size="sm" data-testid="guide-generation-retry" disabled={busy} onClick={onRetry}>
+              Retry
+            </Button>
+          )}
+          {onDismiss && (
+            <Button size="sm" variant="ghost" data-testid="guide-generation-dismiss" onClick={onDismiss}>
+              Dismiss
+            </Button>
+          )}
+        </>
       }
     >
       {message}

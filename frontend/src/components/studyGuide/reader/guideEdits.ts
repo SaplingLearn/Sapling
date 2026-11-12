@@ -3,11 +3,11 @@
  * guide and leaves the one it was given alone.
  */
 import type {
+  AnswerResult,
   Block,
   CheckAnswer,
   GuideContent,
   GuideDetail,
-  MasteryChange,
   Section,
 } from "@/lib/studyGuide/types";
 
@@ -15,9 +15,27 @@ function withSections(guide: GuideDetail, sections: Section[]): GuideDetail {
   return { ...guide, content: { ...guide.content, sections } };
 }
 
-/** The outline arrived: every section is listed, none written yet. */
+/**
+ * The outline arrived: every section is listed, and only the ones an Update
+ * keeps are written. Read marks and check answers stay with those sections
+ * alone, as on the server: a rewritten guide numbers its sections and items
+ * from the start again, so an old mark would land on new text.
+ */
 export function applyOutline(guide: GuideDetail, content: GuideContent): GuideDetail {
-  return { ...guide, title: content.title, content };
+  const kept = content.sections.filter(section => section.status === "written");
+  const sectionIds = new Set(kept.map(section => section.id));
+  const itemIds = new Set(kept.flatMap(section => section.items.map(item => item.id)));
+  const answers: Record<string, CheckAnswer> = {};
+  for (const [blockId, answer] of Object.entries(guide.answers)) {
+    if (itemIds.has(blockId)) answers[blockId] = answer;
+  }
+  return {
+    ...guide,
+    title: content.title,
+    content,
+    read_sections: guide.read_sections.filter(id => sectionIds.has(id)),
+    answers,
+  };
 }
 
 /** One section finished writing. */
@@ -46,16 +64,32 @@ export function toggleRead(readSections: string[], sectionId: string): string[] 
     : [...readSections, sectionId];
 }
 
-/** A check question was answered, and mastery may have moved with it. */
+/**
+ * A check question was answered. The guide then holds what the server would
+ * send for it on the next load: the answer, the question's correct option and
+ * the explanation for this pick, and the mastery the answer may have moved.
+ */
 export function recordAnswer(
   guide: GuideDetail,
   blockId: string,
-  answer: CheckAnswer,
-  change: MasteryChange | null,
+  optionId: string,
+  result: AnswerResult,
 ): GuideDetail {
+  const explained = result.correct
+    ? { explain_correct: result.explanation }
+    : { explain_incorrect: result.explanation };
+  const sections = guide.content.sections.map(section => ({
+    ...section,
+    items: section.items.map(item =>
+      item.id === blockId && item.type === "check"
+        ? { ...item, correct_id: result.correct_id, ...explained }
+        : item,
+    ),
+  }));
+  const change = result.mastery;
   return {
-    ...guide,
-    answers: { ...guide.answers, [blockId]: answer },
+    ...withSections(guide, sections),
+    answers: { ...guide.answers, [blockId]: { option_id: optionId, correct: result.correct } },
     mastery: change ? { ...guide.mastery, [change.concept]: change.after } : guide.mastery,
   };
 }

@@ -9,7 +9,7 @@ import type { Item, Section } from "@/lib/studyGuide/types";
 import { BlockView } from "./blocks/BlockView";
 import { Prose } from "./Prose";
 import s from "./reader.module.css";
-import { useReader } from "./ReaderContext";
+import { useWriting } from "./ReaderContext";
 import { sectionAnchor, sectionNumber, type SectionPhase } from "./readerModel";
 import { ReadMark } from "./ReadMark";
 
@@ -64,11 +64,11 @@ function SectionWaiting({ writing }: { writing: boolean }) {
 
 /** A section the writer gave up on. Try again writes what the guide is missing. */
 function SectionFailed({ sectionId, onRetry }: { sectionId: string; onRetry: () => void }) {
-  const { generating } = useReader();
+  const writing = useWriting();
   return (
     <div className={s.failed}>
       <p className={s.note}>This section could not be written.</p>
-      <Button size="sm" data-testid={`guide-section-retry-${sectionId}`} disabled={generating} onClick={onRetry}>
+      <Button size="sm" data-testid={`guide-section-retry-${sectionId}`} disabled={writing} onClick={onRetry}>
         Try again
       </Button>
     </div>

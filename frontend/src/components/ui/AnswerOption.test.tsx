@@ -48,6 +48,16 @@ describe("AnswerOption", () => {
     expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "false");
   });
 
+  it("can be the student's pick and the correct answer at once", () => {
+    // `correct` alone only marks the right answer, picked or not.
+    setup("correct");
+    expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "false");
+    cleanup();
+    setup("correct", { checked: true });
+    expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio")).toHaveAccessibleName(/correct answer/);
+  });
+
   it("selects on click and on Enter/Space, because it is a real button", () => {
     const { onSelect } = setup("default");
     const row = screen.getByRole("radio");

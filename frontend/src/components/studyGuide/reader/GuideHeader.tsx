@@ -7,6 +7,7 @@ import type { GuideDetail } from "@/lib/studyGuide/types";
 
 import { GuideMenu } from "./GuideMenu";
 import s from "./reader.module.css";
+import { useWriting } from "./ReaderContext";
 import { countdownLabel, sectionBars, sourcesLabel } from "./readerModel";
 
 function GuideChips({ guide, days }: { guide: GuideDetail; days: number | null }) {
@@ -43,25 +44,24 @@ function SpacePanel({ guide }: { guide: GuideDetail }) {
 export function GuideHeader({
   guide,
   days,
-  generating,
   onSave,
   onRegenerate,
 }: {
   guide: GuideDetail;
   /** Days to the due date, or null with none ahead. */
   days: number | null;
-  generating: boolean;
   onSave: () => void;
   onRegenerate: () => void;
 }) {
   const { title, deck } = guide.content;
+  const writing = useWriting();
   return (
     <header className={s.header}>
       <div className={s.titleRow}>
         <h1 className={`h-serif ${s.title}`} data-testid="guide-title">
           {title}
         </h1>
-        <GuideMenu saved={guide.saved_at !== null} busy={generating} onSave={onSave} onRegenerate={onRegenerate} />
+        <GuideMenu saved={guide.saved_at !== null} busy={writing} onSave={onSave} onRegenerate={onRegenerate} />
       </div>
       {deck && <p className={s.deck}>{deck}</p>}
       <GuideChips guide={guide} days={days} />

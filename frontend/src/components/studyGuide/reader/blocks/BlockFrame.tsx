@@ -5,7 +5,6 @@ import { Skeleton } from "@/components/Skeleton";
 
 import { useReader } from "../ReaderContext";
 import s from "./blocks.module.css";
-import { useBlockRegenerate } from "./useBlockRegenerate";
 
 export type BlockTone = "info" | "err" | "accent" | "amber" | "plum";
 
@@ -36,8 +35,8 @@ export function BlockFrame({
   regenerable = true,
   children,
 }: BlockFrameProps) {
-  const { generating } = useReader();
-  const { busy, regenerate } = useBlockRegenerate(blockId);
+  const { generating, rewriting, regenerateBlock } = useReader();
+  const busy = rewriting === blockId;
   return (
     <div
       className={s.block}
@@ -60,8 +59,9 @@ export function BlockFrame({
               type="button"
               className={s.regenerate}
               data-testid={`guide-block-regenerate-${blockId}`}
-              disabled={busy}
-              onClick={regenerate}
+              // One rewrite at a time: the other blocks wait for this one.
+              disabled={rewriting !== null}
+              onClick={() => regenerateBlock(blockId)}
             >
               Regenerate
             </button>
