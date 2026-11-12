@@ -5,7 +5,8 @@
  * when it loads is resumed; Update and Regenerate run the same stream. While
  * another run holds the guide, the reader shows what that run has written and
  * keeps asking, so it takes over if that run stops. A run that fails ends on
- * the guide as the server has it, with what can be done about it.
+ * the guide as the server has it, with what can be done about it. A resume
+ * that finds the guide already finished by another request just shows it.
  */
 import React from "react";
 
@@ -51,6 +52,11 @@ export function useGeneration(userId: string, guideId: string, status: GuideStat
   /** An Update finished during this visit. */
   const [updated, setUpdated] = React.useState(false);
   const controller = React.useRef<AbortController | null>(null);
+  /** The status of the guide on screen, for a run that ends long after it started. */
+  const shown = React.useRef(status);
+  React.useEffect(() => {
+    shown.current = status;
+  }, [status]);
 
   const start = React.useCallback(
     async (mode: GenerateMode) => {
@@ -91,8 +97,12 @@ export function useGeneration(userId: string, guideId: string, status: GuideStat
         if (signal.aborted) return;
         const { guide, failure } = await failedRun({ userId, guideId, mode }, err);
         if (signal.aborted) return;
+        const wasUnfinished = shown.current !== "ready";
         if (guide) update(() => guide);
         setState({ ...IDLE, failure });
+        // No failure: another tab finished the guide before this resume could.
+        // That is news only where the guide on screen was not ready yet.
+        if (!failure && wasUnfinished) toast.success("Guide ready.");
       }
     },
     [userId, guideId, update, toast],

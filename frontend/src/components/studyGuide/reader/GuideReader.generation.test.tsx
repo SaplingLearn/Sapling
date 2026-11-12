@@ -412,6 +412,62 @@ describe("a section that could not be written", () => {
   });
 });
 
+describe("a resume that finds the guide already written", () => {
+  /** What `streamSSE` throws for the server's 422: another request finished the guide first. */
+  const alreadyWritten = () =>
+    Object.assign(new Error(JSON.stringify({ detail: "This guide is already written." })), { status: 422 });
+
+  /** A ready guide whose third section failed. */
+  function missingOne(): GuideDetail {
+    const guide = fixtureGuide({ read_sections: [] });
+    Object.assign(sectionOf(guide, "s3"), { status: "failed", items: [] });
+    return guide;
+  }
+
+  it("shows the finished guide and says it is ready, with no error, when it had loaded as generating", async () => {
+    mocks.generateGuide.mockRejectedValue(alreadyWritten());
+    mocks.getGuide
+      .mockResolvedValueOnce(fixtureGuide({ status: "generating", read_sections: [] }))
+      .mockResolvedValue(finishedGuide());
+    renderReader();
+
+    expect(await screen.findByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("guide-section-s3")).queryByText("Writing this section")).not.toBeInTheDocument();
+    expect(screen.getByTestId("guide-feedback-yes")).toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the finished guide without a toast when the guide on screen was already ready", async () => {
+    mocks.generateGuide.mockRejectedValue(alreadyWritten());
+    mocks.getGuide.mockResolvedValueOnce(missingOne()).mockResolvedValue(finishedGuide());
+    const user = userEvent.setup();
+    renderReader();
+
+    // Another tab filled the section in before this one asked.
+    await user.click(await screen.findByTestId("guide-section-retry-s3"));
+    await waitFor(() => expect(screen.queryByTestId("guide-section-retry-s3")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument());
+
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.queryByText("Guide ready.")).not.toBeInTheDocument();
+  });
+
+  it("still shows the error when the guide read back has a section left to write", async () => {
+    mocks.generateGuide.mockRejectedValue(new GuideGenerationError("You are out of AI credit for today.", false));
+    mocks.getGuide.mockResolvedValue(missingOne());
+    const user = userEvent.setup();
+    renderReader();
+
+    await user.click(await screen.findByTestId("guide-section-retry-s3"));
+
+    expect(await screen.findByTestId("guide-generation-error")).toHaveTextContent("You are out of AI credit for today.");
+    expect(screen.getByTestId("guide-generation-dismiss")).toBeInTheDocument();
+    expect(screen.queryByText("Guide ready.")).not.toBeInTheDocument();
+  });
+});
+
 describe("regenerating the whole guide", () => {
   it("runs the stream in regenerate mode from the menu", async () => {
     const { run, handlers } = controlledRun();

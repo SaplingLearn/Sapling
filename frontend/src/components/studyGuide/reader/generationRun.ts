@@ -100,15 +100,24 @@ export function failureOf(err: unknown, mode: GenerateMode, status: GuideStatus 
   return { message, retry: retryable ? mode : null, dismissible: status === "ready" };
 }
 
+/** A ready guide with every section written: a resume has nothing to add to it. */
+function isFinished(guide: GuideDetail): boolean {
+  return guide.status === "ready" && guide.content.sections.every(section => section.status === "written");
+}
+
 /**
  * A run stopped. What its stream showed is not always what was saved (the
  * outline of a failed Update or Regenerate never was), so the guide is read
  * again. `guide` is null when that fails too: the reader keeps what it has.
+ *
+ * `failure` is null when nothing failed after all: a resume was turned away,
+ * or cut, because another request had finished the guide first.
  */
 export async function failedRun(
   { userId, guideId, mode }: Pick<Run, "userId" | "guideId" | "mode">,
   err: unknown,
-): Promise<{ guide: GuideDetail | null; failure: Failure }> {
+): Promise<{ guide: GuideDetail | null; failure: Failure | null }> {
   const guide = await getGuide(userId, guideId).catch(() => null);
+  if (guide && mode === "resume" && isFinished(guide)) return { guide, failure: null };
   return { guide, failure: failureOf(err, mode, guide?.status ?? null) };
 }
