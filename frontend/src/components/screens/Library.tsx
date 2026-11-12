@@ -277,7 +277,7 @@ export function Library() {
                 <button data-testid="library-load-retry" className="btn btn--ghost btn--sm" onClick={retryLoad}>Retry</button>
               </div>
             )}
-            <LibraryGuides guides={shownGuides} />
+            <LibraryGuides guides={shownGuides} courses={courses} />
             {filtered.length === 0 && shownGuides.length === 0 && !(loadError && documents.length === 0) && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>

@@ -238,7 +238,7 @@ describe("StudyHub", () => {
 
   it("Recent Activity links each of the course's guides to its reader", async () => {
     const guide = (id: string, over: Partial<GuideCard> = {}): GuideCard => ({
-      id, title: "Recursion for Exam 2", course_id: "c1", course_name: "Intro to CS", semester: null,
+      id, title: "Recursion for Exam 2", course_id: "c1", course_name: "Intro to CS", course_code: "CS101", semester: null,
       scope_kind: "exam", scope_label: "Exam 2", goal: "exam_prep", depth: "standard", status: "ready",
       generated_at: new Date(2026, 10, 6, 9).toISOString(), created_at: new Date(2026, 10, 6, 8).toISOString(),
       saved_at: null, new_materials: 0, bars: [], counts: { sections: 0, blocks: 0, practice: 0, minutes: 0 }, ...over,

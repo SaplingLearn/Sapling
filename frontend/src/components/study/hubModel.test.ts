@@ -270,7 +270,7 @@ describe("recentActivity", () => {
     created_at: at(7, 10), completed_at: at(7, 11), ...over,
   });
   const guide = (id: string, over: Partial<GuideCard> = {}): GuideCard => ({
-    id, title: "Exam 2 guide", course_id: "c1", course_name: "Intro to CS", semester: null,
+    id, title: "Exam 2 guide", course_id: "c1", course_name: "Intro to CS", course_code: "CS101", semester: null,
     scope_kind: "exam", scope_label: "Exam 2", goal: "exam_prep", depth: "standard", status: "ready",
     generated_at: at(6, 9), created_at: at(5, 9), saved_at: null, new_materials: 0, bars: [],
     counts: { sections: 0, blocks: 0, practice: 0, minutes: 0 }, ...over,
