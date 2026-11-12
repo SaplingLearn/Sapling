@@ -353,6 +353,15 @@ def _token(rows: list | None) -> str | None:
     return rows[0]["generating_at"] if rows else None
 
 
+def claim_is_held(guide: GuideRow) -> bool:
+    """Whether a run held the guide when it was loaded: it has a claim that is
+    not stale. Good for refusing a request early; only ``aclaim_generation``
+    decides who writes."""
+    if not guide.generating_at:
+        return False
+    return datetime.fromisoformat(guide.generating_at) > _now() - CLAIM_STALE_AFTER
+
+
 async def aclaim_generation(user_id: str, guide_id: str) -> str | None:
     """Take the guide for one run that writes its content. Returns the claim
     token when the claim was free (never taken, released, or older than
@@ -437,4 +446,5 @@ __all__ = [
     "arelease_generation",
     "asave_content",
     "atouch_generation",
+    "claim_is_held",
 ]
