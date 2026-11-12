@@ -6,9 +6,13 @@ small markup (its system prompt is the other half of this file):
 - Prose is plain paragraphs separated by blank lines. `**term**` marks a key
   term and is kept as written. `[S2]` cites the source labelled S2.
 - A line that starts with `>>` is the Skim summary of the passage above it,
-  and closes that passage.
+  and closes that passage. A line that starts with `>>>` is not: that is a
+  Python prompt, and stays prose.
 - A block is one JSON object inside a fence: a line ```` ```block ````, the
   JSON, a closing ```` ``` ````. It names its source by label: `"source": "S2"`.
+- A fence with any other language (```` ```python ````) is a code sample. It
+  stays in the prose as a paragraph of its own, fence included, so the
+  reader's Markdown shows it as code.
 
 A passage is the run of paragraphs up to the next summary line or block. A run
 longer than three paragraphs is split into further passages, and its summary
@@ -24,12 +28,21 @@ Pure functions, no I/O.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 
 from models.study_guide import BLOCK_TYPES, Block, Item, parse_items
 
 _FENCE = "```"
+#: The fence languages that hold a block. A bare fence does too.
+_BLOCK_LANGUAGES = ("", "block", "json")
+#: `Paragraph.text`'s cap. Prose past it is clipped at a word; a code sample
+#: past it is dropped, because half a code sample is worse than none.
+_CODE_MAX = 1200
+#: Fields that hold LaTeX. A newline there is `\neq` or `\nu` written with
+#: one backslash, never a line break.
+_MATH_FIELDS = ("latex", "math")
 #: `## A heading` or a `---` rule: a model's habit, not part of the markup.
 _NOISE = re.compile(r"\s{0,3}(#{1,6}\s.*|([-*_])(\s*\2){2,})\s*")
 #: `[S1]` or `[S1, S3]`, with the space before it.
@@ -108,38 +121,50 @@ def _place(item_id: str) -> int:
 
 
 def _chunks(text: str) -> list[tuple[str, str]]:
-    """The text in order as `("paragraph" | "summary" | "block", content)`."""
+    """The text in order as `("paragraph" | "summary" | "block", content)`.
+    A code sample is a paragraph whose content starts with a fence."""
     chunks: list[tuple[str, str]] = []
     lines: list[str] = []
     fenced: list[str] | None = None
+    language = ""
 
     def close_paragraph() -> None:
         if lines:
             chunks.append(("paragraph", " ".join(lines)))
             lines.clear()
 
+    def close_fence() -> None:
+        if language in _BLOCK_LANGUAGES:
+            chunks.append(("block", "\n".join(fenced)))
+            return
+        code = "\n".join([_FENCE + language, *fenced, _FENCE])
+        if len(code) <= _CODE_MAX:
+            chunks.append(("paragraph", code))
+
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         stripped = line.strip()
         if stripped.startswith(_FENCE):
             close_paragraph()
             if fenced is not None:
-                chunks.append(("block", "\n".join(fenced)))
+                close_fence()
             # A bare fence closes a block. One with a language opens the next,
             # even when the block before it was never closed.
             fenced = [] if fenced is None or stripped != _FENCE else None
+            language = stripped[len(_FENCE):].strip().lower()
         elif fenced is not None:
             fenced.append(line)
         elif not stripped or _NOISE.fullmatch(line):
             close_paragraph()
-        elif stripped.startswith(">>"):
+        elif stripped.startswith(">>") and not stripped.startswith(">>>"):
             close_paragraph()
             chunks.append(("summary", stripped[2:].strip()))
         else:
             lines.append(stripped)
     close_paragraph()
     if fenced is not None:
-        # The reply was cut inside a fence: still a block, and it will reject.
-        chunks.append(("block", "\n".join(fenced)))
+        # The reply was cut inside a fence: a block that will reject, or a
+        # code sample that ends where the reply did.
+        close_fence()
     return chunks
 
 
@@ -184,6 +209,9 @@ def _prose(paragraphs: list[str], summary: str | None, item_id: str, sources: di
 
 
 def _paragraph(text: str, sources: dict[str, str]) -> dict:
+    if text.startswith(_FENCE):
+        # A code sample: `a[S1]` in it is an index, not a citation.
+        return {"text": text, "citations": []}
     cited: list[str] = []
     for match in _CITATION.finditer(text):
         for label in match.group(1).split(","):
@@ -199,7 +227,11 @@ def _paragraph(text: str, sources: dict[str, str]) -> dict:
 def _block(body: str, block_id: str, sources: dict[str, str]) -> tuple[Block | None, dict]:
     """`(the validated block or None, the JSON object as written or {})`."""
     raw = _json_object(body)
-    if raw.get("type") not in BLOCK_TYPES or _has_control_characters(raw):
+    try:
+        sound = raw.get("type") in BLOCK_TYPES and not _unusable(raw)
+    except RecursionError:  # nested too deep to walk
+        sound = False
+    if not sound:
         return None, raw
     valid = _validated(_prepared(raw, block_id, sources))
     return (valid[0] if valid else None), raw
@@ -216,7 +248,7 @@ def _rejected(block_id: str, raw: dict, body: str) -> RejectedBlock:
 def _json_object(body: str) -> dict:
     try:
         value = json.loads(body, parse_constant=_no_constants)
-    except ValueError:
+    except (ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
 
@@ -227,16 +259,24 @@ def _no_constants(name: str):
     raise ValueError(name)
 
 
-def _has_control_characters(value) -> bool:
-    """True when a string holds a tab, a form feed or the like. In a block that
-    is a LaTeX command written with one backslash (`\\text`, `\\frac`), which
-    JSON reads as an escape: the formula would be silently wrong."""
+def _unusable(value, field: str | None = None) -> bool:
+    """True when the JSON holds a value that would reach the reader wrong.
+
+    A control character in a string is a LaTeX command written with one
+    backslash (`\\text`, `\\frac`), which JSON reads as an escape: the
+    formula would be silently wrong. A newline is allowed in ordinary text but
+    not in a LaTeX field, where it is `\\neq` or `\\nu`. A number that is not
+    finite (`1e999` parses to infinity) could not be drawn or sent as JSON.
+    """
     if isinstance(value, str):
-        return any(ord(char) < 32 and char != "\n" for char in value)
+        newline_ok = field not in _MATH_FIELDS
+        return any(ord(char) < 32 and not (char == "\n" and newline_ok) for char in value)
+    if isinstance(value, float):
+        return not math.isfinite(value)
     if isinstance(value, dict):
-        return any(_has_control_characters(v) for v in value.values())
+        return any(_unusable(v, key) for key, v in value.items())
     if isinstance(value, list):
-        return any(_has_control_characters(v) for v in value)
+        return any(_unusable(v, field) for v in value)
     return False
 
 

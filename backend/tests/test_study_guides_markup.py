@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from models.study_guide import BLOCK_TYPES, QUIZ_HISTORY_SOURCE
+from models.study_guide import BLOCK_TYPES, QUIZ_HISTORY_SOURCE, Paragraph
 from services.study_guides.markup import parse_block, parse_section, put_back
 
 SOURCES = {"S1": "document:doc-1", "S2": "document:doc-2", "S3": QUIZ_HISTORY_SOURCE}
@@ -216,10 +216,75 @@ def test_windows_newlines():
     assert parsed.items[0].summary == "Both."
 
 
+def test_a_python_prompt_is_prose_not_a_summary():
+    parsed = parse("Type this at the prompt:\n\n>>> print(1 + 1)\n\n>> The prompt echoes 2.\n")
+
+    (passage,) = parsed.items
+    assert [p.text for p in passage.paragraphs] == ["Type this at the prompt:", ">>> print(1 + 1)"]
+    assert passage.summary == "The prompt echoes 2."
+
+
 def test_empty_text_is_an_empty_section():
     parsed = parse("  \n\n")
 
     assert parsed.items == [] and parsed.rejected == []
+
+
+# ── Code samples ──────────────────────────────────────────────────────────────
+
+CODE = "def total(xs):\n    n = 0\n    for x in xs:\n        n += xs[S1]\n    return n"
+
+
+def test_a_code_fence_stays_in_the_prose_as_markdown():
+    parsed = parse(
+        f"A loop adds each value.\n\n```python\n{CODE}\n```\n\nThen it returns.\n\n>> It sums.\n"
+    )
+
+    (passage,) = parsed.items
+    assert parsed.rejected == []
+    assert passage.id == "s1-i1" and passage.summary == "It sums."
+    before, code, after = passage.paragraphs
+    # Fence, language and indentation as written: Markdown renders it as code.
+    assert code.text == f"```python\n{CODE}\n```"
+    # `xs[S1]` is an index here, not a citation.
+    assert code.citations == []
+    assert (before.text, after.text) == ("A loop adds each value.", "Then it returns.")
+
+
+@pytest.mark.parametrize("language", ["Python", "c++", "text", "sql"])
+def test_any_language_but_block_and_json_is_code(language):
+    parsed = parse(f"```{language}\nx = 1\n```\n\n{fenced(BLOCKS['key_terms'])}\n")
+
+    assert kinds(parsed) == ["prose", "key_terms"]
+    assert parsed.rejected == []
+    assert parsed.items[0].paragraphs[0].text == f"```{language.lower()}\nx = 1\n```"
+
+
+def test_an_over_long_code_sample_is_dropped_not_cut():
+    cap = Paragraph.model_fields["text"].metadata
+    longest = "x" * (1200 - len("```python\n\n```"))
+    assert len(f"```python\n{longest}\n```") == 1200
+    assert any(getattr(bound, "max_length", None) == 1200 for bound in cap)
+
+    (kept,) = parse(f"```python\n{longest}\n```\n").items
+    dropped = parse(f"Before.\n\n```python\n{longest}y\n```\n\nAfter.\n")
+
+    assert kept.paragraphs[0].text == f"```python\n{longest}\n```"
+    assert [p.text for p in dropped.items[0].paragraphs] == ["Before.", "After."]
+    assert dropped.rejected == []
+
+
+def test_a_reply_cut_inside_a_code_sample_closes_it():
+    (passage,) = parse("Before.\n\n```python\nx = 1").items
+
+    assert [p.text for p in passage.paragraphs] == ["Before.", "```python\nx = 1\n```"]
+
+
+def test_a_code_sample_does_not_swallow_the_block_after_it():
+    parsed = parse("```python\nx = 1\n" + fenced(BLOCKS["key_terms"]))
+
+    assert kinds(parsed) == ["prose", "key_terms"]
+    assert parsed.rejected == []
 
 
 # ── Blocks ────────────────────────────────────────────────────────────────────
@@ -363,6 +428,54 @@ def test_latex_written_with_one_backslash_is_rejected():
 
     assert parsed.items == []
     assert [r.type for r in parsed.rejected] == ["formula"]
+
+
+@pytest.mark.parametrize("command", ["neq", "nu", "nabla", "not"])
+def test_latex_whose_one_backslash_reads_as_a_newline_is_rejected(command):
+    # JSON reads `\n` as a newline, so `a \neq b` would render as "a eq b".
+    formula = {**BLOCKS["formula"], "latex": f"a \\{command} b"}
+    step = {"title": "Compare", "math": f"a \\{command} b", "why": "They differ."}
+    example = {**BLOCKS["worked_example"], "steps": [step, BLOCKS["worked_example"]["steps"][1]]}
+    one_backslash = [
+        json.dumps(block).replace(f"\\\\{command}", f"\\{command}") for block in (formula, example)
+    ]
+    assert all(f"a \\{command} b" in body for body in one_backslash)
+
+    parsed = parse("\n".join(fenced(body) for body in one_backslash))
+
+    assert parsed.items == []
+    assert [r.type for r in parsed.rejected] == ["formula", "worked_example"]
+    # Written with two backslashes, both are fine.
+    assert kinds(parse(f"{fenced(formula)}\n{fenced(example)}")) == ["formula", "worked_example"]
+
+
+def test_a_line_break_in_ordinary_text_is_not_a_latex_slip():
+    example = {**BLOCKS["worked_example"], "problem": "A loop starts at 2.\nHow many passes?"}
+
+    (block,) = parse(fenced(example)).items
+
+    assert block.problem == "A loop starts at 2.\nHow many passes?"
+
+
+def test_a_number_too_large_to_be_finite_is_rejected():
+    # `1e999` is valid JSON and parses to infinity.
+    body = json.dumps(BLOCKS["chart"]).replace('"y": 100', '"y": 1e999')
+    assert "1e999" in body
+
+    parsed = parse(fenced(body))
+
+    assert parsed.items == []
+    assert [r.type for r in parsed.rejected] == ["chart"]
+
+
+@pytest.mark.parametrize("depth", [900, 100_000])
+def test_json_nested_too_deep_is_rejected_not_raised(depth):
+    body = '{"type": "formula", "name": ' + "[" * depth + "]" * depth + "}"
+
+    parsed = parse(f"Before.\n\n{fenced(body)}\n")
+
+    assert kinds(parsed) == ["prose"]
+    assert [(r.id, r.type) for r in parsed.rejected] == [("s1-i2", "formula")]
 
 
 # ── One block ─────────────────────────────────────────────────────────────────
