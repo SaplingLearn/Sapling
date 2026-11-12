@@ -27,7 +27,7 @@ from db.scope import service_route
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
-from services.calendar_service import extract_assignments_from_file, insert_new_assignments
+from services.calendar_service import extract_assignments_from_file, save_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 from services.request_context import current_request_id
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
@@ -333,12 +333,12 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": a.notes,  # raw; insert_new_assignments encrypts
+            "notes": a.notes,  # raw; save_new_assignments encrypts
         }
         for a in body.assignments
     ]
-    saved = insert_new_assignments(body.user_id, payload, source="manual")
-    return {"saved_count": saved}
+    # {saved_count, skipped_count, skipped: [{title, due_date, reason}]}
+    return save_new_assignments(body.user_id, payload, source="manual")
 
 
 @router.get("/upcoming/{user_id}")

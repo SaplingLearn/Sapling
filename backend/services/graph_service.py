@@ -16,7 +16,8 @@ from config import (
     MASTERY_STRUGGLING_MIN,
     get_mastery_tier,
 )
-from db.connection import rpc, table
+from db.async_connection import apage_all
+from db.connection import MAX_ROWS, page_all, rpc, table
 from db.scope import runs_as_service
 from services.streak_service import effective_streak, touch_streak_safe
 # Module imports, not names: tests patch these on their home modules, and a
@@ -244,6 +245,91 @@ async def _anode_events(nodes: list) -> list:
         return []
 
 
+#: `week_delta` (the Study hub's "+N% this week") covers a ROLLING window: the
+#: events created in the last 7 days, as of the read.
+WEEK_DELTA_DAYS = 7
+_WEEK_EVENTS_SELECT = "node_id,delta,created_at"
+#: Offset paging needs a total order: `id` breaks created_at ties.
+_WEEK_EVENTS_ORDER = "created_at.asc,id.asc"
+
+
+def _week_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=WEEK_DELTA_DAYS)
+
+
+def _sum_week_deltas(event_rows: list, cutoff: datetime) -> dict[str, float]:
+    """node id -> the summed ``delta`` of its events at or after ``cutoff``.
+    A node with none is absent. Rows without a readable timestamp or delta
+    are skipped, as ``_compute_velocity`` skips them."""
+    out: dict[str, float] = {}
+    for ev in event_rows:
+        try:
+            if _parse_event_ts(_event_ts(ev)) < cutoff:
+                continue
+            delta = float(ev.get("delta") or 0.0)
+        except Exception:
+            continue
+        out[ev.get("node_id")] = out.get(ev.get("node_id"), 0.0) + delta
+    return out
+
+
+def _history_is_complete(event_rows: list) -> bool:
+    """Whether the unpaged ``_node_events`` read returned every row. PostgREST
+    caps a response at ``MAX_ROWS`` and that read sorts oldest first, so a
+    full page means the NEWEST events (this week's among them) were cut off;
+    only a short page proves the end (``db.connection.page_all``)."""
+    return len(event_rows) < MAX_ROWS
+
+
+def _week_events_filters(nodes: list, cutoff: datetime) -> dict | None:
+    filters = _node_events_filters(nodes)
+    if filters is None:
+        return None
+    return {**filters, "created_at": f"gte.{cutoff.isoformat()}"}
+
+
+def _week_read_failed(exc: Exception) -> None:
+    logger.warning(
+        "graph: this week's mastery events could not be read (%s); "
+        "week_delta is left off the nodes", type(exc).__name__,
+    )
+
+
+def _week_deltas(nodes: list, event_rows: list, cutoff: datetime) -> dict[str, float] | None:
+    """Each node's mastery change since ``cutoff``, over EVERY event of the
+    window. Summed from ``event_rows`` when that read is complete; otherwise
+    from a paged read bounded to the window. ``None`` when that read fails:
+    the truncated history would under-count, so the caller sends no number."""
+    if _history_is_complete(event_rows):
+        return _sum_week_deltas(event_rows, cutoff)
+    try:
+        rows = list(page_all(
+            table("node_mastery_events"), _WEEK_EVENTS_SELECT,
+            filters=_week_events_filters(nodes, cutoff), order=_WEEK_EVENTS_ORDER,
+        ))
+    except Exception as exc:
+        _week_read_failed(exc)
+        return None
+    return _sum_week_deltas(rows, cutoff)
+
+
+async def _aweek_deltas(
+    nodes: list, event_rows: list, cutoff: datetime,
+) -> dict[str, float] | None:
+    """Async twin of :func:`_week_deltas` (#117)."""
+    if _history_is_complete(event_rows):
+        return _sum_week_deltas(event_rows, cutoff)
+    try:
+        rows = [row async for row in apage_all(
+            table("node_mastery_events"), _WEEK_EVENTS_SELECT,
+            filters=_week_events_filters(nodes, cutoff), order=_WEEK_EVENTS_ORDER,
+        )]
+    except Exception as exc:
+        _week_read_failed(exc)
+        return None
+    return _sum_week_deltas(rows, cutoff)
+
+
 #: The STORED streak_count is only reset on the student's next activity, so a
 #: lapsed streak would still display; effective_streak reads it as of today
 #: (#767).
@@ -260,9 +346,11 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     )
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
     event_rows = _node_events(nodes)
+    week_deltas = _week_deltas(nodes, event_rows, _week_cutoff())
     user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
     return _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+        week_deltas=week_deltas,
     )
 
 
@@ -287,8 +375,10 @@ async def aget_graph(user_id: str, semester: str | None = None) -> dict:
     )
     nodes = _scope_nodes(nodes_raw, allowed_course_ids)
     event_rows = await _anode_events(nodes)
+    week_deltas = await _aweek_deltas(nodes, event_rows, _week_cutoff())
     return _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+        week_deltas=week_deltas,
     )
 
 
@@ -300,8 +390,16 @@ def _assemble_graph(
     edges_raw: list,
     event_rows: list,
     user_rows: list | None,
+    *,
+    week_deltas: dict[str, float] | None,
 ) -> dict:
-    """The pure half of :func:`get_graph` / :func:`aget_graph`: no I/O."""
+    """The pure half of :func:`get_graph` / :func:`aget_graph`: no I/O.
+
+    ``week_deltas`` (:func:`_week_deltas`) becomes each concept node's
+    ``week_delta``: its summed mastery deltas over the last
+    ``WEEK_DELTA_DAYS`` days, 0.0 when it had none. ``None`` (the window
+    could not be read) leaves the key off, and the client estimates from
+    ``mastery_events``."""
     if allowed_course_ids is not None:
         enrolled_courses = [
             c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
@@ -329,6 +427,9 @@ def _assemble_graph(
         events = events_by_node.get(n["id"], [])
         n["learning_velocity"] = _compute_velocity(events)
         n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
+        if week_deltas is not None:
+            # Summed over the whole week, not the five kept above.
+            n["week_delta"] = round(week_deltas.get(n["id"], 0.0), 4) + 0.0  # never -0.0
 
     mastered   = sum(1 for n in nodes if n["mastery_tier"] == "mastered")
     learning   = sum(1 for n in nodes if n["mastery_tier"] == "learning")

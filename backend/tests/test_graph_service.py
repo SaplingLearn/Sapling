@@ -336,6 +336,159 @@ class TestGetGraph:
         assert node["mastery_events"] == []
 
 
+# ── get_graph: week_delta (the Study hub's "+N% this week") ──────────────────
+
+def _days_ago_iso(days: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _event(node_id: str, delta: float, days_ago: float) -> dict:
+    return {"node_id": node_id, "delta": delta, "reason": "r",
+            "created_at": _days_ago_iso(days_ago)}
+
+
+class TestWeekDelta:
+    """Each concept node carries ``week_delta``: its summed mastery deltas of
+    the last 7 days, over EVERY event of the week. ``mastery_events`` keeps
+    only the node's last five, so summing those under-counts a busy week."""
+
+    NODES = [
+        {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+         "mastery_score": 0.5, "times_studied": 9, "user_id": "u1", "course_id": "c1"},
+        {"id": "n2", "concept_name": "Sets", "mastery_tier": "unexplored",
+         "mastery_score": 0.0, "times_studied": 0, "user_id": "u1", "course_id": "c1"},
+    ]
+
+    def _tables(self, events: list):
+        import copy
+        return _cached_mock_table({
+            "users": [{"streak_count": 1}],
+            "graph_nodes": copy.deepcopy(self.NODES),
+            "graph_edges": [],
+            "node_mastery_events": events,
+            "enrollments": [_enrollment_row("c1", "CS", "Intro CS")],
+        })
+
+    def _graph(self, events: list) -> dict:
+        factory, _ = self._tables(events)
+        with patch("services.graph_service.table", side_effect=factory):
+            return get_graph("u1")
+
+    @staticmethod
+    def _node(graph: dict, node_id: str) -> dict:
+        return next(n for n in graph["nodes"] if n["id"] == node_id)
+
+    def test_sums_every_event_of_the_week_not_the_last_five(self):
+        # Oldest first, as the read orders them: one from before the window,
+        # then eight inside it.
+        events = [_event("n1", 0.30, 10)] + [
+            _event("n1", 0.05, d) for d in (6, 5, 4, 3, 2, 1, 0.5, 0)]
+        n1 = self._node(self._graph(events), "n1")
+        assert n1["week_delta"] == pytest.approx(0.40)
+        # The trimmed tail the client used to sum holds five of the eight.
+        assert len(n1["mastery_events"]) == 5
+        assert sum(e["delta"] for e in n1["mastery_events"]) == pytest.approx(0.25)
+
+    def test_is_zero_for_a_node_with_no_event_this_week(self):
+        graph = self._graph([_event("n1", 0.2, 30), _event("n1", 0.2, 8)])
+        assert self._node(graph, "n1")["week_delta"] == 0.0
+        assert self._node(graph, "n2")["week_delta"] == 0.0  # no events at all
+        assert isinstance(self._node(graph, "n1")["week_delta"], float)
+
+    def test_the_window_is_a_rolling_seven_days(self):
+        graph = self._graph([_event("n1", 0.5, 7.01), _event("n1", 0.1, 6.99)])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.1)
+
+    def test_is_the_net_change_and_never_negative_zero(self):
+        graph = self._graph([_event("n1", 0.2, 3), _event("n1", -0.05, 2),
+                             _event("n2", 0.1, 2), _event("n2", -0.1, 1)])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.15)
+        assert str(self._node(graph, "n2")["week_delta"]) == "0.0"
+
+    def test_reads_naive_and_z_suffixed_timestamps_as_utc(self):
+        now = datetime.now(timezone.utc)
+        graph = self._graph([
+            {"node_id": "n1", "delta": 0.1,
+             "created_at": now.replace(tzinfo=None).isoformat()},
+            {"node_id": "n1", "delta": 0.2,
+             "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")},
+            {"node_id": "n1", "delta": 9.0, "created_at": "not a timestamp"},
+        ])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.3)
+
+    def test_a_subject_root_carries_no_week_delta(self):
+        root = self._node(self._graph([_event("n1", 0.2, 1)]), "subject_root__c1")
+        assert "week_delta" not in root
+
+    def test_a_complete_history_costs_no_second_read(self):
+        factory, mocks = self._tables([_event("n1", 0.2, 1)])
+        with patch("services.graph_service.table", side_effect=factory):
+            get_graph("u1")
+        mocks["node_mastery_events"].select.assert_called_once()
+        mocks["node_mastery_events"].select_with_count.assert_not_called()
+
+    # PostgREST caps the unpaged history read at MAX_ROWS, oldest first: a
+    # full page means this week's events were cut off.
+
+    def _capped(self, week_pages: list):
+        """History capped at MAX_ROWS old rows; the window read answers
+        ``week_pages`` (one (rows, total) per page, or an exception)."""
+        capped = [_event("n1", 0.001, 400)] * gs.MAX_ROWS
+        factory, _ = self._tables(capped)
+        events_tbl = factory("node_mastery_events")
+        events_tbl.select_with_count.side_effect = week_pages
+        return factory, events_tbl
+
+    def test_a_capped_history_reads_the_week_on_its_own(self):
+        factory, events_tbl = self._capped(
+            [([_event("n1", 0.07, 2), _event("n2", 0.03, 1)], 2)])
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.07)
+        assert self._node(graph, "n2")["week_delta"] == pytest.approx(0.03)
+
+        kwargs = events_tbl.select_with_count.call_args.kwargs
+        assert kwargs["filters"]["node_id"].startswith("in.(")
+        assert set(kwargs["filters"]["node_id"][4:-1].split(",")) == {"n1", "n2"}
+        bound = datetime.fromisoformat(kwargs["filters"]["created_at"].removeprefix("gte."))
+        age = datetime.now(timezone.utc) - bound
+        assert timedelta(days=7) <= age < timedelta(days=7, minutes=1)
+        # Offset paging needs a total order (db.connection.page_all).
+        assert kwargs["order"] == "created_at.asc,id.asc"
+
+    def test_a_capped_history_pages_a_week_longer_than_one_response(self):
+        page_one = [_event("n1", 0.001, 3)] * gs.MAX_ROWS
+        factory, events_tbl = self._capped([(page_one, 0), ([_event("n1", 0.5, 1)], 0)])
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(1.5)
+        assert events_tbl.select_with_count.call_count == 2
+        assert events_tbl.select_with_count.call_args.kwargs["offset"] == gs.MAX_ROWS
+
+    def test_a_failed_week_read_sends_no_number_rather_than_a_wrong_one(self):
+        factory, _ = self._capped([RuntimeError("PostgREST down")])
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        n1 = self._node(graph, "n1")
+        assert "week_delta" not in n1  # the client falls back to mastery_events
+        assert len(n1["mastery_events"]) == 5  # the rest of the node is intact
+
+    def test_the_async_twin_answers_the_same_capped_history(self):
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        answers = []
+        for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
+            factory, events_tbl = self._capped(
+                [([_event("n1", 0.07, 2), _event("n1", 0.02, 1)], 2)])
+            with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+                answers.append({n["id"]: n.get("week_delta") for n in run()["nodes"]})
+            events_tbl.select_with_count.assert_called_once()
+        assert answers[0] == answers[1]
+        assert answers[0]["n1"] == pytest.approx(0.09) and answers[0]["n2"] == 0.0
+
+
 # ── get_courses ───────────────────────────────────────────────────────────────
 
 class TestGetCourses:

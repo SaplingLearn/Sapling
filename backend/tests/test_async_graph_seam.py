@@ -78,6 +78,29 @@ def test_get_graph(wire, monkeypatch, async_mode):  # noqa: F811
 
 
 @pytest.mark.parametrize("async_mode", ["off", "on"])
+@pytest.mark.parametrize("history_rows", [3, 1000])
+def test_get_graph_week_delta(wire, monkeypatch, async_mode, history_rows):  # noqa: F811
+    """`week_delta` on the wire, from a complete history (one events read) and
+    from a capped one (PostgREST max_rows: the week is read on its own, paged,
+    on the same seam as every other read of the handler)."""
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setenv("SAPLING_FLAG_ASYNC_DB_CLIENT", async_mode)
+    _seed(wire)
+    now = datetime.now(timezone.utc)
+    old = {"node_id": "n1", "delta": 0.5, "created_at": (now - timedelta(days=30)).isoformat()}
+    recent = {"node_id": "n1", "delta": 0.04, "created_at": (now - timedelta(days=1)).isoformat()}
+    wire.rows[("GET", "node_mastery_events")] = [old] * (history_rows - 3) + [recent] * 3
+    r = client.get("/api/graph/user_andres")
+    assert r.status_code == 200, r.text
+    nodes = {n["id"]: n for n in r.json()["nodes"]}
+    assert nodes["n1"]["week_delta"] == pytest.approx(0.12)
+    assert "week_delta" not in nodes["subject_root__c1"]
+    sent = wire.native if async_mode == "on" else [(m, n) for m, n, _ in wire.calls]
+    assert sent.count(("GET", "node_mastery_events")) == (2 if history_rows == 1000 else 1)
+
+
+@pytest.mark.parametrize("async_mode", ["off", "on"])
 def test_get_graph_semester_lookup_runs_off_the_loop(wire, monkeypatch, async_mode):  # noqa: F811
     monkeypatch.setenv("SAPLING_FLAG_ASYNC_DB_CLIENT", async_mode)
     _seed(wire)

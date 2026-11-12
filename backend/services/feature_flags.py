@@ -754,14 +754,24 @@ def require_flag(key: str):
 #: on the API (``NAV_FEATURES_NOT_ENFORCED`` says why).
 NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
     "hide_quiz": {
-        # Tree shows the student's recent attempts.
+        # Tree and the Study hub show the student's recent attempts.
         "/api/quiz": (("GET", r"/attempts"),),
     },
     # /api/study is the Study hub's own (daily goal + minutes).
     "hide_study": {"/api/flashcards": (), "/api/study-guide": (), "/api/study": ()},
     "hide_calendar": {
-        # The dashboard's upcoming-deadlines card.
-        "/api/calendar": (("GET", r"/upcoming/[^/]+"),),
+        "/api/calendar": (
+            # The dashboard's upcoming-deadlines card.
+            ("GET", r"/upcoming/[^/]+"),
+            # The Study hub's exam tabs and deadlines, and the Flashcards
+            # page's exam tags.
+            ("GET", r"/all/[^/]+"),
+            # The Study hub's "+ Add Exam or Deadline".
+            ("POST", r"/save"),
+            # The Study hub's Exams and Deadlines editor (edit, remove).
+            ("PATCH", r"/assignments/[^/]+"),
+            ("DELETE", r"/assignments/[^/]+"),
+        ),
     },
     "hide_social": {
         # Friends are on every profile page (ProfileView), not just Social.

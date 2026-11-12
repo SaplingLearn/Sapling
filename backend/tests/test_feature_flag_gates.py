@@ -2,6 +2,7 @@
 cache's single-flight + bounded maps."""
 from __future__ import annotations
 
+import re
 import threading
 import time
 from unittest.mock import patch
@@ -61,6 +62,74 @@ def test_a_hidden_feature_404s_on_its_api(monkeypatch, flag, path, exempt):
 def test_a_visible_feature_is_not_gated(monkeypatch, flag, path, exempt):
     monkeypatch.setenv(f"SAPLING_FLAG_{flag.upper()}", "off")
     assert not _gated(client.get(path))
+
+
+#: (flag, method, path): a call ANOTHER visible surface makes on a gated
+#: router, so it must keep working while the flag hides the feature's page.
+EXEMPT_CALLS = [
+    # Dashboard: upcoming-deadlines card.
+    ("hide_calendar", "GET", "/api/calendar/upcoming/u1"),
+    # Study hub exam tabs + deadlines; Flashcards page exam tags.
+    ("hide_calendar", "GET", "/api/calendar/all/u1"),
+    # Study hub "+ Add Exam or Deadline".
+    ("hide_calendar", "POST", "/api/calendar/save"),
+    # Study hub Exams and Deadlines editor.
+    ("hide_calendar", "PATCH", "/api/calendar/assignments/a1"),
+    ("hide_calendar", "DELETE", "/api/calendar/assignments/a1?user_id=u1"),
+    # Tree + Study hub: recent attempts.
+    ("hide_quiz", "GET", "/api/quiz/attempts?user_id=u1"),
+]
+
+#: (flag, method, path): the rest of an exempted router stays hidden. An
+#: exemption names one method on one path, never the router.
+STILL_GATED_CALLS = [
+    ("hide_calendar", "GET", "/api/calendar/status/u1"),
+    ("hide_calendar", "GET", "/api/calendar/auth-url?user_id=u1"),
+    ("hide_calendar", "GET", "/api/calendar/import/u1"),
+    ("hide_calendar", "POST", "/api/calendar/extract"),
+    ("hide_calendar", "POST", "/api/calendar/suggest-study-blocks"),
+    ("hide_calendar", "POST", "/api/calendar/sync"),
+    ("hide_calendar", "POST", "/api/calendar/export"),
+    ("hide_calendar", "DELETE", "/api/calendar/disconnect/u1"),
+    # The hub hides its own Quiz buttons under hide_quiz: no exemption.
+    ("hide_quiz", "POST", "/api/quiz/generate"),
+    ("hide_quiz", "GET", "/api/quiz/attempts/a1"),
+]
+
+
+def _call(method: str, path: str):
+    body = {} if method in ("POST", "PATCH") else None
+    return client.request(method, path, json=body)
+
+
+@pytest.mark.parametrize("flag,method,path", EXEMPT_CALLS)
+def test_a_cross_feature_call_survives_the_hidden_feature(monkeypatch, flag, method, path):
+    monkeypatch.setenv(f"SAPLING_FLAG_{flag.upper()}", "on")
+    r = _call(method, path)
+    assert not _gated(r), f"{method} {path} is used by another surface"
+    assert r.status_code != 405, f"{method} {path} is not a route"
+
+
+@pytest.mark.parametrize("flag,method,path", STILL_GATED_CALLS)
+def test_the_rest_of_an_exempted_router_stays_hidden(monkeypatch, flag, method, path):
+    monkeypatch.setenv(f"SAPLING_FLAG_{flag.upper()}", "on")
+    assert _gated(_call(method, path)), f"{method} {path} served while {flag} hides it"
+    monkeypatch.setenv(f"SAPLING_FLAG_{flag.upper()}", "off")
+    assert not _gated(_call(method, path)), f"{method} {path} is not a route"
+
+
+def test_every_exemption_has_a_probe():
+    """A new NAV_FEATURE_API exemption needs a row in EXEMPT_CALLS (or, for
+    the routers GATED covers with a GET, its exempt column)."""
+    probes = [(f, m, p.split("?")[0]) for f, m, p in EXEMPT_CALLS]
+    probes += [(f, "GET", e.split("?")[0]) for f, _, e in GATED if e]
+    for flag, routers in ff.NAV_FEATURE_API.items():
+        for prefix, exemptions in routers.items():
+            for method, pattern in exemptions:
+                rx = re.compile(re.escape(prefix) + pattern + r"/?$")
+                assert any(
+                    f == flag and method in ("*", m) and rx.match(p) for f, m, p in probes
+                ), f"no probe for {flag}: {method} {prefix}{pattern}"
 
 
 def test_admin_and_auth_routes_are_never_gated(monkeypatch):
