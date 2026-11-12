@@ -53,16 +53,22 @@ async def acreate_guide(user_id: str, request: GuideRequest) -> str:
     scope = await scopes.ascope_of(user_id, offering_id, request.scope_kind, request.scope_id)
     material_ids = await _aclass_material_ids(user_id, offering_id, request.material_ids)
     title = await _atitle(scope, request.course_id)
-    await limits.acharge(user_id, action="create", limit=limits.STUDY_GUIDE_CREATE_LIMIT)
-    return await store.ainsert_guide(
-        user_id=user_id,
-        offering_id=offering_id,
-        # The kind the row reads as now, which is not always the one sent.
-        scope_kind=scope.kind,
-        exam_id=scope.id,
-        goal=request.goal,
-        depth=request.depth,
-        use_history=request.use_history,
-        material_ids=material_ids,
-        content=GuideContent(title=title[:_TITLE_MAX], scope_label=scope.title[:_LABEL_MAX]),
-    )
+    content = GuideContent(title=title[:_TITLE_MAX], scope_label=scope.title[:_LABEL_MAX])
+    charge = await limits.acharge(user_id, action="create", limit=limits.STUDY_GUIDE_CREATE_LIMIT)
+    try:
+        return await store.ainsert_guide(
+            user_id=user_id,
+            offering_id=offering_id,
+            # The kind the row reads as now, which is not always the one sent.
+            scope_kind=scope.kind,
+            exam_id=scope.id,
+            goal=request.goal,
+            depth=request.depth,
+            use_history=request.use_history,
+            material_ids=material_ids,
+            content=content,
+        )
+    except Exception:
+        # No guide was made, so none is counted.
+        charge.refund()
+        raise

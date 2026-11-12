@@ -28,7 +28,7 @@ from models.study_guide import (
 from services import request_limits
 from services.encryption import encrypt_json
 from services.llm_budget import LLMBudgetExceeded
-from services.study_guides import blocks, limits, prompts, writer
+from services.study_guides import blocks, limits, prompts, store, writer
 from services.study_guides.errors import (
     GuideBusy,
     GuideGenerationFailed,
@@ -350,6 +350,80 @@ def test_a_rewrite_that_loses_the_claim_writes_nothing(world, monkeypatch):  # n
 
     assert world.content() == before
     assert world.stored()["generating_at"] == taken_over
+
+
+def _refunds(monkeypatch) -> list[str]:
+    """Every refund asked of the limiter from here on, by key."""
+    asked: list[str] = []
+    refund = limits.refund_rate_limit
+
+    def counted(key, slot):
+        asked.append(key)
+        refund(key, slot)
+
+    monkeypatch.setattr(limits, "refund_rate_limit", counted)
+    return asked
+
+
+def test_a_block_that_went_away_before_the_claim_is_not_counted(world, monkeypatch):  # noqa: F811
+    """Another request rewrote the guide between this one's first read and
+    its claim. No model is asked, so the hourly limit is not spent."""
+    _guide(world)
+    rewriter = Rewriter(monkeypatch, KEY_TERMS)
+    refunds = _refunds(monkeypatch)
+    claim = store.aclaim_generation
+
+    async def claimed_after_a_rewrite(user_id, guide_id):
+        gone = _content()
+        gone.sections[0].items.remove(KEY_TERMS)
+        world.stored()["content"] = encrypt_json(gone.model_dump(mode="json"))
+        return await claim(user_id, guide_id)
+
+    monkeypatch.setattr(store, "aclaim_generation", claimed_after_a_rewrite)
+
+    with pytest.raises(GuideNotFound):
+        _regenerate("s1-i2")
+
+    assert rewriter.calls == [] and _charges() == 0
+    assert refunds == [f"study-guide-block:{ME}"]
+    assert world.stored()["generating_at"] is None
+
+
+def test_a_guide_with_no_readable_material_is_not_counted(world, monkeypatch):  # noqa: F811
+    before = _guide(world)
+    world.documents.clear()
+    rewriter = Rewriter(monkeypatch, KEY_TERMS)
+    refunds = _refunds(monkeypatch)
+
+    with pytest.raises(GuideInvalid) as invalid:
+        _regenerate("s1-i2")
+
+    assert invalid.value.detail == "None of this guide's materials can be read."
+    assert rewriter.calls == [] and _charges() == 0
+    assert refunds == [f"study-guide-block:{ME}"]
+    assert world.content() == before and world.stored()["generating_at"] is None
+
+
+@pytest.mark.parametrize("reply", [None, RuntimeError("boom")], ids=["no valid block", "the model failed"])
+def test_a_rewrite_the_model_was_asked_for_is_counted_whatever_came_back(world, monkeypatch, reply):  # noqa: F811
+    _guide(world)
+    Rewriter(monkeypatch, reply)
+    refunds = _refunds(monkeypatch)
+
+    with pytest.raises((GuideGenerationFailed, RuntimeError)):
+        _regenerate("s1-i2")
+
+    assert _charges() == 1 and refunds == []
+
+
+def test_a_busy_guide_gives_its_charge_back_once(world, monkeypatch):  # noqa: F811
+    _guide(world, generating_at=datetime.now(timezone.utc).isoformat())
+    refunds = _refunds(monkeypatch)
+
+    with pytest.raises(GuideBusy):
+        _regenerate("s1-i2")
+
+    assert refunds == [f"study-guide-block:{ME}"] and _charges() == 0
 
 
 def test_the_hourly_limit_is_its_own(world, monkeypatch):  # noqa: F811

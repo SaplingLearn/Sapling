@@ -20,7 +20,8 @@ from services.study_guides.errors import (
     GuideNotFound,
 )
 from services.study_guides.generation import arelease_guide
-from services.study_guides.inputs import aload_inputs, amaterial_ids, facts_for
+from services.study_guides.inputs import Inputs, aload_inputs, amaterial_ids, facts_for
+from services.study_guides.limits import Charge
 from services.study_guides.store import GuideRow
 
 BLOCK_NOT_FOUND_DETAIL = "Block not found."
@@ -49,10 +50,24 @@ def _with_block(content: GuideContent, section: Section, block: Block) -> GuideC
     return content.model_copy(update={"sections": sections})
 
 
-async def _arewritten(guide: GuideRow, section: Section, block: Block) -> Block:
+async def _aread(
+    user_id: str, guide_id: str, block_id: str, charge: Charge,
+) -> tuple[GuideRow, Section, Block, Inputs]:
+    """The guide as it is under the claim (nothing else writes its content
+    now), the block in it and what its rewrite reads. No model is asked
+    here, so a request that ends here gives its charge back."""
+    try:
+        guide = await store.aload_guide(user_id, guide_id)
+        section, block = _find(guide.content, block_id)
+        return guide, section, block, await aload_inputs(guide, await amaterial_ids(guide))
+    except Exception:
+        charge.refund()
+        raise
+
+
+async def _arewritten(guide: GuideRow, section: Section, block: Block, inputs: Inputs) -> Block:
     """A new, checked version of `block`. `GuideGenerationFailed` when the
     rewrite is not a valid block of the same type, or does not pass the check."""
-    inputs = await aload_inputs(guide, await amaterial_ids(guide))
     rewritten = await writer.arewrite_block(
         inputs.brief, guide.content, section,
         block_id=block.id,
@@ -74,7 +89,10 @@ async def aregenerate_block(user_id: str, guide_id: str, block_id: str) -> Block
     `GuideInvalid` (a check question, a guide that cannot be read or has no
     readable material), `GuideRateLimited`, `GuideBusy` while the guide is
     being written, and `GuideGenerationFailed` when no valid new version came
-    back. A refusal by the daily LLM budget is raised as itself."""
+    back. A refusal by the daily LLM budget is raised as itself.
+
+    The hourly limit counts the rewrites a model was asked for: a request
+    that is refused before that is not counted."""
     guide = await store.aload_guide(user_id, guide_id)
     if guide.unreadable:
         raise GuideInvalid(store.GUIDE_UNREADABLE_DETAIL)
@@ -85,10 +103,8 @@ async def aregenerate_block(user_id: str, guide_id: str, block_id: str) -> Block
         charge.refund()
         raise GuideBusy(BUSY_DETAIL)
     try:
-        # Read again under the claim: nothing else writes the content now.
-        guide = await store.aload_guide(user_id, guide_id)
-        section, block = _find(guide.content, block_id)
-        rewritten = await _arewritten(guide, section, block)
+        guide, section, block, inputs = await _aread(user_id, guide_id, block_id, charge)
+        rewritten = await _arewritten(guide, section, block, inputs)
         saved = await store.asave_content(
             guide, _with_block(guide.content, section, rewritten), claim=claim,
         )

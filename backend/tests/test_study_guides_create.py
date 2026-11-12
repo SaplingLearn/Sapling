@@ -181,6 +181,33 @@ def test_creating_guides_has_an_hourly_limit_of_its_own(world, monkeypatch):
     assert len(request_limits._rate_state[f"study-guide-create:{ME}"]) == 2
 
 
+def test_a_guide_that_could_not_be_inserted_is_not_counted(world, monkeypatch):
+    seen, _ = world
+    refunds: list[str] = []
+    refund = limits.refund_rate_limit
+
+    def counted(key, slot):
+        refunds.append(key)
+        refund(key, slot)
+
+    async def failing_insert(**row):
+        raise RuntimeError("the database is away")
+
+    monkeypatch.setattr(limits, "refund_rate_limit", counted)
+    key = f"study-guide-create:{ME}"
+
+    # A guide that is made is counted, and nothing is given back for it.
+    asyncio.run(create.acreate_guide(ME, _request()))
+    assert len(request_limits._rate_state[key]) == 1 and refunds == []
+
+    monkeypatch.setattr(create.store, "ainsert_guide", failing_insert)
+    with pytest.raises(RuntimeError, match="the database is away"):
+        asyncio.run(create.acreate_guide(ME, _request()))
+
+    assert len(request_limits._rate_state[key]) == 1 and refunds == [key]
+    assert len(seen["inserted"]) == 1
+
+
 def test_a_class_the_student_is_not_in_is_not_found(world):
     seen, _ = world
     with pytest.raises(GuideNotFound):
