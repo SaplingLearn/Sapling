@@ -15,6 +15,7 @@
  * review clears both.
  */
 import React from "react";
+import { editUrlInPlace } from "@/lib/toolHrefs";
 import type { Card } from "../home/flashcardsModel";
 import { TALLY_ORDER, type Rated, type Ratings } from "./reviewModel";
 
@@ -123,7 +124,8 @@ export function hasParam(name: string): boolean {
  * navigation. (The builder keeps itself the same way: home/buildSession.ts.)
  * Putting it on is a NEW history entry, so the browser's Back leaves the
  * review (or the builder) for the screen under it; taking it off rewrites the
- * entry it is on.
+ * entry it is on. Either way the router is told (`editUrlInPlace`), or it
+ * would write its own, older URL back over the marker.
  */
 export function markParam(name: string, on: boolean): void {
   if (typeof window === "undefined") return;
@@ -131,10 +133,10 @@ export function markParam(name: string, on: boolean): void {
   if (url.searchParams.has(name) === on) return;
   if (on) {
     url.searchParams.set(name, "1");
-    window.history.pushState(window.history.state, "", url.toString());
+    editUrlInPlace(url, "push");
   } else {
     url.searchParams.delete(name);
-    window.history.replaceState(window.history.state, "", url.toString());
+    editUrlInPlace(url);
   }
 }
 

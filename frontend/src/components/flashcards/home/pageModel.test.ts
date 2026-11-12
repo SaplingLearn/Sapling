@@ -29,22 +29,25 @@ const review = (from: OpenReview["from"]): OpenReview => ({ deck: [], title: "Mi
 describe("parseArrival", () => {
   it("reads the course, the concepts and the markers", () => {
     const params = new URLSearchParams("course=c1&concepts=A| B ||C&start=1&review=1&build=1");
-    expect(parseArrival(params, true)).toEqual({ courseId: "c1", concepts: ["A", "B", "C"], start: true, review: true, build: true });
+    expect(parseArrival(params)).toEqual({ courseId: "c1", concepts: ["A", "B", "C"], start: true, review: true, build: true });
   });
 
   it("reads a concept name that holds the separator, as the hub writes it", () => {
     const href = flashcardsHref("c1", ["Read | Write", "AT&T, 100%"]);
     const params = new URL(href, "http://x").searchParams;
-    expect(parseArrival(params, false).concepts).toEqual(["Read | Write", "AT&T, 100%"]);
+    expect(parseArrival(params).concepts).toEqual(["Read | Write", "AT&T, 100%"]);
   });
 
   it("a bare URL asks for nothing", () => {
-    expect(parseArrival(new URLSearchParams(""), true)).toEqual({ courseId: "", concepts: [], start: false, review: false, build: false });
+    expect(parseArrival(new URLSearchParams(""))).toEqual({ courseId: "", concepts: [], start: false, review: false, build: false });
   });
 
-  it("start counts only while the live URL still says so", () => {
-    expect(parseArrival(new URLSearchParams("start=1"), false).start).toBe(false);
-    expect(parseArrival(new URLSearchParams("start=yes"), true).start).toBe(false);
+  it("start is what the given params say, and only `start=1` says it", () => {
+    // The params are the router's; the address bar is not consulted (on a
+    // client-side navigation it is still the page being left).
+    expect(parseArrival(new URLSearchParams("start=1")).start).toBe(true);
+    expect(parseArrival(new URLSearchParams("start=yes")).start).toBe(false);
+    expect(parseArrival(new URLSearchParams("concepts=A")).start).toBe(false);
   });
 });
 

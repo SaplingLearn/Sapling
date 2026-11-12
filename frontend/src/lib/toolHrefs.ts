@@ -93,12 +93,42 @@ export function flashcardsHref(
   return p.size ? `/flashcards?${p.toString()}` : "/flashcards";
 }
 
-/** The live URL still asks to start. A tool reads this rather than only the
- *  params it parsed on arrival: closing a quiz (or a deck) remounts its home,
- *  and a stale `start` there would start it again, so it could never be left. */
+/**
+ * The live URL still asks to start. A tool reads this rather than only the
+ * params it parsed on arrival: closing a quiz remounts its home, and a stale
+ * `start` there would start it again, so it could never be left.
+ *
+ * Only for an EFFECT (or an event handler), never for a render. On a
+ * client-side navigation the page renders BEFORE the router writes its URL to
+ * the address bar, so during that first render the live URL is still the page
+ * being left and says nothing about this one: Flashcards read it there and
+ * took the hub's `start=1` link for one that did not ask to start. A render
+ * reads the router's params (`useSearchParams`), which `consumeStartParam`
+ * keeps true.
+ */
 export function startStillRequested(): boolean {
   if (typeof window === "undefined") return false;
   return new URL(window.location.href).searchParams.get(START_PARAM) === "1";
+}
+
+/**
+ * Change the current URL's query in place, with no navigation, and tell the
+ * router: a NEW history entry when `push`, else the current one rewritten.
+ *
+ * The state argument must be null. Next patches `history.pushState` /
+ * `replaceState` so that a URL edited this way reaches `useSearchParams`, but
+ * it skips its own hook when handed the state it wrote itself (`__NA`), and
+ * `window.history.state` is exactly that: the address bar changes while the
+ * router keeps the old URL. Two things then go wrong. A page that renders
+ * again from the router's params sees a `start` that was already acted on;
+ * and the router writes ITS url back over the address bar on its next state
+ * change, undoing the edit. Nothing is lost by passing null: Next copies its
+ * own state onto the entry. (lib/quiz/useQuizSession.ts `goTo` documents the
+ * same trap.)
+ */
+export function editUrlInPlace(url: URL, how: "push" | "replace" = "replace"): void {
+  if (how === "push") window.history.pushState(null, "", url.toString());
+  else window.history.replaceState(null, "", url.toString());
 }
 
 /** Drop `START_PARAM` from the current URL without a navigation. */
@@ -107,7 +137,7 @@ export function consumeStartParam(): void {
   const url = new URL(window.location.href);
   if (!url.searchParams.has(START_PARAM)) return;
   url.searchParams.delete(START_PARAM);
-  window.history.replaceState(window.history.state, "", url.toString());
+  editUrlInPlace(url);
 }
 
 /** Pages that are Study tools rather than destinations of their own: the nav

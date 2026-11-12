@@ -11,8 +11,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, cleanup, waitFor, within, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+// The router's params. They are the address bar's, except while a client-side
+// navigation is landing: the router renders the page for the new URL first and
+// writes that URL to the address bar when the render commits. `router.search`
+// holds the two apart for the one test of that moment.
+const router = vi.hoisted(() => ({ search: null as string | null }));
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(window.location.search),
+  useSearchParams: () => new URLSearchParams(router.search ?? window.location.search),
 }));
 
 vi.mock("@/context/UserContext", () => ({
@@ -89,6 +94,7 @@ import {
 beforeEach(() => {
   resetMocks();
   flagState.flags = {};
+  router.search = null;
 });
 
 afterEach(() => {
@@ -909,6 +915,26 @@ describe("Flashcards deep links from the Study hub", () => {
     await userEvent.click(screen.getByRole("button", { name: "All sets" }));
     expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: /^Variables/ })).toBeNull();
+  });
+
+  it("start=1 followed from the hub starts too: the page first renders while the address bar is still the hub's", async () => {
+    // How the hub's "Flashcards" / "Make Flashcards" arrive: a client-side
+    // navigation. The page read `start` off the address bar during this first
+    // render, found the hub's URL there, and opened the builder instead.
+    window.history.replaceState(null, "", "/study?course=c1");
+    router.search = "course=c1&concepts=Variables|Recursion&start=1";
+    renderPage();
+    expect(screen.queryByRole("checkbox", { name: /^Variables/ })).toBeNull();
+    // The render has committed: the router writes its URL to the address bar.
+    arriveAt(router.search);
+    router.search = null;
+
+    expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
+    expect(screen.getByTestId("flashcards-deck-name").textContent).toBe("2 concepts");
+    expect(mocks.generate).not.toHaveBeenCalled();
+    const left = new URLSearchParams(window.location.search);
+    expect(left.get("start")).toBeNull();
+    expect(left.get("concepts")).toBe("Variables|Recursion");
   });
 
   it("start=1 on a concept with no cards makes them first, then reviews", async () => {

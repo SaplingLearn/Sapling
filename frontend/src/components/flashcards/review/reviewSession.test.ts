@@ -3,7 +3,7 @@
  * A review kept across a reload: what is stored, what is read back, and what
  * is refused. (The page's side of it is in home/FlashcardsHome.test.tsx.)
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Card } from "../home/flashcardsModel";
 import {
   clearSession,
@@ -62,5 +62,31 @@ describe("a kept review", () => {
     expect(window.location.search).toBe("?course=c1&review=1");
     markReview(false);
     expect(window.location.search).toBe("?course=c1");
+  });
+
+  it("tells the router both ways: the state it passes is null, never the entry's own", () => {
+    // A real App Router entry. Next skips its `useSearchParams` sync for a
+    // state carrying `__NA`, so handing it `window.history.state` would leave
+    // the router on the URL without the marker, and it writes that URL back
+    // over the address bar on its next state change (the marker is lost and a
+    // reload no longer comes back to the review).
+    window.history.replaceState({ __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ["flashcards"] }, "", "/flashcards?course=c1");
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    try {
+      markReview(true);
+      // On: a new entry, so the browser's Back leaves the review.
+      expect(push.mock.calls.map(call => call[0])).toEqual([null]);
+      expect(replace).not.toHaveBeenCalled();
+
+      markReview(false);
+      // Off: the entry it is on, rewritten.
+      expect(replace.mock.calls.map(call => call[0])).toEqual([null]);
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(window.location.search).toBe("?course=c1");
+    } finally {
+      push.mockRestore();
+      replace.mockRestore();
+    }
   });
 });

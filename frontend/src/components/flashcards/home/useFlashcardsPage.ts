@@ -18,7 +18,7 @@ import React from "react";
 import { useSearchParams } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { getCourses, type EnrolledCourse } from "@/lib/api";
-import { consumeStartParam, startStillRequested } from "@/lib/toolHrefs";
+import { consumeStartParam } from "@/lib/toolHrefs";
 import { courseInTerm, useActiveSemester } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useReviewSession } from "../review/reviewSession";
@@ -113,10 +113,11 @@ export function useTermCourses(): TermCourses {
 
 // ── the URL, and the course ──────────────────────────────────────────────────
 
-/** What the URL asked for on arrival. Read once: it seeds the page. */
+/** What the URL asked for on arrival. Read once: it seeds the page. From the
+ *  router's params, never the address bar (see `parseArrival`). */
 function useArrival(): Arrival {
   const searchParams = useSearchParams();
-  const [arrival] = React.useState(() => parseArrival(searchParams, startStillRequested()));
+  const [arrival] = React.useState(() => parseArrival(searchParams));
   return arrival;
 }
 

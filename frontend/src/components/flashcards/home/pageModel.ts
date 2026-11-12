@@ -18,7 +18,7 @@ export interface Arrival {
   /** "" when the link names no course. */
   courseId: string;
   concepts: string[];
-  /** `start=1`, and the live URL still says so (see toolHrefs). */
+  /** `start=1`: go straight into the review of `concepts` (see toolHrefs). */
   start: boolean;
   /** A reload inside a review (reviewSession.ts). */
   review: boolean;
@@ -26,11 +26,22 @@ export interface Arrival {
   build: boolean;
 }
 
-export function parseArrival(params: Pick<URLSearchParams, "get">, startStillRequested: boolean): Arrival {
+/**
+ * `params` are the ROUTER's (`useSearchParams`), and nothing else is asked.
+ * They are the URL this render is for, on a reload and on a client-side
+ * navigation alike; the address bar is not, until the router has written to
+ * it, which is after the page's first render. (`start` used to be checked
+ * against the address bar as well, so the hub's `start=1` link, followed by a
+ * click, read as a link that did not ask to start and opened the builder.)
+ * The router's params stay true after the page edits its own URL, because
+ * those edits are made through it (toolHrefs `editUrlInPlace`): a `start`
+ * that was acted on is gone from them too.
+ */
+export function parseArrival(params: Pick<URLSearchParams, "get">): Arrival {
   return {
     courseId: params.get("course") || "",
     concepts: decodeConcepts(params.get(CONCEPTS_PARAM)),
-    start: params.get(START_PARAM) === "1" && startStillRequested,
+    start: params.get(START_PARAM) === "1",
     review: params.get(REVIEW_PARAM) === "1",
     build: params.get(BUILD_PARAM) === "1",
   };
