@@ -252,6 +252,16 @@ def test_section_prompt_defines_the_markup():
     assert "**base case**" in prompt
 
 
+def test_section_prompt_says_a_summary_line_is_plain_text():
+    """The reader draws the Skim summary as plain text, not Markdown: marks,
+    math and an escaped dollar sign would all show as written."""
+    rule = " ".join(PROMPTS["section"].split())
+
+    assert "summary line is shown as plain text" in rule
+    assert "write money plainly ($4)" in rule
+    assert "no ** marks and no $...$ math" in rule
+
+
 def test_section_prompt_allows_a_code_sample_only_in_a_fence_that_names_its_language():
     prompt = PROMPTS["section"]
 

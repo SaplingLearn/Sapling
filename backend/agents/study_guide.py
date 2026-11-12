@@ -434,7 +434,9 @@ appear in SOURCES.
 - After each run of one to three paragraphs, write one line that starts with \
 ">> ". It is the skim summary of that run: one or two plain sentences that \
 replace those paragraphs when the student switches to Skim mode. A run with \
-no summary line disappears in Skim mode, so give every run one.
+no summary line disappears in Skim mode, so give every run one. The summary \
+line is shown as plain text: write money plainly ($4) there, and use no ** \
+marks and no $...$ math in it.
 
 Blocks
 {_BLOCK_FORMAT}

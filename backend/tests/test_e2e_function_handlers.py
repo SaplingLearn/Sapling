@@ -1020,6 +1020,8 @@ def test_study_guide_section_constant_parses_into_the_journeys_blocks():
 
     first, formula, _, second, _, _, concept_map, check = parsed.items
     assert first.summary and second.summary is None
+    # The reader draws a summary as plain text: no marks, no math.
+    assert "**" not in first.summary and "$" not in first.summary
     assert first.paragraphs[0].citations == ["document:d1"]
     assert "[S1]" not in first.paragraphs[0].text
     assert "**base case**" in first.paragraphs[0].text
