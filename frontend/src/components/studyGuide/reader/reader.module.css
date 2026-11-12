@@ -171,6 +171,8 @@
   border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-subtle);
   font-family: var(--font-mono); font-size: var(--fs-md); line-height: 1.55;
 }
+/* The highlighter's own white box and padding would sit inside the block. */
+.blockParagraph .code > code { padding: 0; background: transparent; }
 .citeLine { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; line-height: 1; }
 /* A key term: highlighted in the Learning amber, not bold. */
 .term { font-weight: inherit; padding: 0 3px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--state-progress) 30%, transparent); }
