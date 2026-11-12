@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { OnboardingTakeover } from '@/components/onboarding/OnboardingTakeover';
-import SignInModal from '@/components/marketing/SignInModal';
-import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
+import { useCallback, useEffect, useState } from 'react';
+import SignInModal, { type SignInVariant } from '@/components/marketing/SignInModal';
+import { useSignInErrorParam, useSignInRequestParam } from '@/components/marketing/useSignInErrorParam';
+import { useGetStarted } from '@/components/marketing/useGetStarted';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { BetaModal } from '@/components/landing-v5/BetaModal';
@@ -33,17 +33,25 @@ export default function LandingPage() {
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
   const [signInOpen, setSignInOpen] = useState(false);
+  const [signInVariant, setSignInVariant] = useState<SignInVariant>('signin');
   // #756: a failed sign-in lands here as `/?error=<code>`; open the modal
   // with that error's copy (e.g. account_deleted) instead of saying nothing.
   const [signInError, clearSignInError] = useSignInErrorParam();
+  // `/?signin=1`: the companion pages' Sign In, or onboarding with no one
+  // signed in, asks for the box.
+  const [signInAsked, clearSignInAsked] = useSignInRequestParam();
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
 
-  // Get Started plays onboarding over the landing (the original zoom-in
-  // hand-off) for everyone, as a new student creating an account: no sign-in
-  // or "already onboarded" check up front. A guest signs in at Finish.
-  const [onboarding, setOnboarding] = useState(false);
+  const openSignIn = useCallback((variant: SignInVariant) => {
+    setSignInVariant(variant);
+    setSignInOpen(true);
+  }, []);
+  // Sign in first (owner decision, 2026-11-12): Get Started opens the sign-in
+  // box ("Get started."), and onboarding follows sign-in. A signed-in visitor
+  // goes straight to /onboarding or /dashboard.
+  const getStarted = useGetStarted(useCallback(() => openSignIn('start'), [openSignIn]));
 
   // The document scrollbar is hidden while the landing is mounted: the page
   // is a guided scroll cinema and the bar reads as stray chrome against the
@@ -92,19 +100,19 @@ export default function LandingPage() {
         exploring={state.exploring}
         theme={navTheme}
         onLogoClick={actions.scrollTop}
-        onSignIn={() => setSignInOpen(true)}
-        onGetStarted={() => setOnboarding(true)}
+        onSignIn={() => openSignIn('signin')}
+        onGetStarted={() => void getStarted()}
       />
 
-      {onboarding && <OnboardingTakeover />}
-
       <SignInModal
-        open={signInOpen || signInError !== null}
+        open={signInOpen || signInError !== null || signInAsked}
         onClose={() => {
           setSignInOpen(false);
           clearSignInError();
+          clearSignInAsked();
         }}
         errorCode={signInError}
+        variant={signInVariant}
       />
 
       <BetaModal

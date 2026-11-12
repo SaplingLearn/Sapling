@@ -75,10 +75,11 @@ renders the element.
 
 | Surface | Prefix | Owning file(s) |
 | --- | --- | --- |
-| Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
+| Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the landing nav's Sign In trigger and Get Started in `src/components/landing-v5/Navbar.tsx`, and the status line of `src/app/auth/callback/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
 | Local sample-data hold screen | `setup` | `frontend/src/app/setting-up/page.tsx` (where a new account waits after signing in to a LOCAL backend while the sample dataset is copied onto it, #715) |
-| Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
+| Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) and the pieces it was split into under `frontend/src/components/onboarding/` (`screens.tsx`, `CourseStep.tsx`, `LegalStep.tsx`, `ConsentSheet.tsx`, `chrome.tsx`, `ScreenHead.tsx`) |
+| Legal pages | `legal` | `frontend/src/components/legal/LegalDocumentPage.tsx` (the `/terms` and `/privacy` body, rendered from `src/lib/legal/documents.ts`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/quiz/**` — `QuizScreen.tsx` (route root + error card) switching on phase between `home/QuizHome.tsx` (+ `AdjustDialog`/`TopicList`/`LiveNeighbourhood`/`QuizSettings`), `question/QuizQuestion.tsx` (+ `AskPanel`/`LeaveDialog`) and `results/QuizResults.tsx` (+ `MissedList`); the ids on the shared `ui/` primitives and `graph/ConceptNeighbourhood.tsx` are passed in from those files as a `testid` prop (#537) |
@@ -129,12 +130,15 @@ route:
 
 | testid | element |
 | --- | --- |
-| `signin-trigger` | landing-nav "Sign In" button that opens the modal |
-| `signin-modal` | modal panel root (`role="dialog"`) |
+| `signin-trigger` | landing-nav "Sign In" button that opens the modal ("Welcome back.") |
+| `landing-get-started` | landing-nav "Get Started": signed out it opens the modal as "Get started."; signed in it goes to `/onboarding`, `/dashboard` or `/pending` |
+| `signin-modal` | modal panel root (`role="dialog"`, labelled by its title) |
+| `signin-title` | the modal's heading: "Welcome back." (Sign In) or "Get started." (Get Started) |
 | `signin-close` | × close button |
 | `signin-google-button` | "Continue with Google" |
 | `signin-cancel` | "Cancel" (only while waiting on the popup) |
-| `signin-error` | error banner |
+| `signin-error` | error banner (`role="alert"`; e.g. "Sign-in was cancelled." for `cancelled`) |
+| `auth-callback-status` | `/auth/callback`'s status line: "Signing you in…", or the sign-in error's sentence while a failed sign-in is handed on |
 
 ### `pending`
 
@@ -150,19 +154,49 @@ route:
 | `pending-joined` | "You're on the waitlist" confirmation, only right after a join in this visit |
 | `pending-unknown` | state root: no usable pending token (missing, expired, network failure) |
 | `pending-home` | "Back to home" (only in `pending-unknown`) |
+
+### `onboarding`
+
+Signed in only (2026-11-12): the middleware gates `/onboarding` like the shell.
+
+| testid | element |
+| --- | --- |
 | `onboarding-gate` | first-run onboarding page root |
-| `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
-| `onboarding-back` | "Back" (absent on step 0) |
-| `onboarding-close` | "×" close/exit control |
-| `onboarding-input` | the shared `TextInput` default; every simultaneous instance overrides it (below) |
-| `onboarding-first-name` / `onboarding-last-name` | the two name fields — they render side by side |
-| `onboarding-school` | school field (disabled; BU-only today) |
-| `onboarding-chip-input-${field}` / `onboarding-chip-add-${field}` | majors/minors editor — `field` is `majors` or `minors`, since both render at once |
-| `onboarding-chip-remove-${field}-${value}` | one chip's remove control |
-| `onboarding-course-search` | course search field |
+| `onboarding-continue` | primary advance button ("Next" / "Read the terms" / "Finish") |
+| `onboarding-back` | "Back" in the action row (absent on the first screen); a real button at every width |
+| `onboarding-skip` | "Skip for now" (Connect screen only): finishes with no accounts chosen |
+| `onboarding-sign-out` | "Sign out", top right on every screen |
+| `onboarding-next-key` / `onboarding-back-key` | the desktop Enter / Esc hints (mouse only: `tabIndex -1`, `aria-hidden`; hidden on phones) |
+| `onboarding-step` | visually hidden "Step n of 6: chapter" on the progress strip |
+| `onboarding-notice` | why a save sent the student back to this screen (courses gone, Terms changed); the heading's description |
+| `onboarding-name` | name field ("Your first name") |
+| `onboarding-dob-month` / `onboarding-dob-day` / `onboarding-dob-year` | the birthday `CustomSelect` triggers; options are `onboarding-dob-${field}-${value}` |
+| `onboarding-minor-note` | the under-18 note (profile private, class sharing off) |
+| `onboarding-blocked` / `onboarding-blocked-title` | the under-13 panel and its focused title |
+| `onboarding-blocked-sign-out` | the under-13 panel's "Sign out" |
+| `onboarding-school-bu` | the Boston University tile |
+| `onboarding-school-missing` | "My school isn't listed" (`aria-expanded`) |
+| `onboarding-school-missing-panel` | its answer: open to BU for now, the beta list, sign out |
+| `onboarding-beta-link` | "Join the beta list" (to the landing's `#newsletter`) |
+| `onboarding-school-sign-out` | the school panel's "Sign out" |
+| `onboarding-year-${year}` | one year choice (`freshman` … `other`) |
+| `onboarding-course-search` | course search field (Enter adds the top result) |
 | `onboarding-course-result-${course.id}` | one course search result |
-| `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
-| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
+| `onboarding-course-remove-${course.id}` | one selected-course chip's remove control |
+| `onboarding-course-search-error` / `onboarding-course-search-retry` | a failed search's message and its "Try again" |
+| `onboarding-course-search-empty` | "No courses match" (a search that worked and found nothing) |
+| `onboarding-course-search-status` | visually hidden live line with each search's outcome |
+| `onboarding-courses-later` | "My courses aren't listed — I'll add them later" (`aria-pressed`); saves no courses |
+| `onboarding-courses-later-note` | where to add them afterwards |
+| `onboarding-legal-body` | the Terms / Privacy document (scrollable region) |
+| `onboarding-legal-updated` | its "Last updated" date (the version accepted) |
+| `onboarding-agree` | the "I agree" checkbox button |
+| `onboarding-agree-hint` | "Scroll to the end to accept." (the checkbox's description until the end is reached) |
+| `onboarding-legal-reload` | "Reload" in the notice after a 422 `legal_outdated` |
+| `onboarding-connect-${key}` | a Connect option's control: "Connect" / "Will connect after setup" for `gradescope` and `gcal`, a "Coming soon" label (not a button) for the rest. Left out while its feature's `hide_*` flag is on |
+| `onboarding-consent` | the consent sheet (`role="dialog"`) |
+| `onboarding-consent-continue` / `onboarding-consent-cancel` | "Connect after setup" / "Not now" |
+| `onboarding-setting-up` | the white hand-off's "Setting up…" status (`role="status"`, empty until it waits on the save) |
 
 ### `setup`
 
@@ -171,6 +205,12 @@ route:
 | `setup-gate` | local sample-data hold screen root (`/setting-up`) |
 | `setup-error` | why the seed failed (failed state only) |
 | `setup-continue` | "Continue anyway" link to `/onboarding` (failed state only) |
+
+### `legal`
+
+| testid | element |
+| --- | --- |
+| `legal-updated` | the public `/terms` or `/privacy` page's "Last updated" date (from the document's version) |
 
 ### `upload-modal`
 
@@ -767,9 +807,10 @@ It is intentionally narrow:
   "the root `<div>` of this component" is not expressible without false
   positives.
 
-There is no lint coverage on `signin-trigger` in `src/app/(public)/page.tsx` —
-the landing page has dozens of buttons that are not part of any browser test, so
-that file stays out of the `files` list. The trigger is documented here instead.
+There is no lint coverage on `signin-trigger` and `landing-get-started` in
+`src/components/landing-v5/Navbar.tsx` — the landing has dozens of buttons that
+are not part of any browser test, so those files stay out of the `files` list.
+The triggers are documented here instead.
 
 There is likewise no lint coverage on `adminfb-*` in `Admin.tsx`. `FeedbackTab`
 (the tab that owns them) has zero `<button>`/`<input>`/`<textarea>` elements,

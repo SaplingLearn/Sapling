@@ -19,7 +19,7 @@ const OFF = "off";
  */
 const STORE_PREFIX = "sapling.flags.v1:";
 
-function readLastKnown(who: string): FlagMap | null {
+export function readLastKnownFlags(who: string): FlagMap | null {
   try {
     const raw = window.localStorage.getItem(STORE_PREFIX + who);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
@@ -77,7 +77,7 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
         } catch {
           // #771: unreadable flags keep this student's last-known map (a
           // hidden feature stays hidden); with none, every variant's "off".
-          f = readLastKnown(who) ?? {};
+          f = readLastKnownFlags(who) ?? {};
         }
       }
       if (gen !== generation.current) return;

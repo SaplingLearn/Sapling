@@ -18,8 +18,24 @@ export const SHELL_PREFIXES = [
   "/gradebook", "/course-planner", "/notetaker", "/profile",
 ] as const;
 
+function underPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(prefix + "/");
+}
+
 /** Segment-boundary match: `/profile` and `/profile/x`, never `/profiles`. */
 export function isAppShellRoute(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
-  return SHELL_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  return SHELL_PREFIXES.some((p) => underPrefix(pathname, p));
+}
+
+/**
+ * First-run onboarding. Not part of the shell (no nav, no analytics, no
+ * flags), but gated by the middleware like it: a signed-out visitor goes
+ * through sign-in, an unapproved account to /pending, and an account that
+ * has finished onboarding to /dashboard.
+ */
+export const ONBOARDING_PREFIX = "/onboarding";
+
+export function isOnboardingRoute(pathname: string | null | undefined): boolean {
+  return !!pathname && underPrefix(pathname, ONBOARDING_PREFIX);
 }

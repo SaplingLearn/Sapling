@@ -59,6 +59,10 @@ function detailOf(body: Body): string | undefined {
 
   const detail = body.detail;
   if (typeof detail === "string") return detail.trim() || undefined;
+  // A coded HTTPException (`detail: {code, message}`, e.g. the auth guard's
+  // not_approved or onboarding's legal_outdated) carries its sentence inside.
+  const inner = asRecord(detail)?.message;
+  if (typeof inner === "string" && inner.trim()) return inner.trim();
   // FastAPI request-validation failures nest the message under detail[].msg.
   if (Array.isArray(detail)) {
     for (const entry of detail) {
@@ -88,16 +92,21 @@ function statusFrom(err: unknown, body: Body | null): number | undefined {
   return undefined;
 }
 
-/** Pulls what the server actually told us out of a thrown error. */
-export function extractErrorDetail(err: unknown): ErrorDetail {
+/** The response body behind an error, parsed, when there is one. */
+function bodyOf(err: unknown): Body | null {
   // `ApiError.body` is the already-parsed response body (#537). Prefer it over
   // re-parsing `message`, which is the same JSON as text.
   const parsedBody = asRecord(err) && !Array.isArray(err)
     ? asRecord((err as { body?: unknown }).body)
     : null;
-  const body = parsedBody
+  return parsedBody
     ?? (err instanceof Error ? null : asRecord(err))
     ?? asRecord(parseJson(rawMessage(err)));
+}
+
+/** Pulls what the server actually told us out of a thrown error. */
+export function extractErrorDetail(err: unknown): ErrorDetail {
+  const body = bodyOf(err);
   const out: ErrorDetail = {};
   const detail = body ? detailOf(body) : undefined;
   if (detail) out.detail = detail;
@@ -109,6 +118,23 @@ export function extractErrorDetail(err: unknown): ErrorDetail {
 /** The HTTP status behind an error, when one can be recovered. */
 export function statusOf(err: unknown): number | undefined {
   return extractErrorDetail(err).status;
+}
+
+/**
+ * The machine-readable code behind an error, when the server sent one:
+ * `ApiError.code` (the quiz routes' `error.code` envelope), or `detail.code`
+ * from a coded HTTPException such as the auth guard's 403 `not_approved` or
+ * onboarding's 422 `legal_outdated` / `no_known_courses`.
+ */
+export function errorCodeOf(err: unknown): string | undefined {
+  const own = asRecord(err)?.code;
+  if (typeof own === "string" && own) return own;
+  const body = bodyOf(err);
+  for (const holder of [body?.error, body?.detail]) {
+    const code = asRecord(holder)?.code;
+    if (typeof code === "string" && code) return code;
+  }
+  return undefined;
 }
 
 const NOT_FOUND_TEXT = /\bnot found\b/i;

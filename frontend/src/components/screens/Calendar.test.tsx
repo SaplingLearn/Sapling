@@ -40,9 +40,14 @@ vi.mock("framer-motion", () => ({
   useReducedMotion: () => false,
 }));
 
+// Stable across renders, as the real hooks' values are (between URL changes).
+const nav = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { params: new URLSearchParams(""), replace, router: { replace, push: vi.fn() } };
+});
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(""),
+  useRouter: () => nav.router,
+  useSearchParams: () => nav.params,
 }));
 
 vi.mock("@/context/UserContext", () => ({
@@ -388,5 +393,23 @@ describe("Calendar — undated assignments", () => {
     await waitFor(() => expect(exportToGoogleCalendar).toHaveBeenCalledWith("u1", ["a-nodate", "a-dated"]));
     expect(toastSpies.success).toHaveBeenCalledWith("Exported 1 (1 skipped).");
     expect(await screen.findByText("No date")).toBeInTheDocument();
+  });
+});
+
+describe("Calendar — a Google Calendar connect that came back without access", () => {
+  afterEach(() => {
+    nav.params = new URLSearchParams("");
+  });
+
+  it.each([
+    ["access_denied", "access wasn't allowed"],
+    ["scope_denied", "needs permission to see and add your events"],
+    ["oauth_exchange_failed", "couldn't be connected. Please try again."],
+  ])("explains calendar_error=%s and clears it", async (code, words) => {
+    nav.params = new URLSearchParams(`calendar_error=${code}`);
+    render(<Calendar />);
+    await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining(words)));
+    expect(toastSpies.error).toHaveBeenCalledTimes(1);
+    expect(nav.replace).toHaveBeenCalledWith("/calendar");
   });
 });

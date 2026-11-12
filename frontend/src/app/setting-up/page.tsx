@@ -27,7 +27,7 @@ const POLL_MS = 2000;
  */
 export default function SettingUpPage() {
   const router = useRouter();
-  const { refreshProfile } = useUser();
+  const { refreshProfile, markOnboarded } = useUser();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,6 +41,10 @@ export default function SettingUpPage() {
         if (status.state === 'ready') {
           // Re-read /api/auth/me so the context matches the seeded account.
           await refreshProfile();
+          // `ready` means the seed completed onboarding: the shell's
+          // onboarding gate must not act on an older /me answer if that
+          // re-read failed.
+          markOnboarded();
           if (!cancelled) router.replace('/dashboard');
           return;
         }

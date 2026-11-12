@@ -11,13 +11,17 @@
  * Purely device-level UI preferences stay (sidebar collapsed, list/grid
  * layout, graph mode, tutor rail open, the landing animation): they say
  * nothing about the person. A new per-user key belongs in the lists below.
+ *
+ * Deliberately NOT here: onboarding's under-13 memory
+ * (`sapling_age_gate_until`, components/onboarding/age.ts). It belongs to the
+ * browser, so signing out and in as someone else must not reset it.
  */
 
 /** localStorage keys holding one account's data or choices. */
 export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_user', // identity (UserContext)
   'sapling_active_semester', // lib/useActiveSemester.ts
-  'sapling_onboarding_draft', // Onboarding.tsx's legacy shared draft (pre-#757)
+  'sapling_onboarding_draft', // onboarding's legacy shared draft (pre-#757)
   'sapling_quiz_session', // lib/quiz/session.ts
   'sapling_quiz_prefs', // lib/quiz/session.ts + prefs.ts
   'sapling_quiz_dismissed', // lib/quiz/session.ts
@@ -35,7 +39,7 @@ export const USER_SCOPED_LOCAL_KEYS = [
 
 /** localStorage key prefixes (one key per account). */
 export const USER_SCOPED_LOCAL_PREFIXES = [
-  'sapling_onboarding_draft:', // Onboarding.tsx onboardingDraftKey(userId), #757
+  'sapling_onboarding_draft:', // lib/onboardingDraft.ts onboardingDraftKey(userId), #757
   'sapling.flags.v1:', // context/FlagsContext.tsx last-known flags per user, #771
 ] as const;
 
