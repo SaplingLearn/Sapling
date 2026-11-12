@@ -30,6 +30,10 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { Document as Doc, ConceptNote } from "@/lib/types";
+import { listGuides } from "@/lib/studyGuide/api";
+import type { GuideCard } from "@/lib/studyGuide/types";
+import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
+import { libraryGuides } from "../studyGuide/home/guidesModel";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -50,6 +54,8 @@ export function Library() {
   const { userId, userReady } = useUser();
   const [documents, setDocuments] = React.useState<Doc[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  // Every guide the student has; the ones saved to the Library show here.
+  const [guides, setGuides] = React.useState<GuideCard[]>([]);
   const [cat, setCat] = React.useState<Cat>("all");
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   const [uploadOpen, setUploadOpen] = React.useState(false);
@@ -102,13 +108,17 @@ export function Library() {
     // the latest one owns the list (#769).
     const run = loadReq.begin();
     try {
-      const [docs, crs] = await Promise.all([
+      const [docs, crs, saved] = await Promise.all([
         getDocuments(userId),
         getCourses(userId),
+        // Study can be hidden by a flag, which 404s this call: no guides
+        // then, and the documents still load.
+        listGuides(userId).catch(() => ({ guides: [] })),
       ]);
       if (!run.isCurrent()) return;
       setDocuments(docs.documents || []);
       setCourses(crs.courses || []);
+      setGuides(saved.guides || []);
       setLoadError(false);
     } catch (err) {
       if (!run.isCurrent()) return;
@@ -138,6 +148,13 @@ export function Library() {
       return true;
     });
   }, [documents, cat, courseFilter, query]);
+
+  // Saved study guides are not documents: they follow the course filter and
+  // the search, and show under "all" and "study guide" only.
+  const shownGuides = React.useMemo(
+    () => (cat === "all" || cat === "study_guide" ? libraryGuides(guides, courseFilter, query) : []),
+    [guides, cat, courseFilter, query],
+  );
 
   // #449 (upstream, out of scope here): GET /api/graph/{userId}/courses
   // returns one row per ENROLLMENT, so a course with two offerings (e.g.
@@ -260,7 +277,8 @@ export function Library() {
                 <button data-testid="library-load-retry" className="btn btn--ghost btn--sm" onClick={retryLoad}>Retry</button>
               </div>
             )}
-            {filtered.length === 0 && !(loadError && documents.length === 0) && (
+            <LibraryGuides guides={shownGuides} />
+            {filtered.length === 0 && shownGuides.length === 0 && !(loadError && documents.length === 0) && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
                 <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
