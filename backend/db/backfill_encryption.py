@@ -18,11 +18,15 @@ For every cell, try `decrypt(value)`:
     - fails    → plaintext (or corrupted); encrypt and write
 
 This is idempotent: re-running it after a successful run is a no-op
-(every cell is already valid ciphertext, so every check skips).
+(every cell is already valid ciphertext, so every check skips). The rule is
+the same for every column shape, JSON included: a cell that decrypts is
+encrypted, whatever the plaintext inside it turns out to be.
 
 Usage
 -----
-Dry run (default — counts only, no writes):
+Dry run (default — counts only, no writes). Always read its counts before
+an --apply: a detection fix can make one run touch far more rows than the
+last one did.
     python -m db.backfill_encryption
 
 Apply (writes to Supabase):
@@ -61,20 +65,6 @@ def _is_already_encrypted(value: Any) -> bool:
         return False
     try:
         decrypt(value)
-        return True
-    except Exception:
-        return False
-
-
-def _is_already_encrypted_json(value: Any) -> bool:
-    """Same as above but for JSON columns. After the schema migration
-    these are TEXT, so a legacy JSONB row is now a JSON string."""
-    if value is None or not isinstance(value, str):
-        return False
-    # Strict on purpose: decrypt_json falls back to json.loads(value), so it
-    # accepts plaintext JSON and would make every legacy row look encrypted.
-    try:
-        json.loads(decrypt(value))
         return True
     except Exception:
         return False
@@ -154,7 +144,12 @@ def _encrypt_json_column(
         v = row.get(column)
         if v is None:
             continue
-        if _is_already_encrypted_json(v):
+        # Decrypts = encrypted, and nothing more: do NOT also require the
+        # plaintext to parse as JSON (a corrupt row is stored as encrypt(raw)
+        # below, so that check would re-encrypt it on every later run), and do
+        # NOT use decrypt_json (it falls back to json.loads on plaintext, so
+        # every legacy JSON-text row would look encrypted and be skipped).
+        if _is_already_encrypted(v):
             continue
         # Legacy row: parse the JSON text, then encrypt the parsed object
         # so the on-disk shape matches what new writes produce.

@@ -142,9 +142,32 @@ def test_main_keeps_going_when_one_table_fails(db, monkeypatch, capsys):
     assert db.updates == []
 
 
-def test_plaintext_json_text_is_not_mistaken_for_ciphertext():
+def test_plaintext_json_text_is_not_mistaken_for_ciphertext(db):
     """decrypt_json falls back to json.loads on plaintext, so using it as the
     detector made every legacy JSON-text row look encrypted and the backfill
     skipped exactly the rows it exists for."""
-    assert bf._is_already_encrypted_json(json.dumps({"a": 1})) is False
-    assert bf._is_already_encrypted_json(encrypt_json({"a": 1})) is True
+    already = encrypt_json({"b": 2})
+    db.rows["quiz_context"] = [
+        {"id": 1, "context_json": json.dumps({"a": 1})},
+        {"id": 2, "context_json": already},
+    ]
+    assert bf.backfill_quiz_context(apply=True) == {"context_json": 1, "scanned": 2}
+    rows = {r["id"]: r for r in db.rows["quiz_context"]}
+    assert json.loads(decrypt(rows[1]["context_json"])) == {"a": 1}
+    assert rows[2]["context_json"] == already
+
+
+def test_corrupt_json_row_is_encrypted_once_not_on_every_run(db):
+    """A row whose JSON does not parse is stored as encrypt(raw). The detector
+    used to also require the decrypted text to parse, so the next --apply saw
+    that row as plaintext and encrypted the ciphertext again, and readers got
+    ciphertext back from decrypt."""
+    db.rows["sessions"] = [{"id": 1, "summary_json": "{not json"}]
+    bf.backfill_sessions(apply=True)
+    once = db.rows["sessions"][0]["summary_json"]
+    db.updates.clear()
+
+    assert bf.backfill_sessions(apply=True) == {"summary_json": 0, "scanned": 1}
+    assert db.updates == []
+    assert db.rows["sessions"][0]["summary_json"] == once
+    assert decrypt(once) == "{not json"
