@@ -14,6 +14,7 @@ import {
   daysUntil,
   findSource,
   liveTier,
+  madeFromLabel,
   progressTitle,
   readCount,
   sectionBars,
@@ -94,6 +95,12 @@ describe("mastery", () => {
   it("treats a concept the tree does not have as not started", () => {
     expect(conceptTier("Loops", { Loops: "struggling" })).toBe("struggling");
     expect(conceptTier("Recursion", {})).toBe("unexplored");
+  });
+
+  it("counts the documents a guide was made from, and names the quiz history apart from them", () => {
+    const { sources } = guide().content;
+    expect(madeFromLabel(sources)).toBe("Made from 2 of your materials and your quiz history");
+    expect(madeFromLabel(sources.slice(0, 2))).toBe("Made from 2 of your materials");
   });
 
   it("finds a cited source, or nothing", () => {

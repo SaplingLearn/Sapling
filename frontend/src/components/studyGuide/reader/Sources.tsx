@@ -2,7 +2,7 @@ import { Icon } from "@/components/Icon";
 import type { Source } from "@/lib/studyGuide/types";
 
 import s from "./reader.module.css";
-import { SOURCES_ANCHOR } from "./readerModel";
+import { madeFromLabel, SOURCES_ANCHOR } from "./readerModel";
 
 /** What the guide was made from. Every citation links here. */
 export function Sources({ sources }: { sources: Source[] }) {
@@ -10,7 +10,7 @@ export function Sources({ sources }: { sources: Source[] }) {
   return (
     <section id={SOURCES_ANCHOR} data-testid="guide-sources" aria-label="Sources" className={s.sources}>
       <div className={s.sourcesHead}>
-        <span className="label-micro">Made from {sources.length} of your materials</span>
+        <span className="label-micro">{madeFromLabel(sources)}</span>
         <span className={s.sourcesNote}>Every citation above links to one of these</span>
       </div>
       <ul className={s.sourceList}>

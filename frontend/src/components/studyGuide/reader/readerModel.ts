@@ -3,13 +3,14 @@
  */
 import { dueDay } from "@/components/studyGuide/shared/dates";
 import { newLecturesText, plural } from "@/components/studyGuide/shared/labels";
-import type {
-  GuideContent,
-  GuideDetail,
-  Section,
-  SectionBar,
-  Source,
-  Tier,
+import {
+  QUIZ_HISTORY_SOURCE,
+  type GuideContent,
+  type GuideDetail,
+  type Section,
+  type SectionBar,
+  type Source,
+  type Tier,
 } from "@/lib/studyGuide/types";
 
 export type ViewMode = "read" | "skim";
@@ -44,6 +45,16 @@ export const daysLeftLabel = (days: number) => (days === 0 ? "Today" : `${plural
 export function sourcesLabel(sources: number, minutes: number): string {
   const count = plural(sources, "source");
   return minutes > 0 ? `${count} · about ${minutes} min` : count;
+}
+
+/**
+ * "Made from 6 of your materials". The quiz history is a source a citation
+ * can point at, but not one of the student's materials: it is named apart.
+ */
+export function madeFromLabel(sources: Source[]): string {
+  const materials = sources.filter(source => source.id !== QUIZ_HISTORY_SOURCE).length;
+  const quizzes = materials < sources.length ? " and your quiz history" : "";
+  return `Made from ${materials} of your materials${quizzes}`;
 }
 
 /** "2 new lectures since this guide was made". */

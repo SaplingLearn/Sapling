@@ -148,7 +148,8 @@ describe("what the reader draws", () => {
     expect(within(screen.getByTestId("guide-section-s1")).getByText("01")).toBeInTheDocument();
     expect(within(screen.getByTestId("guide-section-s4")).getByText("04")).toBeInTheDocument();
     const sources = screen.getByTestId("guide-sources");
-    expect(within(sources).getByText("Made from 3 of your materials")).toBeInTheDocument();
+    // Two documents and the quiz history, which is a source but not a material.
+    expect(within(sources).getByText("Made from 2 of your materials and your quiz history")).toBeInTheDocument();
     for (const source of fixtureGuide().content.sources) {
       expect(within(sources).getByText(source.name)).toBeInTheDocument();
     }
