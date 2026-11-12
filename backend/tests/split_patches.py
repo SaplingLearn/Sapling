@@ -160,6 +160,26 @@ def patch_gradescope(name, new=DEFAULT, **kwargs):
     return patch_in(GRADESCOPE_MODULES, name, new, **kwargs)
 
 
+# ── flashcards ────────────────────────────────────────────────────────────────
+
+# The modules the route's handler bodies moved into. services/flashcards/
+# context.py (patched by its own path since wave 3) and importing.py (the old
+# flashcard_import_service.py) are deliberately absent: see the module
+# docstring.
+FLASHCARDS_MODULES = (
+    "routes.flashcards",
+    "services.flashcards.cards",
+    "services.flashcards.generation",
+    "services.flashcards.import_flow",
+)
+
+
+def patch_flashcards(name, new=DEFAULT, **kwargs):
+    """``patch("routes.flashcards.<name>", ...)`` across routes/flashcards.py
+    and the services/flashcards/ modules its handler bodies moved into."""
+    return patch_in(FLASHCARDS_MODULES, name, new, **kwargs)
+
+
 # ── documents ─────────────────────────────────────────────────────────────────
 
 DOCUMENTS_MODULES = (

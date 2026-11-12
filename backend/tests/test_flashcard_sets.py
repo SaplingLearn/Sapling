@@ -1,5 +1,5 @@
 """Route tests for saved flashcard sets (`/api/flashcards/sets`) and the
-`due_at` field of the card list.
+`due_at` field of the card list (always null until a scheduler writes it).
 
 A set is a name, a course, concept names and two options; it owns no cards.
 The routes are thin: the rules live in `services/flashcards/sets.py`, driven
@@ -327,6 +327,15 @@ class TestPatch:
         assert r.status_code == 200 and r.json()["set"]["updated_at"] == row["updated_at"]
         assert db.writes == []
 
+    def test_options_null_changes_nothing(self, db):
+        """`options: null` is "no options sent" (as on create), not a change:
+        nothing is written, so the set keeps its place in the list."""
+        row = db.add_set("s1", options={"only_due": True, "shuffle": False})
+        r = self._patch("s1", options=None)
+        assert r.status_code == 200
+        assert r.json()["set"]["options"] == {"only_due": True, "shuffle": False}
+        assert r.json()["set"]["updated_at"] == row["updated_at"] and db.writes == []
+
     @pytest.mark.parametrize("body", [
         {"name": "   "}, {"name": None}, {"concepts": []}, {"concepts": None},
         {"concepts": ["c" * 121]}, {"options": {"autoplay": True}}, {"options": {"shuffle": 0}},
@@ -378,7 +387,7 @@ class TestDelete:
         """`DELETE /{card_id}` sits on the same router; `/sets/<id>` must reach
         the set handler and never touch `flashcards`."""
         db.add_set("s1")
-        with patch("routes.flashcards.table") as cards_table:
+        with patch("services.flashcards.cards.table") as cards_table:
             r = client.delete("/api/flashcards/sets/s1", params={"user_id": ME})
         assert r.json() == {"deleted": True}
         cards_table.assert_not_called()
@@ -451,7 +460,11 @@ _CARD = {"id": "f1", "user_id": ME, "topic": "Recursion", "offering_id": None,
 
 
 class TestCardListDueAt:
-    def test_due_at_is_returned_when_the_card_has_one(self):
+    def test_a_stored_due_at_is_never_surfaced(self):
+        """Nothing writes `flashcards.due_at` (there is no scheduler), so a
+        value on a database that still carries the reverted learning-loop
+        column is stale: a card frozen "due" forever. The list answers
+        `due_at: null` for every card, keeping the key."""
         captured = {}
         rows = [{**_CARD, "due_at": "2026-11-12T09:00:00+00:00"},
                 {**_CARD, "id": "f2", "due_at": None}]
@@ -459,8 +472,8 @@ class TestCardListDueAt:
             r = client.get(f"/api/flashcards/user/{ME}")
         assert r.status_code == 200
         cards = {c["id"]: c for c in r.json()["flashcards"]}
-        assert cards["f1"]["due_at"] == "2026-11-12T09:00:00+00:00"
-        assert cards["f2"]["due_at"] is None
+        assert set(cards) == {"f1", "f2"}
+        assert all("due_at" in c and c["due_at"] is None for c in cards.values())
 
     def test_due_at_is_null_on_a_database_without_the_column(self):
         """No migration here adds `flashcards.due_at`, so the read must not

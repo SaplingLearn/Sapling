@@ -316,6 +316,43 @@ register_function_handler(
 )
 
 
+# ── Flashcards ──────────────────────────────────────────────────────────────
+#
+# ONE agent (agents/flashcard.py, task "flashcard", output `Flashcards`: a list
+# of {front, back}) serves every flashcard model call, all of them request-path
+# (the route awaits the agent and answers with its cards):
+#   POST /api/flashcards/generate         (stores the cards; the Flashcards page
+#                                          calls it on arriving with `start=1`)
+#   POST /api/flashcards/import/generate  (cards for review)
+#   POST /api/flashcards/import/cleanup   (the "cleaned" deck)
+#   POST /api/flashcards/import/cloze     (cloze cards)
+#   POST /api/flashcards/import/parse     with source `ocr` (cards off a photo)
+# Unregistered, function mode's dispatch raised UnregisteredHandlerError and
+# each of those answered 502.
+#
+# Fixed output, like every handler here: the same three cards whatever was
+# asked for (the requested count, the topic and the task are ignored), so a
+# journey asserts these strings and a deck's size is always 3 per model call.
+# Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_FLASHCARDS = [
+    {
+        "front": "[e2e-function-model] What must every recursive function have?",
+        "back": "A base case that stops the recursion.",
+    },
+    {
+        "front": "[e2e-function-model] What does the recursive step do?",
+        "back": "It calls the function on a smaller version of the same problem.",
+    },
+    {
+        "front": "[e2e-function-model] What happens without a base case?",
+        "back": "The calls never stop, and the call stack overflows.",
+    },
+]
+
+register_function_handler("flashcard", _structured_output({"cards": E2E_FLASHCARDS}))
+
+
 # ── Notetaker agent actions (F5a) ───────────────────────────────────────────
 #
 # routes/notes.py runs three request-path notetaker actions the browser awaits

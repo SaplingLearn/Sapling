@@ -1,39 +1,75 @@
 """Domain errors the flashcards package raises instead of ``HTTPException``
-(no ``fastapi`` in a domain package, #118). ``routes/flashcards.py`` answers
-each with its ``status_code`` and ``detail``."""
+(no ``fastapi`` in a domain package, #118). ``routes/flashcards.py`` maps each
+class to the status code it answers with (its ``_ERROR_STATUS``); ``detail``
+is the client-facing message."""
 from __future__ import annotations
 
 
-class FlashcardSetError(Exception):
-    """Base class: ``detail`` is the client-facing message."""
-
-    status_code = 400
-
+class FlashcardError(Exception):
     def __init__(self, detail: str):
         super().__init__(detail)
         self.detail = detail
 
 
-class FlashcardSetInvalid(FlashcardSetError):
-    """A field of the set fails validation (422)."""
+# ── Cards, generation and the import flow ────────────────────────────────────
 
-    status_code = 422
+
+class InvalidRequest(FlashcardError):
+    """400: a field the request needed is missing or malformed."""
+
+
+class NotFound(FlashcardError):
+    """404: no such card or document (or it is another student's)."""
+
+
+class PayloadTooLarge(FlashcardError):
+    """413: the uploaded file is over the import limit."""
+
+
+class Unprocessable(FlashcardError):
+    """422: the file or page was read but cannot be imported."""
+
+
+class RateLimited(FlashcardError):
+    """429: the import limiter refused; ``retry_after`` is seconds to wait."""
+
+    def __init__(self, detail: str, retry_after: int):
+        super().__init__(detail)
+        self.retry_after = retry_after
+
+
+class StorageError(FlashcardError):
+    """500: a card read or write failed."""
+
+
+class UpstreamError(FlashcardError):
+    """502: the model call or a file parser failed."""
+
+
+# ── Saved sets ───────────────────────────────────────────────────────────────
+
+
+class FlashcardSetError(FlashcardError):
+    """Base class of the saved-set errors."""
+
+
+class FlashcardSetInvalid(FlashcardSetError):
+    """422: a field of the set (or of a set description) fails validation."""
 
 
 class FlashcardSetNotFound(FlashcardSetError):
-    """The set, its course or its exam is missing or is not the caller's
-    (404: the same answer for "not there" and "not yours")."""
-
-    status_code = 404
+    """404: the set, its course or its exam is missing or is not the caller's
+    (the same answer for "not there" and "not yours")."""
 
 
 class FlashcardSetLimitReached(FlashcardSetError):
-    """The caller already holds the maximum number of sets (409)."""
-
-    status_code = 409
+    """409: the caller already holds the maximum number of sets."""
 
 
 class FlashcardSetRateLimited(FlashcardSetError):
-    """Too many "describe a set" requests in a minute (429)."""
+    """429: too many "describe a set" requests; ``retry_after`` is seconds to
+    wait."""
 
-    status_code = 429
+    def __init__(self, detail: str, retry_after: int | None = None):
+        super().__init__(detail)
+        self.retry_after = retry_after

@@ -24,8 +24,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from tests.split_patches import patch_social
-from tests.split_patches import patch_tutor
+from tests.split_patches import patch_flashcards, patch_social, patch_tutor
 
 client = TestClient(app)
 
@@ -185,14 +184,14 @@ class TestGraphDispatch:
                                course_id="c1")
 
 
-# ── routes/flashcards.py::rate_card → flashcards_reviewed ────────────────────
+# ── services/flashcards/cards.py::rate_card → flashcards_reviewed ────────────────────
 
 class TestFlashcardReviewDispatch:
     def test_rating_a_card_fires_flashcards_reviewed(self):
         handles = {"flashcards": MagicMock()}
         handles["flashcards"].select.return_value = [{"id": "f1", "times_reviewed": 3}]
-        with patch("routes.flashcards.table", side_effect=_tables(handles)), \
-             patch("routes.flashcards.check_achievements") as check:
+        with patch_flashcards("table", side_effect=_tables(handles)), \
+             patch_flashcards("check_achievements") as check:
             r = client.post("/api/flashcards/rate", json={
                 "user_id": "u1", "card_id": "f1", "rating": 3,
             })
@@ -202,8 +201,8 @@ class TestFlashcardReviewDispatch:
     def test_a_broken_dispatch_does_not_fail_the_rating(self):
         handles = {"flashcards": MagicMock()}
         handles["flashcards"].select.return_value = [{"id": "f1", "times_reviewed": 3}]
-        with patch("routes.flashcards.table", side_effect=_tables(handles)), \
-             patch("routes.flashcards.check_achievements",
+        with patch_flashcards("table", side_effect=_tables(handles)), \
+             patch_flashcards("check_achievements",
                    side_effect=RuntimeError("boom")):
             r = client.post("/api/flashcards/rate", json={
                 "user_id": "u1", "card_id": "f1", "rating": 3,

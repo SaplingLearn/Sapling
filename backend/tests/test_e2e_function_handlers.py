@@ -426,6 +426,106 @@ def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
     assert "concept_scan" in providers._FUNCTION_HANDLERS
 
 
+# ── Flashcards ────────────────────────────────────────────────────────────
+#
+# One agent (task "flashcard", output `Flashcards`) serves /generate and the
+# import flow's generate / cleanup / cloze / photo. None had a handler, so in
+# function mode each answered 502 (UnregisteredHandlerError) — and the
+# Flashcards page now generates on arriving with `start=1`.
+
+
+def _function_mode(monkeypatch, module="agents.function_handlers_e2e"):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", module)
+
+
+def test_env_module_registers_flashcard_handler_on_dispatch(monkeypatch):
+    """Function mode + the env-named module give a real flashcard_agent run
+    the module's fixed cards, through the REAL `Flashcards` output tool."""
+    from agents.flashcard import flashcard_agent
+
+    _function_mode(monkeypatch)
+    with flashcard_agent.override(model=model_for("flashcard")):
+        result = flashcard_agent.run_sync("Generate exactly 5 flashcards about recursion.")
+
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+
+    assert [c.model_dump() for c in result.output.cards] == E2E_FLASHCARDS
+    assert len(E2E_FLASHCARDS) == 3
+    assert all(c["front"].startswith("[e2e-function-model] ") and c["back"] for c in E2E_FLASHCARDS)
+    assert "flashcard" in providers._FUNCTION_HANDLERS
+
+
+def test_every_flashcard_model_call_is_served_by_the_one_handler(monkeypatch):
+    """Generate, import-generate, cleanup, cloze and the photo split all run
+    the same agent with the same output model, so the one constant must come
+    back from each of the functions the routes call."""
+    from agents.flashcard import flashcard_agent
+    from services.flashcards import importing
+
+    _function_mode(monkeypatch)
+    monkeypatch.setattr(importing.extraction_service, "extract_text_from_file",
+                        lambda *_a, **_k: "Q: what is recursion? A: a function calling itself")
+    with flashcard_agent.override(model=model_for("flashcard")):
+        answers = {
+            "generate": importing.generate_flashcards(topic="Recursion", count=5),
+            "import_generate": importing.gemini_generate_cards("notes", count=5, difficulty="recall"),
+            "cleanup": importing.gemini_cleanup_cards([{"front": "q", "back": "a"}]),
+            "cloze": importing.gemini_cloze("Every recursive function needs a base case."),
+            "ocr": importing.extract_cards_from_image(b"png-bytes", filename="page.png"),
+        }
+
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+
+    assert answers == {name: E2E_FLASHCARDS for name in answers}
+
+
+def test_generate_route_stores_the_scripted_cards_in_function_mode(monkeypatch):
+    """`POST /api/flashcards/generate` end to end on the seam: 200 with the
+    scripted cards (it was a 502), filed and returned as the route does."""
+    from fastapi.testclient import TestClient
+
+    from agents.flashcard import flashcard_agent
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+    from main import app
+    from tests.split_patches import patch_flashcards
+
+    _function_mode(monkeypatch)
+    sys.modules.pop("agents.function_handlers_e2e", None)  # the import above registered early
+    clear_function_handlers()
+    with flashcard_agent.override(model=model_for("flashcard")), \
+         patch_flashcards("_get_course_documents", return_value=[]), \
+         patch_flashcards("_get_weak_concepts", return_value=[]), \
+         patch_flashcards("table") as table, \
+         patch_flashcards("check_achievements"):
+        r = TestClient(app).post("/api/flashcards/generate", json={
+            "user_id": "e2e-user", "topic": "Recursion", "count": 5,
+        })
+
+    assert r.status_code == 200, r.text
+    cards = r.json()["flashcards"]
+    assert [{"front": c["front"], "back": c["back"]} for c in cards] == E2E_FLASHCARDS
+    assert {c["topic"] for c in cards} == {"Recursion"}
+    assert table.return_value.insert.call_count == len(E2E_FLASHCARDS)
+
+
+def test_showcase_module_registers_a_flashcard_handler_too(monkeypatch):
+    """The gallery lane runs function mode with its own handlers module (the
+    #484 lesson: the second module is the one that gets missed)."""
+    from agents.flashcard import flashcard_agent
+
+    _function_mode(monkeypatch, "agents.function_handlers_showcase")
+    sys.modules.pop("agents.function_handlers_showcase", None)
+    try:
+        with flashcard_agent.override(model=model_for("flashcard")):
+            result = flashcard_agent.run_sync("Generate exactly 5 flashcards about recursion.")
+        showcase = sys.modules["agents.function_handlers_showcase"]
+    finally:
+        sys.modules.pop("agents.function_handlers_showcase", None)
+
+    assert [c.model_dump() for c in result.output.cards] == showcase.SHOWCASE_FLASHCARDS
+
+
 # ── Notetaker agent actions (F5a) ─────────────────────────────────────────
 #
 # routes/notes.py's summarize / extract-concepts / chat run note_summary,
@@ -630,6 +730,39 @@ def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
     assert not any(a.defaulted for a in result.answers.values()), result.answers
     assert result.value("complexity") == "medium"
     assert result.value("needs_retrieval") is True
+
+
+def test_flashcard_set_suggest_runs_on_the_decision_handler_in_function_mode(monkeypatch):
+    """Describe-a-set (services/flashcards/suggest.py) asks the same seam about
+    its own keys (c0, c1, ...), which the scripted answers do not cover: each
+    falls to its safe default (not included). So the lane gets the concepts
+    the description NAMES, from the `function` backend, and never an error or
+    a live model."""
+    import asyncio
+
+    from agents.decision import decision_agent
+    from services.flashcards import suggest
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    class _Graph:
+        async def aselect(self, *_a, **_k):
+            return [{"concept_name": "Recursion", "course_id": "c1"},
+                    {"concept_name": "Pointers and Memory", "course_id": "c1"}]
+
+    async def allow(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(suggest, "table", lambda name: _Graph())
+    monkeypatch.setattr(suggest, "acheck_rate_limit", allow)
+    with decision_agent.override(model=model_for("decision")):
+        out = asyncio.run(suggest.suggest_flashcard_set("u1", "recursion for the midterm"))
+
+    assert out["backend"] == "function" and out["considered"] == 2
+    assert out["concepts"] == [
+        {"name": "Recursion", "course_id": "c1", "source": "named", "confidence": 1.0},
+    ]
 
 
 def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):

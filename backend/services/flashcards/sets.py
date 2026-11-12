@@ -214,19 +214,16 @@ def create_flashcard_set(
     return _public(saved[0] if saved else row)
 
 
-def update_flashcard_set(user_id: str, set_id: str, changes: dict) -> dict:
-    """Change the fields present in ``changes`` (``name``, ``concepts``,
-    ``options``, ``exam_id``) and nothing else. ``exam_id: None`` clears the
-    exam; ``options`` is merged over the stored options, so sending one key
-    leaves the other as it was. Raises ``FlashcardSetNotFound`` when the set is
-    not this user's."""
-    current = _own_set(user_id, set_id)
+def _patch_for(user_id: str, current: dict, changes: dict) -> dict[str, Any]:
+    """The validated columns ``changes`` writes to the stored row ``current``."""
     patch: dict[str, Any] = {}
     if "name" in changes:
         patch["name"] = _clean_name(changes["name"])
     if "concepts" in changes:
         patch["concepts"] = _clean_concepts(changes["concepts"])
-    if "options" in changes:
+    # `options: null` changes nothing (on create it means "the defaults"), so
+    # it must not count as a write and bump the set to the top of the list.
+    if changes.get("options") is not None:
         patch["options"] = {**_options(current.get("options")), **_clean_options(changes["options"])}
     if "exam_id" in changes:
         exam_id = changes["exam_id"]
@@ -234,6 +231,17 @@ def update_flashcard_set(user_id: str, set_id: str, changes: dict) -> dict:
             None if exam_id is None
             else _require_own_exam(user_id, current.get("course_id") or "", exam_id)
         )
+    return patch
+
+
+def update_flashcard_set(user_id: str, set_id: str, changes: dict) -> dict:
+    """Change the fields present in ``changes`` (``name``, ``concepts``,
+    ``options``, ``exam_id``) and nothing else. ``exam_id: None`` clears the
+    exam; ``options`` is merged over the stored options, so sending one key
+    leaves the other as it was. Raises ``FlashcardSetNotFound`` when the set is
+    not this user's."""
+    current = _own_set(user_id, set_id)
+    patch = _patch_for(user_id, current, changes)
     if not patch:
         return _public(current)
 
