@@ -7,17 +7,21 @@ import {
   RING0,
   RING_REACH,
   RING_STEP,
+  clearOfCourses,
   computeDepths,
   courseLinks,
   forceOrbit,
   importanceRadii,
   isDirected,
   labelOpacityAt,
+  nearestSeat,
   packCourses,
   planBounds,
   planRadial,
   ringsFor,
   splitEdges,
+  swapSeats,
+  type RadialPlan,
 } from "./radialLayout";
 
 const TAU = Math.PI * 2;
@@ -584,42 +588,67 @@ describe("forceOrbit", () => {
     centers: new Map<string, { x: number; y: number }>(),
     orbit: new Map([["a", { rootId: "r", radius, angle, depth: 0 }]]),
   });
-  const run = (n: P, radius: number, angle: number, opts?: Parameters<typeof forceOrbit>[4]) => {
-    const pushed: Array<[string, number, number]> = [];
-    const force = forceOrbit<P>(
-      () => planOf(radius, angle),
-      () => ({ x: 100, y: 100 }),
-      0.6,
-      0.12,
-      opts ? { ...opts, pushRoot: (id, dvx, dvy) => pushed.push([id, dvx, dvy]) } : undefined,
-    );
+  /** One tick at full strength, with the course centred on (100, 100) unless said otherwise. */
+  const run = (n: P, radius: number, angle: number, centre = { x: 100, y: 100 }) => {
+    const force = forceOrbit<P>(() => planOf(radius, angle), () => centre, 0.3);
     force.initialize([n]);
     force(1);
-    return pushed;
   };
 
-  it("pulls a concept outward when it is inside its ring, inward when outside", () => {
-    const inside: P = { id: "a", x: 150, y: 100, vx: 0, vy: 0 };
-    run(inside, 100, 0);
-    expect(inside.vx).toBeGreaterThan(0);
-    expect(inside.vy).toBeCloseTo(0, 5);
-    const outside: P = { id: "a", x: 300, y: 100, vx: 0, vy: 0 };
-    run(outside, 100, 0);
-    expect(outside.vx).toBeLessThan(0);
+  it("draws a concept straight toward its seat, harder the further away it is", () => {
+    // Seat at (200, 100).
+    const near: P = { id: "a", x: 190, y: 100, vx: 0, vy: 0 };
+    run(near, 100, 0);
+    expect(near.vx).toBeCloseTo(3, 9);
+    expect(near.vy).toBeCloseTo(0, 9);
+    const far: P = { id: "a", x: 130, y: 100, vx: 0, vy: 0 };
+    run(far, 100, 0);
+    expect(far.vx).toBeCloseTo(21, 9);
+    expect(far.vy).toBeCloseTo(0, 9);
   });
 
   it("leaves a concept sitting on its seat alone", () => {
     const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
     run(n, 100, 0);
-    expect(n.vx).toBeCloseTo(0, 5);
-    expect(n.vy).toBeCloseTo(0, 5);
+    expect(n.vx).toBeCloseTo(0, 9);
+    expect(n.vy).toBeCloseTo(0, 9);
   });
 
-  it("turns a concept toward its planned angle", () => {
-    // On the ring, a quarter turn from where it belongs.
-    const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
-    run(n, 100, Math.PI / 2);
-    expect(n.vy).toBeGreaterThan(0);
+  it("walks a concept round the course to a seat on its far side, not through the middle", () => {
+    // On its ring, diametrically opposite its seat (at (200, 100)).
+    const n: P = { id: "a", x: 0, y: 100, vx: 0, vy: 0 };
+    run(n, 100, 0);
+    // It heads for a point an eighth of a turn round, half a ring outside its ring…
+    const target = { x: n.x + n.vx / 0.3, y: n.y + n.vy / 0.3 };
+    expect(Math.hypot(target.x - 100, target.y - 100)).toBeCloseTo(100 + RING_STEP / 2, 6);
+    expect(Math.abs(Math.atan2(target.y - 100, target.x - 100))).toBeCloseTo(Math.PI - Math.PI / 4, 6);
+    // …so it moves round, not in toward the course's centre.
+    expect(Math.abs(n.vy)).toBeGreaterThan(5 * Math.abs(n.vx));
+  });
+
+  it("takes the shorter way round", () => {
+    // Seat a quarter turn clockwise (screen y is down: angle π/2 is below).
+    const n: P = { id: "a", x: 100, y: 0, vx: 0, vy: 0 };
+    run(n, 100, -Math.PI / 2 + Math.PI / 2 + 1.2);
+    // From the top (angle -π/2) to angle 1.2, the short way is clockwise
+    // through the right-hand side: it heads right.
+    expect(n.vx).toBeGreaterThan(0);
+  });
+
+  it("heads straight for a seat close round the course", () => {
+    // A little round from its seat: straight at it, no detour.
+    const n: P = { id: "a", x: 100 + Math.cos(0.5) * 100, y: 100 + Math.sin(0.5) * 100, vx: 0, vy: 0 };
+    run(n, 100, 0);
+    expect(n.vx).toBeCloseTo((200 - n.x) * 0.3, 9);
+    expect(n.vy).toBeCloseTo((100 - n.y) * 0.3, 9);
+  });
+
+  it("weakens with the simulation's heat", () => {
+    const n: P = { id: "a", x: 190, y: 100, vx: 0, vy: 0 };
+    const force = forceOrbit<P>(() => planOf(100, 0), () => ({ x: 100, y: 100 }), 0.3);
+    force.initialize([n]);
+    force(0.5);
+    expect(n.vx).toBeCloseTo(1.5, 9);
   });
 
   it("ignores a node with no seat or no position", () => {
@@ -630,20 +659,11 @@ describe("forceOrbit", () => {
     expect(stray).toEqual({ id: "zz", x: 5, y: 5, vx: 0, vy: 0 });
   });
 
-  it("hands part of each pull back to the course root when asked", () => {
-    const n: P = { id: "a", x: 150, y: 100, vx: 0, vy: 0 };
-    const pushed = run(n, 100, 0, { reaction: 0.5 });
-    expect(pushed).toHaveLength(1);
-    expect(pushed[0][0]).toBe("r");
-    expect(pushed[0][1]).toBeCloseTo(-n.vx * 0.5, 9);
-    expect(run({ id: "a", x: 150, y: 100, vx: 0, vy: 0 }, 100, 0, { reaction: 0 })).toEqual([]);
-  });
-
-  it("does not blow up for a concept sitting exactly on its course", () => {
-    const n: P = { id: "a", x: 100, y: 100, vx: 0, vy: 0 };
-    run(n, 100, 0);
-    expect(Number.isFinite(n.vx)).toBe(true);
-    expect(Number.isFinite(n.vy)).toBe(true);
+  it("follows the course's centre as it is now, not as planned", () => {
+    // The course has moved 30 to the right: its concepts follow it there.
+    const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
+    run(n, 100, 0, { x: 130, y: 100 });
+    expect(n.vx).toBeCloseTo(9, 9);
   });
 });
 
@@ -687,3 +707,231 @@ describe("labelOpacityAt", () => {
     expect(labelOpacityAt(0.8)).toBeGreaterThan(0.7);
   });
 });
+
+/** Where each concept of a plan sits, relative to its course's centre. */
+const seatOf = (plan: RadialPlan, id: string) => {
+  const o = plan.orbit.get(id)!;
+  return { x: Math.cos(o.angle) * o.radius, y: Math.sin(o.angle) * o.radius };
+};
+/** How many pairs of links (as straight lines between seats) cross. */
+function crossings(plan: RadialPlan, edges: GraphEdge[]): number {
+  const segs = edges.map((e) => [seatOf(plan, e.source), seatOf(plan, e.target)] as const);
+  const side = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) =>
+    Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+  let n = 0;
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const [p, q] = segs[i];
+      const [r, t] = segs[j];
+      // Links that share a concept meet there; that is not a crossing.
+      if ([p, q].some((u) => [r, t].some((v) => Math.hypot(u.x - v.x, u.y - v.y) < 1e-6))) continue;
+      if (side(p, q, r) * side(p, q, t) < 0 && side(r, t, p) * side(r, t, q) < 0) n++;
+    }
+  }
+  return n;
+}
+
+describe("planRadial — untangling", () => {
+  const W = 1240;
+  const H = 744;
+  const related = (a: string, b: string) => edge(a, b, "related");
+
+  it("seats linked concepts next to each other", () => {
+    // Six linked pairs among twelve concepts, named so that seating by id
+    // alone would scatter every pair across the course.
+    const nodes = [root("c1"), ...concepts(12)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const pairs = [0, 1, 2, 3, 4, 5].map((i) => [ids[i], ids[i + 6]] as const);
+    const plan = planRadial(nodes, pairs.map(([a, b]) => related(a, b)), W, H);
+    for (const [a, b] of pairs) {
+      const d = Math.hypot(seatOf(plan, a).x - seatOf(plan, b).x, seatOf(plan, a).y - seatOf(plan, b).y);
+      // Neighbouring seats: on one ring, or one ring apart.
+      expect(d, `${a} – ${b}`).toBeLessThan(ARC_PER_NODE * 1.5);
+    }
+  });
+
+  it("draws a prerequisite chain without a single crossing", () => {
+    const nodes = [root("c1"), ...concepts(30)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    // Linked in an order unrelated to the ids.
+    const order = ids.map((id, i) => ids[(i * 7) % 30]);
+    const edges = chain(order);
+    const plan = planRadial(nodes, edges, W, H);
+    expect(crossings(plan, edges)).toBe(0);
+  });
+
+  it("untangles a busy course a long way", () => {
+    // A course like the preview's: chains, fans and cross links.
+    const nodes = [root("c1"), ...concepts(30)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const pick = (i: number) => ids[(i * 11) % 30];
+    const edges: GraphEdge[] = [
+      ...chain([0, 1, 2, 3, 4, 5].map(pick)),
+      ...chain([6, 7, 8, 9].map(pick)),
+      ...[10, 11, 12, 13].map((i) => edge(pick(2), pick(i), "builds_on")),
+      ...[14, 15, 16].map((i) => edge(pick(7), pick(i), "part_of")),
+      ...[17, 18, 19, 20, 21].map((i) => related(pick(i), pick(i + 5))),
+      edge(pick(4), pick(12), "prerequisite"),
+      edge(pick(9), pick(15), "prerequisite"),
+    ];
+    const plan = planRadial(nodes, edges, W, H);
+    // Seated by dependency alone, links like these crossed some 40 times.
+    expect(crossings(plan, edges)).toBeLessThanOrEqual(12);
+    // …and the dependency rule still holds.
+    for (const e of edges) {
+      if (!isDirected(e)) continue;
+      expect(plan.orbit.get(e.target)!.radius).toBeGreaterThanOrEqual(plan.orbit.get(e.source)!.radius);
+    }
+  });
+
+  it("only moves concepts between seats the plan made", () => {
+    const nodes = [root("c1"), ...concepts(30)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const plain = planRadial(nodes, [], W, H);
+    const linked = planRadial(nodes, chain(ids.slice(0, 15)), W, H);
+    const seats = (plan: RadialPlan) =>
+      [...plan.orbit.values()].map((o) => `${o.radius}`).sort();
+    // The same rings, holding the same number of concepts each.
+    expect(seats(linked)).toEqual(seats(plain));
+  });
+
+  it("keeps the starting concepts innermost", () => {
+    const nodes = [root("c1"), ...concepts(24)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const edges = [...chain(ids.slice(0, 10)), ...ids.slice(11, 18).map((id) => related(ids[9], id))];
+    const plan = planRadial(nodes, edges, W, H);
+    const starts = [...plan.orbit.values()].filter((o) => o.depth === 0).map((o) => o.radius);
+    const rest = [...plan.orbit.values()].filter((o) => o.depth > 0).map((o) => o.radius);
+    expect(Math.max(...starts)).toBeLessThanOrEqual(Math.min(...rest));
+  });
+});
+
+describe("nearestSeat / swapSeats", () => {
+  // Four seats a quarter turn apart on one ring, and one on a second course.
+  const orbit = (): RadialPlan["orbit"] =>
+    new Map([
+      ["e", { rootId: "r", radius: 100, angle: 0, depth: 0 }],
+      ["s", { rootId: "r", radius: 100, angle: Math.PI / 2, depth: 0 }],
+      ["w", { rootId: "r", radius: 100, angle: Math.PI, depth: 1 }],
+      ["n", { rootId: "r", radius: 100, angle: -Math.PI / 2, depth: 2 }],
+      ["far", { rootId: "r2", radius: 100, angle: Math.PI, depth: 0 }],
+    ]);
+
+  it("finds the concept on the seat nearest to where a concept was let go", () => {
+    expect(nearestSeat(orbit(), "e", -90, 10)).toBe("w");
+    expect(nearestSeat(orbit(), "e", 5, 95)).toBe("s");
+    expect(nearestSeat(orbit(), "e", 0, -300)).toBe("n");
+  });
+
+  it("keeps a concept on its own seat when that is still the nearest", () => {
+    expect(nearestSeat(orbit(), "e", 100, 0)).toBe("e");
+    expect(nearestSeat(orbit(), "e", 60, 30)).toBe("e");
+    // Exactly between its own seat and another: it stays.
+    expect(nearestSeat(orbit(), "e", 50, 50)).toBe("e");
+  });
+
+  it("only ever takes a seat in its own course", () => {
+    // Dropped right on the other course's seat (relative to its own centre).
+    expect(nearestSeat(orbit(), "e", -100, 0)).toBe("w");
+    expect(nearestSeat(orbit(), "far", 100, 0)).toBe("far");
+  });
+
+  it("leaves a concept with no seat where it is", () => {
+    expect(nearestSeat(orbit(), "ghost", 0, 0)).toBe("ghost");
+  });
+
+  it("trades two seats, each concept keeping its own depth", () => {
+    const o = orbit();
+    swapSeats(o, "e", "w");
+    expect(o.get("e")).toEqual({ rootId: "r", radius: 100, angle: Math.PI, depth: 0 });
+    expect(o.get("w")).toEqual({ rootId: "r", radius: 100, angle: 0, depth: 1 });
+  });
+
+  it("trades nothing across courses, with itself, or with no one", () => {
+    const o = orbit();
+    const before = JSON.stringify([...o]);
+    swapSeats(o, "e", "far");
+    swapSeats(o, "e", "e");
+    swapSeats(o, "e", "ghost");
+    expect(JSON.stringify([...o])).toBe(before);
+  });
+
+  it("keeps every seat filled however concepts are moved about", () => {
+    const o = orbit();
+    const seats = () => [...o.values()].filter((v) => v.rootId === "r").map((v) => v.angle.toFixed(6)).sort();
+    const before = seats();
+    for (const [id, x, y] of [["e", -100, 0], ["w", 0, 100], ["s", 0, -100], ["n", 100, 5]] as const) {
+      swapSeats(o, id, nearestSeat(o, id, x, y));
+    }
+    expect(seats()).toEqual(before);
+  });
+});
+
+describe("clearOfCourses", () => {
+  const A = { x: 0, y: 0, keep: 300 };
+  const B = { x: 600, y: 0, keep: 300 };
+
+  it("leaves a course dropped in open space where it was let go", () => {
+    expect(clearOfCourses({ x: 0, y: 400 }, [A, B])).toEqual({ x: 0, y: 400 });
+    expect(clearOfCourses({ x: 5, y: 5 }, [])).toEqual({ x: 5, y: 5 });
+  });
+
+  it("sets a course dropped onto another down beside it, moved as little as it takes", () => {
+    // Dropped 100 below A's centre: straight out below it, to the edge of A's space.
+    const p = clearOfCourses({ x: 0, y: 100 }, [A]);
+    expect(p.x).toBeCloseTo(0, 6);
+    expect(p.y).toBeCloseTo(300, 6);
+  });
+
+  it("finds a spot clear of every course, not just the one it landed on", () => {
+    // Dropped between A and B: out of A's space to the right is into B's.
+    const p = clearOfCourses({ x: 300, y: 10 }, [A, B]);
+    expect(Math.hypot(p.x - A.x, p.y - A.y)).toBeGreaterThanOrEqual(A.keep - 1e-6);
+    expect(Math.hypot(p.x - B.x, p.y - B.y)).toBeGreaterThanOrEqual(B.keep - 1e-6);
+    // Above or below the gap between them, not off past either end.
+    expect(p.x).toBeGreaterThan(100);
+    expect(p.x).toBeLessThan(500);
+  });
+
+  it("copes with a course dropped dead on another's centre", () => {
+    const p = clearOfCourses({ x: 0, y: 0 }, [A]);
+    expect(Math.hypot(p.x, p.y)).toBeCloseTo(300, 6);
+  });
+
+  it("prefers a spot in view to a nearer one out of it", () => {
+    // The nearest clear spot is above A, off the top of the view.
+    const view = { minX: -1000, minY: -100, maxX: 1000, maxY: 1000 };
+    const p = clearOfCourses({ x: 0, y: -50 }, [A], [view]);
+    expect(p.y).toBeGreaterThanOrEqual(view.minY);
+    expect(Math.hypot(p.x, p.y)).toBeCloseTo(300, 6);
+  });
+
+  it("falls back to the next area, then anywhere clear", () => {
+    const nowhere = { minX: 5000, minY: 5000, maxX: 5001, maxY: 5001 };
+    const below = { minX: -1000, minY: 200, maxX: 1000, maxY: 1000 };
+    const p = clearOfCourses({ x: 0, y: -50 }, [A], [nowhere, below]);
+    expect(p.y).toBeGreaterThanOrEqual(200);
+    const q = clearOfCourses({ x: 0, y: -50 }, [A], [nowhere]);
+    expect(q.x).toBeCloseTo(0, 6);
+    expect(q.y).toBeCloseTo(-300, 6);
+  });
+
+  it("always finds a spot clear of every course, however crowded", () => {
+    // Courses packed close round the drop point, of mixed sizes.
+    let seed = 7;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let trial = 0; trial < 50; trial++) {
+      const others = Array.from({ length: 2 + (trial % 6) }, () => ({
+        x: (rand() - 0.5) * 800,
+        y: (rand() - 0.5) * 800,
+        keep: 200 + rand() * 300,
+      }));
+      const at = { x: (rand() - 0.5) * 400, y: (rand() - 0.5) * 400 };
+      const p = clearOfCourses(at, others);
+      for (const o of others) {
+        expect(Math.hypot(p.x - o.x, p.y - o.y), `trial ${trial}`).toBeGreaterThanOrEqual(o.keep - 1e-6);
+      }
+    }
+  });
+});
+

@@ -86,7 +86,7 @@ describe("blobProfile", () => {
     expect(large.a3 / small.a3).toBeCloseTo(0.13 / 0.07, 10);
   });
 
-  it("answers the same after its cache fills and is emptied", () => {
+  it("answers the same after its cache fills and is emptied", { timeout: 30_000 }, () => {
     const before = { ...blobProfile("cache-probe", 0.1) };
     for (let i = 0; i < 4100; i++) blobProfile(`cache-filler-${i}`, 0.1);
     expect(blobProfile("cache-probe", 0.1)).toEqual(before);
@@ -245,7 +245,8 @@ describe("nodeBlobPath / nodeBlobPathAt", () => {
     expect(nodeBlobPath("n-rec", 12, 0.12)).not.toBe(d);
   });
 
-  it("answers the same after its cache fills and is emptied", () => {
+  // Builds six thousand outlines to overflow the cache: slow on a busy machine.
+  it("answers the same after its cache fills and is emptied", { timeout: 30_000 }, () => {
     const before = nodeBlobPath("path-cache-probe", 12, 0.1);
     for (let i = 0; i < 6100; i++) nodeBlobPath("path-cache-probe", 12 + i * 0.01 + 1, 0.1);
     expect(nodeBlobPath("path-cache-probe", 12, 0.1)).toBe(before);

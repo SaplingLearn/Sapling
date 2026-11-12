@@ -252,6 +252,98 @@ function rowLengths(count: number, rows: number): number[] {
   return out;
 }
 
+/** How many spots round each course a dropped course is tried at (`clearOfCourses`). */
+const SPOTS_ROUND = 72;
+/** Rounds of seat trading; a large course gets fewer, to bound the work. */
+const UNTANGLE_ROUNDS = 16;
+const UNTANGLE_LARGE = 400;
+
+/**
+ * Trade seats, two concepts at a time, while that shortens the course's
+ * links. Seating each concept out from what leads into it leaves many links
+ * running clear across the course, over other concepts and through each
+ * other; shorter links cross less, so the course reads as a few strands
+ * instead of a knot.
+ *
+ * A trade is only made between two starting concepts (`starts`, the ones
+ * the course itself links to) or two that are not, and only when both still
+ * sit level with or outside everything that leads into them: the course
+ * still grows outward from its starting concepts. A course with no links
+ * between its concepts is left exactly as seated. The order tried is by id,
+ * so the same graph always ends up arranged the same way.
+ */
+function untangle(
+  ids: string[],
+  radius: Map<string, number>,
+  angle: Map<string, number>,
+  edges: GraphEdge[],
+  starts: ReadonlySet<string>,
+): void {
+  const here = new Set(ids);
+  const linked = new Map<string, string[]>();
+  const into = new Map<string, string[]>();
+  const outOf = new Map<string, string[]>();
+  const push = (map: Map<string, string[]>, key: string, value: string) => {
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(value);
+  };
+  for (const e of edges) {
+    if (e.source === e.target || !here.has(e.source) || !here.has(e.target)) continue;
+    push(linked, e.source, e.target);
+    push(linked, e.target, e.source);
+    if (isDirected(e)) {
+      push(into, e.target, e.source);
+      push(outOf, e.source, e.target);
+    }
+  }
+  if (!linked.size) return;
+
+  const x = new Map(ids.map((id) => [id, Math.cos(angle.get(id)!) * radius.get(id)!]));
+  const y = new Map(ids.map((id) => [id, Math.sin(angle.get(id)!) * radius.get(id)!]));
+  /** What `id`'s links would measure (squared) with it at (px, py) and `other` at (ox, oy). */
+  const strain = (id: string, px: number, py: number, other: string, ox: number, oy: number) => {
+    let sum = 0;
+    for (const m of linked.get(id) ?? []) {
+      const mx = m === other ? ox : x.get(m)!;
+      const my = m === other ? oy : y.get(m)!;
+      sum += (px - mx) * (px - mx) + (py - my) * (py - my);
+    }
+    return sum;
+  };
+  /** Whether `id` on a ring of radius `r`, with `other` on `otherR`, is still outside what leads into it. */
+  const inOrder = (id: string, r: number, other: string, otherR: number) => {
+    for (const p of into.get(id) ?? []) if ((p === other ? otherR : radius.get(p)!) > r + 1e-6) return false;
+    for (const q of outOf.get(id) ?? []) if ((q === other ? otherR : radius.get(q)!) < r - 1e-6) return false;
+    return true;
+  };
+
+  const order = [...ids].sort((a, b) => a.localeCompare(b));
+  const rounds = ids.length > UNTANGLE_LARGE ? 3 : UNTANGLE_ROUNDS;
+  for (let round = 0; round < rounds; round++) {
+    let traded = false;
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      for (let j = i + 1; j < order.length; j++) {
+        const b = order[j];
+        // Two concepts with no links have nothing to gain from each other.
+        if (!linked.has(a) && !linked.has(b)) continue;
+        if (starts.has(a) !== starts.has(b)) continue;
+        const ax = x.get(a)!, ay = y.get(a)!, bx = x.get(b)!, by = y.get(b)!;
+        const ra = radius.get(a)!, rb = radius.get(b)!;
+        const now = strain(a, ax, ay, b, bx, by) + strain(b, bx, by, a, ax, ay);
+        const then = strain(a, bx, by, b, ax, ay) + strain(b, ax, ay, a, bx, by);
+        if (then >= now - 1) continue;
+        if (!inOrder(a, rb, b, ra) || !inOrder(b, ra, a, rb)) continue;
+        const aa = angle.get(a)!;
+        radius.set(a, rb); angle.set(a, angle.get(b)!); x.set(a, bx); y.set(a, by);
+        radius.set(b, ra); angle.set(b, aa); x.set(b, ax); y.set(b, ay);
+        traded = true;
+      }
+    }
+    if (!traded) break;
+  }
+}
+
 export type RadialPlan = {
   /** Course root id → fixed centre. */
   centers: Map<string, { x: number; y: number }>;
@@ -263,6 +355,143 @@ function stableAngle(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
   return ((h >>> 0) % 3600) / 3600 * Math.PI * 2;
+}
+
+const TAU = Math.PI * 2;
+/** An angle in [0, 2π). */
+const norm = (a: number) => ((a % TAU) + TAU) % TAU;
+/** The mean direction of some angles. */
+function meanAngle(angles: number[]): number {
+  return Math.atan2(
+    angles.reduce((sum, a) => sum + Math.sin(a), 0),
+    angles.reduce((sum, a) => sum + Math.cos(a), 0),
+  );
+}
+
+/** What leads into each of a course's concepts (directed edges within the course). */
+function predecessorsOf(depth: ReadonlyMap<string, number>, edges: GraphEdge[]): Map<string, string[]> {
+  const preds = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!isDirected(e) || !depth.has(e.source) || !depth.has(e.target)) continue;
+    if (!preds.has(e.target)) preds.set(e.target, []);
+    preds.get(e.target)!.push(e.source);
+  }
+  return preds;
+}
+
+/**
+ * Which ring each of a course's concepts sits on. They fill the rings from
+ * the centre out in dependency order, so a concept never sits inside
+ * something that leads into it. A level that runs over the end of a ring is
+ * dealt across the rings it touches, so its concepts are spread all the way
+ * round each one. Also returns `rough`: where each concept would like to be
+ * before the seats are known, by its id for a starting concept, else toward
+ * what leads into it.
+ */
+function seatByDepth(
+  rings: Array<{ radius: number; count: number }>,
+  byDepth: ReadonlyMap<number, string[]>,
+  preds: ReadonlyMap<string, string[]>,
+): { seated: string[][]; rough: Map<string, number> } {
+  const seated: string[][] = rings.map(() => []);
+  const free = rings.map((ring) => ring.count);
+  const rough = new Map<string, number>();
+  let at = 0;
+  for (const d of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const level = byDepth
+      .get(d)!
+      .map((id) => {
+        const from = (preds.get(id) || []).filter((p) => rough.has(p)).map((p) => rough.get(p)!);
+        return { id, a: from.length ? norm(meanAngle(from)) : stableAngle(id) };
+      })
+      .sort((p, q) => p.a - q.a || p.id.localeCompare(q.id));
+    for (const { id, a } of level) rough.set(id, a);
+    const first = at;
+    const take: number[] = [];
+    // There is a seat for every concept, so this always ends with none left.
+    for (let left = level.length; left > 0 && free[at] > 0; ) {
+      const n = Math.min(free[at], left);
+      take.push(n);
+      free[at] -= n;
+      left -= n;
+      if (free[at] === 0 && at < rings.length - 1) at += 1;
+    }
+    const ringOf = dealRings(level.length, take);
+    level.forEach(({ id }, j) => seated[first + ringOf[j]].push(id));
+  }
+  return { seated, rough };
+}
+
+/**
+ * Angles, ring by ring from the centre: each ring's concepts go all the way
+ * round it (a course with one starting concept would otherwise grow off to
+ * one side), in the order of where they want to be and turned to sit as
+ * close to that as an even spacing allows. A concept wants to be out from
+ * what leads into it, so links mostly point outward.
+ */
+function spreadRings(
+  rings: Array<{ radius: number; count: number }>,
+  seated: string[][],
+  preds: ReadonlyMap<string, string[]>,
+  rough: ReadonlyMap<string, number>,
+  offset: number,
+): { angle: Map<string, number>; radius: Map<string, number> } {
+  const angle = new Map<string, number>();
+  const radius = new Map<string, number>();
+  const want = (id: string): number => {
+    const from = (preds.get(id) || []).map((p) => angle.get(p) ?? rough.get(p)).filter((a) => a != null);
+    return from.length ? norm(meanAngle(from as number[])) : stableAngle(id);
+  };
+  rings.forEach((ring, k) => {
+    const members = seated[k]
+      .map((id) => ({ id, a: want(id) }))
+      .sort((p, q) => p.a - q.a || p.id.localeCompare(q.id));
+    const step = TAU / members.length;
+    let base: number;
+    if (members.every(({ id }) => !(preds.get(id) || []).length)) {
+      // Nothing leads into any of them: a stable order, each further ring
+      // turned so the rings do not line up.
+      base = offset + k * RING_TURN;
+    } else if (members.length === 1) {
+      base = members[0].a;
+    } else {
+      base = meanAngle(members.map(({ a }, i) => a - i * step));
+    }
+    members.forEach(({ id }, i) => {
+      angle.set(id, base + i * step);
+      radius.set(id, ring.radius);
+    });
+  });
+  return { angle, radius };
+}
+
+/**
+ * One course's seats. The course takes as few rings as seat it comfortably
+ * (`ringsFor`), its concepts are seated by dependency (`seatByDepth`) and
+ * spread round their rings (`spreadRings`), then trade seats while that
+ * shortens their links (`untangle`). `reach` is its outer ring's radius.
+ */
+function planCourse(
+  ids: string[],
+  conceptEdges: GraphEdge[],
+  rootId: string | null,
+): { seats: Map<string, { radius: number; angle: number; depth: number }>; reach: number } {
+  const depth = computeDepths(ids, conceptEdges);
+  const byDepth = new Map<number, string[]>();
+  for (const id of ids) {
+    const d = depth.get(id) ?? 0;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d)!.push(id);
+  }
+  const preds = predecessorsOf(depth, conceptEdges);
+  const rings = ringsFor(ids.length, RING0);
+  const { seated, rough } = seatByDepth(rings, byDepth, preds);
+  const { angle, radius } = spreadRings(rings, seated, preds, rough, rootId ? stableAngle(rootId) : 0);
+  untangle(ids, radius, angle, conceptEdges, rootId ? new Set(byDepth.get(0) ?? []) : new Set());
+  const seats = new Map(
+    ids.map((id) => [id, { radius: radius.get(id)!, angle: angle.get(id)!, depth: depth.get(id) ?? 0 }] as const),
+  );
+  return { seats, reach: rings.length ? rings[rings.length - 1].radius : 0 };
 }
 
 /**
@@ -288,99 +517,8 @@ export function planRadial(
   const orbit: RadialPlan["orbit"] = new Map();
   const outer = new Map<string | null, number>();
   for (const [rootId, members] of groups) {
-    const ids = members.map((m) => m.id);
-    const depth = computeDepths(ids, conceptEdges);
-    const byDepth = new Map<number, string[]>();
-    for (const id of ids) {
-      const d = depth.get(id) ?? 0;
-      if (!byDepth.has(d)) byDepth.set(d, []);
-      byDepth.get(d)!.push(id);
-    }
-    const preds = new Map<string, string[]>();
-    for (const e of conceptEdges) {
-      if (!isDirected(e) || !depth.has(e.source) || !depth.has(e.target)) continue;
-      if (!preds.has(e.target)) preds.set(e.target, []);
-      preds.get(e.target)!.push(e.source);
-    }
-    const TAU = Math.PI * 2;
-    const norm = (a: number) => ((a % TAU) + TAU) % TAU;
-    const meanAngle = (angles: number[]) =>
-      Math.atan2(
-        angles.reduce((sum, a) => sum + Math.sin(a), 0),
-        angles.reduce((sum, a) => sum + Math.cos(a), 0),
-      );
-
-    // Seats. The whole course takes as few rings as seat it comfortably, and
-    // its concepts fill them from the centre out in dependency order: a
-    // concept never sits inside something that leads into it. A level that
-    // runs over the end of a ring is dealt across the rings it touches, so
-    // its concepts are spread all the way round each one. `rough` is where a
-    // concept would like to be before the seats are known: by its id for a
-    // starting concept, else toward what leads into it.
-    const rings = ringsFor(ids.length, RING0);
-    const seated: string[][] = rings.map(() => []);
-    const free = rings.map((ring) => ring.count);
-    const rough = new Map<string, number>();
-    let at = 0;
-    for (const d of [...byDepth.keys()].sort((a, b) => a - b)) {
-      const level = byDepth
-        .get(d)!
-        .map((id) => {
-          const from = (preds.get(id) || []).filter((p) => rough.has(p)).map((p) => rough.get(p)!);
-          return { id, a: from.length ? norm(meanAngle(from)) : stableAngle(id) };
-        })
-        .sort((p, q) => p.a - q.a || p.id.localeCompare(q.id));
-      for (const { id, a } of level) rough.set(id, a);
-      const first = at;
-      const take: number[] = [];
-      // There is a seat for every concept, so this always ends with none left.
-      for (let left = level.length; left > 0 && free[at] > 0; ) {
-        const n = Math.min(free[at], left);
-        take.push(n);
-        free[at] -= n;
-        left -= n;
-        if (free[at] === 0 && at < rings.length - 1) at += 1;
-      }
-      const ringOf = dealRings(level.length, take);
-      level.forEach(({ id }, j) => seated[first + ringOf[j]].push(id));
-    }
-
-    // Angles, ring by ring from the centre: each ring's concepts go all the
-    // way round it (a course with one starting concept would otherwise grow
-    // off to one side), in the order of where they want to be and turned to
-    // sit as close to that as an even spacing allows. A concept wants to be
-    // out from what leads into it, so links mostly point outward.
-    const angle = new Map<string, number>();
-    const radius = new Map<string, number>();
-    const offset = rootId ? stableAngle(rootId) : 0;
-    rings.forEach((ring, k) => {
-      const want = (id: string): number => {
-        const from = (preds.get(id) || []).map((p) => angle.get(p) ?? rough.get(p)).filter((a) => a != null);
-        return from.length ? norm(meanAngle(from as number[])) : stableAngle(id);
-      };
-      const members = seated[k]
-        .map((id) => ({ id, a: want(id) }))
-        .sort((p, q) => p.a - q.a || p.id.localeCompare(q.id));
-      const step = TAU / members.length;
-      let base: number;
-      if (members.every(({ id }) => !(preds.get(id) || []).length)) {
-        // Nothing leads into any of them: a stable order, each further ring
-        // turned so the rings do not line up.
-        base = offset + k * RING_TURN;
-      } else if (members.length === 1) {
-        base = members[0].a;
-      } else {
-        base = meanAngle(members.map(({ a }, i) => a - i * step));
-      }
-      members.forEach(({ id }, i) => {
-        angle.set(id, base + i * step);
-        radius.set(id, ring.radius);
-      });
-    });
-    const reach = rings.length ? rings[rings.length - 1].radius : 0;
-    for (const id of ids) {
-      orbit.set(id, { rootId, radius: radius.get(id)!, angle: angle.get(id)!, depth: depth.get(id) ?? 0 });
-    }
+    const { seats, reach } = planCourse(members.map((m) => m.id), conceptEdges, rootId);
+    for (const [id, seat] of seats) orbit.set(id, { rootId, ...seat });
     outer.set(rootId, reach);
   }
 
@@ -431,26 +569,122 @@ export function planBounds(plan: RadialPlan, width: number, height: number) {
   return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }
 
-type Positioned = { id: string; x?: number; y?: number; vx?: number; vy?: number };
+/**
+ * The seat a dropped concept takes: of all the seats in its own course, the
+ * one nearest to where it was let go (`dx`, `dy` from the course's centre).
+ * Returns the concept sitting there now, which is the dropped concept itself
+ * while its own seat is still the nearest.
+ *
+ * A seat is a place (a ring and an angle on it), and a course's seats are
+ * what the plan spaced out. Concepts only ever trade them (`swapSeats`), so
+ * however a student moves concepts about, they stay as far apart as planned.
+ */
+export function nearestSeat(orbit: RadialPlan["orbit"], id: string, dx: number, dy: number): string {
+  const own = orbit.get(id);
+  if (!own) return id;
+  const reach = (o: { radius: number; angle: number }) =>
+    Math.hypot(Math.cos(o.angle) * o.radius - dx, Math.sin(o.angle) * o.radius - dy);
+  let best = id;
+  // Its own seat wins a tie: a concept let go where it sat stays put.
+  let nearest = reach(own);
+  for (const [other, o] of orbit) {
+    if (other === id || o.rootId !== own.rootId) continue;
+    const d = reach(o);
+    if (d < nearest - 1e-9) {
+      nearest = d;
+      best = other;
+    }
+  }
+  return best;
+}
 
 /**
- * A custom d3 force pulling each concept toward its ring around its course
- * root's CURRENT position (so dragging a course drags its rings along).
+ * Two concepts of one course trade seats. Each keeps its own depth, which
+ * says what leads into the concept, not where it sits.
+ */
+export function swapSeats(orbit: RadialPlan["orbit"], a: string, b: string): void {
+  const first = orbit.get(a);
+  const second = orbit.get(b);
+  if (!first || !second || a === b || first.rootId !== second.rootId) return;
+  [first.radius, second.radius] = [second.radius, first.radius];
+  [first.angle, second.angle] = [second.angle, first.angle];
+}
+
+/**
+ * Where a dropped course comes to rest: where it was let go when that is
+ * clear of every other course, else the nearest spot that is. `keep` is the
+ * least distance allowed between its centre and that course's. A course
+ * dropped onto another is set down beside it rather than left tangled in it.
+ *
+ * The spots tried are those right at the allowed distance from some course,
+ * all the way round it. `within` lists areas to keep to, most wanted first
+ * (the part of the window the whole course fits in, then the part its centre
+ * is visible in): a spot inside one is preferred to a nearer spot outside,
+ * so a course is not set down off the edge of the window while there is
+ * room in it. Courses take up a bounded space, so there is always a clear
+ * spot on its edge.
+ */
+export function clearOfCourses(
+  at: { x: number; y: number },
+  others: ReadonlyArray<{ x: number; y: number; keep: number }>,
+  within: ReadonlyArray<{ minX: number; minY: number; maxX: number; maxY: number }> = [],
+): { x: number; y: number } {
+  const clear = (p: { x: number; y: number }) =>
+    others.every((o) => Math.hypot(p.x - o.x, p.y - o.y) >= o.keep - 1e-6);
+  if (clear(at)) return at;
+  const spots: Array<{ x: number; y: number }> = [];
+  for (const o of others) {
+    // Starting straight out from that course through the drop point: with
+    // nothing else in the way, that is the least the course can be moved.
+    const out = Math.atan2(at.y - o.y, at.x - o.x);
+    for (let i = 0; i < SPOTS_ROUND; i++) {
+      const a = out + (i / SPOTS_ROUND) * Math.PI * 2;
+      const spot = { x: o.x + Math.cos(a) * o.keep, y: o.y + Math.sin(a) * o.keep };
+      if (clear(spot)) spots.push(spot);
+    }
+  }
+  // Only if every sampled spot were covered; kept so the answer is always a point.
+  if (!spots.length) return at;
+  let pool = spots;
+  for (const area of within) {
+    const inside = spots.filter((p) => p.x >= area.minX && p.x <= area.maxX && p.y >= area.minY && p.y <= area.maxY);
+    if (inside.length) {
+      pool = inside;
+      break;
+    }
+  }
+  let best = at;
+  let nearest = Infinity;
+  for (const spot of pool) {
+    const d = Math.hypot(spot.x - at.x, spot.y - at.y);
+    if (d < nearest - 1e-9) {
+      nearest = d;
+      best = spot;
+    }
+  }
+  return best;
+}
+
+type Positioned = { id: string; x?: number; y?: number; vx?: number; vy?: number };
+
+/** The furthest round its course a concept heads in one go when walking to its seat. */
+const WALK_STEP = Math.PI / 4;
+
+/**
+ * A custom d3 force drawing each concept toward its seat: the point on its
+ * ring, at its angle, around its course root's CURRENT position (so moving a
+ * course moves its rings along).
+ *
+ * A concept whose seat is far round the course (a swap sent it to the other
+ * side) walks there: it heads for a point at most `WALK_STEP` further round,
+ * half a ring outside the larger of its distance and its seat's, so it goes
+ * round the course between the rings instead of through the middle, where
+ * the course root would stop it dead.
  */
 export function forceOrbit<N extends Positioned>(
   plan: () => RadialPlan,
   centerOf: (rootId: string | null) => { x: number; y: number },
-  strength = 0.6,
-  anglePull = 0.12,
-  {
-    pushRoot,
-    reaction = 0,
-  }: {
-    /** Apply the opposite tug to the course root (velocity deltas). */
-    pushRoot?: (rootId: string, dvx: number, dvy: number) => void;
-    /** Share of each concept's pull handed back to its root (0 = root fixed). */
-    reaction?: number;
-  } = {},
+  strength = 0.3,
 ) {
   let nodes: N[] = [];
   const force = (alpha: number) => {
@@ -459,21 +693,24 @@ export function forceOrbit<N extends Positioned>(
       const o = orbit.get(n.id);
       if (!o || n.x == null || n.y == null) continue;
       const c = centerOf(o.rootId);
-      const dx = n.x - c.x || 1e-6;
-      const dy = n.y - c.y || 1e-6;
-      const len = Math.hypot(dx, dy);
-      const k = ((o.radius - len) * strength * alpha) / len;
-      // A gentler pull toward the planned angle, so link forces can't drag a
-      // whole course round to one side of its centre.
-      const tx = c.x + Math.cos(o.angle) * o.radius;
-      const ty = c.y + Math.sin(o.angle) * o.radius;
-      const ax = dx * k + (tx - n.x) * anglePull * alpha;
-      const ay = dy * k + (ty - n.y) * anglePull * alpha;
-      n.vx = (n.vx ?? 0) + ax;
-      n.vy = (n.vy ?? 0) + ay;
-      // Equal and opposite, in part: a concept pulled far from its course
-      // tugs the course after it, and the course carries its other concepts.
-      if (reaction && pushRoot && o.rootId) pushRoot(o.rootId, -ax * reaction, -ay * reaction);
+      let tx = c.x + Math.cos(o.angle) * o.radius;
+      let ty = c.y + Math.sin(o.angle) * o.radius;
+      const dx = n.x - c.x;
+      const dy = n.y - c.y;
+      const r = Math.hypot(dx, dy);
+      if (r > 1) {
+        const here = Math.atan2(dy, dx);
+        // The shorter way round, in (-π, π]; from exactly opposite, either way.
+        const turn = Math.atan2(Math.sin(o.angle - here), Math.cos(o.angle - here));
+        if (Math.abs(turn) > WALK_STEP) {
+          const a = here + Math.sign(turn) * WALK_STEP;
+          const walk = Math.max(r, o.radius) + RING_STEP / 2;
+          tx = c.x + Math.cos(a) * walk;
+          ty = c.y + Math.sin(a) * walk;
+        }
+      }
+      n.vx = (n.vx ?? 0) + (tx - n.x) * strength * alpha;
+      n.vy = (n.vy ?? 0) + (ty - n.y) * strength * alpha;
     }
   };
   force.initialize = (ns: N[]) => {
