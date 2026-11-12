@@ -28,20 +28,17 @@ def test_backend_versions_are_dates():
 
 
 def test_frontend_and_backend_versions_match():
-    if not VERSIONS_TS.exists():
-        pytest.skip(
-            f"{VERSIONS_TS} does not exist in this checkout (the frontend's "
-            "legal versions module lands with the onboarding frontend change); "
-            "nothing to compare services/legal.py against yet"
-        )
+    # A missing file fails rather than skips: a moved module must move this
+    # check with it, or the two copies could drift unseen.
+    assert VERSIONS_TS.exists(), f"{VERSIONS_TS} is gone; point this test at its new home"
     src = VERSIONS_TS.read_text()
     assert _ts_constant(src, "TERMS_VERSION") == legal.TERMS_VERSION, (
         f"TERMS_VERSION differs: {VERSIONS_TS.name} says "
-        f"{_ts_constant(src, 'TERMS_VERSION')!r}, services/legal.py says {legal.TERMS_VERSION!r}"
+        f"{_ts_constant(src, 'TERMS_VERSION')!r}, config.py says {legal.TERMS_VERSION!r}"
     )
     assert _ts_constant(src, "PRIVACY_VERSION") == legal.PRIVACY_VERSION, (
         f"PRIVACY_VERSION differs: {VERSIONS_TS.name} says "
-        f"{_ts_constant(src, 'PRIVACY_VERSION')!r}, services/legal.py says {legal.PRIVACY_VERSION!r}"
+        f"{_ts_constant(src, 'PRIVACY_VERSION')!r}, config.py says {legal.PRIVACY_VERSION!r}"
     )
 
 

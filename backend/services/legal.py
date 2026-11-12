@@ -2,10 +2,11 @@
 which ones a student accepted.
 
 A version is the "Last updated" date on the public /terms and /privacy pages.
-The frontend keeps the same two constants in ``frontend/src/lib/legal/versions.ts``
-(the module the pages and onboarding read the documents and their dates from);
-``tests/test_legal_versions.py`` fails when the two disagree, so bump both
-together when a document changes.
+The two constants live in ``config.py`` (so the db/ ops scripts can read them
+too) and are re-exported here. The frontend keeps the same two in
+``frontend/src/lib/legal/versions.ts`` (the module the pages and onboarding
+read the documents and their dates from); ``tests/test_legal_versions.py``
+fails when the two disagree, so bump both together when a document changes.
 
 Onboarding (``POST /api/onboarding/profile``) refuses a submit that accepted
 anything but these versions (422 ``legal_outdated``) and records the two it did
@@ -13,11 +14,9 @@ accept in ``legal_acceptances`` before the account is marked onboarded.
 """
 from __future__ import annotations
 
+from config import PRIVACY_VERSION, TERMS_VERSION
 from db.connection import table
 from db.scope import service_scope
-
-TERMS_VERSION = "2026-10-22"
-PRIVACY_VERSION = "2026-11-03"
 
 #: `legal_acceptances.document` values (the table's CHECK constraint).
 TERMS = "terms"

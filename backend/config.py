@@ -62,6 +62,16 @@ AUTH_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
 
+# The Terms of Service and Privacy Policy versions in force. Each is the "Last
+# updated" date on the public /terms and /privacy pages. Onboarding refuses a
+# submit that accepted any other version and records the ones accepted
+# (services/legal.py). They live here, not in services/legal.py, so that every
+# layer can read them, including the db/ ops scripts (.importlinter). The
+# frontend keeps the same two values in frontend/src/lib/legal/versions.ts, and
+# tests/test_legal_versions.py fails when they differ: bump both together.
+TERMS_VERSION = "2026-10-22"
+PRIVACY_VERSION = "2026-11-03"
+
 
 # Transactional + broadcast email over Resend (services/email_service.py).
 # RESEND_API_KEY unset/empty is the kill switch: every send is still recorded in

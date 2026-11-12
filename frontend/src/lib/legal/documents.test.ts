@@ -1,6 +1,6 @@
 /**
  * The legal documents' one source of truth. The version strings are read by a
- * backend test (backend/services/legal.py must match), so their exact form
+ * backend test (backend/config.py must match), so their exact form
  * is pinned here too.
  */
 import { readFileSync } from 'node:fs';

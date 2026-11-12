@@ -1,7 +1,7 @@
 """Academics journey: semesters list + abstract-catalog search + enroll-resolves-to-offering."""
 from db.e2e_staging_http import client, check, COURSE_ID, OFFERING_ID, USER_ID, current_term_id
 from db.connection import table
-from services.legal import PRIVACY_VERSION, TERMS_VERSION
+from config import PRIVACY_VERSION, TERMS_VERSION
 
 
 def run() -> None:

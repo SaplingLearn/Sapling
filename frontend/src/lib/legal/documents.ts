@@ -8,7 +8,7 @@
  * (./versions.ts, sent with the onboarding save).
  *
  * Editing the text of either document is a new version: change its date in
- * ./versions.ts (and backend/services/legal.py) in the same change.
+ * ./versions.ts (and backend/config.py) in the same change.
  */
 import { PRIVACY_VERSION, TERMS_VERSION } from "./versions";
 
