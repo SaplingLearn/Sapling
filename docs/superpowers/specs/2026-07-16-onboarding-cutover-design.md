@@ -2,6 +2,20 @@
 
 **Issue:** [#292 — frontend: delete dead OnboardingFlow.tsx](https://github.com/SaplingLearn/Sapling/issues/292)
 
+> **Status (2026-11-12): historical.** The cutover below shipped, but three of its statements no
+> longer describe the code:
+>
+> - **Get Started signs in first, for everyone.** A signed-out visitor gets the sign-in box; after
+>   sign-in the student goes to `/pending` (not approved), `/onboarding` (not finished) or
+>   `/dashboard`. There is no guest onboarding. The middleware enforces the same routing on
+>   `/onboarding` and every app page.
+> - **The intro and outro animations are back** (`components/onboarding/useStage.ts`). With
+>   reduced motion they are skipped.
+> - **Esc goes back one screen; it does not sign out.** Leaving the flow is the visible
+>   "Sign out" button.
+>
+> The current flow lives in `components/screens/Onboarding.tsx` and `components/onboarding/`.
+
 ## Problem
 
 Issue #292 was filed as "delete dead code," but the premise is stale. The tracker
