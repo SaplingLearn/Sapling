@@ -10,8 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const push = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
@@ -43,7 +44,10 @@ async function home(guides = THREE) {
   return userEvent.setup();
 }
 
-beforeEach(resetMocks);
+beforeEach(() => {
+  resetMocks();
+  push.mockReset();
+});
 afterEach(cleanup);
 
 describe("the page", () => {
@@ -196,6 +200,15 @@ describe("opening the New study guide dialog", () => {
     await waitFor(() => expect(screen.getByTestId("guide-new-class")).toHaveTextContent("MA225"));
     expect(mocks.options).toHaveBeenCalledWith("u1", "c2", null);
     expect(window.location.search).toBe("?course=c2");
+  });
+
+  it("Generate guide creates the guide and goes to its reader", async () => {
+    arriveAt("new=1&course=c1");
+    const user = await home();
+    await screen.findByTestId("guide-new-material-d1");
+    await user.click(screen.getByTestId("guide-new-generate"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/study/guide/g-new"));
+    expect(mocks.create).toHaveBeenCalledWith("u1", expect.objectContaining({ course_id: "c1", material_ids: ["d1", "d2", "d3"] }));
   });
 
   it("a plain arrival opens nothing", async () => {

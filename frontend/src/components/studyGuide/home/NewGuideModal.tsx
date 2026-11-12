@@ -50,7 +50,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, initial
 
   return (
     <>
-      <Dialog open onClose={onClose} title="New study guide" width="min(920px, calc(100vw - 32px))">
+      <Dialog open onClose={onClose} title="New study guide" width="min(980px, calc(100vw - 32px))">
         <div className={m.dialog} data-testid="guide-new-dialog">
           <div className={m.body}>
             <div className={m.form}>
@@ -58,7 +58,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, initial
                 <ClassField courses={courses} ready={coursesReady} value={form.courseId} onChange={guide.pickCourse} />
                 <ScopeField scopes={guide.scopes} placeholder={scopePlaceholder(guide)} value={form.scope ? scopeKey(form.scope) : ""} onChange={guide.pickScope} />
               </div>
-              <div className={m.pair}>
+              <div className={m.choices}>
                 <GoalField value={form.goal} onChange={guide.setGoal} />
                 <DepthField value={form.depth} onChange={guide.setDepth} />
               </div>

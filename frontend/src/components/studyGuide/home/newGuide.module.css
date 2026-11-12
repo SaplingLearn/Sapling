@@ -13,9 +13,11 @@
   color: var(--text);
 }
 
-.body { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 24px; align-items: start; }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 24px; align-items: start; }
 .form { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* Goal and Depth sit side by side while both fit, and stack when they do not. */
+.choices { display: flex; flex-wrap: wrap; gap: 18px 24px; }
 
 .field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .fieldHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-height: 18px; }
