@@ -207,17 +207,55 @@ describe("a run that stops part way", () => {
     expect(await retryMode(user)).toBe("regenerate");
   });
 
-  it.each([
-    ["the guide is as it was", () => fixtureGuide(), true],
-    ["the guide is partly rewritten", () => partlyRewritten("failed"), false],
-  ])("offers no Retry when the stream says trying again will not help (%s)", async (_name, onServer, dismissible) => {
-    const { run } = await running();
-    mocks.getGuide.mockResolvedValue(onServer());
-    await act(async () => run.reject(new GuideGenerationError("You are out of AI credit for today.", false)));
+  const OUT_OF_CREDIT = "You are out of AI credit for today.";
 
-    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("You are out of AI credit for today.");
+  it("offers no Retry, only Dismiss, when trying again will not help and the guide is as it was", async () => {
+    const { run } = await running();
+    await act(async () => run.reject(new GuideGenerationError(OUT_OF_CREDIT, false)));
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent(OUT_OF_CREDIT);
     expect(screen.queryByTestId("guide-generation-retry")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("guide-generation-dismiss") !== null).toBe(dismissible);
+    expect(screen.getByTestId("guide-generation-dismiss")).toBeInTheDocument();
+  });
+
+  it.each(["failed", "generating"] as const)(
+    "still offers Retry, as a resume, when the refusal left the guide partly rewritten (%s)",
+    async status => {
+      const { user, run } = await running();
+      mocks.getGuide.mockResolvedValue(partlyRewritten(status));
+      await act(async () => run.reject(new GuideGenerationError(OUT_OF_CREDIT, false)));
+
+      expect(screen.getByTestId("guide-generation-error")).toHaveTextContent(OUT_OF_CREDIT);
+      // Unfinished and not dismissible: without Retry nothing could be done.
+      expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
+      expect(await retryMode(user)).toBe("resume");
+    },
+  );
+
+  it("offers a resume when the Update asked again is turned away from a guide it had already begun", async () => {
+    const { user, run, handlers } = await running("update");
+    const rewritten = fixtureGuide();
+    act(() => {
+      handlers().onOutline?.(outlineOf(rewritten));
+      handlers().onSection?.(sectionOf(rewritten, "s1"));
+    });
+    // The stream drops, and the guide cannot be read again either.
+    mocks.getGuide.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => run.reject(new TypeError("network error")));
+
+    // What the server has is not known, so Retry asks for the Update again.
+    // Its first section had been saved: the lectures are no longer new.
+    mocks.generateGuide.mockRejectedValueOnce(refused(422, "There is nothing new to add to this guide."));
+    mocks.getGuide.mockResolvedValue(partlyRewritten("generating"));
+    await user.click(screen.getByTestId("guide-generation-retry"));
+
+    expect(await screen.findByTestId("guide-generation-error")).toHaveTextContent("There is nothing new to add");
+    expect(lastMode()).toBe("update");
+    expect(screen.queryByTestId("guide-generation-dismiss")).not.toBeInTheDocument();
+    mocks.generateGuide.mockReturnValue(deferred<GuideDetail>().promise);
+    await user.click(screen.getByTestId("guide-generation-retry"));
+    await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalledTimes(3));
+    expect(lastMode()).toBe("resume");
   });
 
   it("keeps what it shows, under the run's own error, when the guide cannot be read again", async () => {

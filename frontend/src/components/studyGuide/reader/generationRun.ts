@@ -81,23 +81,23 @@ export interface Failure {
  * `status` is the guide's as the server has it once the run has stopped, or
  * null when it could not be read.
  *
+ * A guide that is `generating` or `failed` is partly written. Only a resume
+ * finishes it, so Retry is always there and asks for one, whatever stopped
+ * the run: the banner cannot be put away, and without Retry the student
+ * could do nothing short of a reload.
+ *
  * A guide that is still `ready` was not replaced: an Update or a Regenerate
  * saves nothing until its first section is written. Retry asks for the same
- * thing again. One that is `generating` or `failed` is partly written, and
- * only a resume finishes it.
- *
- * A 422 is the server saying the request itself cannot work (an Update with
- * nothing new to add): Retry would get the same answer.
+ * thing again, unless the server said that cannot help. A 422 is the server
+ * saying the request itself cannot work (an Update with nothing new to add):
+ * Retry would get the same answer.
  */
 export function failureOf(err: unknown, mode: GenerateMode, status: GuideStatus | null): Failure {
   const streamed = err instanceof GuideGenerationError;
+  const message = streamed ? err.message : humanizeError(err, FAILED);
+  if (status === "generating" || status === "failed") return { message, retry: "resume", dismissible: false };
   const retryable = streamed ? err.retryable : statusOf(err) !== 422;
-  const partlyWritten = status === "generating" || status === "failed";
-  return {
-    message: streamed ? err.message : humanizeError(err, FAILED),
-    retry: retryable ? (partlyWritten ? "resume" : mode) : null,
-    dismissible: status === "ready",
-  };
+  return { message, retry: retryable ? mode : null, dismissible: status === "ready" };
 }
 
 /**
