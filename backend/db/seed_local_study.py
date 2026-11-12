@@ -3,14 +3,17 @@
     python -m db.seed_local_study --owner-email you@gmail.com
     python -m db.seed_local_study --owner-user-id user_123
 
-Why this is not part of ``seed_local_rich``: that dataset is FIXED. Its dates
-never move, and the E2E journeys, the oracles and the integration suite assert
-on it row for row, including the copy the local-seed watcher puts on a new
-Google account (``frontend/e2e/local-seed.spec.ts`` counts its rows). It is
-also small: one study guide, six flashcards, three quizzes, every exam in the
-past. This script layers a term's worth of study data on top of an account
-that already has the rich data (sign in locally, or run ``seed_local_rich``
-with the same flag first), in three of its classes: CS101, MATH210 and BIO110.
+A new local account gets this once, by itself: ``seed_local_rich.seed_owner``
+(what the sign-in watcher and the rich seed's owner flags run) calls ``apply``
+after the rich copy is in and before it completes onboarding. The command
+above is the way to put the data back, or forward to today, by hand.
+
+Why this is not part of ``seed_local_rich``'s dataset: that dataset is FIXED.
+Its dates never move, and the E2E journeys, the oracles and the integration
+suite assert on the ``rich-*`` accounts row for row. It is also small: one
+study guide, six flashcards, three quizzes, every exam in the past. This
+script layers a term's worth of study data on top of an account that already
+has the rich copy, in three of its classes: CS101, MATH210 and BIO110.
 
 Per class it writes (content in ``db/local_study_data/``):
 
@@ -41,15 +44,17 @@ Per class it writes (content in ``db/local_study_data/``):
 Every date is relative to the day it runs, every row has a deterministic id
 and every write is an upsert, so it is safe to re-run: running it again on a
 later day moves the same rows back to "now" and puts them back as seeded (a
-check you answered, a guide you regenerated). It only writes rows it owns (ids
-start with ``study-``), with three exceptions on the classes it fills: a
-concept or prerequisite the account already has is updated in place under the
-id it has, the quiz digest of such a concept is replaced, and so is the
-class's one ``topic_checklists`` row.
+check you answered, a guide you regenerated). That is why the automatic run
+happens only on an account's first seed and never again. It only writes rows
+it owns (ids start with ``study-``), with three exceptions on the classes it
+fills: a concept or prerequisite the account already has is updated in place
+under the id it has, the quiz digest of such a concept is replaced, and so is
+the class's one ``topic_checklists`` row.
 
-An owner flag is required: the fixture accounts (``rich-*``) are the E2E
-baseline and are never a default. Local only: refuses unless APP_ENV is
-local/test and SUPABASE_URL is local.
+An owner is required: the fixture accounts (``rich-*``) are the E2E baseline
+and are never a default. Local only: refuses unless APP_ENV is local/test and
+SUPABASE_URL is local. It calls no model and nothing outside the local stack;
+every encrypted column is encrypted with the configured key.
 """
 from __future__ import annotations
 
@@ -176,8 +181,14 @@ def _report(owner_id: str, rows: dict[str, list[dict]], outlines: int, skipped: 
     print("\n  Open http://localhost:3000/study/guide, /study, /quiz and /flashcards.")
 
 
-def apply(owner_id: str, now: datetime | None = None) -> dict[str, int]:
-    """Write the dataset onto the account; returns rows written per table."""
+def apply(owner_id: str, now: datetime | None = None, *, report: bool = True) -> dict[str, int]:
+    """Write the dataset onto the account; returns rows written per table.
+
+    The CLI prints the per-table report (``report=True``); ``seed_owner``
+    passes its own flag on, so a watcher thread prints nothing. Raises, never
+    exits, so that thread gets an ordinary exception: ValueError when the
+    account is in none of the classes, RuntimeError off a local stack.
+    """
     if not h.is_local_backend():
         raise RuntimeError("REFUSING: the study seed only writes to a local stack.")
     # Imported here for the same reason as the outline service above: the
@@ -192,7 +203,7 @@ def apply(owner_id: str, now: datetime | None = None) -> dict[str, int]:
         for data in CLASSES if scopes[data.key] is not None
     }
     if not enrolled:
-        raise SystemExit(
+        raise ValueError(
             "This account is enrolled in none of the sample classes. Sign in on the local "
             "stack, or run `python -m db.seed_local_rich` with the same --owner flag, first."
         )
@@ -202,7 +213,8 @@ def apply(owner_id: str, now: datetime | None = None) -> dict[str, int]:
     places = placements(now, owner_id, enrolled)
     for place in places:
         _seed_outline(owner_id, scopes[place.data.key], outline.topics(place))
-    _report(owner_id, rows, len(places), skipped)
+    if report:
+        _report(owner_id, rows, len(places), skipped)
     return {**{name: len(rows[name]) for name in TABLES}, "topic_checklists": len(places)}
 
 
@@ -221,9 +233,9 @@ def main(argv: list[str] | None = None) -> None:
     from db.seed_local_owner import resolve_owner
     try:
         owner_id = resolve_owner(email=args.owner_email, user_id=args.owner_user_id)["id"]
+        apply(owner_id)
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")
-    apply(owner_id)
 
 
 if __name__ == "__main__":

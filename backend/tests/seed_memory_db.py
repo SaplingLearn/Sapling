@@ -2,6 +2,9 @@
 from collections import defaultdict
 from copy import deepcopy
 
+import db.seed_local_study as study
+import services.topic_checklist_service as checklist_service
+
 
 def _matches(stored, expr: str) -> bool:
     """The PostgREST operators the seed code uses: eq., in.(a,b), like.prefix*,
@@ -80,3 +83,26 @@ class MemoryDatabase:
                 return self.insert(row)
 
         return Handle()
+
+
+def use_study_seed(monkeypatch, database: MemoryDatabase) -> None:
+    """Point the study seed (db/seed_local_study.py) at `database`.
+
+    The seed asks two app services that read far more than these tests hold
+    (the terms, every source text): which of the account's enrollments a
+    class resolves to, and the outline's evidence hash. Both are stood in for.
+    """
+    def scope(owner_id, course_id):
+        offerings = {o["id"] for o in database.rows["course_offerings"] if o["course_id"] == course_id}
+        mine = [e for e in database.rows["enrollments"]
+                if e["user_id"] == owner_id and e["offering_id"] in offerings]
+        # The app takes the current term's enrollment, else the latest one;
+        # the rich seed lists a class's terms oldest first.
+        return {"enrollment_id": mine[-1]["id"], "offering_id": mine[-1]["offering_id"]} if mine else None
+
+    monkeypatch.setattr(study, "table", database.table)
+    monkeypatch.setattr(study, "_scope", scope)
+    monkeypatch.setattr(
+        checklist_service, "build_snapshot",
+        lambda owner_id, scope: {"hash": f"hash-of-{scope['enrollment_id']}"},
+    )

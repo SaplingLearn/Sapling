@@ -3,7 +3,8 @@ database: what it writes is encrypted where the schema says so, a second run
 writes the same rows instead of more, rows the account already has keep
 their ids, and nothing is written off a local stack.
 
-What the dataset CONTAINS is pinned in `test_local_study_data.py`."""
+What the dataset CONTAINS is pinned in `test_local_study_data.py`. That a new
+account's first owner seed runs it, once, is in `test_seed_local_rich.py`."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -185,11 +186,23 @@ def test_a_class_the_account_dropped_is_skipped(local_database, monkeypatch, cap
     assert "not enrolled in rich-course-math210" in capsys.readouterr().out
 
 
-def test_an_account_in_none_of_the_classes_is_told_what_to_run(local_database, monkeypatch):
+def test_an_account_in_none_of_the_classes_is_told_what_to_run(local_database, monkeypatch, capsys):
     monkeypatch.setattr(seed, "_scope", lambda owner_id, course_id: None)
-    with pytest.raises(SystemExit, match="seed_local_rich"):
+    # An ordinary exception: the first owner seed calls apply in a backend
+    # thread, where a SystemExit would not be caught as a failed seed.
+    with pytest.raises(ValueError, match="seed_local_rich"):
         seed.apply(OWNER, NOW)
+    with pytest.raises(SystemExit) as stopped:
+        seed.main(["--owner-user-id", OWNER])
+    assert stopped.value.code == 1 and "seed_local_rich" in capsys.readouterr().err
     assert local_database.writes == []
+
+
+def test_apply_prints_nothing_when_asked_not_to_report(local_database, capsys):
+    """The first owner seed runs it from the local-seed watcher's thread."""
+    written = seed.apply(OWNER, NOW, report=False)
+    assert sum(written.values()) > 0
+    assert capsys.readouterr().out == ""
 
 
 # ── Local only ───────────────────────────────────────────────────────────────

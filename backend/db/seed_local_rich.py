@@ -13,17 +13,25 @@ Pass --owner-email or --owner-user-id after signing in to populate your own
 account. Owner mode inserts missing sample rows without resetting existing data.
 A local backend does this by itself on sign-in (services/local_seed_watcher.py,
 which calls seed_owner); the flags are the manual fallback.
+
+An account's FIRST owner seed also gets the study dataset
+(db/seed_local_study.py: a term of guides, quizzes, flashcards, documents and
+exams dated around today). Only the first: see seed_owner. The default dataset
+(no owner flag) never does; the `rich-*` accounts are the fixed baseline the
+E2E journeys, the oracles and the integration suite assert on.
 """
 from __future__ import annotations
 
 import os
 import sys
 import argparse
+import logging
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_mastery_tier            # noqa: E402
 from db import seed_helpers as h               # noqa: E402
+from db import seed_local_study                # noqa: E402
 from db.connection import table                # noqa: E402
 from models.study_guide import (               # noqa: E402
     GUIDE_FORMAT,
@@ -45,6 +53,9 @@ from models.study_guide import (               # noqa: E402
     WorkedStep,
 )
 from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
+
+logger = logging.getLogger(__name__)
+_MAX_REASON_CHARS = 300
 
 
 def _guard_local() -> None:
@@ -1137,14 +1148,44 @@ def _seed_owner_chunks(writer) -> None:
         })
 
 
+def _seed_owner_study(owner_id: str, *, report: bool) -> None:
+    """Add the study dataset to an account's first seed. Never raises.
+
+    A new account must not sit on /setting-up for data it can do without, so
+    a failure is one warning line and the account goes on with the rich copy
+    alone. No traceback: the E2E logscan oracle reads one as a crash.
+    """
+    try:
+        written = seed_local_study.apply(owner_id, report=report)
+    except Exception as exc:
+        reason = " ".join(f"{type(exc).__name__}: {exc}".split())[:_MAX_REASON_CHARS]
+        logger.warning(
+            "[local-seed] the study dataset was not written onto %s (%s); the account keeps "
+            "the rich sample data. To retry: python -m db.seed_local_study --owner-user-id %s",
+            owner_id, reason, owner_id,
+        )
+        return
+    logger.info(
+        "[local-seed] study dataset written onto %s (%d rows)", owner_id, sum(written.values()),
+    )
+
+
 def seed_owner(owner: dict, *, report: bool = True) -> int:
-    """Copy the rich dataset onto an existing account; returns rows created.
+    """Copy the rich dataset onto an existing account; returns the rich rows created.
 
     `owner` is a users row with at least `id` (and `onboarding_completed`).
     The CLI prints the per-table summary (`report=True`); the backend's
     local-seed watcher passes report=False and logs the count instead.
     Raises — never exits — when the backend is not local, so a watcher thread
     gets an ordinary exception. Not re-entrant: h.counts is process-global.
+
+    An account that is not onboarded yet is on its first seed: it also gets
+    the study dataset, and then onboarding is completed, as the last write.
+    That one column is the whole "once" rule. The study seed rewrites its rows
+    (new dates, answers cleared), so it must never run on an account the
+    developer has been let into: a later run here finds the account onboarded
+    and adds missing rich rows only. A first seed that stopped before the last
+    write is the one case that repeats it, on an account nobody has used yet.
     """
     if not h.is_local_backend():
         raise RuntimeError("REFUSING: the owner seed only writes to a local stack.")
@@ -1158,6 +1199,7 @@ def seed_owner(owner: dict, *, report: bool = True) -> int:
     # onboarding only after seeding succeeds lets a fresh sign-in see the dashboard
     # (and is what tells the watcher a seed finished rather than stopped midway).
     if not owner.get("onboarding_completed"):
+        _seed_owner_study(owner["id"], report=report)
         table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
     if report:
         return h.print_summary(_SUMMARY_ORDER, f"Seed summary (owner {owner['id']}):")
