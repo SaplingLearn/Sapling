@@ -29,7 +29,7 @@ export function Rail({
       <ProgressRing
         read={readCount(guide)}
         total={guide.content.sections.length}
-        scopeLabel={guide.content.scope_label}
+        scopeLabel={guide.scope_label}
         dueLabel={dueDateLabel(guide.due_date)}
         days={days}
       />

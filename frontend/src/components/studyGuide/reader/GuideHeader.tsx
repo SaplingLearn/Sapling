@@ -17,7 +17,7 @@ function GuideChips({ guide, days }: { guide: GuideDetail; days: number | null }
       </Chip>
       <Chip variant="accent">{GOAL_LABEL[guide.goal]}</Chip>
       <Chip>{DEPTH_LABEL[guide.depth]}</Chip>
-      {days !== null && <Chip variant="err">{countdownLabel(guide.content.scope_label, days)}</Chip>}
+      {days !== null && <Chip variant="err">{countdownLabel(guide.scope_label, days)}</Chip>}
       {sources > 0 && <span className={s.chipNote}>{sourcesLabel(sources, guide.counts.minutes)}</span>}
     </div>
   );

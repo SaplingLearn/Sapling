@@ -13,7 +13,7 @@ import { ReadMark } from "./ReadMark";
 
 function SectionItems({ items, hidden = false }: { items: Item[]; hidden?: boolean }) {
   return (
-    <div className={s.sectionBody} hidden={hidden}>
+    <div className={`${s.sectionBody} fade-in`} hidden={hidden}>
       {items.map(item =>
         item.type === "prose" ? <Prose key={item.id} item={item} /> : <BlockView key={item.id} block={item} />,
       )}

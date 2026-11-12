@@ -65,8 +65,8 @@
 .chartDotAfter { fill: var(--warn); }
 .chartMarkLabel { font-size: 13px; fill: var(--text); }
 /* What only After shows fades in when the toggle flips. */
-.chartEnter { animation: chartEnter 260ms var(--ease) both; }
-@keyframes chartEnter { from { opacity: 0; } to { opacity: 1; } }
+.chartEnter { animation: chartFade 260ms var(--ease) both; }
+@keyframes chartFade { from { opacity: 0; } to { opacity: 1; } }
 
 .chartSide { flex: 1 1 160px; display: flex; flex-direction: column; gap: 14px; }
 .readout { display: flex; flex-direction: column; gap: 2px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }

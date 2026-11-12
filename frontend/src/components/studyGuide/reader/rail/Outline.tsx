@@ -38,6 +38,8 @@ export function Outline({
   generating: boolean;
   onToggleRead: (sectionId: string) => void;
 }) {
+  // A new guide has no sections to list until its outline arrives.
+  if (guide.content.sections.length === 0) return null;
   return (
     <nav aria-label="In this guide" className={s.outline}>
       <span className="label-micro">In this guide</span>

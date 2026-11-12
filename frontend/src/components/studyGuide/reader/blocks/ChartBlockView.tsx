@@ -46,16 +46,18 @@ export function ChartBlockView({ block }: { block: ChartBlock }) {
   const source = findSource(guide.content.sources, block.source_id);
 
   const stateToggle = hasAfter && (
-    <Toggle<ChartView>
-      size="sm"
-      testid={`guide-chart-state-${block.id}`}
-      options={[
-        { value: "before", label: "Before" },
-        { value: "after", label: block.after_label },
-      ]}
-      value={view}
-      onChange={setView}
-    />
+    <div role="group" aria-label="Chart state">
+      <Toggle<ChartView>
+        size="sm"
+        testid={`guide-chart-state-${block.id}`}
+        options={[
+          { value: "before", label: "Before" },
+          { value: "after", label: block.after_label },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+    </div>
   );
   const caption = (source || block.illustrative) && (
     <>
