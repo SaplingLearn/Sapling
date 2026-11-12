@@ -19,6 +19,7 @@ from config import (
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     GOOGLE_AUTH_REDIRECT_URI,
+    GOOGLE_SCOPES,
     SESSION_SECRET,
     IS_LOCAL,
 )
@@ -133,6 +134,33 @@ def _google_client_config() -> dict:
             "token_uri": "https://oauth2.googleapis.com/token",
         }
     }
+
+
+def granted_scopes(creds, requested) -> frozenset[str]:
+    """The scopes Google says it granted with `creds` (the token response's
+    ``scope``), which is rarely just what was asked for: under
+    ``include_granted_scopes`` it adds every scope the student granted us
+    before, and on Google's per-scope consent screen a student can untick
+    one. RFC 6749 §5.1 lets a server leave ``scope`` out when it equals the
+    request, so an absent one means `requested`.
+
+    The code exchange runs on a Flow built WITHOUT scopes (routes/auth.py,
+    routes/calendar.py): oauthlib otherwise raises "Scope has changed" on
+    any difference, which failed the exchange in exactly those two cases.
+    This is the check instead."""
+    raw = getattr(creds, "granted_scopes", None)
+    if raw is None:
+        return frozenset(requested)
+    if isinstance(raw, str):
+        raw = raw.split()
+    return frozenset(str(s) for s in raw)
+
+
+def covers_calendar(scopes) -> bool:
+    """Whether a grant includes every calendar scope (config.GOOGLE_SCOPES).
+    Only such a grant's tokens are stored, so a stored token is one that can
+    reach the calendar."""
+    return set(GOOGLE_SCOPES) <= set(scopes)
 
 
 def _encode_state(data: dict) -> str:

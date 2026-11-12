@@ -1,6 +1,7 @@
 """Academics journey: semesters list + abstract-catalog search + enroll-resolves-to-offering."""
 from db.e2e_staging_http import client, check, COURSE_ID, OFFERING_ID, USER_ID, current_term_id
 from db.connection import table
+from services.legal import PRIVACY_VERSION, TERMS_VERSION
 
 
 def run() -> None:
@@ -27,24 +28,31 @@ def run() -> None:
         f"found={[c['id'] for c in found]}",
     )
 
-    # ── 3. POST /api/onboarding/profile -> enrollment resolves to OFFERING_ID ─
-    # OnboardingBody requires: user_id, first_name, last_name, year,
-    # majors (min_length=1), minors, course_ids (min_length=1), learning_style.
+    # ── 3. POST /api/onboarding/profile -> enrollment in the onboarding term ──
+    # OnboardingBody requires: user_id, first_name, last_name, year (one of the
+    # onboarding choices, lowercase), and the accepted Terms / Privacy versions
+    # (the current ones, or 422 legal_outdated); course_ids may be empty.
+    # The fixture user is created onboarded and onboarding is one-way (#757:
+    # a replay is a 409), so reopen it for this check; the POST closes it again.
+    table("users").update({"onboarding_completed": False}, filters={"id": f"eq.{USER_ID}"})
     r = client.post(
         "/api/onboarding/profile",
         json={
             "user_id": USER_ID,
             "first_name": "E2E",
             "last_name": "User",
-            "year": "Sophomore",
+            "year": "sophomore",
             "majors": ["CS"],
             "minors": [],
             "course_ids": [COURSE_ID],
             "learning_style": "visual",
+            "accepted_terms_version": TERMS_VERSION,
+            "accepted_privacy_version": PRIVACY_VERSION,
         },
     )
-    # The fixture seeds OFFERING_ID = the current-term offering for COURSE_ID, so
-    # resolve_offering() must return OFFERING_ID and create an enrollment for it.
+    # The fixture seeds OFFERING_ID = COURSE_ID's offering in the onboarding
+    # term (current_term_id()), so resolve_offering() must return OFFERING_ID
+    # and create an enrollment for it.
     enr = table("enrollments").select("offering_id", filters={"user_id": f"eq.{USER_ID}"}) or []
     check(
         "POST /api/onboarding/profile -> enrolled into offering",

@@ -28,7 +28,7 @@ from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
-from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
+from services.encryption import encrypt, decrypt, decrypt_if_present
 from services.request_context import current_request_id
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
 # the single source of truth for CSRF handling — see services/auth/oauth_state.py.
@@ -41,6 +41,8 @@ from services.auth.oauth_state import (
     _generate_pkce_pair,
     _encode_oauth_cookie,
     _decode_oauth_cookie,
+    covers_calendar,
+    granted_scopes,
 )
 
 try:
@@ -60,7 +62,8 @@ router = APIRouter()
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
     creds = Credentials(
         token=decrypt(token_row["access_token"]),
-        refresh_token=decrypt(token_row["refresh_token"]),
+        # NULL when Google never sent one; then there is nothing to refresh with.
+        refresh_token=decrypt_if_present(token_row.get("refresh_token")),
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -167,13 +170,32 @@ def _read_assignments(user_id, *, due_gte=None, limit=None):
 
 
 # ── Google Calendar OAuth connect ─────────────────────────────────────────────
-# The dedicated calendar consent flow (auth-url → Google → callback). It grants
-# only GOOGLE_SCOPES (calendar) and lands the tokens in `oauth_tokens`. It was
-# dropped in the SQLite→Supabase migration (#61) even though config.GOOGLE_SCOPES
-# / GOOGLE_REDIRECT_URI and the frontend "Connect Google" button still target it.
+# The dedicated calendar consent flow (auth-url → Google → callback), and since
+# sign-in asks for identity only, the ONLY way calendar access is first granted
+# (onboarding's Connect step, the Calendar page). It asks for GOOGLE_SCOPES and
+# lands the tokens in `oauth_tokens` only when the grant covers all of them. It
+# was dropped in the SQLite→Supabase migration (#61) even though
+# config.GOOGLE_SCOPES / GOOGLE_REDIRECT_URI and the frontend "Connect Google"
+# button still target it.
+#
+# `oauth_tokens` therefore holds a row only for a grant that reaches the
+# calendar: this callback and sign-in (services/auth/signin.py) both refuse to
+# store anything less. A row written before that rule came from a flow that
+# asked for the calendar scopes, and oauthlib's scope check (on until this
+# change) failed that flow's exchange unless Google granted exactly the scopes
+# it asked for. That is what lets GET /status read "connected" off the row.
 
 CALENDAR_OAUTH_STATE_COOKIE = "sapling_calendar_oauth_state"
 _CALENDAR_OAUTH_COOKIE_MAX_AGE = 600
+
+#: Where a successful connect may send the student (`next` on /auth-url): an
+#: internal path, exactly one of these. Anything else is ignored.
+CALENDAR_NEXT_PATHS = frozenset({"/dashboard", "/gradebook", "/calendar"})
+_CALENDAR_DEFAULT_NEXT = "/calendar"
+
+
+def _clean_calendar_next(value) -> str | None:
+    return value if isinstance(value, str) and value in CALENDAR_NEXT_PATHS else None
 
 
 def _calendar_client_config() -> dict:
@@ -186,13 +208,22 @@ def _calendar_client_config() -> dict:
 
 
 @router.get("/auth-url")
-def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
+def calendar_auth_url(
+    request: FastAPIRequest,
+    user_id: str = Query(...),
+    next_path: str | None = Query(None, alias="next"),
+):
     """Begin the Google Calendar consent flow for the authenticated user.
 
     ``require_self`` ties the initiating request to the caller's session, and the
     user_id is then sealed into the HMAC-signed state cookie — so the callback
     binds the resulting tokens to *this* user and never to an attacker-supplied
     parameter (the holistic auth-scoping concern on #61, sibling of #123).
+
+    ``next`` (optional) is where a successful connect lands: one of
+    ``CALENDAR_NEXT_PATHS``, anything else ignored. It is sealed in the same
+    signed cookie and re-checked at the callback, so the redirect target is
+    only ever one this route allowed.
     """
     require_self(user_id, request)
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
@@ -212,10 +243,15 @@ def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
         code_challenge_method="S256",
     )
 
+    cookie = {"n": nonce, "cv": code_verifier, "uid": user_id}
+    clean_next = _clean_calendar_next(next_path)
+    if clean_next:
+        cookie["next"] = clean_next
+
     resp = RedirectResponse(auth_url)
     resp.set_cookie(
         key=CALENDAR_OAUTH_STATE_COOKIE,
-        value=_encode_oauth_cookie({"n": nonce, "cv": code_verifier, "uid": user_id}),
+        value=_encode_oauth_cookie(cookie),
         max_age=_CALENDAR_OAUTH_COOKIE_MAX_AGE,
         httponly=True,
         secure=SECURE_COOKIES,
@@ -235,11 +271,14 @@ def calendar_callback(
     error: str = Query(None),
 ):
     """Handle Google's redirect: validate CSRF state, exchange the code, and
-    store the tokens scoped to the user sealed in the signed state cookie."""
+    store the tokens scoped to the user sealed in the signed state cookie.
+
+    Success lands on the cookie's ``next`` (default /calendar) with
+    ``connected=true``; every failure on /calendar with ``calendar_error``."""
     cookie_payload = _decode_oauth_cookie(request.cookies.get(CALENDAR_OAUTH_STATE_COOKIE))
 
-    def _finish(query: str) -> RedirectResponse:
-        resp = RedirectResponse(f"{FRONTEND_URL}/calendar?{query}")
+    def _finish(query: str, path: str = _CALENDAR_DEFAULT_NEXT) -> RedirectResponse:
+        resp = RedirectResponse(f"{FRONTEND_URL}{path}?{query}")
         resp.set_cookie(
             key=CALENDAR_OAUTH_STATE_COOKIE,
             value="",
@@ -274,7 +313,12 @@ def calendar_callback(
     ):
         return _finish("calendar_error=invalid_state")
 
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
+    # No scopes on the exchange Flow. include_granted_scopes makes Google
+    # answer with every scope granted (sign-in's identity scopes too), and a
+    # student can untick a calendar box on Google's screen; oauthlib raises
+    # "Scope has changed" on either, which failed every connect as
+    # oauth_exchange_failed. The granted set is checked below instead.
+    flow = Flow.from_client_config(_calendar_client_config(), scopes=None)
     flow.redirect_uri = GOOGLE_REDIRECT_URI
     try:
         flow.fetch_token(code=code, code_verifier=cookie_payload.get("cv"))
@@ -282,17 +326,25 @@ def calendar_callback(
         return _finish("calendar_error=oauth_exchange_failed")
     creds = flow.credentials
 
-    table("oauth_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": encrypt(creds.token),
-            "refresh_token": encrypt_if_present(creds.refresh_token),
-            # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
-            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
-        },
-        on_conflict="user_id",
+    # Connected means calendar access: a grant missing a calendar scope is
+    # not stored, so a stored token is always one that reaches the calendar.
+    if not covers_calendar(granted_scopes(creds, GOOGLE_SCOPES)):
+        return _finish("calendar_error=scope_denied")
+
+    row = {
+        "user_id": user_id,
+        "access_token": encrypt(creds.token),
+        # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
+        "expires_at": creds.expiry.isoformat() if creds.expiry else None,
+    }
+    # prompt=consent normally returns one; without it, keep the stored one.
+    if creds.refresh_token:
+        row["refresh_token"] = encrypt(creds.refresh_token)
+    table("oauth_tokens").upsert(row, on_conflict="user_id")
+    return _finish(
+        "connected=true",
+        _clean_calendar_next(cookie_payload.get("next")) or _CALENDAR_DEFAULT_NEXT,
     )
-    return _finish("connected=true")
 
 
 # ── Syllabus extraction ───────────────────────────────────────────────────────
@@ -428,6 +480,9 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 
 @router.get("/status/{user_id}")
 def calendar_status(user_id: str, request: FastAPIRequest):
+    """Whether the student's Google Calendar is connected. A token row exists
+    only for a grant that covers the calendar scopes (see the connect flow
+    above), so the row is the answer; an identity-only sign-in stores none."""
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
         "access_token,expires_at",

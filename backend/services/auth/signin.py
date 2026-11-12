@@ -4,12 +4,13 @@ writes the OAuth callback makes once Google has vouched for the student."""
 import logging
 from dataclasses import dataclass
 
-from config import ALLOWED_EMAIL_DOMAINS
+from config import ALLOWED_EMAIL_DOMAINS, AUTH_SCOPES, STORAGE_BUCKET
 from db.connection import table
 from services import email_service
 from services.auth.accounts import _mark_welcomed, _welcome_due
+from services.auth.oauth_state import covers_calendar, granted_scopes
 from services.auth.waitlist import _mark_waitlist_joined, _waitlist_entry
-from services.encryption import encrypt, encrypt_if_present
+from services.encryption import decrypt_if_present, encrypt, encrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,89 @@ class SignInResult:
     user_id: str | None = None
 
 
+_NAME_COLS = ("name", "first_name", "last_name")
+
+#: Where a student's own uploaded avatar lives (services/storage_service.py).
+_UPLOADED_AVATAR_MARK = f"/storage/v1/object/public/{STORAGE_BUCKET}/"
+
+
+def _has_name(row: dict) -> bool:
+    # Decrypted, because an empty name is still a ciphertext (of "").
+    return any((decrypt_if_present(row.get(c)) or "").strip() for c in _NAME_COLS)
+
+
+def _refresh_profile(
+    user_id: str, *, name: str, first_name: str, last_name: str, avatar_url: str,
+) -> None:
+    """Bring the profile up to date with Google without taking anything the
+    student chose.
+
+    The name is the student's once the profile has one: onboarding asks for
+    it (a preferred name, often not Google's), and rewriting it from Google on
+    every sign-in undid that choice. A profile with no name yet — a new
+    account, or a stub that never reached onboarding (#285) — still starts
+    from the Google name. The avatar refreshes from Google, except over one
+    the student uploaded themselves, and never to a blank.
+    """
+    google_name = {
+        "name": encrypt_if_present(name),
+        "first_name": encrypt_if_present(first_name),
+        "last_name": encrypt_if_present(last_name),
+    }
+    cols = "name,first_name,last_name,avatar_url"
+    by_user = {"user_id": f"eq.{user_id}"}
+    rows = table("user_profiles").select(cols, filters=by_user, limit=1)
+    if not rows:
+        # user_profiles.user_id is the PK (0024). DO NOTHING on conflict: a
+        # row that appeared since the read (onboarding in another tab) is
+        # the student's and is handled below like any existing one.
+        created = table("user_profiles").upsert(
+            {"user_id": user_id, **google_name, "avatar_url": avatar_url},
+            on_conflict="user_id",
+            ignore_duplicates=True,
+        )
+        if created:
+            return
+        rows = table("user_profiles").select(cols, filters=by_user, limit=1)
+        if not rows:
+            return
+    current = rows[0]
+    patch: dict = {}
+    if avatar_url and _UPLOADED_AVATAR_MARK not in (current.get("avatar_url") or ""):
+        patch["avatar_url"] = avatar_url
+    filters = dict(by_user)
+    if not _has_name(current):
+        patch.update(google_name)
+        # Compare-and-set on the stored name: one written since the read
+        # above is the student's, and this update then matches no row.
+        stored = current.get("name")
+        filters["name"] = "is.null" if stored is None else f"eq.{stored}"
+    if patch:
+        table("user_profiles").update(patch, filters=filters)
+
+
+def _store_calendar_tokens(user_id: str, creds) -> None:
+    """Refresh the stored calendar tokens from this sign-in's grant.
+
+    Called only for a grant that covers the calendar scopes: sign-in asks for
+    identity alone, plus (include_granted_scopes) whatever the student
+    granted before, so this is a student who connected the calendar. An
+    identity-only grant is never stored: it would replace a working calendar
+    token with one that cannot reach the calendar, and make
+    `GET /api/calendar/status` report a calendar that is not connected.
+    A grant without a refresh token keeps the stored one."""
+    row = {
+        "user_id": user_id,
+        "access_token": encrypt(creds.token),
+        # expires_at is TIMESTAMPTZ after migration 0024 — None (not "") when
+        # there is no expiry, since "" is not a valid timestamptz.
+        "expires_at": creds.expiry.isoformat() if creds.expiry else None,
+    }
+    if creds.refresh_token:
+        row["refresh_token"] = encrypt(creds.refresh_token)
+    table("oauth_tokens").upsert(row, on_conflict="user_id")
+
+
 def record_google_sign_in(
     *,
     email: str,
@@ -76,10 +160,8 @@ def record_google_sign_in(
     whether it gets in. ``creds`` are the Google OAuth credentials."""
     # Profile fields (name/first_name/last_name/avatar_url) live on user_profiles
     # after migration 0024; `users` keeps identity + auth + activity only.
-    profile_fields = {
-        "name": encrypt_if_present(name),
-        "first_name": encrypt_if_present(first_name),
-        "last_name": encrypt_if_present(last_name),
+    profile = {
+        "name": name, "first_name": first_name, "last_name": last_name,
         "avatar_url": avatar_url,
     }
 
@@ -113,10 +195,7 @@ def record_google_sign_in(
             },
             filters={"id": f"eq.{user_id}"},
         )
-        table("user_profiles").upsert(
-            {"user_id": user_id, **profile_fields},
-            on_conflict="user_id",
-        )
+        _refresh_profile(user_id, **profile)
     else:
         # Email-based account merge is disabled because emails are now encrypted
         # with random nonces; equality lookups by plaintext email cannot match.
@@ -146,24 +225,15 @@ def record_google_sign_in(
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
         }, on_conflict="id")
         # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
-        # reached onboarding already has a row here (onboarding.py upserts it).
-        table("user_profiles").upsert(
-            {"user_id": user_id, **profile_fields},
-            on_conflict="user_id",
-        )
+        # reached onboarding already has a row here (onboarding.py upserts it),
+        # holding the name the student chose there.
+        _refresh_profile(user_id, **profile)
 
-    # Store OAuth tokens (calendar access included)
-    # expires_at is TIMESTAMPTZ after migration 0024 — pass None (not "") when
-    # there is no expiry, since "" is not a valid timestamptz.
-    table("oauth_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": encrypt(creds.token),
-            "refresh_token": encrypt_if_present(creds.refresh_token),
-            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
-        },
-        on_conflict="user_id",
-    )
+    # Calendar tokens: only from a grant that can reach the calendar (a
+    # student who connected it; see _store_calendar_tokens). An identity-only
+    # sign-in leaves `oauth_tokens` alone.
+    if covers_calendar(granted_scopes(creds, AUTH_SCOPES)):
+        _store_calendar_tokens(user_id, creds)
 
     # Local dev bypass (#364): auto-approve so a real Google sign-in doesn't hit the
     # /pending wall. Strictly gated on APP_ENV=="local" — staging/prod AND the test

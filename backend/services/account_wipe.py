@@ -22,9 +22,11 @@ Deleted (directly, or through the FK cascades noted):
 
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
-oauth_tokens, gradescope_credentials, user_cosmetics, social (rooms,
-friendships, …), feedback, issue_reports, events, llm_usage, admin_audit_log,
-and class-wide aggregates (offering_concept_stats).
+oauth_tokens, legal_acceptances (the Terms / Privacy versions the person
+accepted: account state, not study data), gradescope_credentials,
+user_cosmetics, social (rooms, friendships, …), feedback, issue_reports,
+events, llm_usage, admin_audit_log, and class-wide aggregates
+(offering_concept_stats).
 
 Not atomic — PostgREST has no transactions. Each step selects the ids it is
 about to delete and deletes exactly those, in bounded batches, so the counts

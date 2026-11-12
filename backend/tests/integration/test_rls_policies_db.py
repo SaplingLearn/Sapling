@@ -60,6 +60,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "rate_limit_hits", "feature_flags_version",  # #117
         "app_leases",  # #117 wave 3 (stateless_locks)
         "tutor_pending_sessions",  # #117 stateless_tutor_sessions
+        "legal_acceptances",  # onboarding: Terms / Privacy versions accepted
     }),
 }
 

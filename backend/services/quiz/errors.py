@@ -149,14 +149,18 @@ def error_content(
 ) -> dict:
     """The one branch point between the quiz envelope and the legacy
     ``{detail, request_id}`` shape — main.py's three exception handlers all
-    call this so the contract lives in exactly one place."""
+    call this so the contract lives in exactly one place.
+
+    A ``QuizErrorCode`` never leaves the quiz routes: outside /api/quiz/* it is
+    dropped with its message, so a 422 from onboarding or sign-in can never
+    tell the student "That quiz request wasn't valid"."""
     if is_quiz_path(path):
         return quiz_error_body(
             status_code, legacy_detail, request_id,
             code=code, message=message, machine_detail=machine_detail,
         )
     content = {"detail": legacy_detail, "request_id": request_id}
-    if isinstance(code, str) and code:
+    if isinstance(code, str) and code and not isinstance(code, QuizErrorCode):
         # A non-quiz raise site that attached a typed code (e.g. the tutor's
         # SESSION_ENDED 409, #761) gets the same `error` object the quiz
         # envelope carries — additive: the legacy keys are unchanged.
@@ -170,6 +174,7 @@ def error_content(
 
 def validation_error_code(errors: list[dict]) -> tuple["QuizErrorCode", str | None]:
     """Pick the (code, message) for a quiz-route RequestValidationError.
+    Quiz routes only: main.py asks for it only when ``is_quiz_path``.
 
     QUIZ_COUNT_OUT_OF_RANGE only for an actual bounds violation on
     num_questions — a type error ("five", 5.5) on the same field is NOT

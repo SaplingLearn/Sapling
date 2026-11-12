@@ -329,7 +329,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # rule the envelope exists to report. Encoded ONCE and reused, so the
     # payload and the machine detail can never disagree.
     errors = jsonable_encoder(exc.errors())
-    code, message = quiz_errors.validation_error_code(errors)
+    # The quiz code and its student-facing sentence are for quiz routes only;
+    # every other route keeps the plain {detail, request_id} 422.
+    code, message = None, None
+    if quiz_errors.is_quiz_path(request.url.path):
+        code, message = quiz_errors.validation_error_code(errors)
     if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
         message = (
             f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
