@@ -138,16 +138,26 @@ def _numbers_in(text: str) -> set[float]:
     return found
 
 
+def _chart_text(chart: ChartBlock) -> list[str]:
+    """Everything the chart says in words: on the page, and to a screen
+    reader (`alt`)."""
+    return [
+        chart.title, chart.x_label, chart.y_label, chart.after_label, chart.alt,
+        *(series.label for series in chart.series),
+        *(label for marker in chart.markers for label in (marker.x_label, marker.y_label)),
+        *(
+            text for readout in chart.readouts
+            for text in (readout.label, readout.before, readout.after, readout.change)
+        ),
+    ]
+
+
 def _chart_numbers(chart: ChartBlock) -> set[float]:
     """Every number the chart shows: the coordinates it draws, and the ones
-    written in a marker's labels and a readout's values."""
+    written anywhere in its text."""
     points = [point for series in chart.series for point in series.points]
     drawn = {n for at in [*points, *chart.markers] for n in (at.x, at.y)}
-    written = [
-        *(label for marker in chart.markers for label in (marker.x_label, marker.y_label)),
-        *(value for readout in chart.readouts for value in (readout.before, readout.after)),
-    ]
-    return drawn.union(*(_numbers_in(text) for text in written))
+    return drawn.union(*(_numbers_in(text) for text in _chart_text(chart)))
 
 
 def _chart(chart: ChartBlock, facts: Facts) -> ChartBlock:

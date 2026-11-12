@@ -314,6 +314,67 @@ def test_a_charts_readouts_and_marker_labels_are_held_to_the_source_too():
     assert check_block(invented_label, FACTS).illustrative is True
 
 
+def _written_chart(**texts) -> ChartBlock:
+    """A chart drawn from the source's numbers, with `texts` written on it."""
+    series_label = texts.pop("series_label", "Demand")
+    readout = {"label": "Price", "before": "$4", "after": "$5.50", "change": "Rises",
+               **texts.pop("readout", {})}
+    return ChartBlock(
+        id="s1-i2", source_id=DOC, illustrative=False,
+        series=[ChartSeries(label=series_label, points=[ChartPoint(x=4, y=40), ChartPoint(x=5.5, y=25)])],
+        readouts=[ChartReadout(**readout)],
+        **{"title": "Demand", "x_label": "Price", "y_label": "Quantity", "alt": "A falling line.",
+           **texts},
+    )
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        {"title": "Supply at 5 units"},
+        {"x_label": "Price in 2019 dollars"},
+        {"y_label": "Quantity (per 100)"},
+        {"series_label": "Demand in 2019"},
+        {"after_label": "After the $2 tax"},
+        {"alt": "A line falling to 12."},
+        {"readout": {"label": "Price in 2019"}},
+        {"readout": {"change": "Up 7%"}},
+    ],
+    ids=["title", "x axis", "y axis", "series", "after label", "alt", "readout label", "readout change"],
+)
+def test_a_number_the_source_never_gives_anywhere_in_a_charts_text_makes_it_illustrative(texts):
+    """The reader shows all of it beside the plot, so one invented number in
+    any of it and the chart is not plotted from data."""
+    assert check_block(_written_chart(**texts), FACTS).illustrative is True
+
+
+def test_a_charts_text_may_carry_the_sources_own_numbers():
+    chart = _written_chart(
+        title="Demand at $4 and $5.50", x_label="Price, $4 to $5.50", y_label="Units, 25 to 40",
+        series_label="Demand, 40 to 25", after_label="At $5.50", alt="A line falling from 40 to 25.",
+        readout={"label": "Price from $4", "change": "Down to 25"},
+    )
+
+    assert check_block(chart, FACTS).illustrative is False
+
+
+def test_the_reviews_probe_a_change_and_a_title_the_source_does_not_hold():
+    facts = Facts(sources={DOC: "The points are 0 1 2 3."}, mistakes=[], concepts=[])
+    chart = ChartBlock(
+        id="s1-i2", title="Supply at 5 units", x_label="Price", y_label="Quantity",
+        alt="A rising line.", source_id=DOC,
+        series=[ChartSeries(label="Supply", points=[ChartPoint(x=0, y=1), ChartPoint(x=2, y=3)])],
+        readouts=[ChartReadout(label="Quantity", before="1", after="3", change="Up 7%")],
+    )
+
+    assert check_block(chart, facts).illustrative is True
+    plain = chart.model_copy(update={
+        "title": "Supply",
+        "readouts": [ChartReadout(label="Quantity", before="1", after="3", change="Up")],
+    })
+    assert check_block(plain, facts).illustrative is False
+
+
 @pytest.mark.parametrize(
     ("text", "numbers"),
     [
