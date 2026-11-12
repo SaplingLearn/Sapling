@@ -9,8 +9,12 @@ Daily Goal panel):
 - flashcards: ``CARD_MIN`` per card whose ``last_reviewed_at`` falls on the
               day. Only a card's latest review survives, so a re-reviewed card
               moves to its newest day and older days under-count.
-- tutor:      each ended tutor session, ``ended_at - started_at``, capped at
-              ``SESSION_CAP_MIN``. Sessions that never ended are not counted.
+- tutor:      each tutor session, from ``started_at`` to its end, capped at
+              ``SESSION_CAP_MIN`` and counted on the day it started. The end
+              is ``ended_at`` when the student pressed "End session"; most
+              never do, so otherwise it is the ``created_at`` of the session's
+              last message. A session with neither (never ended, no messages)
+              is not counted.
 
 Days are the student's LOCAL days: the client passes ``tz_offset_min`` (JS
 ``Date#getTimezoneOffset``, minutes behind UTC).
@@ -23,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import MAX_ROWS, pg_quote_value, table
 from services.auth_guard import require_self
 
 logger = logging.getLogger(__name__)
@@ -36,6 +40,11 @@ QUIZ_CAP_MIN = 30.0
 SESSION_CAP_MIN = 60.0
 CARD_MIN = 0.5
 _ROW_LIMIT = 2000
+# Session ids per `in.(...)` filter (keeps the URL short) and rows per read of
+# `messages` (PostgREST's cap: a larger limit comes back short, which would
+# read as "that was everything").
+_SESSION_ID_CHUNK = 100
+_MESSAGE_PAGE = MAX_ROWS
 
 
 def _ts(value: str | None) -> datetime | None:
@@ -67,6 +76,43 @@ def _goal_minutes(user_id: str) -> int:
         return DEFAULT_GOAL_MIN
     value = rows[0].get("daily_goal_minutes") if rows else None
     return int(value) if value else DEFAULT_GOAL_MIN
+
+
+def _last_message_at(session_ids: list[str]) -> dict[str, str]:
+    """``session_id -> created_at`` of each session's LAST message.
+
+    One read per ``_SESSION_ID_CHUNK`` sessions, newest message first, so the
+    first row seen for a session is its last message. Only when a read comes
+    back full (a very chatty week) are the sessions it did not reach asked for
+    again. A session with no messages is simply absent. A failed read degrades
+    to "no messages" for the sessions not yet answered rather than failing the
+    whole panel. ``content`` (encrypted) is never selected.
+    """
+    last: dict[str, str] = {}
+    try:
+        for i in range(0, len(session_ids), _SESSION_ID_CHUNK):
+            pending = session_ids[i:i + _SESSION_ID_CHUNK]
+            while pending:
+                rows = table("messages").select(
+                    "session_id,created_at",
+                    filters={"session_id": f"in.({','.join(pg_quote_value(s) for s in pending)})"},
+                    order="created_at.desc",
+                    limit=_MESSAGE_PAGE,
+                ) or []
+                for r in rows:
+                    if r.get("session_id") and r.get("created_at"):
+                        last.setdefault(r["session_id"], r["created_at"])
+                if len(rows) < _MESSAGE_PAGE:
+                    break
+                unanswered = [s for s in pending if s not in last]
+                if len(unanswered) == len(pending):
+                    break  # a full page that answered nobody: don't spin
+                pending = unanswered
+    except Exception:
+        logger.warning(
+            "study: last-message read failed sessions=%d", len(session_ids), exc_info=True
+        )
+    return last
 
 
 def daily_minutes(user_id: str, tz_offset_min: int = 0, now: datetime | None = None) -> dict:
@@ -111,16 +157,20 @@ def daily_minutes(user_id: str, tz_offset_min: int = 0, now: datetime | None = N
             b["cards"] += 1
 
     session_rows = table("sessions").select(
-        "started_at,ended_at",
+        "id,started_at,ended_at",
         filters={"user_id": f"eq.{user_id}", "started_at": f"gte.{since_iso}"},
         limit=_ROW_LIMIT,
     ) or []
+    # Most sessions are never explicitly ended: those end at their last message.
+    open_ids = [r["id"] for r in session_rows if not r.get("ended_at") and r.get("id")]
+    last_message = _last_message_at(open_ids) if open_ids else {}
     for r in session_rows:
-        if not r.get("ended_at"):
+        end = r.get("ended_at") or last_message.get(r.get("id"))
+        if not end:
             continue
         b = _bucket(r.get("started_at"))
         if b is not None:
-            b["tutor"] += _span_min(r.get("started_at"), r.get("ended_at"), SESSION_CAP_MIN)
+            b["tutor"] += _span_min(r.get("started_at"), end, SESSION_CAP_MIN)
             b["sessions"] += 1
 
     days = []

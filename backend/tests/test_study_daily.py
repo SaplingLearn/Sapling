@@ -16,11 +16,14 @@ client = TestClient(_app)
 NOW = datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc)
 
 
-def _handles(quiz=(), cards=(), sessions=(), settings=({"daily_goal_minutes": 40},)):
-    h = {name: MagicMock() for name in ("quiz_attempts", "flashcards", "sessions", "user_settings")}
+def _handles(quiz=(), cards=(), sessions=(), messages=(), settings=({"daily_goal_minutes": 40},)):
+    h = {name: MagicMock() for name in
+         ("quiz_attempts", "flashcards", "sessions", "messages", "user_settings")}
     h["quiz_attempts"].select.return_value = list(quiz)
     h["flashcards"].select.return_value = list(cards)
     h["sessions"].select.return_value = list(sessions)
+    # Newest first, as the route asks for them (order=created_at.desc).
+    h["messages"].select.return_value = list(messages)
     h["user_settings"].select.return_value = list(settings)
     return h
 
@@ -48,8 +51,8 @@ def test_sums_quiz_cards_and_tutor_with_caps():
         cards=[{"last_reviewed_at": "2026-11-08T09:00:00Z"} for _ in range(10)],
         sessions=[
             {"started_at": "2026-11-07T09:00:00Z", "ended_at": "2026-11-07T09:20:00Z"},
-            # Never ended: not counted.
-            {"started_at": "2026-11-07T10:00:00Z", "ended_at": None},
+            # Never ended and no messages: not counted.
+            {"id": "s2", "started_at": "2026-11-07T10:00:00Z", "ended_at": None},
         ],
     )
     body = _run(h)
@@ -58,6 +61,108 @@ def test_sums_quiz_cards_and_tutor_with_caps():
     assert today["flashcards"] == 5 and today["cards"] == 10
     assert today["minutes"] == 47
     assert yesterday["tutor"] == 20 and yesterday["sessions"] == 1
+
+
+def test_unended_session_runs_to_its_last_message():
+    h = _handles(
+        sessions=[{"id": "s1", "started_at": "2026-11-07T09:00:00Z", "ended_at": None}],
+        messages=[
+            {"session_id": "s1", "created_at": "2026-11-07T09:25:00Z"},
+            {"session_id": "s1", "created_at": "2026-11-07T09:05:00Z"},
+        ],
+    )
+    yesterday = _run(h)["days"][-2]
+    assert yesterday["tutor"] == 25 and yesterday["sessions"] == 1
+    assert yesterday["minutes"] == 25
+    # One batched read, newest first, and never the encrypted `content`.
+    h["messages"].select.assert_called_once()
+    args, kwargs = h["messages"].select.call_args
+    assert args[0] == "session_id,created_at"
+    assert kwargs["filters"] == {"session_id": 'in.("s1")'}
+    assert kwargs["order"] == "created_at.desc"
+    assert kwargs["limit"]
+
+
+def test_unended_session_is_capped_at_sixty_minutes():
+    h = _handles(
+        sessions=[{"id": "s1", "started_at": "2026-11-07T09:00:00Z", "ended_at": None}],
+        # Came back to the same chat three hours later.
+        messages=[{"session_id": "s1", "created_at": "2026-11-07T12:00:00Z"}],
+    )
+    yesterday = _run(h)["days"][-2]
+    assert yesterday["tutor"] == 60 and yesterday["sessions"] == 1
+
+
+def test_unended_session_without_messages_counts_nothing():
+    h = _handles(
+        sessions=[
+            {"id": "s1", "started_at": "2026-11-07T09:00:00Z", "ended_at": None},
+            {"id": "s2", "started_at": "2026-11-07T11:00:00Z", "ended_at": None},
+        ],
+        # Only s2 has messages.
+        messages=[{"session_id": "s2", "created_at": "2026-11-07T11:10:00Z"}],
+    )
+    yesterday = _run(h)["days"][-2]
+    assert yesterday["tutor"] == 10 and yesterday["sessions"] == 1
+    assert h["messages"].select.call_args.kwargs["filters"] == {"session_id": 'in.("s1","s2")'}
+
+
+def test_ended_session_is_unchanged_and_reads_no_messages():
+    h = _handles(
+        sessions=[{"id": "s1", "started_at": "2026-11-07T09:00:00Z",
+                   "ended_at": "2026-11-07T09:20:00Z"}],
+        # Would give 45 minutes if it were (wrongly) consulted.
+        messages=[{"session_id": "s1", "created_at": "2026-11-07T09:45:00Z"}],
+    )
+    yesterday = _run(h)["days"][-2]
+    assert yesterday["tutor"] == 20 and yesterday["sessions"] == 1
+    h["messages"].select.assert_not_called()
+
+
+def test_failing_messages_read_degrades_to_zero():
+    h = _handles(
+        quiz=[{"created_at": "2026-11-07T10:00:00Z", "completed_at": "2026-11-07T10:12:00Z"}],
+        sessions=[
+            {"id": "s1", "started_at": "2026-11-07T09:00:00Z", "ended_at": None},
+            {"id": "s2", "started_at": "2026-11-07T13:00:00Z", "ended_at": "2026-11-07T13:20:00Z"},
+        ],
+    )
+    h["messages"].select.side_effect = RuntimeError("postgrest down")
+    yesterday = _run(h)["days"][-2]
+    # The un-ended session is lost; the ended one and the quiz still count.
+    assert yesterday["tutor"] == 20 and yesterday["sessions"] == 1
+    assert yesterday["quiz"] == 12 and yesterday["minutes"] == 32
+
+
+def test_unended_sessions_are_looked_up_in_chunks():
+    ids = [f"s{i}" for i in range(150)]
+    h = _handles(sessions=[
+        {"id": i, "started_at": "2026-11-07T09:00:00Z", "ended_at": None} for i in ids
+    ])
+    h["messages"].select.side_effect = lambda *a, **kw: [
+        {"session_id": i, "created_at": "2026-11-07T09:01:00Z"}
+        for i in ids if f'"{i}"' in kw["filters"]["session_id"]
+    ]
+    yesterday = _run(h)["days"][-2]
+    assert h["messages"].select.call_count == 2
+    assert yesterday["sessions"] == 150 and yesterday["tutor"] == 150
+
+
+def test_full_messages_page_asks_again_for_sessions_it_did_not_reach():
+    h = _handles(sessions=[
+        {"id": "s1", "started_at": "2026-11-07T09:00:00Z", "ended_at": None},
+        {"id": "s2", "started_at": "2026-11-07T08:00:00Z", "ended_at": None},
+    ])
+    # s1 alone fills the first (2-row) page; s2's last message is older.
+    h["messages"].select.side_effect = [
+        [{"session_id": "s1", "created_at": "2026-11-07T09:30:00Z"},
+         {"session_id": "s1", "created_at": "2026-11-07T09:20:00Z"}],
+        [{"session_id": "s2", "created_at": "2026-11-07T08:10:00Z"}],
+    ]
+    with patch("routes.study._MESSAGE_PAGE", 2):
+        yesterday = _run(h)["days"][-2]
+    assert yesterday["tutor"] == 40 and yesterday["sessions"] == 2
+    assert h["messages"].select.call_args.kwargs["filters"] == {"session_id": 'in.("s2")'}
 
 
 def test_local_day_follows_the_client_offset():
