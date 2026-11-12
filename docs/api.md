@@ -23,17 +23,18 @@ Every route is mounted under `/api/<name>` in `backend/main.py`. Unless noted, r
 
 **Flashcards**
 
-- `POST` `/api/flashcards/generate` — Generate flashcards for a topic
+- `POST` `/api/flashcards/generate` — Generate and store flashcards for a topic: body `{user_id, topic, count, session_id?, semester?, course_id?}`. With a `course_id` the cards are grounded in that course's documents, prioritise only that course's weak concepts, and are filed under the selected `semester`'s offering of it (else the student's enrolled offering). Answers `{flashcards: [...], context_used}`; each card carries the `course_id` it was filed under (`null` when none)
 - `POST` `/api/flashcards/import/parse` — Parse cards from paste, file, URL, or photo (no save)
 - `POST` `/api/flashcards/import/generate` — AI-generate cards from a topic / prompt
 - `POST` `/api/flashcards/import/cleanup` — Clean up parsed cards before commit
 - `POST` `/api/flashcards/import/cloze` — Convert sentences into cloze-deletion cards
 - `POST` `/api/flashcards/import/commit` — Commit parsed cards to the user's deck
-- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
+- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards (optional `?topic=`, `?semester=`). Each card has a derived `course_id` and a `due_at` that is always `null` until a review scheduler exists
 - `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
 - `DELETE` `/api/flashcards/{card_id}` — Delete a card
 - `GET` `/api/flashcards/sets/{user_id}` — List a user's saved sets (optional `?course_id=`)
 - `POST` `/api/flashcards/sets` — Save a set (name, course, concept names, options)
+- `POST` `/api/flashcards/sets/suggest` — Describe a set in a sentence and get the concepts it should hold (a suggestion; nothing is saved): body `{user_id, description, course_id?}` (description 3 to 300 characters), answers `{name, concepts: [{name, course_id, source, confidence}], considered, backend}` where `source` is `named` (the description says it) or `model`. 422 for the description's length; 429 with `Retry-After` past 10 model-backed requests a minute
 - `PATCH` `/api/flashcards/sets/{set_id}` — Change a saved set's name, concepts, options, or exam
 - `DELETE` `/api/flashcards/sets/{set_id}` — Delete a saved set (its cards stay)
 
@@ -70,6 +71,13 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
 - `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook (`202 {pending}` when a queued sync outlasts the wait)
 - `GET` `/api/gradescope/sync/{sapling_course_id}/status` — Poll a queued sync: 202 while it runs, then the POST's answer
+
+**Study**
+
+The Study hub's Daily Goal panel. Minutes are an estimate from timestamps the app already records, not a logged timer: each completed quiz attempt (start to finish, capped at 30 minutes, on the day it was completed); half a minute per flashcard reviewed that day (a card counts only on its latest review day); and tutor chat from message times (per session, per day: its first to its last message that day, capped at 60 minutes, so a chat opened last week counts on each day it is used). Each activity is rounded to whole minutes (never 0 when there was any), and a day's `minutes` is the sum of the three. Both routes are hidden with the rest of Study by the `hide_study` flag.
+
+- `GET` `/api/study/{user_id}/daily` — Estimated study minutes for the last seven local days, oldest first, plus the goal: `{goal_minutes, today, days: [{date, minutes, quiz, flashcards, tutor, quizzes, cards, sessions}]}`. Optional `?tz_offset_min=` is the browser's `Date#getTimezoneOffset()` (minutes behind UTC, default `0`; clamped to real-world offsets)
+- `PATCH` `/api/study/{user_id}/daily-goal` — Set the daily goal: body `{minutes}` (5 to 600), answers `{goal_minutes}`
 
 **Study Guide**
 
@@ -180,7 +188,7 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 
 ## Complete route index
 
-Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09: 236 operations; the four `/api/flashcards/sets` routes were added by hand on 2026-11-12. Regenerate it from the running backend's `/openapi.json` when routers change.
+Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09 (236 operations then; 243 in the schema as of 2026-11-12); the five `/api/flashcards/sets` routes (`suggest` included) were added by hand on 2026-11-12; so were the two `/api/study` routes. Regenerate it from the running backend's `/openapi.json` when routers change.
 
 <details><summary><code>/api/admin</code> (71)</summary>
 
@@ -333,7 +341,7 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 
 </details>
 
-<details><summary><code>/api/flashcards</code> (13)</summary>
+<details><summary><code>/api/flashcards</code> (14)</summary>
 
 - `POST /api/flashcards/generate`
 - `POST /api/flashcards/import/cleanup`
@@ -343,6 +351,7 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 - `POST /api/flashcards/import/parse`
 - `POST /api/flashcards/rate`
 - `POST /api/flashcards/sets`
+- `POST /api/flashcards/sets/suggest`
 - `DELETE /api/flashcards/sets/{set_id}`
 - `PATCH /api/flashcards/sets/{set_id}`
 - `GET /api/flashcards/sets/{user_id}`
@@ -536,6 +545,13 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 - `GET /api/social/rooms/{user_id}`
 - `POST /api/social/school-match`
 - `GET /api/social/students`
+
+</details>
+
+<details><summary><code>/api/study</code> (2)</summary>
+
+- `GET /api/study/{user_id}/daily`
+- `PATCH /api/study/{user_id}/daily-goal`
 
 </details>
 
