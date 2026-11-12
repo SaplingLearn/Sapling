@@ -81,11 +81,17 @@ The Study hub's Daily Goal panel. Minutes are an estimate from timestamps the ap
 
 **Study Guide**
 
-- `GET` `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
-- `GET` `/api/study-guide/{user_id}/cached` — List all cached study guides
-- `GET` `/api/study-guide/{user_id}/courses` — List courses for guide generation
-- `GET` `/api/study-guide/{user_id}/exams` — List exam-type assignments
-- `POST` `/api/study-guide/regenerate` — Invalidate cache and regenerate a guide
+A study guide is the student's own durable document: many per class, for an exam, an assignment or the whole course, written as prose with typed blocks. Every route checks that `{user_id}` is the caller and is hidden with the rest of Study by the `hide_study` flag. The shapes are in `backend/models/study_guide.py` (mirrored in `frontend/src/lib/studyGuide/types.ts`); the design is `docs/design/study-guide-redesign.md`. A refusal answers `{detail, request_id}` with `detail` a sentence the UI can show: 404 for a guide, class, exam or block that is missing or not the caller's, 409 while another request is writing the guide, 422 for a choice that does not hold up, 429 past the generation rate limit, 502 when the model could not write.
+
+- `GET` `/api/study-guide/{user_id}/guides` — Every guide the student has, newest first: `{guides: GuideCard[]}`. A card carries the title, class and term, scope, goal, depth, status, `saved_at`, `new_materials` (lectures added since it was made), `bars` (each section's title, mastery tier and share) and `counts` (`sections`, `blocks`, `practice`, `minutes`)
+- `GET` `/api/study-guide/{user_id}/options?course_id=&semester=` — What a new guide for the class can be for and from which materials: `{scopes, materials}`. Scopes are the whole course first, then the class's exams and assignments by date, each with `suggested_material_ids`
+- `POST` `/api/study-guide/{user_id}/plan` — The planned outline for the modal's choices (body `GuideRequest`): `{sections: [{title, tier, weight}], minutes}`. No model runs
+- `POST` `/api/study-guide/{user_id}/guides` — Create a guide (body `GuideRequest`): 201 `{id}`. The row is `generating` with no sections yet; the reader starts the generation. 422 when none of the chosen materials is the class's
+- `GET` `/api/study-guide/{user_id}/guides/{guide_id}` — One guide as the reader renders it (`GuideDetail`): the card, its content, the live scope title and date, read sections, answers, feedback and `mastery` (the live tier of each concept it mentions). A check question the student has not answered comes with `correct_id` and both explanations null
+- `PATCH` `/api/study-guide/{user_id}/guides/{guide_id}` — Reader state, only the fields sent: `{read_sections?, saved?, feedback?}` answers `{read_sections, saved_at, feedback}`. `saved` puts the guide in the Library or takes it out. 422 for a section id the guide does not have
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/generate` — **Streaming SSE.** Body `{mode}`: `resume` (write whatever is still queued), `update` (fold in material added since) or `regenerate` (rewrite everything); the last two keep the previous version. Events use the upload stream's envelope `{type, step, message, data}`: `status` (`message` is the label, `data` is `{step, total}`), `progress` with step `outline` (`data.content`) then one per section (step `section`, `data.section`), `done` (`data.guide` is the finished `GuideDetail`), `error` (`data.retryable`). 404, 409, 422 and 429 are answered as statuses before the stream opens; a 409 means another run is writing the guide, so poll the guide instead
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate` — Rewrite one block and leave the rest of the guide as it is: `{block}`
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer` — Answer a check question: body `{option_id}` (`a` to `d`), answers `{correct, correct_id, explanation, counted, mastery}`. Only the first answer is stored and moves mastery of the question's concept (`counted: true`, `mastery: {concept, before, after}` when a concept moved); a repeat is graded and explained with `counted: false`. 404 when the block is not a check question of the guide, 422 for an option it does not have
 
 **Calendar**
 
@@ -188,7 +194,7 @@ The Study hub's Daily Goal panel. Minutes are an estimate from timestamps the ap
 
 ## Complete route index
 
-Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09 (236 operations then; 243 in the schema as of 2026-11-12); the five `/api/flashcards/sets` routes (`suggest` included) were added by hand on 2026-11-12; so were the two `/api/study` routes. Regenerate it from the running backend's `/openapi.json` when routers change.
+Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09 (236 operations then; 247 in the schema as of 2026-11-12); the five `/api/flashcards/sets` routes (`suggest` included) were added by hand on 2026-11-12; so were the two `/api/study` routes and the nine `/api/study-guide` routes that replaced the old five. Regenerate it from the running backend's `/openapi.json` when routers change.
 
 <details><summary><code>/api/admin</code> (71)</summary>
 
@@ -555,13 +561,17 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 
 </details>
 
-<details><summary><code>/api/study-guide</code> (5)</summary>
+<details><summary><code>/api/study-guide</code> (9)</summary>
 
-- `POST /api/study-guide/regenerate`
-- `GET /api/study-guide/{user_id}/cached`
-- `GET /api/study-guide/{user_id}/courses`
-- `GET /api/study-guide/{user_id}/exams`
-- `GET /api/study-guide/{user_id}/guide`
+- `GET /api/study-guide/{user_id}/guides`
+- `POST /api/study-guide/{user_id}/guides`
+- `GET /api/study-guide/{user_id}/guides/{guide_id}`
+- `PATCH /api/study-guide/{user_id}/guides/{guide_id}`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/generate`
+- `GET /api/study-guide/{user_id}/options`
+- `POST /api/study-guide/{user_id}/plan`
 
 </details>
 
