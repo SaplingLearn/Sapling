@@ -1,0 +1,218 @@
+{
+  "id": "guide-fixture-1",
+  "title": "Control flow and functions",
+  "course_id": "course-cs101",
+  "course_name": "CS 101",
+  "semester": "Spring 2026",
+  "scope_kind": "exam",
+  "scope_label": "Midterm Exam",
+  "goal": "exam_prep",
+  "depth": "standard",
+  "status": "ready",
+  "generated_at": "2026-03-10T15:00:00+00:00",
+  "created_at": "2026-03-10T14:58:00+00:00",
+  "saved_at": null,
+  "new_materials": 2,
+  "bars": [
+    {"title": "Loops", "tier": "struggling", "weight": 50},
+    {"title": "Functions", "tier": "learning", "weight": 25},
+    {"title": "Scope", "tier": "unexplored", "weight": 15},
+    {"title": "Variables", "tier": "mastered", "weight": 10}
+  ],
+  "counts": {"sections": 4, "blocks": 8, "practice": 1, "minutes": 12},
+  "content": {
+    "title": "Control flow and functions",
+    "deck": "Four sections, written from your own lectures and weighted toward what you have not mastered yet.",
+    "takeaways": [
+      "A loop repeats a block until its condition turns false.",
+      "A function names a block of code so it can be reused with different inputs.",
+      "A variable made inside a function is gone once the function returns."
+    ],
+    "sections": [
+      {
+        "id": "s1",
+        "title": "Loops",
+        "concept": "Loops",
+        "tier": "struggling",
+        "weight": 50,
+        "one_line": "A loop repeats a block until its condition turns false.",
+        "status": "written",
+        "items": [
+          {
+            "type": "prose",
+            "id": "s1-i1",
+            "paragraphs": [
+              {
+                "text": "A **while loop** checks its condition before every pass. When the condition is false the loop ends and the program carries on below it.",
+                "citations": ["document:doc-lecture-3"]
+              },
+              {
+                "text": "The exam rarely asks what a loop is. It asks how many times one runs.",
+                "citations": []
+              }
+            ],
+            "summary": "A while loop repeats while its condition holds. Count the passes."
+          },
+          {
+            "type": "chart",
+            "id": "s1-i2",
+            "title": "Passes against input size",
+            "x_label": "Input size",
+            "y_label": "Passes",
+            "series": [
+              {"label": "One loop", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}], "state": "both"},
+              {"label": "Nested loop", "points": [{"x": 0, "y": 0}, {"x": 5, "y": 25}, {"x": 10, "y": 100}], "state": "after"}
+            ],
+            "markers": [
+              {"x": 10, "y": 10, "x_label": "n", "y_label": "n", "state": "before"},
+              {"x": 10, "y": 100, "x_label": "n", "y_label": "n squared", "state": "after"}
+            ],
+            "readouts": [
+              {"label": "Passes", "before": "n", "after": "n squared", "change": "Grows faster"}
+            ],
+            "after_label": "Nested",
+            "alt": "A straight line for one loop and a steeper curve for a nested loop.",
+            "source_id": "document:doc-lecture-3",
+            "illustrative": true
+          },
+          {
+            "type": "mistakes",
+            "id": "s1-i3",
+            "title": "From your quizzes",
+            "mistakes": [
+              {
+                "title": "Counting one pass too many",
+                "fix": "Check the condition with the last value by hand before you answer.",
+                "evidence_id": "m1",
+                "evidence": "From your quizzes on Loops."
+              }
+            ]
+          },
+          {
+            "type": "formula",
+            "id": "s1-i4",
+            "name": "Passes of a counting loop",
+            "latex": "\\text{passes} = \\frac{\\text{stop} - \\text{start}}{\\text{step}}",
+            "spoken": "Passes equal stop minus start, divided by step.",
+            "source_id": "document:doc-lecture-3"
+          },
+          {
+            "type": "worked_example",
+            "id": "s1-i5",
+            "title": "Count the passes",
+            "problem": "A loop starts i at 2 and adds 3 while i is below 14. How many times does the body run?",
+            "steps": [
+              {"title": "List the values", "math": "2, 5, 8, 11", "why": "14 is not below 14, so the loop stops before it."},
+              {"title": "Count them", "math": "4 passes", "why": "One pass for each value listed."}
+            ],
+            "source_id": null
+          },
+          {
+            "type": "comparison",
+            "id": "s1-i6",
+            "title": "While and for",
+            "columns": ["While", "For"],
+            "rows": [
+              {"label": "Use it when", "cells": ["The number of passes is unknown", "The number of passes is known"], "emphasis": false},
+              {"label": "Common bug", "cells": ["Never updating the condition", "Off by one at the end"], "emphasis": true}
+            ]
+          },
+          {
+            "type": "concept_map",
+            "id": "s1-i7",
+            "title": "What this section builds on",
+            "nodes": [
+              {"concept": "Variables", "step": "Foundations"},
+              {"concept": "Loops", "step": "This section"},
+              {"concept": "Functions", "step": "Up next"}
+            ]
+          },
+          {
+            "type": "check",
+            "id": "s1-i8",
+            "question": "A loop starts i at 0 and adds 2 while i is below 7. How many times does the body run?",
+            "options": [
+              {"id": "a", "text": "3"},
+              {"id": "b", "text": "4"},
+              {"id": "c", "text": "7"}
+            ],
+            "correct_id": null,
+            "explain_correct": null,
+            "explain_incorrect": null,
+            "concept": "Loops"
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "title": "Functions",
+        "concept": "Functions",
+        "tier": "learning",
+        "weight": 25,
+        "one_line": "A function names a block of code so it can be reused.",
+        "status": "written",
+        "items": [
+          {
+            "type": "prose",
+            "id": "s2-i1",
+            "paragraphs": [
+              {"text": "A **function** takes inputs, does one job and hands back a result.", "citations": ["document:doc-lecture-4"]}
+            ],
+            "summary": "A function is a named, reusable block with inputs and a result."
+          },
+          {
+            "type": "key_terms",
+            "id": "s2-i2",
+            "title": "New in this section",
+            "terms": [
+              {"term": "Parameter", "definition": "A name in the function's definition that stands for an input."},
+              {"term": "Return value", "definition": "What the function hands back to its caller."}
+            ]
+          }
+        ]
+      },
+      {
+        "id": "s3",
+        "title": "Scope",
+        "concept": null,
+        "tier": "unexplored",
+        "weight": 15,
+        "one_line": "A variable made inside a function is gone once the function returns.",
+        "status": "queued",
+        "items": []
+      },
+      {
+        "id": "s4",
+        "title": "Variables",
+        "concept": "Variables",
+        "tier": "mastered",
+        "weight": 10,
+        "one_line": "A variable is a name bound to a value.",
+        "status": "written",
+        "items": [
+          {
+            "type": "prose",
+            "id": "s4-i1",
+            "paragraphs": [
+              {"text": "Assignment binds a name to a value. Assigning again rebinds the name.", "citations": ["quiz-history"]}
+            ],
+            "summary": null
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {"id": "document:doc-lecture-3", "name": "Lecture 3 slides.pdf", "kind": "PDF"},
+      {"id": "document:doc-lecture-4", "name": "Lecture 4 notes.docx", "kind": "DOCX"},
+      {"id": "quiz-history", "name": "Your quiz history", "kind": "Sapling"}
+    ],
+    "scope_label": "Midterm Exam"
+  },
+  "scope_id": "asg-midterm",
+  "due_date": "2026-03-17",
+  "use_history": true,
+  "read_sections": ["s2"],
+  "answers": {},
+  "feedback": null,
+  "mastery": {"Loops": "struggling", "Functions": "learning", "Variables": "mastered"}
+}
