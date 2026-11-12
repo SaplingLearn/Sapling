@@ -317,7 +317,8 @@ quiz journey is what drives them.
 | `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course |
 | `graph-node-activate` | the activation `<button>` inside an a11y entry (when the graph is clickable) |
 | `graph-node` | 2D SVG node group (`<g>`); carries `data-node-id={node.id}` |
-| `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
+| `graph-node-circle` | the main mark inside a 2D node group — the shape that encodes the mastery tier as `opacity`. A hand-drawn outline (`<path>`, its radius on `data-r`) in the default variant; a `<circle>` in the thin-line variants. The name is kept so existing selectors hold |
+| `graph-node-highlight` | the pulsing ring round the highlighted node (`highlightId`); it holds the `<animate>` the capture recipes wait on |
 | `graph-edge` | one 2D SVG edge `<line>` |
 | `graph-zoom-in` / `graph-zoom-out` / `graph-zoom-reset` | 2D zoom controls |
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |

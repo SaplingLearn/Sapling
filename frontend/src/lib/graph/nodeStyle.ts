@@ -141,10 +141,11 @@ export function opacityFor(tier: string): number {
   return TIER_OPACITY[tier as MasteryTier] ?? 0.6;
 }
 
-/** Edge stroke width from its 0..1 strength → 0.5 … 1.7. The backend's
- *  hub-spoke edges ship a fixed 0.7 (graph_service.py), i.e. 1.34. */
+/** Edge stroke width from its 0..1 strength → 2.2 … 5.0: a drawn bar, not a
+ *  hairline. The backend's hub-spoke edges ship a fixed 0.7
+ *  (graph_service.py), i.e. 4.16. */
 export function edgeWidthFor(strength: number): number {
-  return 0.5 + (strength || 0.5) * 1.2;
+  return 2.2 + (strength || 0.5) * 2.8;
 }
 
 /** The tree's concept-label rule: anything longer than `max` is cut to
@@ -153,12 +154,21 @@ export function truncateLabel(name: string, max = 18): string {
   return name.length > max ? name.slice(0, max - 1) + "…" : name;
 }
 
+/**
+ * The label under a course root. The backend names a root "CODE - Course
+ * Name" (graph_service.py); written out in full it is far wider than the
+ * mark and runs across the concepts around it, so the tree shows the code
+ * alone (the tooltip and the course key carry the full name). A course with
+ * no code keeps its name, cut like a concept label.
+ */
+export function courseLabel(name: string): string {
+  const cut = name.indexOf(" - ");
+  return truncateLabel(cut > 0 ? name.slice(0, cut) : name, 22);
+}
+
 /** Resting stroke opacity of the node body. The tree raises it on hover (0.9)
  *  and while drag-pinned (1.0); static surfaces stay at rest. */
 export const NODE_STROKE_OPACITY = 0.4;
-
-/** The soft halo behind an `organism` node: a blurred disc at `r + pad`. */
-export const GLOW = { pad: 8, opacity: 0.15, blur: 3 } as const;
 
 /**
  * How the tree colours its nodes:

@@ -37,8 +37,37 @@ describe("KnowledgeGraph2D — colorMode", () => {
     expect(circle(container, "s").getAttribute("fill")).toMatch(/^hsl\(/);
     expect(Number(circle(container, "s").getAttribute("opacity"))).toBe(TIER_OPACITY.struggling);
     expect(container.querySelectorAll("linearGradient")).toHaveLength(0);
+    // Each link is a flat bar of its course's colour: the course's own, not a
+    // node's shade of it, so every link in a course is the same colour.
+    const edges = container.querySelectorAll('[data-testid="graph-edge"]');
+    expect(edges.length).toBeGreaterThan(0);
+    for (const e of edges) {
+      expect(e.getAttribute("stroke")).toBe("#3e6f8a");
+    }
+  });
+
+  it("paints each node one flat colour: a single filled outline, no rim at rest", () => {
+    const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} />);
+    for (const n of NODES) {
+      const group = container.querySelector(`[data-testid="graph-node"][data-node-id="${n.id}"]`)!;
+      const mark = circle(container, n.id);
+      expect(mark.tagName.toLowerCase()).toBe("path");
+      expect(mark.getAttribute("fill")).not.toMatch(/^url\(/);
+      // The rim is the fill's own colour and invisible until hovered or dragged.
+      expect(mark.getAttribute("stroke")).toBe(mark.getAttribute("fill"));
+      expect(Number(mark.getAttribute("stroke-opacity"))).toBe(0);
+      expect(mark).not.toHaveAttribute("filter");
+      // Nothing else is painted under or over it: no glow, no second tone.
+      expect(group.querySelectorAll("circle, ellipse, image, path")).toHaveLength(1);
+    }
+    expect(container.querySelector("filter, pattern, radialGradient, image")).toBeNull();
+  });
+
+  it("falls back to the sage token for a link whose course has no colour", () => {
+    const bare = NODES.map((n) => ({ ...n, color: "" }));
+    const { container } = render(<KnowledgeGraph2D nodes={bare} edges={EDGES} width={400} height={300} />);
     for (const e of container.querySelectorAll('[data-testid="graph-edge"]')) {
-      expect(e.getAttribute("stroke")).toBe("var(--text-muted)");
+      expect(e.getAttribute("stroke")).toBe("var(--c-sage)");
     }
   });
 

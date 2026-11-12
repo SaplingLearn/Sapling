@@ -14,16 +14,17 @@
  * the `size` prop only sets the SVG's CSS width. That is what makes a 15px dot
  * and a 26px node "the same mark at two sizes": the mastery radius is scaled
  * into `size` rather than recomputed per call site. A fully-mastered concept
- * (r 20) would overflow the reference box, so the body radius is clamped;
- * the glow is allowed to spill (the class sets `overflow: visible`), because a
- * blurred halo clipped to a square edge reads as a box, not a glow.
+ * (r 20) would overflow the reference box, so the body radius is clamped.
+ *
+ * SHAPE. The mark is the tree's hand-drawn node: an imperfect circle whose
+ * outline comes from the node id (`lib/graph/blobShape`), filled with one
+ * flat colour. The same concept has the same shape here and in the tree.
  */
 
 import React from "react";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
+import { nodeBlobPathAt, wobbleFor } from "@/lib/graph/blobShape";
 import {
-  GLOW,
-  NODE_STROKE_OPACITY,
   opacityFor,
   radiusFor,
   shadeFor,
@@ -45,11 +46,9 @@ export const NODE_REF_BOX = NODE_REF_RADIUS * 2;
 export const LABEL_GAP = 13;
 /** Reference-unit band added below the box when a caption is drawn. */
 const LABEL_BAND = 18;
-/** Stroke weights, in reference units. The tree does not scale these. */
+/** Stroke weight of the dashed "before" ring, in reference units; also the
+ *  clearance `markRadius` keeps inside the reference box. */
 const STROKE_WIDTH = 1.5;
-const ROOT_STROKE_WIDTH = 2.5;
-/** The grown mark carries a slightly heavier ring — it's the point of the screen. */
-const GROWTH_STROKE_WIDTH = 2;
 /** The "before" ring on a growth mark. */
 const BEFORE_RING = { dash: "4 4", opacity: 0.5 } as const;
 
@@ -105,8 +104,6 @@ export interface ConceptMarkProps {
   nodeId: string;
   isRoot?: boolean;
   variant: ConceptNodeVariant;
-  /** `url(#…)` target for the blur filter. Omit for a flat mark. */
-  glowFilterId?: string;
   /** Growth only: false renders the "before" size so a transition has somewhere to start. */
   grown?: boolean;
 }
@@ -114,7 +111,8 @@ export interface ConceptMarkProps {
 /**
  * The mark itself, as bare SVG children so both `<ConceptNode>` (its own
  * `<svg>`) and `<ConceptNeighbourhood>` (one shared canvas) draw the identical
- * shape. Callers own the `<defs>` that `glowFilterId` points at.
+ * shape. The body carries `data-r`, `data-cx` and `data-cy`: what a circle's
+ * `r` / `cx` / `cy` would say.
  */
 export function ConceptMark({
   cx,
@@ -126,7 +124,6 @@ export function ConceptMark({
   nodeId,
   isRoot = false,
   variant,
-  glowFilterId,
   grown = true,
 }: ConceptMarkProps) {
   // Subject roots are never shaded — the family reads as one colour (the tree
@@ -142,33 +139,24 @@ export function ConceptMark({
   const rBody = markRadius(effectiveMastery, isRoot, scale);
   const rBefore = growth ? markRadius(growth.before, false, scale) : 0;
   const opacity = isRoot ? 1 : opacityFor(effectiveTier);
-  const strokeWidth = growth ? GROWTH_STROKE_WIDTH : isRoot ? ROOT_STROKE_WIDTH : STROKE_WIDTH;
+  // The outline is chosen in reference units, so a concept has the same
+  // shape at 15px and at 60px, and the same shape as in the tree.
+  const wobble = wobbleFor(rBody / scale);
 
   // Pre-animation, the body sits at the "before" size. Scaling the drawn
-  // circle (rather than swapping `r`) keeps the transition on a property every
-  // browser composites, and the ratio rides a custom property so the rule
-  // itself stays in globals.css.
+  // shape (rather than redrawing it smaller) keeps the transition on a
+  // property every browser composites, and the ratio rides a custom property
+  // so the rule itself stays in globals.css.
   const growFrom = growth && !grown && rBody > 0 ? rBefore / rBody : 1;
 
   return (
     <>
-      {glowFilterId && (
-        <circle
-          className="concept-node__glow"
-          cx={cx}
-          cy={cy}
-          r={rBody + GLOW.pad * scale}
-          fill={color}
-          opacity={GLOW.opacity}
-          filter={`url(#${glowFilterId})`}
-        />
-      )}
       {growth && (
-        <circle
+        // The dashed "before" ring: the same outline at the earlier size.
+        <path
           className="concept-node__before"
-          cx={cx}
-          cy={cy}
-          r={rBefore}
+          data-r={rBefore}
+          d={nodeBlobPathAt(nodeId, rBefore, wobble, cx, cy)}
           fill="none"
           stroke={color}
           strokeWidth={STROKE_WIDTH}
@@ -176,16 +164,16 @@ export function ConceptMark({
           opacity={BEFORE_RING.opacity}
         />
       )}
-      <circle
+      <path
         className={growth ? "concept-node__body concept-node__body--growth" : "concept-node__body"}
-        cx={cx}
-        cy={cy}
-        r={rBody}
+        data-r={rBody}
+        data-cx={cx}
+        data-cy={cy}
+        // The centre is in the path, not a `transform` attribute: the growth
+        // class sets a CSS transform, which would replace the attribute.
+        d={nodeBlobPathAt(nodeId, rBody, wobble, cx, cy)}
         fill={color}
         opacity={opacity}
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeOpacity={NODE_STROKE_OPACITY}
         style={
           growth ? ({ "--concept-grow": growFrom.toFixed(4) } as React.CSSProperties) : undefined
         }
@@ -208,9 +196,10 @@ export interface ConceptNodeProps {
   /**
    * Optional caption under the mark, truncated like the tree's. The box grows
    * to fit it vertically, but the text can be wider than the mark and spills
-   * sideways (the SVG is `overflow: visible` for the glow) — exactly as the
-   * tree's own labels do inside the graph canvas. Marks laid out in a tight
-   * row should label themselves in HTML instead.
+   * sideways (the SVG is `overflow: visible`, which also lets a full-size
+   * mark's outline bulge a hair past the box) — exactly as the tree's own
+   * labels do inside the graph canvas. Marks laid out in a tight row should
+   * label themselves in HTML instead.
    */
   label?: string;
   variant?: ConceptNodeVariant;
@@ -235,10 +224,8 @@ export function ConceptNode({
   title,
   testid,
 }: ConceptNodeProps) {
-  const filterId = `concept-node-glow-${React.useId()}`;
   const [grown] = useGrowth(variant, animate);
 
-  const hasGlow = variant.kind !== "dot";
   const truncated = label ? truncateLabel(label) : null;
   const boxHeight = truncated ? NODE_REF_BOX + LABEL_BAND : NODE_REF_BOX;
   const centre = NODE_REF_RADIUS;
@@ -255,13 +242,6 @@ export function ConceptNode({
       aria-hidden={title ? undefined : true}
       data-testid={testid}
     >
-      {hasGlow && (
-        <defs>
-          <filter id={filterId}>
-            <feGaussianBlur stdDeviation={GLOW.blur} />
-          </filter>
-        </defs>
-      )}
       <ConceptMark
         cx={centre}
         cy={centre}
@@ -272,7 +252,6 @@ export function ConceptNode({
         nodeId={nodeId}
         isRoot={isRoot}
         variant={variant}
-        glowFilterId={hasGlow ? filterId : undefined}
         grown={grown}
       />
       {truncated && (

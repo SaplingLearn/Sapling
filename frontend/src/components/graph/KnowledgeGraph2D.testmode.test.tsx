@@ -15,15 +15,23 @@
  * fork a second React copy and break hooks against the test renderer's
  * react-dom. A "fresh page load" is simulated with `resetTestRng()`,
  * which rewinds the seeded sequence to its module-init state.
+ *
+ * Re-capture the golden (only for an intended paint or layout change):
+ *   KG_WRITE_GOLDEN=1 npx vitest run src/components/graph/KnowledgeGraph2D.testmode.test.tsx
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import React from "react";
+import fs from "node:fs";
+import path from "node:path";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import GOLDEN from "./__fixtures__/knowledgeGraph2D.golden.json";
 
 vi.stubEnv("NEXT_PUBLIC_TEST_MODE", "1");
+
+const GOLDEN_PATH = path.join(__dirname, "__fixtures__", "knowledgeGraph2D.golden.json");
+const WRITE = process.env.KG_WRITE_GOLDEN === "1";
 
 let KnowledgeGraph2D: (typeof import("./KnowledgeGraph2D"))["KnowledgeGraph2D"];
 let resetTestRng: (typeof import("@/lib/testMode"))["resetTestRng"];
@@ -68,9 +76,10 @@ const at = (el: Element, name: string) => el.getAttribute(name) ?? "";
 /**
  * Every rendered node position + edge coordinate + the paint attributes, as
  * attribute strings. Node positions live on the group's `transform` (#111
- * moved the per-tick writes off React: children sit at relative cx/cy 0 and
- * the group carries the translate); circle radii are kept so size regressions
- * still surface.
+ * moved the per-tick writes off React: children sit at the group's origin
+ * and the group carries the translate). A node is a hand-drawn outline now,
+ * a `<path>` whose radius rides on `data-r` and whose `d` is its shape; any
+ * `<circle>` is still captured, so one coming back shows up here too.
  *
  * `fill` / `opacity` / `stroke-opacity` (and the label font/fill/truncation)
  * were added for #537: the node-style layer moved out to `lib/graph/nodeStyle`
@@ -94,17 +103,24 @@ function snapshot(container: HTMLElement): string[] {
       `|fill=${at(c, "fill")}|op=${at(c, "opacity")}` +
       `|stroke=${at(c, "stroke")}|sw=${at(c, "stroke-width")}|sop=${at(c, "stroke-opacity")}`,
   );
+  const paths = Array.from(svg!.querySelectorAll("path")).map(
+    (p) =>
+      `p:r=${at(p, "data-r")}|d=${at(p, "d")}` +
+      `|fill=${at(p, "fill")}|op=${at(p, "opacity")}` +
+      `|stroke=${at(p, "stroke")}|sw=${at(p, "stroke-width")}|sop=${at(p, "stroke-opacity")}`,
+  );
   const lines = Array.from(svg!.querySelectorAll("line")).map(
     (l) =>
       `l:${at(l, "x1")},${at(l, "y1")},${at(l, "x2")},${at(l, "y2")}` +
-      `|stroke=${at(l, "stroke")}|sop=${at(l, "stroke-opacity")}|sw=${at(l, "stroke-width")}`,
+      `|stroke=${at(l, "stroke")}|sop=${at(l, "stroke-opacity")}|sw=${at(l, "stroke-width")}` +
+      `|cap=${at(l, "stroke-linecap")}|dash=${at(l, "stroke-dasharray")}`,
   );
   const texts = Array.from(svg!.querySelectorAll("text")).map(
     (t) =>
       `t:${t.textContent}|${at(t, "x")},${at(t, "y")}` +
       `|font=${at(t, "font-family")}|fs=${at(t, "font-size")}|fill=${at(t, "fill")}|op=${at(t, "opacity")}`,
   );
-  return [...groups, ...circles, ...lines, ...texts];
+  return [...groups, ...circles, ...paths, ...lines, ...texts];
 }
 
 describe("KnowledgeGraph2D — test-mode determinism", () => {
@@ -149,8 +165,13 @@ describe("KnowledgeGraph2D — test-mode determinism", () => {
     const { container } = render(
       <KnowledgeGraph2D nodes={GOLDEN_NODES} edges={GOLDEN_EDGES} width={600} height={480} />,
     );
+    const snap = snapshot(container);
+    if (WRITE) {
+      fs.writeFileSync(GOLDEN_PATH, JSON.stringify(snap, null, 2) + "\n");
+      return;
+    }
     // Equality on the whole array, not a subset: a changed shade, a moved
     // opacity ramp, a retuned radius or a lost label truncation all land here.
-    expect(snapshot(container)).toEqual(GOLDEN);
+    expect(snap).toEqual(GOLDEN);
   });
 });

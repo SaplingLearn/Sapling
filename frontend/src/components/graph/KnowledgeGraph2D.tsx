@@ -11,7 +11,7 @@ import {
 } from "d3-force";
 import { type GraphEdge, type GraphNode } from "@/lib/data";
 import {
-  GLOW,
+  courseLabel,
   edgeWidthFor,
   masteryFillFor,
   radiusFor,
@@ -19,8 +19,12 @@ import {
   truncateLabel,
   type GraphColorMode,
 } from "@/lib/graph/nodeStyle";
+import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
+  ANCHOR_WIDTH,
+  ARROW_REF_X,
+  ARROW_SIZE,
   conceptLabelOpacity,
   conceptLabelSize,
   conceptLabelWeight,
@@ -36,7 +40,9 @@ import {
   linkStroke,
   nodeOpacity,
   nodeStrokeOpacity,
+  organicLinkSegment,
   plainLinkOpacity,
+  relatedDash,
 } from "./knowledgeGraph2DPaint";
 import {
   courseLinks,
@@ -124,7 +130,25 @@ type DragState =
   | { kind: "pan"; pointerId: number; startX: number; startY: number; originTx: number; originTy: number }
   | null;
 
-const MIN_ZOOM = 0.4;
+// The furthest zoom-out, and the floor of the opening fit: a large course
+// planned with room around every concept still opens whole.
+const MIN_ZOOM = 0.25;
+// Layout spacing (see `lib/graph/radialLayout` for the rings these sit on).
+/** Resting length of a concept-to-concept link. */
+const LINK_DISTANCE = 80;
+/**
+ * How hard concepts push each other apart, and from how far. Kept gentle and
+ * short-ranged: the rings already give every concept its room, and a strong
+ * push only swells each course past the space planned for it.
+ */
+const CHARGE = -70;
+const CHARGE_REACH = 220;
+/** Legible: how firmly a free course root is held at its home. */
+const HOME_PULL = 0.6;
+/** Collide radius of a course root: its mark plus room for its label. */
+const ROOT_CLEARANCE = 58;
+/** Added to a concept's radius for its collide radius: room for its caption. */
+const CAPTION_CLEARANCE = 24;
 /** Smallest on-screen node radius (px) in legible mode. */
 const MIN_SCREEN_R = 7;
 
@@ -292,6 +316,20 @@ function rimToRim(
 }
 // Clearance past a node's radius: half its stroke, so the line meets the rim.
 const rimGap = (n: GraphNode) => (n.is_subject_root ? 1.25 : 0.75);
+/** The hand-drawn highlight ring is drawn at `r + 8`; its pulse is that outline scaled to `r + pad`. */
+const ringScale = (r: number, pad: number) => ((r + pad) / (r + 8)).toFixed(3);
+/**
+ * Arrowhead geometry. A hand-drawn link is several units thick, so its head
+ * has a fixed size in the graph's units and sits with its base on the line's
+ * end; a thin line keeps a head sized by its stroke with the tip on the end.
+ */
+const ORGANIC_ARROW = {
+  markerUnits: "userSpaceOnUse",
+  markerWidth: ARROW_SIZE,
+  markerHeight: ARROW_SIZE,
+  refX: ARROW_REF_X,
+} as const;
+const THIN_ARROW = { markerWidth: 5, markerHeight: 5, refX: 9 } as const;
 // Legible mode leaves room at the target for the arrowhead.
 const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
@@ -411,13 +449,22 @@ function KnowledgeGraph2DImpl({
   zoomRequest = null,
 }: Props) {
   const mastery = colorMode === "mastery";
+  // `organism` (the default) is the hand-drawn graph: each node an imperfect
+  // circle in one flat colour, links thick bars in their course's colour. The
+  // other variants keep true circles and thin lines.
+  const organic = variant === "organism";
+  const organicRef = React.useRef(organic);
+  // Which links currently carry an arrowhead, by index: written by the render,
+  // read by the per-tick writer (a hand-drawn link stops short for its arrow).
+  const linkArrowRef = React.useRef<boolean[]>([]);
   const legibleRef = React.useRef(legible);
   // The current zoom, for the per-tick writer (legible nodes keep a minimum
   // on-screen size, so arrow insets depend on it).
   const viewScaleRef = React.useRef(initialZoom);
   React.useEffect(() => {
     legibleRef.current = legible;
-  }, [legible]);
+    organicRef.current = organic;
+  }, [legible, organic]);
   const importance = React.useMemo(
     () => (legible ? importanceRadii(nodes, splitEdges(nodes, edges).concept) : null),
     [legible, nodes, edges],
@@ -545,12 +592,18 @@ function KnowledgeGraph2DImpl({
         const r = radiusRef.current.get(n.id) ?? 0;
         return legible ? Math.max(r, MIN_SCREEN_R / viewScaleRef.current) : r;
       };
-      const [x1, y1, x2, y2] = rimToRim(
-        s.x, s.y, t.x, t.y,
-        rOf(s) + rimGap(s),
-        rOf(t) + (legible ? ARROW_GAP : rimGap(t)),
-      );
-      // The mastery gradient spans exactly the visible segment.
+      const [x1, y1, x2, y2] = organicRef.current
+        ? organicLinkSegment(
+            s.id, s.x, s.y, rOf(s), radiusRef.current.get(s.id) ?? 0,
+            t.id, t.x, t.y, rOf(t), radiusRef.current.get(t.id) ?? 0,
+            linkArrowRef.current[i] === true,
+          )
+        : rimToRim(
+            s.x, s.y, t.x, t.y,
+            rOf(s) + rimGap(s),
+            rOf(t) + (legible ? ARROW_GAP : rimGap(t)),
+          );
+      // The link's gradient spans exactly the visible segment.
       for (const target of [el, gradElsRef.current.get(i)]) {
         if (!target) continue;
         target.setAttribute("x1", String(x1));
@@ -627,21 +680,27 @@ function KnowledgeGraph2DImpl({
     planRef.current = plan;
 
     // Open on the whole graph: when the planned rings overflow the window,
-    // zoom out to fit — until the student pans or zooms themselves.
+    // zoom out to fit — until the student pans or zooms themselves. Only at
+    // the default zoom: a caller that asks for its own opening zoom (quiz
+    // home's neighbourhood fragment) is framed on where its nodes actually
+    // come to rest instead (`frameContent`, on the tick).
     const b = planBounds(plan, width, height);
     fittedViewRef.current = null;
-    if (b) {
-      const bw = b.maxX - b.minX;
-      const bh = b.maxY - b.minY;
-      const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / bw, height / bh));
-      // Only at the default zoom: a caller that asks for its own opening zoom
-      // (quiz home's neighbourhood fragment) is framed on where its nodes
-      // actually come to rest instead (`frameContent`, on the tick).
-      if (initialZoom === 1 && (scale < initialZoom || bw > width || bh > height)) {
+    if (initialZoom === 1) {
+      const bw = b ? b.maxX - b.minX : 0;
+      const bh = b ? b.maxY - b.minY : 0;
+      if (b && (bw > width || bh > height)) {
+        const scale = Math.max(MIN_ZOOM, Math.min(1, width / bw, height / bh));
         const mx = (b.minX + b.maxX) / 2;
         const my = (b.minY + b.maxY) / 2;
         fittedViewRef.current = { tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale };
-        if (!viewTouchedRef.current) setView(fittedViewRef.current);
+      }
+      // A graph that fits goes back to full size: the window is often
+      // measured twice (a placeholder size, then the real one), and a fit
+      // worked out for the first must not outlive it.
+      if (!viewTouchedRef.current) {
+        const open = fittedViewRef.current ?? initialView();
+        setView((v) => (v.tx === open.tx && v.ty === open.ty && v.scale === open.scale ? v : open));
       }
     }
 
@@ -655,6 +714,17 @@ function KnowledgeGraph2DImpl({
     }
     framedIdsRef.current = idsKey;
 
+    // A course whose planned centre moved (the window was re-measured, or a
+    // course was added and the courses re-arranged) is carried there whole, with
+    // its concepts as they sit. Left to the springs, a course that has far
+    // to go stops short: every concept it drags pulls back on it.
+    const carried = new Map<string, { dx: number; dy: number }>();
+    for (const [id, center] of plan.centers) {
+      const home = rootHomeRef.current.get(id);
+      if (!home || movedRootsRef.current.has(id)) continue;
+      if (home.x !== center.x || home.y !== center.y) carried.set(id, { dx: center.x - home.x, dy: center.y - home.y });
+    }
+
     // Merge new node data into existing sim nodes to preserve motion state.
     const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
     const nextNodes: SimNode[] = nodes.map((n) => {
@@ -662,6 +732,11 @@ function KnowledgeGraph2DImpl({
       const center = plan.centers.get(n.id);
       if (center && !movedRootsRef.current.has(n.id)) rootHomeRef.current.set(n.id, center);
       if (prev) {
+        const carry = carried.get(center ? n.id : (plan.orbit.get(n.id)?.rootId ?? ""));
+        if (carry && prev.x != null && prev.y != null) {
+          prev.x += carry.dx;
+          prev.y += carry.dy;
+        }
         // Keep position + velocity; refresh mutable data fields (mastery, color).
         Object.assign(prev, n);
         if (center && legibleRef.current) {
@@ -731,18 +806,16 @@ function KnowledgeGraph2DImpl({
         "link",
         forceLink<SimNode, SimLink>(nextLinks)
           .id((d) => d.id)
-          .distance(56)
+          .distance(LINK_DISTANCE)
           .strength((l) => (l.anchor ? 0 : 0.06 + (l.strength || 0.5) * 0.12)),
       )
-      .force("charge", forceManyBody<SimNode>().strength(-70).distanceMax(220))
+      .force("charge", forceManyBody<SimNode>().strength(CHARGE).distanceMax(CHARGE_REACH))
       .force(
         "collide",
+        // The layout radius: the mark plus the room its caption needs, so
+        // two concepts never settle on each other's labels.
         forceCollide<SimNode>().radius((d) =>
-          d.is_subject_root
-            ? 40
-            : legibleRef.current
-              ? (radiusRef.current.get(d.id) ?? 8) + 13
-              : 20 + (d.mastery_score || 0) * 6,
+          d.is_subject_root ? ROOT_CLEARANCE : (radiusRef.current.get(d.id) ?? 8) + CAPTION_CLEARANCE,
         ),
       )
       // Freed nodes (see freeRef) follow their leaders on ropes; see followForce.
@@ -771,8 +844,8 @@ function KnowledgeGraph2DImpl({
           if (!root || root.fx != null || root.x == null || root.y == null) continue;
           // A root being pulled along by a drag goes where it's pulled.
           if (freeRef.current.leader.has(id)) continue;
-          root.vx = (root.vx ?? 0) + (home.x - root.x) * 0.1 * alpha;
-          root.vy = (root.vy ?? 0) + (home.y - root.y) * 0.1 * alpha;
+          root.vx = (root.vx ?? 0) + (home.x - root.x) * HOME_PULL * alpha;
+          root.vy = (root.vy ?? 0) + (home.y - root.y) * HOME_PULL * alpha;
         }
       });
 
@@ -868,6 +941,9 @@ function KnowledgeGraph2DImpl({
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
+  // A hand-drawn link in course colours is its course's own colour, unshaded:
+  // one flat bar per link, in the family its two nodes are shades of.
+  const linkCourseColor = (n: GraphNode) => n.color || "var(--c-sage)";
   // In legible mastery mode the course dot keeps its course colour, so it
   // matches the disc behind it and the legend.
   const fillFor = (n: GraphNode) =>
@@ -918,7 +994,7 @@ function KnowledgeGraph2DImpl({
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of ns) {
       if (n.x == null || n.y == null) continue;
-      const r = nodeRadius(n) + 24; // node radius + label/glow allowance
+      const r = nodeRadius(n) + 24; // node radius + label allowance
       if (n.x - r < minX) minX = n.x - r;
       if (n.x + r > maxX) maxX = n.x + r;
       if (n.y - r < minY) minY = n.y - r;
@@ -1231,15 +1307,26 @@ function KnowledgeGraph2DImpl({
     if (!s || !t || s.x == null || t.x == null) return null;
     const incident = linkIncident(focusId, s.id, t.id);
     const op = legible
-      ? legibleLinkOpacity(l.anchor, incident, s, t, mastery, focusId, focusCourseId)
-      : plainLinkOpacity(mastery, variant);
+      ? legibleLinkOpacity(l.anchor, incident, s, t, mastery, focusId, focusCourseId, organic)
+      : plainLinkOpacity(mastery, variant, l.anchor);
     const arrow = linkArrow(l, legible, focusId, incident, view.scale);
-    const [x1, y1, x2, y2] = rimToRim(
-      s.x!, s.y!, t.x!, t.y!,
-      drawRadius(s) + rimGap(s),
-      drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
-    );
+    linkArrowRef.current[i] = arrow;
+    const [x1, y1, x2, y2] = organic
+      ? organicLinkSegment(
+          s.id, s.x!, s.y!, drawRadius(s), nodeRadius(s),
+          t.id, t.x!, t.y!, drawRadius(t), nodeRadius(t),
+          arrow,
+        )
+      : rimToRim(
+          s.x!, s.y!, t.x!, t.y!,
+          drawRadius(s) + rimGap(s),
+          drawRadius(t) + (legible ? ARROW_GAP : rimGap(t)),
+        );
     const gradId = `${gradPrefix}-e${i}`;
+    const width = organic
+      ? l.anchor ? ANCHOR_WIDTH : edgeWidthFor(l.strength)
+      : mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength);
+    const related = l.relationship_type === "related";
     return (
       <React.Fragment key={i}>
         {mastery && (
@@ -1271,19 +1358,21 @@ function KnowledgeGraph2DImpl({
           y1={y1}
           x2={x2}
           y2={y2}
-          stroke={linkStroke(mastery, gradId, incident)}
+          stroke={linkStroke(mastery, gradId, incident, organic ? linkCourseColor(s) : undefined)}
           strokeOpacity={op}
           markerEnd={linkMarker(arrow, gradPrefix, incident)}
           style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
-          strokeWidth={mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength)}
-          strokeLinecap="round"
-          strokeDasharray={l.relationship_type === "related" ? "4 4" : undefined}
+          strokeWidth={width}
+          // A hand-drawn bar meets each node's rim square-on; its dotted
+          // "related" form needs round caps to make the dots.
+          strokeLinecap={organic && !related ? "butt" : "round"}
+          strokeDasharray={related ? relatedDash(organic, width) : undefined}
         />
       </React.Fragment>
     );
   };
 
-  /** One node group (hit area, glow, highlight, comparison ring, dot, label), keyed by id. */
+  /** One node group (hit area, highlight, comparison ring, mark, label), keyed by id. */
   const renderNode = (n: SimNode) => {
     if (n.x == null || n.y == null) return null;
     const r = drawRadius(n);
@@ -1292,6 +1381,9 @@ function KnowledgeGraph2DImpl({
     const isHl = highlightId === n.id;
     const isHovered = hovered?.id === n.id;
     const isPinned = isDragPinned(n);
+    // The outline's irregularity follows the resting radius, so a node keeps
+    // its shape while the legible zoom floor draws it larger.
+    const wobble = wobbleFor(nodeRadius(n));
     return (
       <g
         key={n.id}
@@ -1333,39 +1425,68 @@ function KnowledgeGraph2DImpl({
           // A bigger, invisible hover/click target than the dot itself.
           <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
         )}
-        {variant === "organism" && (
-          <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
-        )}
-        {isHl && (
-          <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
-            <animate
-              attributeName="r"
-              values={`${r + 5};${r + 11};${r + 5}`}
-              dur="2.4s"
-              repeatCount="indefinite"
-            />
-          </circle>
-        )}
+        {isHl &&
+          (organic ? (
+            // The highlight ring follows the node's own outline and breathes:
+            // out and fainter, then back. The `<animate>` is also what the
+            // browser suite waits on to know a node is highlighted.
+            <path
+              data-testid="graph-node-highlight"
+              d={nodeBlobPath(n.id, r + 8, wobble)}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              opacity={0.7}
+            >
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values={`${ringScale(r, 5)};${ringScale(r, 11)};${ringScale(r, 5)}`}
+                dur="2.4s"
+                repeatCount="indefinite"
+              />
+              <animate attributeName="opacity" values="0.7;0.4;0.7" dur="2.4s" repeatCount="indefinite" />
+            </path>
+          ) : (
+            <circle
+              data-testid="graph-node-highlight"
+              cx={0}
+              cy={0}
+              r={r + 7}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              opacity={0.7}
+            >
+              <animate
+                attributeName="r"
+                values={`${r + 5};${r + 11};${r + 5}`}
+                dur="2.4s"
+                repeatCount="indefinite"
+              />
+            </circle>
+          ))}
         {(() => {
           const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());
           if (!partner) return null;
           const partnerR = r + 4 + partner.mastery_score * 5;
-          return (
-            <circle
-              cx={0}
-              cy={0}
-              r={partnerR}
-              fill="none"
-              stroke={comparisonColor}
-              strokeWidth={1.8}
-              strokeDasharray="3 3"
-              opacity={0.35 + partner.mastery_score * 0.55}
-            >
-              <title>
-                {comparisonLabel ? `${comparisonLabel}: ` : ""}
-                {Math.round(partner.mastery_score * 100)}% mastery on {n.name}
-              </title>
-            </circle>
+          const ring = {
+            fill: "none",
+            stroke: comparisonColor,
+            strokeWidth: 1.8,
+            strokeDasharray: "3 3",
+            opacity: 0.35 + partner.mastery_score * 0.55,
+          };
+          const title = (
+            <title>
+              {comparisonLabel ? `${comparisonLabel}: ` : ""}
+              {Math.round(partner.mastery_score * 100)}% mastery on {n.name}
+            </title>
+          );
+          return organic ? (
+            <path d={nodeBlobPath(n.id, partnerR, wobble)} {...ring}>{title}</path>
+          ) : (
+            <circle cx={0} cy={0} r={partnerR} {...ring}>{title}</circle>
           );
         })()}
         {variant === "constellation" ? (
@@ -1373,6 +1494,20 @@ function KnowledgeGraph2DImpl({
             <circle data-testid="graph-node-circle" cx={0} cy={0} r={r * 0.7} fill={color} opacity={op} />
             <circle cx={0} cy={0} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
           </>
+        ) : organic ? (
+          // The hand-drawn mark: the node's own imperfect outline, one flat
+          // colour. `data-r` says what the circle's `r` used to.
+          <path
+            data-testid="graph-node-circle"
+            data-r={r}
+            d={nodeBlobPath(n.id, r, wobble)}
+            fill={color}
+            opacity={op}
+            stroke={color}
+            strokeWidth={n.is_subject_root ? 2.5 : 1.5}
+            strokeOpacity={nodeStrokeOpacity(isPinned, isHovered, true)}
+            strokeLinejoin="round"
+          />
         ) : (
           <circle
             data-testid="graph-node-circle"
@@ -1397,7 +1532,7 @@ function KnowledgeGraph2DImpl({
             fill={color}
             pointerEvents="none"
           >
-            {n.name}
+            {courseLabel(n.name)}
           </text>
         )}
         {!n.is_subject_root && (
@@ -1418,6 +1553,8 @@ function KnowledgeGraph2DImpl({
       </g>
     );
   };
+
+  const arrowBox = organic ? ORGANIC_ARROW : THIN_ARROW;
 
   return (
     <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
@@ -1442,19 +1579,14 @@ function KnowledgeGraph2DImpl({
         <defs>
           {legible && (
             <>
-              <marker id={`${gradPrefix}-arrow`} viewBox="0 0 10 10" refX={9} refY={5}
-                markerWidth={5} markerHeight={5} orient="auto">
+              <marker id={`${gradPrefix}-arrow`} viewBox="0 0 10 10" refY={5} orient="auto" {...arrowBox}>
                 <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
               </marker>
-              <marker id={`${gradPrefix}-arrow-on`} viewBox="0 0 10 10" refX={9} refY={5}
-                markerWidth={5} markerHeight={5} orient="auto">
+              <marker id={`${gradPrefix}-arrow-on`} viewBox="0 0 10 10" refY={5} orient="auto" {...arrowBox}>
                 <path d="M0,0 L10,5 L0,10 z" fill="var(--text-dim)" />
               </marker>
             </>
           )}
-          <filter id="soft">
-            <feGaussianBlur stdDeviation={GLOW.blur} />
-          </filter>
         </defs>
 
         <g transform={`translate(${view.tx}, ${view.ty}) scale(${view.scale})`}>

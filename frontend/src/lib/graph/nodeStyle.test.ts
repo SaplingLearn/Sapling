@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  GLOW,
   NODE_STROKE_OPACITY,
   TIER_OPACITY,
+  courseLabel,
   edgeWidthFor,
   hexToHsl,
   hslToHex,
@@ -133,21 +133,23 @@ describe("opacityFor / TIER_OPACITY", () => {
 });
 
 describe("edgeWidthFor", () => {
+  // A link is a bar now, not a hairline: 2.2 at its faintest, 5 at its
+  // strongest, so it reads as part of the drawing next to a hand-drawn node.
   it.each([
-    [0.1, 0.62],
-    [0.3, 0.86],
-    [0.5, 1.1],
-    [0.7, 1.34],
-    [1, 1.7],
+    [0.1, 2.48],
+    [0.3, 3.04],
+    [0.5, 3.6],
+    [0.7, 4.16],
+    [1, 5],
   ])("strength %s → %s", (strength, width) => {
     expect(edgeWidthFor(strength)).toBeCloseTo(width, 10);
   });
 
   it("substitutes 0.5 for a falsy strength, exactly as the renderer's `|| 0.5` did", () => {
     // Including a literal 0 — the quirk is preserved on purpose, because the
-    // tree paints a zero-strength edge at 1.1 today and the golden pins it.
-    expect(edgeWidthFor(0)).toBeCloseTo(1.1, 10);
-    expect(edgeWidthFor(undefined as unknown as number)).toBeCloseTo(1.1, 10);
+    // tree paints a zero-strength edge at the middle width and the golden pins it.
+    expect(edgeWidthFor(0)).toBeCloseTo(3.6, 10);
+    expect(edgeWidthFor(undefined as unknown as number)).toBeCloseTo(3.6, 10);
   });
 });
 
@@ -167,10 +169,31 @@ describe("truncateLabel", () => {
   });
 });
 
+describe("courseLabel", () => {
+  it("keeps only the course code of a `CODE - Title` name", () => {
+    expect(courseLabel("CAS CS 131 - Combinatoric Structures")).toBe("CAS CS 131");
+    expect(courseLabel("ENG EK 103 - Computational Linear Algebra")).toBe("ENG EK 103");
+  });
+
+  it("leaves a name with no ` - ` separator as it is", () => {
+    expect(courseLabel("Biology")).toBe("Biology");
+    // A hyphen inside a word is not the separator.
+    expect(courseLabel("Self-paced study")).toBe("Self-paced study");
+  });
+
+  it("does not cut at a leading separator, which would leave nothing", () => {
+    expect(courseLabel(" - Untitled")).toBe(" - Untitled");
+  });
+
+  it("cuts a long code or an unsplit name to 22 characters", () => {
+    expect(courseLabel("Introduction to Organic Chemistry")).toBe("Introduction to Organ…");
+    expect(courseLabel("A very long course code 101 - Title")).toBe("A very long course co…");
+  });
+});
+
 describe("the mark's constants", () => {
-  it("keeps the resting stroke opacity and the glow geometry the tree uses", () => {
+  it("keeps the resting stroke opacity the plain variants use", () => {
     expect(NODE_STROKE_OPACITY).toBe(0.4);
-    expect(GLOW).toEqual({ pad: 8, opacity: 0.15, blur: 3 });
   });
 });
 

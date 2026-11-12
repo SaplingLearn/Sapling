@@ -40,8 +40,9 @@ describe("KnowledgeGraph2D — initialZoom", () => {
   });
 
   it("resets to the opening zoom, framed on the nodes, not to 1", () => {
+    // A window the two-node fragment fits in at 2×.
     const { container } = render(
-      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={800} height={600} initialZoom={2} />,
     );
     fireEvent.click(screen.getByTestId("graph-zoom-out"));
     expect(viewTransform(container)).toMatch(/scale\(1\.6\)$/);
@@ -49,6 +50,39 @@ describe("KnowledgeGraph2D — initialZoom", () => {
     // The opening zoom again, centred on where the nodes are rather than on
     // the window (a fragment centred on the window sat off to one side).
     expect(viewTransform(container)).toMatch(/scale\(2\)$/);
+  });
+
+  it("resets a fragment too wide for its window to the largest zoom that shows all of it", () => {
+    // At 2× the two nodes and their captions would not fit in 400px: the
+    // reset stops short of the opening zoom rather than cutting a node off.
+    const { container } = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
+    );
+    fireEvent.click(screen.getByTestId("graph-zoom-out"));
+    fireEvent.click(screen.getByTestId("graph-zoom-reset"));
+    const m = /translate\(([-\d.e]+), ([-\d.e]+)\) scale\(([-\d.e]+)\)/.exec(viewTransform(container) ?? "")!;
+    const [tx, ty, scale] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    expect(scale).toBeGreaterThan(1);
+    expect(scale).toBeLessThan(2);
+    const nodes = Array.from(container.querySelectorAll('[data-testid="graph-node"]'));
+    expect(nodes).toHaveLength(2);
+    let left = Infinity;
+    let right = -Infinity;
+    for (const g of nodes) {
+      const [, x, y] = /translate\(([-\d.e]+),\s*([-\d.e]+)\)/.exec(g.getAttribute("transform")!)!;
+      const r = Number(g.querySelector('[data-testid="graph-node-circle"]')!.getAttribute("data-r"));
+      const sx = Number(x) * scale + tx;
+      const sy = Number(y) * scale + ty;
+      // The whole mark is inside the window.
+      expect(sx - r * scale).toBeGreaterThanOrEqual(0);
+      expect(sx + r * scale).toBeLessThanOrEqual(400);
+      expect(sy - r * scale).toBeGreaterThanOrEqual(0);
+      expect(sy + r * scale).toBeLessThanOrEqual(300);
+      left = Math.min(left, sx - r * scale);
+      right = Math.max(right, sx + r * scale);
+    }
+    // …and the pair, edge to edge, is centred in it.
+    expect((left + right) / 2).toBeCloseTo(200, 4);
   });
 
   it("zooms the buttons about the window's centre, not the content's origin", () => {
