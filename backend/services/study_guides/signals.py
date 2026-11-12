@@ -19,6 +19,8 @@ from services.tool_signals import Expect, report_empty_result_async
 logger = logging.getLogger(__name__)
 
 FEATURE = "study_guide"
+#: What a concept row is, as opposed to the course's root node.
+_CONCEPTS_ONLY = {"mastery_tier": "neq.subject_root"}
 MAX_MISTAKES_PER_CONCEPT = 3
 MAX_MISTAKES = 12
 #: Digest fields that hold mistakes, most specific first.
@@ -44,11 +46,7 @@ async def _anodes(user_id: str, course_id: str) -> list[dict]:
     """The student's concepts in the course, without root nodes."""
     rows = await table("graph_nodes").aselect(
         "id,concept_name,mastery_score",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "course_id": f"eq.{course_id}",
-            "mastery_tier": "neq.subject_root",
-        },
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}", **_CONCEPTS_ONLY},
         order="concept_name.asc,id.asc",
     ) or []
     return [row for row in rows if (row.get("concept_name") or "").strip()]
@@ -64,7 +62,9 @@ async def amastery(user_id: str, course_id: str) -> dict[str, float]:
         count=len(scores),
         expect=Expect.HAS_GRAPH,
         feature=FEATURE,
-        scope={"course_id": f"eq.{course_id}"},
+        # The probe asks about the slice that was read: a course that has only
+        # its root node has no concepts, and that is not a discrepancy.
+        scope={"course_id": f"eq.{course_id}", **_CONCEPTS_ONLY},
     )
     return scores
 
@@ -120,10 +120,12 @@ async def amistakes(user_id: str, course_id: str, concepts: list[str]) -> list[Q
         filters={"user_id": f"eq.{user_id}", "concept_node_id": node_ids},
     ) or []
     by_node = _mistakes_by_node(rows)
+    # Counts the digests read, not the mistakes in them: a student whose
+    # quizzes recorded no mistakes has nothing missing.
     await report_empty_result_async(
         "study_guide_mistakes",
         user_id=user_id,
-        count=len(by_node),
+        count=len(rows),
         expect=Expect.HAS_ATTEMPTS,
         feature=FEATURE,
         scope={"concept_node_id": node_ids},

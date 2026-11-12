@@ -100,12 +100,29 @@ def test_the_mastery_read_reports_through_the_silent_empty_seam(db):
     db.node("n1", "Recursion", 0.82)
     run(signals.amastery(ME, COURSE))
     run(signals.amastery(ME, OTHER_COURSE))
+
+    def concepts_in(course: str) -> dict:
+        return {"course_id": f"eq.{course}", "mastery_tier": "neq.subject_root"}
+
     assert db.reports == [
         {"tool": "study_guide_mastery", "user_id": ME, "count": 1, "expect": Expect.HAS_GRAPH,
-         "feature": "study_guide", "scope": {"course_id": f"eq.{COURSE}"}},
+         "feature": "study_guide", "scope": concepts_in(COURSE)},
         {"tool": "study_guide_mastery", "user_id": ME, "count": 0, "expect": Expect.HAS_GRAPH,
-         "feature": "study_guide", "scope": {"course_id": f"eq.{OTHER_COURSE}"}},
+         "feature": "study_guide", "scope": concepts_in(OTHER_COURSE)},
     ]
+
+
+def test_a_course_with_only_its_root_node_is_not_a_missing_graph(db):
+    """The read leaves the root node out, so the probe must too: its scope is
+    the read's own filter, and the root row does not match it."""
+    db.node("n-root", "CS 111", 0.0, tier="subject_root")
+
+    assert run(signals.amastery(ME, COURSE)) == {}
+
+    (report,) = db.reports
+    assert report["count"] == 0
+    probe = {"user_id": f"eq.{ME}", **report["scope"]}
+    assert [r for r in db.rows["graph_nodes"] if _matches(r, probe)] == []
 
 
 def test_tiers_follow_the_configured_thresholds():
@@ -195,19 +212,27 @@ def test_a_digest_that_does_not_decrypt_is_skipped_with_a_warning(db, caplog):
     assert found == [signals.QuizMistake(id="m1", concept="Recursion", text="Forgets the base case")]
     warnings = [r for r in caplog.records if r.name == signals.logger.name]
     assert len(warnings) == 1 and warnings[0].exc_info is None
-    assert db.reports[-1]["count"] == 1
+    assert db.reports[-1]["count"] == 2
 
 
-def test_the_mistakes_read_reports_the_digests_that_yielded_text(db):
+def test_the_mistakes_read_reports_the_digests_it_read(db):
+    """A digest that records no mistakes is still a digest: a student who
+    made none is not a student whose history went missing."""
     db.node("n1", "Pointers")
     db.node("n2", "Recursion")
     db.digest("n1", common_mistakes=[], weak_areas=[], notes="nothing recorded yet")
     assert run(signals.amistakes(ME, COURSE, ["Pointers", "Recursion"])) == []
     assert db.reports == [{
-        "tool": "study_guide_mistakes", "user_id": ME, "count": 0,
+        "tool": "study_guide_mistakes", "user_id": ME, "count": 1,
         "expect": Expect.HAS_ATTEMPTS, "feature": "study_guide",
         "scope": {"concept_node_id": 'in.("n1","n2")'},
     }]
+
+
+def test_no_digests_at_all_is_reported_as_an_empty_read(db):
+    db.node("n1", "Recursion")
+    assert run(signals.amistakes(ME, COURSE, ["Recursion"])) == []
+    assert [r["count"] for r in db.reports] == [0]
 
 
 def test_concepts_the_tree_does_not_have_read_no_digests(db):
