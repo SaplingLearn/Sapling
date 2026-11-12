@@ -108,16 +108,16 @@ The generate stream uses `services.agent_events.SaplingEvent` (`{type, step, mes
 - `done`: `data.guide` is the finished `GuideDetail`.
 - `error`: `message` is the reason; `data.retryable`.
 
-Modes: `resume` writes whatever is still queued (a new guide, or one whose stream was cut); `update` folds in material added since; `regenerate` rewrites everything. `update` and `regenerate` first copy `content` to `previous_content`.
+Modes: `resume` writes whatever is still queued (a new guide, or one whose stream was cut); `update` folds in material added since; `regenerate` rewrites everything. `update` and `regenerate` copy the last finished `content` to `previous_content` in the same write that saves their first new section, once per run, and only when the guide being replaced was readable.
 
 ## 5. Generation
 
 1. **Claim.** `generating_at` is the claim. The request is refused with 409 while a claim is held; the stream then takes the claim as its first act (so a client that disconnects before the stream starts leaves nothing held), and a run that loses that race ends with an `error` event. A run takes it when it is NULL or older than fifteen minutes (longer than the slowest model call with its retries), refreshes it after every section, and clears it on exit, including a cancelled stream. The claim's timestamp is the run's token: a run that finds its token gone was overtaken and stops without writing. A second request while a claim is fresh gets 409; the reader re-reads the guide, waits, and asks to resume again.
 2. **Read.** The chosen documents' `summary`, `concept_notes` and `extracted_text`, budgeted (30 documents, 10k characters each, 60k in total) and wrapped with `prompt_safety.wrap_untrusted`. Each source gets a short label (`S1`, `S2`, ...). With history on: the student's mastery per concept and their `quiz_context` mistakes for those concepts.
-3. **Outline.** `study_guide_outline_agent` (structured, small): title, deck, takeaways, and sections as `{title, concept, one_line, keep_id}`. `concept` must be one of the student's concept names or null. The server, not the model, sets each section's tier and weight from mastery: struggling 5, learning 3, unexplored 3, mastered 1, scaled to 100. With history off every section weighs the same. The outline is saved and sent before any section is written.
+3. **Outline.** `study_guide_outline_agent` (structured, small): title, deck, takeaways, and sections as `{title, concept, one_line, keep_id}`. `concept` must be one of the student's concept names or null. The server, not the model, sets each section's tier and weight from mastery: struggling 5, learning 3, unexplored 3, mastered 1, scaled to 100. With history off every section weighs the same. For a new guide the outline is saved and sent before any section is written. An Update or Regenerate of a finished guide sends the outline but saves nothing until its first section is written, so a run that fails early leaves the guide exactly as it was.
 4. **Sections, one at a time.** `study_guide_section_agent` is a text agent. It writes prose with fenced JSON blocks; `services/study_guides/markup.py` turns the text into items and maps `[S1]` to source ids. A rejected block is rewritten once by `study_guide_block_agent`, then dropped. Each section is saved as soon as it is written, so a cut stream resumes at the next queued section.
 5. **Check.** `verify.py` drops citations to unknown sources, stamps each mistake's evidence from the real quiz history (and drops one that cites none), drops a check question whose answer is not among its options, clears concept names the student's tree does not have, and decides every chart's `illustrative` flag.
-6. **Finish.** `status = ready`, `generated_at = now`, `done` event.
+6. **Finish.** `status = ready`, `generated_at = now`, and the claim cleared, all in one write; then the `done` event, so the guide is free the moment the reader hears it is ready. A guide is failed only when no section at all could be written; a section that could not be written is marked `failed` and `resume` tries it again.
 
 `update` gives the outline agent the current outline and the new documents; a section it returns with `keep_id` is kept as written, with its read state. Everything else is written fresh.
 
@@ -136,11 +136,14 @@ All three agents run on the existing `study_guide` slot. One function-mode handl
 | `materials.py` | the class's documents, the suggested set per scope, source text for the prompt, the new-materials count |
 | `signals.py` | mastery tier per concept; quiz mistakes per concept |
 | `plan.py` | the planned outline and section weights |
+| `limits.py` | the hourly limits on creating, generating and rewriting, each overridable by env |
+| `inputs.py` | what one run reads: sources, mastery and quiz mistakes, as the writer's brief |
+| `outline.py` | how many sections a guide may have, and turning the model's outline into sections |
 | `markup.py` | the section writer's text as items |
 | `prompts.py` | the user messages for the three agents |
 | `writer.py` | runs the agents, records usage, retries a rejected block |
 | `verify.py` | the citation and block check |
-| `generation.py` | one generation run as a stream of events |
+| `generation.py` | one generation run as a stream of events: prepare, the claim, the steps, failure handling |
 | `blocks.py` | regenerate one block |
 | `create.py` | validate a `GuideRequest` and insert the row |
 | `options.py` | what a new guide for a class can be for, and from which materials |
