@@ -330,6 +330,11 @@ def source_db() -> FakeDB:
         "study_guides": [{
             "id": "sg-1", "user_id": UID, "offering_id": SRC_OFF_CS, "exam_id": "asg-1",
             "content": enc_json(A, {"exam": "Midterm"}),
+            "previous_content": enc_json(A, {"exam": "Midterm, before the update"}),
+            "answers": enc_json(A, {"s1-i2": {"option_id": "b", "correct": True}}),
+            "scope_kind": "exam", "status": "ready", "format": 1,
+            "material_ids": ["doc-1"], "read_sections": ["s1"],
+            "saved_at": "2026-11-04T00:00:00Z", "generating_at": "2026-11-05T00:00:00Z",
         }],
         "quiz_attempts": [{
             "id": "qa-1", "user_id": UID, "concept_node_id": "node-1", "score": 3, "total": 4,
@@ -414,6 +419,10 @@ def test_export_is_plaintext_with_natural_key_catalog(use):
     assert t["messages"][1]["content"] == "Hello"
     assert t["quiz_responses"][0]["answer_text"] == {"text": "a base case"}
     assert t["topic_checklists"][0]["content"] == {"topics": [{"name": "Recursion"}]}
+    guide = t["study_guides"][0]
+    assert guide["content"] == {"exam": "Midterm"}
+    assert guide["previous_content"] == {"exam": "Midterm, before the update"}
+    assert guide["answers"] == {"s1-i2": {"option_id": "b", "correct": True}}
     assert bundle["profile"]["name"] == "Ada Student"
     assert "avatar_url" not in bundle["profile"]
     assert "equipped_banner_id" not in bundle["settings"]
@@ -532,7 +541,19 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert dec(KEY_B, a["points_earned"]) == "88" and dec(KEY_B, a["notes"]) == "remember the base case"
     assert [dec(KEY_B, m["content"]) for m in d["messages"]] == ["Hi", "Hello"]
     assert json.loads(dec(KEY_B, d["quiz_responses"][0]["answer_text"])) == {"text": "a base case"}
-    assert json.loads(dec(KEY_B, d["study_guides"][0]["content"])) == {"exam": "Midterm"}
+    guide = d["study_guides"][0]
+    assert json.loads(dec(KEY_B, guide["content"])) == {"exam": "Midterm"}
+    assert json.loads(dec(KEY_B, guide["previous_content"])) == {
+        "exam": "Midterm, before the update"}
+    assert json.loads(dec(KEY_B, guide["answers"])) == {
+        "s1-i2": {"option_id": "b", "correct": True}}
+    # The guide's plaintext state travels; its materials and exam keep their
+    # ids (row ids are preserved), and the source's generation claim does not.
+    assert guide["material_ids"] == [d["documents"][0]["id"]] == ["doc-1"]
+    assert guide["exam_id"] == d["assignments"][0]["id"]
+    assert (guide["scope_kind"], guide["status"], guide["format"]) == ("exam", "ready", 1)
+    assert (guide["read_sections"], guide["saved_at"]) == (["s1"], "2026-11-04T00:00:00Z")
+    assert guide["generating_at"] is None
     assert d["quiz_attempts"][0]["answers_json"] is None
     assert json.loads(dec(KEY_B, d["topic_checklists"][0]["content"]))["topics"][0]["name"] == "Recursion"
     # Achievements by slug; one the target lacks is skipped and counted.

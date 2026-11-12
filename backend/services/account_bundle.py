@@ -110,7 +110,7 @@ ENCRYPTED: dict[str, dict[str, str]] = {
     "flashcards": {"front": TEXT, "back": TEXT},
     "sessions": {"summary_json": JSON},
     "messages": {"content": TEXT},
-    "study_guides": {"content": JSON},
+    "study_guides": {"content": JSON, "previous_content": JSON, "answers": JSON},
     "quiz_attempts": {"questions_json": JSON, "answers_json": JSON},
     "quiz_responses": {"answer_text": JSON},
     "quiz_context": {"context_json": JSON},
@@ -245,6 +245,9 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("flashcard_sets"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
+    # `exam_id` (an assignment), `material_ids` (documents) and the
+    # `document:<id>` source ids inside the content travel unchanged, because
+    # row ids are preserved.
     _Spec("study_guides"),
     _Spec("quiz_attempts"),
     _Spec("quiz_responses", key="attempt_id", parent="quiz_attempts"),
@@ -294,6 +297,9 @@ _ACH_XP_SOURCE = "achievement"
 _DOCUMENT_INDEX_RESET = {
     "index_attempts": 0, "index_leased_at": None, "index_chunk_count": None, "index_error": None,
 }
+
+# A generation run holding a guide on the source holds nothing here.
+_GUIDE_CLAIM_RESET = {"generating_at": None}
 
 _IN_CHUNK = 50  # ids per `in.(…)` filter — keeps the query string bounded
 _INSERT_CHUNK = 200
@@ -665,6 +671,8 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
         # A soft-deleted document is never claimed by the sweeper anyway;
         # 'skipped' keeps it out of the admin unindexed list too.
         out["index_status"] = "skipped" if out.get("deleted_at") else "pending"
+    if name == "study_guides" and out.get("generating_at") is not None:
+        out.update(_GUIDE_CLAIM_RESET)
     for column, kind in ENCRYPTED.get(name, {}).items():
         if column in out:
             out[column] = _encrypt(kind, out[column])
