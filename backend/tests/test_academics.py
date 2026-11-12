@@ -90,8 +90,12 @@ class _TermsTable:
                 out = [r for r in out if r.get(col) and r[col] <= val]
             elif op == "gte":
                 out = [r for r in out if r.get(col) and r[col] >= val]
+            elif op == "gt":
+                out = [r for r in out if r.get(col) and r[col] > val]
             elif op == "eq":
                 out = [r for r in out if str(r.get(col)) == val]
+            else:
+                raise AssertionError(f"filter op {op!r} not modelled")
         for key in reversed((order or "").split(",")):
             if key:
                 col, _, direction = key.partition(".")
@@ -125,6 +129,45 @@ def test_current_term_between_terms_prefers_most_recently_started(today, expecte
 def test_current_term_none_when_no_terms():
     with patch.object(ac, "table", side_effect=_factory({"terms": []})):
         assert ac.current_term() is None
+
+
+# ── onboarding_term ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("today,expected", [
+    ("2026-03-11", "spring-2026"),  # inside a term: that term
+    ("2026-05-10", "spring-2026"),  # its last day: end_date is inclusive, not ended yet
+    ("2026-05-11", "fall-2026"),    # the day after: next term, NOT the one that just ended
+    ("2026-06-20", "fall-2026"),    # summer gap (current_term says spring-2026)
+    ("2026-01-01", "spring-2026"),  # winter gap (current_term says fall-2025)
+    ("2026-09-01", "fall-2026"),    # first day of a term
+    ("2025-08-01", "fall-2025"),    # before every term: the soonest one
+    ("2027-02-01", "fall-2026"),    # after every term: no later one, so the current term
+])
+def test_onboarding_term_enrolls_a_new_student_in_the_term_ahead(today, expected):
+    from datetime import date as _date
+    terms = _TermsTable(_TERMS)
+    with patch.object(ac, "table", return_value=terms):
+        assert ac.onboarding_term(_date.fromisoformat(today))["id"] == expected
+
+
+def test_onboarding_term_leaves_current_term_alone():
+    """Every other caller keeps reading a gap as the term that just ended."""
+    from datetime import date as _date
+    terms = _TermsTable(_TERMS)
+    with patch.object(ac, "table", return_value=terms):
+        assert ac.current_term(_date.fromisoformat("2026-06-20"))["id"] == "spring-2026"
+        assert ac.onboarding_term(_date.fromisoformat("2026-06-20"))["id"] == "fall-2026"
+
+
+def test_onboarding_term_none_when_no_terms():
+    with patch.object(ac, "table", side_effect=_factory({"terms": []})):
+        assert ac.onboarding_term() is None
+
+
+def test_onboarding_term_without_an_end_date_is_the_current_term():
+    rows = [{"id": "open", "start_date": "2026-01-01", "end_date": None, "sort_key": 1}]
+    with patch.object(ac, "table", side_effect=_factory({"terms": rows})):
+        assert ac.onboarding_term()["id"] == "open"
 
 
 # ── resolve_offering ────────────────────────────────────────────────────────
