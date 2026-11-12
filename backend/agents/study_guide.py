@@ -9,9 +9,6 @@ all on the `study_guide` slot:
   union in `models/study_guide.py` is far past the structured-output budget
   (`tests/test_agent_output_schemas.py`), which is why this is not structured.
 - `study_guide_block_agent` rewrites one block, as one fenced JSON block.
-
-`study_guide_agent` (with `StudyGuide` and `Topic`) is the pre-redesign agent.
-The old route still imports it; all three go when that route is replaced.
 """
 
 from __future__ import annotations
@@ -27,55 +24,6 @@ from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 from services.prompt_safety import INJECTION_GUARD_PROMPT
-
-
-class Topic(BaseModel):
-    """One study-guide topic."""
-
-    name: str = Field(description="Topic name.")
-    importance: str = Field(
-        description="One sentence explaining why this topic matters for the exam.",
-    )
-    concepts: list[str] = Field(
-        description="3-5 surface-level concept bullet points the student should understand.",
-    )
-
-
-class StudyGuide(BaseModel):
-    """Typed study guide. Serializes to the legacy JSON contract via model_dump()."""
-
-    exam: str = Field(description="The exam title.")
-    due_date: str = Field(description="The exam due date, YYYY-MM-DD.")
-    overview: str = Field(
-        description="2-3 sentence overview of what this exam covers and how to approach it.",
-    )
-    topics: list[Topic] = Field(description="The topics that make up the study guide.")
-
-
-_SYSTEM_PROMPT = (
-    "You are a study guide generator for a student exam-prep tool. Given an "
-    "exam and the student's course material, break the material into clear "
-    "topics. For each topic provide a topic name, 3-5 surface-level concept "
-    "bullet points the student should understand, and one sentence explaining "
-    "why the topic matters for the exam. Also produce a 2-3 sentence overview "
-    "of what the exam covers and how to approach it. Stay grounded in the "
-    "provided material; do not invent topics the material does not support. "
-    "Echo the exam title and due date you are given."
-)
-_PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
-
-
-study_guide_agent = Agent[SaplingDeps, StudyGuide](
-    model=model_for("study_guide"),
-    deps_type=SaplingDeps,
-    output_type=StudyGuide,
-    # #153: bounded output-validation retry budget for this idempotent
-    # generation task. Tool-less agent, so `retries=` IS the output budget
-    # (see the validation-retry policy note in agents/__init__.py).
-    retries=2,
-    system_prompt=_SYSTEM_PROMPT,
-    metadata={"prompt_version": _PROMPT_HASH, "agent": "study_guide"},
-)
 
 
 def _hash(prompt: str) -> str:
@@ -308,13 +256,16 @@ _BLOCK_SHAPES: dict[str, dict] = {
 _BLOCK_RULES: dict[str, str] = {
     "chart": (
         "For a relationship between two quantities whose shape matters: growth, a "
-        "shift, a before and after. 1 to 4 series of 2 to 12 points each. A series "
+        "shift, a before and after. 1 to 4 series of 2 to 12 points each, and each "
+        "series label is at most 40 characters. A series "
         'with "state": "after" is drawn only in the After state, so use it for the '
-        "line that changes; leave the rest \"both\". Optional: up to 2 markers "
-        '(a labelled point; "state" is "before" or "after"; each label at most 16 '
-        "characters), up to 2 readouts (each value at most 24 characters) and "
-        "after_label (what the After state is called). Axis labels at most 32 "
-        "characters. Use only numbers that appear in the source you cite. When "
+        "line that changes; leave the rest \"both\". The chart's x_label and "
+        "y_label are at most 32 characters each. Optional: up to 2 markers "
+        '(a labelled point; "state" is "before" or "after"; a marker\'s x_label '
+        "and y_label are at most 16 characters each), up to 2 readouts (a "
+        "readout's label, before, after and change are at most 24 characters "
+        "each) and after_label (what the After state is called, at most 24 "
+        "characters). Use only numbers that appear in the source you cite. When "
         "the source gives no numbers, the chart can still show the shape: keep "
         "the coordinates simple and do not refer to them as data in your prose, "
         "because the page labels such a chart as an illustrative shape and "
@@ -322,54 +273,68 @@ _BLOCK_RULES: dict[str, str] = {
     ),
     "mistakes": (
         "Only when the message has QUIZ HISTORY entries that bear on this "
-        "section. 1 to 3 mistakes. Each names the slip, gives the fix, and "
-        "carries the id of the entry it comes from in evidence_id, copied "
-        "exactly. Never write a mistake that is not in QUIZ HISTORY, and do not "
+        "section. 1 to 3 mistakes. Each names the slip in a title of at most 120 "
+        "characters, gives the fix, and carries the id of the entry it comes "
+        "from in evidence_id, copied exactly and nothing else (at most 40 "
+        "characters). Never write a mistake that is not in QUIZ HISTORY, and do not "
         "say how often it happened or on which quiz: the app adds that line "
         "from its own records."
     ),
     "formula": (
         "For a relationship the student must be able to write down or apply. "
-        "Only formulas the sources give. latex has no $ signs."
+        "Only formulas the sources give. name is at most 80 characters and latex "
+        "at most 300 characters. latex has no $ signs, and every backslash in it "
+        "is written twice because it sits inside a JSON string: \\\\frac, \\\\neq."
     ),
     "worked_example": (
         "For a kind of problem the student will be asked to solve. 2 to 6 "
         "steps. The page reveals one step at a time, so each step carries its "
-        "own working in math and its own reason in why. Prefer a problem from "
+        "own working in math and its own reason in why. A step's title is at "
+        "most 80 characters and its math at most 200 characters; a LaTeX "
+        "backslash in math is written twice, as in latex. Prefer a problem from "
         "the sources; then cite it."
     ),
     "comparison": (
         "For two or three things students mix up. columns names the 2 or 3 "
-        "things; every row has a label and one cell per column, 2 to 6 rows. "
+        "things. 2 to 6 rows; every row has a label of at most 60 characters "
+        "and exactly one cell per column, in the order of columns. "
         'Set "emphasis": true on at most one row, the one most likely to be '
         "tested."
     ),
     "concept_map": (
         "To show where this section's concept sits among the others the student "
         "is learning. 2 to 5 nodes in learning order. Every concept is a name "
-        "from CONCEPTS, copied exactly: the page looks up the student's mastery "
+        "from CONCEPTS of at most 120 characters, copied exactly: the page looks "
+        "up the student's mastery "
         "by that name, so a name that is not in CONCEPTS cannot be shown. step "
         "is a short position label of at most 24 characters. Skip this block "
         "when fewer than two CONCEPTS names truly relate to the section."
     ),
     "key_terms": (
-        "When the section introduces several terms. 2 to 6 terms, each at most "
-        "60 characters, with a one-sentence definition. Do not define a term an "
+        "When the section introduces several terms. 2 to 6 entries, each a term "
+        "of at most 60 characters with a one-sentence definition. Do not define a term an "
         "earlier section of the outline already owns."
     ),
     "check": (
         "One question that tests the section's main idea. 3 or 4 options with "
-        'ids "a", "b", "c", "d" in order, exactly one of them correct. '
+        'ids "a", "b", "c", "d" in order, each with a text of at most 200 '
+        "characters, exactly one of them correct. "
         "explain_incorrect is shown after a wrong pick, when the student may "
         "try again, so point at the method and do not reveal the answer. "
+        'Do not begin explain_correct with "Correct" or explain_incorrect with '
+        '"Not quite": the page puts those words in front itself. '
         "concept is the SECTION's concept, copied exactly (null when the "
-        "section has none), because a first answer moves the student's mastery "
+        "section has none or its name is longer than 120 characters), because "
+        "a first answer moves the student's mastery "
         "of that concept. A section has at most one check, and it is the last "
         "thing in the section."
     ),
 }
 
 _FENCE = "```"
+
+#: Every block type has a `title` with this limit (a formula has `name`).
+_TITLE_RULE = "A block's title is at most 80 characters."
 
 _BLOCK_REFERENCE = "\n\n".join(
     f"{kind}\n{json.dumps(shape)}\n{_BLOCK_RULES[kind]}" for kind, shape in _BLOCK_SHAPES.items()
@@ -379,14 +344,17 @@ _BLOCK_FORMAT = f"""\
 A block is one JSON object inside a fence: a line that is exactly {_FENCE}block, \
 the JSON, then a line that is exactly {_FENCE}. One block per fence. Write \
 valid JSON: double quotes, no trailing commas, no comments. Inside a JSON \
-string a LaTeX backslash is written twice, as in the formula sample below.
+string a LaTeX backslash is written twice (\\\\frac, \\\\neq), as in the formula \
+sample below.
 
 Never write "id", "illustrative" or "evidence": the app sets those. A block \
 that draws on a source names it by label, "source": "S2". Leave "source" out \
 when the block comes from no single source.
 
-Keep every title under 80 characters. The samples show each type's fields; \
-the words in them describe what goes there and are not content to copy.
+{_TITLE_RULE} The length limits given below are exact: a block with a \
+field over its limit is rejected whole, so count before you write a long \
+value. The samples show each type's fields; the words in them describe what \
+goes there and are not content to copy.
 
 {_BLOCK_REFERENCE}"""
 
@@ -439,8 +407,14 @@ else: no heading (the page prints the section title), no opening line about \
 what you are going to do, no closing remark.
 
 Prose
-- Plain paragraphs with a blank line between them. No lists, headings, tables \
-or code fences in prose. Keep a paragraph under about 120 words.
+- Plain paragraphs with a blank line between them. No lists, headings or \
+tables in prose. Keep a paragraph under about 120 words.
+- A short code sample may stand between paragraphs as a fenced code block \
+that names its language: a line that is exactly {_FENCE}python (or the \
+language it is in), the code, then a line that is exactly {_FENCE}. It counts \
+as one paragraph of its run. Keep it under 1000 characters, because a longer \
+sample is dropped. A fence with no language, or with json, is read as a \
+block, so always name the language.
 - Mark a key term with double asterisks the first time it appears: \
 **base case**. Inline math goes in $...$.
 - When a sentence states something from a source, end it with that source's \

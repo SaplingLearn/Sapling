@@ -4,9 +4,11 @@ that still describe the contract (`models/study_guide.py`)."""
 from __future__ import annotations
 
 import json
+import re
+import typing
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from agents import study_guide as agents
 from agents.study_guide import (
@@ -17,7 +19,7 @@ from agents.study_guide import (
     study_guide_outline_agent,
     study_guide_section_agent,
 )
-from models.study_guide import BLOCK_TYPES
+from models.study_guide import BLOCK_TYPES, Block
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 from services.study_guides.markup import parse_block
 from tests.test_agent_output_schemas import schema_violations
@@ -150,6 +152,70 @@ def test_writer_prompts_describe_every_block_type(name, kind):
     assert agents._BLOCK_RULES[kind] in prompt
 
 
+# ── The limits a block is rejected for breaking ───────────────────────────────
+
+BLOCK_MODELS = {model.model_fields["type"].default: model for model in typing.get_args(Block)}
+#: Set by the server; the model is told never to write them.
+SERVER_OWNED = {"id", "evidence"}
+
+
+def _models_in(annotation) -> list[type[BaseModel]]:
+    """Every model named anywhere in a field's annotation."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [m for arg in typing.get_args(annotation) for m in _models_in(arg)]
+
+
+def _strict_limits(model: type[BaseModel]) -> set[tuple[str, int]]:
+    """`(field, max length)` for every string the model writes that is rejected
+    when too long: a `max_length` with no clip in front of it. Nested models
+    are walked too."""
+    limits: set[tuple[str, int]] = set()
+    for name, field in model.model_fields.items():
+        for nested in _models_in(field.annotation):
+            limits |= _strict_limits(nested)
+        clipped = any(isinstance(m, BeforeValidator) for m in field.metadata)
+        is_text = str in (field.annotation, *typing.get_args(field.annotation))
+        longest = next((m.max_length for m in field.metadata if hasattr(m, "max_length")), None)
+        if is_text and longest and not clipped and name not in SERVER_OWNED:
+            limits.add((name, longest))
+    return limits
+
+
+def test_the_limit_walk_finds_strict_fields_and_skips_clipped_ones():
+    worked = _strict_limits(BLOCK_MODELS["worked_example"])
+    assert worked == {("title", 80), ("math", 200)}
+    chart = _strict_limits(BLOCK_MODELS["chart"])
+    assert {("label", 40), ("label", 24), ("x_label", 32), ("x_label", 16)} <= chart
+    assert not any(name == "alt" for name, _ in chart)
+
+
+@pytest.mark.parametrize("kind", BLOCK_TYPES)
+def test_block_rules_state_every_strict_length_limit(kind):
+    """An overshoot of a strict limit rejects the whole block, so the writer
+    is told each one: the field's name and its limit in the same sentence of
+    the block's rule (or, for a title, of the rule every block shares)."""
+    stated = f"{agents._BLOCK_RULES[kind]} {agents._TITLE_RULE}"
+    limits = _strict_limits(BLOCK_MODELS[kind])
+
+    assert limits
+    for name, longest in sorted(limits):
+        assert re.search(rf"\b{name}\b[^.]*\b{longest} characters", stated), (
+            f"{kind}: the rule does not say that {name} is at most {longest} characters"
+        )
+
+
+@pytest.mark.parametrize("name", ["section", "block"])
+def test_writer_prompts_carry_the_shared_title_limit_and_the_json_escaping_rule(name):
+    assert agents._TITLE_RULE in PROMPTS[name]
+    # As the model reads it: each LaTeX backslash doubled inside a JSON string.
+    assert r"written twice (\\frac, \\neq)" in PROMPTS[name]
+
+
+def test_a_comparison_row_has_exactly_one_cell_per_column():
+    assert "exactly one cell per column" in agents._BLOCK_RULES["comparison"]
+
+
 # ── The rules the server relies on the prompt for ─────────────────────────────
 
 
@@ -160,6 +226,21 @@ def test_section_prompt_defines_the_markup():
     assert '">> "' in prompt
     assert "[S2]" in prompt
     assert "**base case**" in prompt
+
+
+def test_section_prompt_allows_a_code_sample_only_in_a_fence_that_names_its_language():
+    prompt = PROMPTS["section"]
+
+    assert "```python" in prompt
+    assert "always name the language" in prompt
+    assert "code fences in prose" not in prompt
+
+
+def test_check_explanations_do_not_repeat_the_readers_verdict():
+    rule = agents._BLOCK_RULES["check"]
+
+    assert 'Do not begin explain_correct with "Correct"' in rule
+    assert '"Not quite"' in rule
 
 
 def test_section_prompt_states_the_grounding_rules():

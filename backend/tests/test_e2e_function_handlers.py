@@ -973,16 +973,3 @@ def test_study_guide_section_constant_parses_into_the_journeys_blocks():
     assert [option.id for option in check.options] == ["a", "b", "c"]
     assert check.correct_id == "b"
     assert check.explain_correct and check.explain_incorrect
-
-
-def test_study_guide_handler_does_not_script_the_pre_redesign_agent(monkeypatch):
-    """The old one-shot StudyGuide agent shares the task until its route is
-    replaced. It was never scripted, and the outline's payload would not fit
-    its output: it keeps failing as an unregistered task does."""
-    from agents.study_guide import study_guide_agent
-
-    _study_guide_env(monkeypatch)
-
-    with study_guide_agent.override(model=model_for("study_guide")):
-        with pytest.raises(providers.UnregisteredHandlerError):
-            study_guide_agent.run_sync("Exam: Midterm", deps=_deps())

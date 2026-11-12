@@ -37,7 +37,6 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from agents._decision_fixtures import DECISION_ANSWERS
 from agents._providers import (
     FunctionModelHandler,
-    UnregisteredHandlerError,
     register_function_handler,
     set_function_stream_delay_ms,
 )
@@ -628,14 +627,7 @@ E2E_STUDY_GUIDE_BLOCK_TEXT = _fenced({
 
 def _study_guide_handler(messages, info) -> ModelResponse:
     if info.output_tools:
-        # Only the outline is scripted. Any other structured output on this
-        # task (the pre-redesign StudyGuide agent, while it still exists) fails
-        # the way an unregistered task does, as it did before this handler.
-        if "sections" not in info.output_tools[0].parameters_json_schema.get("properties", {}):
-            raise UnregisteredHandlerError(
-                "function mode scripts the study_guide task for the outline, "
-                "section and block agents only"
-            )
+        # The outline is the task's only structured agent.
         return _structured_output(E2E_STUDY_GUIDE_OUTLINE)(messages, info)
     if BLOCK_REWRITE_MARKER in _last_user_prompt_text(messages):
         return ModelResponse(parts=[TextPart(content=E2E_STUDY_GUIDE_BLOCK_TEXT)])

@@ -75,7 +75,6 @@ EXPECTED_STRUCTURED_AGENTS = {
     "quiz_agent",
     "quiz_context_agent",
     "social_summary_agent",
-    "study_guide_agent",
     "study_guide_outline_agent",
     "summary_agent",
     "syllabus_extraction_agent",
