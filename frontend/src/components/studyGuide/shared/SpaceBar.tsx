@@ -1,6 +1,7 @@
 import type { SectionBar } from "@/lib/studyGuide/types";
 
 import s from "./SpaceBar.module.css";
+import { TierSwatch } from "./TierMarks";
 import { tierFill, tierLabel, tierText } from "./tiers";
 
 /** The section that gets the most room, or null for a guide with none. */
@@ -34,7 +35,7 @@ export function SpaceBar({ bars, legend = false }: { bars: SectionBar[]; legend?
         <ul className={s.legend}>
           {bars.map((bar, i) => (
             <li key={`${i}-${bar.title}`} style={{ color: tierText(bar.tier) }}>
-              <span className={s.swatch} style={{ background: tierFill(bar.tier) }} aria-hidden="true" />
+              <TierSwatch tier={bar.tier} />
               {bar.title} · {tierLabel(bar.tier)}
             </li>
           ))}

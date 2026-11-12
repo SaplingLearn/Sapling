@@ -4,10 +4,11 @@
   gap: 10px;
 }
 
+/* A home card sets --space-bar-height: its bar is a little slimmer. */
 .bar {
   display: flex;
   gap: 3px;
-  height: 12px;
+  height: var(--space-bar-height, 12px);
 }
 
 .segment {
@@ -31,10 +32,4 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: var(--r-xs);
 }

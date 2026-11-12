@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { dueDateText, dueDay } from "./dates";
-import { DEPTH_LABEL, GOAL_LABEL, newLecturesText, plural } from "./labels";
+import { DEPTH_LABEL, GOAL_LABEL, focusLabel, newLecturesText, plural } from "./labels";
 
 describe("labels", () => {
   it("names every goal and depth", () => {
     expect(GOAL_LABEL).toEqual({ practice: "Practice", review: "Review", exam_prep: "Exam prep" });
     expect(DEPTH_LABEL).toEqual({ cram: "Cram sheet", standard: "Standard", deep: "Deep review" });
+  });
+
+  it("names the depth when it is not the standard one, otherwise the goal", () => {
+    expect(focusLabel("exam_prep", "standard")).toBe("Exam prep");
+    expect(focusLabel("review", "standard")).toBe("Review");
+    expect(focusLabel("exam_prep", "cram")).toBe("Cram sheet");
+    expect(focusLabel("practice", "deep")).toBe("Deep review");
   });
 
   it("counts in the singular and the plural", () => {

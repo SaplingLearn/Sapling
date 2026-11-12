@@ -16,6 +16,13 @@ export const DEPTH_LABEL: Record<Depth, string> = {
   deep: "Deep review",
 };
 
+/**
+ * The one label a card has room for beside what the guide is for: its depth
+ * when that is not the usual one, otherwise its goal.
+ */
+export const focusLabel = (goal: Goal, depth: Depth): string =>
+  depth === "standard" ? GOAL_LABEL[goal] : DEPTH_LABEL[depth];
+
 /** "1 section", "2 sections". */
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
