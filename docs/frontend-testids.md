@@ -761,16 +761,17 @@ The Study Guides home (`/study/guide`), added with the study-guide redesign.
 | testid | element |
 | --- | --- |
 | `back-link` | the shared `BackLink` in the top bar; here it goes to the Study hub |
-| `guides-search` | the toolbar's search input (title, class, scope) |
+| `guides-search` | the toolbar's search input (title, class name or code, scope) |
 | `guides-sort` | the sort button; its text is the current choice |
 | `guides-sort-{key}` | one sort menu item: `recent`, `oldest`, `class` |
 | `guides-new` | the toolbar's "New study guide" button |
 | `guides-grid` | the list of guide cards |
 | `guides-card-{guideId}` | one guide's card, a link to the reader; `data-status` is the guide's status |
-| `guides-card-status-{guideId}` | "Not finished" or "Could not finish" on a card whose guide is not ready |
-| `guides-card-new-{guideId}` | "n new lectures" on a card (only when there are some) |
-| `guides-card-saved-{guideId}` | "Saved" on a card whose guide is in the Library |
-| `guides-card-room-{guideId}` | "Most room: section, status" under the card's bar |
+| `guides-card-status-{guideId}` | "Not finished" or "Could not finish" after the date on a card whose guide is not ready (it takes the new-lectures text's place) |
+| `guides-card-new-{guideId}` | "n new lectures" after the date on a card (only when there are some, and the guide is ready) |
+| `guides-card-saved-{guideId}` | "In Library" on a card whose guide is saved (read out as "Saved: In Library"); absent on an unsaved guide |
+| `guides-card-unsaved-{guideId}` | "Not saved" in the same place on a card whose guide is not in the Library |
+| `guides-card-room-{guideId}` | the row under the card's bar: "Most room: section" and that section's tier label; absent while the guide has no section |
 | `guides-card-sections-{guideId}` / `-blocks-` / `-practice-` / `-minutes-` | the card's four numbers |
 | `guides-loading` | the skeleton grid while the list loads (`aria-busy`) |
 | `guides-empty` | the empty state when the student has no guide |
