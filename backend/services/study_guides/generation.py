@@ -306,9 +306,12 @@ async def _afinish(run: _Run, *, planned: bool) -> None:
     the same write."""
     changes: dict[str, Any] = {"status": "ready"}
     # `generated_at` is when the guide was made from its materials: the
-    # lectures added after it are the new ones. A resume that only fills in
-    # sections of a finished guide read nothing new, so it leaves it alone.
-    if planned or not run.guide.generated_at:
+    # lectures added after it are the new ones. A run that planned the guide
+    # dates it, and so does a resume that makes it ready (it was `generating`
+    # or `failed`: a first generation, an Update or a Regenerate that was cut
+    # short). A resume that only fills in sections of a guide that stayed
+    # `ready` read nothing new, so it leaves the date alone.
+    if planned or run.guide.status != "ready":
         changes["generated_at"] = datetime.now(timezone.utc).isoformat()
     await run.asave(release=True, **changes)
 

@@ -749,10 +749,49 @@ def test_a_regenerate_that_fails_after_a_section_can_be_resumed(world, monkeypat
     assert events[-1].type == "error" and row["status"] == "failed"
     assert [s.status for s in world.content().sections] == ["written", "queued"]
     assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    # Not made yet: the date is still the old guide's.
+    assert row["generated_at"] == MADE_AT
     script.sections.clear()
+    resumed_at = datetime.now(timezone.utc)
     events, _ = run(_follow(world))
     assert events[-1].type == "done" and script.written == ["One", "Two", "Two"]
     assert [s.status for s in world.content().sections] == ["written", "written"]
+    # The resume is what made the new guide: it is dated from then.
+    assert datetime.fromisoformat(world.stored()["generated_at"]) >= resumed_at
+
+
+@pytest.mark.parametrize("left_as", ["generating", "failed"])
+def test_a_resume_that_finishes_a_cut_update_dates_the_guide(world, monkeypatch, left_as):
+    """The Update saved its first section and its stream was cut (the row
+    stays `generating`), or it failed there. Either way the guide becomes
+    ready only when the resume ends, so that is when it was made."""
+    _updatable(world)
+    outline = _outline(_planned("Recursion", keep_id="s1"), _planned("Types"), _planned("Scope"))
+    script = Script(monkeypatch, outline=outline, sections={"Scope": RuntimeError("boom")})
+    run(_follow(world, "update"))
+    assert (world.stored()["status"], world.stored()["generated_at"]) == ("failed", MADE_AT)
+    world.stored()["status"] = left_as
+
+    script.sections.clear()
+    resumed_at = datetime.now(timezone.utc)
+    events, _ = run(_follow(world))
+
+    row = world.stored()
+    assert events[-1].type == "done" and row["status"] == "ready"
+    assert datetime.fromisoformat(row["generated_at"]) >= resumed_at
+    assert events[-1].data["guide"]["generated_at"] == row["generated_at"]
+
+
+def test_a_resume_with_nothing_left_to_write_still_dates_the_guide_it_makes_ready(world, monkeypatch):
+    """Every section was saved, and the run was cut before its last write."""
+    world.guide(generated_at=MADE_AT, content=encrypt_json(_written_guide().model_dump(mode="json")))
+    script = Script(monkeypatch)
+    resumed_at = datetime.now(timezone.utc)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done" and script.written == []
+    assert datetime.fromisoformat(world.stored()["generated_at"]) >= resumed_at
 
 
 def test_a_failed_first_section_is_not_saved_until_a_later_one_is_written(world, monkeypatch):
