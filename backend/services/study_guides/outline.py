@@ -82,14 +82,18 @@ def planned_sections(
     current: list[Section],
     brief: Brief,
     *,
+    updating: bool,
     use_history: bool,
 ) -> list[Section]:
     """The outline as the guide's sections. The server decides ids, tiers and
-    weights. A section the outline keeps (`keep_id` names a written section
-    of `current`, once) stays exactly as it is; every other one is new,
-    `queued`, and numbered after every id `current` uses, so nothing the
-    student did on an old section can land on a new one."""
-    kept = {section.id: section for section in current if section.status == "written"}
+    weights. On an update, a section the outline keeps (`keep_id` names a
+    written section of `current`, once) stays exactly as it is. Every other
+    one is new, `queued`, and numbered after every id `current` uses. A
+    regenerate keeps none, and numbers the same way: an id is never used
+    again, so an answer or a read mark sent for an old section (by a tab
+    still showing it) cannot land on a new one."""
+    keepable = [section for section in current if updating and section.status == "written"]
+    kept = {section.id: section for section in keepable}
     numbers = count(_first_free_number(current))
     sections = [
         kept.pop(planned.keep_id, None) or _new_section(f"s{next(numbers)}", planned, brief)
@@ -130,8 +134,8 @@ async def anew_content(
         deck=planned.deck,
         takeaways=planned.takeaways,
         sections=planned_sections(
-            planned.sections[:most], current.sections if updating else [], brief,
-            use_history=guide.use_history,
+            planned.sections[:most], current.sections, brief,
+            updating=updating, use_history=guide.use_history,
         ),
         sources=guide_sources(brief, current.sources if updating else []),
         scope_label=current.scope_label,

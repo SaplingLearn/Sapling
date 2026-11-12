@@ -404,8 +404,12 @@ def test_regenerate_keeps_the_previous_version_and_clears_read_state_and_answers
     assert row["status"] == "ready" and row["generated_at"] != MADE_AT
     content = world.content()
     assert content.title == "Recursion and what it builds on"
+    # Numbered after the old guide's `s1` and `s2`: no id is used twice, so
+    # an answer or a read mark sent for the old guide finds nothing to land on.
     assert [(s.id, s.status) for s in content.sections] == [
-        ("s1", "written"), ("s2", "written"), ("s3", "written")]
+        ("s3", "written"), ("s4", "written"), ("s5", "written")]
+    old_ids = {item.id for section in old.sections for item in section.items}
+    assert not old_ids & {item.id for section in content.sections for item in section.items}
     assert _shape(events)[:3] == [("status", "read"), ("status", "outline"), ("progress", "outline")]
     # The outline is sent, but nothing is replaced until a section is written.
     assert GuideContent.model_validate(events[2].data["content"]).title == content.title
@@ -1104,7 +1108,8 @@ def test_regenerate_reads_the_lectures_added_since_so_they_are_no_longer_new(wor
     row = world.stored()
     assert row["material_ids"] == ["doc-1", "doc-2"]
     assert [source.id for source in world.content().sources] == both
-    assert [s.id for s in world.content().sections] == ["s1", "s2"]
+    # Planned from scratch, and numbered after the two sections it replaces.
+    assert [s.id for s in world.content().sections] == ["s3", "s4"]
     # The lecture stopped being new because it is one of the guide's
     # materials now, not only because the date moved.
     assert _new_lectures(world) == 0

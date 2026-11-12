@@ -18,8 +18,8 @@ function withSections(guide: GuideDetail, sections: Section[]): GuideDetail {
 /**
  * The outline arrived: every section is listed, and only the ones an Update
  * keeps are written. Read marks and check answers stay with those sections
- * alone, as on the server: a rewritten guide numbers its sections and items
- * from the start again, so an old mark would land on new text.
+ * alone, as on the server: every other section is new, under an id the guide
+ * has not used before, and the sections the old marks were on are gone.
  */
 export function applyOutline(guide: GuideDetail, content: GuideContent): GuideDetail {
   const kept = content.sections.filter(section => section.status === "written");

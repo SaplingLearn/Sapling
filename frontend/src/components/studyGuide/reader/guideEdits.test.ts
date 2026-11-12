@@ -31,8 +31,8 @@ describe("the outline arriving", () => {
   });
 
   it("drops every read mark and answer when the whole guide is rewritten", () => {
-    // A regenerated guide numbers its sections s1.. again: the old marks
-    // would land on the new sections.
+    // No section of a regenerated guide is one of the old ones: the marks
+    // have nothing left to be on.
     const before = guide({ read_sections: ["s1", "s2"], answers: ANSWERED });
     const next = applyOutline(before, outlineKeeping());
     expect(next.read_sections).toEqual([]);

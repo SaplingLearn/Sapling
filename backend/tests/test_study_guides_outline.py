@@ -100,7 +100,7 @@ def test_new_sections_are_numbered_after_every_id_the_guide_had():
 
     sections = outline.planned_sections(
         [_planned("Kept", keep_id="s1"), _planned("Loops", "loops"), _planned("Failed", keep_id="s4")],
-        current, brief, use_history=True,
+        current, brief, updating=True, use_history=True,
     )
 
     # A failed section is not kept: it is written fresh under a new id.
@@ -108,6 +108,29 @@ def test_new_sections_are_numbered_after_every_id_the_guide_had():
     # The tree's spelling and tier; struggling 5, unexplored 3 and 3.
     assert (sections[1].concept, sections[1].tier) == ("Loops", "struggling")
     assert [s.weight for s in sections] == [27, 46, 27] and sections[0].items == current[0].items
+
+
+def test_a_regenerate_keeps_nothing_and_reuses_no_id_the_guide_had():
+    """An id names one piece of text for good: a tab still showing the old
+    guide may answer its check `s1-i2` or mark its `s1` read, and neither
+    may land on a new section."""
+    current = [_section("s1"), _section("s4", "failed"), _section("intro")]
+
+    sections = outline.planned_sections(
+        [_planned("One", keep_id="s1"), _planned("Two"), _planned("Three")],
+        current, _brief(DOC_1), updating=False, use_history=True,
+    )
+
+    assert [(s.id, s.status, s.items) for s in sections] == [
+        ("s5", "queued", []), ("s6", "queued", []), ("s7", "queued", [])]
+
+
+def test_a_guide_with_no_sections_yet_starts_at_s1():
+    sections = outline.planned_sections(
+        [_planned("One"), _planned("Two")], [], _brief(DOC_1), updating=False, use_history=True,
+    )
+
+    assert [s.id for s in sections] == ["s1", "s2"]
 
 
 def test_the_sources_are_what_was_read_then_the_quiz_history():
