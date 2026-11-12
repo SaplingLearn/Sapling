@@ -1,0 +1,85 @@
+/**
+ * The Study Guides home's rules, as pure functions: which guides a search
+ * keeps, the order a sort puts them in, and the words on a card.
+ */
+import { fmtWhen } from "@/components/study/studyModel";
+import type { Depth, Goal, GuideCard, GuideStatus } from "@/lib/studyGuide/types";
+
+export type SortKey = "recent" | "oldest" | "class";
+
+export const SORTS: { key: SortKey; label: string }[] = [
+  { key: "recent", label: "Most recent" },
+  { key: "oldest", label: "Oldest" },
+  { key: "class", label: "Class" },
+];
+
+export const sortLabel = (key: SortKey): string =>
+  SORTS.find(sort => sort.key === key)?.label ?? "";
+
+export const GOAL_LABEL: Record<Goal, string> = {
+  practice: "Practice",
+  review: "Review",
+  exam_prep: "Exam prep",
+};
+
+export const DEPTH_LABEL: Record<Depth, string> = {
+  cram: "Cram sheet",
+  standard: "Standard",
+  deep: "Deep review",
+};
+
+/** When the guide was written. One still being written has only its row's date. */
+export const guideDate = (guide: GuideCard): string => guide.generated_at ?? guide.created_at;
+
+const time = (guide: GuideCard): number => Date.parse(guideDate(guide)) || 0;
+
+/** The guides whose title, class or scope label has the query in it. */
+export function searchGuides(guides: GuideCard[], query: string): GuideCard[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return guides;
+  return guides.filter(guide =>
+    [guide.title, guide.course_name, guide.scope_label].some(text => text.toLowerCase().includes(q)),
+  );
+}
+
+/** A sorted copy. "Class" groups by class name, newest first inside a class. */
+export function sortGuides(guides: GuideCard[], sort: SortKey): GuideCard[] {
+  const newestFirst = (a: GuideCard, b: GuideCard) => time(b) - time(a);
+  const order: Record<SortKey, (a: GuideCard, b: GuideCard) => number> = {
+    recent: newestFirst,
+    oldest: (a, b) => time(a) - time(b),
+    class: (a, b) => a.course_name.localeCompare(b.course_name) || newestFirst(a, b),
+  };
+  return [...guides].sort(order[sort]);
+}
+
+/** "Today", "Yesterday" or "Nov 3", with the year once it is not this one. */
+export function dateText(guide: GuideCard, now: Date): string {
+  const iso = guideDate(guide);
+  const when = fmtWhen(iso, now);
+  const year = new Date(iso).getFullYear();
+  return when && year !== now.getFullYear() ? `${when}, ${year}` : when;
+}
+
+/** "2 new lectures", or nothing when the class has added none since. */
+export function newLecturesText(count: number): string {
+  if (count <= 0) return "";
+  return count === 1 ? "1 new lecture" : `${count} new lectures`;
+}
+
+/** What a guide that is not ready says in its place. */
+export function statusText(status: GuideStatus): string {
+  if (status === "generating") return "Writing…";
+  return status === "failed" ? "Could not finish" : "";
+}
+
+/**
+ * The saved guides the Library shows under its course filter and search. A
+ * guide always belongs to a class, so "Uncategorized" has none.
+ */
+export function libraryGuides(guides: GuideCard[], courseFilter: string, query: string): GuideCard[] {
+  if (courseFilter === "uncategorized") return [];
+  const saved = guides.filter(guide => guide.saved_at !== null);
+  const inCourse = courseFilter === "all" ? saved : saved.filter(guide => guide.course_id === courseFilter);
+  return searchGuides(inCourse, query);
+}
