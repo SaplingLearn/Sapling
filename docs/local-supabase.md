@@ -170,6 +170,30 @@ The chunks use encrypted text and deterministic synthetic 768-dimensional
 embeddings: the fixtures exercise storage and retrieval without calling a
 model, and are not a semantic-search relevance benchmark.
 
+#### A live Study page: `seed_local_study`
+
+The rich dataset is fixed (the E2E journeys and oracles assert on it row for
+row), so its dates never move: every exam in it is in the past and nothing was
+studied "this week". On its own the Study page therefore shows zero minutes, no
+upcoming exam and no per-exam readiness. To fill it with a week of activity
+dated relative to today, run this after the rich seed, with the same owner flag:
+
+```bash
+python -m db.seed_local_study --owner-email you@gmail.com   # or --owner-user-id
+```
+
+It adds, in CS101 only: seven more concepts with their prerequisites (twelve in
+all), two upcoming exams and a homework due tomorrow, four completed quizzes,
+concept-named flashcard decks with recent reviews, three tutor sessions (two
+never "ended", the common case), this week's mastery changes, and a course
+outline grouped into four units (the roadmap's four columns) and linked to the
+two exams
+(stored under the outline's real evidence hash, so the page does not regenerate
+it with the model). Every row has a deterministic `study-…` id and is upserted:
+re-run it on a later day to move the same rows back to "this week". Local only,
+like the rich seed. It is NOT part of `scripts/local-up.sh`, a reset or any E2E
+lane, which all keep the fixed dataset.
+
 `scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
 `SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your
 OAuth account too; sign in again and the watcher seeds the new account.

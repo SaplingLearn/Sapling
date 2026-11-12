@@ -48,6 +48,11 @@ ignore_imports =
     db.seed_local_owner -> services.encryption
     db.seed_local_owner -> services.profiles
     db.seed_local_rich -> services.encryption
+    # The local study seed also stores a course outline under the hash the app
+    # would compute for it (so the Study page does not regenerate it), which
+    # only the outline service can produce.
+    db.seed_local_study -> services.encryption
+    db.seed_local_study -> services.topic_checklist_service
     db.seed_showcase -> services.encryption
     db.seed_staging -> services.encryption
     db.e2e_staging_http -> services.encryption
