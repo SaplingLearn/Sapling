@@ -143,6 +143,7 @@ All three agents run on the existing `study_guide` slot. One function-mode handl
 | `generation.py` | one generation run as a stream of events |
 | `blocks.py` | regenerate one block |
 | `create.py` | validate a `GuideRequest` and insert the row |
+| `options.py` | what a new guide for a class can be for, and from which materials |
 | `cards.py` | `GuideRow` to `GuideCard` |
 | `detail.py` | `GuideRow` to `GuideDetail` |
 | `state.py` | apply a `GuidePatch` |
