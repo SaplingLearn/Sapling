@@ -37,7 +37,7 @@ from models.study_guide import (
 from services import academics, events_service, request_limits
 from services.encryption import decrypt_json, encrypt_json
 from services.llm_budget import LLMBudgetExceeded
-from services.study_guides import generation, limits, materials, signals, store, writer
+from services.study_guides import cards, generation, limits, materials, signals, store, writer
 from services.study_guides.errors import (
     GuideBusy,
     GuideGenerationFailed,
@@ -489,6 +489,8 @@ class Script:
         self.sections = sections or {}
         self.outline_calls: list[dict] = []
         self.written: list[str] = []
+        #: The source ids each section's writer was offered.
+        self.offered: list[list[str]] = []
         monkeypatch.setattr(writer, "awrite_outline", self.awrite_outline)
         monkeypatch.setattr(writer, "awrite_section", self.awrite_section)
 
@@ -500,6 +502,7 @@ class Script:
 
     async def awrite_section(self, brief, content, section, *, deps, beat):
         self.written.append(section.title)
+        self.offered.append([source.source.id for source in brief.sources])
         result = self.sections.get(section.title, "prose")
         if isinstance(result, BaseException):
             raise result
@@ -1069,6 +1072,92 @@ def test_update_with_nothing_new_is_invalid(world, monkeypatch):
     assert world.stored()["material_ids"] == ["doc-1"]
     assert world.stored()["generating_at"] is None
     assert request_limits._rate_state == {}
+
+
+# ── Regenerate and the lectures added since ───────────────────────────────────
+
+
+def _new_lectures(world: World) -> int:
+    """How many new lectures the guide's card reports, as the home and the
+    reader show it."""
+    guide = run(store.aload_guide(ME, GUIDE))
+    its_class = cards.GuideClass(course_id=COURSE, course_name="Intro to CS", semester=None)
+    return cards.card(guide, its_class, world.lectures).new_materials
+
+
+def test_regenerate_reads_the_lectures_added_since_so_they_are_no_longer_new(world, monkeypatch):
+    """A regenerate stamps the guide as made now, which stops every earlier
+    lecture counting as new. So it reads them, as an update does."""
+    _updatable(world)
+    assert _new_lectures(world) == 1
+    script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")))
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    assert events[-1].type == "done"
+    both = ["document:doc-1", "document:doc-2"]
+    (call,) = script.outline_calls
+    assert [source.source.id for source in call["brief"].sources] == both
+    # Nothing is kept on a regenerate: the outline is planned from scratch.
+    assert call["current"] == []
+    assert script.offered == [both, both]
+    row = world.stored()
+    assert row["material_ids"] == ["doc-1", "doc-2"]
+    assert [source.id for source in world.content().sources] == both
+    assert [s.id for s in world.content().sections] == ["s1", "s2"]
+    # The lecture stopped being new because it is one of the guide's
+    # materials now, not only because the date moved.
+    assert _new_lectures(world) == 0
+    assert materials.new_material_ids(
+        world.lectures, offering_id=OFFERING, material_ids=row["material_ids"], since=MADE_AT,
+    ) == []
+
+
+def test_regenerate_with_no_new_lecture_reads_the_guides_own_materials(world, monkeypatch):
+    _ready(world)
+    # In the class, but not chosen for this guide and older than it.
+    world.documents["doc-0"] = ("syllabus-week.pdf", "Office hours are on Friday.", [])
+    world.lectures = [
+        {"id": "doc-0", "offering_id": OFFERING, "created_at": "2026-10-20T00:00:00+00:00"},
+        {"id": "doc-9", "offering_id": "another-class", "created_at": "2026-11-05T00:00:00+00:00"},
+    ]
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    assert events[-1].type == "done"
+    assert script.offered == [["document:doc-1"]]
+    assert script.outline_calls[0]["new_labels"] == []
+    assert world.stored()["material_ids"] == ["doc-1"]
+
+
+def test_a_regenerate_goes_ahead_without_a_new_lecture_it_cannot_read(world, monkeypatch):
+    """An update with nothing readable to add is refused. A regenerate still
+    has the whole guide to write."""
+    _ready(world)
+    world.lectures = [{"id": "doc-3", "offering_id": OFFERING,
+                       "created_at": "2026-11-05T00:00:00+00:00"}]
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "regenerate"))
+
+    assert prepared.material_ids == ["doc-1"] and prepared.new_labels == []
+    assert [source.source.id for source in prepared.inputs.brief.sources] == ["document:doc-1"]
+
+
+def test_a_resume_reads_no_lecture_added_since(world, monkeypatch):
+    """It leaves the guide's date alone, so the lecture is still new after it."""
+    _missing_one(world)
+    world.documents["doc-2"] = ("lecture-9.pdf", "Types are checked at run time.", ["Types"])
+    world.lectures = [{"id": "doc-2", "offering_id": OFFERING,
+                       "created_at": "2026-11-05T00:00:00+00:00"}]
+    script = Script(monkeypatch)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done"
+    assert script.offered == [["document:doc-1"]]
+    assert world.stored()["material_ids"] == ["doc-1"]
+    assert _new_lectures(world) == 1
 
 
 # ── Prepare ───────────────────────────────────────────────────────────────────

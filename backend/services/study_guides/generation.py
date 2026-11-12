@@ -12,10 +12,11 @@ never raises, and it always gives the claim back: with its last save when it
 finishes, so the guide is free before `done` is sent.
 
 Modes: `resume` writes whatever is not written yet (the outline first, when
-the guide has no sections). `regenerate` plans and writes the whole guide
-again. `update` folds in the lectures added since the guide was made: the
-outline agent says which sections to keep as written, and only the rest are
-written.
+the guide has no sections). `update` and `regenerate` both read the lectures
+added since the guide was made, beside the materials it already has.
+`regenerate` plans and writes the whole guide again. `update` folds the new
+lectures in: the outline agent says which sections to keep as written, and
+only the rest are written.
 
 An Update or Regenerate replaces a guide the student may be reading, so it
 holds its outline in memory and saves nothing until its first section is
@@ -72,10 +73,12 @@ class Generation:
     mode: str
     charge: Charge
     inputs: Inputs
-    #: The guide's materials after this run: on an update, with the new
-    #: lectures that could be read.
+    #: The guide's materials after this run: its own and, on an update or a
+    #: regenerate, the new lectures that could be read.
     material_ids: list[str]
-    #: The labels of the sources an update adds.
+    #: The labels of the sources new to the guide. Only an update's outline
+    #: is told which they are: a regenerate keeps no section to set them
+    #: against.
     new_labels: list[str]
 
 
@@ -156,7 +159,9 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
         raise GuideInvalid(UNKNOWN_MODE_DETAIL)
     guide = await store.aload_guide(user_id, guide_id)
     _refuse(guide, mode)
-    new = await anew_lectures(guide) if mode == "update" else []
+    # A resume finishes the guide as it was planned. The other two stamp it
+    # as made now, so they read every lecture that stamp stops counting as new.
+    new = [] if mode == "resume" else await anew_lectures(guide)
     own = [material_id for material_id in await amaterial_ids(guide) if material_id not in new]
     # The new lectures last: past the source budget the last ids are read.
     inputs = await aload_inputs(guide, [*own, *new])
@@ -171,7 +176,7 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
             user_id, action="generate", limit=limits.STUDY_GUIDE_GENERATE_LIMIT,
         ),
         inputs=inputs,
-        # A new lecture that could not be read yet stays new for a later update.
+        # A new lecture that could not be read is not recorded as a material.
         material_ids=[*own, *(source.source.id.removeprefix("document:") for source in read)],
         new_labels=[source.label for source in read],
     )
