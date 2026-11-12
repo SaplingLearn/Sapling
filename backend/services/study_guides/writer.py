@@ -12,6 +12,7 @@ validate gets one rewrite by the block agent and is dropped if that fails too.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from pydantic_ai.usage import UsageLimits
 
@@ -99,11 +100,7 @@ async def _arescued(
     brief: Brief, content: GuideContent, section: Section, rejected: RejectedBlock,
     deps: SaplingDeps,
 ) -> Block | None:
-    """A rejected block after its one rewrite, or None to drop it. A block
-    whose type could not be read is dropped unasked: there is no type to ask
-    the rewriter for."""
-    if rejected.type not in BLOCK_TYPES:
-        return None
+    """A rejected block after its one rewrite, or None to drop it."""
     try:
         return await arewrite_block(
             brief, content, section,
@@ -115,16 +112,30 @@ async def _arescued(
 
 
 async def awrite_section(
-    brief: Brief, content: GuideContent, section: Section, *, deps: SaplingDeps,
+    brief: Brief,
+    content: GuideContent,
+    section: Section,
+    *,
+    deps: SaplingDeps,
+    beat: Callable[[], Awaitable[None]],
 ) -> list[Item]:
     """One section of `content` as items, not yet checked by `verify`.
-    `GuideGenerationFailed` when nothing usable came back."""
+    `GuideGenerationFailed` when nothing usable came back.
+
+    `beat` is awaited before each rewrite of a rejected block: every rewrite
+    is another slow model call, and the caller has a claim to keep fresh.
+    What it raises ends the section."""
     reply = await _arun(
         study_guide_section_agent, prompts.section_message(brief, content, section), deps,
     )
     parsed = markup.parse_section(reply, section_id=section.id, sources=brief.labels())
     items = parsed.items
     for rejected in parsed.rejected:
+        # A block whose type could not be read is dropped unasked: there is
+        # no type to ask the rewriter for.
+        if rejected.type not in BLOCK_TYPES:
+            continue
+        await beat()
         block = await _arescued(brief, content, section, rejected, deps)
         if block is not None:
             items = markup.put_back(items, block)

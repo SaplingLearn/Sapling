@@ -468,7 +468,7 @@ class Script:
             raise self.outline
         return self.outline
 
-    async def awrite_section(self, brief, content, section, *, deps):
+    async def awrite_section(self, brief, content, section, *, deps, beat):
         self.written.append(section.title)
         result = self.sections.get(section.title, "prose")
         if isinstance(result, BaseException):
@@ -954,7 +954,7 @@ def test_the_claim_is_released_when_the_request_is_cancelled_mid_section(world, 
     world.guide()
     script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")))
 
-    async def never_returns(brief, content, section, *, deps):
+    async def never_returns(brief, content, section, *, deps, beat):
         script.written.append(section.title)
         await anyio.sleep_forever()
 
@@ -989,7 +989,7 @@ def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch)
     script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")))
     taken_over = "2026-11-12T12:00:00+00:00"
 
-    async def overtaken_while_writing(brief, content, section, *, deps):
+    async def overtaken_while_writing(brief, content, section, *, deps, beat):
         script.written.append(section.title)
         if section.title == "Two":
             world.stored()["generating_at"] = taken_over

@@ -35,7 +35,7 @@
 --   feedback         'yes' | 'no' | NULL.
 --   saved_at         set = saved to the Library.
 --   generating_at    the generation claim: a run holds the guide while this is
---                    newer than five minutes (services/study_guides/store.py).
+--                    newer than fifteen minutes (services/study_guides/store.py).
 --   generated_at     now NULLABLE: NULL until the first generation finishes.
 --                    The DEFAULT now() stays for code deployed before this
 --                    migration; the store sends NULL itself.
@@ -183,7 +183,7 @@ COMMENT ON COLUMN public.study_guides.exam_id IS
 COMMENT ON COLUMN public.study_guides.format IS
     '1 = pre-redesign content {exam, due_date, overview, topics}; 2 = GuideContent (models/study_guide.py).';
 COMMENT ON COLUMN public.study_guides.generating_at IS
-    'The generation claim: held while newer than five minutes; NULL when no run holds the guide.';
+    'The generation claim: held while newer than fifteen minutes; NULL when no run holds the guide.';
 COMMENT ON COLUMN public.study_guides.generated_at IS
     'When the last generation finished; NULL until the first one does.';
 

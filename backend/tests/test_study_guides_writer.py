@@ -84,8 +84,12 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def _write_section():
-    return writer.awrite_section(BRIEF, CONTENT, SECTION, deps=DEPS)
+async def _no_beat() -> None:
+    return None
+
+
+def _write_section(beat=_no_beat):
+    return writer.awrite_section(BRIEF, CONTENT, SECTION, deps=DEPS, beat=beat)
 
 
 def _budget_refusal() -> LLMBudgetExceeded:
@@ -171,7 +175,38 @@ def test_a_rejected_block_is_rewritten_once_and_put_back_in_its_place(monkeypatc
     (rewrite,) = agents["block"].runs
     assert rewrite["message"] == prompts.block_message(
         BRIEF, CONTENT, SECTION, block_text=BROKEN_FORMULA, why=prompts.REWRITE_REJECTED)
-    assert rewrite["message"].endswith(f"{BLOCK_REWRITE_MARKER}\n{BROKEN_FORMULA}")
+    assert BROKEN_FORMULA in rewrite["message"].split(f"{BLOCK_REWRITE_MARKER}\n")[1]
+
+
+def test_the_caller_is_told_before_each_rewrite(monkeypatch, usage):
+    """Two rescues are two more slow model calls: the caller's heartbeat runs
+    before each one, after the section's own call."""
+    text = "\n\n".join(["Prose.", fenced(BROKEN_FORMULA), fenced(BROKEN_FORMULA), fenced(KEY_TERMS)])
+    fakes = _agents(monkeypatch, section=[text], block=[fenced(FORMULA), fenced(FORMULA)])
+    order: list[str] = []
+
+    async def beat() -> None:
+        order.append(f"beat after {len(fakes['section'].runs)} section and "
+                     f"{len(fakes['block'].runs)} block runs")
+
+    run(_write_section(beat))
+
+    assert order == ["beat after 1 section and 0 block runs", "beat after 1 section and 1 block runs"]
+
+
+def test_a_beat_that_raises_stops_the_section_before_the_rewrite_is_paid_for(monkeypatch, usage):
+    fakes = _agents(monkeypatch, section=[fenced(BROKEN_FORMULA)], block=[fenced(FORMULA)])
+
+    class Overtaken(Exception):
+        pass
+
+    async def beat() -> None:
+        raise Overtaken
+
+    with pytest.raises(Overtaken):
+        run(_write_section(beat))
+
+    assert fakes["block"].runs == []
 
 
 def test_a_block_that_is_still_invalid_after_its_one_rewrite_is_dropped(monkeypatch, usage):

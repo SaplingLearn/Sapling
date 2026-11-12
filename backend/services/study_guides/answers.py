@@ -101,10 +101,10 @@ async def _acount(
     stands: it must not turn a graded answer into an error."""
     try:
         return await _amove_mastery(guide, block, correct, defer)
-    except Exception:
-        logger.exception(
-            "study guide: mastery update failed after a check answer guide=%s block=%s",
-            guide.id, block.id,
+    except Exception as exc:
+        logger.warning(
+            "study guide: mastery update failed after a check answer guide=%s block=%s (%s)",
+            guide.id, block.id, type(exc).__name__,
         )
         return None
 

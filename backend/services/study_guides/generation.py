@@ -419,7 +419,9 @@ async def _awrite(run: _Run, section: Section) -> Section:
     await run.atouch()
     run.attempted += 1
     try:
-        items = await writer.awrite_section(inputs.brief, run.content, section, deps=inputs.deps)
+        items = await writer.awrite_section(
+            inputs.brief, run.content, section, deps=inputs.deps, beat=run.atouch,
+        )
     except GuideGenerationFailed:
         items = []
     checked = verify.check_section(

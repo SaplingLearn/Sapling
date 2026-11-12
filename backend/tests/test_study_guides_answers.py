@@ -202,11 +202,16 @@ def test_a_check_with_no_concept_records_the_answer_without_a_mastery_write(worl
     assert "s1-i4" in world["answered"] and world["graph"] == []
 
 
-def test_a_failed_mastery_write_does_not_fail_the_answer(world):
+def test_a_failed_mastery_write_does_not_fail_the_answer(world, caplog):
     world["graph_error"] = RuntimeError("graph is down")
     out = _answer("s1-i2", "b")
     assert (out.correct, out.counted, out.mastery) == (True, True, None)
     assert "s1-i2" in world["answered"]
+    # One warning line naming the error's type, and no traceback (the E2E
+    # log scan fails on any).
+    (record,) = [r for r in caplog.records if "mastery" in r.getMessage()]
+    assert record.levelname == "WARNING" and record.exc_info is None
+    assert "RuntimeError" in record.getMessage() and "graph is down" not in record.getMessage()
 
 
 # ── Refusals ──────────────────────────────────────────────────────────────────
