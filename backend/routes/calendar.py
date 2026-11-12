@@ -20,6 +20,7 @@ from services.auth_guard import require_self, get_session_user_id, guard_off_loo
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, decrypt, decrypt_if_present
 from services.request_context import current_request_id
+from routes.calendar_connect import router as consent_router
 
 try:
     from googleapiclient.discovery import build
@@ -30,6 +31,10 @@ except ImportError:
     GOOGLE_AVAILABLE = False
 
 router = APIRouter()
+# The Google Calendar consent flow (/auth-url, /callback) lives in its own
+# module and is included here, so it shares this router's /api/calendar mount
+# and its hide_calendar gate (main.py).
+router.include_router(consent_router)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

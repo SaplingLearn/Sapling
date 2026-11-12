@@ -3,8 +3,8 @@ backend/routes/calendar_connect.py
 
 The Google Calendar consent flow: GET /api/calendar/auth-url and
 GET /api/calendar/callback. Split out of routes/calendar.py (the route-length
-ratchet, #118) and mounted at the same prefix, behind the same hide_calendar
-gate (main.py).
+ratchet, #118); calendar.py includes this router, so it keeps the
+/api/calendar mount and the hide_calendar gate (main.py).
 """
 
 import hmac as _hmac

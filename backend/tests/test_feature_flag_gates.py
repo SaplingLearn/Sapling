@@ -21,6 +21,8 @@ GATED = [
     ("hide_study", "/api/flashcards/user/u1", None),
     ("hide_study", "/api/study-guide/u1/cached", None),
     ("hide_calendar", "/api/calendar/status/u1", "/api/calendar/upcoming/u1"),
+    # The consent flow lives in routes/calendar_connect.py, included by calendar.py.
+    ("hide_calendar", "/api/calendar/auth-url?user_id=u1", None),
     ("hide_social", "/api/social/public-rooms?user_id=u1", "/api/social/friends/u1"),
     ("hide_achievements", "/api/gamification/leaderboard?user_id=u1",
      "/api/gamification/me?user_id=u1"),
