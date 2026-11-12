@@ -18,8 +18,8 @@ the rich data (run ``seed_local_rich`` first), all of it in CS101:
 - assignments ........ two upcoming exams and a homework due tomorrow
 - quiz_attempts ...... four completed quizzes across the last five days
 - flashcards ......... decks named for the concepts, some reviewed this week
-- sessions/messages .. three tutor sessions; two were never "ended", so their
-                       time comes from their last message (routes/study.py)
+- sessions/messages .. three tutor sessions; tutor time is read from their
+                       MESSAGE times (services/study/daily.py), ended or not
 - node_mastery_events  this week's mastery changes (the "+N% this week" chip)
 - topic_checklists ... the course outline, grouped into FOUR units and linked to
                        the two exams, stored under the outline's REAL evidence
@@ -124,7 +124,7 @@ _FLASHCARDS = [
 # (key, concept, name, days ago, clock hour, explicitly ended after N minutes or None,
 #  minutes into the session of each message)
 # The two un-ended sessions are the common case in real use: the student closes
-# the tab, so the session's length is its last message.
+# the tab. Study time comes from the message times either way.
 _SESSIONS = [
     ("recursion", RECURSION, "Tracing Recursive Calls", 2, 18, 25, (0, 4, 11, 19, 24)),
     ("controlflow", CONTROL_FLOW, "Loops and Conditions", 1, 20, None, (0, 5, 12, 17, 22)),

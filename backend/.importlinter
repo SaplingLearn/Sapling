@@ -82,6 +82,7 @@ source_modules =
     services.profile
     services.quiz
     services.social
+    services.study
     services.tutor
 forbidden_modules =
     services.admin.*
@@ -93,5 +94,6 @@ forbidden_modules =
     services.profile.*
     services.quiz.*
     services.social.*
+    services.study.*
     services.tutor.*
 allow_indirect_imports = True
