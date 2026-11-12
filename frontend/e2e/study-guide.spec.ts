@@ -33,11 +33,11 @@
  * Spring 2026, which has none, and the dialog cannot generate. So the dialog
  * journey runs with Fall 2025 picked, and the API-created guides name it.
  *
- * The generation budget (read before adding a test). A student may start 20
- * generations and 40 block rewrites an hour
- * (services/study_guides/generation.py, blocks.py). The limiter is per backend
- * process, so the per-test reset does not clear it: one run of this file
- * spends 3 generations and 1 rewrite of the stack's budget.
+ * The generation budget. A student may start 20 generations and 40 block
+ * rewrites an hour (services/study_guides/limits.py), and the limiter is per
+ * backend process, so the per-test reset does not clear it. The E2E stack
+ * raises all three study-guide limits (scripts/e2e-up.sh), as it does the
+ * quiz limit, so repeated runs on a held stack do not run out.
  *
  * Waiting is event-based only: auto-retrying expects and `expect.poll` on a
  * row, never a sleep.
@@ -152,9 +152,8 @@ const GENERATION_TIMEOUT = 60_000;
 const LOAD_TIMEOUT = 20_000;
 
 const THREE_SECTIONS_HINT =
-  "The scripted outline has three sections, but a guide gets at most one per concept its " +
-  "materials name (services/study_guides/generation.py::section_range). The CS101 Fall 2025 " +
-  "documents in db/seed_local_rich.py must name at least three concepts between them.";
+  "The scripted outline (E2E_STUDY_GUIDE_OUTLINE) has three sections and a cram guide may " +
+  "have up to three (services/study_guides/outline.py::section_range).";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

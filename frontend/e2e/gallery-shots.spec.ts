@@ -145,9 +145,11 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
 
   "shot-guide": async (page) => {
     await page.goto("/study/guide");
-    await expect(page.getByRole("heading", { name: "Study Guide", exact: true })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Study Guides", exact: true })).toBeVisible({
       timeout: 30_000,
     });
+    // The seeded guide's card: the shot is of the home with something on it.
+    await expect(page.getByTestId("guides-grid")).toBeVisible({ timeout: 30_000 });
   },
 
   // The notetaker has no h1 — it opens straight into the editor with the most
