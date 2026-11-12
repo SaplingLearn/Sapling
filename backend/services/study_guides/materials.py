@@ -14,7 +14,7 @@ from datetime import datetime
 from db.connection import pg_quote_value, table
 from models.study_guide import MaterialOption, Source
 from services.encryption import decrypt
-from services.study_guides.scopes import Scope
+from services.study_guides.scopes import MAX_ID_CHARS, Scope
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +106,13 @@ async def _arows(
     user_id: str, offering_id: str, material_ids: list[str], columns: str,
 ) -> list[dict]:
     """The chosen documents, oldest first. An id that is not the student's,
-    not in the class or deleted matches nothing and is left out."""
-    ids = list(dict.fromkeys(material_ids))[:MAX_SOURCES]
+    not in the class or deleted matches nothing and is left out.
+
+    Past the budget the last ids given are the ones read. Callers give them
+    oldest first, with the lectures new to a guide at the end, so it is the
+    oldest material that is left out and never the new."""
+    known = [i for i in dict.fromkeys(material_ids) if len(i) <= MAX_ID_CHARS]
+    ids = known[-MAX_SOURCES:]
     if not ids:
         return []
     return await table("documents").aselect(

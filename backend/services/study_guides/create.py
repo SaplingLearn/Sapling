@@ -5,12 +5,13 @@ the reader starts the generation when it opens the guide.
 from __future__ import annotations
 
 from models.study_guide import GuideContent, GuideRequest
-from services.study_guides import cards, materials, scopes, store
+from services.study_guides import cards, limits, materials, scopes, store
 from services.study_guides.errors import GuideInvalid
 from services.study_guides.legacy import UNTITLED
 from services.study_guides.scopes import Scope
 
 NO_MATERIALS_DETAIL = "Choose at least one of this class's materials."
+NOTHING_TO_READ_DETAIL = "None of these materials can be read yet."
 
 # The strict lengths of ``GuideContent.title`` and ``scope_label``.
 _TITLE_MAX = 120
@@ -19,12 +20,17 @@ _LABEL_MAX = 200
 
 async def _aclass_material_ids(user_id: str, offering_id: str, chosen: list[str]) -> list[str]:
     """The chosen ids that are the class's materials, oldest first. An id from
-    another class, another student or a deleted document is left out."""
+    another class, another student or a deleted document is left out.
+    ``GuideInvalid`` when none is left, or none of them can be read."""
     wanted = set(chosen)
     mine = await materials.alist_materials(user_id, offering_id)
     kept = [material.id for material in mine if material.id in wanted]
     if not kept:
         raise GuideInvalid(NO_MATERIALS_DETAIL)
+    # A guide made only from documents with no text yet could never be
+    # written, so it is not made.
+    if not await materials.aload_sources(user_id, offering_id, kept):
+        raise GuideInvalid(NOTHING_TO_READ_DETAIL)
     return kept
 
 
@@ -40,11 +46,14 @@ async def _atitle(scope: Scope, course_id: str) -> str:
 async def acreate_guide(user_id: str, request: GuideRequest) -> str:
     """Insert the guide and return its id. ``GuideNotFound`` when the class or
     the exam is not the student's, ``GuideInvalid`` when the scope's kind and
-    id disagree or none of the chosen materials is the class's."""
+    id disagree, none of the chosen materials is the class's or none of them
+    has anything to read, ``GuideRateLimited`` past the hourly limit on new
+    guides (a refused request is not counted)."""
     offering_id = await scopes.aresolve_offering(user_id, request.course_id, request.semester)
     scope = await scopes.ascope_of(user_id, offering_id, request.scope_kind, request.scope_id)
     material_ids = await _aclass_material_ids(user_id, offering_id, request.material_ids)
     title = await _atitle(scope, request.course_id)
+    await limits.acharge(user_id, action="create", limit=limits.STUDY_GUIDE_CREATE_LIMIT)
     return await store.ainsert_guide(
         user_id=user_id,
         offering_id=offering_id,

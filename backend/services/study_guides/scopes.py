@@ -20,6 +20,9 @@ from services.study_guides.errors import GuideInvalid, GuideNotFound
 
 #: Far above a real class's exams and assignments; it only bounds the read.
 MAX_ASSIGNMENTS = 200
+#: No id of ours is longer (a uuid is 36 characters). A longer one in a
+#: request names nothing, and is never put into a query.
+MAX_ID_CHARS = 100
 
 
 @dataclass(frozen=True)
@@ -119,7 +122,8 @@ async def ascope_of(
         return WHOLE_COURSE
     if not scope_id:
         raise GuideInvalid("Pick the exam or assignment this guide is for.")
-    rows = await _aassignments(user_id, offering_id, scope_id)
+    known = len(scope_id) <= MAX_ID_CHARS
+    rows = await _aassignments(user_id, offering_id, scope_id) if known else []
     if not rows:
         raise GuideNotFound("That exam or assignment was not found. Pick another one.")
     return _scope(rows[0])

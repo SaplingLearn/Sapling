@@ -267,13 +267,31 @@ def test_many_sources_share_the_total_budget_evenly(docs):
     assert sum(len(s.text) for s in sources) <= materials.MAX_TOTAL_CHARS == 60_000
 
 
-def test_at_most_thirty_documents_are_read(docs):
+def test_at_most_thirty_documents_are_read_and_the_last_given_are_the_ones_kept(docs):
+    """Callers give ids oldest first, with what is new to a guide at the end:
+    past the budget it is the oldest that are left out, never the new."""
     ids = [f"d{n:02d}" for n in range(40)]
     for n, doc_id in enumerate(ids):
         docs.add(doc_id, created_at=f"2026-09-01T09:{n:02d}:00+00:00", text="z" * 5_000)
     sources = run(materials.aload_sources(ME, OFFERING, ids + ids))
-    assert [s.source.id for s in sources] == [f"document:{i}" for i in ids[:30]]
+    assert [s.source.id for s in sources] == [f"document:{i}" for i in ids[10:]]
+    assert [s.label for s in sources] == [f"S{n}" for n in range(1, 31)]
     assert sum(len(s.text) for s in sources) <= materials.MAX_TOTAL_CHARS
+
+
+def test_an_id_too_long_to_be_a_document_is_never_sent_to_the_database(docs):
+    longest, too_long = "d" * 100, "d" * 101
+    docs.add("d1", created_at="2026-09-01T09:00:00+00:00", concepts=_notes("Loops"))
+    docs.add(longest, created_at="2026-09-02T09:00:00+00:00", concepts=_notes("Functions"))
+
+    concepts = run(materials.aload_concepts(ME, OFFERING, ["x" * 5_000, "d1", too_long, longest]))
+
+    assert concepts == ["Loops", "Functions"]
+    assert docs.filters[-1]["id"] == f'in.("d1","{longest}")'
+    # Nothing but over-long ids: no read at all.
+    reads = len(docs.selects)
+    assert run(materials.aload_sources(ME, OFFERING, [too_long])) == []
+    assert len(docs.selects) == reads
 
 
 @pytest.mark.parametrize("count, expected", [(0, 10_000), (1, 10_000), (6, 10_000), (7, 8_571), (30, 2_000)])

@@ -216,6 +216,12 @@ def test_an_assignment_that_is_not_the_students_in_this_class_is_not_found(db, s
         run(scopes.ascope_of(ME, FALL, "exam", scope_id))
 
 
+def test_an_id_too_long_to_be_an_assignment_is_not_found_without_a_read(db):
+    with pytest.raises(GuideNotFound):
+        run(scopes.ascope_of(ME, FALL, "exam", "a" * (scopes.MAX_ID_CHARS + 1)))
+    assert db.selects == []
+
+
 def test_an_offering_the_student_is_not_enrolled_in_has_no_scopes(db):
     with pytest.raises(GuideNotFound):
         run(scopes.ascope_of(ME, SPRING, "exam", "a-final"))

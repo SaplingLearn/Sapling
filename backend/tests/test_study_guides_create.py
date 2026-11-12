@@ -9,8 +9,9 @@ import asyncio
 import pytest
 
 from models.study_guide import GuideRequest, MaterialOption
-from services.study_guides import create, options
-from services.study_guides.errors import GuideInvalid, GuideNotFound
+from services import request_limits
+from services.study_guides import create, limits, options
+from services.study_guides.errors import GuideInvalid, GuideNotFound, GuideRateLimited
 from services.study_guides.scopes import WHOLE_COURSE, Scope
 
 ME = "user_create_me"
@@ -45,7 +46,7 @@ def _request(**over) -> GuideRequest:
 def world(monkeypatch):
     """The student's class: one offering, three scopes, three materials."""
     seen = {"offering": [], "scope": [], "inserted": []}
-    state = {"scope": MIDTERM, "materials": MATERIALS}
+    state = {"scope": MIDTERM, "materials": MATERIALS, "unreadable": set()}
 
     async def aresolve_offering(user_id, course_id, semester):
         seen["offering"].append((user_id, course_id, semester))
@@ -66,6 +67,13 @@ def world(monkeypatch):
         assert (user_id, offering_id) == (ME, OFFERING)
         return state["materials"]
 
+    async def aload_sources(user_id, offering_id, material_ids):
+        assert (user_id, offering_id) == (ME, OFFERING)
+        return [doc_id for doc_id in material_ids if doc_id not in state["unreadable"]]
+
+    async def per_process_limiter():
+        return False
+
     async def acourse_names(course_ids):
         return {COURSE: "Intro to CS"} if COURSE in course_ids else {}
 
@@ -78,7 +86,10 @@ def world(monkeypatch):
         monkeypatch.setattr(module.scopes, "ascope_of", ascope_of)
         monkeypatch.setattr(module.scopes, "alist_scopes", alist_scopes)
         monkeypatch.setattr(module.materials, "alist_materials", alist_materials)
+    monkeypatch.setattr(create.materials, "aload_sources", aload_sources)
     monkeypatch.setattr(create.cards, "acourse_names", acourse_names)
+    monkeypatch.setattr(request_limits, "_astateless", per_process_limiter)
+    monkeypatch.setattr(request_limits, "_rate_state", {})
     monkeypatch.setattr(create.store, "ainsert_guide", ainsert_guide)
     return seen, state
 
@@ -132,6 +143,42 @@ def test_no_material_of_the_class_is_refused_before_any_insert(world, chosen):
         asyncio.run(create.acreate_guide(ME, _request(material_ids=chosen)))
     assert refused.value.detail == "Choose at least one of this class's materials."
     assert seen["inserted"] == []
+
+
+def test_materials_with_nothing_to_read_are_refused_before_any_insert(world):
+    """A guide made only from documents with no text could never be written:
+    generate would answer 422 for ever and the row would stay `generating`."""
+    seen, state = world
+    state["unreadable"] = {"doc-1", "doc-2"}
+
+    with pytest.raises(GuideInvalid) as refused:
+        asyncio.run(create.acreate_guide(ME, _request()))
+
+    assert refused.value.detail == "None of these materials can be read yet."
+    assert seen["inserted"] == [] and request_limits._rate_state == {}
+    # One readable material is enough, and the others stay chosen.
+    state["unreadable"] = {"doc-1"}
+    asyncio.run(create.acreate_guide(ME, _request()))
+    assert seen["inserted"][0]["material_ids"] == ["doc-1", "doc-2"]
+
+
+def test_creating_guides_has_an_hourly_limit_of_its_own(world, monkeypatch):
+    seen, _ = world
+    assert limits.STUDY_GUIDE_CREATE_LIMIT == 60
+    monkeypatch.setattr(limits, "STUDY_GUIDE_CREATE_LIMIT", 2)
+
+    for _ in range(2):
+        asyncio.run(create.acreate_guide(ME, _request()))
+    with pytest.raises(GuideRateLimited) as limited:
+        asyncio.run(create.acreate_guide(ME, _request()))
+
+    assert limited.value.status_code == 429 and len(seen["inserted"]) == 2
+    # Creating a guide does not spend the budget for writing one, and a
+    # request that is refused for another reason is not counted.
+    assert list(request_limits._rate_state) == [f"study-guide-create:{ME}"]
+    with pytest.raises(GuideInvalid):
+        asyncio.run(create.acreate_guide(ME, _request(material_ids=[])))
+    assert len(request_limits._rate_state[f"study-guide-create:{ME}"]) == 2
 
 
 def test_a_class_the_student_is_not_in_is_not_found(world):
