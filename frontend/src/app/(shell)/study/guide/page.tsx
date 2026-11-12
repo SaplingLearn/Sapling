@@ -1,15 +1,15 @@
 import { Suspense } from "react";
-import { StudyGuide } from "@/components/screens/StudyGuide";
+import { GuidesHome } from "@/components/studyGuide/home/GuidesHome";
 
 /**
- * `StudyGuide` reads the course and exam it was opened on off
+ * `GuidesHome` reads how it was opened (`?new=1`, `?course=`) off
  * `useSearchParams`, which App Router requires to sit under a Suspense
  * boundary.
  */
-export default function StudyGuidePage() {
+export default function StudyGuidesPage() {
   return (
     <Suspense fallback={null}>
-      <StudyGuide />
+      <GuidesHome />
     </Suspense>
   );
 }

@@ -446,21 +446,6 @@ export function GraphPanelSkeleton() {
   );
 }
 
-export function StudyGuideSkeleton() {
-  return (
-    <div style={{ padding: "24px 32px", maxWidth: 880, margin: "0 auto" }}>
-      <Skeleton width="50%" height={28} style={{ marginBottom: 8 }} />
-      <Skeleton width="30%" height={11} style={{ marginBottom: 24 }} />
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} style={{ marginBottom: 24 }}>
-          <Skeleton width="40%" height={18} style={{ marginBottom: 10 }} />
-          <SkeletonText lines={4} lineHeight={12} lastWidth="65%" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function FlashcardsSkeleton() {
   return (
     <div style={{ padding: "24px 32px", maxWidth: 720, margin: "0 auto" }}>
