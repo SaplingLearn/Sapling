@@ -25,7 +25,7 @@ from models.study_guide import (
 )
 from services.encryption import decrypt_json, encrypt_json
 from services.study_guides import store
-from services.study_guides.errors import GuideBusy, GuideNotFound
+from services.study_guides.errors import GuideBusy, GuideInvalid, GuideNotFound
 from services.study_guides.legacy import UNTITLED
 from tests.db_fakes import add_async_twins
 
@@ -180,7 +180,7 @@ def test_save_keeps_the_previous_version_encrypted(db):
     rewritten = _content("Midterm 1, rewritten")
 
     after = run(store.asave_content(
-        before, rewritten, keep_previous=True, reset_answers=True,
+        before, rewritten, keep_previous=True, answers={},
         status="ready", generated_at="2026-11-12T00:00:00+00:00",
         material_ids=["doc-9"], read_sections=[],
     ))
@@ -205,6 +205,24 @@ def test_save_leaves_the_previous_version_and_answers_alone_by_default(db):
 
     assert db.stored("g1")["previous_content"] == "older-ciphertext"
     assert db.stored("g1")["answers"] == answers
+
+
+def test_save_can_keep_only_the_answers_that_survive(db):
+    """An Update keeps some sections and rewrites others: the answers written
+    are exactly the ones passed, encrypted."""
+    db.add("g1", answers=encrypt_json({
+        "s1-i2": {"option_id": "b", "correct": True},
+        "s2-i4": {"option_id": "a", "correct": False},
+    }))
+    guide = run(store.aload_guide(ME, "g1"))
+    kept = {"s1-i2": guide.answers["s1-i2"]}
+
+    after = run(store.asave_content(guide, _content(), answers=kept))
+
+    raw = db.stored("g1")["answers"]
+    assert isinstance(raw, str) and "option_id" not in raw
+    assert decrypt_json(raw) == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert after.answers == kept
 
 
 def test_save_refuses_a_column_it_does_not_own(db):
@@ -292,7 +310,7 @@ def test_another_users_guide_is_not_found(db):
         run(store.aload_guide(ME, "missing"))
     with pytest.raises(GuideNotFound):
         run(store.apatch_state(ME, "theirs", saved=True))
-    assert run(store.aclaim_generation(ME, "theirs")) is False
+    assert run(store.aclaim_generation(ME, "theirs")) is None
     assert run(store.alist_guides(ME)) == []
 
     assert db.stored("theirs")["saved_at"] is None
@@ -339,43 +357,104 @@ def _minutes_ago(minutes: float) -> str:
 def test_a_free_claim_is_taken_and_then_held(db):
     db.add("g1")
 
-    assert run(store.aclaim_generation(ME, "g1")) is True
-    assert db.stored("g1")["generating_at"] is not None
-    assert run(store.aclaim_generation(ME, "g1")) is False
+    token = run(store.aclaim_generation(ME, "g1"))
+
+    assert token is not None
+    assert db.stored("g1")["generating_at"] == token
+    assert run(store.aclaim_generation(ME, "g1")) is None
 
 
 def test_a_fresh_claim_is_refused(db):
-    held = _minutes_ago(4)
+    held = _minutes_ago(14)
     db.add("g1", generating_at=held)
 
-    assert run(store.aclaim_generation(ME, "g1")) is False
+    assert run(store.aclaim_generation(ME, "g1")) is None
     assert db.stored("g1")["generating_at"] == held
 
 
 def test_a_stale_claim_is_taken_over(db):
-    stale = _minutes_ago(6)
+    stale = _minutes_ago(16)
     db.add("g1", generating_at=stale)
 
-    assert run(store.aclaim_generation(ME, "g1")) is True
-    assert db.stored("g1")["generating_at"] > stale
+    token = run(store.aclaim_generation(ME, "g1"))
+
+    assert token is not None and token > stale
+    assert db.stored("g1")["generating_at"] == token
 
 
 def test_touch_keeps_a_claim_fresh_and_release_frees_it(db):
-    db.add("g1", generating_at=_minutes_ago(4.9))
+    old = _minutes_ago(14.9)
+    db.add("g1", generating_at=old)
 
-    run(store.atouch_generation(ME, "g1"))
-    assert db.stored("g1")["generating_at"] > _minutes_ago(1)
+    token = run(store.atouch_generation(ME, "g1", old))
+    assert token > _minutes_ago(1)
+    assert db.stored("g1")["generating_at"] == token
 
-    run(store.arelease_generation(ME, "g1"))
+    run(store.arelease_generation(ME, "g1", token))
     assert db.stored("g1")["generating_at"] is None
     # A late heartbeat from the run that released does not take the claim back.
-    run(store.atouch_generation(ME, "g1"))
+    with pytest.raises(store.ClaimLost):
+        run(store.atouch_generation(ME, "g1", token))
     assert db.stored("g1")["generating_at"] is None
-    assert run(store.aclaim_generation(ME, "g1")) is True
+    assert run(store.aclaim_generation(ME, "g1")) is not None
 
 
-def test_the_stale_window_is_five_minutes():
-    assert store.CLAIM_STALE_AFTER == timedelta(minutes=5)
+def test_a_save_under_the_claim_refreshes_it(db):
+    db.add("g1")
+    token = run(store.aclaim_generation(ME, "g1"))
+    guide = run(store.aload_guide(ME, "g1"))
+
+    saved = run(store.asave_content(guide, _content("Section written"), claim=token))
+
+    assert saved.generating_at is not None and saved.generating_at != token
+    assert db.stored("g1")["generating_at"] == saved.generating_at
+    assert saved.content.title == "Section written"
+    # The run goes on under the new token; the old one is spent.
+    assert run(store.atouch_generation(ME, "g1", saved.generating_at))
+    with pytest.raises(store.ClaimLost):
+        run(store.atouch_generation(ME, "g1", token))
+
+
+def test_an_overtaken_run_cannot_touch_save_or_release(db):
+    """A run went silent past the stale window and another took the guide.
+    Nothing the first run does afterwards may reach the row or free the new
+    holder's claim."""
+    lost = _minutes_ago(16)
+    db.add("g1", generating_at=lost)
+    guide = run(store.aload_guide(ME, "g1"))
+    holder = run(store.aclaim_generation(ME, "g1"))
+    before = dict(db.stored("g1"))
+
+    with pytest.raises(store.ClaimLost):
+        run(store.atouch_generation(ME, "g1", lost))
+    with pytest.raises(store.ClaimLost):
+        run(store.asave_content(
+            guide, _content("Written by the overtaken run"), claim=lost,
+            keep_previous=True, answers={}, status="ready",
+        ))
+    run(store.arelease_generation(ME, "g1", lost))
+
+    assert db.stored("g1") == before
+    assert db.stored("g1")["generating_at"] == holder
+    assert run(store.aclaim_generation(ME, "g1")) is None
+
+
+def test_a_save_under_a_claim_on_a_deleted_guide_is_claim_lost(db):
+    db.add("g1")
+    token = run(store.aclaim_generation(ME, "g1"))
+    guide = run(store.aload_guide(ME, "g1"))
+    db.rows.clear()
+
+    with pytest.raises(store.ClaimLost):
+        run(store.asave_content(guide, _content(), claim=token))
+
+
+def test_the_stale_window_outlasts_one_slow_model_call():
+    from agents._providers import _SLOT_TIMEOUT_S
+
+    assert store.CLAIM_STALE_AFTER == timedelta(minutes=15)
+    # Three attempts of the slot's timeout fit inside the window.
+    assert store.CLAIM_STALE_AFTER.total_seconds() > 3 * _SLOT_TIMEOUT_S["study_guide"]
 
 
 # ── Old rows and unreadable rows ────────────────────────────────────────────
@@ -436,10 +515,48 @@ def test_a_row_that_does_not_decrypt_does_not_break_the_list(db, caplog):
     bad, good = guides
     assert bad.content == GuideContent(title=UNTITLED)
     assert bad.answers == {}
+    assert (bad.unreadable, good.unreadable) == (True, False)
     assert good.content == _content()
     assert not [r for r in caplog.records if r.exc_info], "an expected path logged a traceback"
 
 
 def test_content_that_no_longer_validates_reads_as_empty(db):
     db.add("drifted", content=encrypt_json({"sections": "not a list"}))
-    assert run(store.aload_guide(ME, "drifted")).content == GuideContent(title=UNTITLED)
+    guide = run(store.aload_guide(ME, "drifted"))
+    assert guide.content == GuideContent(title=UNTITLED)
+    assert guide.unreadable is True
+
+
+def test_one_stored_item_that_no_longer_validates_costs_only_itself(db, caplog):
+    """The contract moved on under one block (here a check with two options,
+    where three are needed now). The rest of the guide still reads."""
+    stored = _content().model_dump(mode="json")
+    stored["sections"][0]["items"][1]["options"] = [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}]
+    stored["sections"][0]["items"].append({"type": "flashcards", "id": "s1-i3", "cards": []})
+    db.add("g1", content=encrypt_json(stored))
+
+    guide = run(store.aload_guide(ME, "g1"))
+
+    assert guide.unreadable is False
+    assert guide.content.title == "Midterm 1"
+    (section,) = guide.content.sections
+    assert [item.id for item in section.items] == ["s1-i1"]
+    assert section.items[0] == _content().sections[0].items[0]
+    assert not [r for r in caplog.records if r.exc_info], "an expected path logged a traceback"
+
+
+def test_an_unreadable_guide_is_never_written_over(db):
+    """Saving would put the empty placeholder into `previous_content` and
+    replace ciphertext that may only need the right key."""
+    ciphertext = "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
+    db.add("bad", content=ciphertext)
+    guide = run(store.aload_guide(ME, "bad"))
+    token = run(store.aclaim_generation(ME, "bad"))
+    before = dict(db.stored("bad"))
+
+    for claim in (None, token):
+        with pytest.raises(GuideInvalid, match="cannot be read"):
+            run(store.asave_content(guide, _content("Rewritten"), claim=claim, keep_previous=True))
+
+    assert db.stored("bad") == before
+    assert db.stored("bad")["content"] == ciphertext

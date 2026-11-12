@@ -5,6 +5,10 @@ It turns rows into :class:`GuideRow`, owns the encryption of ``content``,
 migration, ``20261112094239_study_guides_durable.sql``), holds the generation
 claim, and writes a check answer at most once per block.
 
+The claim is owned. Taking it returns a token (the ``generating_at`` stamp it
+wrote), and a run's touch, saves and release only act on a row that still
+holds that token. A run that was overtaken gets ``ClaimLost`` and must stop.
+
 Every read and write is filtered by ``user_id`` as well as ``id``, so another
 student's guide answers exactly like one that does not exist
 (``GuideNotFound``).
@@ -27,9 +31,10 @@ from models.study_guide import (
     GuideContent,
     GuideStatus,
     ScopeKind,
+    parse_items,
 )
 from services.encryption import decrypt_json_column, encrypt_json
-from services.study_guides.errors import GuideBusy, GuideNotFound
+from services.study_guides.errors import GuideBusy, GuideInvalid, GuideNotFound
 from services.study_guides.legacy import UNTITLED, content_from_topics
 
 logger = logging.getLogger(__name__)
@@ -37,8 +42,10 @@ logger = logging.getLogger(__name__)
 TABLE = "study_guides"
 
 #: A generation claim older than this is treated as abandoned (the run that
-#: took it crashed or was cut off without releasing it).
-CLAIM_STALE_AFTER = timedelta(minutes=5)
+#: took it crashed or was cut off without releasing it). A run refreshes its
+#: claim between model calls, and one call on the ``study_guide`` slot can
+#: take three attempts of 240 seconds, so the window is longer than that.
+CLAIM_STALE_AFTER = timedelta(minutes=15)
 
 #: Guides one list call returns. Every row carries its whole encrypted
 #: content (the card's title and counts are inside it), so the read is bounded.
@@ -46,6 +53,7 @@ LIST_LIMIT = 200
 
 GUIDE_NOT_FOUND_DETAIL = "Study guide not found."
 GUIDE_BUSY_DETAIL = "This study guide is being changed. Try again."
+GUIDE_UNREADABLE_DETAIL = "This guide cannot be read, so it was left as it is."
 
 #: Everything a ``GuideRow`` is built from. ``previous_content`` is written
 #: here and never read back: nothing shows the previous version yet.
@@ -59,11 +67,21 @@ _COLUMNS = (
 _SAVE_COLUMNS = frozenset({"status", "generated_at", "material_ids", "read_sections"})
 
 
+class ClaimLost(Exception):
+    """The run's claim token is no longer on the row: the run went silent for
+    longer than ``CLAIM_STALE_AFTER`` and another one took the guide (or the
+    guide is gone). The run must stop without writing anything more."""
+
+
 @dataclass(frozen=True)
 class GuideRow:
     """One ``study_guides`` row, decrypted. ``content`` is always the current
     shape: a ``format`` 1 row is upgraded on read (``format`` still says what
-    is stored). Timestamps are the ISO strings PostgREST returned."""
+    is stored). Timestamps are the ISO strings PostgREST returned.
+
+    ``unreadable`` is True when the stored content could not be decrypted or
+    read. ``content`` is then an empty placeholder, and the row is never
+    written over (``asave_content`` refuses)."""
 
     id: str
     user_id: str
@@ -85,6 +103,7 @@ class GuideRow:
     generated_at: str | None
     created_at: str
     updated_at: str
+    unreadable: bool = False
 
 
 # ── Rows ─────────────────────────────────────────────────────────────────────
@@ -106,20 +125,38 @@ def _encrypt_answers(answers: dict[str, CheckAnswer]) -> str:
     return encrypt_json({block_id: answer.model_dump() for block_id, answer in answers.items()})
 
 
-def _content(raw: dict) -> GuideContent:
-    """The row's content in the current shape. A row that does not decrypt or
-    validate reads as an empty guide rather than failing the whole list."""
+def _sound_section(section: Any) -> Any:
+    """A stored section with only the items that still validate, so one item
+    the contract has moved away from does not cost the guide its other items
+    (``parse_items`` warns about each one it drops)."""
+    if not isinstance(section, dict) or not isinstance(section.get("items"), list):
+        return section
+    valid, _ = parse_items(section["items"])
+    return {**section, "items": valid}
+
+
+def _stored_content(stored: dict) -> GuideContent:
+    sections = stored.get("sections")
+    if isinstance(sections, list):
+        stored = {**stored, "sections": [_sound_section(s) for s in sections]}
+    return GuideContent.model_validate(stored)
+
+
+def _content(raw: dict) -> tuple[GuideContent, bool]:
+    """``(the row's content in the current shape, whether it is unreadable)``.
+    A row that does not decrypt or validate is still listed, as an empty
+    placeholder marked unreadable, rather than failing the whole list."""
     try:
         stored = decrypt_json_column(raw.get("content")) or {}
         if raw.get("format") == GUIDE_FORMAT:
-            return GuideContent.model_validate(stored)
-        return content_from_topics(stored)
+            return _stored_content(stored), False
+        return content_from_topics(stored), False
     except Exception as exc:
         logger.warning(
             "study guide %s: content could not be read (%s); showing it empty",
             raw.get("id"), type(exc).__name__,
         )
-        return GuideContent(title=UNTITLED)
+        return GuideContent(title=UNTITLED), True
 
 
 def _answers(raw: dict) -> dict[str, CheckAnswer]:
@@ -139,6 +176,7 @@ def _strings(value: Any) -> list[str]:
 
 
 def _to_row(raw: dict) -> GuideRow:
+    content, unreadable = _content(raw)
     return GuideRow(
         id=raw["id"],
         user_id=raw["user_id"],
@@ -150,7 +188,7 @@ def _to_row(raw: dict) -> GuideRow:
         use_history=raw.get("use_history") is not False,
         status=raw.get("status") or "ready",
         format=raw.get("format") or 1,
-        content=_content(raw),
+        content=content,
         material_ids=_strings(raw.get("material_ids")),
         read_sections=_strings(raw.get("read_sections")),
         answers=_answers(raw),
@@ -160,6 +198,7 @@ def _to_row(raw: dict) -> GuideRow:
         generated_at=raw.get("generated_at"),
         created_at=raw.get("created_at") or "",
         updated_at=raw.get("updated_at") or "",
+        unreadable=unreadable,
     )
 
 
@@ -233,17 +272,28 @@ async def asave_content(
     guide: GuideRow,
     content: GuideContent,
     *,
+    claim: str | None = None,
     keep_previous: bool = False,
-    reset_answers: bool = False,
+    answers: dict[str, CheckAnswer] | None = None,
     **columns: Any,
 ) -> GuideRow:
     """Write ``content`` and, in the same update, any of ``status``,
     ``generated_at`` (an ISO string), ``material_ids`` and ``read_sections``.
 
+    With ``claim`` (a run's token) the write only lands while the row still
+    holds that claim, and refreshes it: the returned row's ``generating_at``
+    is the run's new token. ``ClaimLost`` when the token is gone.
+
     ``keep_previous`` moves the content ``guide`` was loaded with into
-    ``previous_content`` (Update and Regenerate keep one step back);
-    ``reset_answers`` clears the check answers of a rewritten guide. Returns
-    the row as written."""
+    ``previous_content`` (Update and Regenerate keep one step back).
+    ``answers`` replaces the check answers: the ones that survive an Update,
+    or none after a Regenerate. Left as None, the answers are not touched.
+
+    An unreadable row is never written over (``GuideInvalid``): its stored
+    content may only need the right key to read again. Returns the row as
+    written."""
+    if guide.unreadable:
+        raise GuideInvalid(GUIDE_UNREADABLE_DETAIL)
     unknown = sorted(set(columns) - _SAVE_COLUMNS)
     if unknown:
         raise TypeError(f"asave_content cannot write {', '.join(unknown)}")
@@ -254,9 +304,15 @@ async def asave_content(
     }
     if keep_previous:
         patch["previous_content"] = _encrypt_content(guide.content)
-    if reset_answers:
-        patch["answers"] = None
-    rows = await table(TABLE).aupdate(patch, filters=_own(guide.user_id, guide.id))
+    if answers is not None:
+        patch["answers"] = _encrypt_answers(answers) if answers else None
+    filters = _own(guide.user_id, guide.id)
+    if claim is not None:
+        patch["generating_at"] = _now().isoformat()
+        filters = _held(guide.user_id, guide.id, claim)
+    rows = await table(TABLE).aupdate(patch, filters=filters)
+    if claim is not None and not rows:
+        raise ClaimLost(guide.id)
     return _written(rows)
 
 
@@ -286,10 +342,22 @@ async def apatch_state(
 # ── The generation claim ─────────────────────────────────────────────────────
 
 
-async def aclaim_generation(user_id: str, guide_id: str) -> bool:
-    """Take the guide for one generation run. True when the claim was free
-    (never taken, released, or older than ``CLAIM_STALE_AFTER``); False when
-    another run holds it, or the guide is not the caller's.
+def _held(user_id: str, guide_id: str, claim: str) -> dict[str, str]:
+    """Filters for the caller's guide while it still holds ``claim``."""
+    return {**_own(user_id, guide_id), "generating_at": f"eq.{claim}"}
+
+
+def _token(rows: list | None) -> str | None:
+    """The claim token on the row an update returned, or None when the update
+    matched no row."""
+    return rows[0]["generating_at"] if rows else None
+
+
+async def aclaim_generation(user_id: str, guide_id: str) -> str | None:
+    """Take the guide for one run that writes its content. Returns the claim
+    token when the claim was free (never taken, released, or older than
+    ``CLAIM_STALE_AFTER``); None when another run holds it, or the guide is
+    not the caller's.
 
     Each attempt is one conditional UPDATE, so of two requests racing for a
     free claim only one matches the row."""
@@ -301,24 +369,30 @@ async def aclaim_generation(user_id: str, guide_id: str) -> bool:
             filters={**_own(user_id, guide_id), "generating_at": free},
         )
         if rows:
-            return True
-    return False
+            return _token(rows)
+    return None
 
 
-async def atouch_generation(user_id: str, guide_id: str) -> None:
-    """Refresh a held claim (the run's heartbeat, after each section). A claim
-    that was released is not taken back."""
-    await table(TABLE).aupdate(
-        {"generating_at": _now().isoformat()},
-        filters={**_own(user_id, guide_id), "generating_at": "not.is.null"},
-        prefer_return_minimal=True,
+async def atouch_generation(user_id: str, guide_id: str, claim: str) -> str:
+    """Refresh a held claim (the run's heartbeat) and return the new token.
+    ``ClaimLost`` when ``claim`` is no longer on the row: the claim is not
+    taken back from whoever holds it now."""
+    rows = await table(TABLE).aupdate(
+        {"generating_at": _now().isoformat()}, filters=_held(user_id, guide_id, claim),
     )
+    token = _token(rows)
+    if token is None:
+        raise ClaimLost(guide_id)
+    return token
 
 
-async def arelease_generation(user_id: str, guide_id: str) -> None:
-    """Give the claim up when the run ends, however it ends."""
+async def arelease_generation(user_id: str, guide_id: str, claim: str) -> None:
+    """Give the claim up when the run ends, however it ends. A run that was
+    overtaken releases nothing: the claim on the row is not its own."""
     await table(TABLE).aupdate(
-        {"generating_at": None}, filters=_own(user_id, guide_id), prefer_return_minimal=True,
+        {"generating_at": None},
+        filters=_held(user_id, guide_id, claim),
+        prefer_return_minimal=True,
     )
 
 
@@ -350,7 +424,9 @@ async def arecord_answer(guide: GuideRow, block_id: str, answer: CheckAnswer) ->
 
 __all__ = [
     "CLAIM_STALE_AFTER",
+    "GUIDE_UNREADABLE_DETAIL",
     "LIST_LIMIT",
+    "ClaimLost",
     "GuideRow",
     "aclaim_generation",
     "ainsert_guide",
