@@ -47,6 +47,7 @@ python -m pytest tests/ -q --ignore=tests/evals \
   --ignore=tests/test_ocr_pipeline.py \
   --ignore=tests/test_extraction_backends.py
 ruff check .
+python scripts/lint_ratchet.py   # fails on a NEW blind except / bugbear / async-blocking violation in any file
 lint-imports
 python scripts/type_ratchet.py   # needs node; fails on a NEW pyright error
 ```

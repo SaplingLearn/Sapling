@@ -27,6 +27,13 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: backend/requirements.lock
+      # node runs pyright for the type-check ratchet below. The cache key is
+      # the ratchet's own lockfile (backend/scripts/pyright).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/scripts/pyright/package-lock.json
       # The OCR stack (torch / docling / transformers) is multi-GB and pulls
       # models at runtime; those integration tests are excluded from the fast
       # gate below and covered by the manual evals workflow. Everything else
@@ -34,26 +41,42 @@ jobs:
       # Install from the hash-pinned lockfile for reproducible, auditable builds
       # (#163) — requirements.lock is the fast (non-OCR) resolved set.
       - name: Install backend deps from lockfile (excluding heavy OCR stack)
+        id: deps
         run: pip install --require-hashes -r requirements.lock
+      # Every check below runs whenever the install worked, even after an
+      # earlier check failed (`!cancelled()` replaces the default "stop at the
+      # first failure"): a type or lint failure must not hide that run's test
+      # results, or the other way round. The job still fails if any step did.
+      #
       # #193: ruff lint, gated against the baseline in backend/ruff.toml. New
       # violations (new files, or new rule categories in existing files) fail.
       - name: Lint (ruff — baselined ratchet)
         run: ruff check .
+      # The bug-finding rules (ASYNC, bugbear, blind except) counted per file
+      # against backend/lint_baseline.json. ruff's own per-file baseline would
+      # switch a rule off for a whole file; this fails on ONE more violation in
+      # a file that already has some. A fixed one only warns (`--shrink`).
+      - name: Lint (ruff bug-finding rules — per-file count ratchet)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: python scripts/lint_ratchet.py
       # #118: import boundaries (backend/.importlinter) — routes/worker ->
       # services/agents/models -> db layering, and domain packages reaching each
       # other only through the package __init__. Known exceptions are listed
       # with their reason in the config; a new violation fails here.
       - name: Lint (import-linter — boundary contracts)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: lint-imports
-      # Type-check ratchet: pyright (basic mode, pinned in the script) against
+      # Type-check ratchet: pyright (basic mode) against
       # backend/type_baseline.json. A new error fails; fixing one only warns
-      # and asks for `--shrink`. Runs against this job's lockfile install.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      # and asks for `--shrink`. Runs against this job's lockfile install. The
+      # script installs pyright with `npm ci` from
+      # backend/scripts/pyright/package-lock.json, so the version is pinned and
+      # the download is checked against its recorded hash.
       - name: Typecheck (pyright — baselined ratchet)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: python scripts/type_ratchet.py
       - name: Run pytest
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         env:
           # Non-secret dummy values so config validation / DB-URL construction /
           # encryption-key import all succeed in CI. The gated tests mock their
@@ -107,8 +130,11 @@ jobs:
         run: npm install -g npm@10.9.2 --engine-strict=false
       - run: npm ci
       - name: Lint (eslint flat config — replaces the removed `next lint`)
-        # Zero warnings: the last ones were fixed or their rule made a decision
-        # (eslint.config.mjs), so a new warning is a real regression. Keep the
+        # Zero warnings, as a backstop: eslint.config.mjs promotes every "warn"
+        # rule to an error (promoteWarnings), because only errors can be held
+        # in eslint-suppressions.json. So a rule a dependency bump adds fails
+        # as errors that `npx eslint . --suppress-rule <rule>` can baseline,
+        # and nothing is left to arrive as a warning with no baseline. Keep the
         # '=' form: a bare `--max-warnings 0` is fine, but a negative value
         # without '=' is parsed as an option and eslint exits 2.
         run: npx eslint . --max-warnings=0

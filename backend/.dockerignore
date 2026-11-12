@@ -6,3 +6,4 @@ venv
 .venv
 tests
 .import_linter_cache
+node_modules

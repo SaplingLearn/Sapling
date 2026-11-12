@@ -11,10 +11,19 @@ every open PR, so this works like the ruff and code-size ratchets:
 
 An entry that is now higher than it needs to be only warns, so two PRs that
 each fix an error cannot leave main red between them; ``--shrink`` lowers the
-baseline to today's numbers. Missing-import errors are off in
+baseline to today's numbers (the rule is shared with lint_ratchet.py, in
+_count_ratchet.py). Missing-import errors are off in
 pyrightconfig.json because CI installs the lockfile without the heavy OCR
 stack; run this against that same environment (``pip install -r
 requirements.lock``) so the counts match CI.
+
+pyright itself is an npm package. Its version is pinned in
+scripts/pyright/package.json and installed with ``npm ci`` from the
+package-lock.json beside it, so the download is checked against a recorded
+sha512 the way requirements.lock checks every pip package. The first run
+installs it (needs node and npm); to move to a new pyright, change the version
+there, run ``npm install --package-lock-only`` in that directory, and commit
+both files with the re-measured baseline.
 
 Usage, from backend/:
 
@@ -32,15 +41,37 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from _count_ratchet import run
+
 BACKEND = Path(__file__).resolve().parent.parent
 BASELINE = BACKEND / "type_baseline.json"
-# Pinned so a pyright release cannot turn main red on its own.
-PYRIGHT = "pyright@1.1.414"
+# pyright's pinned version and its integrity hash live here (package.json and
+# package-lock.json), so a pyright release cannot turn main red on its own and
+# a tampered download fails the install.
+PYRIGHT_DIR = BACKEND / "scripts" / "pyright"
+
+
+def _pyright() -> str:
+    """Path to the locked pyright, installing it with ``npm ci`` when it is
+    missing or is not the version package.json pins."""
+    wanted = json.loads((PYRIGHT_DIR / "package.json").read_text())["dependencies"]["pyright"]
+    installed = PYRIGHT_DIR / "node_modules" / "pyright" / "package.json"
+    if not installed.exists() or json.loads(installed.read_text())["version"] != wanted:
+        # `npm ci` installs exactly what package-lock.json records and fails on
+        # an integrity mismatch. --ignore-scripts: nothing here needs one.
+        done = subprocess.run(
+            ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+            cwd=PYRIGHT_DIR, capture_output=True, text=True,
+        )
+        if done.returncode != 0:
+            sys.stderr.write(done.stdout + done.stderr)
+            raise SystemExit("type_ratchet: could not install the locked pyright (needs node and npm)")
+    return str(PYRIGHT_DIR / "node_modules" / ".bin" / "pyright")
 
 
 def measure() -> tuple[Counter[str], list[dict]]:
     proc = subprocess.run(
-        ["npx", "--yes", PYRIGHT, "--outputjson", "-p", str(BACKEND / "pyrightconfig.json")],
+        [_pyright(), "--outputjson", "-p", str(BACKEND / "pyrightconfig.json")],
         cwd=BACKEND, capture_output=True, text=True,
     )
     try:
@@ -62,38 +93,18 @@ def main() -> int:
     args = parser.parse_args()
 
     counts, errors = measure()
-    baseline: dict[str, int] = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
 
-    grew = {k: (baseline.get(k, 0), n) for k, n in counts.items() if n > baseline.get(k, 0)}
-    shrunk = {k: (n, counts.get(k, 0)) for k, n in baseline.items() if counts.get(k, 0) < n}
+    def describe(key: str) -> list[str]:
+        file, rule = key.split("::")
+        lines = []
+        for d in errors:
+            rel = Path(d["file"]).resolve().relative_to(BACKEND).as_posix()
+            if rel == file and d.get("rule", "error") == rule:
+                line = d["range"]["start"]["line"] + 1
+                lines.append(f"{file}:{line}: {d['message'].splitlines()[0]}")
+        return lines
 
-    if args.shrink:
-        if grew and BASELINE.exists():
-            print("type_ratchet: refusing to --shrink while entries have grown; fix those first")
-        else:
-            new = {k: counts[k] for k in sorted(counts)}
-            BASELINE.write_text(json.dumps(new, indent=2) + "\n")
-            print(f"type_ratchet: baseline now {sum(new.values())} errors in {len(new)} entries")
-            return 0
-
-    for key, (was, now) in sorted(shrunk.items()):
-        print(f"warning: {key} is down to {now} (baseline {was}); run with --shrink")
-
-    if grew:
-        print("\ntype_ratchet: new type errors (fix them; do not raise the baseline):")
-        for key, (was, now) in sorted(grew.items()):
-            print(f"  {key}: {now} (baseline {was})")
-            file, rule = key.split("::")
-            for d in errors:
-                rel = Path(d["file"]).resolve().relative_to(BACKEND).as_posix()
-                if rel == file and d.get("rule", "error") == rule:
-                    line = d["range"]["start"]["line"] + 1
-                    msg = d["message"].splitlines()[0]
-                    print(f"    {file}:{line}: {msg}")
-        return 1
-
-    print(f"type_ratchet: OK ({sum(counts.values())} baselined errors, none new)")
-    return 0
+    return run("type_ratchet", BASELINE, counts, describe, shrink=args.shrink, what="type errors")
 
 
 if __name__ == "__main__":
