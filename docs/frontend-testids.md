@@ -717,8 +717,8 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-load-error` | the guide could not be loaded (`role="alert"`) |
 | `guide-generating` | the banner that follows the page while the guide is being written: the current label and "Step n of m" |
 | `guide-generation-error` | the banner when a generation stopped or was turned away (an Update with nothing new, the hourly limit), or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
-| `guide-generation-retry` | its "Retry" button: asks again for what failed (`update` / `regenerate`), or a `resume` once that run's outline had replaced the guide. Absent when asking again cannot help (a 422, a stream error marked not retryable); disabled while a block is being regenerated |
-| `guide-generation-dismiss` | its "Dismiss" button: only when the guide is `ready` and the failed request left it as it was |
+| `guide-generation-retry` | its "Retry" button: asks again for what failed (`update` / `regenerate`) when the guide, read again after the failure, is still `ready`, or a `resume` when it is `generating` or `failed`. Absent when asking again cannot help (a 422, a stream error marked not retryable); disabled while a block is being regenerated |
+| `guide-generation-dismiss` | its "Dismiss" button: only when the guide, read again after the failure, is `ready` |
 | `guide-title` | the guide's title (`<h2>`: the top bar's "Study" is the page's `<h1>`, and each section's title is an `<h3>`) |
 | `guide-menu` | the three-dot menu button beside the title |
 | `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |

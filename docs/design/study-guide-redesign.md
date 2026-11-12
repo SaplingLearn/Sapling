@@ -108,7 +108,7 @@ The generate stream uses `services.agent_events.SaplingEvent` (`{type, step, mes
 - `done`: `data.guide` is the finished `GuideDetail`.
 - `error`: `message` is the reason; `data.retryable`.
 
-Modes: `resume` writes whatever is still queued (a new guide, or one whose stream was cut); `update` folds in material added since; `regenerate` rewrites everything. `update` and `regenerate` copy the last finished `content` to `previous_content` in the same write that saves their first new section, once per run, and only when the guide being replaced was readable.
+Modes: `resume` writes whatever is still queued (a new guide, or one whose stream was cut); `update` folds in the lectures added since and keeps the sections they do not touch; `regenerate` rewrites everything, and reads those new lectures too. `update` and `regenerate` copy the last finished `content` to `previous_content` in the same write that saves their first new section, once per run, and only when the guide being replaced was readable.
 
 ## 5. Generation
 
