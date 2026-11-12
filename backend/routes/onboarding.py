@@ -322,10 +322,15 @@ def save_onboarding_profile(
     # Last, and only from false: a concurrent submit that got here first wins.
     # #115: `users` is account state (SELECT-only for the student's token).
     with service_scope():
-        table("users").update(
+        completed = table("users").update(
             {"onboarding_completed": True},
             filters={"id": f"eq.{user_id}", "onboarding_completed": "is.false"},
         )
+    if not completed:
+        # Another submit (a second tab) finished first, after this one's
+        # check. Its writes above are the same student's and idempotent; the
+        # answer is the replay's, so this tab takes the "already set up" path.
+        raise HTTPException(status_code=409, detail="Onboarding is already complete.")
 
     return {
         "ok": True,

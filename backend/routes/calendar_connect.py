@@ -59,7 +59,8 @@ router = APIRouter()
 # button still target it.
 #
 # `oauth_tokens` therefore holds a row only for a grant that reaches the
-# calendar: this callback and sign-in (services/auth/signin.py) both refuse to
+# calendar: only this callback creates one, and both it and sign-in
+# (services/auth/signin.py, which only refreshes an existing row) refuse to
 # store anything less. A row written before that rule came from a flow that
 # asked for the calendar scopes, and oauthlib's scope check (on until this
 # change) failed that flow's exchange unless Google granted exactly the scopes
@@ -76,6 +77,11 @@ _CALENDAR_DEFAULT_NEXT = "/calendar"
 
 def _clean_calendar_next(value) -> str | None:
     return value if isinstance(value, str) and value in CALENDAR_NEXT_PATHS else None
+
+
+def _has_stored_refresh_token(user_id: str) -> bool:
+    rows = table("oauth_tokens").select("refresh_token", filters={"user_id": f"eq.{user_id}"})
+    return bool(rows and rows[0].get("refresh_token"))
 
 
 def _calendar_client_config() -> dict:
@@ -218,8 +224,12 @@ def calendar_callback(
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
     }
     # prompt=consent normally returns one; without it, keep the stored one.
+    # With none stored either, the access token stops working within the hour
+    # while /status would say "connected": store nothing and report a failure.
     if creds.refresh_token:
         row["refresh_token"] = encrypt(creds.refresh_token)
+    elif not _has_stored_refresh_token(user_id):
+        return _finish("calendar_error=no_refresh_token")
     table("oauth_tokens").upsert(row, on_conflict="user_id")
     return _finish(
         "connected=true",

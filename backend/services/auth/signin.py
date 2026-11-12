@@ -128,13 +128,16 @@ def _store_calendar_tokens(user_id: str, creds) -> None:
 
     Called only for a grant that covers the calendar scopes: sign-in asks for
     identity alone, plus (include_granted_scopes) whatever the student
-    granted before, so this is a student who connected the calendar. An
-    identity-only grant is never stored: it would replace a working calendar
-    token with one that cannot reach the calendar, and make
+    granted before. An identity-only grant is never stored: it would replace a
+    working calendar token with one that cannot reach the calendar, and make
     `GET /api/calendar/status` report a calendar that is not connected.
+
+    It UPDATES the stored row and never creates one. Connecting is the
+    calendar consent flow's job (routes/calendar_connect.py). A student who
+    pressed Disconnect has no row, and Google still includes the calendar in
+    later grants, so creating one here would connect them again unasked.
     A grant without a refresh token keeps the stored one."""
     row = {
-        "user_id": user_id,
         "access_token": encrypt(creds.token),
         # expires_at is TIMESTAMPTZ after migration 0024 — None (not "") when
         # there is no expiry, since "" is not a valid timestamptz.
@@ -142,7 +145,7 @@ def _store_calendar_tokens(user_id: str, creds) -> None:
     }
     if creds.refresh_token:
         row["refresh_token"] = encrypt(creds.refresh_token)
-    table("oauth_tokens").upsert(row, on_conflict="user_id")
+    table("oauth_tokens").update(row, filters={"user_id": f"eq.{user_id}"})
 
 
 def record_google_sign_in(

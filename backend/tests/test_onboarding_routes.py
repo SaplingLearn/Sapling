@@ -618,6 +618,21 @@ class TestOnboardingIsAOneWayGate:
         assert res.json()["detail"] == "Onboarding is already complete."
         assert db.writes() == []
 
+    def test_a_submit_that_loses_a_race_is_a_409(self, db, monkeypatch):
+        """Another tab finished onboarding after this submit's check: the final
+        update matches no row, and this submit answers as a replay does."""
+        from services import legal
+        real = legal.record_acceptances
+
+        def finished_elsewhere(*args, **kwargs):
+            real(*args, **kwargs)
+            db.rows["users"][0]["onboarding_completed"] = True
+
+        monkeypatch.setattr(legal, "record_acceptances", finished_elsewhere)
+        res = _post()
+        assert res.status_code == 409
+        assert res.json()["detail"] == "Onboarding is already complete."
+
     def test_the_409_comes_before_the_legal_check(self, db):
         """A stale tab of an onboarded student gets "already complete", not a
         request to re-accept documents it will never submit."""

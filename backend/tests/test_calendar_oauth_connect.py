@@ -252,12 +252,29 @@ class TestCalendarCallback:
     def test_no_refresh_token_keeps_the_stored_one(self, monkeypatch):
         _mock_flow(monkeypatch, refresh=None)
         upserts = self._upserts(monkeypatch)
+        cal.table.return_value.select.return_value = [{"refresh_token": "ENC(old)"}]
         client = TestClient(_app)
         state = self._initiate(client)
         client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
         (args, _kwargs) = upserts[-1]
         assert "refresh_token" not in args[0]
         assert args[0]["access_token"] == "ENC(acc)"
+
+    @pytest.mark.parametrize("stored", [[], [{"refresh_token": None}]])
+    def test_a_first_connect_without_a_refresh_token_fails(self, monkeypatch, stored):
+        """prompt=consent normally returns a refresh token. Without one, and
+        with none stored, the access token dies within the hour while /status
+        says "connected": nothing is stored and the connect reports a failure."""
+        _mock_flow(monkeypatch, refresh=None)
+        fake_table = MagicMock()
+        fake_table.return_value.select.return_value = stored
+        monkeypatch.setattr(cal, "table", fake_table)
+        monkeypatch.setattr(cal, "encrypt", lambda v: f"ENC({v})")
+        client = TestClient(_app)
+        state = self._initiate(client, "&next=/dashboard")
+        r = client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
+        assert r.headers["location"].endswith("/calendar?calendar_error=no_refresh_token")
+        fake_table.return_value.upsert.assert_not_called()
 
     def test_nonce_mismatch_rejected_no_token_write(self, monkeypatch):
         _mock_flow(monkeypatch)

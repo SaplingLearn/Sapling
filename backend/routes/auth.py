@@ -214,19 +214,30 @@ def google_callback(
         )
         return resp
 
+    # Whether this request is Google's answer to THE pending sign-in: the
+    # state's nonce matches the one sealed in the signed cookie.
+    state_nonce = ((_decode_state(state) or {}) if state else {}).get("n")
+    state_ok = bool(
+        cookie_payload and cookie_nonce and state_nonce
+        and _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
+    )
+
     if error or not code:
         logger.info(
             "google sign-in cancelled (%s)",
             error if error and _GOOGLE_ERROR_RE.match(error) else "no code",
         )
-        return _fail_redirect(SIGNIN_CANCELLED)
+        if state_ok:
+            return _fail_redirect(SIGNIN_CANCELLED)
+        # Not this sign-in's answer (a stray tab, a crafted link): same
+        # message, but the pending sign-in keeps its cookie and its popup, so
+        # Google's real callback still completes it.
+        return RedirectResponse(f"{frontend_url}/?error={SIGNIN_CANCELLED}")
 
     if not GOOGLE_AVAILABLE:
         return _fail_redirect("google_not_configured")
 
-    state_data = _decode_state(state) if state else {}
-    state_nonce = state_data.get("n")
-    if not cookie_payload or not cookie_nonce or not state_nonce or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce)):
+    if not state_ok:
         return _fail_redirect("invalid_state")
     # #756: one callback per state. Consumed before the code exchange, so a
     # replay is refused whatever the rest of this callback would have done.

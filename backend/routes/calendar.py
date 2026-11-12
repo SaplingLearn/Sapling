@@ -283,8 +283,8 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 @router.get("/status/{user_id}")
 def calendar_status(user_id: str, request: FastAPIRequest):
     """Whether the student's Google Calendar is connected. A token row exists
-    only for a grant that covers the calendar scopes (see the connect flow
-    above), so the row is the answer; an identity-only sign-in stores none."""
+    only for a grant that covers the calendar scopes, created only by the
+    consent flow (routes/calendar_connect.py), so the row is the answer."""
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
         "access_token,expires_at",

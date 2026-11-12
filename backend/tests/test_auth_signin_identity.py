@@ -176,18 +176,27 @@ class TestCalendarTokensAtSignIn:
         connected earlier, so its tokens replace the stored ones."""
         _, tables, _ = signin(granted=" ".join(IDENTITY + CALENDAR))
         t = tables["oauth_tokens"]
-        t.upsert.assert_called_once()
-        row = t.upsert.call_args.args[0]
-        assert t.upsert.call_args.kwargs["on_conflict"] == "user_id"
-        assert row["user_id"] == USER_ID
+        t.update.assert_called_once()
+        row = t.update.call_args.args[0]
+        assert t.update.call_args.kwargs["filters"] == {"user_id": f"eq.{USER_ID}"}
         assert decrypt(row["access_token"]) == "access-tok"
         assert decrypt(row["refresh_token"]) == "refresh-tok"
         assert row["expires_at"] is None
         t.delete.assert_not_called()
 
+    def test_sign_in_never_connects_the_calendar(self, signin):
+        """Only the calendar consent flow creates the token row. A student who
+        pressed Disconnect has none, and Google keeps including the calendar
+        in later grants: sign-in updates the row if there is one, and never
+        creates it, so Disconnect sticks."""
+        _, tables, _ = signin(granted=IDENTITY + CALENDAR)
+        t = tables["oauth_tokens"]
+        t.upsert.assert_not_called()
+        t.insert.assert_not_called()
+
     def test_no_refresh_token_keeps_the_stored_one(self, signin):
         _, tables, _ = signin(granted=IDENTITY + CALENDAR, refresh=None)
-        row = tables["oauth_tokens"].upsert.call_args.args[0]
+        row = tables["oauth_tokens"].update.call_args.args[0]
         assert "refresh_token" not in row
         assert decrypt(row["access_token"]) == "access-tok"
 
@@ -300,6 +309,19 @@ class TestCancelledSignIn:
         loc = urlparse(r.headers["location"])
         assert loc.path == "/auth/callback"
         assert parse_qs(loc.query) == {"error": ["cancelled"], "popup_id": ["popup-1"]}
+
+    def test_a_cancel_that_is_not_this_sign_ins_leaves_it_alone(self, monkeypatch):
+        """A stray tab or a crafted link with Google's error but another (or no)
+        state must not end the pending sign-in: its cookie stays, the popup is
+        not told, and Google's real callback can still complete it."""
+        client, _, flow_cls = self._client(monkeypatch, popup_id="popup-1")
+        other = auth_module._encode_state({"action": "signin", "n": "someone-else"})
+        for query in (f"error=access_denied&state={other}", "error=access_denied"):
+            r = client.get(f"/api/auth/google/callback?{query}", follow_redirects=False)
+            assert r.status_code in (302, 307)
+            assert r.headers["location"] == f"{FRONTEND}/?error=cancelled"
+            assert auth_module.OAUTH_STATE_COOKIE not in r.headers.get("set-cookie", "")
+        flow_cls.from_client_config.assert_not_called()
 
     def test_no_code_at_all_is_cancelled_not_a_422(self, monkeypatch):
         client, state, flow_cls = self._client(monkeypatch)
