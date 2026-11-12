@@ -22,10 +22,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.auth as auth_module
-import routes.calendar as cal
+import routes.calendar as calendar_routes
+import routes.calendar_connect as cal
 from tests.split_patches import set_auth_session_secret
 
-# Mount ONLY the calendar router so these tests don't pull in main.py's full
+# Mount ONLY the calendar consent router so these tests don't pull in main.py's full
 # router + logfire stack (mirrors test_auth_state.py).
 _app = FastAPI()
 _app.include_router(cal.router, prefix="/api/calendar")
@@ -44,7 +45,7 @@ CALENDAR = list(cal.GOOGLE_SCOPES)
 
 def _mock_flow(monkeypatch, *, token="acc", refresh="ref", expiry=None,
                granted=IDENTITY + CALENDAR):
-    """Patch routes.calendar.Flow so no real Google network hop happens.
+    """Patch routes.calendar_connect.Flow so no real Google network hop happens.
     `granted` is the token response's scope list (include_granted_scopes:
     the sign-in's identity scopes come back too)."""
     flow = MagicMock(name="flow")
@@ -321,11 +322,11 @@ class TestStoredRefreshToken:
             c.refresh_token = kw.get("refresh_token")
             return c
 
-        monkeypatch.setattr(cal, "Credentials", _creds, raising=False)
-        monkeypatch.setattr(cal, "decrypt", lambda v: f"DEC({v})")
+        monkeypatch.setattr(calendar_routes, "Credentials", _creds, raising=False)
+        monkeypatch.setattr(calendar_routes, "decrypt", lambda v: f"DEC({v})")
         fake_table = MagicMock()
-        monkeypatch.setattr(cal, "table", fake_table)
-        cal._get_refreshed_credentials({
+        monkeypatch.setattr(calendar_routes, "table", fake_table)
+        calendar_routes._get_refreshed_credentials({
             "user_id": "user_a", "access_token": "enc_acc", "refresh_token": None,
             "expires_at": "2000-01-01T00:00:00+00:00",
         })
@@ -344,17 +345,17 @@ class TestRefreshExpiresAt:
         fake_table.return_value.update.side_effect = (
             lambda *a, **k: updates.append((a, k))
         )
-        monkeypatch.setattr(cal, "table", fake_table)
-        monkeypatch.setattr(cal, "encrypt", lambda v: f"ENC({v})")
-        monkeypatch.setattr(cal, "decrypt", lambda v: v)
+        monkeypatch.setattr(calendar_routes, "table", fake_table)
+        monkeypatch.setattr(calendar_routes, "encrypt", lambda v: f"ENC({v})")
+        monkeypatch.setattr(calendar_routes, "decrypt", lambda v: v)
 
         creds = MagicMock()
         creds.refresh_token = "ref"
         creds.token = "newacc"
         creds.expiry = None
         creds.refresh = MagicMock()
-        monkeypatch.setattr(cal, "Credentials", MagicMock(return_value=creds), raising=False)
-        monkeypatch.setattr(cal, "Request", MagicMock(), raising=False)
+        monkeypatch.setattr(calendar_routes, "Credentials", MagicMock(return_value=creds), raising=False)
+        monkeypatch.setattr(calendar_routes, "Request", MagicMock(), raising=False)
 
         token_row = {
             "user_id": "user_a",
@@ -362,7 +363,7 @@ class TestRefreshExpiresAt:
             "refresh_token": "enc_ref",
             "expires_at": "2000-01-01T00:00:00+00:00",  # far past → forces refresh
         }
-        cal._get_refreshed_credentials(token_row)
+        calendar_routes._get_refreshed_credentials(token_row)
 
         assert updates, "expected an oauth_tokens update on refresh"
         (args, _kwargs) = updates[-1]

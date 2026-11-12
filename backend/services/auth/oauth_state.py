@@ -145,7 +145,7 @@ def granted_scopes(creds, requested) -> frozenset[str]:
     request, so an absent one means `requested`.
 
     The code exchange runs on a Flow built WITHOUT scopes (routes/auth.py,
-    routes/calendar.py): oauthlib otherwise raises "Scope has changed" on
+    routes/calendar_connect.py): oauthlib otherwise raises "Scope has changed" on
     any difference, which failed the exchange in exactly those two cases.
     This is the check instead."""
     raw = getattr(creds, "granted_scopes", None)

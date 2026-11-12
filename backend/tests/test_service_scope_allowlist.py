@@ -53,7 +53,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "friendships are cross-user (plan §6.3: social last)",
     # ── Endpoints ──
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
-    ("routes/calendar.py", "calendar_callback", "service_route"):
+    ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
     ("routes/gamification.py", "get_leaderboard", "service_route"):
         "cross-user projection (everyone's weekly XP); scope + privacy applied in code",

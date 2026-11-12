@@ -1,7 +1,7 @@
 """Sign-in asks Google for identity only (owner decision, 2026-11-12).
 
 * ``AUTH_SCOPES`` is openid/email/profile; calendar access has its own consent
-  flow (routes/calendar.py). ``/google`` asks Google to include the scopes the
+  flow (routes/calendar_connect.py). ``/google`` asks Google to include the scopes the
   student granted before, so a student who connected the calendar keeps
   calendar-capable tokens, and the callback stores tokens ONLY from a grant
   that covers the calendar scopes. An identity-only grant never replaces a

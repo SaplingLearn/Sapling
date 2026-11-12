@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
+from routes import graph, learn, quiz, calendar, calendar_connect, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
@@ -442,6 +442,8 @@ app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
+# The Google Calendar consent flow (/auth-url, /callback), split out of calendar.py.
+app.include_router(calendar_connect.router, prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
 # Social stays service role until step 2e: room_messages has no policies or
 # grants yet, and invite-code join / owner transfer / room teardown /
 # two-sided friendships are cross-user by design (plan §6.3: social last).

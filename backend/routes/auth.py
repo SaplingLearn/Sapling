@@ -2,7 +2,7 @@
 backend/routes/auth.py
 
 Google OAuth sign-in. Identity only (openid, email, profile): calendar access
-has its own consent flow (routes/calendar.py), and a student who granted it
+has its own consent flow (routes/calendar_connect.py), and a student who granted it
 before keeps it (services/auth/signin.py). Restricts sign-in to the configured
 email domains (default @bu.edu).
 """
