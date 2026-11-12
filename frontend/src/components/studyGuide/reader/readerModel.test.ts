@@ -13,7 +13,6 @@ import {
   countdownLabel,
   daysLeftLabel,
   daysUntil,
-  dueDateLabel,
   findSource,
   liveTier,
   progressTitle,
@@ -49,11 +48,6 @@ describe("the exam countdown", () => {
     expect(daysLeftLabel(0)).toBe("Today");
     expect(daysLeftLabel(1)).toBe("1 day left");
     expect(daysLeftLabel(6)).toBe("6 days left");
-  });
-
-  it("names the due date without the year", () => {
-    expect(dueDateLabel("2026-03-17")).toBe("Tue, Mar 17");
-    expect(dueDateLabel(null)).toBe("");
   });
 });
 

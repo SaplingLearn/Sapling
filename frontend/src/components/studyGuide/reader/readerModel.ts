@@ -1,9 +1,9 @@
 /**
  * What the reader shows, derived from a guide. Pure: no React, no network.
  */
+import { dueDay } from "@/components/studyGuide/shared/dates";
+import { newLecturesText, plural } from "@/components/studyGuide/shared/labels";
 import type {
-  Depth,
-  Goal,
   GuideContent,
   GuideDetail,
   Section,
@@ -14,20 +14,6 @@ import type {
 
 export type ViewMode = "read" | "skim";
 
-export const GOAL_LABEL: Record<Goal, string> = {
-  practice: "Practice",
-  review: "Review",
-  exam_prep: "Exam prep",
-};
-
-export const DEPTH_LABEL: Record<Depth, string> = {
-  cram: "Cram sheet",
-  standard: "Standard",
-  deep: "Deep review",
-};
-
-export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 /** The id a section is anchored and tested under. */
 export const sectionAnchor = (sectionId: string) => `guide-section-${sectionId}`;
 export const SOURCES_ANCHOR = "guide-sources";
@@ -37,16 +23,9 @@ export const sectionNumber = (index: number) => String(index + 1).padStart(2, "0
 
 const DAY_MS = 86_400_000;
 
-/** A `YYYY-MM-DD` (or ISO) date as UTC midnight, or null when it is not one. */
-function dayOf(date: string | null): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date ?? "");
-  if (!match) return null;
-  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-}
-
 /** Whole days from today to the due date. Null with no date, or one that has passed. */
 export function daysUntil(dueDate: string | null, now: Date): number | null {
-  const due = dayOf(dueDate);
+  const due = dueDay(dueDate);
   if (due === null) return null;
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   const days = Math.round((due - today) / DAY_MS);
@@ -61,18 +40,6 @@ export function countdownLabel(scopeLabel: string, days: number): string {
 /** "6 days left". */
 export const daysLeftLabel = (days: number) => (days === 0 ? "Today" : `${plural(days, "day")} left`);
 
-/** "Wed, Nov 18", or "" when there is no date. */
-export function dueDateLabel(dueDate: string | null): string {
-  const due = dayOf(dueDate);
-  if (due === null) return "";
-  return new Date(due).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
 /** "6 sources · about 14 min". The time is left off until the guide has one. */
 export function sourcesLabel(sources: number, minutes: number): string {
   const count = plural(sources, "source");
@@ -80,7 +47,7 @@ export function sourcesLabel(sources: number, minutes: number): string {
 }
 
 /** "2 new lectures since this guide was made". */
-export const staleLabel = (count: number) => `${plural(count, "new lecture")} since this guide was made`;
+export const staleLabel = (count: number) => `${newLecturesText(count)} since this guide was made`;
 
 /** The space bar, read off the sections so it fills in with the outline. */
 export function sectionBars(content: GuideContent): SectionBar[] {

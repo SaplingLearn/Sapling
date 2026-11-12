@@ -5,9 +5,11 @@ import { Chip } from "@/components/ui";
 import type { GuideCard as Guide, GuideCounts } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref } from "@/lib/toolHrefs";
 
+import { GoalDepthChips } from "../shared/GoalDepthChips";
+import { newLecturesText } from "../shared/labels";
 import { SpaceBar, widestBar } from "../shared/SpaceBar";
 import { tierLabel, tierText } from "../shared/tiers";
-import { DEPTH_LABEL, GOAL_LABEL, dateText, newLecturesText, statusText } from "./guidesModel";
+import { dateText, statusText } from "./guidesModel";
 import s from "./home.module.css";
 
 const FIGURES: { key: keyof GuideCounts; one: string; many: string }[] = [
@@ -41,8 +43,7 @@ export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
         <div className={s.foot}>
           <span className={s.chips}>
             <Chip>{guide.scope_label}</Chip>
-            <Chip variant="accent">{GOAL_LABEL[guide.goal]}</Chip>
-            <Chip>{DEPTH_LABEL[guide.depth]}</Chip>
+            <GoalDepthChips goal={guide.goal} depth={guide.depth} />
           </span>
           <span className={s.course}>{guide.course_name}</span>
         </div>

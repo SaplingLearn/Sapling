@@ -1,6 +1,8 @@
 "use client";
+import { dueDateText } from "@/components/studyGuide/shared/dates";
+
 import { useReader } from "../ReaderContext";
-import { dueDateLabel, readCount, type SectionPhase } from "../readerModel";
+import { readCount, type SectionPhase } from "../readerModel";
 import { AskBox } from "./AskBox";
 import { Outline } from "./Outline";
 import { ProgressRing } from "./ProgressRing";
@@ -30,7 +32,7 @@ export function Rail({
         read={readCount(guide)}
         total={guide.content.sections.length}
         scopeLabel={guide.scope_label}
-        dueLabel={dueDateLabel(guide.due_date)}
+        dueLabel={dueDateText(guide.due_date)}
         days={days}
       />
       {guide.new_materials > 0 && <StaleBanner count={guide.new_materials} busy={generating} onUpdate={onUpdate} />}

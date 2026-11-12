@@ -1,12 +1,13 @@
 "use client";
 import { Icon } from "@/components/Icon";
+import { GoalDepthChips } from "@/components/studyGuide/shared/GoalDepthChips";
 import { SpaceBar } from "@/components/studyGuide/shared/SpaceBar";
 import { Chip } from "@/components/ui";
 import type { GuideDetail } from "@/lib/studyGuide/types";
 
 import { GuideMenu } from "./GuideMenu";
 import s from "./reader.module.css";
-import { countdownLabel, DEPTH_LABEL, GOAL_LABEL, sectionBars, sourcesLabel } from "./readerModel";
+import { countdownLabel, sectionBars, sourcesLabel } from "./readerModel";
 
 function GuideChips({ guide, days }: { guide: GuideDetail; days: number | null }) {
   const sources = guide.content.sources.length;
@@ -15,8 +16,7 @@ function GuideChips({ guide, days }: { guide: GuideDetail; days: number | null }
       <Chip variant="warn" icon={<Icon name="sparkle" size={11} />}>
         AI generated
       </Chip>
-      <Chip variant="accent">{GOAL_LABEL[guide.goal]}</Chip>
-      <Chip>{DEPTH_LABEL[guide.depth]}</Chip>
+      <GoalDepthChips goal={guide.goal} depth={guide.depth} />
       {days !== null && <Chip variant="err">{countdownLabel(guide.scope_label, days)}</Chip>}
       {sources > 0 && <span className={s.chipNote}>{sourcesLabel(sources, guide.counts.minutes)}</span>}
     </div>

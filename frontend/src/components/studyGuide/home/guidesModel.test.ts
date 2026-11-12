@@ -3,13 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { GuideCard } from "@/lib/studyGuide/types";
 
 import {
-  DEPTH_LABEL,
-  GOAL_LABEL,
   SORTS,
   dateText,
   guideDate,
   libraryGuides,
-  newLecturesText,
   searchGuides,
   sortGuides,
   sortLabel,
@@ -32,9 +29,7 @@ const C = guide({ id: "c", title: "Arrays", scope_label: "Lab 5", generated_at: 
 const ids = (guides: GuideCard[]) => guides.map(g => g.id);
 
 describe("labels", () => {
-  it("names every goal, depth and sort", () => {
-    expect(GOAL_LABEL).toEqual({ practice: "Practice", review: "Review", exam_prep: "Exam prep" });
-    expect(DEPTH_LABEL).toEqual({ cram: "Cram sheet", standard: "Standard", deep: "Deep review" });
+  it("names every sort", () => {
     expect(SORTS.map(s => s.label)).toEqual(["Most recent", "Oldest", "Class"]);
     expect(sortLabel("class")).toBe("Class");
   });
@@ -90,14 +85,6 @@ describe("dateText", () => {
 
   it("falls back to the row's date for a guide not written yet", () => {
     expect(dateText(C, NOW)).toBe("Nov 9");
-  });
-});
-
-describe("newLecturesText", () => {
-  it("counts the lectures added since, and says nothing for none", () => {
-    expect(newLecturesText(0)).toBe("");
-    expect(newLecturesText(1)).toBe("1 new lecture");
-    expect(newLecturesText(2)).toBe("2 new lectures");
   });
 });
 

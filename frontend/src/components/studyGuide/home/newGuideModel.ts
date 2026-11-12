@@ -11,7 +11,8 @@ import type {
   ScopeOption,
 } from "@/lib/studyGuide/types";
 
-import { DEPTH_LABEL, GOAL_LABEL } from "./guidesModel";
+import { dueDateText } from "../shared/dates";
+import { DEPTH_LABEL, GOAL_LABEL } from "../shared/labels";
 
 /** The most materials one guide is written from (the request's own limit). */
 export const MAX_MATERIALS = 30;
@@ -40,17 +41,9 @@ const KIND_LABEL: Record<ScopeOption["kind"], string> = {
   assignment: "Assignment",
 };
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "Nov 21" from a date or timestamp, read as written (no timezone shift). */
-function dueText(iso: string): string {
-  const [, month, day] = iso.slice(0, 10).split("-").map(Number);
-  return MONTHS[month - 1] && day ? `${MONTHS[month - 1]} ${day}` : "";
-}
-
 /** The line under a scope's title: what it is, and when it is due. */
 export function scopeNote(scope: ScopeOption): string {
-  const due = scope.due_date ? dueText(scope.due_date) : "";
+  const due = dueDateText(scope.due_date);
   return due ? `${KIND_LABEL[scope.kind]} · due ${due}` : KIND_LABEL[scope.kind];
 }
 

@@ -1,6 +1,7 @@
+import { plural } from "@/components/studyGuide/shared/labels";
 import { Chip } from "@/components/ui";
 
-import { daysLeftLabel, plural, progressTitle } from "../readerModel";
+import { daysLeftLabel, progressTitle } from "../readerModel";
 import s from "./rail.module.css";
 
 const RADIUS = 31;

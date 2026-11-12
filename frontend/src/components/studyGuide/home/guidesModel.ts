@@ -3,7 +3,7 @@
  * keeps, the order a sort puts them in, and the words on a card.
  */
 import { fmtWhen } from "@/components/study/studyModel";
-import type { Depth, Goal, GuideCard, GuideStatus } from "@/lib/studyGuide/types";
+import type { GuideCard, GuideStatus } from "@/lib/studyGuide/types";
 
 export type SortKey = "recent" | "oldest" | "class";
 
@@ -15,18 +15,6 @@ export const SORTS: { key: SortKey; label: string }[] = [
 
 export const sortLabel = (key: SortKey): string =>
   SORTS.find(sort => sort.key === key)?.label ?? "";
-
-export const GOAL_LABEL: Record<Goal, string> = {
-  practice: "Practice",
-  review: "Review",
-  exam_prep: "Exam prep",
-};
-
-export const DEPTH_LABEL: Record<Depth, string> = {
-  cram: "Cram sheet",
-  standard: "Standard",
-  deep: "Deep review",
-};
 
 /** When the guide was written. One still being written has only its row's date. */
 export const guideDate = (guide: GuideCard): string => guide.generated_at ?? guide.created_at;
@@ -59,12 +47,6 @@ export function dateText(guide: GuideCard, now: Date): string {
   const when = fmtWhen(iso, now);
   const year = new Date(iso).getFullYear();
   return when && year !== now.getFullYear() ? `${when}, ${year}` : when;
-}
-
-/** "2 new lectures", or nothing when the class has added none since. */
-export function newLecturesText(count: number): string {
-  if (count <= 0) return "";
-  return count === 1 ? "1 new lecture" : `${count} new lectures`;
 }
 
 /** What a guide that is not ready says in its place. */

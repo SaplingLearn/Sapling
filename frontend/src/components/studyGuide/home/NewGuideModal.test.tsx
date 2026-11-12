@@ -97,7 +97,7 @@ describe("class and scope", () => {
     await user.click(screen.getByTestId("guide-new-scope"));
     const options = within(screen.getByRole("listbox")).getAllByRole("option").map(option => option.textContent);
     // The whole course, the exam with its due date, the assignment.
-    expect(options).toEqual(["Whole courseWhole course✓", "Midterm 2Exam · due Nov 21", "Lab 5Assignment"]);
+    expect(options).toEqual(["Whole courseWhole course✓", "Midterm 2Exam · due Sat, Nov 21", "Lab 5Assignment"]);
   });
 
   it("reads the options of the active term", async () => {

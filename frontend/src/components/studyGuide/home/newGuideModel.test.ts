@@ -69,8 +69,8 @@ describe("scopes", () => {
 
   it("notes what a scope is, and its due date when it has one", () => {
     expect(scopeNote(COURSE)).toBe("Whole course");
-    expect(scopeNote(EXAM)).toBe("Exam · due Nov 21");
-    expect(scopeNote(LAB)).toBe("Assignment · due Nov 18");
+    expect(scopeNote(EXAM)).toBe("Exam · due Sat, Nov 21");
+    expect(scopeNote(LAB)).toBe("Assignment · due Wed, Nov 18");
     expect(scopeNote({ ...EXAM, due_date: "soon" })).toBe("Exam");
   });
 });
