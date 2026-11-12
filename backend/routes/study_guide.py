@@ -9,7 +9,7 @@ function on the package: ``routes.study_guide.study_guides.<name>``.
 from __future__ import annotations
 
 import uuid
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -97,8 +97,11 @@ async def generate_guide(user_id: str, guide_id: str, body: GenerateBody, reques
     )
 
     async def event_stream():
-        async for event in study_guides.stream_generation(generation):
-            yield sapling_event_to_sse(event)
+        # aclosing: a client that goes away closes the run at once, so its
+        # claim is released then and not whenever the generator is collected.
+        async with aclosing(study_guides.stream_generation(generation)) as events:
+            async for event in events:
+                yield sapling_event_to_sse(event)
 
     return EventSourceResponse(
         event_stream(),

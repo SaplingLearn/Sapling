@@ -290,9 +290,9 @@ _BLOCK_RULES: dict[str, str] = {
         "For a kind of problem the student will be asked to solve. 2 to 6 "
         "steps. The page reveals one step at a time, so each step carries its "
         "own working in math and its own reason in why. A step's title is at "
-        "most 80 characters and its math at most 200 characters; a LaTeX "
-        "backslash in math is written twice, as in latex. Prefer a problem from "
-        "the sources; then cite it."
+        "most 80 characters and its math at most 200 characters. math is shown "
+        "as plain text, exactly as written: no LaTeX there, use ordinary symbols "
+        "(x, /, ^, <=). Prefer a problem from the sources; then cite it."
     ),
     "comparison": (
         "For two or three things students mix up. columns names the 2 or 3 "
@@ -416,7 +416,10 @@ as one paragraph of its run. Keep it under 1000 characters, because a longer \
 sample is dropped. A fence with no language, or with json, is read as a \
 block, so always name the language.
 - Mark a key term with double asterisks the first time it appears: \
-**base case**. Inline math goes in $...$.
+**base case**. Inline math goes in $...$. A bare $ therefore starts math: \
+in prose write a money amount with a backslash before the sign (\\$4, \\$5.50). \
+Inside a block's JSON strings write money plainly ($4), because block text \
+is not parsed for math.
 - When a sentence states something from a source, end it with that source's \
 label in square brackets: ... before every pass [S2]. Cite only labels that \
 appear in SOURCES.
