@@ -88,6 +88,9 @@ renders the element.
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
+| Study guide reader | `guide` | `frontend/src/components/studyGuide/reader/**` (the `/study/guide/{guideId}` screen: `GuideReader.tsx` mounts `ReaderTopBar`, `GuideHeader` + `GuideMenu`, `GenerationBanner`, `SectionView` + `Prose`, one file per block type under `blocks/` inside the shared `BlockFrame`, `Sources`, `FeedbackRow` and the rail under `rail/`); `guide-space-bar` is `studyGuide/shared/SpaceBar.tsx`. The ids on `ui/Toggle`, `ui/AnswerOption` and `ui/InlineBanner` are passed in as a `testid` prop |
+| Study Guides home | `guides` | `frontend/src/components/studyGuide/home/GuidesHome.tsx` (the `/study/guide` screen) + `GuidesToolbar.tsx`, `SortMenu.tsx`, `GuideCard.tsx`, `GuidesStates.tsx` |
+| New study guide dialog | `guide-new` | `frontend/src/components/studyGuide/home/NewGuideModal.tsx` (opened from the home) + `ScopeFields.tsx`, `ChoiceFields.tsx`, `MaterialTiles.tsx`, `PlannedOutline.tsx`. The ids on `CustomSelect`, `ui/Toggle` and `ui/Switch` are passed in as a `testId` / `testid` prop |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
@@ -698,6 +701,117 @@ Added with the upload → SSE → library journey (#387).
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
 | `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
 | `library-load-retry` | that notice's "Try again" / "Retry" button |
+| `library-guide-{guideId}` | one saved study guide's card in the "Study guides" section over the documents (`studyGuide/home/LibraryGuides.tsx`, mounted by `screens/Library.tsx`); a link to the reader, suffixed with the guide's id. The section is absent when no saved guide matches the course filter and search |
+
+### `guide`
+
+The study-guide reader (`/study/guide/{guideId}`), added with the study-guide
+redesign. `{sectionId}`, `{itemId}` and `{blockId}` are the ids the guide's
+content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
+
+| testid | element |
+| --- | --- |
+| `guide-mode` | the top bar's Read / Skim toggle (container) |
+| `guide-mode-read` / `guide-mode-skim` | its two options |
+| `back-link` | the shared `BackLink` in the top bar; here it goes to the Study Guides home |
+| `guide-load-error` | the guide could not be loaded (`role="alert"`) |
+| `guide-generating` | the banner that follows the page while the guide is being written: the current label and "Step n of m" |
+| `guide-generation-error` | the banner when a generation stopped, or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
+| `guide-generation-retry` | its "Retry" button (runs a `resume` generation) |
+| `guide-title` | the guide's title (`<h1>`) |
+| `guide-menu` | the three-dot menu button beside the title |
+| `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |
+| `guide-menu-saved` | menu item "Saved to Library", a link to `/library` (only once saved) |
+| `guide-menu-export` | menu item "Export PDF" (the browser's print dialog) |
+| `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while generating) |
+| `guide-space-bar` | the bar that shows each section's share of the guide by mastery (`shared/SpaceBar.tsx`). Also rendered on every home card and in the dialog's planned outline, so scope it to its parent there |
+| `guide-section-{sectionId}` | one section (also its anchor `id`) |
+| `guide-section-read-{sectionId}` | the section's "Mark as read" / "Read" toggle (`aria-pressed`; disabled until the section is written) |
+| `guide-section-expand-{sectionId}` | a mastered section's "Show full section" / "Hide full section" |
+| `guide-section-retry-{sectionId}` | "Try again" on a section that could not be written (runs a `resume` generation; disabled while one runs) |
+| `guide-prose-{itemId}` | one prose passage in Read mode |
+| `guide-skim-{itemId}` | the same passage's one-line summary in Skim mode (absent when it has none) |
+| `guide-block-{blockId}` | one typed block, whatever its type (the shared frame) |
+| `guide-block-regenerate-{blockId}` | the block's "Regenerate" (not on a check block; hidden while the guide is generating) |
+| `guide-chart-state-{blockId}` | a chart's Before / After toggle (container; only when the chart has an After state) |
+| `guide-chart-state-{blockId}-before` / `-after` | its two options |
+| `guide-step-next-{blockId}` | a worked example's "Show first step" / "Show next step" |
+| `guide-step-reset-{blockId}` | a worked example's "Start over" |
+| `guide-concept-{blockId}-{idx}` | one concept-map tile (render index; `aria-pressed` while its tutor prompts are open) |
+| `guide-concept-prompt-{blockId}-{idx}` | one tutor prompt for the selected tile (render index: 0 simpler, 1 example, 2 quiz me) |
+| `guide-concept-close-{blockId}` | closes the tutor prompts |
+| `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`) |
+| `guide-check-result-{blockId}` | the result line after an answer: correct or not, the explanation, and the mastery change when there was one |
+| `guide-sources` | the sources list (also the anchor every citation links to) |
+| `guide-feedback-yes` / `guide-feedback-no` | the "Was this guide useful?" answers (`aria-pressed`) |
+| `guide-progress` | the rail's progress ring: sections read, what the guide is for, days left |
+| `guide-stale` | the rail's "n new lectures since this guide was made" notice |
+| `guide-update` | its "Update guide" button (runs an `update` generation) |
+| `guide-updated` | the "Guide is up to date" notice after an Update finished in this visit |
+| `guide-outline-{sectionId}` | the rail outline's link to a section, with its mastery or writing state |
+| `guide-outline-read-{sectionId}` | the rail outline's read mark for a section (`aria-pressed`) |
+| `guide-ask-input` | the rail's "Ask about this guide" input |
+| `guide-ask-send` | its send button (opens the tutor on a new session) |
+
+### `guides`
+
+The Study Guides home (`/study/guide`), added with the study-guide redesign.
+
+| testid | element |
+| --- | --- |
+| `back-link` | the shared `BackLink` in the top bar; here it goes to the Study hub |
+| `guides-search` | the toolbar's search input (title, class, scope) |
+| `guides-sort` | the sort button; its text is the current choice |
+| `guides-sort-{key}` | one sort menu item: `recent`, `oldest`, `class` |
+| `guides-new` | the toolbar's "New study guide" button |
+| `guides-grid` | the list of guide cards |
+| `guides-card-{guideId}` | one guide's card, a link to the reader; `data-status` is the guide's status |
+| `guides-card-status-{guideId}` | "Writing…" or "Could not finish" on a card whose guide is not ready |
+| `guides-card-new-{guideId}` | "n new lectures" on a card (only when there are some) |
+| `guides-card-saved-{guideId}` | "Saved" on a card whose guide is in the Library |
+| `guides-card-room-{guideId}` | "Most room: section, status" under the card's bar |
+| `guides-card-sections-{guideId}` / `-blocks-` / `-practice-` / `-minutes-` | the card's four numbers |
+| `guides-loading` | the skeleton grid while the list loads (`aria-busy`) |
+| `guides-empty` | the empty state when the student has no guide |
+| `guides-empty-new` | its "New study guide" button |
+| `guides-no-match` | "No guide matches ..." when the search keeps none |
+| `guides-load-error` | the list could not be loaded (`role="alert"`) |
+| `guides-load-retry` | its "Try again" button |
+
+One guide testid lives outside the two screens:
+
+| testid | element |
+| --- | --- |
+| `recent-g{guideId}` | a study guide's row in the Study hub's Recent Activity (`components/study/RecentActivity.tsx`), a link to the reader. The suffix is the row's key: `g` + the guide's id. Quiz and flashcard rows are not links and carry no testid |
+
+### `guide-new`
+
+The New study guide dialog on the Study Guides home.
+
+| testid | element |
+| --- | --- |
+| `guide-new-dialog` | the dialog's body |
+| `guide-new-class` | the Class select's trigger |
+| `guide-new-class-option-{courseId}` | one class in its list |
+| `guide-new-scope` | the "Studying for" select's trigger |
+| `guide-new-scope-option-{scopeKey}` | one scope in its list: `course`, `exam:{id}` or `assignment:{id}` |
+| `guide-new-goal` | the Goal toggle (container) |
+| `guide-new-goal-{goal}` | its options: `practice`, `review`, `exam_prep` |
+| `guide-new-depth` | the Depth toggle (container) |
+| `guide-new-depth-{depth}` | its options: `cram`, `standard`, `deep` |
+| `guide-new-materials-count` | "n of m selected", or the note that the class has no material yet |
+| `guide-new-materials-suggested` / `-all` / `-none` | the three quick picks over the tiles |
+| `guide-new-material-{documentId}` | one material tile (`aria-pressed`; `aria-disabled` when the cap is reached and it is off) |
+| `guide-new-upload` | the "Add from Library or upload" tile |
+| `guide-new-materials-cap` | the note shown once 30 materials are selected |
+| `guide-new-options-retry` | "Try again" when the class's materials could not be loaded |
+| `guide-new-history` | the "Use my quiz history and mastery" switch |
+| `guide-new-outline` | the planned outline panel (`aria-busy` while it is planned again) |
+| `guide-new-outline-section-{idx}` | one planned section (render index; `data-tier` is its mastery tier) |
+| `guide-new-outline-minutes` | "about n min" |
+| `guide-new-error` | why the guide could not be created (`role="alert"`) |
+| `guide-new-cancel` | the footer's "Cancel" |
+| `guide-new-generate` | the footer's "Generate guide" (disabled until there is a class and a material) |
 
 ### `landing-graph`
 
@@ -879,6 +993,12 @@ dozens of untagged buttons and inputs (the deck grid, the set builder, the revie
 rating row, the dates editor) that journeys reach by role and name, as the
 inventory notes say; enrolling those files means tagging each control, which
 is for whoever first needs one by id.
+
+The study-guide files (`guide`, `guides` and `guide-new` surfaces) joined the
+`files` list with no baselined backlog: every file under
+`components/studyGuide/` that renders a `<button>`, `<input>` or `<textarea>`
+is listed, and each of those elements entered tagged. A new file there that
+renders one must be added to the list.
 
 ### Adding a surface
 
