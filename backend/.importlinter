@@ -48,6 +48,9 @@ ignore_imports =
     db.seed_local_owner -> services.encryption
     db.seed_local_owner -> services.profiles
     db.seed_local_rich -> services.encryption
+    # The rich seed builds its sample study guide from the guide contract's
+    # own models, so the seeded content always validates against it.
+    db.seed_local_rich -> models.study_guide
     # The local study seed also stores a course outline under the hash the app
     # would compute for it (so the Study page does not regenerate it), which
     # only the outline service can produce.

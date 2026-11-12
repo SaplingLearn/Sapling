@@ -135,7 +135,39 @@ def test_study_guides_content_is_ciphertext_and_decrypts(db_conn):
     raw = _raw(db_conn, "study_guides", "id", "rich-guide-cs-f25-mid", "content")
     assert isinstance(raw, str), "content stored as PLAINTEXT JSONB — encryption regressed"
     decoded = decrypt_json(raw)
-    assert decoded["exam"] == "Midterm Exam"
+    assert decoded["title"] == "Variables, control flow and functions"
+    assert decoded["scope_label"] == "Midterm Exam"
+
+
+def test_study_guides_previous_content_and_answers_are_ciphertext_and_decrypt(db_conn):
+    """The seed leaves both NULL (a guide never updated, no check answered), so
+    this one writes them through the store, the only writer of the table, and
+    reads them back raw. It also runs the once-only answer's compare-and-set
+    against the real `updated_at` trigger."""
+    import asyncio
+
+    from models.study_guide import CheckAnswer
+    from services.study_guides import store
+
+    user, guide_id = "rich-user-active", "rich-guide-cs-f25-mid"
+    seeded = asyncio.run(store.aload_guide(user, guide_id))
+    rewritten = seeded.content.model_copy(update={"title": "Rewritten for the round trip"})
+    saved = asyncio.run(store.asave_content(seeded, rewritten, keep_previous=True))
+    answer = CheckAnswer(option_id="b", correct=True)
+    assert asyncio.run(store.arecord_answer(saved, "s2-i4", answer)) is True
+    # A second click that loaded the guide before the first one wrote.
+    assert asyncio.run(store.arecord_answer(saved, "s2-i4", answer)) is False
+
+    previous = _raw(db_conn, "study_guides", "id", guide_id, "previous_content")
+    assert isinstance(previous, str), "previous_content stored as PLAINTEXT JSONB"
+    assert "recursive traces" not in previous
+    assert decrypt_json(previous) == seeded.content.model_dump(mode="json")
+
+    answers = _raw(db_conn, "study_guides", "id", guide_id, "answers")
+    assert isinstance(answers, str), "answers stored as PLAINTEXT JSONB"
+    assert "option_id" not in answers
+    assert decrypt_json(answers) == {"s2-i4": {"option_id": "b", "correct": True}}
+    assert asyncio.run(store.aload_guide(user, guide_id)).content == rewritten
 
 
 def test_documents_concept_notes_uses_json_encryption(db_conn):

@@ -6,7 +6,8 @@ import db.seed_local_rich as rich
 from db import seed_helpers as h, seed_local_owner as owner_seed
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
-from services.encryption import decrypt, encrypt
+from models.study_guide import GuideContent
+from services.encryption import decrypt, decrypt_json, encrypt
 from services import profiles
 from tests.seed_memory_db import MemoryDatabase
 
@@ -144,6 +145,70 @@ def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(local_databas
             parent_ids = {row["id"] for row in local_database.rows[parent]}
             orphans = [row.get("id") for row in local_database.rows[child] if row[field] not in parent_ids]
             assert judges.orphan_findings(f"{child}->{parent}", orphans) == []
+
+
+def _seeded_guide(db, user_id):
+    row = next(r for r in db.rows["study_guides"] if r["user_id"] == user_id)
+    return row, GuideContent.model_validate(decrypt_json(row["content"]))
+
+
+def test_the_seeded_guide_is_a_ready_format_2_guide_with_every_seedable_block(local_database):
+    rich.main([])
+    row, content = _seeded_guide(local_database, rich.USER_ACTIVE)
+
+    assert row["id"] == rich.GUIDE_CS_MIDTERM
+    assert (row["format"], row["status"], row["scope_kind"]) == (2, "ready", "exam")
+    assert row.get("saved_at") is None and row.get("answers") is None
+    assert [s.id for s in content.sections] == ["s1", "s2", "s3"]
+    assert {s.status for s in content.sections} == {"written"}
+    assert sum(s.weight for s in content.sections) == 100
+    items = [item for s in content.sections for item in s.items]
+    assert {item.type for item in items} == {
+        "prose", "formula", "worked_example", "comparison", "key_terms", "concept_map", "check"}
+    assert all(item.id.startswith(f"{s.id}-i") for s in content.sections for item in s.items)
+    assert len({item.id for item in items}) == len(items)
+    assert all(item.summary for item in items if item.type == "prose")
+    for check in (item for item in items if item.type == "check"):
+        assert check.correct_id in {option.id for option in check.options}
+        assert check.explain_correct and check.explain_incorrect
+
+
+def test_the_seeded_guide_names_concepts_and_documents_the_seed_gives_that_user(local_database):
+    rich.main([])
+    row, content = _seeded_guide(local_database, rich.USER_ACTIVE)
+    nodes = {
+        n["concept_name"]: n["mastery_tier"] for n in local_database.rows["graph_nodes"]
+        if n["user_id"] == rich.USER_ACTIVE and n["course_id"] == rich.COURSE_CS
+    }
+    items = [item for s in content.sections for item in s.items]
+
+    assert {s.concept: s.tier for s in content.sections} == {
+        name: nodes[name] for name in ("Variables and Types", "Control Flow", "Recursion")}
+    assert {item.concept for item in items if item.type == "check"} <= set(nodes)
+    assert {n.concept for item in items if item.type == "concept_map" for n in item.nodes} <= set(nodes)
+
+    documents = {
+        d["id"]: d["file_name"] for d in local_database.rows["documents"]
+        if d["user_id"] == rich.USER_ACTIVE and d["offering_id"] == rich.OFF_CS_F25
+    }
+    assert row["material_ids"] == list(documents) and documents
+    assert {s.id: s.name for s in content.sources} == {
+        f"document:{doc_id}": name for doc_id, name in documents.items()}
+    cited = {c for item in items if item.type == "prose" for p in item.paragraphs for c in p.citations}
+    assert cited and cited <= {s.id for s in content.sources}
+
+
+def test_the_owners_copy_of_the_guide_points_at_the_owners_own_documents(local_database):
+    _seed_personal()
+    row, content = _seeded_guide(local_database, "user-personal")
+    own_documents = {
+        d["id"] for d in local_database.rows["documents"]
+        if d["user_id"] == "user-personal" and d["offering_id"] == rich.OFF_CS_F25
+    }
+
+    assert row["id"] != rich.GUIDE_CS_MIDTERM
+    assert set(row["material_ids"]) == own_documents and own_documents
+    assert {s.id for s in content.sources} == {f"document:{doc_id}" for doc_id in own_documents}
 
 
 def test_owner_can_reuse_existing_enrollment_and_concept_without_resetting_them(local_database):
