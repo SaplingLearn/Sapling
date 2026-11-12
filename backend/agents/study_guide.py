@@ -36,9 +36,17 @@ def _hash(prompt: str) -> str:
 #: (`services.study_guides.prompts`) must sit inside it.
 MAX_OUTLINE_SECTIONS = 12
 
+# Bounds are local on Claude (`agents/_bounded.py`): an over-long title or
+# sentence is clipped, because refusing it would spend the outline's retries
+# and fail the whole guide. Only the two identifiers keep a strict length.
+_Title = Annotated[str, clip_prose(120, "study_guide.outline.title")]
+_Takeaway = Annotated[
+    str, clip_prose(240, "study_guide.outline.takeaway"), Field(max_length=240)
+]
+
 
 class OutlineSection(BaseModel):
-    title: str = Field(max_length=120)
+    title: _Title = Field(max_length=120)
     concept: str | None = Field(
         default=None,
         max_length=120,
@@ -61,11 +69,11 @@ class GuideOutline(BaseModel):
     """The plan of a guide. The server adds each section's id, tier and weight
     (`services.study_guides.plan`); the model never decides those."""
 
-    title: str = Field(max_length=120)
+    title: _Title = Field(max_length=120)
     deck: Annotated[str, clip_prose(240, "study_guide.outline.deck")] = Field(
         max_length=240, description="One sentence on what the guide covers."
     )
-    takeaways: Annotated[list[str], clip_list(3, "study_guide.outline.takeaways")] = Field(
+    takeaways: Annotated[list[_Takeaway], clip_list(3, "study_guide.outline.takeaways")] = Field(
         max_length=3, description="The three things most worth remembering."
     )
     sections: Annotated[

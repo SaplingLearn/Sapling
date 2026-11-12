@@ -7,10 +7,11 @@ section and block messages have GUIDE, SECTION, CONCEPTS, SOURCES and, when
 there is one to cite, QUIZ HISTORY. Only the block message ends with
 `BLOCK_REWRITE_MARKER` and the block.
 
-Everything that came from a document or from the student is untrusted here
-(`services/prompt_safety.py`): source text and quiz mistakes go inside the
-envelope, and short values (file names, concept names, titles the outline
-agent wrote from the sources) are neutralised and kept on one line.
+Everything that came from a document, from the student or from a model is
+untrusted here (`services/prompt_safety.py`): source text with its file name,
+quiz mistakes and the block to rewrite go inside an envelope, and short
+values (concept names, titles the outline agent wrote from the sources) are
+neutralised and kept on one line.
 
 Pure functions, no I/O.
 """
@@ -79,10 +80,10 @@ def _line(text: str | None) -> str:
 
 
 def _source(source: SourceText) -> str:
-    # The envelope's own label is one bracketed line, so the file name cannot
-    # carry a bracket into it.
-    name = _line(source.source.name).replace("[", "(").replace("]", ")")
-    return wrap_untrusted(source.text, source=f"{source.label}: {name}")
+    # The envelope's label is the server's own (`S1`). The file name is the
+    # student's, so it goes inside with the text.
+    named = f"File: {_line(source.source.name)}\n{source.text}"
+    return wrap_untrusted(named, source=source.label)
 
 
 def _quoted(text: str) -> str:
@@ -214,8 +215,9 @@ def block_message(
 ) -> str:
     """The block agent's message: what the section was written from, why the
     block is rewritten (`REWRITE_REJECTED` or `REWRITE_ASKED`), then the
-    marker and the block as it stands."""
-    block = _quoted(neutralize_delimiters(block_text))
+    marker and the block as it stands. The block is enveloped (a rejected
+    one is raw model output); the marker stays a line of its own above it."""
+    block = wrap_untrusted(_quoted(block_text), source="the block as it stands")
     return "\n\n".join([
         section_message(brief, content, section),
         f"WHY: {why}",

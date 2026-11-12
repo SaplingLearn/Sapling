@@ -146,16 +146,33 @@ def test_a_regenerated_block_is_logged_by_type_only(world, function_mode):  # no
     assert event["payload"] == {"guide_id": GUIDE, "block_type": "key_terms"}
 
 
-def test_a_reply_of_another_type_changes_nothing(world, function_mode):  # noqa: F811
-    """The handler only ever writes key terms, so asking it for a formula
-    comes back as the wrong type."""
+def test_every_other_block_of_the_e2e_section_comes_back_as_its_own_type(world, function_mode):  # noqa: F811
     before = _guide(world)
+
+    block = _regenerate("s1-i3")
+
+    assert (block.id, block.type, block.name) == ("s1-i3", "formula", "Factorial, defined recursively, rewritten")
+    assert block.source_id == DOC
+    assert world.content().sections[0].items == [
+        before.sections[0].items[0], KEY_TERMS, block, CHECK]
+
+
+def test_a_reply_of_another_type_changes_nothing(world, function_mode):  # noqa: F811
+    """The handler has no chart to answer with, so asking it for one comes
+    back as key terms: the wrong type."""
+    content = _content()
+    chart = ChartBlock(
+        id="s1-i3", title="Calls", x_label="n", y_label="Calls", alt="A rising line.",
+        series=[ChartSeries(label="Calls", points=[ChartPoint(x=1, y=1), ChartPoint(x=3, y=3)])],
+    )
+    content.sections[0].items[2] = chart
+    _guide(world, content=encrypt_json(content.model_dump(mode="json")))
 
     with pytest.raises(GuideGenerationFailed) as failed:
         _regenerate("s1-i3")
 
     assert failed.value.status_code == 502
-    assert world.content() == before
+    assert world.content() == content
     assert world.stored()["generating_at"] is None and world.logged == []
 
 

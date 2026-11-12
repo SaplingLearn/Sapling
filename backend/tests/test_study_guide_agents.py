@@ -19,7 +19,7 @@ from agents.study_guide import (
     study_guide_outline_agent,
     study_guide_section_agent,
 )
-from models.study_guide import BLOCK_TYPES, Block
+from models.study_guide import BLOCK_TYPES, Block, GuideContent, Section
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 from services.study_guides.markup import parse_block
 from tests.test_agent_output_schemas import schema_violations
@@ -101,12 +101,36 @@ def test_outline_clips_what_claude_cannot_bound():
     ]
 
 
-def test_outline_needs_a_section_and_keeps_names_strict():
+def test_an_over_long_title_or_takeaway_is_clipped_not_refused():
+    """A refusal here would spend the outline's retries and fail the guide."""
+    outline = GuideOutline.model_validate(
+        _outline(
+            title="word " * 40,
+            takeaways=["One.", "word " * 100, "Three."],
+            sections=[_section(title="word " * 40, one_line="word " * 100)],
+        )
+    )
+
+    (section,) = outline.sections
+    assert 100 < len(outline.title) <= 120 and 100 < len(section.title) <= 120
+    assert 200 < len(outline.takeaways[1]) <= 240 and 200 < len(section.one_line) <= 240
+    assert outline.takeaways[0] == "One."
+    # What is stored as the guide's content holds the same limits.
+    assert GuideContent(
+        title=outline.title, deck=outline.deck, takeaways=outline.takeaways,
+        sections=[Section(id="s1", title=section.title, one_line=section.one_line)],
+    )
+
+
+def test_outline_needs_a_section_and_keeps_identifiers_strict():
     with pytest.raises(ValidationError):
         GuideOutline.model_validate(_outline(sections=[]))
-    # A clipped concept name would no longer match the student's tree.
+    # A clipped concept name would no longer match the student's tree, and a
+    # clipped id would name no section.
     with pytest.raises(ValidationError):
         GuideOutline.model_validate(_outline(sections=[_section(concept="x" * 121)]))
+    with pytest.raises(ValidationError):
+        GuideOutline.model_validate(_outline(sections=[_section(keep_id="s" * 41)]))
 
 
 def test_outline_prompt_names_every_field_it_asks_for():

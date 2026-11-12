@@ -14,6 +14,7 @@ ALWAYS sends a pref). In any non-real mode it must return None.
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -908,29 +909,86 @@ def test_study_guide_section_agent_gets_the_scripted_section(monkeypatch):
     assert result.output == E2E_STUDY_GUIDE_SECTION_TEXT
 
 
+def _rewrite(monkeypatch, block_text: str) -> str:
+    """The block agent's reply, through the seam, to the message
+    services/study_guides/prompts.py writes for `block_text`."""
+    from agents.study_guide import study_guide_block_agent
+    from models.study_guide import GuideContent, Section
+    from services.study_guides import prompts
+
+    _study_guide_env(monkeypatch)
+    section = Section(id="s1", title="Recursion", one_line="A function calls itself.")
+    brief = prompts.Brief(
+        scope_kind="course", scope_label="Whole course", goal="review", depth="standard",
+        sources=[], concepts=[], tiers={}, mistakes=[],
+    )
+    message = prompts.block_message(
+        brief, GuideContent(title="Recursion", sections=[section]), section,
+        block_text=block_text, why=prompts.REWRITE_ASKED,
+    )
+    with study_guide_block_agent.override(model=model_for("study_guide")):
+        return study_guide_block_agent.run_sync(message, deps=_deps()).output
+
+
 def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
     """Both text agents share the task; only the block agent's message carries
     BLOCK_REWRITE_MARKER, and that is what picks the reply."""
-    from agents.study_guide import BLOCK_REWRITE_MARKER, study_guide_block_agent
-    from services.study_guides.markup import parse_block
-
-    _study_guide_env(monkeypatch)
-
-    with study_guide_block_agent.override(model=model_for("study_guide")):
-        result = study_guide_block_agent.run_sync(
-            f"SECTION: Recursion\n\n{BLOCK_REWRITE_MARKER}\n{{}}", deps=_deps()
-        )
-
     from agents.function_handlers_e2e import (
         _E2E_STUDY_GUIDE_BLOCKS,
         E2E_STUDY_GUIDE_BLOCK_TEXT,
     )
+    from services.study_guides.markup import parse_block
 
-    assert result.output == E2E_STUDY_GUIDE_BLOCK_TEXT
-    block = parse_block(result.output, block_id="s1-i6", sources={})
+    output = _rewrite(monkeypatch, json.dumps(_E2E_STUDY_GUIDE_BLOCKS["key_terms"]))
+
+    # Byte for byte: the journey asserts this title and these terms.
+    assert output == E2E_STUDY_GUIDE_BLOCK_TEXT
+    block = parse_block(output, block_id="s1-i6", sources={})
     assert block is not None and block.type == "key_terms"
+    assert block.title == "Key terms, rewritten"
     # A regenerate has to be visible: not the section body's own key terms.
     assert block.title != _E2E_STUDY_GUIDE_BLOCKS["key_terms"]["title"]
+
+
+@pytest.mark.parametrize("kind", ["formula", "worked_example", "comparison", "concept_map"])
+def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(monkeypatch, kind):
+    """The route refuses a rewrite of another type (502), so regenerating any
+    block of the E2E section has to get its own type back, visibly changed."""
+    from agents.function_handlers_e2e import _E2E_STUDY_GUIDE_BLOCKS
+    from services.study_guides.markup import parse_block
+
+    written = _E2E_STUDY_GUIDE_BLOCKS[kind]
+    name = "name" if kind == "formula" else "title"
+
+    output = _rewrite(monkeypatch, json.dumps(written))
+
+    block = parse_block(output, block_id="s1-i2", sources={"S1": "document:d1"})
+    assert block is not None and block.type == kind
+    assert getattr(block, name) == f"{written[name]}, rewritten"
+    again = parse_block(json.dumps(written), block_id="s1-i2", sources={"S1": "document:d1"})
+    assert block.model_dump(exclude={name}) == again.model_dump(exclude={name})
+
+
+@pytest.mark.parametrize(
+    "block_text",
+    [
+        '{"type": "chart", "title": "A chart the section body never has"}',
+        '{"type": "mistakes", "title": "Nor this"}',
+        '{"type": "check", "question": "Never regenerated"}',
+        "{}",
+    ],
+)
+def test_study_guide_block_rewrite_falls_back_to_key_terms(monkeypatch, block_text):
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_BLOCK_TEXT
+
+    assert _rewrite(monkeypatch, block_text) == E2E_STUDY_GUIDE_BLOCK_TEXT
+
+
+def test_study_guide_block_rewrite_reads_the_type_of_a_block_that_is_not_json(monkeypatch):
+    """A rejected block reaches the rewriter as the model wrote it."""
+    output = _rewrite(monkeypatch, '{"type": "formula", "name": "Cut off')
+
+    assert '"type": "formula"' in output and ", rewritten" in output
 
 
 def test_study_guide_section_constant_parses_into_the_journeys_blocks():

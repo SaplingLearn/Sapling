@@ -459,9 +459,9 @@ register_function_handler("topic_checklist", _topic_checklist_handler)
 # one handler answers all three:
 #   study_guide_outline_agent (structured) -> E2E_STUDY_GUIDE_OUTLINE
 #   study_guide_section_agent (text)       -> E2E_STUDY_GUIDE_SECTION_TEXT
-#   study_guide_block_agent   (text)       -> E2E_STUDY_GUIDE_BLOCK_TEXT
+#   study_guide_block_agent   (text)       -> a block of the type it was given
 # The two text agents are told apart by BLOCK_REWRITE_MARKER, which only the
-# block agent's user message carries.
+# block agent's user message carries. The block to rewrite follows it.
 #
 # The outline's concepts are graph nodes the rich seed gives rich-user-active
 # in CS101 (db/seed_local_rich.py), one struggling, one learning and one
@@ -611,10 +611,9 @@ E2E_STUDY_GUIDE_SECTION_TEXT = "\n\n".join([
     _fenced(_E2E_STUDY_GUIDE_BLOCKS["check"]),
 ])
 
-# The one rewritten block. It is a `key_terms` block whose title and terms
-# differ from the section body's, so a journey that regenerates the section's
-# key terms sees the block change. Regenerating any other block type gets this
-# same reply back, which the route will not accept as that type.
+# The rewritten key terms: a title and terms that differ from the section
+# body's, so the journey that regenerates the section's key terms sees the
+# block change (it asserts this title).
 E2E_STUDY_GUIDE_BLOCK_TEXT = _fenced({
     "type": "key_terms",
     "title": "Key terms, rewritten",
@@ -624,14 +623,32 @@ E2E_STUDY_GUIDE_BLOCK_TEXT = _fenced({
     ],
 })
 
+_E2E_BLOCK_TYPE = re.compile(r'"type"\s*:\s*"(\w+)"')
+
+
+def _rewritten_block(block_type: str | None) -> str:
+    """The reply to a rewrite of one block. The route only accepts a block of
+    the type it asked for, so every type the section body has gets itself
+    back, marked in its title. A check is never regenerated, and the body has
+    no chart or mistakes block: those, like a type that cannot be read, get
+    the key terms."""
+    block = _E2E_STUDY_GUIDE_BLOCKS.get(block_type)
+    if block is None or block_type in ("key_terms", "check"):
+        return E2E_STUDY_GUIDE_BLOCK_TEXT
+    name = "name" if "name" in block else "title"
+    return _fenced({**block, name: f"{block[name]}, rewritten"})
+
 
 def _study_guide_handler(messages, info) -> ModelResponse:
     if info.output_tools:
         # The outline is the task's only structured agent.
         return _structured_output(E2E_STUDY_GUIDE_OUTLINE)(messages, info)
-    if BLOCK_REWRITE_MARKER in _last_user_prompt_text(messages):
-        return ModelResponse(parts=[TextPart(content=E2E_STUDY_GUIDE_BLOCK_TEXT)])
-    return ModelResponse(parts=[TextPart(content=E2E_STUDY_GUIDE_SECTION_TEXT)])
+    _, marker, block = _last_user_prompt_text(messages).partition(BLOCK_REWRITE_MARKER)
+    if not marker:
+        return ModelResponse(parts=[TextPart(content=E2E_STUDY_GUIDE_SECTION_TEXT)])
+    # Read as text: a rejected block need not be JSON.
+    found = _E2E_BLOCK_TYPE.search(block)
+    return ModelResponse(parts=[TextPart(content=_rewritten_block(found and found.group(1)))])
 
 
 register_function_handler("study_guide", _study_guide_handler)
