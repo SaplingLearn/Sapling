@@ -716,23 +716,24 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `back-link` | the shared `BackLink` in the top bar; here it goes to the Study Guides home |
 | `guide-load-error` | the guide could not be loaded (`role="alert"`) |
 | `guide-generating` | the banner that follows the page while the guide is being written: the current label and "Step n of m" |
-| `guide-generation-error` | the banner when a generation stopped, or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
-| `guide-generation-retry` | its "Retry" button (runs a `resume` generation) |
-| `guide-title` | the guide's title (`<h1>`) |
+| `guide-generation-error` | the banner when a generation stopped or was turned away (an Update with nothing new, the hourly limit), or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
+| `guide-generation-retry` | its "Retry" button: asks again for what failed (`update` / `regenerate`), or a `resume` once that run's outline had replaced the guide. Absent when asking again cannot help (a 422, a stream error marked not retryable); disabled while a block is being regenerated |
+| `guide-generation-dismiss` | its "Dismiss" button: only when the guide is `ready` and the failed request left it as it was |
+| `guide-title` | the guide's title (`<h2>`: the top bar's "Study" is the page's `<h1>`, and each section's title is an `<h3>`) |
 | `guide-menu` | the three-dot menu button beside the title |
 | `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |
-| `guide-menu-saved` | menu item "Saved to Library", a link to `/library` (only once saved) |
+| `guide-menu-saved` | menu item "Saved to Library", a link to `/library` (only once saved; takes the focus when Save swaps it in) |
 | `guide-menu-export` | menu item "Export PDF" (the browser's print dialog) |
-| `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while generating) |
+| `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while the guide is generating or a block is being regenerated) |
 | `guide-space-bar` | the bar that shows each section's share of the guide by mastery (`shared/SpaceBar.tsx`). Also rendered on every home card and in the dialog's planned outline, so scope it to its parent there |
 | `guide-section-{sectionId}` | one section (also its anchor `id`) |
 | `guide-section-read-{sectionId}` | the section's "Mark as read" / "Read" toggle (`aria-pressed`; disabled until the section is written) |
 | `guide-section-expand-{sectionId}` | a mastered section's "Show full section" / "Hide full section" |
-| `guide-section-retry-{sectionId}` | "Try again" on a section that could not be written (runs a `resume` generation; disabled while one runs) |
+| `guide-section-retry-{sectionId}` | "Try again" on a section that could not be written (runs a `resume` generation; disabled while a block is being regenerated, and gone while a generation runs: the section then shows as being written or queued) |
 | `guide-prose-{itemId}` | one prose passage in Read mode |
 | `guide-skim-{itemId}` | the same passage's one-line summary in Skim mode (absent when it has none) |
 | `guide-block-{blockId}` | one typed block, whatever its type (the shared frame) |
-| `guide-block-regenerate-{blockId}` | the block's "Regenerate" (not on a check block; hidden while the guide is generating) |
+| `guide-block-regenerate-{blockId}` | the block's "Regenerate" (not on a check block; hidden while the guide is generating; every block's is disabled while one block is being regenerated) |
 | `guide-chart-state-{blockId}` | a chart's Before / After toggle (container; only when the chart has an After state) |
 | `guide-chart-state-{blockId}-before` / `-after` | its two options |
 | `guide-step-next-{blockId}` | a worked example's "Show first step" / "Show next step" |
@@ -740,13 +741,13 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-concept-{blockId}-{idx}` | one concept-map tile (render index; `aria-pressed` while its tutor prompts are open) |
 | `guide-concept-prompt-{blockId}-{idx}` | one tutor prompt for the selected tile (render index: 0 simpler, 1 example, 2 quiz me) |
 | `guide-concept-close-{blockId}` | closes the tutor prompts |
-| `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`) |
+| `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`; `aria-checked` on the picked one, right or wrong) |
 | `guide-check-result-{blockId}` | the result line after an answer: correct or not, the explanation, and the mastery change when there was one |
 | `guide-sources` | the sources list (also the anchor every citation links to) |
 | `guide-feedback-yes` / `guide-feedback-no` | the "Was this guide useful?" answers (`aria-pressed`) |
 | `guide-progress` | the rail's progress ring: sections read, what the guide is for, days left |
 | `guide-stale` | the rail's "n new lectures since this guide was made" notice |
-| `guide-update` | its "Update guide" button (runs an `update` generation) |
+| `guide-update` | its "Update guide" button (runs an `update` generation; disabled while the guide is generating or a block is being regenerated) |
 | `guide-updated` | the "Guide is up to date" notice after an Update finished in this visit |
 | `guide-outline-{sectionId}` | the rail outline's link to a section, with its mastery or writing state |
 | `guide-outline-read-{sectionId}` | the rail outline's read mark for a section (`aria-pressed`) |
@@ -766,7 +767,7 @@ The Study Guides home (`/study/guide`), added with the study-guide redesign.
 | `guides-new` | the toolbar's "New study guide" button |
 | `guides-grid` | the list of guide cards |
 | `guides-card-{guideId}` | one guide's card, a link to the reader; `data-status` is the guide's status |
-| `guides-card-status-{guideId}` | "Writing…" or "Could not finish" on a card whose guide is not ready |
+| `guides-card-status-{guideId}` | "Not finished" or "Could not finish" on a card whose guide is not ready |
 | `guides-card-new-{guideId}` | "n new lectures" on a card (only when there are some) |
 | `guides-card-saved-{guideId}` | "Saved" on a card whose guide is in the Library |
 | `guides-card-room-{guideId}` | "Most room: section, status" under the card's bar |
