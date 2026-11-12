@@ -5,6 +5,7 @@ import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import s from "../FlashcardImportModal.module.css";
 
 interface LibraryDoc { id: string; file_name: string; category?: string }
 
@@ -57,46 +58,61 @@ export function AiTab({ documents, onCards }: Props) {
   const canGo = mode === "paste" ? text.trim().length > 0 : !!docId;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn btn--sm" style={{ fontWeight: mode === "paste" ? 600 : 400 }} onClick={() => setMode("paste")}>Paste notes</button>
-        <button className="btn btn--sm" style={{ fontWeight: mode === "library_doc" ? 600 : 400 }} onClick={() => setMode("library_doc")}>From library</button>
-      </div>
-
+    <div className={s.tab}>
       {mode === "paste" ? (
         <textarea
+          className={s.textarea}
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder="Paste lecture notes, a study guide, or a course topic."
-          style={{ minHeight: 160, padding: 12, borderRadius: "var(--r-md)", background: "var(--bg-panel)", border: "1px solid var(--border)", color: "var(--text)", resize: "vertical" }}
         />
       ) : (
-        <CustomSelect
-          value={docId}
-          onChange={setDocId}
-          placeholder={documents.length ? "Pick a document…" : "No library documents yet"}
-          options={documents.map(d => ({ value: d.id, label: d.file_name, description: d.category }))}
-        />
-      )}
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 140 }}>
-          <div className="label-micro">Count</div>
-          <CustomSelect value={count} onChange={setCount} options={COUNT_OPTIONS} />
-        </div>
-        <div style={{ minWidth: 180 }}>
-          <div className="label-micro">Difficulty</div>
+        <div className={s.fill}>
           <CustomSelect
-            value={difficulty}
-            onChange={v => setDifficulty(v as "recall" | "application" | "conceptual")}
-            options={DIFFICULTY_OPTIONS}
+            className={`${s.select} ${s.selectFill}`}
+            size="sm"
+            value={docId}
+            onChange={setDocId}
+            placeholder={documents.length ? "Pick a document…" : "No library documents yet"}
+            options={documents.map(d => ({ value: d.id, label: d.file_name, description: d.category }))}
           />
         </div>
-      </div>
+      )}
 
-      <button className="btn btn--primary btn--sm" onClick={generate} disabled={busy || !canGo}>
-        {busy ? "Generating…" : "Generate cards"}
-      </button>
+      <div className={s.options}>
+        <div className={`${s.seg} ${s.segInline}`} role="group" aria-label="Generate from">
+          <button type="button" className={s.segOpt} aria-pressed={mode === "paste"} onClick={() => setMode("paste")}>
+            Paste notes
+          </button>
+          <button type="button" className={s.segOpt} aria-pressed={mode === "library_doc"} onClick={() => setMode("library_doc")}>
+            From library
+          </button>
+        </div>
+
+        <div className={s.optionsLine}>
+          <div className={s.pairs}>
+            <CustomSelect
+              className={`${s.select} ${s.pairSelect} ${s.pairSelectWide}`}
+              size="sm"
+              ariaLabel="Count"
+              value={count}
+              onChange={setCount}
+              options={COUNT_OPTIONS}
+            />
+            <CustomSelect
+              className={`${s.select} ${s.pairSelect} ${s.pairSelectWide}`}
+              size="sm"
+              ariaLabel="Difficulty"
+              value={difficulty}
+              onChange={v => setDifficulty(v as "recall" | "application" | "conceptual")}
+              options={DIFFICULTY_OPTIONS}
+            />
+          </div>
+          <button type="button" className={`btn btn--primary ${s.go}`} onClick={generate} disabled={busy || !canGo}>
+            {busy ? "Generating…" : "Generate cards"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

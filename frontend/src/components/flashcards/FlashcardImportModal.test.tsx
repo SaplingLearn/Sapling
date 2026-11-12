@@ -15,11 +15,12 @@
  *   3. Control: after switching back to Paste, typing still re-parses and
  *      replaces the shared deck (the mount guard must not disable parsing).
  *
- * Real FlashcardImportModal + PasteTab + ParsedCardsTable + Dialog +
- * ToastProvider (the portal pattern proven in DocumentUploadModal.test.tsx);
- * the other tabs are mocked light, with the URL tab mock exposing a button
- * that injects a fixed deck. Assertions read the real commit button label
- * ("Import N cards") and the real ParsedCardsTable counter.
+ * Real FlashcardImportModal (its preview column included) + PasteTab +
+ * Dialog + ToastProvider (the portal pattern proven in
+ * DocumentUploadModal.test.tsx); the other tabs are mocked light, with the URL
+ * tab mock exposing a button that injects a fixed deck. Assertions read the
+ * real commit button label ("Import N cards") and the preview's own count
+ * ("N cards").
  */
 
 import React from "react";
@@ -107,8 +108,8 @@ function renderModal() {
   return render(modal());
 }
 
-// Accessible-name helpers. Tab buttons carry their bare label ("Paste",
-// "URL"); the commit button's label doubles as the deck-size readout.
+// Accessible-name helpers. The source picker's buttons carry their bare label
+// ("Paste", "URL"); the commit button's label doubles as the deck-size readout.
 const tabButton = (label: string) => screen.getByRole("button", { name: label });
 const importButton = (count: number) =>
   screen.getByRole("button", {
@@ -117,6 +118,11 @@ const importButton = (count: number) =>
 
 const pasteTextarea = () =>
   screen.getByPlaceholderText(/paste your cards here/i);
+
+// The preview column's count. Matched as the element's whole text, so it never
+// collides with the commit button's "Import N cards".
+const previewCount = (count: number) =>
+  screen.getByText(`${count} card${count === 1 ? "" : "s"}`);
 
 afterEach(() => {
   // UNMOUNT first, then sweep. Order matters and both steps are needed:
@@ -149,12 +155,12 @@ describe("FlashcardImportModal shared deck across tabs (#183)", () => {
     fireEvent.click(tabButton("URL"));
     fireEvent.click(screen.getByRole("button", { name: "Inject mock deck" }));
     expect(importButton(2)).toBeInTheDocument();
-    expect(screen.getByText(/2 valid/)).toBeInTheDocument();
+    expect(previewCount(2)).toBeInTheDocument();
 
     // Re-enter the Paste tab: its remount must NOT wipe the shared deck.
     fireEvent.click(tabButton("Paste"));
     expect(importButton(2)).toBeInTheDocument();
-    expect(screen.getByText(/2 valid/)).toBeInTheDocument();
+    expect(previewCount(2)).toBeInTheDocument();
   });
 
   it("still clears the deck when the user deletes all Paste text", () => {
@@ -182,7 +188,7 @@ describe("FlashcardImportModal shared deck across tabs (#183)", () => {
     fireEvent.click(tabButton("Paste"));
     fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
     expect(importButton(1)).toBeInTheDocument();
-    expect(screen.getByText(/1 valid/)).toBeInTheDocument();
+    expect(previewCount(1)).toBeInTheDocument();
   });
 });
 
