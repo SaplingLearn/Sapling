@@ -55,10 +55,15 @@ python scripts/type_ratchet.py   # needs node; fails on a NEW pyright error
 Frontend (from `frontend/`):
 
 ```
-npm run lint
+npm run lint        # CI runs it with --max-warnings=0; every rule is an error, old violations are baselined
 npm run typecheck
-npm test
+npm test            # includes the complexity and file-size ratchets
 ```
+
+A source file over 800 lines fails lint, and a file already over it (listed in
+`frontend/max-lines-baseline.json`) may not grow: move new code into its own
+module. After shrinking one, run `npm run max-lines:shrink` and commit the
+baseline.
 
 ## Conventions
 
