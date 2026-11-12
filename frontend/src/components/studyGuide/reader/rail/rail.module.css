@@ -1,0 +1,79 @@
+/* The reader's right rail: progress, freshness, the outline, the ask box.
+
+   It follows the page (sticky under the top bar) while there are two columns.
+   The query is on the reader's .shell container (reader.module.css): under
+   866px the article and the rail no longer fit side by side, the rail wraps
+   below, and a sticky rail there would cover what it follows. */
+
+.rail {
+  flex: 1 1 290px; max-width: 340px; min-width: 0;
+  position: sticky; top: 96px;
+  display: flex; flex-direction: column; gap: 18px;
+  font-size: 15px; line-height: 1.45;
+}
+@container (max-width: 865px) {
+  .rail { position: static; max-width: none; }
+}
+.note { margin: 0; font-size: var(--fs-md); color: var(--text-muted); }
+
+/* ── progress ────────────────────────────────────────────────────────────── */
+
+.progress {
+  display: flex; align-items: center; gap: 16px; padding: 18px;
+  border-radius: var(--r-lg); background: var(--bg-panel); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.progress svg { flex: none; }
+.ringTrack { fill: none; stroke: var(--bg-soft); stroke-width: 8; }
+.ringFill { fill: none; stroke: var(--sap-500); stroke-width: 8; stroke-linecap: round; transition: stroke-dasharray 520ms var(--ease); }
+.ringText { font-family: var(--font-serif); font-size: 20px; font-weight: 600; fill: var(--text); }
+.progressText { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.progressTitle { font-family: var(--font-serif); font-size: 19px; font-weight: 600; line-height: 1.2; }
+.progressScope { font-size: var(--fs-md); color: var(--text-muted); }
+
+/* ── new lectures / up to date ───────────────────────────────────────────── */
+
+.stale, .updated { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: var(--r-lg); font-size: var(--fs-base); }
+.stale { background: var(--warn-soft); color: var(--text); }
+.updated { gap: 4px; background: var(--sap-100); color: var(--sap-800); }
+.noticeTitle { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; }
+/* --warn on its own soft tint is short of AA for text this size. */
+.stale .noticeTitle { color: color-mix(in srgb, var(--warn) 75%, var(--ink-900)); }
+.updateButton { align-self: flex-start; height: 40px; font-weight: 700; }
+
+/* ── outline ─────────────────────────────────────────────────────────────── */
+
+.outline { display: flex; flex-direction: column; gap: 6px; }
+.outlineList { margin: 0; padding: 0; list-style: none; }
+.outlineList li { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); }
+.outlineRead { flex: none; width: 40px; height: 48px; display: flex; align-items: center; }
+.outlineRead:disabled { opacity: 0.5; cursor: not-allowed; }
+.outlineLink {
+  flex: 1; min-width: 0; min-height: 48px; padding: 6px 0;
+  display: flex; flex-direction: column; justify-content: center;
+  color: var(--text); text-decoration: none;
+}
+.outlineLink:hover .outlineTitle { text-decoration: underline; }
+.outlineTitle { font-weight: 700; line-height: 1.25; }
+.outlineStatus { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 700; color: var(--text-muted); }
+.dot { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--ink-200); }
+.dotWriting { background: var(--sap-300); }
+
+/* ── ask about this guide ────────────────────────────────────────────────── */
+
+.ask {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px;
+  border-radius: var(--r-lg); background: var(--bg-panel); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.askLabel { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.askLabel svg { color: var(--brand-forest); }
+.askRow { display: flex; gap: 8px; }
+.askRow input { flex: 1; height: 40px; }
+.askSend { flex: none; width: 40px; height: 40px; padding: 0; justify-content: center; }
+.askStatus { font-size: var(--fs-md); color: var(--sap-700); }
+
+/* The printout is the guide alone. */
+@media print {
+  .rail { display: none; }
+}
