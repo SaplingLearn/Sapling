@@ -7,13 +7,18 @@ import { courseInTerm, useActiveSemester } from "@/lib/useActiveSemester";
 export interface TermCourses {
   /** The student's courses in the active term ("" = every term). */
   courses: EnrolledCourse[];
+  /** Every course the student is enrolled in, whatever the term. */
+  enrolled: EnrolledCourse[];
   /** The active term's label, "" when no term is picked. */
   semester: string;
   /** The course list has answered: an empty one now means "no courses". */
   ready: boolean;
 }
 
-/** The courses a new guide can be made for: the active term's, as on the hub. */
+/**
+ * The courses a new guide can be made for: the active term's, as on the hub.
+ * `enrolled` is the whole list, for a card whose guide is from another term.
+ */
 export function useTermCourses(userId: string): TermCourses {
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [ready, setReady] = React.useState(false);
@@ -33,5 +38,5 @@ export function useTermCourses(userId: string): TermCourses {
     () => (semester ? courses.filter(course => courseInTerm(course, semester)) : courses),
     [courses, semester],
   );
-  return { courses: scoped, semester, ready };
+  return { courses: scoped, enrolled: courses, semester, ready };
 }

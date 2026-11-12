@@ -258,6 +258,8 @@ export interface GuideCard {
   title: string;
   course_id: string;
   course_name: string;
+  /** The class's short code ("CS 101"); its name when it has none. */
+  course_code: string;
   semester: string | null;
   scope_kind: ScopeKind;
   scope_label: string;

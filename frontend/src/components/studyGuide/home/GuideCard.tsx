@@ -1,14 +1,15 @@
 import Link from "next/link";
 
 import { Icon } from "@/components/Icon";
-import { Chip } from "@/components/ui";
 import type { GuideCard as Guide, GuideCounts } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref } from "@/lib/toolHrefs";
 
-import { GoalDepthChips } from "../shared/GoalDepthChips";
-import { newLecturesText } from "../shared/labels";
+import { ClassTag } from "../shared/ClassTag";
+import { focusLabel, newLecturesText } from "../shared/labels";
+import { Pill } from "../shared/Pill";
+import { ReadOut } from "../shared/ReadOut";
 import { SpaceBar, widestBar } from "../shared/SpaceBar";
-import { tierLabel, tierText } from "../shared/tiers";
+import { TierLabel, TierSwatch } from "../shared/TierMarks";
 import { dateText, statusText } from "./guidesModel";
 import s from "./home.module.css";
 
@@ -19,8 +20,18 @@ const FIGURES: { key: keyof GuideCounts; one: string; many: string }[] = [
   { key: "minutes", one: "Minute", many: "Minutes" },
 ];
 
-/** One guide on the home. The whole card opens it in the reader. */
-export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
+/**
+ * One guide on the home. The whole card opens it in the reader. Every card
+ * has the same rows at the same heights, so a row of cards lines up.
+ */
+export function GuideCard({
+  guide, now, color,
+}: {
+  guide: Guide;
+  now: Date;
+  /** The class's colour (`classColor`). */
+  color: string;
+}) {
   return (
     <li className={s.cell}>
       <Link
@@ -29,48 +40,60 @@ export function GuideCard({ guide, now }: { guide: Guide; now: Date }) {
         data-testid={`guides-card-${guide.id}`}
         data-status={guide.status}
       >
-        <h2 className={`h-serif ${s.title}`}>{guide.title}</h2>
+        <h2 className={s.title} title={guide.title}>{guide.title}</h2>
         <Meta guide={guide} now={now} />
         <Room guide={guide} />
-        <dl className={s.figures}>
-          {FIGURES.map(figure => (
-            <div key={figure.key} className={s.figure} data-testid={`guides-card-${figure.key}-${guide.id}`}>
-              <dt className="label-micro">{guide.counts[figure.key] === 1 ? figure.one : figure.many}</dt>
-              <dd>{guide.counts[figure.key]}</dd>
-            </div>
-          ))}
-        </dl>
+        <Figures guide={guide} />
         <div className={s.foot}>
-          <span className={s.chips}>
-            <Chip>{guide.scope_label}</Chip>
-            <GoalDepthChips goal={guide.goal} depth={guide.depth} />
+          <span className={s.pills}>
+            <Pill>{guide.scope_label}</Pill>
+            <Pill>{focusLabel(guide.goal, guide.depth)}</Pill>
           </span>
-          <span className={s.course}>{guide.course_name}</span>
+          <ClassTag code={guide.course_code} name={guide.course_name} color={color} />
         </div>
       </Link>
     </li>
   );
 }
 
-/** The date, then what is worth knowing: not finished, new lectures, saved. */
+/** The date and what is new since on the left, whether it is saved on the right. */
 function Meta({ guide, now }: { guide: Guide; now: Date }) {
-  const status = statusText(guide.status);
-  const lectures = newLecturesText(guide.new_materials);
   return (
     <div className={s.meta}>
-      <span>{dateText(guide, now)}</span>
-      {status && (
-        <span className={guide.status === "failed" ? s.metaFailed : s.metaUnfinished} data-testid={`guides-card-status-${guide.id}`}>
-          {status}
-        </span>
-      )}
-      {lectures && <span className={s.metaNew} data-testid={`guides-card-new-${guide.id}`}>{lectures}</span>}
-      {guide.saved_at && (
-        <span className={s.metaSaved} data-testid={`guides-card-saved-${guide.id}`}>
-          <Icon name="check" size={11} /> Saved
-        </span>
-      )}
+      <span className={s.when}>
+        {dateText(guide, now)}
+        <Note guide={guide} />
+      </span>
+      <Saved guide={guide} />
     </div>
+  );
+}
+
+/** After the date: that the guide is not finished, or else the lectures added since. */
+function Note({ guide }: { guide: Guide }) {
+  const status = statusText(guide.status);
+  const text = status || newLecturesText(guide.new_materials);
+  if (!text) return null;
+  return (
+    <>
+      <span aria-hidden="true"> · </span>
+      <span className={s.note} data-testid={`guides-card-${status ? "status" : "new"}-${guide.id}`}>{text}</span>
+    </>
+  );
+}
+
+function Saved({ guide }: { guide: Guide }) {
+  if (!guide.saved_at) {
+    return (
+      <span className={s.saved} data-testid={`guides-card-unsaved-${guide.id}`}>
+        <Icon name="library" size={13} />Not saved
+      </span>
+    );
+  }
+  return (
+    <span className={`${s.saved} ${s.savedOn}`} data-testid={`guides-card-saved-${guide.id}`}>
+      <Icon name="library" size={13} /><ReadOut>Saved: </ReadOut>In Library
+    </span>
   );
 }
 
@@ -79,13 +102,31 @@ function Room({ guide }: { guide: Guide }) {
   const widest = widestBar(guide.bars);
   return (
     <div className={s.room}>
-      <SpaceBar bars={guide.bars} />
-      {widest && (
-        <span className={s.roomLine} data-testid={`guides-card-room-${guide.id}`}>
-          Most room: {widest.title},{" "}
-          <span className={s.roomTier} style={{ color: tierText(widest.tier) }}>{tierLabel(widest.tier)}</span>
-        </span>
-      )}
+      {/* A guide with no section yet keeps the bar's place. */}
+      {widest ? <SpaceBar bars={guide.bars} /> : <span className={s.noBar} aria-hidden="true" />}
+      <div className={s.roomRow} data-testid={widest ? `guides-card-room-${guide.id}` : undefined}>
+        {widest && (
+          <>
+            <TierSwatch tier={widest.tier} />
+            <span className={s.roomText}>Most room: <strong>{widest.title}</strong></span>
+            <TierLabel tier={widest.tier} />
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+/** Four numbers over their mono labels. */
+function Figures({ guide }: { guide: Guide }) {
+  return (
+    <dl className={s.figures}>
+      {FIGURES.map(figure => (
+        <div key={figure.key} className={s.figure} data-testid={`guides-card-${figure.key}-${guide.id}`}>
+          <dt className="label-micro">{guide.counts[figure.key] === 1 ? figure.one : figure.many}</dt>
+          <dd>{guide.counts[figure.key]}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

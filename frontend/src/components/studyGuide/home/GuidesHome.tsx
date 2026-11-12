@@ -13,9 +13,11 @@ import { BackLink } from "@/components/BackLink";
 import { AIDisclaimerChip } from "@/components/chat/AIDisclaimerChip";
 import { TopBar } from "@/components/TopBar";
 import { useUser } from "@/context/UserContext";
+import type { EnrolledCourse } from "@/lib/api";
 import type { GuideCard as Guide } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref, studyHref } from "@/lib/toolHrefs";
 
+import { classColor } from "../shared/classColor";
 import { GuideCard } from "./GuideCard";
 import { searchGuides, sortGuides, type SortKey } from "./guidesModel";
 import { GuidesEmpty, GuidesLoadError, GuidesNoMatch, GuidesSkeleton } from "./GuidesStates";
@@ -55,7 +57,7 @@ export function GuidesHome({
       {/* `tool-enter`: the Study tools' arrival fade (globals.css). */}
       <div className={`tool-enter ${s.home}`}>
         <GuidesToolbar query={query} onQuery={setQuery} sort={sort} onSort={setSort} onNew={openNew} />
-        <GuidesContent list={list} shown={shown} query={query} now={today} onNew={openNew} />
+        <GuidesContent list={list} shown={shown} query={query} now={today} enrolled={term.enrolled} onNew={openNew} />
       </div>
       {creating && (
         <NewGuideModal
@@ -73,13 +75,15 @@ export function GuidesHome({
 
 /** Under the toolbar: the grid, or the one state that stands in for it. */
 function GuidesContent({
-  list, shown, query, now, onNew,
+  list, shown, query, now, enrolled, onNew,
 }: {
   list: GuidesState;
   /** The guides the search keeps, in the sort's order. */
   shown: Guide[];
   query: string;
   now: Date;
+  /** The student's classes, for each card's class colour. */
+  enrolled: EnrolledCourse[];
   onNew: () => void;
 }) {
   if (list.loading) return <GuidesSkeleton />;
@@ -88,7 +92,9 @@ function GuidesContent({
   if (shown.length === 0) return <GuidesNoMatch query={query} />;
   return (
     <ul className={s.grid} aria-label="Your study guides" data-testid="guides-grid">
-      {shown.map(guide => <GuideCard key={guide.id} guide={guide} now={now} />)}
+      {shown.map(guide => (
+        <GuideCard key={guide.id} guide={guide} now={now} color={classColor(enrolled, guide.course_id)} />
+      ))}
     </ul>
   );
 }

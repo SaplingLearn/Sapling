@@ -26,19 +26,21 @@ export const mocks = {
 
 export const NOW = new Date("2026-11-12T12:00:00Z");
 
-const course = (id: string, code: string, name: string): EnrolledCourse => ({
+const course = (id: string, code: string, name: string, color: string | null): EnrolledCourse => ({
   enrollment_id: `enr-${id}`, course_id: id, course_code: code, course_name: name,
-  school: "BU", department: "CS", color: null, nickname: null, node_count: 0,
+  school: "BU", department: "CS", color, nickname: null, node_count: 0,
   enrolled_at: "2026-09-01", term: "Fall 2026",
 });
-export const CS = course("c1", "CS101", "Intro to CS");
-export const MATH = course("c2", "MA225", "Calculus");
+export const CS = course("c1", "CS101", "Intro to CS", "#2868b0");
+/** A class the student gave no colour. */
+export const MATH = course("c2", "MA225", "Calculus", null);
 
 export const guide = (over: Partial<GuideCard> = {}): GuideCard => ({
   id: "g1",
   title: "Loops and recursion",
   course_id: "c1",
   course_name: "Intro to CS",
+  course_code: "CS101",
   semester: "Fall 2026",
   scope_kind: "exam",
   scope_label: "Midterm 2",

@@ -22,11 +22,13 @@ vi.mock("@/lib/studyGuide/api", () => ({
   createGuide: vi.fn(),
 }));
 
+import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
+
 import { deferred, guide, mocks, renderHome, resetMocks } from "./testKit";
 
 const THREE = [
   guide({ id: "a", title: "Loops and recursion", generated_at: "2026-11-10T12:00:00Z" }),
-  guide({ id: "b", title: "Limits", course_id: "c2", course_name: "Calculus", scope_label: "Whole course", generated_at: "2026-11-11T12:00:00Z" }),
+  guide({ id: "b", title: "Limits", course_id: "c2", course_name: "Calculus", course_code: "MA225", scope_label: "Whole course", generated_at: "2026-11-11T12:00:00Z" }),
   guide({ id: "c", title: "Arrays", scope_label: "Lab 5", generated_at: "2026-11-09T12:00:00Z" }),
 ];
 
@@ -45,7 +47,10 @@ beforeEach(() => {
   resetMocks();
   push.mockReset();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.removeItem(ACTIVE_SEMESTER_STORAGE_KEY);
+});
 
 describe("the page", () => {
   it("is titled Study Guides, with the way back to the hub and the AI chip", async () => {
@@ -63,14 +68,48 @@ describe("the page", () => {
   });
 });
 
+describe("the toolbar", () => {
+  it("has search then sort on the left, and New study guide last", async () => {
+    await home();
+    const toolbar = screen.getByTestId("guides-search").closest("label")?.parentElement as HTMLElement;
+    const controls = [...toolbar.querySelectorAll("input, button")].map(control => control.getAttribute("data-testid"));
+    expect(controls).toEqual(["guides-search", "guides-sort", "guides-new"]);
+    expect(screen.getByTestId("guides-search")).toHaveAttribute("placeholder", "Search your guides");
+    expect(screen.getByTestId("guides-new")).toHaveTextContent("New study guide");
+  });
+});
+
+describe("the cards' classes", () => {
+  /** The dot before a card's class code. */
+  const dot = (id: string, code: string) =>
+    within(screen.getByTestId(`guides-card-${id}`)).getByText(code).previousElementSibling as HTMLElement;
+
+  it("gives each card its class's colour from the student's courses, muted for a class with none", async () => {
+    await home();
+    await waitFor(() => expect(dot("a", "CS101").style.background).toBe("rgb(40, 104, 176)"));
+    expect(dot("c", "CS101").style.background).toBe("rgb(40, 104, 176)");
+    expect(dot("b", "MA225").style.background).toBe("var(--text-muted)");
+  });
+
+  it("colours a guide from another term's class too", async () => {
+    // The fixtures' classes are Fall 2026: the picked term has none of them.
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Spring 2027");
+    await home();
+    await waitFor(() => expect(dot("a", "CS101").style.background).toBe("rgb(40, 104, 176)"));
+  });
+});
+
 describe("search", () => {
-  it("filters by title, class name and scope label", async () => {
+  it("filters by title, class name or code and scope label", async () => {
     const user = await home();
     const search = screen.getByTestId("guides-search");
     await user.type(search, "recurs");
     expect(cardIds()).toEqual(["a"]);
     await user.clear(search);
     await user.type(search, "calculus");
+    expect(cardIds()).toEqual(["b"]);
+    await user.clear(search);
+    await user.type(search, "ma225");
     expect(cardIds()).toEqual(["b"]);
     await user.clear(search);
     await user.type(search, "lab 5");
@@ -111,8 +150,8 @@ describe("sort", () => {
     await user.click(screen.getByTestId("guides-sort"));
     await user.click(screen.getByTestId("guides-sort-class"));
     expect(screen.getByTestId("guides-sort")).toHaveTextContent(/^Class$/);
-    // Calculus before Intro to CS; newest first inside Intro to CS.
-    expect(cardIds()).toEqual(["b", "a", "c"]);
+    // CS101 before MA225; newest first inside CS101.
+    expect(cardIds()).toEqual(["a", "c", "b"]);
 
     await user.click(screen.getByTestId("guides-sort"));
     await user.click(screen.getByTestId("guides-sort-recent"));

@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/Skeleton";
 
 import { SpaceBar } from "../shared/SpaceBar";
-import { tierFill, tierLabel, tierText } from "../shared/tiers";
+import { TierLabel, TierSwatch } from "../shared/TierMarks";
 import m from "./newGuide.module.css";
 import type { PlanState } from "./usePlan";
 
@@ -36,10 +36,10 @@ function OutlineBody({ ready, state }: { ready: boolean; state: PlanState }) {
       <ol className={m.sections}>
         {plan.sections.map((section, i) => (
           <li key={`${i}-${section.title}`} className={m.section} data-testid={`guide-new-outline-section-${i}`} data-tier={section.tier}>
-            <span className={m.swatch} style={{ background: tierFill(section.tier) }} aria-hidden="true" />
+            <span className={m.swatch}><TierSwatch tier={section.tier} /></span>
             <span className={m.sectionText}>
               <span className={m.sectionTitle}>{section.title}</span>
-              <span className={m.sectionTier} style={{ color: tierText(section.tier) }}>{tierLabel(section.tier)}</span>
+              <TierLabel tier={section.tier} />
             </span>
             <span className={m.share}>{section.weight}%</span>
           </li>

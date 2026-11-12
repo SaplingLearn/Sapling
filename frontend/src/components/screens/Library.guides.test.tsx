@@ -38,12 +38,12 @@ const doc = (id: string, name: string, course_id: string | null) => ({
 });
 
 const guide = (over: Partial<GuideCard>) => ({
-  id: "g1", title: "Loops and recursion", course_id: "c1", course_name: "Intro to CS",
+  id: "g1", title: "Loops and recursion", course_id: "c1", course_name: "Intro to CS", course_code: "CS101",
   scope_label: "Midterm 2", saved_at: "2026-11-11T09:00:00Z", ...over,
 }) as GuideCard;
 
 const SAVED_CS = guide({});
-const SAVED_MATH = guide({ id: "g2", title: "Limits", course_id: "c2", course_name: "Calculus" });
+const SAVED_MATH = guide({ id: "g2", title: "Limits", course_id: "c2", course_name: "Calculus", course_code: "MA225" });
 const UNSAVED = guide({ id: "g3", title: "Arrays cram sheet", saved_at: null });
 
 const renderLibrary = () => render(<ToastProvider><Library /></ToastProvider>);
@@ -62,15 +62,19 @@ afterEach(() => {
 });
 
 describe("Library: saved study guides", () => {
-  it("shows each saved guide with its title, class and kind, as a link to the reader", async () => {
+  it("shows each saved guide as the home's card cut short: title, labels and class, a link to the reader", async () => {
     renderLibrary();
     const card = await screen.findByTestId("library-guide-g1");
     expect(vi.mocked(listGuides)).toHaveBeenCalledWith("u1");
     expect(card.tagName).toBe("A");
     expect(card).toHaveAttribute("href", "/study/guide/g1");
-    expect(card).toHaveTextContent("Loops and recursion");
-    expect(card).toHaveTextContent("Intro to CS");
-    expect(card).toHaveTextContent("Study guide");
+    expect(within(card).getByRole("heading", { level: 3, name: "Loops and recursion" })).toBeTruthy();
+    // What it is for and what it is, then the class by its code (the name is read out).
+    expect([...card.children].map(row => row.textContent)).toEqual([
+      "Loops and recursion",
+      "Midterm 2Study guideCS101, Intro to CS",
+    ]);
+    expect(within(card).getByText("CS101").parentElement).toHaveAttribute("title", "Intro to CS");
     expect(screen.getByTestId("library-guide-g2")).toHaveAttribute("href", "/study/guide/g2");
     // A guide that was not saved stays on the Study Guides home only.
     expect(screen.queryByTestId("library-guide-g3")).toBeNull();
@@ -91,7 +95,7 @@ describe("Library: saved study guides", () => {
     expect(screen.getByTestId("library-guide-g1")).toBeTruthy();
   });
 
-  it("follows the search, by title or class", async () => {
+  it("follows the search, by title or class (name or code)", async () => {
     renderLibrary();
     await screen.findByTestId("library-guide-g1");
     fireEvent.change(screen.getByTestId("library-search"), { target: { value: "limits" } });
@@ -100,6 +104,9 @@ describe("Library: saved study guides", () => {
     fireEvent.change(screen.getByTestId("library-search"), { target: { value: "intro to cs" } });
     expect(screen.getByTestId("library-guide-g1")).toBeTruthy();
     expect(screen.queryByTestId("library-guide-g2")).toBeNull();
+    fireEvent.change(screen.getByTestId("library-search"), { target: { value: "ma225" } });
+    expect(screen.queryByTestId("library-guide-g1")).toBeNull();
+    expect(screen.getByTestId("library-guide-g2")).toBeTruthy();
   });
 
   it("shows under a document category only for all and study guide", async () => {

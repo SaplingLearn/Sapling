@@ -2,7 +2,6 @@
  * The Study Guides home's rules, as pure functions: which guides a search
  * keeps, the order a sort puts them in, and the words on a card.
  */
-import { fmtWhen } from "@/components/study/studyModel";
 import type { GuideCard, GuideStatus } from "@/lib/studyGuide/types";
 
 export type SortKey = "recent" | "oldest" | "class";
@@ -21,32 +20,33 @@ export const guideDate = (guide: GuideCard): string => guide.generated_at ?? gui
 
 const time = (guide: GuideCard): number => Date.parse(guideDate(guide)) || 0;
 
-/** The guides whose title, class or scope label has the query in it. */
+/** The guides whose title, class (name or code) or scope label has the query in it. */
 export function searchGuides(guides: GuideCard[], query: string): GuideCard[] {
   const q = query.trim().toLowerCase();
   if (!q) return guides;
   return guides.filter(guide =>
-    [guide.title, guide.course_name, guide.scope_label].some(text => text.toLowerCase().includes(q)),
+    [guide.title, guide.course_name, guide.course_code, guide.scope_label].some(text => text.toLowerCase().includes(q)),
   );
 }
 
-/** A sorted copy. "Class" groups by class name, newest first inside a class. */
+/** A sorted copy. "Class" groups by the class code a card shows, newest first inside a class. */
 export function sortGuides(guides: GuideCard[], sort: SortKey): GuideCard[] {
   const newestFirst = (a: GuideCard, b: GuideCard) => time(b) - time(a);
   const order: Record<SortKey, (a: GuideCard, b: GuideCard) => number> = {
     recent: newestFirst,
     oldest: (a, b) => time(a) - time(b),
-    class: (a, b) => a.course_name.localeCompare(b.course_name) || newestFirst(a, b),
+    class: (a, b) => a.course_code.localeCompare(b.course_code) || newestFirst(a, b),
   };
   return [...guides].sort(order[sort]);
 }
 
-/** "Today", "Yesterday" or "Nov 3", with the year once it is not this one. */
+/** "Today" or "Nov 3", with the year once it is not this one. */
 export function dateText(guide: GuideCard, now: Date): string {
-  const iso = guideDate(guide);
-  const when = fmtWhen(iso, now);
-  const year = new Date(iso).getFullYear();
-  return when && year !== now.getFullYear() ? `${when}, ${year}` : when;
+  const when = new Date(guideDate(guide));
+  if (Number.isNaN(when.getTime())) return "";
+  if (when.toDateString() === now.toDateString()) return "Today";
+  const year = when.getFullYear() === now.getFullYear() ? undefined : "numeric";
+  return when.toLocaleDateString("en-US", { month: "short", day: "numeric", year });
 }
 
 /**

@@ -1,6 +1,5 @@
-/* The Study Guides home: a toolbar (search, sort, New study guide) over the
-   student's guides as a grid of paper cards. The cards speak the reader's
-   language: a serif title, the mastery bar, mono labels and chips.
+/* The Study Guides home: a toolbar (search and sort on the left, New study
+   guide on the right) over the student's guides as a grid of paper cards.
 
    Width comes from the CONTAINER, not the viewport, as on the Flashcards home:
    the side nav collapses and expands, and a viewport query is wrong in one of
@@ -20,129 +19,185 @@
   container-name: guideshome;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
   min-width: 0;
-  padding: 20px 32px 56px;
+  padding: 24px 32px 56px;
 }
 
 /* ── the toolbar ─────────────────────────────────────────────────────────── */
 
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* Three controls of one height and one corner. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
-/* The quiz home's search pill, at the toolbar's 40px. */
 .search {
-  flex: 1 1 200px; max-width: 360px; min-width: 0; height: 40px; box-sizing: border-box;
-  display: inline-flex; align-items: center; gap: 8px; padding: 0 14px;
-  border: 1px solid var(--border); border-radius: var(--r-full); background: var(--bg-panel);
+  flex: 0 1 354px; min-width: 0; height: 50px; box-sizing: border-box;
+  display: inline-flex; align-items: center; gap: 10px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-panel);
   color: var(--text-muted);
-  transition: border-color var(--dur-fast) var(--ease);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 .search:focus-within { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-soft); }
 .searchInput {
   flex: 1 1 0; width: 0; min-width: 0; padding: 0; border: 0; outline: none; background: none;
-  font: inherit; font-size: var(--fs-md); color: var(--text);
+  font: inherit; font-size: var(--fs-base); color: var(--text);
 }
 .searchInput::placeholder { color: var(--text-muted); }
 /* Escape clears; the native clear button would be a second, unstyled control. */
 .searchInput::-webkit-search-cancel-button { display: none; }
 
-.sortOwner { position: relative; margin-left: auto; flex-shrink: 0; }
-.sort { height: 40px; padding: 0 14px; white-space: nowrap; cursor: pointer; }
-.sortChevron { display: grid; color: var(--text-muted); transition: transform var(--dur-fast) var(--ease); }
-.sort[aria-expanded="true"] .sortChevron { transform: rotate(180deg); }
-.newGuide { height: 40px; padding: 0 16px; white-space: nowrap; flex-shrink: 0; }
-
-@keyframes guidesPop {
-  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
-  to   { opacity: 1; transform: none; }
+.sortOwner { position: relative; flex-shrink: 0; }
+.sortOwner .sort {
+  height: 50px; padding: 0 16px; gap: 10px; border-radius: var(--r-md);
+  font-size: var(--fs-base); font-weight: 700; white-space: nowrap; cursor: pointer;
 }
+.sort svg { color: var(--text-dim); }
+.sortChevron { display: grid; transition: transform var(--dur-fast) var(--ease); }
+.sort[aria-expanded="true"] .sortChevron { transform: rotate(180deg); }
+
+.toolbar .newGuide { margin-left: auto; flex-shrink: 0; }
+/* The toolbar's primary button, and the empty state's. */
+.newGuide:global(.btn) {
+  height: 50px; padding: 0 20px; gap: 10px; border-radius: var(--r-md);
+  font-size: var(--fs-lg); font-weight: 700; white-space: nowrap;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--sap-900) 20%, transparent);
+}
+
+/* The reader's three-dot menu, under the sort button. */
 .menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 4;
-  min-width: 180px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
-  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-md);
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 8; width: 210px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-radius: var(--r-md); background: var(--bg-panel); border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
-  animation: guidesPop var(--dur-fast) var(--ease) both; transform-origin: top right;
 }
 .menuItem {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  height: 32px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: transparent;
-  font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text);
-  text-align: left; white-space: nowrap; cursor: pointer;
+  width: 100%; min-height: 44px; padding: 0 12px; border-radius: var(--r-sm);
+  font-size: var(--fs-base); font-weight: 500; color: var(--text); text-align: left; white-space: nowrap;
 }
 .menuItem:hover { background: var(--bg-subtle); }
-.menuItem[aria-checked="true"] { color: var(--brand-forest); }
+.menuItem svg { color: var(--text-dim); }
+.menuItem[aria-checked="true"] { font-weight: 700; }
 
 /* ── the grid ────────────────────────────────────────────────────────────── */
 
+/* Three across at a laptop's width. A fourth only once every card would
+   still be as wide as one of three is there. */
 .grid {
   list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px;
 }
+
+/* ── one card ────────────────────────────────────────────────────────────── */
+
+/* A paper panel in the reader's language: a serif title, mono micro labels,
+   the mastery bar, label pills. Rows are told apart by hairlines. Every row
+   has a fixed height, the title's two lines included, so the rows of
+   neighbouring cards line up whatever each one holds. */
+
 .cell { display: flex; min-width: 0; }
 
 .card {
-  flex: 1; min-width: 0; box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 12px; padding: 18px;
+  flex: 1; min-width: 0; box-sizing: border-box; position: relative;
+  display: flex; flex-direction: column; padding: 20px;
   border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel);
   box-shadow: var(--shadow-sm);
-  color: var(--text); text-decoration: none;
+  font-family: var(--font-sans); color: var(--text); text-decoration: none;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur) var(--ease);
 }
 .card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-lg); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* The reading serif, as the reader's section titles. Two lines, always: a
+   one-line title leaves the second blank. */
 .card .title {
-  margin: 0; font-size: var(--fs-xl); line-height: 1.25; color: var(--text); overflow-wrap: anywhere;
+  margin: 0; min-height: 2.4em; font-family: var(--font-serif); font-size: 24px; font-weight: 600; line-height: 1.2;
+  color: var(--text); overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-.meta { display: flex; flex-wrap: wrap; align-items: center; margin-top: -6px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-muted); }
-.meta > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.meta > span + span::before { content: "·"; margin: 0 6px; color: var(--text-muted); font-weight: 400; }
-.metaNew { color: var(--warn); font-weight: 600; }
-.metaSaved { color: var(--brand-forest); font-weight: 600; }
-.metaUnfinished { color: var(--text-dim); font-weight: 600; }
-.metaFailed { color: var(--err); font-weight: 600; }
+/* ── date, what is new, saved ────────────────────────────────────────────── */
 
-.room { display: flex; flex-direction: column; gap: 6px; min-height: 35px; }
-.roomLine { display: block; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.roomTier { font-weight: 700; }
+.meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 18px; margin-top: 17px; }
+.when {
+  min-width: 0; font-family: var(--font-mono); font-size: var(--fs-sm); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.note { font-weight: 600; color: var(--warn); }
+.saved { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 700; color: var(--text-muted); white-space: nowrap; }
+.savedOn { color: var(--brand-forest); }
 
-/* Four numbers over their mono labels, as on the Flashcards hero. */
-.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--border); }
-.figure { display: flex; flex-direction: column-reverse; min-width: 0; }
-.figure dd { margin: 0; font-family: var(--font-display); font-size: var(--fs-2xl); line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
-.figure dt { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; }
+/* ── the bar and the section with the most room ──────────────────────────── */
 
-.foot { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-.course { flex-shrink: 0; max-width: 45%; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.room, .figures, .foot { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
 
-.ghost { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel); box-shadow: var(--shadow-sm); }
+.room { --space-bar-height: 10px; display: flex; flex-direction: column; gap: 11px; }
+.noBar { height: 10px; border-radius: var(--r-xs); background: var(--bg-soft); }
+.roomRow { display: flex; align-items: center; gap: 9px; height: 18px; min-width: 0; }
+.roomText { flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roomText strong { font-weight: 700; color: var(--text); }
+
+/* ── four numbers ────────────────────────────────────────────────────────── */
+
+/* Content boxes of one width, with a hairline and its padding between them. */
+.figures { display: flex; margin-bottom: 0; }
+.figure { flex: 1 1 0; min-width: 0; box-sizing: content-box; display: flex; flex-direction: column-reverse; gap: 7px; }
+.figure + .figure { padding-left: 15px; border-left: 1px solid var(--border); }
+.figure dd { margin: 0; font-size: 24px; font-weight: 500; line-height: 1; color: var(--text); }
+.figure dt { line-height: 12px; white-space: nowrap; }
+
+/* ── labels and the class ────────────────────────────────────────────────── */
+
+.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+/* A long label gives way before the class does: what the guide is for is
+   cut short, the second pill and a class code never are. */
+.pills { flex: 1 1 0; display: flex; gap: 6px; min-width: 0; }
+.pills > :first-child { flex: 0 1 auto; min-width: 0; }
+.pills > :last-child { flex: none; }
+.foot > :last-child { flex: none; max-width: 50%; }
+
+/* ── the card while the list loads ───────────────────────────────────────── */
+
+/* The same rows, in outline. */
+.ghost:hover { border-color: var(--border); box-shadow: var(--shadow-sm); transform: none; }
+.ghostTitle { box-sizing: border-box; height: 58px; padding-top: 5px; display: flex; flex-direction: column; gap: 10px; }
+.ghost .figure { flex-direction: column; gap: 7px; }
+
+/* ── a saved guide in the Library: the title, then the last row ──────────── */
+
+.short { padding: 18px; }
+.short .title { font-size: 20px; }
+.short .foot { margin-top: 14px; }
 
 /* ── states ──────────────────────────────────────────────────────────────── */
 
+.empty {
+  padding: 0 20px; border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--bg-panel); box-shadow: var(--shadow-sm);
+}
 .quiet { margin: 0; padding: 32px 0; font-size: var(--fs-base); color: var(--text-muted); }
 .loadError { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 32px 0; }
 .loadError .loadErrorTitle { font-size: var(--fs-2xl); color: var(--text); }
 .loadError p { margin: 0 0 10px; color: var(--text-dim); }
 
-/* The Library's saved guides: the same card, without the bar and numbers. */
+/* ── the Library's saved guides ──────────────────────────────────────────── */
+
 .librarySection { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 .libraryGrid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.libraryCard { gap: 10px; padding: 16px; }
-.libraryCard .title { font-size: var(--fs-lg); }
 
-@container guideshome (min-width: 1320px) {
+@container guideshome (min-width: 1560px) {
   .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-@container guideshome (max-width: 860px) {
+@container guideshome (max-width: 980px) {
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@container guideshome (max-width: 560px) {
+/* Search takes the row; sort and New share the next one. */
+@container guideshome (max-width: 720px) {
+  .search { flex-basis: 100%; }
+}
+/* One column has no neighbour to line up with: a one-line title takes one line. */
+@container guideshome (max-width: 660px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
-  .sortOwner { margin-left: 0; }
-  .search { flex-basis: 100%; max-width: none; }
+  .grid .title { min-height: 0; }
 }
 
 @media (max-width: 768px) {
@@ -150,7 +205,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card, .sortChevron { transition: none; }
+  .search, .sortChevron, .card { transition: none; }
   .card:hover { transform: none; }
-  .menu { animation: none; }
 }

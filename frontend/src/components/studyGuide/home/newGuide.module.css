@@ -77,10 +77,10 @@
 .sections { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .section { display: flex; align-items: flex-start; gap: 9px; padding: 8px 0; border-top: 1px solid var(--border); }
 .section:first-child { border-top: 0; padding-top: 0; }
-.swatch { width: 10px; height: 10px; margin-top: 4px; border-radius: var(--r-xs); flex-shrink: 0; }
+/* Holds the swatch on the title's first line. */
+.swatch { display: flex; padding-top: 4px; }
 .sectionText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sectionTitle { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.sectionTier { font-size: var(--fs-sm); font-weight: 700; }
 .share { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .minutes { margin: 0; font-weight: 600; color: var(--text); }
 

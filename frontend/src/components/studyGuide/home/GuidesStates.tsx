@@ -1,37 +1,70 @@
+import { Icon } from "@/components/Icon";
 import { Skeleton } from "@/components/Skeleton";
 import { Button, EmptyState } from "@/components/ui";
 
 import s from "./home.module.css";
 
+/** One card in outline: the same rows at the same heights as a real one. */
+function GhostCard() {
+  return (
+    <li className={s.cell}>
+      <div className={`${s.card} ${s.ghost}`}>
+        <div className={s.ghostTitle}>
+          <Skeleton width="82%" height={20} />
+          <Skeleton width="48%" height={20} />
+        </div>
+        <div className={s.meta}>
+          <Skeleton width={118} height={10} />
+          <Skeleton width={72} height={10} />
+        </div>
+        <div className={s.room}>
+          <Skeleton height={10} radius="var(--r-xs)" />
+          <div className={s.roomRow}><Skeleton width="58%" height={12} /></div>
+        </div>
+        <div className={s.figures}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className={s.figure}>
+              <Skeleton width={26} height={24} />
+              <Skeleton width={46} height={12} />
+            </div>
+          ))}
+        </div>
+        <div className={s.foot}>
+          <span className={s.pills}>
+            <Skeleton width={78} height={26} radius={999} />
+            <Skeleton width={84} height={26} radius={999} />
+          </span>
+          <Skeleton width={58} height={14} />
+        </div>
+      </div>
+    </li>
+  );
+}
+
 /** The grid while the list loads: cards in outline. */
 export function GuidesSkeleton() {
   return (
     <ul className={s.grid} aria-busy="true" aria-label="Loading your study guides" data-testid="guides-loading">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <li key={i} className={s.cell}>
-          <div className={s.ghost}>
-            <Skeleton width="78%" height={20} />
-            <Skeleton width="45%" height={11} />
-            <Skeleton height={12} radius="var(--r-xs)" />
-            <Skeleton width="60%" height={11} />
-            <Skeleton height={34} />
-            <Skeleton width="70%" height={20} radius={999} />
-          </div>
-        </li>
-      ))}
+      {Array.from({ length: 6 }).map((_, i) => <GhostCard key={i} />)}
     </ul>
   );
 }
 
-/** No guide yet: what one is, and the way to the first. */
+/** No guide yet: what one is, and the way to the first. On the cards' paper. */
 export function GuidesEmpty({ onNew }: { onNew: () => void }) {
   return (
-    <EmptyState
-      testid="guides-empty"
-      title="No study guides yet"
-      body="Make one for an exam, an assignment or a whole class. It is written from your own materials and gives the most room to what you have not mastered."
-      action={<Button variant="primary" data-testid="guides-empty-new" onClick={onNew}>New study guide</Button>}
-    />
+    <div className={s.empty}>
+      <EmptyState
+        testid="guides-empty"
+        title="No study guides yet"
+        body="Make one for an exam, an assignment or a whole class. It is written from your own materials and gives the most room to what you have not mastered."
+        action={(
+          <Button variant="primary" className={s.newGuide} data-testid="guides-empty-new" onClick={onNew}>
+            <Icon name="plus" size={14} /> New study guide
+          </Button>
+        )}
+      />
+    </div>
   );
 }
 

@@ -1,14 +1,16 @@
 import Link from "next/link";
 
-import { Chip } from "@/components/ui";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref } from "@/lib/toolHrefs";
 
+import { ClassTag } from "../shared/ClassTag";
+import { Pill } from "../shared/Pill";
 import s from "./home.module.css";
 
 /**
  * The study guides saved to the Library, as their own short section over the
- * documents. Each opens in the reader. Nothing is rendered when there are none.
+ * documents: the home's card, down to its title and last row. Each opens in
+ * the reader. Nothing is rendered when there are none.
  */
 export function LibraryGuides({ guides }: { guides: GuideCard[] }) {
   if (guides.length === 0) return null;
@@ -20,13 +22,16 @@ export function LibraryGuides({ guides }: { guides: GuideCard[] }) {
           <li key={guide.id} className={s.cell}>
             <Link
               href={studyGuideReaderHref(guide.id)}
-              className={`${s.card} ${s.libraryCard}`}
+              className={`${s.card} ${s.short}`}
               data-testid={`library-guide-${guide.id}`}
             >
-              <h3 className={`h-serif ${s.title}`}>{guide.title}</h3>
+              <h3 className={s.title} title={guide.title}>{guide.title}</h3>
               <div className={s.foot}>
-                <Chip variant="accent">Study guide</Chip>
-                <span className={s.course}>{guide.course_name}</span>
+                <span className={s.pills}>
+                  <Pill>{guide.scope_label}</Pill>
+                  <Pill>Study guide</Pill>
+                </span>
+                <ClassTag code={guide.course_code} name={guide.course_name} />
               </div>
             </Link>
           </li>
