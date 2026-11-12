@@ -104,7 +104,7 @@ export function SectionView({
       <div className={s.sectionHead}>
         <div className={s.sectionTitle}>
           <span className={s.sectionNumber}>{sectionNumber(index)}</span>
-          <h2 id={`${anchor}-title`}>{section.title}</h2>
+          <h3 id={`${anchor}-title`}>{section.title}</h3>
         </div>
         <button
           type="button"

@@ -92,7 +92,7 @@
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-lg); }
 
 .card .title {
-  margin: 0; font-size: var(--fs-xl); line-height: 1.25; color: var(--text);
+  margin: 0; font-size: var(--fs-xl); line-height: 1.25; color: var(--text); overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 

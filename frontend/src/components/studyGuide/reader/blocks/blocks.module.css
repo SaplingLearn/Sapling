@@ -170,7 +170,10 @@
   background: color-mix(in srgb, var(--c-plum) 14%, var(--bg-panel)); color: var(--c-plum);
   font-size: var(--fs-sm); font-weight: 700;
 }
-.question { margin: 0; max-width: 56ch; font-family: var(--font-serif); font-size: 19px; font-weight: 600; line-height: 1.4; }
+.question {
+  margin: 0; max-width: 56ch; overflow-wrap: anywhere;
+  font-family: var(--font-serif); font-size: 19px; font-weight: 600; line-height: 1.4;
+}
 .answers { display: flex; flex-direction: column; gap: 8px; }
 .right, .wrong {
   display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between;

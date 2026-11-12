@@ -1,13 +1,14 @@
 /* The reader's right rail: progress, freshness, the outline, the ask box.
 
-   It follows the page (sticky under the top bar) while there are two columns.
+   It follows the page (sticky under the top bar, whose height is --guide-bar:
+   see reader.module.css) while there are two columns.
    The query is on the reader's .shell container (reader.module.css): under
    866px the article and the rail no longer fit side by side, the rail wraps
    below, and a sticky rail there would cover what it follows. */
 
 .rail {
   flex: 1 1 290px; max-width: 340px; min-width: 0;
-  position: sticky; top: 96px;
+  position: sticky; top: calc(var(--guide-bar, 80px) + 16px);
   display: flex; flex-direction: column; gap: 18px;
   font-size: 15px; line-height: 1.45;
 }

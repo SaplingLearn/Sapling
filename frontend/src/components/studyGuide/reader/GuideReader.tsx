@@ -18,6 +18,7 @@ import "./print.css";
 import s from "./reader.module.css";
 import type { ViewMode } from "./readerModel";
 import { ReaderTopBar } from "./ReaderTopBar";
+import { useBarHeight } from "./useBarHeight";
 import { useGuide } from "./useGuide";
 
 export function GuideReader({
@@ -32,10 +33,12 @@ export function GuideReader({
   const [mode, setMode] = React.useState<ViewMode>("read");
   const today = React.useMemo(() => now ?? new Date(), [now]);
   const { guide, error, update, toggleRead, save, sendFeedback } = useGuide(userId, guideId);
+  const page = React.useRef<HTMLDivElement>(null);
+  useBarHeight(page);
 
   return (
     // `data-guide-reader` is what print.css keys the app shell's print rules on.
-    <div className={s.page} data-guide-reader="">
+    <div ref={page} className={s.page} data-guide-reader="">
       <ReaderTopBar mode={mode} onMode={setMode} />
       {error ? (
         <p className={s.loadError} role="alert" data-testid="guide-load-error">

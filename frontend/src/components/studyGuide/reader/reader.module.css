@@ -27,9 +27,10 @@
 
 /* ── the generation banner ───────────────────────────────────────────────── */
 
-/* Sticks under the top bar (about 80px tall) while sections fill in. */
+/* Sticks under the top bar while sections fill in. `--guide-bar` is the bar's
+   measured height (useBarHeight); 80px is one row of actions. */
 .banner {
-  position: sticky; top: 84px; z-index: 4;
+  position: sticky; top: calc(var(--guide-bar, 80px) + 4px); z-index: 4;
   display: flex; flex-direction: column; gap: 10px; padding: 14px 18px;
   border-radius: var(--r-lg); background: var(--sap-900); color: var(--ink-0);
   box-shadow: var(--shadow-lg);
@@ -51,7 +52,7 @@
 .header { display: flex; flex-direction: column; gap: 16px; padding-bottom: 26px; border-bottom: 1px solid var(--border); }
 .titleRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .header .title {
-  flex: 1; min-width: 0; margin: 0;
+  flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere;
   font-size: clamp(34px, 4.4vw, 52px); font-weight: 400; line-height: 1.04; color: var(--text);
 }
 .deck { margin: 0; max-width: 58ch; font-style: italic; font-size: 19px; line-height: 1.5; color: var(--text-dim); }
@@ -112,11 +113,14 @@
 /* scroll-margin clears the sticky top bar when the outline jumps here. */
 .section {
   display: flex; flex-direction: column; gap: 22px; padding-top: 26px;
-  border-top: 1px solid var(--border-strong); scroll-margin-top: 90px;
+  border-top: 1px solid var(--border-strong); scroll-margin-top: calc(var(--guide-bar, 80px) + 10px);
 }
 .sectionHead { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
 .sectionTitle { display: flex; align-items: baseline; gap: 16px; min-width: 0; }
-.sectionTitle h2 { margin: 0; font-family: var(--font-serif); font-size: clamp(24px, 2.6vw, 30px); font-weight: 600; line-height: 1.2; }
+.sectionTitle h3 {
+  margin: 0; overflow-wrap: anywhere;
+  font-family: var(--font-serif); font-size: clamp(24px, 2.6vw, 30px); font-weight: 600; line-height: 1.2;
+}
 .sectionNumber { font-family: var(--font-mono); font-size: var(--fs-md); color: var(--text-muted); }
 .sectionBody { display: flex; flex-direction: column; gap: 22px; }
 .sectionBody[hidden] { display: none; }
@@ -193,7 +197,7 @@
 
 .sources {
   display: flex; flex-direction: column; gap: 10px; padding-top: 26px;
-  border-top: 1px solid var(--border-strong); scroll-margin-top: 90px;
+  border-top: 1px solid var(--border-strong); scroll-margin-top: calc(var(--guide-bar, 80px) + 10px);
   font-family: var(--font-sans); font-size: 15px; line-height: 1.45;
 }
 .sourcesHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -230,6 +234,9 @@
 /* The printout is the guide alone. print.css takes the app shell away; this
    takes the reader's own controls away and opens what is collapsed. */
 @media print {
+  /* Browsers drop backgrounds on paper unless told to keep them. The space
+     bar, the tier swatches, key terms and the block tints are backgrounds. */
+  .page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .page > header, .banner, .menuWrap, .readToggle, .expand, .feedback { display: none !important; }
   .shell { max-width: none; padding: 0; }
   .layout { display: block; }

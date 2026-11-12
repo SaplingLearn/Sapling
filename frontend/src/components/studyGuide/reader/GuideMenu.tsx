@@ -3,6 +3,7 @@ import React from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/Icon";
+import { useMenu } from "@/components/studyGuide/shared/useMenu";
 
 import s from "./reader.module.css";
 
@@ -24,25 +25,6 @@ function RegenerateGlyph() {
   );
 }
 
-/** Close on Escape, and on a press anywhere outside `ref`. */
-function useDismiss(ref: React.RefObject<HTMLElement | null>, open: boolean, close: () => void) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onPress = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) close();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("pointerdown", onPress);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPress);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [ref, open, close]);
-}
-
 /** The three-dot menu beside the title. */
 export function GuideMenu({
   saved,
@@ -56,10 +38,13 @@ export function GuideMenu({
   onSave: () => void;
   onRegenerate: () => void;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const wrap = React.useRef<HTMLDivElement>(null);
-  const close = React.useCallback(() => setOpen(false), []);
-  useDismiss(wrap, open, close);
+  const { open, toggle, close, owner, onKeyDown, onBlur } = useMenu();
+  const savedItem = React.useRef<HTMLAnchorElement>(null);
+  // Save swaps the item that has the focus for this one. Follow it, or the
+  // focus falls to the page and the keyboard loses the menu.
+  React.useEffect(() => {
+    if (open && saved) savedItem.current?.focus();
+  }, [open, saved]);
 
   const exportPdf = () => {
     close();
@@ -71,7 +56,7 @@ export function GuideMenu({
   };
 
   return (
-    <div className={s.menuWrap} ref={wrap}>
+    <div className={s.menuWrap} ref={owner} onKeyDown={onKeyDown} onBlur={onBlur}>
       <button
         type="button"
         className={s.menuButton}
@@ -79,14 +64,14 @@ export function GuideMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="More actions for this guide"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
       >
         <DotsGlyph />
       </button>
       {open && (
         <div role="menu" aria-label="Guide actions" className={`${s.menu} fade-in`}>
           {saved ? (
-            <Link role="menuitem" href="/library" className={s.menuItem} data-testid="guide-menu-saved">
+            <Link ref={savedItem} role="menuitem" href="/library" className={s.menuItem} data-testid="guide-menu-saved">
               <Icon name="check" size={14} />
               <span className={s.menuSaved}>
                 <strong>Saved to Library</strong>

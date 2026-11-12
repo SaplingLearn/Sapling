@@ -1,39 +1,13 @@
 "use client";
-import React from "react";
-
 import { Icon } from "@/components/Icon";
 
+import { useMenu } from "../shared/useMenu";
 import { SORTS, sortLabel, type SortKey } from "./guidesModel";
 import s from "./home.module.css";
 
-/** Closes the menu on Esc (focus back on its button) or a press outside it. */
-function useDismiss(open: boolean, owner: React.RefObject<HTMLDivElement | null>, close: () => void) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      close();
-      owner.current?.querySelector<HTMLElement>("button")?.focus();
-    };
-    const onDown = (e: Event) => {
-      if (owner.current && e.target instanceof Node && owner.current.contains(e.target)) return;
-      close();
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown);
-    };
-  }, [open, owner, close]);
-}
-
 /** The sort button shows only the current choice; the menu holds the rest. */
 export function SortMenu({ value, onChange }: { value: SortKey; onChange: (sort: SortKey) => void }) {
-  const [open, setOpen] = React.useState(false);
-  const owner = React.useRef<HTMLDivElement | null>(null);
-  const close = React.useCallback(() => setOpen(false), []);
-  useDismiss(open, owner, close);
+  const { open, toggle, close, owner, onKeyDown, onBlur } = useMenu();
 
   const pick = (sort: SortKey) => {
     close();
@@ -41,7 +15,7 @@ export function SortMenu({ value, onChange }: { value: SortKey; onChange: (sort:
   };
 
   return (
-    <div ref={owner} className={s.sortOwner}>
+    <div ref={owner} className={s.sortOwner} onKeyDown={onKeyDown} onBlur={onBlur}>
       <button
         type="button"
         className={`btn ${s.sort}`}
@@ -49,7 +23,7 @@ export function SortMenu({ value, onChange }: { value: SortKey; onChange: (sort:
         aria-label={`Sort: ${sortLabel(value)}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen(o => !o)}
+        onClick={toggle}
       >
         {sortLabel(value)}
         <span aria-hidden="true" className={s.sortChevron}><Icon name="chevron-down" size={10} /></span>

@@ -113,6 +113,14 @@ describe("what the reader draws", () => {
     expect(back).toHaveAccessibleName("Back to Study Guides");
   });
 
+  it("has one page heading, with the guide's title under it and the sections under that", async () => {
+    await open();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 2, name: "Control flow and functions" })).toBe(screen.getByTestId("guide-title"));
+    const sections = screen.getAllByRole("heading", { level: 3 }).map(heading => heading.textContent);
+    expect(sections).toEqual(["Loops", "Functions", "Scope", "Variables"]);
+  });
+
   it("renders every item of the fixture: each prose passage and each block type", async () => {
     await open();
     const items = fixtureGuide().content.sections.flatMap(section => section.items);

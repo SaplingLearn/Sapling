@@ -58,9 +58,10 @@ export function GuideHeader({
   return (
     <header className={s.header}>
       <div className={s.titleRow}>
-        <h1 className={`h-serif ${s.title}`} data-testid="guide-title">
+        {/* The top bar's "Study" is the page's h1. */}
+        <h2 className={`h-serif ${s.title}`} data-testid="guide-title">
           {title}
-        </h1>
+        </h2>
         <GuideMenu saved={guide.saved_at !== null} busy={writing} onSave={onSave} onRegenerate={onRegenerate} />
       </div>
       {deck && <p className={s.deck}>{deck}</p>}
