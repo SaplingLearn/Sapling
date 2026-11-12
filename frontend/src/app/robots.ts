@@ -7,7 +7,6 @@ import { SHELL_PREFIXES } from '@/lib/appRoutes';
 // app routes that live outside (shell).
 const PRIVATE = [
   ...SHELL_PREFIXES,
-  '/flashcards',
   '/onboarding',
   '/pending',
   '/setting-up',

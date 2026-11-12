@@ -104,6 +104,16 @@ describe("TopNav — desktop group labels", () => {
     expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*500/);
   });
 
+  it.each(["/flashcards", "/study/guide", "/quiz"])(
+    "highlights the Learn group on %s, a Study tool page",
+    (path) => {
+      mockedUsePathname.mockReturnValue(path);
+      render(<TopNav />);
+      const learn = screen.getByRole("button", { name: /^Learn/ });
+      expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    },
+  );
+
   it("highlights the Tools group when on /gradebook", () => {
     mockedUsePathname.mockReturnValue("/gradebook");
     render(<TopNav />);

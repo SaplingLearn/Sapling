@@ -112,6 +112,7 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/dashboard/:path*', '/learn/:path*', '/quiz/:path*', '/study/:path*',
+    '/flashcards/:path*',
     '/tree/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',
     '/settings/:path*', '/achievements/:path*',

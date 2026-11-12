@@ -128,9 +128,10 @@ describe('#170 robots / sitemap / manifest', () => {
       const d = rule?.disallow;
       return Array.isArray(d) ? d : d ? [d] : [];
     });
-    for (const p of ['/dashboard', '/api/', '/auth/', '/settings']) {
+    for (const p of ['/dashboard', '/api/', '/auth/', '/settings', '/flashcards', '/study']) {
       expect(flat.some(x => x.startsWith(p))).toBe(true);
     }
+    expect(new Set(flat).size).toBe(flat.length); // no path listed twice
     expect(r.sitemap).toContain('/sitemap.xml');
   });
 

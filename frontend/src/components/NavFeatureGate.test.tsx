@@ -63,4 +63,46 @@ describe("NavFeatureGate", () => {
     renderGate();
     expect(replace).not.toHaveBeenCalled();
   });
+
+  // Flashcards and the Study Guide are Study's pages; /flashcards is served
+  // outside /study and used to slip past the gate (navFeatures NAV_PATH_ALIASES).
+  it.each(["/study", "/study/guide", "/flashcards", "/flashcards/deck-1"])(
+    "hiding Study redirects %s to /dashboard, veiled",
+    (path) => {
+      pathname = path;
+      flagState = { flags: { hide_study: "on" }, ready: true };
+      renderGate();
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledWith("/dashboard");
+      expect(screen.getByTestId("nav-feature-gate").style.visibility).toBe("hidden");
+    },
+  );
+
+  it("veils /flashcards while flags load, without redirecting", () => {
+    pathname = "/flashcards";
+    flagState = { flags: {}, ready: false };
+    renderGate();
+    expect(screen.getByTestId("nav-feature-gate").dataset.veiled).toBe("true");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("shows /flashcards when Study is visible, whatever Quiz's flag says", () => {
+    pathname = "/flashcards";
+    flagState = { flags: { hide_study: "off", hide_quiz: "on" }, ready: true };
+    renderGate();
+    expect(screen.getByTestId("nav-feature-gate").dataset.veiled).toBeUndefined();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("the landing page of a redirect is never gated, so it cannot loop", () => {
+    // Every hide flag on at once: /dashboard still renders.
+    pathname = "/dashboard";
+    flagState = {
+      flags: { hide_study: "on", hide_quiz: "on", hide_tutor: "on", hide_tree: "on" },
+      ready: true,
+    };
+    renderGate();
+    expect(screen.getByTestId("nav-feature-gate").dataset.veiled).toBeUndefined();
+    expect(replace).not.toHaveBeenCalled();
+  });
 });
