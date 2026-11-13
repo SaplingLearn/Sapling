@@ -39,11 +39,11 @@
 .bannerRow { display: flex; align-items: center; gap: 12px; }
 .bannerLabel { flex: 1; min-width: 0; font-weight: 700; }
 .bannerStep { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
-.bannerTrack { height: 4px; border-radius: 2px; background: var(--bg-inset); overflow: hidden; }
+.bannerTrack { height: 4px; border-radius: 2px; background: var(--sap-100); overflow: hidden; }
 .bannerBar { height: 100%; border-radius: 2px; background: var(--brand-forest); transition: width 520ms var(--ease); }
 .spinner {
   flex: none; width: 18px; height: 18px; border-radius: 50%;
-  border: 2.5px solid var(--bg-inset); border-top-color: var(--brand-forest);
+  border: 2.5px solid var(--sap-100); border-top-color: var(--brand-forest);
   animation: guideSpin 0.9s linear infinite;
 }
 @keyframes guideSpin { to { transform: rotate(360deg); } }
