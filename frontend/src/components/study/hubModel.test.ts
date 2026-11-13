@@ -219,6 +219,15 @@ describe("roadmapColumns", () => {
     expect([t.a.dim, t.b.dim, t.c.dim, t.d.dim]).toEqual([true, true, false, true]);
   });
 
+  it("marks the tiles the selected exam does not cover, and none without one", () => {
+    const t = tiles({ ...none, covered: new Set(["b", "c"]) });
+    expect([t.a.off, t.b.off, t.c.off, t.d.off]).toEqual([true, false, false, true]);
+    // Off the exam is not the legend's or the hover's dimming.
+    expect(Object.values(t).some(x => x.dim)).toBe(false);
+    expect(Object.values(tiles(none)).some(x => x.off)).toBe(false);
+    expect(Object.values(tiles({ ...none, covered: null })).some(x => x.off)).toBe(false);
+  });
+
   describe("a long column", () => {
     const mastered = ["m1", "m2", "m3", "m4", "m5"].map(id => concept(id, "mastered"));
     const open = { c1Foundations: true };

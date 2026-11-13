@@ -1,8 +1,9 @@
 "use client";
 /**
  * The Up Next block beside the readiness figure: the concept to work on (the
- * clicked one, else the head of the study queue), what it rests on, and the
- * ways straight into it. With nothing to work on it says why instead.
+ * clicked one, else the head of the selected exam's study queue), what it
+ * rests on, and the ways straight into it. With nothing to work on it says
+ * why instead.
  *
  * It follows the CLICKED concept, never the hovered one: it is in flow above
  * the roadmap and changes height with the concept, so previewing the hovered
@@ -19,6 +20,7 @@ import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
 /* `.label-micro`, for the one place it sits on the dark block. */
 const MICRO_ON_DARK: React.CSSProperties = { fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--sap-100)" };
 const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px" };
+const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
 const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
 
 function MasteryRing({ concept }: { concept: Concept }) {
@@ -71,10 +73,12 @@ function Prereqs({ prereqs }: { prereqs: Concept[] }) {
   );
 }
 
-export function FocusCard({ concept, upNext, prereqs, cardCount, quizShown, nav }: {
+export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, quizShown, nav }: {
   concept: Concept;
   /** It is the head of the study queue (rather than a concept the student clicked off it). */
   upNext: boolean;
+  /** The selected exam, once all it covers is mastered: the queue is then the rest of the course's. */
+  masteredExam: string | null;
   /** The concepts it rests on, as the graph has them. */
   prereqs: Concept[];
   /** Flashcards the student already has on it. */
@@ -88,6 +92,13 @@ export function FocusCard({ concept, upNext, prereqs, cardCount, quizShown, nav 
   ];
   return (
     <div data-testid="focus-card" className={s.focus} style={{ position: "relative", ...BLOCK, minWidth: 0 }}>
+      {/* The line stays while a clicked concept is shown (only its second half
+          is about the queue), so picking one does not change the block's height. */}
+      {masteredExam && (
+        <p data-testid="focus-fallback-note" style={FALLBACK_NOTE}>
+          Everything on {masteredExam} is mastered.{upNext && " From the rest of the course:"}
+        </p>
+      )}
       {/* One row, like the Dashboard's lead plan row: the concept on the
           left, the ways straight into it on the right. Stacked once the
           block is too narrow for that (StudyHub.module.css). */}

@@ -663,8 +663,8 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(squares()).toHaveLength(2);
     expect(legend()).toEqual(["0 Mastered", "1 Learning", "1 Struggling", "0 Not Started"]);
 
-    // The rest of the page is still the whole course: all four concepts on the
-    // roadmap, Up Next unchanged, and the legend still filters the roadmap.
+    // The roadmap keeps all four concepts in place, Up Next is on the exam
+    // (Recursion), and the legend still filters the roadmap.
     for (const id of ["var", "loop", "rec", "arr"]) expect(screen.getByTestId(`tile-${id}`)).toBeTruthy();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^1\s*Learning$/ }));
@@ -672,8 +672,10 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(screen.getByTestId("tile-var").style.opacity).toBe("0.3");
 
     // Quiz 3 has nothing linked: the course's number, under the course's name.
+    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
     expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
+    expect(screen.getByTestId("readiness-unlinked-note").textContent).toBe("No topics are linked to Quiz 3 yet.");
     expect(screen.queryByText(/^Ready for/)).toBeNull();
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%");
     expect(screen.getByText("+3% this week")).toBeTruthy();
@@ -695,6 +697,132 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"); // mean of 96, 60, 30, 0
     expect(squares()).toHaveLength(4);
     expect(legend()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
+  });
+});
+
+describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
+  const ALL = ["var", "loop", "rec", "arr"];
+  const opacity = (id: string) => screen.getByTestId(`tile-${id}`).style.opacity;
+  const tileTitle = (id: string) => screen.getByTestId(`tile-${id}`).getAttribute("title");
+  /** An outline that puts `onExam2` on Exam 2 and nothing on Quiz 3. */
+  const linkExam2 = (...onExam2: string[]) =>
+    vi.mocked(getTopicChecklist).mockResolvedValue({
+      topics: ALL.map(id => topic(`t-${id}`, id, null, id, onExam2.includes(id) ? ["e2"] : [])),
+      needs_refresh: false,
+    } as never);
+
+  it("sets back the concepts the exam does not cover, and says how many it does", async () => {
+    linkExam2("loop", "rec");
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    expect(screen.getByTestId("roadmap-exam-caption").textContent).toBe("2 concepts on Exam 2");
+    // Every tile is still there, in place; the two off the exam are set back
+    // and say why in words, not by opacity alone.
+    expect(ALL.map(opacity)).toEqual(["0.6", "1", "1", "0.6"]);
+    expect(ALL.map(tileTitle)).toEqual(["Not on Exam 2", null, null, "Not on Exam 2"]);
+    // A set-back tile still selects its concept.
+    fireEvent.click(screen.getByTestId("tile-var"));
+    expect(within(screen.getByTestId("focus-card")).getByText("Variables")).toBeTruthy();
+    // And its menu is not faded with it while it is open.
+    fireEvent.click(screen.getByTestId("tile-actions-arr"));
+    expect(within(screen.getByTestId("tile-arr")).getByRole("menu")).toBeTruthy();
+    expect(opacity("arr")).toBe("1");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(opacity("arr")).toBe("0.6");
+  });
+
+  it("counts one covered concept in the singular", async () => {
+    linkExam2("loop");
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    expect(screen.getByTestId("roadmap-exam-caption").textContent).toBe("1 concept on Exam 2");
+  });
+
+  it("sets nothing back for an exam with no linked concept, and says none is linked", async () => {
+    linkExam2("loop", "rec");
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
+    expect(screen.getByTestId("readiness-unlinked-note").textContent).toBe("No topics are linked to Quiz 3 yet.");
+    expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
+    expect(screen.queryByTestId("roadmap-exam-caption")).toBeNull();
+    expect(ALL.map(opacity)).toEqual(["1", "1", "1", "1"]);
+    expect(ALL.map(tileTitle)).toEqual([null, null, null, null]);
+    expect(screen.queryByTestId("focus-fallback-note")).toBeNull();
+    // Back on Exam 2 the note goes and the roadmap is scoped again.
+    fireEvent.click(screen.getByRole("tab", { name: /Exam 2/ }));
+    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
+    expect(ALL.map(opacity)).toEqual(["0.6", "1", "1", "0.6"]);
+  });
+
+  it("sets nothing back when no exam is selected at all", async () => {
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [] });
+    linkExam2("loop", "rec");
+    renderHub();
+    await screen.findByText("CS101 Mastery");
+    expect(screen.queryByTestId("roadmap-exam-caption")).toBeNull();
+    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
+    expect(ALL.map(opacity)).toEqual(["1", "1", "1", "1"]);
+  });
+
+  it("Up Next is queued from the exam's concepts, and its actions start on that concept", async () => {
+    // Over the whole course Recursion (struggling) is first. It is not on Exam 2.
+    linkExam2("loop", "arr");
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const card = () => screen.getByTestId("focus-card");
+    expect(within(card()).getByText("Up Next")).toBeTruthy();
+    expect(within(card()).getByText("Loops")).toBeTruthy();
+    expect(within(card()).queryByText("Recursion")).toBeNull();
+    expect(within(card()).getByRole("link", { name: "Start quiz" }).getAttribute("href")).toContain("concept=loop");
+    expect(within(card()).getByRole("link", { name: "Review 1 flashcard" }).getAttribute("href"))
+      .toBe("/flashcards?course=c1&concepts=Loops&start=1");
+    expect(screen.queryByTestId("focus-fallback-note")).toBeNull();
+    // The roadmap's "Next" mark is the same concept.
+    expect(within(screen.getByTestId("tile-loop")).getByText("Next")).toBeTruthy();
+    expect(within(screen.getByTestId("tile-rec")).queryByText("Next")).toBeNull();
+
+    // Quiz 3 has nothing linked, so its Up Next is the course's: Recursion.
+    fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
+    expect(within(card()).getByText("Recursion")).toBeTruthy();
+    expect(within(card()).getByRole("link", { name: "Start quiz" }).getAttribute("href")).toContain("concept=rec");
+    expect(screen.queryByTestId("focus-fallback-note")).toBeNull();
+  });
+
+  it("says so when everything on the exam is mastered and Up Next is the rest of the course", async () => {
+    linkExam2("var"); // Variables is mastered
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const card = screen.getByTestId("focus-card");
+    expect(screen.getByTestId("focus-fallback-note").textContent)
+      .toBe("Everything on Exam 2 is mastered. From the rest of the course:");
+    expect(within(card).getByTestId("focus-fallback-note")).toBeTruthy();
+    expect(within(card).getByText("Up Next")).toBeTruthy();
+    expect(within(card).getByText("Recursion")).toBeTruthy();
+    // A clicked concept is not "from the rest of the course"; the line keeps
+    // its first half, so the block does not change height.
+    fireEvent.click(screen.getByTestId("tile-var"));
+    expect(within(screen.getByTestId("focus-card")).getByText("Variables")).toBeTruthy();
+    expect(screen.getByTestId("focus-fallback-note").textContent).toBe("Everything on Exam 2 is mastered.");
+  });
+
+  it("Quick Reviews are the same list on every tab", async () => {
+    linkExam2("loop");
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    const names = () => {
+      const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
+      fireEvent.focus(row);
+      const list = screen.getByRole("dialog", { name: "Quick reviews" });
+      const found = ["Variables", "Loops", "Recursion", "Arrays"].filter(n => within(list).queryByText(n));
+      expect(within(list).getByText("~4 min · CS101")).toBeTruthy();
+      fireEvent.blur(row);
+      return found;
+    };
+    // Recursion is not on Exam 2, and is still in the list there.
+    expect(names()).toEqual(["Loops", "Recursion"]);
+    fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
+    expect(names()).toEqual(["Loops", "Recursion"]);
   });
 });
 
@@ -780,6 +908,8 @@ describe("StudyHub shows only what its data backs", () => {
     await hubLoaded();
     expect(screen.getByTestId("readiness-pct").textContent).toBe("–");
     expect(screen.queryByText("0%")).toBeNull();
+    // No number to qualify, so no note about the exam either.
+    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
     // Nothing to draw or filter either; the block beside it says why.
     const band = screen.getByLabelText("Readiness");
     expect(within(band).queryByRole("img")).toBeNull();

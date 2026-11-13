@@ -165,15 +165,15 @@ function HubPage(props: {
 
         {/* Re-keyed on the course and exam, so the band replays its entrance for each. */}
         <section aria-label="Readiness" key={`${cid}:${view.exam?.id ?? ""}`} className={`${s.areaReady} ${s.readyGrid} ${s.examEnter}`} style={{ padding: "16px 0", borderBottom: "1px solid var(--border)" }}>
-          <ReadinessBand label={view.band.label} concepts={view.band.concepts} ready={view.ready}
+          <ReadinessBand label={view.band.label} note={view.band.note} concepts={view.band.concepts} ready={view.ready}
             selectedId={view.sel?.id ?? null} level={st.lvl} onSelect={id => set({ topic: id })} onLevel={lvl => set({ lvl })} />
           {focus
-            ? <FocusCard concept={focus} upNext={focus.id === view.rec?.id} prereqs={view.focusPrereqs}
+            ? <FocusCard concept={focus} upNext={focus.id === view.rec?.id} masteredExam={view.masteredExam} prereqs={view.focusPrereqs}
                 cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} nav={nav} />
             : <FocusEmpty hasConcepts={view.topics.length > 0} />}
         </section>
 
-        <Roadmap key={`roadmap:${cid}`} columns={view.columns} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
+        <Roadmap key={`roadmap:${cid}`} columns={view.columns} scope={view.scope} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
           quizShown={quizShown} nav={nav} set={set} closeTileMenu={props.closeTileMenu} />
 
         {/* The 40px side bleed (padding + negative margin, in the stylesheet so

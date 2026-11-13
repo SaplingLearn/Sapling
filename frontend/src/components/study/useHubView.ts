@@ -25,10 +25,11 @@ import {
 import {
   categoriesFromChecklist,
   conceptsForCourse,
+  examQueue,
+  examScope,
   quickReviews,
   readiness,
   readinessBand,
-  studyQueue,
 } from "./studyModel";
 import type { HubState } from "./useHubState";
 import type { StudyGraph, StudyRecords } from "./useStudyData";
@@ -58,10 +59,12 @@ export function useHubView(input: {
     [graph, cid, today, outline],
   );
   const byId = React.useMemo(() => new Map(topics.map(t => [t.id, t])), [topics]);
-  const queueHead = React.useMemo(() => studyQueue(topics)[0] || null, [topics]);
-  const marks = conceptMarks(byId, queueHead, st.topic, st.hover);
 
-  // The readiness band alone follows the selected exam.
+  // What the selected exam covers. The readiness band, the roadmap's set-back
+  // tiles and Up Next all follow it; with nothing linked they are the course's.
+  const scope = React.useMemo(() => examScope(topics, outline, exam), [topics, outline, exam]);
+  const upNext = React.useMemo(() => examQueue(topics, scope), [topics, scope]);
+  const marks = conceptMarks(byId, upNext.queue[0] || null, st.topic, st.hover);
   const band = React.useMemo(() => readinessBand(topics, outline, exam, label), [topics, outline, exam, label]);
 
   // Reviews are picked over the whole course, whichever exam is selected.
@@ -74,11 +77,13 @@ export function useHubView(input: {
 
   return {
     label, list, upcoming, soon: dueThisWeek(upcoming, today), exams, exam,
-    topics, byId, ...marks,
+    topics, byId, ...marks, scope,
+    // The exam Up Next has run out of: its queue is the rest of the course's.
+    masteredExam: upNext.fallback && scope ? scope.title : null,
     focusPrereqs: prerequisitesOf(marks.focus, byId),
     band, ready: readiness(band.concepts),
     cardCount,
-    columns: roadmapColumns(topics, { ...marks, lvl: st.lvl }, cid, st.openCols),
+    columns: roadmapColumns(topics, { ...marks, lvl: st.lvl, covered: scope?.ids }, cid, st.openCols),
     reviews,
     recent,
   };

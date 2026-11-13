@@ -181,6 +181,8 @@ export interface RoadmapTile {
   isNext: boolean;
   rel: TileRelation;
   dim: boolean;
+  /** Not on the selected exam, when the outline says what is. */
+  off: boolean;
   /** Never folded away, even when mastered. */
   pin: boolean;
 }
@@ -208,13 +210,15 @@ export interface RoadmapMarks {
   hot: Concept | null;
   /** The legend's status filter. */
   lvl: Status | null;
+  /** The selected exam's concepts (studyModel's `examScope`), when it has some. */
+  covered?: Set<string> | null;
 }
 
 /** Tiles a column shows before it folds its mastered ones away. */
 const COLUMN_LIMIT = 4;
 
 function tileMaker(marks: RoadmapMarks): (t: Concept) => RoadmapTile {
-  const { sel, rec, hot, lvl } = marks;
+  const { sel, rec, hot, lvl, covered } = marks;
   const needed = new Set(hot?.pre);
   const unlocks = new Set(hot?.post);
   const pinned = new Set([...(sel?.pre || []), ...(sel?.post || [])]);
@@ -232,6 +236,7 @@ function tileMaker(marks: RoadmapMarks): (t: Concept) => RoadmapTile {
     return {
       t, isSel, isNext, rel,
       dim: offLevel || (other && !rel && linked),
+      off: !!covered && !covered.has(t.id),
       pin: isSel || isNext || pinned.has(t.id),
     };
   };

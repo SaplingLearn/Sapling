@@ -5,7 +5,8 @@
  *
  * It follows the selected exam: the figure, trend, squares and legend counts
  * are over the concepts the outline puts on that exam, or over the whole
- * course (labelled as the course) when it puts none.
+ * course (labelled as the course, with a note that the exam has nothing
+ * linked) when it puts none.
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
@@ -47,6 +48,8 @@ function LegendChip({ status, count, on, onToggle }: { status: Status; count: nu
 type BandProps = {
   /** "Ready for <exam>", or the course's name when the figure is the course's. */
   label: string;
+  /** Says the selected exam has nothing linked, when the figure is the course's for that reason. */
+  note: string | null;
   /** The concepts the figure is over. With none there is nothing to measure,
    *  and the band says so ("–") rather than "0%", which reads as a score. */
   concepts: Concept[];
@@ -93,6 +96,7 @@ export function ReadinessBand(props: BandProps) {
         <span data-testid="readiness-pct" style={{ fontFamily: DISPLAY, fontSize: 42, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{measured ? `${ready.pct}%` : "–"}</span>
         <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingBottom: 2 }}>
           <span style={{ fontSize: "var(--fs-base)", lineHeight: 1.3, fontWeight: 600 }}>{label}</span>
+          {measured && props.note && <span data-testid="readiness-unlinked-note" style={{ fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "var(--text-muted)" }}>{props.note}</span>}
           <Trend points={ready.trend} />
         </div>
       </div>

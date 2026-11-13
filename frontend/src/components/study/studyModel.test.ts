@@ -7,6 +7,8 @@ import {
   classifyAssessment,
   readiness,
   conceptIdsForExam,
+  examQueue,
+  examScope,
   readinessBand,
   studyQueue,
   quickReviews,
@@ -259,6 +261,7 @@ describe("readinessBand", () => {
   it("is the exam's own concepts, named for the exam, when the outline links some", () => {
     const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }, { node_id: "c", assessments: on("e1") }], exam, "CS101");
     expect(band.label).toBe("Ready for Midterm");
+    expect(band.note).toBeNull();
     expect(band.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
     expect(readiness(band.concepts).pct).toBe(45); // not the course's 60
   });
@@ -273,12 +276,96 @@ describe("readinessBand", () => {
     ]) {
       const band = readinessBand(cs, outline, exam, "CS101");
       expect(band.label).toBe("CS101 Readiness");
+      // The course's number under an exam's tab says why it is the course's.
+      expect(band.note).toBe("No topics are linked to Midterm yet.");
       expect(band.concepts).toBe(cs);
     }
   });
 
   it("with no exam selected it is the course's mastery", () => {
     const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101");
-    expect(band).toEqual({ concepts: cs, label: "CS101 Mastery" });
+    expect(band).toEqual({ concepts: cs, label: "CS101 Mastery", note: null });
+  });
+});
+
+describe("examScope", () => {
+  const cs = conceptsForCourse(
+    [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
+    [], "c1", NOW,
+  );
+  const exam = { id: "e1", title: "Midterm" };
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is the exam's title and its concepts among the course's", () => {
+    const scope = examScope(cs, [
+      { node_id: "b", assessments: on("e1") },
+      { node_id: "c", assessments: on("e1", "e2") },
+      { node_id: "a", assessments: on("e2") },
+      // On the exam, but not one of this course's concepts: not counted.
+      { node_id: "elsewhere", assessments: on("e1") },
+    ], exam);
+    expect(scope?.title).toBe("Midterm");
+    expect([...scope!.ids].sort()).toEqual(["b", "c"]);
+  });
+
+  it("is null when the outline links none of the course's concepts to the exam", () => {
+    for (const outline of [
+      [],
+      [{ node_id: "b", assessments: on("other") }],
+      [{ node_id: null, assessments: on("e1") }],
+      [{ node_id: "elsewhere", assessments: on("e1") }],
+    ]) {
+      expect(examScope(cs, outline, exam)).toBeNull();
+    }
+  });
+
+  it("is null with no exam selected", () => {
+    expect(examScope(cs, [{ node_id: "b", assessments: on("e1") }], null)).toBeNull();
+  });
+});
+
+describe("examQueue", () => {
+  // The course's own queue: r (struggling), q then p (learning, lowest mastery
+  // first), n (not started), and last the not-started concept that rests on an
+  // unmastered one.
+  const cs = conceptsForCourse(
+    [
+      node("m", "mastered", 0.95),
+      node("p", "learning", 0.6),
+      node("q", "learning", 0.4),
+      node("r", "struggling", 0.3),
+      node("n", "unexplored", 0),
+      node("blocked", "unexplored", 0),
+    ],
+    [{ source: "p", target: "blocked", relationship_type: "prerequisite" }],
+    "c1", NOW,
+  );
+  const scope = (...ids: string[]) => ({ title: "Midterm", ids: new Set(ids) });
+  const ids = (list: { id: string }[]) => list.map(c => c.id);
+
+  it("with no exam scope it is the course's queue", () => {
+    expect(ids(studyQueue(cs))).toEqual(["r", "q", "p", "n", "blocked"]);
+    expect(examQueue(cs, null)).toEqual({ queue: studyQueue(cs), fallback: false });
+  });
+
+  it("is the exam's concepts only, in the queue's own order", () => {
+    // Given out of order, and with a mastered concept that is never queued.
+    const q = examQueue(cs, scope("blocked", "m", "p", "n", "q"));
+    expect(ids(q.queue)).toEqual(["q", "p", "n", "blocked"]);
+    expect(q.fallback).toBe(false);
+    // The course's first pick (r) is not on the exam, so it is not Up Next.
+    expect(q.queue[0].id).toBe("q");
+  });
+
+  it("falls back to the course's queue, and says so, once the exam's concepts are all mastered", () => {
+    const q = examQueue(cs, scope("m"));
+    expect(q.fallback).toBe(true);
+    expect(q.queue).toEqual(studyQueue(cs));
+  });
+
+  it("is empty, with nothing to fall back to, when the whole course is mastered", () => {
+    const done = conceptsForCourse([node("a", "mastered", 0.9), node("b", "mastered", 0.95)], [], "c1", NOW);
+    expect(examQueue(done, scope("a"))).toEqual({ queue: [], fallback: false });
+    expect(examQueue(done, null)).toEqual({ queue: [], fallback: false });
   });
 });

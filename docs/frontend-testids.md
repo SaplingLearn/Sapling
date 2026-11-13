@@ -641,7 +641,9 @@ suite as well as to the journey. A new id on the hub takes the `study-` prefix
 
 Only the ids a browser journey uses are listed; the hub carries a few more
 for its unit suite (`focus-card`, `recent-toggle`, `recent-all`,
-`study-modal-backdrop`). Most of the hub's controls have no testid: a journey
+`study-modal-backdrop`, and the three lines that say what the selected exam
+tab scopes: `roadmap-exam-caption`, `readiness-unlinked-note`,
+`focus-fallback-note`). Most of the hub's controls have no testid: a journey
 reaches them by role and a name built from DATA — the Daily Goal's target
 button (`Daily goal: {n} minutes. Change daily goal`) and its preset radios
 (`{n} minutes`), a tile menu's items inside `role="menu"` named

@@ -130,8 +130,20 @@ const tileClass = (isSel: boolean, isNext: boolean) => {
 
 const statusLine = (t: Concept) => (t.st === "new" ? "Not Started" : `${ST_LABEL[t.st]} · ${t.m}%`);
 
-export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, closeTileMenu }: {
+/**
+ * A tile off the selected exam is set back, less than one the legend or a
+ * hover filters out: it is still part of the course and still read. Not while
+ * its menu is open, because opacity would fade the menu with it.
+ */
+const tileOpacity = (tile: Tile, menuOpen: boolean) => {
+  if (tile.dim) return 0.3;
+  return tile.off && !menuOpen ? 0.6 : 1;
+};
+
+export function RoadmapTile({ tile, examTitle, menuOpen, cardCount, quizShown, nav, set, closeTileMenu }: {
   tile: Tile;
+  /** The selected exam, when it has concepts linked: an `off` tile names it. */
+  examTitle?: string;
   menuOpen: boolean;
   /** Flashcards the student already has on this concept. */
   cardCount: number;
@@ -140,18 +152,20 @@ export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, cl
   set: SetHub;
   closeTileMenu: (conceptId: string) => void;
 }) {
-  const { t, isSel, isNext, dim } = tile;
+  const { t, isSel, isNext } = tile;
   const owner = React.useRef<HTMLDivElement | null>(null);
   const closeMenu = React.useCallback(() => closeTileMenu(t.id), [closeTileMenu, t.id]);
   useMenuDismiss(menuOpen, owner, closeMenu);
   const toggle = () => set({ topic: isSel ? null : t.id, tileMenu: null });
   return (
     <div ref={owner} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} className={tileClass(isSel, isNext)}
+      // Opacity alone would leave the reason to colour: the tile says it too.
+      title={tile.off ? `Not on ${examTitle}` : undefined}
       onClick={toggle}
       onKeyDown={e => { if (isPress(e)) { e.preventDefault(); toggle(); } }}
       onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
       // The tile that owns the open menu is lifted above its siblings, or the next tile paints over the menu.
-      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
+      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", opacity: tileOpacity(tile, menuOpen), cursor: "pointer" }}>
       <TileRing concept={t} />
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty" } as React.CSSProperties}>{t.name}</span>

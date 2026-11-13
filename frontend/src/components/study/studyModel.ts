@@ -21,7 +21,10 @@
  *    (`node_id`). When the checklist links the selected exam to at least one of
  *    the course's concepts, the readiness band is "Ready for <exam>" over those.
  *    Otherwise (no outline, a past exam, nothing linked) it is the whole
- *    course, and says so: "<course> Readiness".
+ *    course, and says so: "<course> Readiness", with a note that nothing is
+ *    linked to that exam yet.
+ *  - The same set (`examScope`) is what the roadmap sets the other concepts
+ *    back against, and what Up Next is queued from (`examQueue`).
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
  *    days (the node's `week_delta`), averaged over the same concepts, in
  *    percentage points.
@@ -347,26 +350,50 @@ export function conceptIdsForExam(outline: ExamTopic[], examId: string | null | 
   return out;
 }
 
+/** The part of the course a selected exam covers. */
+export interface ExamScope {
+  title: string;
+  /** Its concepts among this course's. Never empty. */
+  ids: Set<string>;
+}
+
+/**
+ * What the selected exam covers: the course's concepts the outline puts on it.
+ * Null with no exam, or when the outline links none of this course's concepts
+ * to it. The readiness band, the roadmap and Up Next all ask here, so the
+ * three never disagree about what is on the exam.
+ */
+export function examScope(
+  topics: Concept[],
+  outline: ExamTopic[],
+  exam: { id: string; title: string } | null,
+): ExamScope | null {
+  if (!exam) return null;
+  const linked = conceptIdsForExam(outline, exam.id);
+  const ids = new Set(topics.filter(t => linked.has(t.id)).map(t => t.id));
+  return ids.size ? { title: exam.title, ids } : null;
+}
+
 /**
  * What the readiness band speaks for, and the label that says so.
  *
  * The selected exam's own concepts when the outline links it to at least one
  * concept of this course: "Ready for <exam>". Otherwise every concept of the
  * course under the course's name, because a course-wide average under an
- * exam's title reads as a claim about that exam.
+ * exam's title reads as a claim about that exam; the `note` then says the exam
+ * has nothing linked, so its tab is not mistaken for one that changed nothing.
  */
 export function readinessBand(
   topics: Concept[],
   outline: ExamTopic[],
   exam: { id: string; title: string } | null,
   courseLabel: string,
-): { concepts: Concept[]; label: string } {
-  if (!exam) return { concepts: topics, label: `${courseLabel} Mastery` };
-  const ids = conceptIdsForExam(outline, exam.id);
-  const covered = topics.filter(t => ids.has(t.id));
-  return covered.length
-    ? { concepts: covered, label: `Ready for ${exam.title}` }
-    : { concepts: topics, label: `${courseLabel} Readiness` };
+): { concepts: Concept[]; label: string; note: string | null } {
+  if (!exam) return { concepts: topics, label: `${courseLabel} Mastery`, note: null };
+  const scope = examScope(topics, outline, exam);
+  return scope
+    ? { concepts: topics.filter(t => scope.ids.has(t.id)), label: `Ready for ${exam.title}`, note: null }
+    : { concepts: topics, label: `${courseLabel} Readiness`, note: `No topics are linked to ${exam.title} yet.` };
 }
 
 /** Up Next: struggling first, then learning, then not started; a not-started
@@ -377,6 +404,17 @@ export function studyQueue(topics: Concept[]): Concept[] {
   return topics
     .filter(t => t.st !== "mastered")
     .sort((x, y) => blocked(x) - blocked(y) || rank[x.st] - rank[y.st] || x.m - y.m);
+}
+
+/**
+ * Up Next for the selected exam: the study queue over its concepts, in the
+ * queue's own order. Once they are all mastered the queue is the whole
+ * course's again, and `fallback` says so.
+ */
+export function examQueue(topics: Concept[], scope: ExamScope | null): { queue: Concept[]; fallback: boolean } {
+  const course = studyQueue(topics);
+  const own = scope ? course.filter(t => scope.ids.has(t.id)) : course;
+  return own.length ? { queue: own, fallback: false } : { queue: course, fallback: !!scope && course.length > 0 };
 }
 
 /** Squares order: mastered -> not started, higher mastery first. */

@@ -3,6 +3,9 @@
  * The roadmap: the course's concepts in columns (its own categories, or
  * prerequisite layers when it has none), each a list of tiles. A long column
  * folds its mastered tiles into "N more mastered".
+ *
+ * It follows the selected exam: the concepts that exam does not cover are set
+ * back (in place, still clickable) and a caption says how many it does.
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
@@ -11,7 +14,7 @@ import { cardsFor, type RoadmapColumn } from "./hubModel";
 import { ELLIPSIS } from "./hubUi";
 import { RoadmapTile } from "./RoadmapTile";
 import s from "./StudyHub.module.css";
-import { TC } from "./studyModel";
+import { TC, type ExamScope } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolNav } from "./useToolNav";
 
@@ -54,9 +57,15 @@ function FoldToggle({ column, onToggle }: { column: RoadmapColumn; onToggle: () 
   );
 }
 
+/** "2 concepts on Exam 2": what the set-back tiles are set back against. */
+const scopeCaption = (scope: ExamScope) =>
+  `${scope.ids.size} ${scope.ids.size === 1 ? "concept" : "concepts"} on ${scope.title}`;
+
 /** Key it on the course, so a course change replays its entrance. */
 export interface RoadmapProps {
   columns: RoadmapColumn[];
+  /** What the selected exam covers; null when no exam has concepts linked. */
+  scope: ExamScope | null;
   /** Flashcards per concept name (hubModel's `cardCounts`). */
   cards: Map<string, number>;
   /** The concept whose "..." menu is open. */
@@ -68,7 +77,7 @@ export interface RoadmapProps {
   closeTileMenu: (conceptId: string) => void;
 }
 
-export function Roadmap({ columns, cards, tileMenu, openCols, quizShown, nav, set, closeTileMenu }: RoadmapProps) {
+export function Roadmap({ columns, scope, cards, tileMenu, openCols, quizShown, nav, set, closeTileMenu }: RoadmapProps) {
   /* Stacking: every column is its own stacking context (its colEnter
      opacity/transform animation), and so is any hovered (lifted) or dimmed
      tile. A z-index on the menu alone is therefore trapped and later
@@ -80,8 +89,9 @@ export function Roadmap({ columns, cards, tileMenu, openCols, quizShown, nav, se
   return (
     <section aria-label="Roadmap" className={`${s.areaRoadmap} ${s.paneEnter}`}
       style={{ position: "relative", zIndex: lift(!!tileMenu), padding: "16px 6px 24px 0" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-        <span className="label-micro">Roadmap</span>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+        <span className="label-micro" style={{ flexShrink: 0 }}>Roadmap</span>
+        {scope && <span data-testid="roadmap-exam-caption" style={{ minWidth: 0, fontSize: "var(--fs-sm)", color: "var(--text-muted)", ...ELLIPSIS }}>{scopeCaption(scope)}</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: TRACKS, gap: "20px 16px", alignItems: "start", maxWidth: gridWidth(columns.length) }}>
         {columns.map((col, ci) => (
@@ -89,7 +99,7 @@ export function Roadmap({ columns, cards, tileMenu, openCols, quizShown, nav, se
             style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: lift(col.shown.some(x => x.t.id === tileMenu)), display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } as React.CSSProperties}>
             <ColumnHead column={col} />
             {col.shown.map(tile => (
-              <RoadmapTile key={tile.t.id} tile={tile} menuOpen={tileMenu === tile.t.id} cardCount={cardsFor(cards, tile.t.name)}
+              <RoadmapTile key={tile.t.id} tile={tile} examTitle={scope?.title} menuOpen={tileMenu === tile.t.id} cardCount={cardsFor(cards, tile.t.name)}
                 quizShown={quizShown} nav={nav} set={set} closeTileMenu={closeTileMenu} />
             ))}
             {col.hidden.length > 0 && <FoldToggle column={col} onToggle={() => set({ openCols: { ...openCols, [col.key]: !col.open } })} />}
