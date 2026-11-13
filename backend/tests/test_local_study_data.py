@@ -459,6 +459,89 @@ def test_the_pre_redesign_guide_upgrades_on_read(rows):
     assert row["material_ids"] == [] and row["exam_id"] and row["scope_kind"] == "exam"
 
 
+# ── How much there is to read ────────────────────────────────────────────────
+
+#: Words of prose in a written section, by the guide's depth: what the section
+#: writer is asked for (`agents/study_guide.py`, "HOW MUCH TO WRITE").
+PROSE_WORDS = {"cram": (90, 160), "standard": (280, 450), "deep": (500, 800)}
+#: A paragraph explains something: it is never a caption.
+PARAGRAPH_WORDS = 40
+
+
+def _words(text: str | None) -> int:
+    return len((text or "").split())
+
+
+def _prose_words(section) -> int:
+    return sum(_words(p.text) for i in section.items if i.type == "prose" for p in i.paragraphs)
+
+
+def _is_bridge(section, place: int) -> bool:
+    """One sentence that leads into the block right below it. It has no
+    summary, so Skim shows the block without it."""
+    item, after = section.items[place], section.items[place + 1 : place + 2]
+    return (
+        item.type == "prose" and item.summary is None and len(item.paragraphs) == 1
+        and bool(after) and after[0].type != "prose"
+    )
+
+
+def _passages(section) -> list:
+    """The section's written passages: its prose, less the bridges."""
+    return [
+        item for place, item in enumerate(section.items)
+        if item.type == "prose" and not _is_bridge(section, place)
+    ]
+
+
+def _guide(guides, key: str):
+    return next((row, content) for row, content in guides if row["id"].endswith(f"-guide-{key}"))
+
+
+def test_the_model_guide_is_what_a_standard_guide_should_read_like(guides, rows):
+    # CS101's Midterm 2 guide is the one to open to see the usual output.
+    row, content = _guide(guides, "mid2")
+    assert (row["depth"], row["goal"], row["status"]) == ("standard", "exam_prep", "ready")
+    # Freshly written: up to date, and nothing read, answered or saved yet.
+    assert not _new_lectures(rows, row)
+    assert (row["saved_at"], row["read_sections"], row["answers"], row["feedback"]) == (None, [], None, None)
+
+    low, high = PROSE_WORDS["standard"]
+    for section in content.sections:
+        assert low <= _prose_words(section) <= high, section.title
+        assert 3 <= len(_passages(section)) <= 4, section.title
+        assert section.items[-1].type == "check", section.title
+        # Every block has prose on one side of it that leads in or reads it.
+        for place, item in enumerate(section.items[:-1]):
+            beside = section.items[max(place - 1, 0) : place + 2]
+            assert item.type == "prose" or any(i.type == "prose" for i in beside), (section.title, item.id)
+    # The weaker the concept, the more there is to read about it.
+    by_tier = {tier: [_prose_words(s) for s in content.sections if s.tier == tier] for tier in TIERS}
+    assert min(by_tier["struggling"]) > max(by_tier["learning"])
+
+    blocks = [item for item in _items(content) if item.type != "prose"]
+    assert {block.type for block in blocks} == set(BLOCK_TYPES)
+    charts = [block for block in blocks if block.type == "chart"]
+    assert any(series.state == "after" for chart in charts for series in chart.series)
+    assert {chart.illustrative for chart in charts} == {True, False}
+    assert all(3 <= len(block.steps) <= 5 for block in blocks if block.type == "worked_example")
+
+
+def test_read_mode_is_full_prose_and_skim_is_a_line_or_two(guides):
+    row, content = _guide(guides, "mid2")
+    for section in content.sections:
+        opening = section.items[: next(n for n, i in enumerate(section.items) if i.type != "prose")]
+        assert sum(len(item.paragraphs) for item in opening) >= 2, section.title
+        for place, item in enumerate(section.items):
+            if item.type != "prose":
+                continue
+            if _is_bridge(section, place):
+                continue  # one sentence, and gone in Skim
+            written = sum(_words(p.text) for p in item.paragraphs)
+            assert all(_words(p.text) >= PARAGRAPH_WORDS for p in item.paragraphs), item.id
+            assert 0 < _words(item.summary) * 3 <= written, item.id
+
+
 # ── Quiz ─────────────────────────────────────────────────────────────────────
 
 

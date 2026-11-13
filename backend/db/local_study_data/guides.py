@@ -3,7 +3,8 @@
 A guide is put together the way a generation run would leave it: its sources
 are the documents that taught its concepts and existed when it was made, each
 section gets its tier from the student's mastery and its share from the
-server's own weights, and every written section goes through the server's
+server's own weights, its prose is as long as the guide's depth asks for (and
+shorter for a mastered concept), and every written section goes through the server's
 citation and block check (``services.study_guides.verify``). That check is
 what decides whether a chart is plotted from data, and it stamps the evidence
 line on a quiz mistake, so what is stored is what the app would have stored.
@@ -13,7 +14,16 @@ from __future__ import annotations
 from config import get_mastery_tier
 from db.local_study_data import clock, coursework, materials
 from db.local_study_data.placement import Placement
-from db.local_study_data.spec import ClassData, Concept, GuideSpec, LegacyGuide, Material
+from db.local_study_data.spec import (
+    LENGTHS,
+    ClassData,
+    Concept,
+    GuideSpec,
+    LegacyGuide,
+    Material,
+    Passage,
+    SectionDraft,
+)
 from models.study_guide import (
     GUIDE_FORMAT,
     QUIZ_HISTORY_SOURCE,
@@ -132,15 +142,31 @@ def _placed(item: Item, place: Placement, concept: Concept, facts: verify.Facts)
     return item
 
 
+def _length(depth: str, tier: str) -> int:
+    """How long a section is, as a place in ``LENGTHS``: its guide's depth,
+    and one step shorter for a concept the student has mastered."""
+    return LENGTHS.index(depth) - (tier == "mastered")
+
+
+def _at_length(draft: SectionDraft, length: int) -> list[Item]:
+    """The draft's items at one length: every block, and the passages written
+    for that length or a shorter one."""
+    return [
+        entry.item if isinstance(entry, Passage) else entry
+        for entry in draft.items
+        if not isinstance(entry, Passage) or LENGTHS.index(entry.at) <= length
+    ]
+
+
 def _items(
-    place: Placement, spec: GuideSpec, section_id: str, concept: Concept, facts: verify.Facts,
+    place: Placement, spec: GuideSpec, section: Section, concept: Concept, facts: verify.Facts,
 ) -> list[Item]:
-    """The concept's drafted items, numbered. A guide made without quiz
-    history has no mistakes block."""
-    drafted = place.data.sections[concept.key].items
+    """The concept's drafted items at the section's length, numbered. A guide
+    made without quiz history has no mistakes block."""
+    drafted = _at_length(place.data.sections[concept.key], _length(spec.depth, section.tier))
     kept = [item for item in drafted if spec.use_history or item.type != "mistakes"]
     return [
-        _placed(item, place, concept, facts).model_copy(update={"id": f"{section_id}-i{number}"})
+        _placed(item, place, concept, facts).model_copy(update={"id": f"{section.id}-i{number}"})
         for number, item in enumerate(kept, start=1)
     ]
 
@@ -191,7 +217,7 @@ def _section(
     )
     if section.status != "written":
         return section
-    items = _items(place, spec, section.id, concept, facts)
+    items = _items(place, spec, section, concept, facts)
     return _checked(section.model_copy(update={"items": items}), facts)
 
 

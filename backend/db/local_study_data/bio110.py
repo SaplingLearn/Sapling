@@ -372,6 +372,7 @@ SECTIONS = {
                 ("Cells pair that release with reactions that need energy. This **energy coupling** is "
                  "how pumps, muscle fibres and enzymes that build molecules are paid for.", "lec08"),
                 summary="ATP releases energy when it becomes ADP, and cells couple that to work that needs energy.",
+                at="brief",
             ),
             b.formula(
                 "ATP hydrolysis",

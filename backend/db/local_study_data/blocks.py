@@ -11,7 +11,7 @@ A draft item is not yet part of a guide, so three fields hold stand-ins that
 """
 from __future__ import annotations
 
-from db.local_study_data.spec import Concept
+from db.local_study_data.spec import Concept, Passage
 from models.study_guide import (
     ChartBlock,
     ChartMarker,
@@ -38,10 +38,11 @@ from models.study_guide import (
 _LETTERS = "abcd"
 
 
-def prose(*paragraphs: str | tuple[str, ...], summary: str) -> ProseItem:
+def prose(*paragraphs: str | tuple[str, ...], summary: str | None, at: str = "cram") -> Passage:
     """A passage. A paragraph is its text, or ``(text, document key, ...)``
-    when it cites."""
-    return ProseItem(
+    when it cites. ``at`` is the shortest length of the section that has it
+    (``spec.LENGTHS``)."""
+    item = ProseItem(
         id="",
         paragraphs=[
             Paragraph(text=p) if isinstance(p, str) else Paragraph(text=p[0], citations=list(p[1:]))
@@ -49,6 +50,13 @@ def prose(*paragraphs: str | tuple[str, ...], summary: str) -> ProseItem:
         ],
         summary=summary,
     )
+    return Passage(item=item, at=at)
+
+
+def bridge(sentence: str, at: str = "standard") -> Passage:
+    """One sentence that leads into the block below it. It has no summary,
+    so Skim shows the block without it."""
+    return prose(sentence, summary=None, at=at)
 
 
 def formula(name: str, latex: str, spoken: str, source: str | None = None) -> FormulaBlock:
