@@ -18,7 +18,6 @@ import {
   planBounds,
   planCourse,
   planRadial,
-  pushCoursesApart,
   splitEdges,
   startingConcepts,
   type Box,
@@ -498,73 +497,6 @@ describe("planBounds", () => {
   });
 });
 
-describe("pushCoursesApart", () => {
-  /** A course whose box is 200 across and 160 down, centred on its root. */
-  const course = (id: string, x: number, y: number, held = false) => ({
-    id,
-    x,
-    y,
-    held,
-    box: { minX: -100, maxX: 100, minY: -80, maxY: 80 },
-  });
-  const clear = (a: ReturnType<typeof course>, b: ReturnType<typeof course>, gap: number) =>
-    Math.max(a.x - b.x, b.x - a.x) >= 200 + gap - 1 || Math.max(a.y - b.y, b.y - a.y) >= 160 + gap - 1;
-
-  it("leaves courses that are clear of each other alone", () => {
-    expect(pushCoursesApart([course("a", 0, 0), course("b", 240, 0)], 40, 0.5).size).toBe(0);
-    expect(pushCoursesApart([course("a", 0, 0), course("b", 0, 200)], 40, 0.5).size).toBe(0);
-    expect(pushCoursesApart([course("a", 0, 0)], 40, 0.5).size).toBe(0);
-  });
-
-  it("pushes two overlapping courses apart across, half each, when that is the shorter way", () => {
-    // 200 apart, 240 wanted: 40 of overlap, half of it closed this step.
-    const moves = pushCoursesApart([course("a", 0, 0), course("b", 200, 0)], 40, 0.5);
-    expect(moves.get("a")).toEqual({ dx: -10, dy: 0 });
-    expect(moves.get("b")).toEqual({ dx: 10, dy: 0 });
-  });
-
-  it("pushes them up and down when that is the shorter way", () => {
-    // 150 apart down, 200 wanted: 50 of overlap; across it would be 220.
-    const moves = pushCoursesApart([course("a", 0, 0), course("b", 20, 150)], 40, 0.5);
-    expect(moves.get("a")).toEqual({ dx: 0, dy: -12.5 });
-    expect(moves.get("b")).toEqual({ dx: 0, dy: 12.5 });
-  });
-
-  it("moves only the other course when one is held", () => {
-    const moves = pushCoursesApart([course("a", 0, 0, true), course("b", 0, 150)], 40, 0.5);
-    expect(moves.has("a")).toBe(false);
-    expect(moves.get("b")).toEqual({ dx: 0, dy: 25 });
-    const other = pushCoursesApart([course("a", 0, 0), course("b", 0, 150, true)], 40, 0.5);
-    expect(other.has("b")).toBe(false);
-    expect(other.get("a")).toEqual({ dx: 0, dy: -25 });
-  });
-
-  it("separates two courses on exactly the same spot", () => {
-    const moves = pushCoursesApart([course("a", 50, 50), course("b", 50, 50)], 40, 1);
-    expect(moves.get("a")!.dy).toBeLessThan(0);
-    expect(moves.get("b")!.dy).toBeGreaterThan(0);
-  });
-
-  it("adds up the pushes from every course a course overlaps", () => {
-    const moves = pushCoursesApart([course("a", -150, 0), course("b", 0, 0), course("c", 150, 0)], 40, 1);
-    // b is pushed both ways equally: it stays.
-    expect(moves.get("b")!.dx).toBeCloseTo(0, 9);
-    expect(moves.get("a")!.dx).toBeLessThan(0);
-    expect(moves.get("c")!.dx).toBeGreaterThan(0);
-  });
-
-  it("clears every overlap when run step after step", () => {
-    let courses = [course("a", 0, 0), course("b", 30, 10), course("c", -20, 40), course("d", 10, -30)];
-    for (let i = 0; i < 300; i++) {
-      const moves = pushCoursesApart(courses, 40, 0.15);
-      courses = courses.map((c) => ({ ...c, x: c.x + (moves.get(c.id)?.dx ?? 0), y: c.y + (moves.get(c.id)?.dy ?? 0) }));
-    }
-    for (let i = 0; i < courses.length; i++) {
-      for (let j = i + 1; j < courses.length; j++) expect(clear(courses[i], courses[j], 40)).toBe(true);
-    }
-  });
-});
-
 describe("forceOrbit", () => {
   type P = { id: string; x: number; y: number; vx: number; vy: number };
   const planOf = (radius: number, angle: number): RadialPlan => ({
@@ -572,82 +504,76 @@ describe("forceOrbit", () => {
     orbit: new Map([["a", { rootId: "r", radius, angle, spoke: false }]]),
     boxes: new Map(),
   });
-  /** One tick at full strength, with the course centred on (100, 100) unless said otherwise. */
-  const run = (n: P, radius: number, angle: number, centre = { x: 100, y: 100 }) => {
-    const force = forceOrbit<P>(() => planOf(radius, angle), () => centre, 0.3);
+  /** One tick, the course centred on (100, 100) unless said otherwise; the planned place is (200, 100). */
+  const run = (
+    n: P,
+    { centre = { x: 100, y: 100 }, alpha = 1, reaction = 0, pushRoot }: {
+      centre?: { x: number; y: number };
+      alpha?: number;
+      reaction?: number;
+      pushRoot?: (rootId: string, dvx: number, dvy: number) => void;
+    } = {},
+  ) => {
+    const force = forceOrbit<P>(() => planOf(100, 0), () => centre, 0.55, 0.12, { reaction, pushRoot });
     force.initialize([n]);
-    force(1);
+    force(alpha);
   };
 
-  it("draws a concept straight toward its seat, harder the further away it is", () => {
-    // Seat at (200, 100).
-    const near: P = { id: "a", x: 190, y: 100, vx: 0, vy: 0 };
-    run(near, 100, 0);
-    expect(near.vx).toBeCloseTo(3, 9);
-    expect(near.vy).toBeCloseTo(0, 9);
-    const far: P = { id: "a", x: 130, y: 100, vx: 0, vy: 0 };
-    run(far, 100, 0);
-    expect(far.vx).toBeCloseTo(21, 9);
-    expect(far.vy).toBeCloseTo(0, 9);
+  it("pulls a concept firmly to its planned distance from its course root", () => {
+    // On its planned angle, 30 short of its distance: drawn straight out.
+    const n: P = { id: "a", x: 170, y: 100, vx: 0, vy: 0 };
+    run(n);
+    expect(n.vx).toBeCloseTo(30 * 0.55 + 30 * 0.12, 9);
+    expect(n.vy).toBeCloseTo(0, 6);
   });
 
-  it("leaves a concept sitting on its seat alone", () => {
+  it("pulls it round to its planned angle only gently", () => {
+    // At its distance but a quarter turn round: no pull in or out, a gentle one round.
+    const n: P = { id: "a", x: 100, y: 200, vx: 0, vy: 0 };
+    run(n);
+    expect(n.vx).toBeCloseTo(100 * 0.12, 6);
+    expect(n.vy).toBeCloseTo(-100 * 0.12, 6);
+  });
+
+  it("leaves a concept on its planned place alone", () => {
     const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
-    run(n, 100, 0);
-    expect(n.vx).toBeCloseTo(0, 9);
-    expect(n.vy).toBeCloseTo(0, 9);
-  });
-
-  it("walks a concept round the course to a seat on its far side, not through the middle", () => {
-    // As far from the root as its seat (at (200, 100)), on the opposite side.
-    const n: P = { id: "a", x: 0, y: 100, vx: 0, vy: 0 };
-    run(n, 100, 0);
-    // It heads for a point an eighth of a turn round, a little further out…
-    const target = { x: n.x + n.vx / 0.3, y: n.y + n.vy / 0.3 };
-    expect(Math.hypot(target.x - 100, target.y - 100)).toBeCloseTo(100 + SPACE_Y / 2, 6);
-    expect(Math.abs(Math.atan2(target.y - 100, target.x - 100))).toBeCloseTo(Math.PI - Math.PI / 4, 6);
-    // …so it moves round, not in toward the course's centre.
-    expect(Math.abs(n.vy)).toBeGreaterThan(5 * Math.abs(n.vx));
-  });
-
-  it("takes the shorter way round", () => {
-    // Seat a quarter turn clockwise (screen y is down: angle π/2 is below).
-    const n: P = { id: "a", x: 100, y: 0, vx: 0, vy: 0 };
-    run(n, 100, -Math.PI / 2 + Math.PI / 2 + 1.2);
-    // From the top (angle -π/2) to angle 1.2, the short way is clockwise
-    // through the right-hand side: it heads right.
-    expect(n.vx).toBeGreaterThan(0);
-  });
-
-  it("heads straight for a seat close round the course", () => {
-    // A little round from its seat: straight at it, no detour.
-    const n: P = { id: "a", x: 100 + Math.cos(0.5) * 100, y: 100 + Math.sin(0.5) * 100, vx: 0, vy: 0 };
-    run(n, 100, 0);
-    expect(n.vx).toBeCloseTo((200 - n.x) * 0.3, 9);
-    expect(n.vy).toBeCloseTo((100 - n.y) * 0.3, 9);
+    run(n);
+    expect(n.vx).toBeCloseTo(0, 6);
+    expect(n.vy).toBeCloseTo(0, 6);
   });
 
   it("weakens with the simulation's heat", () => {
-    const n: P = { id: "a", x: 190, y: 100, vx: 0, vy: 0 };
-    const force = forceOrbit<P>(() => planOf(100, 0), () => ({ x: 100, y: 100 }), 0.3);
-    force.initialize([n]);
-    force(0.5);
-    expect(n.vx).toBeCloseTo(1.5, 9);
+    const n: P = { id: "a", x: 170, y: 100, vx: 0, vy: 0 };
+    run(n, { alpha: 0.5 });
+    expect(n.vx).toBeCloseTo((30 * 0.55 + 30 * 0.12) / 2, 9);
   });
 
-  it("ignores a node with no seat or no position", () => {
+  it("follows the course's centre as it is now, not as planned", () => {
+    // The course has moved 30 to the right: its concept is pulled after it.
+    const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
+    run(n, { centre: { x: 130, y: 100 } });
+    expect(n.vx).toBeCloseTo(30 * 0.55 + 30 * 0.12, 9);
+  });
+
+  it("hands a share of each pull back to the course root, when asked", () => {
+    const n: P = { id: "a", x: 170, y: 100, vx: 0, vy: 0 };
+    const tugs: Array<[string, number, number]> = [];
+    run(n, { reaction: 0.35, pushRoot: (rootId, dvx, dvy) => tugs.push([rootId, dvx, dvy]) });
+    expect(tugs).toHaveLength(1);
+    expect(tugs[0][0]).toBe("r");
+    expect(tugs[0][1]).toBeCloseTo(-(30 * 0.55 + 30 * 0.12) * 0.35, 9);
+    // With no share asked for, the root is left alone.
+    const none: string[] = [];
+    run({ id: "a", x: 170, y: 100, vx: 0, vy: 0 }, { pushRoot: (rootId) => none.push(rootId) });
+    expect(none).toEqual([]);
+  });
+
+  it("ignores a node with no plan or no position", () => {
     const stray = { id: "zz", x: 5, y: 5, vx: 0, vy: 0 };
     const force = forceOrbit<P>(() => planOf(100, 0), () => ({ x: 0, y: 0 }));
     force.initialize([stray]);
     force(1);
     expect(stray).toEqual({ id: "zz", x: 5, y: 5, vx: 0, vy: 0 });
-  });
-
-  it("follows the course's centre as it is now, not as planned", () => {
-    // The course has moved 30 to the right: its concepts follow it there.
-    const n: P = { id: "a", x: 200, y: 100, vx: 0, vy: 0 };
-    run(n, 100, 0, { x: 130, y: 100 });
-    expect(n.vx).toBeCloseTo(9, 9);
   });
 });
 

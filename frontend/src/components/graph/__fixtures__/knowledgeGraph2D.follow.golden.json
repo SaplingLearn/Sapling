@@ -1,0 +1,234 @@
+{
+  "nothing freed": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 0,
+        "y": 0
+      }
+    ],
+    "orbit": [],
+    "settles": 0
+  },
+  "dragging: a stretched rope pulls a free follower; its orbit tracks it": {
+    "nodes": [
+      {
+        "id": "root",
+        "x": 300,
+        "y": 240,
+        "fx": 300,
+        "fy": 240
+      },
+      {
+        "id": "a",
+        "x": 500,
+        "y": 100,
+        "fx": 500,
+        "fy": 100
+      },
+      {
+        "id": "b",
+        "x": 330,
+        "y": 260,
+        "vx": 24.30520010230076,
+        "vy": -22.404894213930127
+      },
+      {
+        "id": "c",
+        "x": 320,
+        "y": 250
+      }
+    ],
+    "orbit": [
+      [
+        "a",
+        {
+          "rootId": "root",
+          "angle": 0,
+          "radius": 80
+        }
+      ],
+      [
+        "b",
+        {
+          "rootId": "root",
+          "angle": 0.5880026035475675,
+          "radius": 40
+        }
+      ],
+      [
+        "c",
+        {
+          "rootId": null,
+          "angle": 0.4636476090008061,
+          "radius": 40
+        }
+      ]
+    ],
+    "settles": 0
+  },
+  "pinned follower pulls its free leader back": {
+    "nodes": [
+      {
+        "id": "root",
+        "x": 300,
+        "y": 240,
+        "fx": 300,
+        "fy": 240
+      },
+      {
+        "id": "a",
+        "x": 450,
+        "y": 400,
+        "vx": -21.424824195661387,
+        "vy": -19.78647914203881
+      }
+    ],
+    "orbit": [
+      [
+        "a",
+        {
+          "rootId": "root",
+          "angle": 0,
+          "radius": 80
+        }
+      ]
+    ],
+    "settles": 0
+  },
+  "both ends pinned: no pull": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 0,
+        "y": 0,
+        "fx": 0,
+        "fy": 0
+      },
+      {
+        "id": "b",
+        "x": 300,
+        "y": 300,
+        "fx": 300,
+        "fy": 300
+      }
+    ],
+    "orbit": [],
+    "settles": 0
+  },
+  "slack rope and coincident ends: no pull, unpositioned nodes skipped": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 100,
+        "y": 100
+      },
+      {
+        "id": "b",
+        "x": 150,
+        "y": 120
+      },
+      {
+        "id": "c",
+        "x": 100,
+        "y": 100
+      },
+      {
+        "id": "d"
+      },
+      {
+        "id": "e",
+        "x": 50,
+        "y": 60,
+        "vx": 0.05,
+        "vy": 0.05
+      }
+    ],
+    "orbit": [
+      [
+        "d",
+        {
+          "rootId": null,
+          "angle": 0,
+          "radius": 0
+        }
+      ]
+    ],
+    "settles": 2
+  },
+  "released and still moving at high alpha: keeps going": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 100,
+        "y": 100,
+        "vx": 3,
+        "vy": -2
+      },
+      {
+        "id": "b",
+        "x": 400,
+        "y": 300,
+        "vx": -48.3512958792702,
+        "vy": -32.23419725284679
+      }
+    ],
+    "orbit": [
+      [
+        "a",
+        {
+          "rootId": "nope",
+          "angle": -2.5308666892005847,
+          "radius": 244.13111231467406
+        }
+      ],
+      [
+        "b",
+        {
+          "rootId": null,
+          "angle": 0.5404195002705842,
+          "radius": 116.619037896906
+        }
+      ]
+    ],
+    "settles": 0
+  },
+  "released and still moving below the alpha floor: settles": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 100,
+        "y": 100,
+        "vx": 3,
+        "vy": -2
+      },
+      {
+        "id": "b",
+        "x": 400,
+        "y": 300,
+        "vx": -48.3512958792702,
+        "vy": -32.23419725284679
+      }
+    ],
+    "orbit": [],
+    "settles": 2
+  },
+  "released and at rest: settles": {
+    "nodes": [
+      {
+        "id": "a",
+        "x": 100,
+        "y": 100,
+        "vx": 0.01,
+        "vy": 0
+      },
+      {
+        "id": "b",
+        "x": 120,
+        "y": 110
+      }
+    ],
+    "orbit": [],
+    "settles": 2
+  }
+}

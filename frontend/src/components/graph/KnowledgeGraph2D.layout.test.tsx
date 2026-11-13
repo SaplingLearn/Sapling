@@ -2,8 +2,9 @@
 /**
  * Where the graph's nodes settle, and how the opening view frames them.
  *
- * The plan (`lib/graph/radialLayout`) seats every concept with room for its
- * caption; the simulation is only allowed to loosen that a little. These
+ * The plan (`lib/graph/radialLayout`) places every concept with room for its
+ * caption; the simulation (links pulling, concepts pushing apart, the orbit
+ * force holding each near its place) may only loosen that a little. These
  * tests read the settled positions off the DOM, so they hold the two
  * together: a retuned force that swells a course past its planned space, or
  * bunches concepts up, fails here.
@@ -68,19 +69,22 @@ function positions(container: HTMLElement): Map<string, { x: number; y: number }
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
 describe("KnowledgeGraph2D — where concepts settle", () => {
-  it("settles thirty unlinked concepts on their planned seats, not on rings round their course", () => {
+  it("settles thirty unlinked concepts close to their planned places, not on rings round their course", () => {
     const nodes = [root("c1"), ...concepts(30)];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={1240} height={744} />);
     const at = positions(container);
     const plan = planRadial(nodes, [], 1240, 744);
     const centre = plan.centers.get("root-c1")!;
     expect(dist(at.get("root-c1")!, centre)).toBeLessThan(1e-6);
+    let total = 0;
     for (const n of nodes.slice(1)) {
       const o = plan.orbit.get(n.id)!;
-      const seat = { x: centre.x + Math.cos(o.angle) * o.radius, y: centre.y + Math.sin(o.angle) * o.radius };
-      // The simulation leaves a concept on its seat, give or take a hair.
-      expect(dist(at.get(n.id)!, seat), n.id).toBeLessThan(2);
+      const place = { x: centre.x + Math.cos(o.angle) * o.radius, y: centre.y + Math.sin(o.angle) * o.radius };
+      // Links and crowding nudge a concept off its planned place, a little.
+      expect(dist(at.get(n.id)!, place), n.id).toBeLessThan(30);
+      total += dist(at.get(n.id)!, place);
     }
+    expect(total / 30).toBeLessThan(12);
     // Rings would leave a handful of distances from the root; nearly every
     // concept has its own.
     const radii = new Set(nodes.slice(1).map((n) => Math.round(dist(at.get(n.id)!, centre) / 4)));
@@ -129,14 +133,15 @@ describe("KnowledgeGraph2D — where concepts settle", () => {
     expect(viewTransform(container)).toBe("translate(0, 0) scale(1)");
   });
 
-  it("holds each legible course at its planned centre, however its links pull", () => {
+  it("holds each legible course near its planned centre, however its links pull", () => {
     const nodes = [root("c1"), root("c2"), root("c3"), ...concepts(14, "c1"), ...concepts(20, "c2"), ...concepts(9, "c3")];
     const ids = (c: string) => nodes.filter((n) => !n.is_subject_root && n.course_id === c).map((n) => n.id);
     const edges = [...chain(ids("c1").slice(0, 8)), ...chain(ids("c2").slice(3, 15)), ...chain(ids("c3").slice(0, 4))];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={1240} height={744} legible />);
     const at = positions(container);
     const plan = planRadial(nodes, splitEdges(nodes, edges).concept, 1240, 744);
-    for (const [id, c] of plan.centers) expect(dist(at.get(id)!, c), id).toBeLessThan(6);
+    // A legible course root is elastic: its concepts tug it, its home holds it.
+    for (const [id, c] of plan.centers) expect(dist(at.get(id)!, c), id).toBeLessThan(20);
   });
 });
 

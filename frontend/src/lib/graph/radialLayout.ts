@@ -23,11 +23,12 @@
 //
 // The synthesized course→concept spokes from /api/graph are dropped: the
 // root's own links are `courseLinks`, and only real concept-to-concept edges
-// are drawn besides. Spacing is planned, not left to the simulation: the
-// component draws each concept to its seat and never lets a link pull it off
-// (KnowledgeGraph2D). Several courses are packed side by side by their
-// planned boxes, whichever way shows them largest (`packCourses`). The same
-// graph always gets the same plan, whatever order its nodes and edges come in.
+// are drawn besides. The plan gives each concept its place; the component's
+// simulation holds it near there with the orbit force (`forceOrbit`) while
+// links pull, concepts push apart and drags play out. Several courses are
+// packed side by side by their planned boxes, whichever way shows them
+// largest (`packCourses`). The same graph always gets the same plan, whatever
+// order its nodes and edges come in.
 //
 // Pure functions + one custom d3 force; the component owns the simulation.
 
@@ -1060,71 +1061,27 @@ export function planBounds(plan: RadialPlan, width: number, height: number) {
   return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }
 
-/**
- * One step of pushing overlapping courses apart, as moves to apply to their
- * centres. Two courses overlap when their boxes, `gap` apart, would meet;
- * each step closes `share` of the overlap, along whichever way (across or
- * up and down) is the shorter move, the way the two already lie. A course
- * the student is holding (`held`) stays put and the other gives way all of
- * that; otherwise the two give way half each. Run every tick, so a course
- * dragged into another shoves it along, and courses dropped on top of each
- * other drift apart until they are clear.
- */
-export function pushCoursesApart(
-  courses: ReadonlyArray<{ id: string; x: number; y: number; box: Box; held?: boolean }>,
-  gap: number,
-  share: number,
-): Map<string, { dx: number; dy: number }> {
-  const moves = new Map<string, { dx: number; dy: number }>();
-  const move = (id: string, dx: number, dy: number) => {
-    const m = moves.get(id) ?? { dx: 0, dy: 0 };
-    moves.set(id, { dx: m.dx + dx, dy: m.dy + dy });
-  };
-  for (let i = 0; i < courses.length; i++) {
-    for (let j = i + 1; j < courses.length; j++) {
-      const a = courses[i];
-      const b = courses[j];
-      if (a.held && b.held) continue;
-      const across = Math.min(a.x + a.box.maxX, b.x + b.box.maxX) - Math.max(a.x + a.box.minX, b.x + b.box.minX) + gap;
-      const down = Math.min(a.y + a.box.maxY, b.y + b.box.maxY) - Math.max(a.y + a.box.minY, b.y + b.box.minY) + gap;
-      if (across <= 0 || down <= 0) continue;
-      // From exactly on top of each other: the second goes right, or down.
-      let ux = 0;
-      let uy = 0;
-      if (across <= down) ux = b.x + (b.box.minX + b.box.maxX) / 2 >= a.x + (a.box.minX + a.box.maxX) / 2 ? 1 : -1;
-      else uy = b.y + (b.box.minY + b.box.maxY) / 2 >= a.y + (a.box.minY + a.box.maxY) / 2 ? 1 : -1;
-      const step = Math.min(across, down) * share;
-      if (a.held) move(b.id, ux * step, uy * step);
-      else if (b.held) move(a.id, -ux * step, -uy * step);
-      else {
-        move(a.id, (-ux * step) / 2, (-uy * step) / 2);
-        move(b.id, (ux * step) / 2, (uy * step) / 2);
-      }
-    }
-  }
-  return moves;
-}
-
 type Positioned = { id: string; x?: number; y?: number; vx?: number; vy?: number };
 
-/** The furthest round its course a concept heads in one go when walking to its seat. */
-const WALK_STEP = Math.PI / 4;
-
 /**
- * A custom d3 force drawing each concept toward its seat: the point at its
- * distance and angle from its course root's CURRENT position (so moving a
- * course moves its concepts along).
- *
- * A concept whose seat is far round the course (a re-plan sent it to the
- * other side) walks there: it heads for a point at most `WALK_STEP` further
- * round, a little outside the larger of its distance and its seat's, so it
- * goes round the course instead of through the middle, where the course
- * root would stop it dead.
+ * A custom d3 force pulling each concept toward its planned place round its
+ * course root's CURRENT position (so dragging a course drags its concepts
+ * along): firmly to its distance from the root, gently to its angle.
  */
 export function forceOrbit<N extends Positioned>(
   plan: () => RadialPlan,
   centerOf: (rootId: string | null) => { x: number; y: number },
-  strength = 0.3,
+  strength = 0.6,
+  anglePull = 0.12,
+  {
+    pushRoot,
+    reaction = 0,
+  }: {
+    /** Apply the opposite tug to the course root (velocity deltas). */
+    pushRoot?: (rootId: string, dvx: number, dvy: number) => void;
+    /** Share of each concept's pull handed back to its root (0 = root fixed). */
+    reaction?: number;
+  } = {},
 ) {
   let nodes: N[] = [];
   const force = (alpha: number) => {
@@ -1133,24 +1090,21 @@ export function forceOrbit<N extends Positioned>(
       const o = orbit.get(n.id);
       if (!o || n.x == null || n.y == null) continue;
       const c = centerOf(o.rootId);
-      let tx = c.x + Math.cos(o.angle) * o.radius;
-      let ty = c.y + Math.sin(o.angle) * o.radius;
-      const dx = n.x - c.x;
-      const dy = n.y - c.y;
-      const r = Math.hypot(dx, dy);
-      if (r > 1) {
-        const here = Math.atan2(dy, dx);
-        // The shorter way round, in (-π, π]; from exactly opposite, either way.
-        const turn = Math.atan2(Math.sin(o.angle - here), Math.cos(o.angle - here));
-        if (Math.abs(turn) > WALK_STEP) {
-          const a = here + Math.sign(turn) * WALK_STEP;
-          const walk = Math.max(r, o.radius) + SPACE_Y / 2;
-          tx = c.x + Math.cos(a) * walk;
-          ty = c.y + Math.sin(a) * walk;
-        }
-      }
-      n.vx = (n.vx ?? 0) + (tx - n.x) * strength * alpha;
-      n.vy = (n.vy ?? 0) + (ty - n.y) * strength * alpha;
+      const dx = n.x - c.x || 1e-6;
+      const dy = n.y - c.y || 1e-6;
+      const len = Math.hypot(dx, dy);
+      const k = ((o.radius - len) * strength * alpha) / len;
+      // A gentler pull toward the planned angle, so link forces can't drag a
+      // whole course round to one side of its centre.
+      const tx = c.x + Math.cos(o.angle) * o.radius;
+      const ty = c.y + Math.sin(o.angle) * o.radius;
+      const ax = dx * k + (tx - n.x) * anglePull * alpha;
+      const ay = dy * k + (ty - n.y) * anglePull * alpha;
+      n.vx = (n.vx ?? 0) + ax;
+      n.vy = (n.vy ?? 0) + ay;
+      // Equal and opposite, in part: a concept pulled far from its course
+      // tugs the course after it, and the course carries its other concepts.
+      if (reaction && pushRoot && o.rootId) pushRoot(o.rootId, -ax * reaction, -ay * reaction);
     }
   };
   force.initialize = (ns: N[]) => {
