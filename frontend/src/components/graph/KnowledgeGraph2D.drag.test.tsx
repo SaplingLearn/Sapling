@@ -315,7 +315,7 @@ describe("KnowledgeGraph2D — the course node", () => {
     const radius = (id: string) =>
       Number(container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"] [data-testid="graph-node-circle"]`)!.getAttribute("data-r"));
     const largest = Math.max(...ids.map(radius));
-    expect(radius("root-c1")).toBeGreaterThanOrEqual(1.45 * largest);
+    expect(radius("root-c1")).toBeGreaterThanOrEqual(1.2 * largest);
     const label = container.querySelector('[data-node-id="root-c1"] [data-testid="graph-course-label"]')!;
     expect(label.textContent).toBe("C1 101");
   });

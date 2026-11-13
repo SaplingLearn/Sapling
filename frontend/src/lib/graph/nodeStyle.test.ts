@@ -87,10 +87,10 @@ describe("radiusFor", () => {
   });
 
   it("pins subject roots at a flat size regardless of mastery, well above any concept's", () => {
-    expect(radiusFor(0, true)).toBe(34);
-    expect(radiusFor(1, true)).toBe(34);
-    // Half again the largest concept: 20 by mastery, 23 by importance.
-    expect(radiusFor(1, true)).toBeGreaterThanOrEqual(1.45 * 23);
+    expect(radiusFor(0, true)).toBe(28);
+    expect(radiusFor(1, true)).toBe(28);
+    // A fifth bigger than the largest concept: 20 by mastery, 23 by importance.
+    expect(radiusFor(1, true)).toBeGreaterThanOrEqual(1.2 * 23);
   });
 });
 

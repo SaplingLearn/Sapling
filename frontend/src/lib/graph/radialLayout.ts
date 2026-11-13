@@ -58,14 +58,14 @@ const SPOKE_LENGTH = { min: 1, max: 1.55 } as const;
 export const MAX_SPOKES = 6;
 /**
  * No concept sits nearer its course root than this, on screen: room for the
- * root's mark (radius 34, `COURSE_NODE_R`) and course code, and a concept's
+ * root's mark (radius 28, `COURSE_NODE_R`) and course code, and a concept's
  * mark and caption beside them.
  */
 export const ROOT_ROOM = 100;
 /** How far a concept's mark and caption reach from its centre. */
 export const CONCEPT_REACH = { x: 56, up: 26, down: 42 } as const;
-/** How far a course root's mark (radius 34) and course code under it reach from its centre. */
-export const ROOT_REACH = { x: 48, up: 38, down: 56 } as const;
+/** How far a course root's mark (radius 28) and course code under it reach from its centre. */
+export const ROOT_REACH = { x: 48, up: 32, down: 50 } as const;
 /** Space kept between two courses' boxes when several share the canvas. */
 export const COURSE_MARGIN = 48;
 /**
