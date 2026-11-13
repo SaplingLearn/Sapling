@@ -208,8 +208,8 @@ ASSESSMENTS = (
     Assessment("mid2", "Midterm 2", "exam", 9, covers=(MEMORY, PROBLEM_SOLVING)),
     Assessment("final", "Final Exam", "exam", 27,
                covers=(FOUNDATIONS, MEMORY, PROBLEM_SOLVING, STRUCTURES)),
-    Assessment("quiz1", "Quiz 1: Control Flow", "quiz", -62, 20, 17),
-    Assessment("quiz2", "Quiz 2: Linked Lists", "quiz", 12, 20, covers=(STRUCTURES,)),
+    Assessment("quiz1", "Quiz 1: Control Flow", "quiz", -62, 20, 17, concepts=("variables", "controlflow")),
+    Assessment("quiz2", "Quiz 2: Linked Lists", "quiz", 12, 20, concepts=("structs", "linkedlists", "stacks")),
     Assessment("hw5", "Homework 5: Pointers", "homework", -10, 50, 41),
     Assessment("hw6", "Homework 6: Recursion", "homework", 1, 50),
     Assessment("hw7", "Homework 7: Linked Lists", "homework", 13, 50),
@@ -827,4 +827,5 @@ CLASS = ClassData(
     card_sets=CARD_SETS,
     sections=SECTIONS,
     guides=GUIDES,
+    earlier_exams={"Pop Quiz: Recursion": ("functions", "recursion")},
 )

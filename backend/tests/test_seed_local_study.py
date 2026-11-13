@@ -177,6 +177,30 @@ def test_rows_the_account_already_has_are_updated_in_place(local_database):
     assert [r["id"] for r in answers] == ["from-the-app"] and "is_correct" in answers[0]
 
 
+def test_an_exam_the_account_already_has_is_linked_from_the_outline(local_database):
+    # As the rich owner seed leaves CS101: a quiz of its own on the enrollment
+    # the study seed fills, and the same title on an earlier term's.
+    quiz = {"title": "Pop Quiz: Recursion", "assignment_type": "quiz", "due_date": "2026-02-10"}
+    local_database.rows["assignments"] = [
+        {"id": "rich-pop-quiz", "enrollment_id": "enr-cs101", **quiz},
+        {"id": "rich-earlier-term", "enrollment_id": "enr-cs101-earlier", **quiz},
+    ]
+    seed.apply(OWNER, NOW)
+    seed.apply(OWNER, NOW)  # the seed's own exams are on the enrollment by now
+
+    stored = next(r for r in local_database.rows["topic_checklists"] if r["enrollment_id"] == "enr-cs101")
+    linking = {
+        topic["name"] for topic in decrypt_json(stored["content"])["topics"]
+        if "rich-pop-quiz" in topic["assessment_ids"]
+    }
+    assert linking == {"Functions", "Recursion"}
+    exams = {a["id"] for a in local_database.rows["assignments"] if a["enrollment_id"] == "enr-cs101"}
+    for row in local_database.rows["topic_checklists"]:
+        linked = {a for topic in decrypt_json(row["content"])["topics"] for a in topic["assessment_ids"]}
+        assert "rich-earlier-term" not in linked
+        assert row["enrollment_id"] != "enr-cs101" or linked <= exams
+
+
 def test_a_class_the_account_dropped_is_skipped(local_database, monkeypatch, capsys):
     enrolled_in = {"rich-course-cs101": {"enrollment_id": "enr-cs101", "offering_id": "off-cs101"}}
     monkeypatch.setattr(seed, "_scope", lambda owner_id, course_id: enrolled_in.get(course_id))

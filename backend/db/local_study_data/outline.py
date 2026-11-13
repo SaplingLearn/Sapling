@@ -2,13 +2,16 @@
 concepts under each, and which exams cover them.
 
 The Study hub names its roadmap columns after the units, and reads an exam's
-readiness from the concepts linked to it here.
+readiness from the concepts linked to it here. The outline as SERVED attaches
+an exam to a topic only while the exam is ahead (today to thirty days out,
+``topic_checklist_service.present``), so an exam already sat is linked here
+and still reads as the whole course on the hub.
 """
 from __future__ import annotations
 
 from db.local_study_data import coursework
 from db.local_study_data.placement import Placement
-from db.local_study_data.spec import Concept
+from db.local_study_data.spec import Assessment, Concept
 
 _UNIT_IMPORTANCE = 0.9
 _CONCEPT_IMPORTANCE = 0.8
@@ -21,11 +24,25 @@ def _source_ids(place: Placement, concept_keys: set[str]) -> list[str]:
     return [f"document:{place.document_id(m.key)}" for m in teaching or place.data.materials[:1]]
 
 
-def _exam_ids(place: Placement, unit: str) -> list[str]:
+def _covers(assessment: Assessment, concept: Concept) -> bool:
+    return concept.unit in assessment.covers or concept.key in assessment.concepts
+
+
+def _earlier_exam_ids(place: Placement, concept: Concept) -> list[str]:
+    """The exams the account already had that cover the concept, under the
+    ids they have. One the account does not have is left out."""
     return [
-        place.assessment_id(a.key) for a in place.data.assessments
-        if coursework.is_exam(a) and unit in a.covers
+        place.enrolled.exams[title] for title, keys in place.data.earlier_exams.items()
+        if concept.key in keys and title in place.enrolled.exams
     ]
+
+
+def _exam_ids(place: Placement, concept: Concept) -> list[str]:
+    seeded = [
+        place.assessment_id(a.key) for a in place.data.assessments
+        if coursework.is_exam(a) and _covers(a, concept)
+    ]
+    return [*_earlier_exam_ids(place, concept), *seeded]
 
 
 def _unit_topic(place: Placement, unit: str, concepts: list[Concept]) -> dict:
@@ -47,7 +64,7 @@ def _concept_topic(place: Placement, concept: Concept) -> dict:
         "parent": concept.unit,
         "prerequisites": [place.data.concept(key).name for key in concept.needs],
         "source_ids": _source_ids(place, {concept.key}),
-        "assessment_ids": _exam_ids(place, concept.unit),
+        "assessment_ids": _exam_ids(place, concept),
         "importance": _CONCEPT_IMPORTANCE,
     }
 

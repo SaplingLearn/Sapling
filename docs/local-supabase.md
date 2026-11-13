@@ -241,9 +241,14 @@ answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
   type, saved and unsaved, read marks, answered checks and feedback. At least
   two say "2 new lectures", one is still generating, one has a section that
   failed and one is in the pre-redesign format.
-- **Course outline**: four units (the roadmap's columns) linked to the exams,
-  stored under the outline's real evidence hash so the Study page does not
-  regenerate it with the model.
+- **Course outline**: four units (the roadmap's columns), stored under the
+  outline's real evidence hash so the Study page does not regenerate it with
+  the model. Every exam and quiz is linked to concepts of its own: a quiz to
+  the two or three it names, a midterm to its units, the final to everything,
+  and a quiz or midterm the rich copy left on the same enrollment to its
+  concepts too. On the Study page the readiness band follows an exam's tab
+  only while the exam is ahead (today to thirty days out, where the outline
+  is served); the tab of an exam already sat reads as the whole class.
 
 The content lives in `backend/db/local_study_data/`, one module per class. A
 guide is built the way a generation run leaves it: the server's own check

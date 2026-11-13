@@ -193,7 +193,7 @@ ASSESSMENTS = (
     Assessment("exam1", "Exam 1: Cell Structure", "exam", -27, 100, 91, (STRUCTURE,)),
     Assessment("exam2", "Exam 2: Energy and Enzymes", "exam", 12, covers=(ENERGY,)),
     Assessment("final", "Final Exam", "exam", 30, covers=(STRUCTURE, ENERGY, GENES, DIVISION)),
-    Assessment("quiz1", "Quiz 1: Transcription", "quiz", 15, 10, covers=(GENES,)),
+    Assessment("quiz1", "Quiz 1: Transcription", "quiz", 15, 10, concepts=("dna", "transcription")),
     Assessment("lab4", "Lab 4 Report: Enzyme Activity", "homework", -5, 50, 44),
     Assessment("lab5", "Lab 5 Report: Respiration in Yeast", "homework", 3, 50),
     Assessment("reading9", "Chapter 9 Reading Check", "reading", 6, 10),

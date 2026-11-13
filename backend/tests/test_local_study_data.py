@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+import services.topic_checklist_service as checklist_service
 from agents.topic_checklist import TopicOutline
 from config import get_mastery_tier
 from db import local_study_data as data
@@ -650,3 +651,100 @@ def test_each_outline_is_valid_has_four_units_and_links_the_seeded_exams(rows):
         }
         # Every exam ahead has concepts to read its readiness from.
         assert {a for a in upcoming if a.rsplit("-", 1)[1] in ("mid2", "exam2", "exam3", "final")} <= linked
+
+
+def _coverage(place) -> dict[str, set[str]]:
+    """Exam id to the names of the concepts the outline links to it."""
+    covered: dict[str, set[str]] = {}
+    for topic in outline.topics(place):
+        for exam_id in topic["assessment_ids"]:
+            covered.setdefault(exam_id, set()).add(topic["name"])
+    return covered
+
+
+def test_every_exam_and_quiz_covers_concepts_of_its_own(rows):
+    # The Study hub has a tab per exam and quiz, and only the readiness band
+    # follows the tab. Two exams with the same coverage are two identical tabs.
+    for place in data.placements(NOW, OWNER, _enrolled()):
+        concepts = {n["concept_name"] for n in rows["graph_nodes"] if n["course_id"] == place.data.course_id}
+        kinds = {
+            a["id"]: a["assignment_type"] for a in rows["assignments"]
+            if a["enrollment_id"] == place.enrolled.enrollment_id and a["assignment_type"] in ("exam", "quiz")
+        }
+        covered = _coverage(place)
+        assert set(covered) == set(kinds)  # linked under the ids the assignment rows have
+        assert all(len(names) >= 2 and names <= concepts for names in covered.values())
+        assert len({frozenset(names) for names in covered.values()}) == len(covered)
+        # The final is the one that covers everything; a quiz is narrower than any exam.
+        assert [exam_id for exam_id, names in covered.items() if names == concepts] == [place.assessment_id("final")]
+        quizzes_cover = [len(covered[i]) for i, kind in kinds.items() if kind == "quiz"]
+        exams_cover = [len(covered[i]) for i, kind in kinds.items() if kind == "exam"]
+        assert max(quizzes_cover) < min(exams_cover), place.data.key
+
+
+def test_a_quiz_covers_the_concepts_it_names():
+    place = next(p for p in data.placements(NOW, OWNER, _enrolled()) if p.data.key == "cs101")
+    covered = _coverage(place)
+    assert covered[place.assessment_id("quiz1")] == {"Variables and Types", "Control Flow"}
+    assert covered[place.assessment_id("quiz2")] == {"Structs", "Linked Lists", "Stacks and Queues"}
+
+
+def _served(place, rows, monkeypatch) -> dict:
+    """The outline as the Study hub gets it: the app's own `present`, over
+    the class's seeded rows."""
+    monkeypatch.setattr(checklist_service, "page_all", lambda *args, **kwargs: [])
+    exams = [
+        {key: a[key] for key in ("id", "title", "due_date", "assignment_type")} for a in rows["assignments"]
+        if a["enrollment_id"] == place.enrolled.enrollment_id and a["assignment_type"] in ("exam", "quiz")
+    ]
+    snapshot = {
+        "payload": {"sources": [{"id": "course-description", "label": "BU course description"}], "assessments": exams},
+        "nodes": [n for n in rows["graph_nodes"] if n["course_id"] == place.data.course_id],
+    }
+    cache = {"content": encrypt_json({"topics": outline.topics(place)}), "generated_at": NOW.isoformat()}
+    scope = {"course": {"id": place.data.course_id}, "enrollment_id": place.enrolled.enrollment_id, "semester": ""}
+    return checklist_service.present(scope, snapshot, cache, NOW)
+
+
+def _band_ids(topics: list[dict], exam_id: str) -> set[str]:
+    """The hub's `studyModel.conceptIdsForExam`: the graph node of every
+    served topic that lists the exam."""
+    return {t["node_id"] for t in topics if t["node_id"] and any(a["id"] == exam_id for a in t["assessments"])}
+
+
+def test_each_exam_ahead_reaches_the_hub_with_its_own_concepts(monkeypatch):
+    # A served topic finds its node by NAME, so a concept the account already
+    # had is read under the id it has. An exam already sat is not served on
+    # any topic (the service's upcoming window), which is why its tab reads
+    # as the whole course whatever the outline links to it.
+    kept = data.Enrolled("enr-cs101", "off-cs101", nodes={
+        "Pointers and Memory": "rich-pointers", "Recursion": "rich-recursion",
+    })
+    rows = _plan(cs101=kept)
+    today = NOW.date()
+    for place in data.placements(NOW, OWNER, _enrolled(cs101=kept)):
+        node_ids = {n["concept_name"]: n["id"] for n in rows["graph_nodes"] if n["course_id"] == place.data.course_id}
+        ahead = [
+            a for a in rows["assignments"]
+            if a["enrollment_id"] == place.enrolled.enrollment_id and a["assignment_type"] in ("exam", "quiz")
+            and 0 <= (date.fromisoformat(a["due_date"]) - today).days <= checklist_service.ASSESSMENT_WINDOW_DAYS
+        ]
+        assert len(ahead) == 3, place.data.key
+        topics = _served(place, rows, monkeypatch)["topics"]
+        covered = _coverage(place)
+        for exam in ahead:
+            want = {node_ids[name] for name in covered[exam["id"]]}
+            assert _band_ids(topics, exam["id"]) == want, exam["title"]
+        if place.data.key == "cs101":
+            assert {"rich-pointers", "rich-recursion"} <= _band_ids(topics, place.assessment_id("mid2"))
+
+
+def test_an_exam_the_account_already_has_is_linked_under_its_own_id():
+    had = data.Enrolled("enr-cs101", "off-cs101", exams={"Pop Quiz: Recursion": "rich-pop-quiz", "Other": "rich-other"})
+    place = next(p for p in data.placements(NOW, OWNER, _enrolled(cs101=had)) if p.data.key == "cs101")
+    covered = _coverage(place)
+    assert covered["rich-pop-quiz"] == {"Functions", "Recursion"}
+    assert "rich-other" not in covered
+    # A class with an earlier exam the account does not have links only its own.
+    for place in data.placements(NOW, OWNER, _enrolled()):
+        assert all(exam_id.startswith(place.prefix) for exam_id in _coverage(place))

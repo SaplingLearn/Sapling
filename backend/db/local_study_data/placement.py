@@ -29,6 +29,8 @@ class Enrolled:
     nodes: dict[str, str] = field(default_factory=dict)
     #: (source node id, target node id) to edge id, for its prerequisite edges.
     edges: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: Title to assignment id, for the exams and quizzes already on the enrollment.
+    exams: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

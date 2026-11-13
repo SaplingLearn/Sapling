@@ -64,6 +64,8 @@ class Assessment:
     earned: int | None = None
     #: The outline units an exam covers (what its readiness band speaks for).
     covers: tuple[str, ...] = ()
+    #: Keys of single concepts it covers, for a quiz narrower than a unit.
+    concepts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,9 @@ class ClassData:
     sections: dict[str, SectionDraft]
     guides: tuple[GuideSpec, ...]
     legacy_guides: tuple[LegacyGuide, ...] = ()
+    #: Exams and quizzes the account may already have in the class (the rich
+    #: seed's), by title, to the keys of the concepts each covers.
+    earlier_exams: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def concept(self, key: str) -> Concept:
         return next(c for c in self.concepts if c.key == key)

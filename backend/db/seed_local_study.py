@@ -37,9 +37,10 @@ Per class it writes (content in ``db/local_study_data/``):
                        some with new lectures since, one still generating,
                        one with a failed section and one in the pre-redesign
                        format
-- topic_checklists ... the course outline, grouped into four units and linked
-                       to the exams, stored under the outline's REAL evidence
-                       hash so the Study page does not regenerate it
+- topic_checklists ... the course outline, grouped into four units, each exam
+                       and quiz linked to concepts of its own, stored under
+                       the outline's REAL evidence hash so the Study page
+                       does not regenerate it
 
 Every date is relative to the day it runs, every row has a deterministic id
 and every write is an upsert, so it is safe to re-run: running it again on a
@@ -126,9 +127,20 @@ def _scope(owner_id: str, course_id: str) -> dict | None:
         return None
 
 
+def _exams(enrollment_id: str) -> dict[str, str]:
+    """Title to id of the exams and quizzes on the enrollment: the ones the
+    outline may link (``topic_checklist_service._assessments`` reads the same)."""
+    found = table("assignments").select("id,title", filters={
+        "enrollment_id": f"eq.{enrollment_id}", "assignment_type": "in.(exam,quiz)",
+        "due_date": "not.is.null",
+    }) or []
+    return {row["title"]: row["id"] for row in found}
+
+
 def _enrolled(owner_id: str, course_id: str, scope: dict):
     """What the account already has for the class: the concepts on its tree
-    and the prerequisite edges out of them, which keep their ids."""
+    and the prerequisite edges out of them, which keep their ids, and its
+    exams, which the outline links."""
     from db.local_study_data import Enrolled
 
     found = table("graph_nodes").select(
@@ -148,6 +160,7 @@ def _enrolled(owner_id: str, course_id: str, scope: dict):
         offering_id=scope["offering_id"],
         nodes=nodes,
         edges={(e["source_node_id"], e["target_node_id"]): e["id"] for e in linked or []},
+        exams=_exams(scope["enrollment_id"]),
     )
 
 

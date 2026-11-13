@@ -204,8 +204,9 @@ ASSESSMENTS = (
     Assessment("exam2", "Exam 2", "exam", -20, 100, 88, (SYSTEMS, MATRICES)),
     Assessment("exam3", "Exam 3", "exam", 5, covers=(MATRICES, SPACES)),
     Assessment("final", "Final Exam", "exam", 29, covers=(SYSTEMS, MATRICES, SPACES, EIGEN)),
-    Assessment("quiz1", "Quiz 1: Dot Products", "quiz", -63, 10, 9),
-    Assessment("quiz2", "Quiz 2: Eigenvalues", "quiz", 8, 10, covers=(EIGEN,)),
+    Assessment("quiz1", "Quiz 1: Dot Products", "quiz", -63, 10, 9, concepts=("vectors", "dot")),
+    Assessment("quiz2", "Quiz 2: Eigenvalues", "quiz", 8, 10,
+               concepts=("determinants", "eigenvalues", "eigenvectors")),
     Assessment("ps6", "Problem Set 6: Determinants", "homework", -8, 40, 31),
     Assessment("ps7", "Problem Set 7: Subspaces", "homework", 2, 40),
     Assessment("ps8", "Problem Set 8: Eigenvalues", "homework", 11, 40),
@@ -786,4 +787,6 @@ CLASS = ClassData(
     card_sets=CARD_SETS,
     sections=SECTIONS,
     guides=GUIDES,
+    # The rich seed's midterm stands where an Exam 1 would.
+    earlier_exams={"Midterm Exam": ("vectors", "dot", "systems", "elimination")},
 )
