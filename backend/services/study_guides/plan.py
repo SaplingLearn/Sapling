@@ -14,7 +14,7 @@ from services.study_guides.signals import amastery, concept_key
 SECTION_COUNT: dict[Depth, int] = {"cram": 3, "standard": 5, "deep": 8}
 #: Room a section gets by mastery: the weaker the concept, the more space.
 TIER_ROOM: dict[Tier, int] = {"struggling": 5, "learning": 3, "unexplored": 3, "mastered": 1}
-MINUTES_PER_SECTION: dict[Depth, int] = {"cram": 2, "standard": 3, "deep": 5}
+MINUTES_PER_SECTION: dict[Depth, int] = {"cram": 2, "standard": 5, "deep": 6}
 
 
 def weights(tiers: list[Tier], *, use_history: bool) -> list[int]:
