@@ -3,15 +3,37 @@
  * tab's underline, the readiness figure and what is around it, the Up Next
  * block, the roadmap) starts on the same frame and runs on this one duration
  * and this one curve, so the page changes once rather than in pieces.
+ *
+ * Inside it, content is swapped in two parts so an old thing and the new
+ * thing in its place are never both readable: what goes fades out first
+ * (HUB_OUT), what comes fades in after (HUB_IN). What stays and moves runs
+ * the whole length underneath (HUB_WHOLE), so the motion never stops.
  */
 
 /** How long a switch takes, start to rest. */
 export const HUB_SWITCH_MS = 320;
-/** What arrives new on the roadmap starts this much later, and still ends with the rest. */
+/** What arrives new on the roadmap starts this much into the second part, and still ends with the rest. */
 export const HUB_STAGGER_MS = 40;
+/** The fraction of the switch by which everything old is gone. */
+export const HUB_OUT_UNTIL = 0.42;
+/** The fraction of the switch at which the new starts to show. Never before HUB_OUT_UNTIL. */
+export const HUB_IN_FROM = 0.44;
 /** The app's `--ease` (globals.css; hubMotion.test.ts pins the two together). */
 export const HUB_EASE_POINTS = [0.2, 0.7, 0.2, 1] as const;
 export const HUB_EASE = `cubic-bezier(${HUB_EASE_POINTS.join(", ")})`;
+
+const IN_FROM_MS = Math.round(HUB_SWITCH_MS * HUB_IN_FROM);
+
+/** When one piece of a switch runs: Web Animations `delay` and `duration`, in ms. */
+export interface HubPhase { delay: number; duration: number }
+/** What stays and moves: slides, the tab's line, heights (and the figure's count). */
+export const HUB_WHOLE: HubPhase = { delay: 0, duration: HUB_SWITCH_MS };
+/** What goes, and the old copy of a crossfade. */
+export const HUB_OUT: HubPhase = { delay: 0, duration: Math.round(HUB_SWITCH_MS * HUB_OUT_UNTIL) };
+/** The new copy of a crossfade. Ends with the switch. */
+export const HUB_IN: HubPhase = { delay: IN_FROM_MS, duration: HUB_SWITCH_MS - IN_FROM_MS };
+/** What arrives new on the roadmap: a beat into the second part, ending with the switch too. */
+export const HUB_IN_LATE: HubPhase = { delay: IN_FROM_MS + HUB_STAGGER_MS, duration: HUB_SWITCH_MS - IN_FROM_MS - HUB_STAGGER_MS };
 
 /** True when the student asked for less motion: every change then lands at once. */
 export const reducedMotion = () =>

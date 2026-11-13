@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
-import { HUB_EASE, HUB_EASE_POINTS, HUB_STAGGER_MS, HUB_SWITCH_MS, countAt, cubicBezier, hubEase } from "./hubMotion";
+import {
+  HUB_EASE, HUB_EASE_POINTS, HUB_IN, HUB_IN_FROM, HUB_IN_LATE, HUB_OUT, HUB_OUT_UNTIL, HUB_STAGGER_MS, HUB_SWITCH_MS, HUB_WHOLE,
+  countAt, cubicBezier, hubEase,
+} from "./hubMotion";
 
 describe("the switch clock", () => {
   it("uses the app's own easing curve", () => {
@@ -14,6 +17,40 @@ describe("the switch clock", () => {
     expect(HUB_STAGGER_MS).toBeLessThanOrEqual(40);
     expect(HUB_SWITCH_MS).toBeGreaterThanOrEqual(220);
     expect(HUB_SWITCH_MS).toBeLessThanOrEqual(420);
+  });
+});
+
+describe("the two parts of a switch", () => {
+  const end = (phase: { delay: number; duration: number }) => phase.delay + phase.duration;
+
+  it("what stays and moves runs the whole switch", () => {
+    expect(HUB_WHOLE).toEqual({ delay: 0, duration: HUB_SWITCH_MS });
+  });
+
+  it("everything old is gone before anything new starts to show", () => {
+    expect(HUB_OUT_UNTIL).toBeLessThanOrEqual(HUB_IN_FROM);
+    expect(HUB_OUT.delay).toBe(0);
+    expect(end(HUB_OUT)).toBeLessThanOrEqual(HUB_IN.delay);
+    expect(end(HUB_OUT)).toBeLessThanOrEqual(HUB_IN_LATE.delay);
+    // The gap between the two is not a pause anyone sees: under a frame.
+    expect(HUB_IN.delay - end(HUB_OUT)).toBeLessThan(17);
+  });
+
+  it("the new ends exactly with the switch, the staggered arrivals too", () => {
+    expect(end(HUB_IN)).toBe(HUB_SWITCH_MS);
+    expect(end(HUB_IN_LATE)).toBe(HUB_SWITCH_MS);
+    expect(HUB_IN_LATE.delay - HUB_IN.delay).toBe(HUB_STAGGER_MS);
+    expect(HUB_IN_LATE.duration).toBeGreaterThan(100); // still a fade, not a pop
+  });
+
+  it("splits near the middle: out over about the first 45%, in over the rest", () => {
+    expect(HUB_OUT.duration / HUB_SWITCH_MS).toBeGreaterThan(0.38);
+    expect(HUB_OUT.duration / HUB_SWITCH_MS).toBeLessThan(0.48);
+    expect(HUB_IN.delay).toBeGreaterThanOrEqual(130);
+    expect(HUB_IN.delay).toBeLessThanOrEqual(145);
+    for (const ms of [HUB_OUT.duration, HUB_IN.delay, HUB_IN.duration, HUB_IN_LATE.delay, HUB_IN_LATE.duration]) {
+      expect(Number.isInteger(ms)).toBe(true);
+    }
   });
 });
 

@@ -68,7 +68,8 @@ describe("ExamTabs' selected line", () => {
     expect(slides[0].el).toBe(lines()[0]);
     // From Midterm 2 (88, 90 wide) to Exam 1 (0, 60 wide): 88px right and half as wide again.
     expect(slides[0].frames).toEqual([{ transform: "translateX(88px) scaleX(1.5)" }, { transform: "none" }]);
-    expect(slides[0].timing).toEqual({ duration: HUB_SWITCH_MS, easing: HUB_EASE });
+    // The whole length of the switch: the line never waits for the content swap.
+    expect(slides[0].timing).toEqual({ delay: 0, duration: HUB_SWITCH_MS, easing: HUB_EASE });
     expect(lines()[0].style.transformOrigin).toBe("0 50%");
   });
 

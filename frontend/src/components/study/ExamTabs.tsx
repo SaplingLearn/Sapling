@@ -13,7 +13,7 @@
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
-import { HUB_EASE, HUB_SWITCH_MS, reducedMotion } from "./hubMotion";
+import { HUB_EASE, HUB_SWITCH_MS, HUB_WHOLE, reducedMotion } from "./hubMotion";
 import { DISPLAY, ELLIPSIS, POPOVER } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
@@ -61,7 +61,7 @@ function useSlidingLine(list: React.RefObject<HTMLElement | null>, selectedId: s
     const line = to?.querySelector<HTMLElement>("[data-tab-line]");
     if (!from || !to || !line || !to.offsetWidth || typeof line.animate !== "function") return;
     const start = `translateX(${from.offsetLeft - to.offsetLeft}px) scaleX(${from.offsetWidth / to.offsetWidth})`;
-    running.current = line.animate([{ transform: start }, { transform: "none" }], { duration: HUB_SWITCH_MS, easing: HUB_EASE });
+    running.current = line.animate([{ transform: start }, { transform: "none" }], { ...HUB_WHOLE, easing: HUB_EASE });
   }, [list, selectedId]);
   React.useEffect(() => () => running.current?.cancel(), []);
 }

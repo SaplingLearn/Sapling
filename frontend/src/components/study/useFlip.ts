@@ -12,6 +12,9 @@
  *
  * A new item also rises 10px and a gone one shrinks a little, unless it is
  * marked `data-flip-how="fade"` (text and small marks, which must not move).
+ * What goes fades out in the first part of the switch and what comes fades in
+ * in the second, so the two are never read on top of each other; slides and
+ * the height run the whole length.
  *
  * It only animates when `trigger` changes, and never under reduced motion.
  * Everything runs through the Web Animations API, which leaves no inline
@@ -27,7 +30,7 @@
  */
 import React from "react";
 import { flipPlan, type FlipItem } from "./flipPlan";
-import { HUB_EASE, HUB_STAGGER_MS, HUB_SWITCH_MS, reducedMotion } from "./hubMotion";
+import { HUB_EASE, HUB_IN, HUB_IN_LATE, HUB_OUT, HUB_WHOLE, reducedMotion, type HubPhase } from "./hubMotion";
 
 type Seen = FlipItem & { el: HTMLElement; fade: boolean };
 type Layout = { root: HTMLElement; trigger: string; height: number; items: Map<string, Seen> };
@@ -65,24 +68,25 @@ function ghostOf(was: Seen, host: HTMLElement): HTMLElement {
 }
 
 function play(prev: Layout, now: Layout, live: Live) {
-  const run = (el: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions = {}) => {
-    const anim = el.animate(frames, { duration: HUB_SWITCH_MS, easing: HUB_EASE, ...timing });
+  const run = (el: HTMLElement, frames: Keyframe[], phase: HubPhase, fill: FillMode = "none") => {
+    const anim = el.animate(frames, { ...phase, easing: HUB_EASE, fill });
     live.anims.push(anim);
     return anim;
   };
   const plan = flipPlan(prev.items, now.items);
   for (const m of plan.move) {
-    run(now.items.get(m.key)!.el, [{ transform: `translate(${m.dx}px, ${m.dy}px)` }, { transform: "none" }]);
+    run(now.items.get(m.key)!.el, [{ transform: `translate(${m.dx}px, ${m.dy}px)` }, { transform: "none" }], HUB_WHOLE);
   }
   // One keyframe each: the other end is wherever the item rests (or rested).
+  // Filled backwards, so a new item stays hidden until its part begins.
   for (const key of plan.enter) {
     const item = now.items.get(key)!;
     // An entrance of the item's own (a roadmap column's, in CSS) would run
     // over this one and past its end: this one takes its place.
     for (const own of item.el.getAnimations?.() ?? []) own.cancel();
-    if (item.fade) run(item.el, [{ opacity: 0, offset: 0 }]);
-    // The hub's studyPaneEnter, a beat behind and ending with everything else.
-    else run(item.el, [{ opacity: 0, transform: "translateY(10px)", offset: 0 }], { delay: HUB_STAGGER_MS, duration: HUB_SWITCH_MS - HUB_STAGGER_MS, fill: "backwards" });
+    if (item.fade) run(item.el, [{ opacity: 0, offset: 0 }], HUB_IN, "backwards");
+    // The hub's studyPaneEnter.
+    else run(item.el, [{ opacity: 0, transform: "translateY(10px)", offset: 0 }], HUB_IN_LATE, "backwards");
   }
   for (const key of plan.leave) {
     const was = prev.items.get(key)!;
@@ -92,10 +96,11 @@ function play(prev: Layout, now: Layout, live: Live) {
     const ghost = ghostOf(was, was.parent ? now.items.get(was.parent)!.el : now.root);
     live.ghosts.push(ghost);
     const gone = was.fade ? { opacity: 0, offset: 1 } : { opacity: 0, transform: "scale(0.94)", offset: 1 };
-    run(ghost, [gone], { fill: "forwards" }).onfinish = () => ghost.remove();
+    // Filled forwards: the copy stays hidden for the instant before it is removed.
+    run(ghost, [gone], HUB_OUT, "forwards").onfinish = () => ghost.remove();
   }
   if (Math.abs(prev.height - now.height) >= 1) {
-    run(now.root, [{ height: `${prev.height}px` }, { height: `${now.height}px` }]);
+    run(now.root, [{ height: `${prev.height}px` }, { height: `${now.height}px` }], HUB_WHOLE);
   }
 }
 

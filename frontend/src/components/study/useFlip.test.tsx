@@ -8,7 +8,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import { HUB_EASE, HUB_STAGGER_MS, HUB_SWITCH_MS } from "./hubMotion";
+import { HUB_EASE, HUB_IN, HUB_IN_LATE, HUB_OUT, HUB_SWITCH_MS, HUB_WHOLE } from "./hubMotion";
 import { useFlip } from "./useFlip";
 
 type Columns = Record<string, Record<string, number>>;
@@ -126,15 +126,78 @@ describe("useFlip", () => {
     expect(ghosts(root)).toEqual([]);
   });
 
-  it("runs everything on the hub's one clock; what comes in starts a beat later and ends with the rest", () => {
-    const { rerender } = render(<Board columns={WHOLE} trigger="" height={400} label="Ready for Exam 2" />);
-    rerender(<Board columns={{ b: { 4: 30, 5: 76 } }} trigger="e1" height={160} label="Exam 1 coverage" />);
-    const ends = started.map(s => Number(s.timing.delay ?? 0) + Number(s.timing.duration));
-    expect(started.length).toBeGreaterThan(5); // a slide, an entrance, copies going, a crossfade, the height
-    expect(new Set(ends)).toEqual(new Set([HUB_SWITCH_MS]));
-    expect(new Set(started.map(s => s.timing.easing))).toEqual(new Set([HUB_EASE]));
-    expect(new Set(started.map(s => s.timing.delay ?? 0))).toEqual(new Set([0, HUB_STAGGER_MS]));
-    expect(started.filter(s => s.timing.delay).map(s => s.el.textContent)).toEqual(["5"]);
+  describe("one switch, in two parts on one clock", () => {
+    const phaseOf = (s: Started) => ({ delay: s.timing.delay, duration: s.timing.duration });
+    const end = (s: Started) => Number(s.timing.delay) + Number(s.timing.duration);
+    const fades = (s: Started) => s.frames.some(f => "opacity" in f);
+    /** Column a and tile 3 go, tile 5 comes, column b and tile 4 slide, the label's text changes, the height shrinks. */
+    const change = () => {
+      const view = render(<Board columns={WHOLE} trigger="" height={400} label="Ready for Exam 2" />);
+      view.rerender(<Board columns={{ b: { 4: 30, 5: 76 } }} trigger="e1" height={160} label="Exam 1 coverage" />);
+      return view;
+    };
+
+    it("what stays and moves runs the whole length", () => {
+      const { getByTestId } = change();
+      const root = getByTestId("root");
+      const whole = [root, root.querySelector<HTMLElement>('[data-flip="col:b"]')!, getByTestId("tile-4")];
+      for (const el of whole) expect(startedOn(el).map(phaseOf)).toEqual([HUB_WHOLE]);
+      expect(whole.flatMap(startedOn).some(fades)).toBe(false);
+    });
+
+    it("what goes fades out in the first part, and is hidden from its end to its removal", () => {
+      const { getByTestId } = change();
+      const out = ghosts(getByTestId("root")).flatMap(startedOn);
+      expect(out.map(s => s.el.textContent).sort()).toEqual(["12", "3", "Ready for Exam 2"]);
+      for (const s of out) {
+        expect(phaseOf(s)).toEqual(HUB_OUT);
+        expect(s.timing.fill).toBe("forwards");
+        expect(s.frames[0].opacity).toBe(0);
+      }
+    });
+
+    it("what comes fades in in the second part, hidden until it begins, and ends with the switch", () => {
+      const { getByTestId, getByText } = change();
+      const label = startedOn(getByText("Exam 1 coverage"));
+      const tile = startedOn(getByTestId("tile-5"));
+      expect(label.map(phaseOf)).toEqual([HUB_IN]);
+      // A roadmap arrival trails by the stagger and still ends on time.
+      expect(tile.map(phaseOf)).toEqual([HUB_IN_LATE]);
+      for (const s of [...label, ...tile]) {
+        expect(s.timing.fill).toBe("backwards"); // not "forwards": nothing is left filling once it is in
+        expect(s.frames).toHaveLength(1);
+        expect(s.frames[0]).toMatchObject({ opacity: 0, offset: 0 });
+        expect(end(s)).toBe(HUB_SWITCH_MS);
+      }
+    });
+
+    it("the old and the new are never both showing: every fade out ends before any fade in begins", () => {
+      change();
+      const out = started.filter(s => fades(s) && s.el.hasAttribute("inert"));
+      const coming = started.filter(s => fades(s) && !s.el.hasAttribute("inert"));
+      expect(out.length).toBe(3);
+      expect(coming.length).toBe(2);
+      expect(Math.max(...out.map(end))).toBeLessThanOrEqual(Math.min(...coming.map(s => Number(s.timing.delay))));
+      // And nothing at all runs past the switch, on one curve.
+      expect(Math.max(...started.map(end))).toBe(HUB_SWITCH_MS);
+      expect(new Set(started.map(s => s.timing.easing))).toEqual(new Set([HUB_EASE]));
+      expect(started).toHaveLength(8); // 3 whole-length, 3 out, 2 in: nothing else
+    });
+
+    it("an interruption mid-switch leaves no opacity animation running or waiting on anything", () => {
+      // As at 100ms: the old half faded, the new still waiting on its delay.
+      const { rerender, getByTestId, getByText } = change();
+      const first = [...started];
+      expect(first.filter(fades).length).toBe(5);
+      rerender(<Board columns={{ b: { 4: 30, 5: 76 } }} trigger="e2" height={160} label="Exam 1 coverage" />);
+      for (const s of first) expect(s.anim.cancel).toHaveBeenCalledTimes(1);
+      // The second change moved nothing, so nothing new was started either:
+      // every item is at its own opacity, and the copies are gone.
+      expect(started).toEqual(first);
+      expect(ghosts(getByTestId("root"))).toEqual([]);
+      expect(getByText("Exam 1 coverage")).toBeTruthy();
+      expect(getByTestId("tile-5")).toBeTruthy();
+    });
   });
 
   it("crossfades in place an item whose key carries its text: no movement either way", () => {
@@ -147,7 +210,7 @@ describe("useFlip", () => {
     expect([old.style.left, old.style.top]).toEqual(["90px", "4px"]);
     expect(startedOn(old).map(s => s.frames)).toEqual([[{ opacity: 0, offset: 1 }]]);
     const now = getByText("Exam 1 coverage", { ignore: "[inert]" });
-    expect(startedOn(now).map(s => [s.frames, s.timing.delay])).toEqual([[[{ opacity: 0, offset: 0 }], undefined]]);
+    expect(startedOn(now).map(s => [s.frames, s.timing.delay])).toEqual([[[{ opacity: 0, offset: 0 }], HUB_IN.delay]]);
   });
 
   it("copies nothing for an element React rewrote in place: its old text is gone", () => {

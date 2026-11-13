@@ -34,6 +34,7 @@ vi.mock("@/context/FlagsContext", () => ({
 }));
 
 import { StudyHub } from "./StudyHub";
+import { HUB_IN, HUB_IN_LATE, HUB_OUT, HUB_SWITCH_MS, HUB_WHOLE } from "./hubMotion";
 import { ToastProvider } from "../ToastProvider";
 import * as api from "@/lib/api";
 import { listAttempts } from "@/lib/quiz/api";
@@ -984,7 +985,10 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
 });
 
 describe("StudyHub with motion on (a fake animation clock)", () => {
-  type Fake = { el: HTMLElement; cancelled: boolean; onfinish: null | (() => void); cancel: () => void };
+  type Fake = { el: HTMLElement; frames: Keyframe[]; timing: KeyframeAnimationOptions; cancelled: boolean; onfinish: null | (() => void); cancel: () => void };
+  const phaseOf = (a: Fake) => ({ delay: a.timing.delay, duration: a.timing.duration });
+  const fades = (a: Fake) => a.frames.some(f => "opacity" in f);
+  const on = (el: Element) => anims.filter(a => a.el === el);
   let anims: Fake[];
   let frames: Map<number, FrameRequestCallback>;
   let clock: number;
@@ -1009,8 +1013,8 @@ describe("StudyHub with motion on (a fake animation clock)", () => {
     vi.spyOn(performance, "now").mockImplementation(() => clock);
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frames.set(++handle, cb); return handle; });
     vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id); });
-    HTMLElement.prototype.animate = function (this: HTMLElement) {
-      const fake: Fake = { el: this, cancelled: false, onfinish: null, cancel() { fake.cancelled = true; } };
+    HTMLElement.prototype.animate = function (this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
+      const fake: Fake = { el: this, frames, timing, cancelled: false, onfinish: null, cancel() { fake.cancelled = true; } };
       anims.push(fake);
       return fake as unknown as Animation;
     } as unknown as typeof HTMLElement.prototype.animate;
@@ -1058,7 +1062,29 @@ describe("StudyHub with motion on (a fake animation clock)", () => {
     for (const copy of copies()) {
       expect(copy.getAttribute("aria-hidden")).toBe("true");
       expect(copy.outerHTML).not.toMatch(/data-testid|data-flip=/);
+      // Everything old goes in the first part of the switch.
+      expect(on(copy).map(phaseOf)).toEqual([HUB_OUT]);
     }
+    // What takes its place comes in the second part: the label, the counts,
+    // the Up Next body, in step; the roadmap's new column a beat behind.
+    const label = screen.getByText("Exam 1 coverage");
+    const body = screen.getByTestId("focus-card").querySelector('[data-flip^="focus-body:"]')!;
+    expect(body.textContent).toContain("Loops");
+    const mastered = screen.getByRole("button", { name: /^1\s*Mastered$/ }).querySelector("[data-flip]")!;
+    for (const el of [label, body, mastered]) expect(on(el).map(phaseOf)).toEqual([HUB_IN]);
+    const column = screen.getByTestId("tile-var").closest('[data-flip^="col:"]')!;
+    expect(on(column).map(phaseOf)).toEqual([HUB_IN_LATE]);
+    // No fade out is still going when a fade in begins, and all end with the switch.
+    const out = anims.filter(a => fades(a) && a.el.hasAttribute("inert"));
+    const coming = anims.filter(a => fades(a) && !a.el.hasAttribute("inert"));
+    const end = (a: Fake) => Number(a.timing.delay) + Number(a.timing.duration);
+    expect(Math.max(...out.map(end))).toBeLessThanOrEqual(Math.min(...coming.map(a => Number(a.timing.delay))));
+    expect(new Set(coming.map(end))).toEqual(new Set([HUB_SWITCH_MS]));
+    expect(coming.every(a => a.timing.fill === "backwards")).toBe(true);
+    // The Up Next block itself only stays put: nothing fades or moves it.
+    expect(on(screen.getByTestId("focus-card"))).toEqual([]);
+    // Anything that slides does so for the whole length.
+    for (const a of anims.filter(a => !fades(a))) expect(phaseOf(a)).toEqual(HUB_WHOLE);
 
     await finish();
     expect(copies()).toEqual([]);
@@ -1072,7 +1098,14 @@ describe("StudyHub with motion on (a fake animation clock)", () => {
     await screen.findByText("Ready for Exam 2");
     await finish();
     tab(/Exam 1/);
+    // Cut short at once, as if at 100ms: old half faded, new not yet showing.
+    const first = [...anims];
+    expect(first.filter(fades).length).toBeGreaterThan(5);
     tab(/Quiz 3/);
+    // None of the first switch's fades is left running or waiting, so nothing
+    // it touched can be stuck part-way; its copies are out of the page.
+    expect(first.every(a => a.cancelled)).toBe(true);
+    expect(first.filter(a => a.el.hasAttribute("inert")).every(a => !a.el.isConnected)).toBe(true);
     tab(/Exam 2/);
     tab(/Exam 1/);
     // Every animation of the three switches that were cut short was cancelled.
