@@ -61,11 +61,14 @@ const CATEGORISED = [
   topic("t-loop", "Loops", "control-flow", "loop"),
   topic("t-rec", "Recursion", "control-flow", "rec"),
 ];
-/** The readiness label once the exams have loaded. With no outline linking
- *  concepts to Exam 2 (the default below) the band speaks for the whole course
- *  and says so, so this, not "Ready for Exam 2", is the "page has loaded" text. */
-const COURSE_READINESS = "CS101 Readiness";
-const hubLoaded = () => screen.findByText(COURSE_READINESS);
+/** The readiness label once the exams have loaded. The band is named for the
+ *  SELECTED exam whether or not the outline links concepts to it; with nothing
+ *  linked (the default below) `readiness-unlinked-note` is what says the
+ *  figure under it is the whole course's. */
+const EXAM_READINESS = "Ready for Exam 2";
+const hubLoaded = () => screen.findByText(EXAM_READINESS);
+/** The caveat shown when the figure is wider than the exam named above it. */
+const unlinkedNote = () => screen.queryByTestId("readiness-unlinked-note");
 
 beforeEach(() => {
   vi.clearAllMocks(); // call history only; each test's implementations are set below
@@ -125,10 +128,10 @@ describe("StudyHub", () => {
     renderHub();
     // mean of 96, 60, 30, 0
     await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"));
-    // Nothing links concepts to Exam 2, so that 47% is the course's and is
-    // labelled as the course's. The tab still carries the exam's title.
-    expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
-    expect(screen.queryByText("Ready for Exam 2")).toBeNull();
+    // Nothing links concepts to Exam 2, so that 47% is the course's — but the
+    // band is still named for the exam, and the note is what says why.
+    expect(screen.getByText(EXAM_READINESS)).toBeTruthy();
+    expect(unlinkedNote()!.textContent).toBe("No topics are linked to Exam 2 yet.");
     const tabs = screen.getAllByRole("tab").map(t => t.textContent);
     expect(tabs).toEqual(["Exam 2Wed, Nov 18", "Quiz 3Fri, Nov 20"]); // homework never a tab
     // Due-soon work is not called out on the page; the bell counts and lists it.
@@ -686,7 +689,8 @@ describe("StudyHub readiness follows the selected exam", () => {
     ], needs_refresh: false } as never);
     renderHub();
     expect(await screen.findByText("Ready for Exam 2")).toBeTruthy();
-    expect(screen.queryByText(COURSE_READINESS)).toBeNull();
+    // The outline links concepts to it, so there is no caveat to show.
+    await waitFor(() => expect(unlinkedNote()).toBeNull());
     // mean of 60 and 30, not of all four (47)
     expect(screen.getByTestId("readiness-pct").textContent).toBe("45%");
     // 10 points over two concepts, not over four (+3%)
@@ -703,12 +707,12 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(screen.getByTestId("tile-loop").style.opacity).toBe("1");
     expect(screen.getByTestId("tile-rec").style.opacity).toBe("0.3");
 
-    // Quiz 3 has nothing linked: the course's number, under the course's name.
-    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
+    // Quiz 3 has nothing linked: the course's number, under QUIZ 3's name.
+    expect(unlinkedNote()).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
-    expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
-    expect(screen.getByTestId("readiness-unlinked-note").textContent).toBe("No topics are linked to Quiz 3 yet.");
-    expect(screen.queryByText(/^Ready for/)).toBeNull();
+    expect(screen.getByText("Ready for Quiz 3")).toBeTruthy();
+    expect(unlinkedNote()!.textContent).toBe("No topics are linked to Quiz 3 yet.");
+    expect(screen.queryByText("Ready for Exam 2")).toBeNull();
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%");
     expect(screen.getByText("+3% this week")).toBeTruthy();
     expect(squares()).toHaveLength(4);
@@ -716,7 +720,7 @@ describe("StudyHub readiness follows the selected exam", () => {
     for (const id of ["var", "loop", "rec", "arr"]) expect(screen.getByTestId(`tile-${id}`)).toBeTruthy();
   });
 
-  it("an exam with no linked concept shows the course's readiness under the course's name", async () => {
+  it("an exam with no linked concept shows the course's readiness under THAT EXAM's name", async () => {
     // The outline exists, but only Quiz 3 has concepts; Exam 2's one topic
     // never matched a graph node.
     vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [
@@ -726,7 +730,7 @@ describe("StudyHub readiness follows the selected exam", () => {
     renderHub();
     expect(await hubLoaded()).toBeTruthy();
     expect(screen.getByRole("tab", { selected: true }).textContent).toBe("Exam 2Wed, Nov 18");
-    expect(screen.queryByText("Ready for Exam 2")).toBeNull();
+    await waitFor(() => expect(unlinkedNote()!.textContent).toBe("No topics are linked to Exam 2 yet."));
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"); // mean of 96, 60, 30, 0
     expect(squares()).toHaveLength(4);
     expect(legend()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
@@ -791,7 +795,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     expect(columns()).toEqual(["Foundations1/2", "Core Methods0/1", "Building On0/1"]);
     expect(screen.queryByTestId("roadmap-exam-caption")).toBeNull();
     expect(screen.getByTestId("readiness-unlinked-note").textContent).toBe("No topics are linked to Quiz 3 yet.");
-    expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
+    expect(screen.getByText("Ready for Quiz 3")).toBeTruthy();
     expect(screen.queryByTestId("focus-fallback-note")).toBeNull();
     // Reduced motion (this suite's matchMedia): the new roadmap is simply there.
     settled();
@@ -944,7 +948,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
       tab(/Quiz 3/);
       expect(screen.getByTestId("readiness-pct")).toBe(figure);
       expect(figure.textContent).toBe("47%");
-      expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
+      expect(screen.getByText("Ready for Quiz 3")).toBeTruthy();
       expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
       // Nothing of the switch is left in the band or the block either.
       expect(section.querySelectorAll("[inert]")).toHaveLength(0);
@@ -1361,6 +1365,9 @@ describe("StudyHub saves exams and deadlines", () => {
     addExam("Final");
     // The new exam's tab is selected, and its readiness is over its own concept.
     expect(await screen.findByText("Ready for Final")).toBeTruthy();
+    // The label is the exam's from the first paint, so it is the caveat going
+    // away that marks the re-read landing — not the label changing.
+    await waitFor(() => expect(unlinkedNote()).toBeNull());
     expect(screen.getByTestId("readiness-pct").textContent).toBe("60%");
     expect(vi.mocked(getTopicChecklist).mock.calls.map(c => c[1])).toEqual(["c1", "c1"]);
   });

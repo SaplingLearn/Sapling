@@ -21,9 +21,11 @@
  *    (`node_id`). When the checklist links the selected exam to at least one of
  *    the course's concepts, the readiness band is over those: "Ready for
  *    <exam>", or "<exam> coverage" once the exam's date has passed.
- *    Otherwise (no outline, nothing linked) it is the whole course, and says
- *    so: "<course> Readiness", with a note that nothing is linked to that
- *    exam yet.
+ *    Otherwise (no outline, nothing linked) the figure is over the whole
+ *    course, but the band is STILL named for the exam — a tab that says
+ *    "Midterm 2" must not be answered with the course's name — and the note
+ *    is what says nothing is linked to it yet. Only with no exam selected at
+ *    all does the course name the band, and then as "<course> Mastery".
  *  - The same set (`examScope`) is what the roadmap shows while that exam is
  *    selected, and what Up Next is queued from (`examQueue`).
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
@@ -401,9 +403,13 @@ export function readinessBand(
   today: Date,
 ): { concepts: Concept[]; label: string; note: string | null } {
   if (!exam) return { concepts: topics, label: `${courseLabel} Mastery`, note: null };
-  const scope = examScope(topics, outline, exam);
-  if (!scope) return { concepts: topics, label: `${courseLabel} Readiness`, note: `No topics are linked to ${exam.title} yet.` };
+  // An exam is selected, so the band is named for THAT exam either way. With
+  // nothing linked the FIGURE falls back to the whole course, but the label
+  // must not: answering the "Midterm 2" tab with "CS101 Readiness" reads as
+  // the wrong number rather than as a wider one. The note carries the caveat.
   const label = daysTo(exam.iso, today) < 0 ? `${exam.title} coverage` : `Ready for ${exam.title}`;
+  const scope = examScope(topics, outline, exam);
+  if (!scope) return { concepts: topics, label, note: `No topics are linked to ${exam.title} yet.` };
   return { concepts: topics.filter(t => scope.ids.has(t.id)), label, note: null };
 }
 

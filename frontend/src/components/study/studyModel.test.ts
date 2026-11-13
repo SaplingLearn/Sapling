@@ -300,8 +300,9 @@ describe("readinessBand", () => {
       [{ node_id: "elsewhere", assessments: on("e1") }],
     ]) {
       const band = readinessBand(cs, outline, exam, "CS101", NOW);
-      expect(band.label).toBe("CS101 Readiness");
-      // The course's number under an exam's tab says why it is the course's.
+      // Named for the EXAM either way; the note is what says the figure under
+      // it is the whole course's.
+      expect(band.label).toBe("Ready for Midterm");
       expect(band.note).toBe("No topics are linked to Midterm yet.");
       expect(band.concepts).toBe(cs);
     }
@@ -320,9 +321,10 @@ describe("readinessBand", () => {
     const past = readinessBand(cs, outline, { ...exam, iso: "2026-10-01" }, "CS101", NOW);
     expect(past.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
     expect(past.note).toBeNull();
-    // A past exam with nothing linked is still the course's, and says so.
+    // A past exam with nothing linked is still named for the exam, and the
+    // note says the figure under it is the whole course's.
     expect(readinessBand(cs, [], { ...exam, iso: "2026-10-01" }, "CS101", NOW))
-      .toMatchObject({ label: "CS101 Readiness", note: "No topics are linked to Midterm yet." });
+      .toMatchObject({ label: "Midterm coverage", note: "No topics are linked to Midterm yet." });
   });
 });
 
