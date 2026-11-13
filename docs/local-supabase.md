@@ -240,7 +240,13 @@ answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
   cover every scope, goal and depth, three to eight sections, every block
   type, saved and unsaved, read marks, answered checks and feedback. At least
   two say "2 new lectures", one is still generating, one has a section that
-  failed and one is in the pre-redesign format.
+  failed and one is in the pre-redesign format. Each section is written at
+  the length its guide's depth asks the section writer for (90 to 160 words
+  of prose for a cram sheet, 280 to 450 for standard, 500 to 800 for a deep
+  review, and about half for a mastered concept), with a one or two sentence
+  Skim summary per passage. CS101's "Pointers, recursion and Big-O" (Midterm
+  2, standard) is the one to open to see the usual output: it is seeded as
+  just written, with every block type between its passages.
 - **Course outline**: four units (the roadmap's columns), stored under the
   outline's real evidence hash so the Study page does not regenerate it with
   the model. Every exam and quiz is linked to concepts of its own: a quiz to
@@ -250,7 +256,12 @@ answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
   only while the exam is ahead (today to thirty days out, where the outline
   is served); the tab of an exam already sat reads as the whole class.
 
-The content lives in `backend/db/local_study_data/`, one module per class. A
+The content lives in `backend/db/local_study_data/`, one module per class
+(`cs101.py`), with its concept tree and its study guides beside it
+(`cs101_concepts.py`, `cs101_guides.py`). A section is drafted once per
+concept, in layers: an opening every length has, the passages a standard
+guide adds and the ones a deep guide adds, so one draft serves guides of
+different depths. A
 guide is built the way a generation run leaves it: the server's own check
 decides whether each chart is plotted from data (three are, from numbers in
 the lecture they cite) and stamps the evidence line on a quiz mistake.

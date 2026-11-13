@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 import services.topic_checklist_service as checklist_service
+from agents.study_guide import PARAGRAPH_FLOOR, SECTION_PASSAGES, SECTION_WORDS, mastered_words
 from agents.topic_checklist import TopicOutline
 from config import get_mastery_tier
 from db import local_study_data as data
@@ -339,7 +340,8 @@ def test_every_written_section_cites_and_no_prose_is_filler(guides):
             prose = [i for i in section.items if i.type == "prose"]
             assert any(p.citations for item in prose for p in item.paragraphs), section.title
             assert all(len(p.text) > 60 for item in prose for p in item.paragraphs)
-            assert len(section.items) >= 3
+            # The shortest section there is: an opening and its check.
+            assert len(section.items) >= 2
 
 
 def _server_text(doc: dict) -> str:
@@ -459,43 +461,128 @@ def test_the_pre_redesign_guide_upgrades_on_read(rows):
     assert row["material_ids"] == [] and row["exam_id"] and row["scope_kind"] == "exam"
 
 
-# ── How much there is to read ────────────────────────────────────────────────
+# ── How much there is to read, and where ─────────────────────────────────────
+#
+# Read mode is the full written guide and Skim swaps each passage for a line or
+# two. The seeded guides once had so little prose that the two looked alike,
+# and their blocks stood back to back. These hold every one of them to what the
+# section writer is asked for (`agents/study_guide.py`, "CHOOSING BLOCKS" and
+# "GOAL AND DEPTH"), so neither can come back.
 
-#: Words of prose in a written section, by the guide's depth: what the section
-#: writer is asked for (`agents/study_guide.py`, "HOW MUCH TO WRITE").
-PROSE_WORDS = {"cram": (90, 160), "standard": (280, 450), "deep": (500, 800)}
-#: A paragraph explains something: it is never a caption.
-PARAGRAPH_WORDS = 40
+#: A Skim summary is a sentence or two: about this many words.
+SUMMARY_WORDS = (8, 30)
 
 
 def _words(text: str | None) -> int:
     return len((text or "").split())
 
 
-def _prose_words(section) -> int:
-    return sum(_words(p.text) for i in section.items if i.type == "prose" for p in i.paragraphs)
-
-
-def _is_bridge(section, place: int) -> bool:
-    """One sentence that leads into the block right below it. It has no
-    summary, so Skim shows the block without it."""
-    item, after = section.items[place], section.items[place + 1 : place + 2]
-    return (
-        item.type == "prose" and item.summary is None and len(item.paragraphs) == 1
-        and bool(after) and after[0].type != "prose"
-    )
+def _passage_words(item) -> int:
+    return sum(_words(p.text) for p in item.paragraphs)
 
 
 def _passages(section) -> list:
-    """The section's written passages: its prose, less the bridges."""
+    return [item for item in section.items if item.type == "prose"]
+
+
+def _prose_words(section) -> int:
+    return sum(_passage_words(item) for item in _passages(section))
+
+
+def _written(guides):
+    """(depth, section) of every written section of a finished guide."""
     return [
-        item for place, item in enumerate(section.items)
-        if item.type == "prose" and not _is_bridge(section, place)
+        (row["depth"], section)
+        for row, content in guides if row["status"] == "ready"
+        for section in content.sections if section.status == "written"
     ]
 
 
 def _guide(guides, key: str):
     return next((row, content) for row, content in guides if row["id"].endswith(f"-guide-{key}"))
+
+
+def test_every_section_has_the_prose_its_depth_asks_for(guides):
+    seen = set()
+    for depth, section in _written(guides):
+        mastered = section.tier == "mastered"
+        fewest, most = mastered_words(depth) if mastered else SECTION_WORDS[depth]
+        assert fewest <= _prose_words(section) <= most, (depth, section.tier, section.title)
+        # A mastered section is a refresher, in fewer passages than the rest.
+        low, high = SECTION_PASSAGES[depth]
+        assert (1 if mastered else low) <= len(_passages(section)) <= high, (depth, section.title)
+        seen.add((depth, mastered))
+    assert seen >= {(depth, False) for depth in SECTION_WORDS} | {("cram", True), ("deep", True)}
+
+
+def test_a_weaker_concept_gets_more_to_read(guides):
+    for _, content in ((r, c) for r, c in guides if r["status"] == "ready"):
+        by_tier = {
+            tier: [_prose_words(s) for s in content.sections if s.tier == tier and s.status == "written"]
+            for tier in TIERS
+        }
+        rest = by_tier["struggling"] + by_tier["learning"] + by_tier["unexplored"]
+        if by_tier["mastered"] and rest:
+            assert max(by_tier["mastered"]) < min(rest), content.title
+        if by_tier["struggling"] and by_tier["learning"]:
+            assert min(by_tier["struggling"]) > max(by_tier["learning"]), content.title
+
+
+def test_no_paragraph_is_a_caption_and_every_section_opens_with_two(guides):
+    for depth, section in _written(guides):
+        opening = section.items[0]
+        assert opening.type == "prose" and len(opening.paragraphs) >= 2, section.title
+        for item in _passages(section):
+            assert all(_words(p.text) >= PARAGRAPH_FLOOR for p in item.paragraphs), (section.title, item.id)
+
+
+def test_no_two_blocks_touch_and_each_is_led_in_by_a_real_paragraph(guides):
+    # Explain, then show or test: a block never follows another block, and
+    # what stands before it is prose of at least one full paragraph.
+    blocks = 0
+    for depth, section in _written(guides):
+        for before, item in zip([None, *section.items], section.items):
+            if item.type == "prose":
+                continue
+            blocks += 1
+            assert before is not None and before.type == "prose", (section.title, item.id)
+            assert _passage_words(before) >= PARAGRAPH_FLOOR, (section.title, item.id)
+        # A passage of its own for every block: never more blocks than passages.
+        assert sum(i.type != "prose" for i in section.items) <= len(_passages(section)), section.title
+    assert blocks >= 100
+
+
+def test_the_check_closes_every_section_after_prose_that_sums_up(guides):
+    for depth, section in _written(guides):
+        *_, closing, check = section.items
+        assert check.type == "check" and closing.type == "prose", section.title
+        assert [i.type for i in section.items].count("check") == 1
+        # A section short enough to open straight onto its check sums up there.
+        if len(section.items) > 2:
+            assert closing.paragraphs[-1].text.count("should now be able to") == 1, section.title
+
+
+def test_skim_has_a_short_line_for_every_passage(guides):
+    fewest, most = SUMMARY_WORDS
+    for depth, section in _written(guides):
+        for item in _passages(section):
+            # One or two short sentences, at most a third of what they stand for.
+            assert fewest <= _words(item.summary) <= most, (section.title, item.id)
+            assert _words(item.summary) * 3 <= _passage_words(item), (section.title, item.id)
+            assert item.summary.count(". ") <= 1, (section.title, item.id)
+            assert "**" not in item.summary and "`" not in item.summary, item.id
+        skim = sum(_words(item.summary) for item in _passages(section))
+        assert skim * 3 <= _prose_words(section), section.title
+
+
+def test_in_skim_too_a_sentence_stands_between_every_pair_of_blocks(guides):
+    # Skim shows a passage's summary in its place and hides a passage that
+    # has none, so walk the section as Skim draws it.
+    for depth, section in _written(guides):
+        shown = [item for item in section.items if item.type != "prose" or item.summary]
+        assert shown[0].type == "prose", section.title
+        for before, item in zip(shown, shown[1:]):
+            assert item.type == "prose" or before.type == "prose", (section.title, item.id)
 
 
 def test_the_model_guide_is_what_a_standard_guide_should_read_like(guides, rows):
@@ -505,19 +592,9 @@ def test_the_model_guide_is_what_a_standard_guide_should_read_like(guides, rows)
     # Freshly written: up to date, and nothing read, answered or saved yet.
     assert not _new_lectures(rows, row)
     assert (row["saved_at"], row["read_sections"], row["answers"], row["feedback"]) == (None, [], None, None)
-
-    low, high = PROSE_WORDS["standard"]
+    # Four passages and four blocks a section, turn and turn about.
     for section in content.sections:
-        assert low <= _prose_words(section) <= high, section.title
-        assert 3 <= len(_passages(section)) <= 4, section.title
-        assert section.items[-1].type == "check", section.title
-        # Every block has prose on one side of it that leads in or reads it.
-        for place, item in enumerate(section.items[:-1]):
-            beside = section.items[max(place - 1, 0) : place + 2]
-            assert item.type == "prose" or any(i.type == "prose" for i in beside), (section.title, item.id)
-    # The weaker the concept, the more there is to read about it.
-    by_tier = {tier: [_prose_words(s) for s in content.sections if s.tier == tier] for tier in TIERS}
-    assert min(by_tier["struggling"]) > max(by_tier["learning"])
+        assert [item.type == "prose" for item in section.items] == [True, False] * 4, section.title
 
     blocks = [item for item in _items(content) if item.type != "prose"]
     assert {block.type for block in blocks} == set(BLOCK_TYPES)
@@ -525,21 +602,6 @@ def test_the_model_guide_is_what_a_standard_guide_should_read_like(guides, rows)
     assert any(series.state == "after" for chart in charts for series in chart.series)
     assert {chart.illustrative for chart in charts} == {True, False}
     assert all(3 <= len(block.steps) <= 5 for block in blocks if block.type == "worked_example")
-
-
-def test_read_mode_is_full_prose_and_skim_is_a_line_or_two(guides):
-    row, content = _guide(guides, "mid2")
-    for section in content.sections:
-        opening = section.items[: next(n for n, i in enumerate(section.items) if i.type != "prose")]
-        assert sum(len(item.paragraphs) for item in opening) >= 2, section.title
-        for place, item in enumerate(section.items):
-            if item.type != "prose":
-                continue
-            if _is_bridge(section, place):
-                continue  # one sentence, and gone in Skim
-            written = sum(_words(p.text) for p in item.paragraphs)
-            assert all(_words(p.text) >= PARAGRAPH_WORDS for p in item.paragraphs), item.id
-            assert 0 < _words(item.summary) * 3 <= written, item.id
 
 
 # ── Quiz ─────────────────────────────────────────────────────────────────────

@@ -3,7 +3,9 @@ mastery, dated coursework, quiz history, flashcards, tutor sessions and study
 guides, written by ``db/seed_local_study.py`` onto a developer's own account.
 
 Content is one module per class (``cs101``, ``math210``, ``bio110``; shapes in
-``spec``). The other modules turn a class into rows for one table each.
+``spec``), with the class's concept tree in its ``_concepts`` module and its
+study guides in its ``_guides`` module. The other modules turn a class into
+rows for one table each.
 ``plan`` puts them together. Nothing in this package touches the database, so
 the whole dataset can be built and checked in a test.
 """

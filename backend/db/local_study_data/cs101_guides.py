@@ -32,17 +32,6 @@ SECTIONS = {
                     ("Assignment", "The statement that copies a value into a variable."),
                     ("Integer division", "Division of two ints, which drops the fraction.")),
             b.prose(
-                "The type also decides what an operator means, and division is where this catches "
-                "people. With two int operands, `/` is **integer division**: it drops the fraction, "
-                "so 7 / 2 is 3 and not 3.5. Nothing is rounded and no warning appears. The fraction "
-                "is gone before the result is stored, even when the variable receiving it could have "
-                "held one. When a result looks too small or comes out as zero, check the types of "
-                "both operands before you check the arithmetic.",
-                summary="With two ints, division drops the fraction: 7 / 2 is 3. Check the operand "
-                        "types first.",
-                at="standard",
-            ),
-            b.prose(
                 "One character separates the two operators you will use most. A single `=` assigns. "
                 "A double `==` compares and gives back true or false, which C stores as 1 or 0. "
                 "Mixing them up still compiles, and that is what makes it dangerous. `if (x = 5)` "
@@ -60,6 +49,25 @@ SECTIONS = {
                 ("What it gives back", "The value that was assigned", "1 for true or 0 for false"),
                 ("Classic bug", "if (x = 5) is always true", "x == 5; on its own line does nothing"),
                 emphasis=2,
+            ),
+            b.prose(
+                "The type also decides what an operator means, and division is where this catches "
+                "people. With two int operands, `/` is **integer division**: it drops the fraction, "
+                "so 7 / 2 is 3 and not 3.5. Nothing is rounded and no warning appears. The fraction "
+                "is gone before the result is stored, even when the variable receiving it could have "
+                "held one. When a result looks too small or comes out as zero, check the types of "
+                "both operands before you check the arithmetic.",
+                summary="With two ints, division drops the fraction: 7 / 2 is 3. Check the operand "
+                        "types first.",
+                at="standard",
+            ),
+            b.prose(
+                "You should now be able to read a declaration and say what the variable can hold, "
+                "follow an assignment without tying two variables together, spot integer division "
+                "from the types of its operands, and tell `=` from `==` at a glance. The question "
+                "below asks for one of those.",
+                summary="You can now read declarations, follow assignments, spot integer division and "
+                        "tell = from ==.",
             ),
             b.check(
                 "With int a = 7 and int b = 2, what is a / b?",
@@ -148,6 +156,13 @@ SECTIONS = {
                         "of the body. Rewrite it that way to trace it.",
                 at="deep",
             ),
+            b.prose(
+                "You should now be able to say which branch of an if runs, list the values a loop "
+                "variable takes, count the passes with the list or with the formula, and catch an "
+                "off-by-one error by checking the comparison sign. The question below asks you to "
+                "count the passes of one loop.",
+                summary="You can now pick the branch, list a loop's values and count its passes.",
+            ),
             b.check(
                 "A loop starts i at 0 and adds 3 while i is below 10. How many times does the body run?",
                 ("3", "4", "10"), 1,
@@ -207,6 +222,12 @@ SECTIONS = {
                         "what goes in and where the result goes.",
                 at="standard",
             ),
+            b.prose(
+                "You should now be able to walk through a call step by step, say what each parameter "
+                "holds, explain why a change to a parameter never reaches the caller, and say where a "
+                "call's result goes. The question below checks the central point.",
+                summary="You can now trace a call and explain why the caller's variable is unchanged.",
+            ),
             b.check(
                 "A function changes one of its int parameters. What happens to the caller's variable?",
                 ("It changes too", "Nothing: the function changed its own copy", "The program does not compile"), 1,
@@ -264,6 +285,12 @@ SECTIONS = {
                         "Prefer locals to globals, so fewer functions can change a value.",
                 at="standard",
             ),
+            b.prose(
+                "You should now be able to say, for any variable in a program, where its name can be "
+                "used and how long its value lasts, and to explain why a pointer to a local goes bad "
+                "when its function returns. The question below asks for that explanation.",
+                summary="You can now give a variable's scope and lifetime and explain the returned-address bug.",
+            ),
             b.check(
                 "A function returns the address of one of its local variables. Why is that a bug?",
                 ("Addresses cannot be returned", "The variable is destroyed when the function returns",
@@ -292,48 +319,6 @@ SECTIONS = {
                 summary="A pointer holds an address. & takes an address, * follows one, and writing "
                         "through *p changes the variable it points at.",
             ),
-            b.prose(
-                ("A pointer is only as good as the address inside it. One that was declared and never "
-                 "set holds whatever bytes were already there, so following it reads or writes some "
-                 "arbitrary part of memory. One that holds **NULL** points at nothing, and there is "
-                 "no value to follow it to. The habit that prevents both is to give every pointer a "
-                 "value on the line where you declare it, a real address or NULL, and to test for "
-                 "NULL before the first `*`. The two slips below come from your own quiz answers.",
-                 "lec09"),
-                summary="Set every pointer where you declare it, to a real address or NULL, and check "
-                        "for NULL before you follow it.",
-                at="standard",
-            ),
-            b.mistakes(
-                (0, "Following a pointer before it is set",
-                 "Initialise every pointer where you declare it, and check for NULL before the first *."),
-                (1, "Mixing up p and *p",
-                 "Say it out loud: p is where, *p is what. Draw the box and the arrow before you answer."),
-            ),
-            b.prose(
-                ("There is a third way for a pointer to go bad, besides never being set and being "
-                 "NULL: it can outlive the thing it points at. Local variables live on the stack and "
-                 "vanish when their function returns, so a pointer to a local must not be kept after "
-                 "that return. The address inside it is unchanged and looks perfectly normal, which "
-                 "is what makes the bug hard to see. Before you follow any pointer, ask whether the "
-                 "variable it was aimed at still exists. If the pointer came back from a function, "
-                 "or was stored somewhere that lasts longer than that function, check twice.",
-                 "lec09"),
-                summary="A pointer can outlive what it points at. Never keep a pointer to a local "
-                        "variable after its function returns.",
-                at="deep",
-            ),
-            b.prose(
-                "When a question asks what a variable holds after a few lines of pointer code, the "
-                "hard part is reading the symbols, because the same star means two different things. "
-                "In a declaration, `int *p` says that p is a pointer to an int, and nothing is "
-                "followed. Everywhere else, `*p` follows the pointer. The table sets the two "
-                "operators side by side. Its first row is the one to learn: reading `&x` and `*p` "
-                "aloud in plain words is what stops you swapping them half way through a trace.",
-                summary="A star in a declaration makes a pointer; a star anywhere else follows one. "
-                        "Read &x and *p aloud as you trace.",
-                at="standard",
-            ),
             b.compare(
                 "The two pointer operators", ("&x", "*p"),
                 ("Read as", "The address of x", "The value p points at"),
@@ -341,9 +326,17 @@ SECTIONS = {
                 ("In a declaration", "Not used", "int *p declares p as a pointer to int"),
                 emphasis=0,
             ),
-            b.bridge(
-                "Work the example with a sketch: a box for x, an arrow from p to the box, and a "
-                "redraw after every line.",
+            b.prose(
+                "When a question asks what a variable holds after a few lines of pointer code, the "
+                "hard part is reading the symbols, because the same star means two different things. "
+                "In a declaration, `int *p` says that p is a pointer to an int, and nothing is "
+                "followed. Everywhere else, `*p` follows the pointer. Reading `&x` and `*p` aloud in "
+                "plain words, as the first row of the table does, is what stops you swapping them "
+                "half way through a trace. The example below is such a trace. Work it with a sketch: "
+                "a box for x, an arrow from p to the box, and a redraw after every line.",
+                summary="A star in a declaration makes a pointer; a star anywhere else follows one. "
+                        "Trace pointer code with a box and an arrow.",
+                at="standard",
             ),
             b.example(
                 "Follow the pointer",
@@ -368,20 +361,51 @@ SECTIONS = {
                 at="deep",
             ),
             b.prose(
+                ("A pointer is only as good as the address inside it. One that was declared and never "
+                 "set holds whatever bytes were already there, so following it reads or writes some "
+                 "arbitrary part of memory. One that holds **NULL** points at nothing, and there is no "
+                 "value to follow it to. Give every pointer a value on the line where you declare it, "
+                 "a real address or NULL, and test for NULL before the first `*`. The two slips below "
+                 "come from your own quizzes, and both start the same way: treating the pointer as if "
+                 "it were the thing it points at.", "lec09"),
+                summary="Set every pointer where you declare it, to a real address or NULL, and check "
+                        "for NULL before you follow it.",
+                at="standard",
+            ),
+            b.mistakes(
+                (0, "Following a pointer before it is set",
+                 "Initialise every pointer where you declare it, and check for NULL before the first *."),
+                (1, "Mixing up p and *p",
+                 "Say it out loud: p is where, *p is what. Draw the box and the arrow before you answer."),
+            ),
+            b.prose(
+                ("There is a third way for a pointer to go bad, besides never being set and being "
+                 "NULL: it can outlive the thing it points at. Local variables live on the stack and "
+                 "vanish when their function returns, so a pointer to a local must not be kept after "
+                 "that return. The address inside it is unchanged and looks perfectly normal, which "
+                 "is what makes the bug hard to see. Before you follow any pointer, ask whether the "
+                 "variable it was aimed at still exists.", "lec09"),
                 ("Pointers are not a topic you finish and leave behind. An array's name acts as a "
                  "pointer to its first element. Memory from malloc lives on the heap until the "
                  "program frees it, and a pointer is the only way to reach it. A linked list is a "
-                 "chain of structs joined by pointers. The map shows that order. If the two "
-                 "operators still feel shaky, settle them here, because every later stop on the map "
-                 "assumes them.", "lec11", "lec09"),
-                summary="Arrays, heap memory and linked lists all rest on pointers, so the two "
-                        "operators have to be solid first.",
-                at="standard",
+                 "chain of structs joined by pointers. The map shows that order. If the two operators "
+                 "still feel shaky, settle them here, because every later stop on the map assumes "
+                 "them.", "lec11", "lec09"),
+                summary="A pointer must not outlive what it points at. Arrays, heap memory and linked "
+                        "lists all build on pointers.",
+                at="deep",
             ),
-            b.concept_map(
+            b.at("deep", b.concept_map(
                 "Where pointers lead",
                 (_C["variables"], "Foundations"), (_C["pointers"], "This section"),
                 (_C["dynamic"], "Up next"), (_C["linkedlists"], "Later"),
+            )),
+            b.prose(
+                "You should now be able to read `&x` and `*p` without hesitating, trace code that "
+                "writes through a pointer, and name the two habits that keep pointers safe: set every "
+                "pointer when you declare it, and check for NULL before you follow it. The question "
+                "below is a short trace.",
+                summary="You can now read & and *, trace writes through a pointer and keep pointers safe.",
             ),
             b.check(
                 "After int x = 10; int *p = &x; *p = 20; what is the value of x?",
@@ -476,6 +500,12 @@ SECTIONS = {
                         "terminator sends it past the array.",
                 at="deep",
             ),
+            b.prose(
+                "You should now be able to give the index of any element, explain why C will not stop "
+                "a bad one, and size a buffer for a string by counting its letters and adding one for "
+                "the terminator. The question below checks whether you can place the terminator.",
+                summary="You can now index an array, explain the missing range check and size a string buffer.",
+            ),
             b.check(
                 "char word[4] = \"cat\"; What does word[3] hold?",
                 ("The letter t", "The zero byte that ends the string", "Nothing: the index is out of range"), 1,
@@ -488,6 +518,19 @@ SECTIONS = {
         "Recursion",
         "A recursive function calls itself on a smaller input and stops at a base case.",
         (
+            b.prose(
+                ("A **recursive** function calls itself on a smaller input. The **base case** is the "
+                 "input it answers directly, and the **recursive case** reduces every other input "
+                 "toward it. A function whose calls never reach the base case never stops, and it "
+                 "overflows the stack.", "lec07"),
+                ("Each call gets its own frame on the call stack, with its own copy of the parameters. "
+                 "The calls stack up on the way down and the answers come back in reverse order, so "
+                 "trace in two passes: one line per call going down, then the return values from the "
+                 "bottom up.", "lec07", "hw6"),
+                summary="A recursive function calls itself on a smaller input until a base case. Trace "
+                        "the calls down, then the return values back up.",
+                upto="cram",
+            ),
             b.prose(
                 ("A **recursive** function solves a problem by calling itself on a smaller input. "
                  "Every such function has two parts. The **base case** is the input it answers "
@@ -503,7 +546,35 @@ SECTIONS = {
                  "then 1, then 2, then 6.", "lec07"),
                 summary="A recursive function calls itself on a smaller input until it reaches a base "
                         "case. Calls stack up going down, and answers come back in reverse.",
+                at="standard",
             ),
+            b.at("deep", b.formula(
+                "Factorial, defined recursively",
+                r"n! = n \times (n-1)!, \qquad 0! = 1",
+                "n factorial is n times the factorial of n minus one, and zero factorial is one.",
+                "lec07",
+            )),
+            b.prose(
+                ("The definition above is already the code. Its second half, zero factorial is one, "
+                 "is the base case. Its first half is the recursive case, and the multiplication by "
+                 "n in it is the work each frame still has to do once the call below returns. That "
+                 "is why a trace has two passes. Homework 6 asks for one line per call, so write the "
+                 "calls going down first, with every multiplication left open, then fill in the "
+                 "return values from the bottom up. The example does this for factorial(3).", "hw6"),
+                summary="Trace in two passes: one line per call going down, then the return values "
+                        "from the bottom up.",
+                at="deep",
+            ),
+            b.at("cram", b.example(
+                "Trace factorial(3)",
+                "factorial(n) returns 1 when n is 0 and n * factorial(n - 1) otherwise. What does factorial(3) return?",
+                ("Go down", "f(3) -> f(2) -> f(1) -> f(0)", "Each call waits for the one below it."),
+                ("Hit the base case", "f(0) = 1", "No further call is made."),
+                ("Come back up", "f(1) = 1 * 1 = 1", "The waiting call finishes its multiplication."),
+                ("Keep going", "f(2) = 2 * 1 = 2", "Each frame uses the value returned to it."),
+                ("Answer", "f(3) = 3 * 2 = 6", "The first call is the last to return."),
+                source="lec07",
+            )),
             b.prose(
                 ("Recursion goes wrong in two ways, and both are worth checking before you trust a "
                  "function you wrote. The first is a base case the input never reaches. A function "
@@ -522,75 +593,43 @@ SECTIONS = {
                 (1, "Dropping the work on the way back up",
                  "The recursive case must combine the returned value with n. Returning the call alone loses it."),
             ),
-            b.formula(
-                "Factorial, defined recursively",
-                r"n! = n \times (n-1)!, \qquad 0! = 1",
-                "n factorial is n times the factorial of n minus one, and zero factorial is one.",
-                "lec07",
-            ),
-            b.prose(
-                ("The definition above is already the code. Its second half, zero factorial is one, "
-                 "is the base case. Its first half is the recursive case, and the multiplication by "
-                 "n in it is the work each frame still has to do once the call below returns. That "
-                 "is why a trace has two passes. Homework 6 asks for one line per call, so write the "
-                 "calls going down first, with every multiplication left open, then fill in the "
-                 "return values from the bottom up. The example does this for factorial(3).", "hw6"),
-                summary="Trace in two passes: one line per call going down, then the return values "
-                        "from the bottom up.",
-                at="standard",
-            ),
-            b.example(
-                "Trace factorial(3)",
-                "factorial(n) returns 1 when n is 0 and n * factorial(n - 1) otherwise. What does factorial(3) return?",
-                ("Go down", "f(3) -> f(2) -> f(1) -> f(0)", "Each call waits for the one below it."),
-                ("Hit the base case", "f(0) = 1", "No further call is made."),
-                ("Come back up", "f(1) = 1 * 1 = 1", "The waiting call finishes its multiplication."),
-                ("Keep going", "f(2) = 2 * 1 = 2", "Each frame uses the value returned to it."),
-                ("Answer", "f(3) = 3 * 2 = 6", "The first call is the last to return."),
-                source="lec07",
-            ),
-            b.prose(
-                ("A trace also shows what recursion costs. factorial(3) needed four frames, one each "
-                 "for 3, 2, 1 and 0, and all four were alive at the moment the base case was "
-                 "reached. In general factorial(n) holds n + 1 frames at its deepest point. This is "
-                 "the difference between a recursive function that never stops and a loop that never "
-                 "stops. The loop just keeps running. The recursive function adds a frame with every "
-                 "call, the stack has only so much room, and the program is ended when it overflows. "
-                 "So a stack overflow in your own code is a message: go and look at the base case.",
-                 "lec07"),
-                summary="factorial(n) holds n + 1 frames at its deepest. Runaway recursion ends in a "
-                        "stack overflow, which points you at the base case.",
-                at="deep",
-            ),
             b.prose(
                 ("Writing a recursive function is the same skill run backwards. Homework 6 asks you "
                  "to state the base case and the recursive case before you write any code, and that "
                  "order is the method: decide which input you can answer directly, then decide how "
-                 "any other input becomes a smaller one. Recursion rests on what you already know "
+                 "any other input becomes a smaller one. If you cannot say both in a sentence each, "
+                 "you are not ready to write the function. Recursion rests on what you already know "
                  "about functions, since each call is an ordinary call with a frame of its own. The "
                  "map shows what it rests on and where it is used next.", "hw6"),
                 summary="To write one, state the base case and the recursive case before any code. "
                         "Each call is an ordinary function call with its own frame.",
                 at="standard",
             ),
-            b.prose(
-                ("Problem 5 of Homework 6 is a good test of that method, because the smaller input "
-                 "is not n - 1. It asks for the number of digits in a positive integer. Ask the two "
-                 "questions in order. Which input can be answered directly? A number with a single "
-                 "digit. How does any other input become a smaller one? Not by subtracting 1, which "
-                 "would take thousands of calls, but by making the number one digit shorter. Notice "
-                 "what you never have to do: follow the calls all the way down in your head. Assume "
-                 "the call on the smaller input returns the right answer and decide only what this "
-                 "frame adds to it. That assumption is safe as long as every call moves toward the "
-                 "base case.", "hw6"),
-                summary="The smaller input is not always n - 1. Assume the call below is right, and "
-                        "decide only what this frame adds.",
-                at="deep",
-            ),
             b.concept_map(
                 "What recursion builds on",
                 (_C["controlflow"], "Foundations"), (_C["functions"], "Before this"),
                 (_C["recursion"], "This section"), (_C["trees"], "Up next"),
+            ),
+            b.prose(
+                ("Problem 5 of Homework 6 tests the habit of stating both cases first, because its "
+                 "smaller input is not n - 1. It asks for the number of digits in a positive integer. "
+                 "Ask the two questions in order. Which input can be answered directly? A number with "
+                 "a single digit. How does any other input become a smaller one? Not by subtracting "
+                 "1, which would take thousands of calls, but by making the number one digit shorter. "
+                 "Notice what you never have to do: follow the calls all the way down in your head. "
+                 "Assume the call on the smaller input returns the right answer and decide only what "
+                 "this frame adds to it. That assumption is safe as long as every call moves toward "
+                 "the base case.", "hw6"),
+                summary="The smaller input is not always n - 1. Assume the call below is right, and "
+                        "decide only what this frame adds.",
+                at="deep",
+            ),
+            b.prose(
+                "You should now be able to find the base case and the recursive case of any recursive "
+                "function, trace it in two passes, one line per call going down and the return values "
+                "coming back up, and say what goes wrong when the base case cannot be reached. The "
+                "question below is a trace of your own.",
+                summary="You can now find both cases, trace in two passes and spot an unreachable base case.",
             ),
             b.check(
                 "sum_to(n) returns 0 when n is 0 and n + sum_to(n - 1) otherwise. What does sum_to(4) return?",
@@ -613,14 +652,11 @@ SECTIONS = {
                 ("Three patterns cover most of the code you will be asked about. One loop over n "
                  "items is O(n): twice the input, twice the steps. A loop inside a loop is O(n^2), "
                  "because the inner loop runs in full for every pass of the outer one. Halving the "
-                 "problem at each step, as binary search does, is O(log n), which grows so slowly "
-                 "that a far longer list costs only a few more steps.", "lec13"),
+                 "problem at each step, as binary search does, is O(log n), which grows very slowly. "
+                 "The chart shows the shape of that difference: switch it to After sorting and "
+                 "compare the new line with the old one at the right-hand edge.", "lec13"),
                 summary="Big-O counts how steps grow with n and keeps the fastest growing term. One "
                         "loop is O(n), nested loops are O(n^2) and halving is O(log n).",
-            ),
-            b.bridge(
-                "The chart shows the shape of that difference: switch it to After sorting and compare "
-                "the new line with the old one at the right-hand edge.",
             ),
             b.chart(
                 "Steps to find one value", "Items in the list", "Steps",
@@ -674,10 +710,9 @@ SECTIONS = {
                 "times n steps, not n plus n, and calling that O(n) is the slip to watch for. Once "
                 "you have a count like the one in the formula below, keep its largest term and drop "
                 "the constant in front of it.",
-                ("Keep in mind what the answer does and does not tell you. Big-O is about growth "
-                 "and not about speed on one input. An O(n^2) program can beat an O(n) program on a "
-                 "small list and still lose badly on a large one, so a question about which is "
-                 "faster for ten items cannot be settled from the Big-O alone.", "lec13"),
+                ("Keep in mind what the answer does not tell you. Big-O is about growth and not about "
+                 "speed on one input: an O(n^2) program can beat an O(n) program on a small list and "
+                 "still lose badly on a large one.", "lec13"),
                 summary="Count how often the innermost line runs: nested loops multiply. Keep the "
                         "largest term, and remember Big-O compares growth, not speed on one input.",
                 at="standard",
@@ -699,6 +734,13 @@ SECTIONS = {
                         "change how the work scales, so both are dropped.",
                 at="deep",
             ),
+            b.prose(
+                "You should now be able to find the Big-O of a piece of code by counting how often "
+                "its innermost line runs, simplify the count to its largest term, and say why a "
+                "faster growth rate matters more as the input grows. The question below gives you a "
+                "pair of loops to classify.",
+                summary="You can now count the innermost line, keep the largest term and name the growth rate.",
+            ),
             b.check(
                 "A function loops over n items, and inside that loop it loops over the same n items again. "
                 "What is its Big-O?",
@@ -718,24 +760,14 @@ SECTIONS = {
                  "to pass every item before it, which is why the work is O(n^2). **Merge sort** "
                  "takes a different route. It splits the list in half, sorts each half and merges "
                  "the two sorted halves, and that is O(n log n).", "lec15"),
-                ("Sorting is usually done for the sake of searching. **Binary search** looks at the "
-                 "middle of a sorted list and throws away the half that cannot hold the target, then "
-                 "does the same to what is left. It only works because the list is in order. On an "
-                 "unsorted list the half you throw away might hold the target, and the only safe "
-                 "search left is to check every item in turn.", "lec15"),
-                summary="Insertion sort is O(n^2) and merge sort is O(n log n). Binary search halves "
-                        "the list at each look, but only if the list is sorted.",
-            ),
-            b.prose(
                 ("The lab timings make the two growth rates visible. Insertion sort took 12 "
                  "milliseconds for 1000 items, 47 for 2000, 190 for 4000 and 760 for 8000: every "
                  "time the list doubles, the time goes up about four times, which is what n^2 "
                  "predicts. Merge sort took 2, 4, 9 and 19 milliseconds for the same lists, a little "
                  "more than double each time. Read the chart from left to right and watch the gap "
                  "between the two lines widen.", "lec15"),
-                summary="In the lab, doubling the list made insertion sort about four times slower "
-                        "and merge sort a little more than twice as slow.",
-                at="standard",
+                summary="Insertion sort is O(n^2) and merge sort is O(n log n). In the lab, doubling "
+                        "the list made insertion sort about four times slower.",
             ),
             b.chart(
                 "Measured sorting time", "Items", "Milliseconds",
@@ -743,6 +775,17 @@ SECTIONS = {
                 b.line("Merge sort", (1000, 2), (2000, 4), (4000, 9), (8000, 19)),
                 alt="Insertion sort's time climbs steeply as the list grows while merge sort's stays close to flat.",
                 source="lec15",
+            ),
+            b.prose(
+                "Speed is not the whole comparison. Merge sort pays for its speed with memory: it "
+                "needs a second array as long as the first, while insertion sort sorts the list where "
+                "it stands. On a short list, or one that is nearly in order already, insertion sort "
+                "has little to do and nothing extra to find, so it is the sensible choice there. When "
+                "a question asks which sort to use, answer with the size and the state of the list. "
+                "The table lines the two up, and its first row is the one to know cold.",
+                summary="Merge sort wins on long lists but needs a second array; insertion sort suits "
+                        "short or nearly sorted ones.",
+                at="standard",
             ),
             b.compare(
                 "Two sorts", ("Insertion sort", "Merge sort"),
@@ -752,14 +795,13 @@ SECTIONS = {
                 emphasis=0,
             ),
             b.prose(
-                "Speed is not the whole comparison, and the table shows what merge sort pays for it: "
-                "a second array as long as the first. On a short list, or one that is nearly in "
-                "order already, insertion sort has little to do and no extra memory to find, so it "
-                "is the sensible choice there. When a question asks which sort to use, answer with "
-                "the size and the state of the list. The example then runs binary search by hand: "
-                "at every look, say which half you discard and why.",
-                summary="Merge sort wins on long lists but needs a second array; insertion sort "
-                        "suits short or nearly sorted ones.",
+                ("Sorting is usually done for the sake of searching. **Binary search** looks at the "
+                 "middle of a sorted list and throws away the half that cannot hold the target, then "
+                 "does the same to what is left. It only works because the list is in order: on an "
+                 "unsorted list the half you throw away might hold the target. The example runs it by "
+                 "hand. At every look, say which half you discard and why.", "lec15"),
+                summary="Binary search halves a sorted list at each look. On an unsorted list it "
+                        "cannot safely discard anything.",
                 at="standard",
             ),
             b.example(
@@ -769,6 +811,12 @@ SECTIONS = {
                 ("Middle of what is left", "31", "31 is greater than 23, so discard the right part."),
                 ("One item remains", "23", "Found in 3 looks instead of 5."),
                 source="lec15",
+            ),
+            b.prose(
+                "You should now be able to say how each sort works and what it costs, choose between "
+                "them for a given list, and carry out a binary search step by step. Keep in mind the "
+                "one condition the search depends on, because the question below asks about it.",
+                summary="You can now compare the two sorts and run a binary search on a sorted list.",
             ),
             b.check(
                 "Which of these must be true before you can use binary search on a list?",
@@ -848,11 +896,11 @@ SECTIONS = {
             b.prose(
                 "Walking a list uses the same picture. Keep a pointer to the current node, start it "
                 "at the head, and move it to the next node until it is NULL. Two cases need care "
-                "because they sit at the edges. An empty list has a NULL head, so a loop that "
-                "follows the head without checking fails on its first step. And the loop must test "
-                "the current pointer itself, not the node after it, or it stops one node early and "
-                "skips the last value. The map shows why this topic arrives now: a node is a struct, "
-                "it is reached through a pointer, and it is made with malloc.",
+                "because they sit at the edges. An empty list has a NULL head, so a loop that follows "
+                "the head without checking fails on its first step. And the loop must test the "
+                "current pointer itself, not the node after it, or it stops one node early. The map "
+                "shows why this topic arrives now: a node is a struct, it is reached through a "
+                "pointer, and it is made with malloc.",
                 summary="Walk a list from the head until the pointer is NULL. Check for an empty "
                         "list, and test the current node, not the next one.",
                 at="standard",
@@ -862,6 +910,12 @@ SECTIONS = {
                 (_C["pointers"], "Foundations"), (_C["structs"], "Before this"),
                 (_C["dynamic"], "Before this"), (_C["linkedlists"], "This section"),
                 (_C["stacks"], "Up next"),
+            ),
+            b.prose(
+                "You should now be able to draw a list as boxes and arrows, insert and remove a node "
+                "at the front in the right order, and walk the list without running off its end. The "
+                "question below asks why the front of a list is cheap.",
+                summary="You can now draw a list, change its front safely and walk it.",
             ),
             b.check(
                 "Why is inserting at the front of a linked list O(1)?",

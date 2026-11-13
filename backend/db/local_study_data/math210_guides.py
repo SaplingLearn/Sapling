@@ -60,6 +60,12 @@ SECTIONS = {
                         "adding, scaling and dot products.",
                 at="standard",
             ),
+            b.prose(
+                "You should now be able to add and scale vectors entry by entry, compute a dot "
+                "product, and use it to find a length or test for a right angle. The question below "
+                "is one dot product. Decide what kind of answer it should be before you work it out.",
+                summary="You can now add, scale and dot vectors and test for a right angle.",
+            ),
             b.check(
                 "What is the dot product of (1, 2) and (2, -1)?",
                 ("0", "4", "(2, -2)"), 0,
@@ -73,6 +79,18 @@ SECTIONS = {
         "Row operations turn a system into a triangular one that you solve from the bottom up.",
         (
             b.prose(
+                ("**Gaussian elimination** solves a linear system with three row operations: swap two "
+                 "rows, scale a row by a nonzero number, or add a multiple of one row to another. None "
+                 "of them changes the solutions. Use them to make a zero below each **pivot**, then "
+                 "solve from the last equation upward.", "lec04"),
+                ("The reduced system also tells you how many solutions there are. A row of zeros that "
+                 "ends in a nonzero number is a false equation, so there is no solution. A column "
+                 "with no pivot gives a free variable and infinitely many solutions.", "lec04"),
+                summary="Row operations make zeros below each pivot. A false row means no solution, "
+                        "and a column with no pivot means infinitely many.",
+                upto="cram",
+            ),
+            b.prose(
                 ("**Gaussian elimination** solves a linear system by rewriting it until the answer "
                  "can be read off. Write the system as an augmented matrix, then use three row "
                  "operations: swap two rows, scale a row by a nonzero number, or add a multiple of "
@@ -84,6 +102,7 @@ SECTIONS = {
                  "above and work upward. Each step up has only one unknown left to find.", "lec04"),
                 summary="Use row operations to make zeros below each pivot, then solve the triangular "
                         "system from the last equation upward.",
+                at="standard",
             ),
             b.prose(
                 "Almost every step you take is the third operation, and it helps to see it as a "
@@ -131,13 +150,13 @@ SECTIONS = {
                         "many, and a pivot in every column means exactly one.",
                 at="standard",
             ),
-            b.compare(
+            b.at("cram", b.compare(
                 "Reading the reduced system", ("What you see", "What it means"),
                 ("A pivot in every column", "No free variables", "Exactly one solution"),
                 ("A column with no pivot", "A free variable", "Infinitely many solutions"),
                 ("A row 0 0 | c with c not 0", "A false equation", "No solution"),
                 emphasis=2,
-            ),
+            )),
             b.prose(
                 ("The same reduction answers questions that do not look like systems. To find an "
                  "inverse you row reduce the block [A | I]. To test whether vectors are independent "
@@ -150,6 +169,12 @@ SECTIONS = {
                 summary="Finding an inverse and testing independence are the same row reduction read "
                         "differently, so fluent elimination pays off everywhere.",
                 at="deep",
+            ),
+            b.prose(
+                "You should now be able to reduce a system to triangular form, solve it from the "
+                "bottom up, and read off from the reduced rows whether it has one solution, none or "
+                "infinitely many. The question below gives you one reduced row to read.",
+                summary="You can now reduce a system, solve it upward and count its solutions.",
             ),
             b.check(
                 "After elimination a system has the row 0 0 0 | 4. How many solutions does it have?",
@@ -164,6 +189,17 @@ SECTIONS = {
         "Rows of A dot columns of B, defined only when the inner sizes match, and order matters.",
         (
             b.prose(
+                ("Matrices do not multiply entry by entry. The entry in row i and column j of AB is "
+                 "the **dot product** of row i of A with column j of B, so the product is defined only "
+                 "when A has as many columns as B has rows.", "lec06"),
+                ("Order matters. Matrix multiplication is **not commutative**, so AB and BA are "
+                 "usually different, and one of them may not even be defined. AB means apply B first "
+                 "and then A. Multiplying by the identity matrix I changes nothing at all.", "lec06"),
+                summary="Entry (i, j) of AB is row i of A dotted with column j of B. The inner sizes "
+                        "must match, and AB is usually not BA.",
+                upto="cram",
+            ),
+            b.prose(
                 ("Matrices do not multiply entry by entry. The entry in row i and column j of the "
                  "product AB is the **dot product** of row i of A with column j of B. That only "
                  "makes sense when the row and the column have the same number of entries, so AB is "
@@ -174,6 +210,7 @@ SECTIONS = {
                  "the identity matrix I changes nothing.", "lec06"),
                 summary="Entry (i, j) of AB is row i of A dotted with column j of B. The inner sizes "
                         "must match, and AB is usually not BA.",
+                at="standard",
             ),
             b.prose(
                 "Check the sizes before you compute anything. Write the two sizes next to each "
@@ -187,12 +224,12 @@ SECTIONS = {
                         "numbers give the size of the product.",
                 at="standard",
             ),
-            b.formula(
+            b.at("cram", b.formula(
                 "One entry of a product",
                 r"(AB)_{ij} = \sum_{k} a_{ik}\, b_{kj}",
                 "The i j entry of A B is the sum over k of a i k times b k j.",
                 "lec06",
-            ),
+            )),
             b.prose(
                 "The mistake to guard against is multiplying matching entries, the way addition "
                 "works. A product is built one entry at a time, and each entry needs a whole row and "
@@ -240,6 +277,12 @@ SECTIONS = {
                         "factors or work entry by entry.",
                 at="deep",
             ),
+            b.prose(
+                "You should now be able to tell from the sizes whether a product exists and what size "
+                "it will be, compute any entry as a row dotted with a column, and explain why the "
+                "order of the factors cannot be changed. The question below starts with the sizes.",
+                summary="You can now check sizes, compute entries of a product and keep the factors in order.",
+            ),
             b.check(
                 "A is 2 by 3 and B is 3 by 4. What size is AB?",
                 ("3 by 3", "2 by 4", "It is not defined"), 1,
@@ -253,6 +296,19 @@ SECTIONS = {
         "The inverse undoes a matrix, exists only when the determinant is not zero, and reverses the order of a product.",
         (
             b.prose(
+                ("The **inverse** of a square matrix A is the matrix that undoes it: multiplied with A "
+                 "on either side it gives the identity I. For a 2 by 2 matrix with rows (a, b) and "
+                 "(c, d), swap a and d, negate b and c, and divide by ad - bc. If ad - bc is 0 there "
+                 "is no inverse.", "lec08"),
+                ("For larger matrices, row reduce the block [A | I] until the left side becomes I. The "
+                 "right side is then A inverse. One rule about products is easy to get backwards: the "
+                 "inverse of AB is B inverse times A inverse, because the last step done is the "
+                 "first undone.", "lec08"),
+                summary="A inverse undoes A and exists only when ad - bc is not 0. The inverse of AB "
+                        "is B inverse times A inverse.",
+                upto="cram",
+            ),
+            b.prose(
                 ("The **inverse** of a square matrix A is the matrix that undoes it. It is written A "
                  "inverse, and multiplying it with A on either side gives the identity I. Not every "
                  "square matrix has one. A matrix with an inverse is called invertible and one "
@@ -265,13 +321,14 @@ SECTIONS = {
                  "inverse.", "lec08"),
                 summary="A inverse undoes A and exists only when ad - bc is not 0. Use the 2 by 2 "
                         "formula, or row reduce [A | I] for larger matrices.",
+                at="standard",
             ),
-            b.formula(
+            b.at("cram", b.formula(
                 "Inverse of a 2 by 2 matrix",
                 r"A^{-1} = \frac{1}{ad - bc}\begin{pmatrix} d & -b \\ -c & a \end{pmatrix}",
                 "Swap a and d, negate b and c, and divide by a d minus b c.",
                 "lec08",
-            ),
+            )),
             b.prose(
                 ("Compute ad - bc before anything else and write it on a line of its own. It is the "
                  "determinant of the matrix, and it answers the first question, whether an inverse "
@@ -323,30 +380,30 @@ SECTIONS = {
                 source="lec08",
             ),
             b.prose(
-                ("The formula stops at 2 by 2. For anything larger, set the identity beside A to "
-                 "make the block [A | I] and row reduce the whole block until the left half is the "
-                 "identity. The right half is then the inverse. It works because every row "
-                 "operation you apply to A is applied to I at the same moment, so the right half "
-                 "keeps a running record of everything it took to turn A into I, and that record is "
-                 "exactly what undoes A. If the left half produces a row of zeros along the way, "
-                 "stop. It can never become the identity, and you have shown that A is singular.",
-                 "lec08"),
-                summary="For larger matrices, row reduce [A | I] until the left half is I. A zero "
-                        "row on the left means there is no inverse.",
-                at="deep",
-            ),
-            b.prose(
+                ("The formula stops at 2 by 2. For anything larger, set the identity beside A to make "
+                 "the block [A | I] and row reduce the whole block until the left half is the "
+                 "identity. The right half is then the inverse. It works because every row operation "
+                 "you apply to A is applied to I at the same moment, so the right half keeps a running "
+                 "record of everything it took to turn A into I, and that record is exactly what "
+                 "undoes A. If the left half produces a row of zeros along the way, stop. It can never "
+                 "become the identity, and you have shown that A is singular.", "lec08"),
                 "It helps to know what a singular matrix has lost. An invertible matrix sends "
                 "different vectors to different results, so each result can be traced back to where "
                 "it came from. A singular matrix sends some nonzero vector to zero, and once two "
                 "inputs give the same output nothing can tell them apart again, which is why no "
-                "matrix can undo it. The matrix with rows (1, 2) and (2, 4) is an example: its "
-                "second row is twice its first, ad - bc is 4 - 4, and it flattens the whole plane "
-                "onto a single line. In a problem, a row or column that is a multiple of another is "
-                "a sign to stop and test ad - bc before computing anything else.",
-                summary="A singular matrix sends some nonzero vector to zero, so its action cannot "
-                        "be undone. A row that is a multiple of another is the warning sign.",
+                "matrix can undo it. The matrix with rows (1, 2) and (2, 4) is an example: its second "
+                "row is twice its first, ad - bc is 4 - 4, and it flattens the whole plane onto a "
+                "single line. In a problem, a row or column that is a multiple of another is a sign "
+                "to stop and test ad - bc before computing anything else.",
+                summary="For larger matrices, row reduce [A | I] until the left half is I. A singular "
+                        "matrix sends some nonzero vector to zero, so nothing can undo it.",
                 at="deep",
+            ),
+            b.prose(
+                "You should now be able to decide whether a 2 by 2 matrix has an inverse, find it "
+                "with the formula, check it by multiplying, and write the inverse of a product in the "
+                "right order. The question below is about that order.",
+                summary="You can now find and check an inverse and invert a product.",
             ),
             b.check(
                 "What is the inverse of the product AB, when both inverses exist?",
@@ -379,19 +436,6 @@ SECTIONS = {
                 r"\det\begin{pmatrix} a & b \\ c & d \end{pmatrix} = ad - bc",
                 "The determinant of the matrix a b c d is a d minus b c.",
                 "lec10",
-            ),
-            b.prose(
-                "Take the area picture one step further, because it explains the rules and saves "
-                "you memorising them. The matrix sends the unit square to a parallelogram whose "
-                "sides are its two columns, and ad - bc is the area of that parallelogram, with a "
-                "sign. The sign records whether the square was flipped over on the way, which is "
-                "why swapping two rows, a flip, changes the sign and not the size. And if one "
-                "column is a multiple of the other, the parallelogram has collapsed onto a line and "
-                "its area is 0. Dependent columns, zero area and a zero determinant are one event "
-                "seen three ways.",
-                summary="ad - bc is the signed area of the parallelogram made by the columns. "
-                        "Dependent columns flatten it, so the determinant is 0.",
-                at="deep",
             ),
             b.prose(
                 ("Larger determinants are built from 2 by 2 ones. To expand a 3 by 3 determinant "
@@ -445,21 +489,35 @@ SECTIONS = {
                 emphasis=0,
             ),
             b.prose(
-                "Read down the table and you will see one fact said three ways. A matrix with a "
-                "nonzero determinant has an inverse, gives exactly one solution to Ax = b, and has "
-                "independent columns, and a matrix with a zero determinant fails all three "
-                "together. The map shows where this is heading. Finding eigenvalues means asking "
-                "for which numbers t the matrix A - tI has determinant 0, so the test you are "
+                "Take the area picture one step further, because it explains the rules and saves you "
+                "memorising them. The matrix sends the unit square to a parallelogram whose sides are "
+                "its two columns, and ad - bc is the area of that parallelogram, with a sign. The "
+                "sign records whether the square was flipped over on the way, which is why swapping "
+                "two rows, a flip, changes the sign and not the size. And if one column is a multiple "
+                "of the other, the parallelogram has collapsed onto a line and its area is 0. "
+                "Dependent columns, zero area and a zero determinant are one event seen three ways.",
+                "Read down the table again with that picture and you will see one fact said three "
+                "ways. A matrix with a nonzero determinant has an inverse, gives exactly one solution "
+                "to Ax = b, and has independent columns, and a matrix with a zero determinant fails "
+                "all three together. The map shows where this is heading. Finding eigenvalues means "
+                "asking for which numbers t the matrix A - tI has determinant 0, so the test you are "
                 "practising here becomes an equation to solve there.",
-                summary="An inverse, exactly one solution and independent columns all go with a "
-                        "nonzero determinant. Eigenvalues reuse the zero test.",
-                at="standard",
+                summary="ad - bc is the signed area of the parallelogram made by the columns, so "
+                        "dependent columns give 0. Eigenvalues reuse the zero test.",
+                at="deep",
             ),
-            b.concept_map(
+            b.at("deep", b.concept_map(
                 "Where determinants sit",
                 (_C["matrices"], "Foundations"), (_C["multiplication"], "Before this"),
                 (_C["determinants"], "This section"), (_C["inverses"], "Alongside"),
                 (_C["eigenvalues"], "Up next"),
+            )),
+            b.prose(
+                "You should now be able to compute a 2 by 2 determinant in one line, expand a 3 by 3 "
+                "along a row with the signs in place, and say what a zero determinant tells you about "
+                "the inverse, the solutions and the columns. The question below needs only the first "
+                "of these, and its answer means something.",
+                summary="You can now compute 2 by 2 and 3 by 3 determinants and read what a zero means.",
             ),
             b.check(
                 "What is the determinant of the matrix with rows (3, 2) and (6, 4)?",
@@ -546,6 +604,12 @@ SECTIONS = {
                         "always dependent. Fewer vectors still have to be tested.",
                 at="standard",
             ),
+            b.prose(
+                "You should now be able to say what independence means in both of its forms, test a "
+                "set by row reduction, and rule a set out by counting when it has more vectors than "
+                "the space has room for. The question below can be settled by counting alone.",
+                summary="You can now define independence, test it by row reduction and rule sets out by counting.",
+            ),
             b.check(
                 "Three vectors in the plane are given. Can they be linearly independent?",
                 ("Yes, if none is a multiple of another", "No, never", "Only if one of them is zero"), 1,
@@ -569,20 +633,14 @@ SECTIONS = {
                  "the same space has the same number of vectors. That number is the **dimension** "
                  "of the space, which is why a line has dimension 1 and a plane has dimension 2.",
                  "lec14"),
-                summary="The span is every combination of a set. A basis spans a space with no "
-                        "redundant vector, and the size of any basis is the dimension.",
-            ),
-            b.prose(
                 "The two jobs pull in opposite directions, and that is the easiest way to remember "
                 "them. Spanning asks for enough vectors: too few and some part of the space cannot "
                 "be reached. Independence asks for no more than enough: too many and one of them is "
-                "a combination of the rest. A basis is the set that sits exactly between. So "
-                "testing a basis always takes two checks, and passing one says nothing about the "
-                "other. Stopping after the first check, usually the spanning one, is the slip your "
-                "quiz history shows.",
-                summary="Spanning needs enough vectors and independence needs no spare ones. A basis "
-                        "passes both tests, so always run both.",
-                at="standard",
+                "a combination of the rest. So testing a basis always takes two checks, and passing "
+                "one says nothing about the other. Stopping after the first check, usually the "
+                "spanning one, is the slip your quiz history shows.",
+                summary="The span is every combination of a set. A basis must both span the space and "
+                        "be independent, and its size is the dimension.",
             ),
             b.mistakes(
                 (0, "Calling a spanning set a basis",
@@ -650,6 +708,12 @@ SECTIONS = {
                 (_C["vectors"], "Foundations"), (_C["independence"], "Before this"),
                 (_C["span"], "This section"), (_C["subspaces"], "Up next"),
             ),
+            b.prose(
+                "You should now be able to describe the span of a set, test whether a set is a basis "
+                "by checking both of its jobs, and find a dimension by counting pivots. The question "
+                "below gives you three vectors in the plane. Run both checks before you answer.",
+                summary="You can now describe a span, test a basis with both checks and find a dimension.",
+            ),
             b.check(
                 "Do (1, 0), (0, 1) and (1, 1) form a basis of the plane?",
                 ("Yes, because they span it", "No, because they are not independent",
@@ -685,10 +749,16 @@ SECTIONS = {
                  "always a subspace, since combinations of combinations are still combinations. The "
                  "null space is every x with Ax = 0. It holds zero because A times zero is zero. If "
                  "Ax = 0 and Ay = 0 then A(x + y) = 0, and A(cx) is c times Ax, which is 0, so sums "
-                 "and multiples stay inside. Notice where they live. For a matrix with 2 rows and 3 "
-                 "columns, the column space sits in R^2 and the null space in R^3.", "lec14"),
-                summary="A span is always a subspace, and so is the null space, every x with Ax = 0. "
-                        "The two can sit in different spaces.",
+                 "and multiples stay inside. For a matrix with 2 rows and 3 columns, the column space "
+                 "sits in R^2 and the null space in R^3.", "lec14"),
+                ("Their bases and dimensions come from one row reduction. For a null space, reduce A "
+                 "and solve Ax = 0: each free variable gives one basis vector, so the dimension of the "
+                 "null space is the number of free variables. For a column space, the pivot columns "
+                 "of A form a basis, so its dimension is the number of pivots. Every column is one "
+                 "kind or the other, which is why the two dimensions always add up to the number of "
+                 "columns. That check costs nothing and catches a miscounted pivot.", "lec14"),
+                summary="The column space and the null space are always subspaces. Pivot columns give "
+                        "a basis of one, and free variables give a basis of the other.",
                 at="deep",
             ),
             b.prose(
@@ -735,16 +805,11 @@ SECTIONS = {
                 at="deep",
             ),
             b.prose(
-                ("Once a set is known to be a subspace, the natural questions are its basis and its "
-                 "dimension, and row reduction answers both. For a null space, reduce A and solve "
-                 "Ax = 0: each free variable gives one basis vector, so the dimension of the null "
-                 "space is the number of free variables. For a column space, the pivot columns of A "
-                 "form a basis, so its dimension is the number of pivots. Every column is one kind "
-                 "or the other, which is why the two dimensions always add up to the number of "
-                 "columns. That check costs nothing and catches a miscounted pivot.", "lec14"),
-                summary="The null space has one basis vector per free variable and the column space "
-                        "one per pivot. The two counts add up to the number of columns.",
-                at="deep",
+                "You should now be able to run the three tests in the cheapest order, prove that a "
+                "set is a subspace by working with general vectors, and recognise a shifted set that "
+                "only looks like one. The question below offers three sets. Try the zero vector on "
+                "each before anything else.",
+                summary="You can now test a set for the three properties and spot a shifted look-alike.",
             ),
             b.check(
                 "Which of these is a subspace of the plane?",
@@ -834,6 +899,12 @@ SECTIONS = {
                         "first step written on the right.",
                 at="deep",
             ),
+            b.prose(
+                "You should now be able to test a map for linearity, starting with the zero vector, "
+                "and write down the matrix of a linear map from where it sends (1, 0) and (0, 1). The "
+                "question below needs only the first test.",
+                summary="You can now test a map for linearity and build its matrix.",
+            ),
             b.check(
                 "T adds (1, 1) to every vector of the plane. Is T linear?",
                 ("Yes, it is a shift", "No, it moves the zero vector", "Only for vectors on the line y = x"), 1,
@@ -848,21 +919,18 @@ SECTIONS = {
         (
             b.prose(
                 ("Most vectors are turned when a matrix A acts on them. An **eigenvector** of A is a "
-                 "nonzero vector that is not: A only stretches it, so Av is a multiple of v and "
-                 "lies along the same line as v. The multiple is the **eigenvalue** that goes with "
-                 "that eigenvector. An eigenvalue of 3 means the vector comes out three times as "
-                 "long, pointing the same way.", "lec16"),
+                 "nonzero vector that is not: A only stretches it, so Av is a multiple of v and lies "
+                 "along the same line as v. The multiple is the **eigenvalue** that goes with that "
+                 "eigenvector. An eigenvalue of 3 means the vector comes out three times as long, "
+                 "pointing the same way.", "lec16"),
                 ("Eigenvalues are found before eigenvectors. They are the solutions of "
                  "det(A - tI) = 0, where A - tI is A with t subtracted from each entry on its "
                  "diagonal. The left side works out to a polynomial in t, the **characteristic "
                  "polynomial**, so for a 2 by 2 matrix the whole job comes down to solving a "
-                 "quadratic.", "lec16"),
+                 "quadratic. First see what an eigenvector looks like: switch the chart to After A "
+                 "and compare the two arrows, one of which stays on its own line.", "lec16"),
                 summary="An eigenvector is only stretched by A, and its eigenvalue is the stretch "
                         "factor. Find the eigenvalues by solving det(A - tI) = 0.",
-            ),
-            b.bridge(
-                "Switch the chart to After A and compare the two arrows: one stays on its own line "
-                "and the other leaves it.",
             ),
             b.chart(
                 "What A does to two vectors", "x", "y",
@@ -875,12 +943,6 @@ SECTIONS = {
                 readouts=(b.readout("Eigenvector", "(1, 1)", "(3, 3)", "Same direction"),
                           b.readout("Other vector", "(1, 0)", "(2, 1)", "Turns")),
                 after_label="After A",
-            ),
-            b.formula(
-                "The characteristic equation",
-                r"\det(A - tI) = 0",
-                "The determinant of A minus t times the identity equals zero.",
-                "lec16",
             ),
             b.prose(
                 ("The equation is not arbitrary, and seeing where it comes from prevents the slip "
@@ -898,6 +960,21 @@ SECTIONS = {
                 (0, "Setting det(A) to zero",
                  "Subtract t from each diagonal entry first. The equation is det(A - tI) = 0."),
             ),
+            b.prose(
+                "Because every eigenvalue problem runs through it, the equation is worth writing on a "
+                "line of its own before you start, in the form below. Read it as a recipe: subtract t "
+                "from each diagonal entry of A, take the determinant of what you get, and set the "
+                "result equal to 0. Each solution t is an eigenvalue.",
+                summary="Subtract t on the diagonal, take the determinant and set it to 0. Each "
+                        "solution is an eigenvalue.",
+                at="deep",
+            ),
+            b.at("deep", b.formula(
+                "The characteristic equation",
+                r"\det(A - tI) = 0",
+                "The determinant of A minus t times the identity equals zero.",
+                "lec16",
+            )),
             b.prose(
                 ("For a 2 by 2 matrix the routine has four moves, and the example goes through them "
                  "on the matrix from lecture. Subtract t from both diagonal entries. Take ad - bc "
@@ -929,13 +1006,20 @@ SECTIONS = {
                  "quadratic gave.", "lec16"),
                 summary="Multiplying by A over and over pulls a vector toward the most stretched "
                         "direction, and the estimate levels off at the largest eigenvalue.",
-                at="standard",
+                at="deep",
             ),
-            b.chart(
+            b.at("deep", b.chart(
                 "Power iteration closing in", "Step", "Largest eigenvalue estimate",
                 b.line("Estimate", (0, 2), (1, 2.8), (2, 2.98), (3, 2.997), (4, 3.0)),
                 alt="The estimate rises quickly at first and then levels off at the largest eigenvalue.",
                 source="lec16",
+            )),
+            b.prose(
+                "You should now be able to say what an eigenvector and its eigenvalue are, set up "
+                "det(A - tI) = 0 for a 2 by 2 matrix, solve the quadratic, and check your answers "
+                "against the diagonal sum and the determinant of A. The question below can be done "
+                "in your head once the determinant is written out.",
+                summary="You can now set up det(A - tI) = 0, solve it and check the eigenvalues you get.",
             ),
             b.check(
                 "What are the eigenvalues of the matrix with rows (4, 0) and (0, 7)?",

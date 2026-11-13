@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from models.study_guide import ProseItem
-
 #: How long a guide section can be, shortest first. A guide's depth names the
 #: length of its sections, and a concept the student has mastered gets the
 #: length below it (``brief`` is a mastered section of a cram guide).
@@ -138,21 +136,11 @@ class CardSet:
 
 
 @dataclass(frozen=True)
-class Passage:
-    """One prose passage of a section draft. ``at`` is the shortest length of
-    the section that has it: a ``standard`` passage is in a standard and a
-    deep section and is left out of a cram one."""
-
-    item: ProseItem
-    at: str = "cram"
-
-
-@dataclass(frozen=True)
 class SectionDraft:
     """One guide section as written: its title, its one-line essence and its
-    items in reading order (``blocks.py`` makes them): passages, each for a
-    length, and blocks, which every length keeps. A guide picks drafts by
-    concept key."""
+    items in reading order (``blocks.py`` makes them). It is written once for
+    every length it is read at: each passage and block says which lengths
+    have it (``blocks.Part``). A guide picks drafts by concept key."""
 
     title: str
     one_line: str

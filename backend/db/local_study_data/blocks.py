@@ -1,7 +1,8 @@
 """Short constructors for the items of a guide section, so the class modules
 read as content and every item is a contract model from the start.
 
-A draft item is not yet part of a guide, so three fields hold stand-ins that
+A section is drafted once for every length it is read at: ``Part`` says which
+lengths have an item. A draft item is not yet part of a guide, so three fields hold stand-ins that
 ``guides.py`` resolves when it puts the section into one:
 
 - ``id`` is empty (the place in the section decides it);
@@ -11,7 +12,9 @@ A draft item is not yet part of a guide, so three fields hold stand-ins that
 """
 from __future__ import annotations
 
-from db.local_study_data.spec import Concept, Passage
+from dataclasses import dataclass
+
+from db.local_study_data.spec import Concept
 from models.study_guide import (
     ChartBlock,
     ChartMarker,
@@ -25,6 +28,7 @@ from models.study_guide import (
     ConceptMapBlock,
     ConceptMapNode,
     FormulaBlock,
+    Item,
     KeyTerm,
     KeyTermsBlock,
     Mistake,
@@ -38,10 +42,24 @@ from models.study_guide import (
 _LETTERS = "abcd"
 
 
-def prose(*paragraphs: str | tuple[str, ...], summary: str | None, at: str = "cram") -> Passage:
+@dataclass(frozen=True)
+class Part:
+    """One item of a section draft and the lengths of the section that have
+    it (``spec.LENGTHS``): every length from ``at`` to ``upto``. A
+    ``standard`` passage is in a standard and a deep section and is left out
+    of a cram one."""
+
+    item: Item
+    at: str = "cram"
+    upto: str = "deep"
+
+
+def prose(
+    *paragraphs: str | tuple[str, ...], summary: str, at: str = "cram", upto: str = "deep",
+) -> Part:
     """A passage. A paragraph is its text, or ``(text, document key, ...)``
-    when it cites. ``at`` is the shortest length of the section that has it
-    (``spec.LENGTHS``)."""
+    when it cites. ``at`` and ``upto`` are the shortest and the longest
+    section that has it."""
     item = ProseItem(
         id="",
         paragraphs=[
@@ -50,13 +68,14 @@ def prose(*paragraphs: str | tuple[str, ...], summary: str | None, at: str = "cr
         ],
         summary=summary,
     )
-    return Passage(item=item, at=at)
+    return Part(item=item, at=at, upto=upto)
 
 
-def bridge(sentence: str, at: str = "standard") -> Passage:
-    """One sentence that leads into the block below it. It has no summary,
-    so Skim shows the block without it."""
-    return prose(sentence, summary=None, at=at)
+def at(length: str, block: Item) -> Part:
+    """A block that only sections of ``length`` or longer have. Without this
+    a block is in standard and deep sections, and the check in every one
+    (``guides.py``)."""
+    return Part(item=block, at=length)
 
 
 def formula(name: str, latex: str, spoken: str, source: str | None = None) -> FormulaBlock:

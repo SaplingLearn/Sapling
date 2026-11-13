@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from config import get_mastery_tier
 from db.local_study_data import clock, coursework, materials
+from db.local_study_data.blocks import Part
 from db.local_study_data.placement import Placement
 from db.local_study_data.spec import (
     LENGTHS,
@@ -21,7 +22,6 @@ from db.local_study_data.spec import (
     GuideSpec,
     LegacyGuide,
     Material,
-    Passage,
     SectionDraft,
 )
 from models.study_guide import (
@@ -148,13 +148,25 @@ def _length(depth: str, tier: str) -> int:
     return LENGTHS.index(depth) - (tier == "mastered")
 
 
+#: The shortest section a block is in when its draft does not say: the check
+#: closes every section, and any other block needs a passage of its own in
+#: front of it, which a cram section has no room for.
+_CHECK_FROM, _BLOCK_FROM = LENGTHS.index("brief"), LENGTHS.index("standard")
+
+
+def _lengths(entry) -> tuple[int, int]:
+    """The shortest and the longest section that has a draft entry."""
+    if isinstance(entry, Part):
+        return LENGTHS.index(entry.at), LENGTHS.index(entry.upto)
+    return (_CHECK_FROM if entry.type == "check" else _BLOCK_FROM), len(LENGTHS) - 1
+
+
 def _at_length(draft: SectionDraft, length: int) -> list[Item]:
-    """The draft's items at one length: every block, and the passages written
-    for that length or a shorter one."""
+    """The draft's items at one length, in reading order."""
     return [
-        entry.item if isinstance(entry, Passage) else entry
+        entry.item if isinstance(entry, Part) else entry
         for entry in draft.items
-        if not isinstance(entry, Passage) or LENGTHS.index(entry.at) <= length
+        if _lengths(entry)[0] <= length <= _lengths(entry)[1]
     ]
 
 
