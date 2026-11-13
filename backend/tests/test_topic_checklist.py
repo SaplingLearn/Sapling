@@ -387,6 +387,36 @@ def test_assessment_window_still_governs_display_and_urgency(state, monkeypatch)
     assert next(t for t in later["topics"] if t["name"] == "Recursion")["assessments"] == []
 
 
+def test_assessment_ids_name_every_linked_assessment_whatever_its_date(state, monkeypatch):
+    """`assessments` is the upcoming window; `assessment_ids` is what the
+    outline links, so a past exam and one far ahead still name their topics."""
+    db, _ = state
+    db["assignments"] += [
+        {"id": "past", "enrollment_id": "enr", "title": "Quiz 1", "assignment_type": "quiz", "due_date": "2026-09-20"},
+        {"id": "gone", "enrollment_id": "enr", "title": "Quiz 2", "assignment_type": "quiz", "due_date": "2026-10-01"},
+    ]
+    linked = outline().model_dump()
+    linked["topics"][1]["assessment_ids"] = ["late", "exam", "gone", "past"]  # not in date order
+
+    async def generate(payload, user_id):
+        return TopicOutline.model_validate(linked)
+
+    monkeypatch.setattr(svc, "_generate", generate)
+    svc.refresh_checklist("u", "course")
+    # The student deletes Quiz 2; the stored outline still names it.
+    db["assignments"] = [a for a in db["assignments"] if a["id"] != "gone"]
+    result = svc.get_checklist("u", "course")
+    recursion = next(t for t in result["topics"] if t["name"] == "Recursion")
+    # NOW is 2026-10-12: "past" is behind it, "late" is 64 days out.
+    assert [a["id"] for a in recursion["assessments"]] == ["exam"]
+    assert recursion["assessment_ids"] == ["past", "exam", "late"]
+    assert next(t for t in result["topics"] if t["name"] == "Functions")["assessment_ids"] == []
+    assert [a["id"] for a in result["assessments"]] == ["exam"]
+    # A checkmark's cheap live view carries the same links.
+    checked = svc.set_reviewed("u", "course", recursion["id"], True)
+    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["assessment_ids"] == ["past", "exam", "late"]
+
+
 def test_generation_rate_limit_and_cached_reads(state):
     db, calls = state
     for index in range(6):

@@ -708,15 +708,15 @@ def _served(place, rows, monkeypatch) -> dict:
 
 def _band_ids(topics: list[dict], exam_id: str) -> set[str]:
     """The hub's `studyModel.conceptIdsForExam`: the graph node of every
-    served topic that lists the exam."""
-    return {t["node_id"] for t in topics if t["node_id"] and any(a["id"] == exam_id for a in t["assessments"])}
+    served topic the outline links to the exam."""
+    return {t["node_id"] for t in topics if t["node_id"] and exam_id in t["assessment_ids"]}
 
 
-def test_each_exam_ahead_reaches_the_hub_with_its_own_concepts(monkeypatch):
+def test_each_exam_reaches_the_hub_with_its_own_concepts(monkeypatch):
     # A served topic finds its node by NAME, so a concept the account already
-    # had is read under the id it has. An exam already sat is not served on
-    # any topic (the service's upcoming window), which is why its tab reads
-    # as the whole course whatever the outline links to it.
+    # had is read under the id it has. An exam already sat (or far ahead) is
+    # outside the service's upcoming window, so no topic lists it under
+    # `assessments`; the hub reads `assessment_ids`, which names it all the same.
     kept = data.Enrolled("enr-cs101", "off-cs101", nodes={
         "Pointers and Memory": "rich-pointers", "Recursion": "rich-recursion",
     })
@@ -735,6 +735,14 @@ def test_each_exam_ahead_reaches_the_hub_with_its_own_concepts(monkeypatch):
         for exam in ahead:
             want = {node_ids[name] for name in covered[exam["id"]]}
             assert _band_ids(topics, exam["id"]) == want, exam["title"]
+        sat = [
+            a for a in rows["assignments"]
+            if a["id"] in covered and date.fromisoformat(a["due_date"]) < today
+        ]
+        assert sat, place.data.key
+        for exam in sat:
+            assert not any(a["id"] == exam["id"] for t in topics for a in t["assessments"]), exam["title"]
+            assert _band_ids(topics, exam["id"]) == {node_ids[name] for name in covered[exam["id"]]}, exam["title"]
         if place.data.key == "cs101":
             assert {"rich-pointers", "rich-recursion"} <= _band_ids(topics, place.assessment_id("mid2"))
 

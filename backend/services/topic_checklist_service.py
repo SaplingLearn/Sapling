@@ -233,6 +233,13 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
 
 
+def _linked_ids(topic_assessment_ids: list[str], enrolled: list[dict]) -> list[str]:
+    """The ids of the enrollment's assessments a topic is linked to, in due-date
+    order. An id the outline kept for an assessment since deleted is dropped."""
+    wanted = set(topic_assessment_ids)
+    return [a["id"] for a in enrolled if a["id"] in wanted]
+
+
 def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> dict:
     """The checklist as served. Freshness (``needs_refresh``/``warnings``) is
     reported only for a full evidence snapshot; a live snapshot (a checkmark)
@@ -244,8 +251,12 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
     reviewed = {r["topic_key"]: r["reviewed_at"] for r in progress}
     nodes = {normalized_name(n["concept_name"]): n for n in snapshot["nodes"]}
     # The upcoming window is a presentation concern only (never in the hash).
+    # It governs `assessments` (what is shown as coming up, and urgency);
+    # `assessment_ids` is every exam/quiz the outline links, whatever its date,
+    # so an exam already sat still says which topics it was on.
     window_end = (now.date() + timedelta(days=ASSESSMENT_WINDOW_DAYS)).isoformat()
-    assessments = {a["id"]: a for a in snapshot["payload"]["assessments"]
+    enrolled = snapshot["payload"]["assessments"]
+    assessments = {a["id"]: a for a in enrolled
                    if now.date().isoformat() <= a["due_date"][:10] <= window_end}
     source_labels = {s["id"]: s["label"] for s in snapshot["payload"]["sources"]}
     topics = []
@@ -278,6 +289,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
             "review_reasons": (["Weak mastery"] if weak else []) + (["Review overdue"] if stale else []),
             "priority": "high" if urgent and status != "mastered" or weak or prereq_gaps else "normal",
             "assessments": linked,
+            "assessment_ids": _linked_ids(topic.assessment_ids, enrolled),
             "sources": [{"id": s, "label": source_labels[s]} for s in topic.source_ids if s in source_labels],
             "node_id": node["id"] if node else None,
         })
