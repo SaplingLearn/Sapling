@@ -60,8 +60,8 @@ export function useHubView(input: {
   );
   const byId = React.useMemo(() => new Map(topics.map(t => [t.id, t])), [topics]);
 
-  // What the selected exam covers. The readiness band, the roadmap's set-back
-  // tiles and Up Next all follow it; with nothing linked they are the course's.
+  // What the selected exam covers. The readiness band, the roadmap and Up
+  // Next all follow it; with nothing linked they are the whole course's.
   const scope = React.useMemo(() => examScope(topics, outline, exam), [topics, outline, exam]);
   const upNext = React.useMemo(() => examQueue(topics, scope), [topics, scope]);
   const marks = conceptMarks(byId, upNext.queue[0] || null, st.topic, st.hover);

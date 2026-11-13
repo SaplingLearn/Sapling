@@ -181,8 +181,6 @@ export interface RoadmapTile {
   isNext: boolean;
   rel: TileRelation;
   dim: boolean;
-  /** Not on the selected exam, when the outline says what is. */
-  off: boolean;
   /** Never folded away, even when mastered. */
   pin: boolean;
 }
@@ -210,7 +208,8 @@ export interface RoadmapMarks {
   hot: Concept | null;
   /** The legend's status filter. */
   lvl: Status | null;
-  /** The selected exam's concepts (studyModel's `examScope`), when it has some. */
+  /** The selected exam's concepts (studyModel's `examScope`), when it has
+   *  some: the roadmap then shows only those. */
   covered?: Set<string> | null;
 }
 
@@ -218,7 +217,7 @@ export interface RoadmapMarks {
 const COLUMN_LIMIT = 4;
 
 function tileMaker(marks: RoadmapMarks): (t: Concept) => RoadmapTile {
-  const { sel, rec, hot, lvl, covered } = marks;
+  const { sel, rec, hot, lvl } = marks;
   const needed = new Set(hot?.pre);
   const unlocks = new Set(hot?.post);
   const pinned = new Set([...(sel?.pre || []), ...(sel?.post || [])]);
@@ -236,7 +235,6 @@ function tileMaker(marks: RoadmapMarks): (t: Concept) => RoadmapTile {
     return {
       t, isSel, isNext, rel,
       dim: offLevel || (other && !rel && linked),
-      off: !!covered && !covered.has(t.id),
       pin: isSel || isNext || pinned.has(t.id),
     };
   };
@@ -258,7 +256,14 @@ function foldColumn(tiles: RoadmapTile[], open: boolean): { shown: RoadmapTile[]
   return { shown: open ? tiles : tiles.filter((_, i) => keep[i]), hidden };
 }
 
-/** The roadmap, column by column, in `roadmapGroups`' order. */
+/**
+ * The roadmap, column by column, in `roadmapGroups`' order.
+ *
+ * With `marks.covered` (the selected exam's concepts) it is those concepts
+ * only: a column with none of them is left out, and a column's count and bars
+ * are over what it shows. The columns keep the WHOLE course's order, so
+ * changing exam drops and restores columns in place instead of reshuffling.
+ */
 export function roadmapColumns(
   topics: Concept[],
   marks: RoadmapMarks,
@@ -266,16 +271,19 @@ export function roadmapColumns(
   openCols: Record<string, boolean>,
 ): RoadmapColumn[] {
   const tile = tileMaker(marks);
-  return roadmapGroups(topics).map(label => {
-    const own = topics.filter(t => t.group === label);
+  const { covered } = marks;
+  const shown = covered ? topics.filter(t => covered.has(t.id)) : topics;
+  return roadmapGroups(topics).flatMap(label => {
+    const own = shown.filter(t => t.group === label);
+    if (own.length === 0) return [];
     const key = courseId + label;
     const open = !!openCols[key];
-    return {
+    return [{
       label, key, open,
       ...foldColumn(own.map(tile), open),
       frac: `${own.filter(t => t.st === "mastered").length}/${own.length}`,
       bars: squaresOrder(own).map(t => TC[t.st]),
-    };
+    }];
   });
 }
 

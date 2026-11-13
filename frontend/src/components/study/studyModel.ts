@@ -24,8 +24,8 @@
  *    Otherwise (no outline, nothing linked) it is the whole course, and says
  *    so: "<course> Readiness", with a note that nothing is linked to that
  *    exam yet.
- *  - The same set (`examScope`) is what the roadmap sets the other concepts
- *    back against, and what Up Next is queued from (`examQueue`).
+ *  - The same set (`examScope`) is what the roadmap shows while that exam is
+ *    selected, and what Up Next is queued from (`examQueue`).
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
  *    days (the node's `week_delta`), averaged over the same concepts, in
  *    percentage points.
@@ -360,6 +360,7 @@ export function conceptIdsForExam(outline: ExamTopic[], examId: string | null | 
 
 /** The part of the course a selected exam covers. */
 export interface ExamScope {
+  id: string;
   title: string;
   /** Its concepts among this course's. Never empty. */
   ids: Set<string>;
@@ -379,7 +380,7 @@ export function examScope(
   if (!exam) return null;
   const linked = conceptIdsForExam(outline, exam.id);
   const ids = new Set(topics.filter(t => linked.has(t.id)).map(t => t.id));
-  return ids.size ? { title: exam.title, ids } : null;
+  return ids.size ? { id: exam.id, title: exam.title, ids } : null;
 }
 
 /**

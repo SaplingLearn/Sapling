@@ -4,8 +4,9 @@
  * prerequisite layers when it has none), each a list of tiles. A long column
  * folds its mastered tiles into "N more mastered".
  *
- * It follows the selected exam: the concepts that exam does not cover are set
- * back (in place, still clickable) and a caption says how many it does.
+ * It follows the selected exam: `columns` then holds only the concepts that
+ * exam covers, a caption says how many, and a change of exam is animated as
+ * the same roadmap rearranging (./useFlip.ts, over the `data-flip` items).
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
@@ -15,6 +16,7 @@ import { ELLIPSIS } from "./hubUi";
 import { RoadmapTile } from "./RoadmapTile";
 import s from "./StudyHub.module.css";
 import { TC, type ExamScope } from "./studyModel";
+import { useFlip } from "./useFlip";
 import type { SetHub } from "./useHubState";
 import type { ToolNav } from "./useToolNav";
 
@@ -48,7 +50,7 @@ function ColumnHead({ column }: { column: RoadmapColumn }) {
 /** "N more mastered" / "Show Less": opens and closes a column's fold. */
 function FoldToggle({ column, onToggle }: { column: RoadmapColumn; onToggle: () => void }) {
   return (
-    <button className={s.hoverMore} onClick={onToggle}
+    <button className={s.hoverMore} onClick={onToggle} data-flip={`fold:${column.key}`}
       style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 10px", border: "1px dashed var(--border-strong)", borderRadius: "var(--r-md)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text-dim)", cursor: "pointer" }}>
       <span style={{ display: "flex", gap: 3 }}>{column.hidden.map(x => <span key={x.t.id} style={{ width: 7, height: 7, borderRadius: 2, background: TC[x.t.st] }} />)}</span>
       <span style={{ flex: 1, textAlign: "left", whiteSpace: "nowrap" }}>{column.open ? "Show Less" : `${column.hidden.length} more mastered`}</span>
@@ -57,14 +59,15 @@ function FoldToggle({ column, onToggle }: { column: RoadmapColumn; onToggle: () 
   );
 }
 
-/** "2 concepts on Exam 2": what the set-back tiles are set back against. */
+/** "2 concepts on Exam 2": why the roadmap is shorter than the course. */
 const scopeCaption = (scope: ExamScope) =>
   `${scope.ids.size} ${scope.ids.size === 1 ? "concept" : "concepts"} on ${scope.title}`;
 
 /** Key it on the course, so a course change replays its entrance. */
 export interface RoadmapProps {
   columns: RoadmapColumn[];
-  /** What the selected exam covers; null when no exam has concepts linked. */
+  /** What the selected exam covers (and `columns` is cut down to); null when
+   *  no exam is selected or it has no concepts linked. */
   scope: ExamScope | null;
   /** Flashcards per concept name (hubModel's `cardCounts`). */
   cards: Map<string, number>;
@@ -86,6 +89,8 @@ export function Roadmap({ columns, scope, cards, tileMenu, openCols, quizShown, 
      section's bottom edge; lifting the section keeps it over whatever follows
      (the rail, once the narrow layout stacks it underneath). */
   const lift = (on: boolean) => (on ? 2 : undefined);
+  const grid = React.useRef<HTMLDivElement | null>(null);
+  useFlip(grid, scope?.id ?? "");
   return (
     <section aria-label="Roadmap" className={`${s.areaRoadmap} ${s.paneEnter}`}
       style={{ position: "relative", zIndex: lift(!!tileMenu), padding: "16px 6px 24px 0" }}>
@@ -93,13 +98,15 @@ export function Roadmap({ columns, scope, cards, tileMenu, openCols, quizShown, 
         <span className="label-micro" style={{ flexShrink: 0 }}>Roadmap</span>
         {scope && <span data-testid="roadmap-exam-caption" style={{ minWidth: 0, fontSize: "var(--fs-sm)", color: "var(--text-muted)", ...ELLIPSIS }}>{scopeCaption(scope)}</span>}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: TRACKS, gap: "20px 16px", alignItems: "start", maxWidth: gridWidth(columns.length) }}>
+      {/* Positioned, and its rows packed to the top, for useFlip: it reads each
+          column's place against this box and tweens this box's height. */}
+      <div ref={grid} style={{ position: "relative", display: "grid", gridTemplateColumns: TRACKS, gap: "20px 16px", alignItems: "start", alignContent: "start", maxWidth: gridWidth(columns.length) }}>
         {columns.map((col, ci) => (
-          <div key={col.key} className={s.colEnter}
+          <div key={col.key} className={s.colEnter} data-flip={`col:${col.key}`}
             style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: lift(col.shown.some(x => x.t.id === tileMenu)), display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } as React.CSSProperties}>
             <ColumnHead column={col} />
             {col.shown.map(tile => (
-              <RoadmapTile key={tile.t.id} tile={tile} examTitle={scope?.title} menuOpen={tileMenu === tile.t.id} cardCount={cardsFor(cards, tile.t.name)}
+              <RoadmapTile key={tile.t.id} tile={tile} menuOpen={tileMenu === tile.t.id} cardCount={cardsFor(cards, tile.t.name)}
                 quizShown={quizShown} nav={nav} set={set} closeTileMenu={closeTileMenu} />
             ))}
             {col.hidden.length > 0 && <FoldToggle column={col} onToggle={() => set({ openCols: { ...openCols, [col.key]: !col.open } })} />}

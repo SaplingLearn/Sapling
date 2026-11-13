@@ -342,7 +342,7 @@ describe("examScope", () => {
       // On the exam, but not one of this course's concepts: not counted.
       { node_id: "elsewhere", assessments: on("e1") },
     ], exam);
-    expect(scope?.title).toBe("Midterm");
+    expect(scope).toMatchObject({ id: "e1", title: "Midterm" });
     expect([...scope!.ids].sort()).toEqual(["b", "c"]);
   });
 
@@ -378,7 +378,7 @@ describe("examQueue", () => {
     [{ source: "p", target: "blocked", relationship_type: "prerequisite" }],
     "c1", NOW,
   );
-  const scope = (...ids: string[]) => ({ title: "Midterm", ids: new Set(ids) });
+  const scope = (...ids: string[]) => ({ id: "e1", title: "Midterm", ids: new Set(ids) });
   const ids = (list: { id: string }[]) => list.map(c => c.id);
 
   it("with no exam scope it is the course's queue", () => {

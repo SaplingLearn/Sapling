@@ -219,13 +219,48 @@ describe("roadmapColumns", () => {
     expect([t.a.dim, t.b.dim, t.c.dim, t.d.dim]).toEqual([true, true, false, true]);
   });
 
-  it("marks the tiles the selected exam does not cover, and none without one", () => {
-    const t = tiles({ ...none, covered: new Set(["b", "c"]) });
-    expect([t.a.off, t.b.off, t.c.off, t.d.off]).toEqual([true, false, false, true]);
-    // Off the exam is not the legend's or the hover's dimming.
-    expect(Object.values(t).some(x => x.dim)).toBe(false);
-    expect(Object.values(tiles(none)).some(x => x.off)).toBe(false);
-    expect(Object.values(tiles({ ...none, covered: null })).some(x => x.off)).toBe(false);
+  describe("with the selected exam's concepts", () => {
+    // Two columns: Foundations (a, d) and Core Methods (b, c).
+    const b2 = { ...b, group: "Core Methods" }, c2 = { ...c, group: "Core Methods" };
+    const all = [a, b2, c2, d];
+    const shape = (marks: RoadmapMarks) =>
+      roadmapColumns(all, marks, "c1", {}).map(col => [col.label, col.shown.map(x => x.t.id), col.frac, col.bars.length]);
+
+    it("shows the whole course without them", () => {
+      const whole = [["Foundations", ["a", "d"], "1/2", 2], ["Core Methods", ["b", "c"], "0/2", 2]];
+      expect(shape(none)).toEqual(whole);
+      expect(shape({ ...none, covered: null })).toEqual(whole);
+    });
+
+    it("shows only those concepts, and counts each column over what it shows", () => {
+      expect(shape({ ...none, covered: new Set(["a", "c"]) }))
+        .toEqual([["Foundations", ["a"], "1/1", 1], ["Core Methods", ["c"], "0/1", 1]]);
+    });
+
+    it("leaves out a column with none of them, and keeps the key of one that stays", () => {
+      const cols = roadmapColumns(all, { ...none, covered: new Set(["b", "c"]) }, "c1", {});
+      expect(cols.map(col => col.key)).toEqual(["c1Core Methods"]);
+      expect(cols[0].frac).toBe("0/2");
+    });
+
+    it("keeps the course's column order whichever concepts are shown", () => {
+      // Over the whole course Early (depths 0 and 1) comes before Late (depths
+      // 0 and 3). Over the exam's two alone Late (0) would sort ahead of
+      // Early (1); a tab change must not reshuffle the columns.
+      const list = [
+        concept("e0", "new", { group: "Early", step: 0 }), concept("e1", "new", { group: "Early", step: 1 }),
+        concept("l0", "new", { group: "Late", step: 0 }), concept("l3", "new", { group: "Late", step: 3 }),
+      ];
+      const labels = (marks: RoadmapMarks) => roadmapColumns(list, marks, "c1", {}).map(col => col.label);
+      expect(labels(none)).toEqual(["Early", "Late"]);
+      expect(labels({ ...none, covered: new Set(["e1", "l0"]) })).toEqual(["Early", "Late"]);
+    });
+
+    it("still marks and dims the tiles it shows", () => {
+      const cols = roadmapColumns(all, { ...none, covered: new Set(["a", "c"]), rec: c2, lvl: "review" }, "c1", {});
+      expect(cols[0].shown[0]).toMatchObject({ dim: true, isNext: false });
+      expect(cols[1].shown[0]).toMatchObject({ dim: false, isNext: true });
+    });
   });
 
   describe("a long column", () => {
