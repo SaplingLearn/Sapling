@@ -140,23 +140,32 @@ export const FOCUS_ARC: Record<Status, string> = {
 
 /** Room on the block's one prerequisite line, and what a chip takes of it. */
 const CHIP_LINE = 230;
+/** Chips shown whether or not they fit, so "+N more" never stands for one. */
+const ALWAYS_SHOWN = 2;
 const MORE_CHIP = 80;
 const chipWidth = (name: string) => 28 + name.length * 6.4 + 5;
 
 /**
  * How many prerequisite chips fit that line before "+N more" (which needs
- * room of its own unless the chip is the last). Always at least one when
- * there are any, so the line never reads as just "+3 more".
+ * room of its own unless the chip is the last).
+ *
+ * Never fewer than two, so "+N more" only ever stands for a THIRD concept and
+ * beyond: collapsing one of two is all cost and no saving — it hides a name to
+ * show a chip of its own width, and "+1 more" tells the student less than the
+ * name it replaced.
+ *
+ * `reserve` is width the line has already spent on something that is not a
+ * chip — today the prerequisite-gap mark, which shares the line.
  */
-export function chipsThatFit(names: string[]): number {
+export function chipsThatFit(names: string[], reserve = 0): number {
   let k = 0;
-  let used = 0;
+  let used = reserve;
   for (; k < names.length; k++) {
     const reserve = k < names.length - 1 ? MORE_CHIP : 0;
     if (used + chipWidth(names[k]) + reserve > CHIP_LINE) break;
     used += chipWidth(names[k]);
   }
-  return Math.max(k, Math.min(1, names.length));
+  return Math.max(k, Math.min(ALWAYS_SHOWN, names.length));
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -291,9 +300,9 @@ export function roadmapColumns(
 
 /** Minutes the Quick Reviews row allows per concept. A flat guess, not a
  *  measurement (the app records no per-concept review time), so it is always
- *  shown as one: "~4 min". */
+ *  shown as one: "~ 4 min". */
 const QUICK_REVIEW_MIN = 2;
-export const quickReviewEstimate = (concepts: number) => `~${concepts * QUICK_REVIEW_MIN} min`;
+export const quickReviewEstimate = (concepts: number) => `~ ${concepts * QUICK_REVIEW_MIN} min`;
 
 // ── recent activity ──────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@
 import React from "react";
 import Link from "next/link";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
-import { DISPLAY, Glyph, MONO, POPOVER, StatusDot, shownTools, type GlyphName } from "./hubUi";
+import { DISPLAY, Glyph, MONO, POPOVER, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { ST_LABEL, ring, type Concept } from "./studyModel";
 import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
@@ -26,15 +26,18 @@ const MICRO_ON_DARK: React.CSSProperties = { fontFamily: MONO, fontSize: 10, let
 const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px" };
 const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
 const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+const PRETTY = { textWrap: "pretty" } as React.CSSProperties;
+/** What the gap mark takes of the prerequisite line (chip + the line's gap). */
+const GAP_MARK_W = 31;
 
 function MasteryRing({ concept }: { concept: Concept }) {
   return (
-    <span style={{ position: "relative", width: 54, height: 54, flexShrink: 0 }}>
-      <svg width="54" height="54" viewBox="0 0 54 54" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
-        <circle cx="27" cy="27" r="23" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="5" />
-        <circle cx="27" cy="27" r="23" fill="none" stroke={FOCUS_ARC[concept.st]} strokeWidth="5" strokeLinecap="round" strokeDasharray={ring(concept.m, 23)} />
+    <span style={{ position: "relative", width: 72, height: 72, flexShrink: 0 }}>
+      <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
+        <circle cx="36" cy="36" r="31" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6.5" />
+        <circle cx="36" cy="36" r="31" fill="none" stroke={FOCUS_ARC[concept.st]} strokeWidth="6.5" strokeLinecap="round" strokeDasharray={ring(concept.m, 31)} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "var(--fs-base)", fontWeight: 600 }}>{concept.m}%</span>
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{concept.m}%</span>
     </span>
   );
 }
@@ -60,12 +63,45 @@ function MorePrereqs({ rest }: { rest: Concept[] }) {
   );
 }
 
-/** One fixed-height line: the chips that fit, then "+N more". */
-function Prereqs({ prereqs }: { prereqs: Concept[] }) {
-  const fit = chipsThatFit(prereqs.map(t => t.name));
+/**
+ * The focused concept's unmet prerequisite: an amber mark at the head of the
+ * prerequisite line, opening the reason on hover or focus.
+ *
+ * A POP-UP rather than the banner this was beside the readiness figure. The
+ * block is deliberately the same height whichever concept is in it, and the
+ * figure beside it is centred; a warning in flow came and went with the
+ * selection and moved the roadmap (or the percentage) each time. An overlay
+ * costs no layout, and it sits on the line it is about — the one naming the
+ * prerequisites it says are not mastered yet.
+ */
+function GapWarning({ concept }: { concept: Concept }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0, display: "flex" }}>
+      <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+        style={{ ...CHIP, padding: "0 6px", background: "var(--warn-soft)", cursor: "default" }}>
+        <WarnIcon size={13} />
+      </span>
+      {open && (
+        <span style={{ position: "absolute", left: -4, top: "100%", paddingTop: 6, zIndex: 25 }}>
+          <span role="tooltip" data-testid="focus-gap-warning" className={s.pop}
+            style={{ display: "flex", alignItems: "flex-start", gap: 8, width: 260, padding: "10px 12px", ...POPOVER, background: "var(--warn-soft)", borderColor: "transparent", color: "var(--warn)", fontSize: "var(--fs-sm)", lineHeight: 1.45, ...PRETTY }}>
+            <WarnIcon size={14} />
+            <span><strong style={{ fontWeight: 700 }}>{concept.name}</strong> · {concept.gap}</span>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** One fixed-height line: the gap mark, the chips that fit, then "+N more". */
+function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null }) {
+  const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 6, height: 22, fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 6, height: 22, minWidth: 0, overflow: "hidden", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+      {gapOn && <GapWarning concept={gapOn} />}
       {prereqs.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
       {prereqs.slice(0, fit).map(t => (
         <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, background: "rgba(255,255,255,0.12)" }}>
@@ -113,7 +149,7 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
             <MasteryRing concept={concept} />
             <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
               <span className={s.focusName} title={concept.name} style={{ fontFamily: DISPLAY, fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.01em" }}>{concept.name}</span>
-              <Prereqs prereqs={prereqs} />
+              <Prereqs prereqs={prereqs} gapOn={concept.gap ? concept : null} />
             </div>
           </div>
         </div>

@@ -138,10 +138,13 @@ describe("flashcards per concept", () => {
 });
 
 describe("chipsThatFit", () => {
-  it("is zero with nothing to show, and never less than one otherwise", () => {
+  it("is zero with nothing to show, and never collapses one of two otherwise", () => {
     expect(chipsThatFit([])).toBe(0);
     expect(chipsThatFit(["A prerequisite whose name alone is far wider than the line"])).toBe(1);
-    expect(chipsThatFit(["A prerequisite whose name alone is far wider than the line", "B"])).toBe(1);
+    // Both are shown however wide they are: "+1 more" says less than the name.
+    expect(chipsThatFit(["A prerequisite whose name alone is far wider than the line", "B"])).toBe(2);
+    // The third is what "+N more" is for.
+    expect(chipsThatFit(["A prerequisite whose name alone is far wider than the line", "B", "C"])).toBe(2);
   });
 
   it("fits short names, and stops while there is still room for '+N more'", () => {
@@ -149,7 +152,9 @@ describe("chipsThatFit", () => {
     // Each is 28 + 10 * 6.4 + 5 = 97 wide; two fit the 230 line only when
     // nothing has to follow them.
     expect(chipsThatFit(["Recursion!", "Iteration!"])).toBe(2);
-    expect(chipsThatFit(["Recursion!", "Iteration!", "Induction!"])).toBe(1);
+    // Width alone would fit only one here, but two are shown regardless and
+    // the third becomes "+1 more".
+    expect(chipsThatFit(["Recursion!", "Iteration!", "Induction!"])).toBe(2);
   });
 });
 
@@ -301,8 +306,8 @@ describe("roadmapColumns", () => {
 
 describe("quickReviewEstimate", () => {
   it("is two minutes a concept, and always worded as a guess", () => {
-    expect(quickReviewEstimate(1)).toBe("~2 min");
-    expect(quickReviewEstimate(5)).toBe("~10 min");
+    expect(quickReviewEstimate(1)).toBe("~ 2 min");
+    expect(quickReviewEstimate(5)).toBe("~ 10 min");
   });
 });
 

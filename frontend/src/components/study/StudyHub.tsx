@@ -78,7 +78,7 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
     setCourseId(id);
     set(COURSE_PICKED);
   };
-  const { outline, reload: reloadOutline } = useCourseOutline(userId, course?.course_id || "", semester, semesterReady);
+  const { outline, ready: outlineReady, reload: reloadOutline } = useCourseOutline(userId, course?.course_id || "", semester, semesterReady);
 
   // The hub paints nothing real until it knows the student's courses AND has
   // their concepts: without this it rendered the "Add a course" empty state,
@@ -89,7 +89,7 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
 
   return (
     <HubPage courses={courses} course={course} onPickCourse={pickCourse} userId={userId} today={today} isMobile={isMobile} quizShown={quizShown}
-      graph={graph} cards={cards} records={records} outline={outline} reloadOutline={reloadOutline}
+      graph={graph} cards={cards} records={records} outline={outline} outlineReady={outlineReady} reloadOutline={reloadOutline}
       st={st} set={set} closeTileMenu={closeTileMenu} />
   );
 }
@@ -121,6 +121,8 @@ function HubPage(props: {
   cards: FlashcardRow[];
   records: StudyRecords;
   outline: ChecklistTopic[];
+  /** That outline is the SELECTED course's, not a previous course's. */
+  outlineReady: boolean;
   /** Re-reads a course's outline after its exams changed. */
   reloadOutline: (courseId: string) => void;
   st: HubState;
@@ -181,14 +183,19 @@ function HubPage(props: {
             : <FocusEmpty hasConcepts={view.topics.length > 0} />}
         </section>
 
-        <Roadmap key={`roadmap:${cid}`} columns={view.columns} scope={view.scope} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
+        {/* No columns until the outline is the SELECTED course's. The graph is
+            loaded per semester and survives a course switch, so the roadmap
+            had concepts but no categories for a moment and drew every one of
+            them under the layer fallback — all stacked in "Foundations" with a
+            generic "Core Methods" — before the real categories replaced it. */}
+        <Roadmap key={`roadmap:${cid}`} columns={props.outlineReady ? view.columns : []} scope={view.scope} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
           quizShown={quizShown} nav={nav} set={set} closeTileMenu={props.closeTileMenu} />
 
         {/* The 40px side bleed (padding + negative margin, in the stylesheet so
             the narrow layout can drop it) gives the Quick Reviews pop-up's drop
             shadow room to fade out; it sits in the 56px column gap. */}
         <aside aria-label="Activity" className={s.areaRail} style={{ display: "flex", flexDirection: "column" }}>
-          <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 24 }}>
+          <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 24 }}>
             <DailyGoalCard daily={records.daily} onSave={records.saveGoal} />
             <QuickReviews reviews={view.reviews} courseLabel={view.label} onStart={startReviews} />
           </section>

@@ -113,11 +113,11 @@ function useGoalEdit(goal: number, onSave: (minutes: number) => Promise<boolean>
 type GoalEdit = ReturnType<typeof useGoalEdit>["edit"];
 type RowRef = React.RefObject<HTMLDivElement | HTMLFormElement | null>;
 
-/** The note beside "Daily goal": what the editor's numbers mean, or how today stands. */
+/** The note beside "Daily goal": what the editor's numbers mean, or that today is done. */
 function HeadNote({ editing, stats }: { editing: boolean; stats: GoalStats }) {
   if (editing) return <span className={s.note}>minutes a day</span>;
   if (stats.met) return <span className={s.met}>Goal met</span>;
-  return <span className={s.note}>{stats.goal - stats.done} min to go</span>;
+  return null;
 }
 
 /** The goal line as a row of presets: one tap saves; the last slot is "another number". */

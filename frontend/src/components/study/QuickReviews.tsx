@@ -4,8 +4,8 @@
  * under 70%), as one row that starts their flashcards. Hovering or focusing it
  * lists them first.
  *
- * Built like a Today's-plan row on the Dashboard: glyph, a 13px title over an
- * 11px meta line, a chip, a chevron.
+ * One line: the glyph, the title in blue beside it, and a solid blue button
+ * carrying the estimate and chevron. What the row is for is spelled out in the hover list.
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
@@ -57,14 +57,15 @@ export function QuickReviews({ reviews, courseLabel, onStart }: {
   return (
     <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative" }}>
       <button className={s.hoverQr} onClick={onStart} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} aria-expanded={open}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 11px", border: 0, borderRadius: "var(--r-md)", background: "var(--info-soft)", color: "var(--text)", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-        <span aria-hidden="true" style={{ width: 18, display: "grid", placeItems: "center", flexShrink: 0, color: "var(--info)" }}><CardsIcon size={15} /></span>
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{reviewsLabel(reviews.length)}</span>
-          <span style={{ display: "block", fontSize: "var(--fs-xs)", color: "var(--text-muted)", ...ELLIPSIS }}>Flashcards on what&apos;s slipping</span>
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", border: 0, borderRadius: "var(--r-md)", background: "var(--info-soft)", color: "var(--text)", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
+        <span aria-hidden="true" style={{ width: 24, display: "grid", placeItems: "center", flexShrink: 0, color: "var(--info)" }}><CardsIcon size={21} /></span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--info)", ...ELLIPSIS }}>{reviewsLabel(reviews.length)}</span>
+        {/* The original action: the estimate and the chevron in ONE solid blue
+            button, not a pale chip sitting beside a loose chevron. */}
+        <span className="chip" style={{ flexShrink: 0, height: 30, padding: "0 12px", borderRadius: "var(--r-sm)", background: "var(--info)", color: "var(--accent-fg)", borderColor: "transparent", fontSize: "var(--fs-sm)", fontWeight: 700 }}>
+          {quickReviewEstimate(reviews.length)}
+          <Icon name="chev" size={12} />
         </span>
-        <span className="chip chip--info" style={{ flexShrink: 0, background: "var(--bg-panel)" }}>{quickReviewEstimate(reviews.length)}</span>
-        <span aria-hidden="true" style={{ display: "grid", flexShrink: 0, color: "var(--info)" }}><Icon name="chev" size={12} /></span>
       </button>
       {open && <ReviewList reviews={reviews} courseLabel={courseLabel} onStart={() => { setOpen(false); onStart(); }} />}
     </div>

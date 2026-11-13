@@ -191,12 +191,23 @@
    as tall as a two-line name over its line of prerequisites (2 x 26.4 + 4 +
    22), and a third line is clamped. The prerequisites never wrap and the
    actions never wrap. A block that grew and shrank moved everything under it
-   each time you picked a different concept. */
+   each time you picked a different concept.
+
+   That 79px is also the ceiling on the mastery ring: it is the tallest thing
+   in the row, so a ring past ~72px would make the BLOCK taller rather than
+   just filling it. */
 .focusMain { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .focusConcept { display: flex; align-items: center; gap: 14px; min-height: 79px; }
+/* The clamp box is the LINE box, and the display face's glyphs are taller than
+   the 1.2 line it is set on, so `overflow: hidden` was shaving the bottom off
+   every descender ("Algorithms" lost the tail of its g). The padding gives the
+   clip box room for them and the negative margin gives that room back to the
+   layout, so the concept row is still the 79px it reserves. */
 .focusName {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden; text-wrap: balance;
+  padding-bottom: 0.18em;
+  margin-bottom: -0.18em;
 }
 .focusActions { display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; }
 /* With no concept to show (a course with none yet, or all mastered) the block

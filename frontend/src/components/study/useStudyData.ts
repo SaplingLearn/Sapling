@@ -163,6 +163,14 @@ export function useStudyRecords(userId: string): StudyRecords {
  * (an exam added or removed): it forgets that course's attempt, so the outline
  * may be generated again, and re-reads the selected course. What is on screen
  * stays until the new answer lands.
+ *
+ * `ready` is false from the moment the COURSE (or term) changes until that
+ * course's read settles. The graph is loaded per SEMESTER, so it survives a
+ * course switch: without this the hub had concepts but no categories for a
+ * moment and drew the whole roadmap under the layer fallback — every concept
+ * stacked in "Foundations" and "Core Methods" — before the real categories
+ * replaced it. A `reload` of the course already shown does NOT clear it: that
+ * one deliberately keeps what is on screen until the new answer lands.
  */
 type OutlineRefresh = { settled: boolean; topics: Promise<ChecklistTopic[] | null> };
 
@@ -171,20 +179,21 @@ export function useCourseOutline(
   cid: string,
   semester: string,
   semesterReady: boolean,
-): { outline: ChecklistTopic[]; reload: (courseId: string) => void } {
+): { outline: ChecklistTopic[]; ready: boolean; reload: (courseId: string) => void } {
   const [outline, setOutline] = React.useState<ChecklistTopic[]>([]);
+  const [ready, setReady] = React.useState(false);
   const [reads, setReads] = React.useState(0);
   const refreshes = React.useRef(new Map<string, OutlineRefresh>());
   /** The course and term whose outline is on screen ("" for none). */
   const shownFor = React.useRef("");
 
   React.useEffect(() => {
-    if (!userId || !cid || !semesterReady) { shownFor.current = ""; setOutline([]); return; }
+    if (!userId || !cid || !semesterReady) { shownFor.current = ""; setOutline([]); setReady(false); return; }
     // Latest request wins: a course or semester change, or a reload, drops
     // everything the previous read still has in flight, its refresh included.
     let live = true;
     const key = `${userId}|${cid}|${semester}`;
-    if (shownFor.current !== key) setOutline([]);
+    if (shownFor.current !== key) { setOutline([]); setReady(false); }
     shownFor.current = key;
     const sem = semester || undefined;
     /** The course's one refresh attempt, if it can still add to this read:
@@ -208,10 +217,13 @@ export function useCourseOutline(
       .then(r => {
         if (!live) return;
         setOutline(r.topics || []);
+        setReady(true);
         if (!r.needs_refresh) return;
         pendingRefresh()?.then(topics => { if (live && topics) setOutline(topics); });
       })
-      .catch(err => { if (live) console.error("study checklist load failed", err); });
+      // Ready on failure too: a course whose checklist cannot be read has no
+      // categories to wait for, and the layer fallback is then the answer.
+      .catch(err => { if (live) { console.error("study checklist load failed", err); setReady(true); } });
     return () => { live = false; };
   }, [userId, cid, semester, semesterReady, reads]);
 
@@ -220,5 +232,5 @@ export function useCourseOutline(
     setReads(n => n + 1);
   }, [userId, semester]);
 
-  return { outline, reload };
+  return { outline, ready, reload };
 }

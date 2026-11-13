@@ -147,7 +147,6 @@ describe("StudyHub", () => {
     // Daily goal and recent activity.
     const goalCard = screen.getByTestId("daily-goal");
     expect(within(goalCard).getByRole("button", { name: /Daily goal: 40 minutes/ })).toBeTruthy();
-    expect(within(goalCard).getByText("15 min to go")).toBeTruthy();
     expect(within(goalCard).queryByLabelText("Edit daily goal")).toBeNull(); // the gear is gone
     expect(screen.getAllByText("Recursion Quiz")).toHaveLength(1); // recent activity only
     expect(screen.getByTitle("Mastery change from this quiz").textContent).toBe("Recursion+5%");
@@ -348,10 +347,17 @@ describe("StudyHub", () => {
     await hubLoaded();
     const card = screen.getByTestId("focus-card");
     expect(within(card).getByText("Recursion")).toBeTruthy();
-    // The prerequisite gap is no longer a banner beside the figure; it is the
-    // mark (with the reason as its tooltip) on the concept's own tile.
+    // The prerequisite gap is no longer a banner beside the figure: it is the
+    // mark on the concept's own tile (the reason as its tooltip), and a mark
+    // on the block's prerequisite line that OPENS the reason. Neither is in
+    // flow, so neither moves the roadmap when the selection changes.
     expect(screen.queryByTestId("focus-gap-warning")).toBeNull();
     expect(within(screen.getByTestId("tile-rec")).getByTitle(/isn't mastered yet/)).toBeTruthy();
+    const gapMark = within(card).getByLabelText(/Recursion · .*isn't mastered yet/);
+    fireEvent.mouseEnter(gapMark.parentElement as HTMLElement);
+    expect(within(screen.getByTestId("focus-gap-warning")).getByText(/isn't mastered yet/)).toBeTruthy();
+    fireEvent.mouseLeave(gapMark.parentElement as HTMLElement);
+    expect(screen.queryByTestId("focus-gap-warning")).toBeNull();
     // Hovering another tile used to re-render the card for it, reflowing the
     // roadmap under the pointer.
     fireEvent.mouseEnter(screen.getByTestId("tile-var"));
@@ -582,6 +588,30 @@ describe("StudyHub generates the course's topic outline", () => {
         ],
         edges: [], stats: {},
       });
+    });
+
+    it("the next course's roadmap waits for ITS outline instead of flashing the fallback", async () => {
+      let landC2!: (topics: unknown[]) => void;
+      const c2Read = new Promise(res => { landC2 = topics => res({ topics, needs_refresh: false }); });
+      vi.mocked(getTopicChecklist).mockImplementation(
+        async (_u: string, cid: string) => (cid === "c2" ? c2Read : { topics: [], needs_refresh: false }) as never,
+      );
+      renderHub({ courses: [COURSE, COURSE2] });
+      await hubLoaded();
+      await waitFor(() => expect(roadmapText("Foundations")).toBeTruthy());
+      pickCourse("MA225");
+      // The graph is per SEMESTER, so Calculus's concepts are already in hand
+      // the moment the course changes — but the columns they belong in are
+      // not. The roadmap stays empty rather than stacking every concept under
+      // the layer fallback and renaming them a moment later.
+      await waitFor(() => expect(roadmapText("Foundations")).toBeNull());
+      expect(roadmapText("Core Methods")).toBeNull();
+      expect(screen.queryByTestId("tile-lim")).toBeNull();
+      // The course picker is still there to switch again with.
+      expect(screen.getAllByRole("button").some(b => b.getAttribute("aria-haspopup") === "listbox")).toBe(true);
+      await act(async () => { landC2([]); });
+      await waitFor(() => expect(screen.getByTestId("tile-lim")).toBeTruthy());
+      expect(roadmapText("Foundations")).toBeTruthy();
     });
 
     it("an outline that lands after the student left its course is not applied to the next one", async () => {
@@ -973,7 +1003,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
       fireEvent.focus(row);
       const list = screen.getByRole("dialog", { name: "Quick reviews" });
       const found = ["Variables", "Loops", "Recursion", "Arrays"].filter(n => within(list).queryByText(n));
-      expect(within(list).getByText("~4 min · CS101")).toBeTruthy();
+      expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
       fireEvent.blur(row);
       return found;
     };
@@ -1133,10 +1163,10 @@ describe("StudyHub shows only what its data backs", () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
-    expect(within(row).getByText("~4 min")).toBeTruthy();
+    expect(within(row).getByText("~ 4 min")).toBeTruthy();
     fireEvent.focus(row); // the list opens on focus as well as hover
     const list = screen.getByRole("dialog", { name: "Quick reviews" });
-    expect(within(list).getByText("~4 min · CS101")).toBeTruthy();
+    expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
     expect(within(list).queryByText(/on Exam 2/)).toBeNull();
     expect(within(list).getByText("Loops")).toBeTruthy();
     expect(within(list).getByText("Recursion")).toBeTruthy();

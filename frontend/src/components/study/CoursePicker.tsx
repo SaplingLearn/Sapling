@@ -24,8 +24,15 @@ function RowContent({ row, withMeta }: { row: Row; withMeta: "show" | "reserve" 
   return (
     <>
       <span style={{ width: 9, height: 9, borderRadius: "50%", background: row.color || "var(--text-muted)", flexShrink: 0 }} />
-      <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, whiteSpace: "nowrap" }}>{row.code}</span>
-      {row.name && <span style={{ flex: withMeta === "show" ? 1 : undefined, minWidth: 0, fontSize: "var(--fs-md)", fontWeight: 400, color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.name}</span>}
+      {/* Code and name are ONE line box, not two flex items. They are
+          different faces at different sizes (mono 14 over sans 13), so
+          centring a box each left them on baselines ~1px apart; as inline
+          children of one span they share the line's baseline by construction.
+          The ellipsis moves here with them. */}
+      <span style={{ flex: withMeta === "show" ? 1 : undefined, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ fontSize: "var(--fs-base)", fontWeight: 600 }}>{row.code}</span>
+        {row.name && <span style={{ marginLeft: 8, fontSize: "var(--fs-md)", fontWeight: 400, color: "var(--text-dim)" }}>{row.name}</span>}
+      </span>
       {row.meta && (
         // In the field this only RESERVES the room the menu's row needs.
         <span aria-hidden={withMeta === "reserve" || undefined} style={{ visibility: withMeta === "reserve" ? "hidden" : undefined, paddingLeft: 8, flexShrink: 0, fontSize: "var(--fs-xs)", fontWeight: 400, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{row.meta}</span>

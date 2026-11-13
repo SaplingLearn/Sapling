@@ -101,9 +101,12 @@ export function ReadinessBand(props: BandProps) {
     // with the selected concept, so centring never makes the figure jump. A
     // concept's missing prerequisite is marked on its roadmap tile.
     <div data-flip="band" style={{ position: "relative", alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "center", gap: 14, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
-        <span data-testid="readiness-pct" data-flip="pct" style={{ fontFamily: DISPLAY, fontSize: 42, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{measured ? `${pct}%` : "–"}</span>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingBottom: 2 }}>
+      {/* Centred, not bottom-aligned: the label and trend are a 51px stack
+          beside a 72px figure, and sharing a baseline with the digits left
+          that stack sitting ~5px below the figure's middle. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <span data-testid="readiness-pct" data-flip="pct" style={{ fontFamily: DISPLAY, fontSize: 72, fontWeight: 600, lineHeight: 1, letterSpacing: "-0.02em" }}>{measured ? `${pct}%` : "–"}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <span key={label} data-flip={`label:${label}`} data-flip-how="fade" style={{ fontSize: "var(--fs-base)", lineHeight: 1.3, fontWeight: 600 }}>{label}</span>
           {measured && props.note && <span key={props.note} data-testid="readiness-unlinked-note" data-flip={`note:${props.note}`} data-flip-how="fade" style={{ fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "var(--text-muted)" }}>{props.note}</span>}
           <Trend points={ready.trend} />
