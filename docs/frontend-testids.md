@@ -717,7 +717,8 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-mode-read` / `guide-mode-skim` | its two options |
 | `back-link` | the shared `BackLink` in the top bar; here it goes to the Study Guides home |
 | `guide-load-error` | the guide could not be loaded (`role="alert"`) |
-| `guide-generating` | the banner that follows the page while the guide is being written: the current label and "Step n of m" |
+| `guide-generating` | the banner that follows the page while the guide is being written: the current label over its progress bar |
+| `guide-generating-bar` | that bar (`role="progressbar"`, `aria-valuenow` 0 to 100) |
 | `guide-generation-error` | the banner when a generation stopped or was turned away (an Update with nothing new, the hourly limit), or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
 | `guide-generation-retry` | its "Retry" button: always present, as a `resume`, when the guide read again after the failure is `generating` or `failed`; otherwise it asks again for what failed (`update` / `regenerate`) and is absent when asking again cannot help (a 422, a stream error marked not retryable); disabled while a block is being regenerated |
 | `guide-generation-dismiss` | its "Dismiss" button: only when the guide, read again after the failure, is `ready` |

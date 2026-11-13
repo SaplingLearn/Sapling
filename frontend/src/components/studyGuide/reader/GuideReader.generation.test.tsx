@@ -83,7 +83,8 @@ describe("a guide that is still being written", () => {
 
     act(() => handlers().onStatus?.("Reading your 3 materials", { step: 1, total: 6 }));
     expect(banner).toHaveTextContent("Reading your 3 materials");
-    expect(banner).toHaveTextContent("Step 1 of 6");
+    expect(within(banner).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "17");
+    expect(banner).not.toHaveTextContent(/Step \d+ of \d+/);
 
     // The outline: header, takeaways and every section listed, none written.
     act(() => handlers().onOutline?.(outlineOf(finished)));
@@ -102,7 +103,7 @@ describe("a guide that is still being written", () => {
       handlers().onStatus?.("Writing section 2 of 4: Functions", { step: 3, total: 6 });
       handlers().onSection?.(sectionOf(finished, "s1"));
     });
-    expect(banner).toHaveTextContent("Step 3 of 6");
+    expect(within(banner).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByTestId("guide-block-s1-i2")).toBeInTheDocument();
     expect(screen.getByTestId("guide-outline-s1")).toHaveTextContent("Written");
     expect(within(screen.getByTestId("guide-section-s2")).getByText("Writing this section")).toBeInTheDocument();
@@ -128,18 +129,18 @@ describe("a guide that is still being written", () => {
     await waitFor(() => expect(mocks.generateGuide).toHaveBeenCalled());
     const shown = (step: number, total: number) => {
       act(() => handlers().onStatus?.("Working", { step, total }));
-      const bar = banner.querySelector<HTMLElement>("div[aria-hidden] > div");
-      return [banner.textContent?.match(/Step \d+ of \d+/)?.[0], bar?.style.width];
+      const track = within(banner).getByRole("progressbar");
+      return [track.getAttribute("aria-valuenow"), (track.firstElementChild as HTMLElement).style.width];
     };
 
     // As the server counts them: before the outline is planned the guide may
     // still have every section its depth allows, and then it has three.
-    expect(shown(1, 8)).toEqual(["Step 1 of 8", "13%"]);
-    expect(shown(2, 8)).toEqual(["Step 2 of 8", "25%"]);
-    expect(shown(3, 6)).toEqual(["Step 3 of 6", "50%"]);
-    expect(shown(4, 6)).toEqual(["Step 4 of 6", "67%"]);
-    expect(shown(5, 6)).toEqual(["Step 5 of 6", "83%"]);
-    expect(shown(6, 6)).toEqual(["Step 6 of 6", "100%"]);
+    expect(shown(1, 8)).toEqual(["13", "13%"]);
+    expect(shown(2, 8)).toEqual(["25", "25%"]);
+    expect(shown(3, 6)).toEqual(["50", "50%"]);
+    expect(shown(4, 6)).toEqual(["67", "67%"]);
+    expect(shown(5, 6)).toEqual(["83", "83%"]);
+    expect(shown(6, 6)).toEqual(["100", "100%"]);
   });
 
   it("shows the guide and says it is ready when the stream is only its `done`", async () => {
@@ -266,7 +267,7 @@ describe("another run holds the guide", () => {
     // This reader's own stream now: its status, then the missing section.
     act(() => handlers.onStatus?.("Writing section 3 of 4: Scope", { step: 4, total: 6 }));
     expect(screen.getByTestId("guide-generating")).toHaveTextContent("Writing section 3 of 4: Scope");
-    expect(screen.getByTestId("guide-generating")).toHaveTextContent("Step 4 of 6");
+    expect(screen.getByTestId("guide-generating-bar")).toHaveAttribute("aria-valuenow", "67");
 
     await act(async () => run.resolve(finishedGuide()));
     expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();

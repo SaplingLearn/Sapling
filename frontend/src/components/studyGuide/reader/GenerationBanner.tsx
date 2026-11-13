@@ -10,14 +10,19 @@ export function GenerationBanner({ label, step }: { label: string; step: Generat
     <div role="status" className={s.banner} data-testid="guide-generating">
       <div className={s.bannerRow}>
         <span className={s.spinner} aria-hidden="true" />
-        <span className={s.bannerLabel}>{label}</span>
-        {step && (
-          <span className={s.bannerStep}>
-            Step {step.step} of {step.total}
-          </span>
-        )}
+        <span className={`${s.bannerLabel} ${s.shimmerText}`}>{label}</span>
       </div>
-      <div className={s.bannerTrack} aria-hidden="true">
+      {/* The label already says which section is being written, so the bar
+          carries the overall progress on its own. */}
+      <div
+        className={s.bannerTrack}
+        role="progressbar"
+        aria-label="Guide progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        data-testid="guide-generating-bar"
+      >
         <div className={s.bannerBar} style={{ width: `${percent}%` }} />
       </div>
     </div>

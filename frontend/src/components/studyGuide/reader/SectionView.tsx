@@ -55,7 +55,9 @@ function MasteredSection({ section }: { section: Section }) {
 function SectionWaiting({ writing }: { writing: boolean }) {
   return (
     <div className={s.waiting}>
-      <span className={s.waitingLabel}>{writing ? "Writing this section" : "Queued"}</span>
+      <span className={writing ? `${s.waitingLabel} ${s.shimmerText}` : s.waitingLabel}>
+        {writing ? "Writing this section" : "Queued"}
+      </span>
       <SkeletonText lines={3} lineHeight={14} gap={12} lastWidth="70%" />
       <Skeleton height={writing ? 220 : 120} radius="var(--r-lg)" />
     </div>

@@ -38,9 +38,37 @@
 }
 .bannerRow { display: flex; align-items: center; gap: 12px; }
 .bannerLabel { flex: 1; min-width: 0; font-weight: 700; }
-.bannerStep { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
-.bannerTrack { height: 4px; border-radius: 2px; background: var(--sap-100); overflow: hidden; }
-.bannerBar { height: 100%; border-radius: 2px; background: var(--brand-forest); transition: width 520ms var(--ease); }
+.bannerTrack { height: 10px; border-radius: var(--r-full); background: var(--sap-100); overflow: hidden; }
+.bannerBar {
+  position: relative; height: 100%; border-radius: var(--r-full); overflow: hidden;
+  background: var(--brand-forest); transition: width 520ms var(--ease);
+}
+/* A band of light that crosses the filled part while the guide is written. */
+.bannerBar::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ink-0) 55%, transparent) 50%, transparent 70%);
+  background-size: 220% 100%;
+  animation: guideShimmer 1.6s linear infinite;
+}
+/* Text that is being written: the same band of light crosses the letters.
+   Without motion the gradient rests on the text's own colour. */
+.shimmerText {
+  background-image: linear-gradient(
+    100deg,
+    var(--shimmer-ink, var(--text)) 35%,
+    color-mix(in srgb, var(--shimmer-ink, var(--text)) 30%, var(--bg-panel)) 50%,
+    var(--shimmer-ink, var(--text)) 65%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: guideShimmer 1.6s linear infinite;
+}
+@keyframes guideShimmer { from { background-position: 110% 0; } to { background-position: -110% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .bannerBar::after { display: none; }
+  .shimmerText { background-image: none; -webkit-text-fill-color: currentColor; color: var(--shimmer-ink, var(--text)); }
+}
 .spinner {
   flex: none; width: 18px; height: 18px; border-radius: 50%;
   border: 2.5px solid var(--sap-100); border-top-color: var(--brand-forest);
@@ -143,7 +171,7 @@
 .readMarkOn { background: var(--sap-500); border-color: var(--sap-500); color: #fff; }
 
 .waiting { display: flex; flex-direction: column; gap: 12px; }
-.waitingLabel { font-family: var(--font-sans); font-size: var(--fs-md); font-weight: 700; color: var(--text-muted); }
+.waitingLabel { align-self: flex-start; font-family: var(--font-sans); font-size: var(--fs-md); font-weight: 700; color: var(--text-muted); --shimmer-ink: var(--text-muted); }
 .note { margin: 0; font-family: var(--font-sans); font-size: var(--fs-base); color: var(--text-dim); }
 .failed { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; font-family: var(--font-sans); }
 
