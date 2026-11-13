@@ -16,13 +16,14 @@
  *    "Advanced", and deeper is "Goal". Those are the design's own fallback
  *    labels for a course without categories, never a claim about the course.
  *  - Readiness = mean mastery % of a set of concepts. An exam's set comes from
- *    the same topic checklist: a topic lists the assessments it is on
- *    (`assessments`, upcoming ones only) and the graph node it describes
+ *    the same topic checklist: a topic lists the exams and quizzes it is on
+ *    (`assessment_ids`, past ones included) and the graph node it describes
  *    (`node_id`). When the checklist links the selected exam to at least one of
- *    the course's concepts, the readiness band is "Ready for <exam>" over those.
- *    Otherwise (no outline, a past exam, nothing linked) it is the whole
- *    course, and says so: "<course> Readiness", with a note that nothing is
- *    linked to that exam yet.
+ *    the course's concepts, the readiness band is over those: "Ready for
+ *    <exam>", or "<exam> coverage" once the exam's date has passed.
+ *    Otherwise (no outline, nothing linked) it is the whole course, and says
+ *    so: "<course> Readiness", with a note that nothing is linked to that
+ *    exam yet.
  *  - The same set (`examScope`) is what the roadmap sets the other concepts
  *    back against, and what Up Next is queued from (`examQueue`).
  *  - "+N% this week" = the summed `node_mastery_events` deltas from the last 7
@@ -331,21 +332,28 @@ export function readiness(topics: Concept[]) {
 export interface ExamTopic {
   /** The graph node this topic describes, when the names matched. */
   node_id: string | null;
-  /** The assessments this topic is on. The server attaches upcoming ones only. */
+  /** Every exam and quiz this topic is on, whatever its date. */
+  assessment_ids?: string[] | null;
+  /** The ones coming up (the server's 30-day window): what a payload from
+   *  before `assessment_ids` has to go on. */
   assessments?: { id: string }[] | null;
 }
+
+/** The exams a topic is on. A past exam is only in `assessment_ids`. */
+const examIdsOf = (topic: ExamTopic): string[] =>
+  topic.assessment_ids ?? (topic.assessments || []).map(a => a.id);
 
 /**
  * The concepts an exam covers, per the course's topic checklist: the graph
  * nodes of the topics that list this exam. Empty when the outline says nothing
- * about it (no outline, a past exam, no topic linked, or none of the linked
- * topics matched a graph node).
+ * about it (no outline, no topic linked, or none of the linked topics matched
+ * a graph node).
  */
 export function conceptIdsForExam(outline: ExamTopic[], examId: string | null | undefined): Set<string> {
   const out = new Set<string>();
   if (!examId) return out;
   for (const t of outline) {
-    if (t.node_id && (t.assessments || []).some(a => a.id === examId)) out.add(t.node_id);
+    if (t.node_id && examIdsOf(t).includes(examId)) out.add(t.node_id);
   }
   return out;
 }
@@ -378,7 +386,8 @@ export function examScope(
  * What the readiness band speaks for, and the label that says so.
  *
  * The selected exam's own concepts when the outline links it to at least one
- * concept of this course: "Ready for <exam>". Otherwise every concept of the
+ * concept of this course: "Ready for <exam>", or "<exam> coverage" for an exam
+ * already sat (nobody is getting ready for it). Otherwise every concept of the
  * course under the course's name, because a course-wide average under an
  * exam's title reads as a claim about that exam; the `note` then says the exam
  * has nothing linked, so its tab is not mistaken for one that changed nothing.
@@ -386,14 +395,15 @@ export function examScope(
 export function readinessBand(
   topics: Concept[],
   outline: ExamTopic[],
-  exam: { id: string; title: string } | null,
+  exam: Pick<Assessment, "id" | "title" | "iso"> | null,
   courseLabel: string,
+  today: Date,
 ): { concepts: Concept[]; label: string; note: string | null } {
   if (!exam) return { concepts: topics, label: `${courseLabel} Mastery`, note: null };
   const scope = examScope(topics, outline, exam);
-  return scope
-    ? { concepts: topics.filter(t => scope.ids.has(t.id)), label: `Ready for ${exam.title}`, note: null }
-    : { concepts: topics, label: `${courseLabel} Readiness`, note: `No topics are linked to ${exam.title} yet.` };
+  if (!scope) return { concepts: topics, label: `${courseLabel} Readiness`, note: `No topics are linked to ${exam.title} yet.` };
+  const label = daysTo(exam.iso, today) < 0 ? `${exam.title} coverage` : `Ready for ${exam.title}`;
+  return { concepts: topics.filter(t => scope.ids.has(t.id)), label, note: null };
 }
 
 /** Up Next: struggling first, then learning, then not started; a not-started

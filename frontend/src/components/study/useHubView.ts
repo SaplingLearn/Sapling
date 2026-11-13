@@ -65,7 +65,7 @@ export function useHubView(input: {
   const scope = React.useMemo(() => examScope(topics, outline, exam), [topics, outline, exam]);
   const upNext = React.useMemo(() => examQueue(topics, scope), [topics, scope]);
   const marks = conceptMarks(byId, upNext.queue[0] || null, st.topic, st.hover);
-  const band = React.useMemo(() => readinessBand(topics, outline, exam, label), [topics, outline, exam, label]);
+  const band = React.useMemo(() => readinessBand(topics, outline, exam, label, today), [topics, outline, exam, label, today]);
 
   // Reviews are picked over the whole course, whichever exam is selected.
   const reviews = React.useMemo(() => quickReviews(topics, today), [topics, today]);

@@ -248,6 +248,30 @@ describe("conceptIdsForExam", () => {
     expect([...conceptIdsForExam(outline, "e1")].sort()).toEqual(["a", "c"]);
     expect([...conceptIdsForExam(outline, "e2")].sort()).toEqual(["a", "b"]);
   });
+
+  it("reads assessment_ids, which names a past exam that assessments leaves out", () => {
+    // The server lists only what is coming up under `assessments`; "past" was
+    // sat last month and "far" is two months out.
+    const outline = [
+      { node_id: "a", assessment_ids: ["past", "soon"], assessments: on("soon") },
+      { node_id: "b", assessment_ids: ["far"], assessments: [] },
+      { node_id: "c", assessment_ids: [], assessments: [] },
+    ];
+    expect([...conceptIdsForExam(outline, "past")]).toEqual(["a"]);
+    expect([...conceptIdsForExam(outline, "soon")]).toEqual(["a"]);
+    expect([...conceptIdsForExam(outline, "far")]).toEqual(["b"]);
+  });
+
+  it("goes by assessment_ids alone when a topic has them, and by assessments when it does not", () => {
+    const outline = [
+      // An empty list is an answer ("on nothing"), not a missing field.
+      { node_id: "a", assessment_ids: [], assessments: on("e1") },
+      // A payload from before the field existed.
+      { node_id: "b", assessments: on("e1") },
+      { node_id: "c", assessment_ids: null, assessments: on("e1") },
+    ];
+    expect([...conceptIdsForExam(outline, "e1")].sort()).toEqual(["b", "c"]);
+  });
 });
 
 describe("readinessBand", () => {
@@ -255,11 +279,12 @@ describe("readinessBand", () => {
     [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
     [], "c1", NOW,
   );
-  const exam = { id: "e1", title: "Midterm" };
+  // NOW is Nov 8.
+  const exam = { id: "e1", title: "Midterm", iso: "2026-11-13" };
   const on = (...ids: string[]) => ids.map(id => ({ id }));
 
   it("is the exam's own concepts, named for the exam, when the outline links some", () => {
-    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }, { node_id: "c", assessments: on("e1") }], exam, "CS101");
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }, { node_id: "c", assessments: on("e1") }], exam, "CS101", NOW);
     expect(band.label).toBe("Ready for Midterm");
     expect(band.note).toBeNull();
     expect(band.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
@@ -274,7 +299,7 @@ describe("readinessBand", () => {
       // Linked, but to a node that is not one of this course's concepts.
       [{ node_id: "elsewhere", assessments: on("e1") }],
     ]) {
-      const band = readinessBand(cs, outline, exam, "CS101");
+      const band = readinessBand(cs, outline, exam, "CS101", NOW);
       expect(band.label).toBe("CS101 Readiness");
       // The course's number under an exam's tab says why it is the course's.
       expect(band.note).toBe("No topics are linked to Midterm yet.");
@@ -283,8 +308,21 @@ describe("readinessBand", () => {
   });
 
   it("with no exam selected it is the course's mastery", () => {
-    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101");
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101", NOW);
     expect(band).toEqual({ concepts: cs, label: "CS101 Mastery", note: null });
+  });
+
+  it("an exam already sat is its coverage, not something to be ready for", () => {
+    const outline = [{ node_id: "b", assessment_ids: ["e1"] }, { node_id: "c", assessment_ids: ["e1"] }];
+    const label = (iso: string) => readinessBand(cs, outline, { ...exam, iso }, "CS101", NOW).label;
+    expect(label("2026-11-07")).toBe("Midterm coverage");
+    expect(label("2026-11-08")).toBe("Ready for Midterm"); // today still counts
+    const past = readinessBand(cs, outline, { ...exam, iso: "2026-10-01" }, "CS101", NOW);
+    expect(past.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
+    expect(past.note).toBeNull();
+    // A past exam with nothing linked is still the course's, and says so.
+    expect(readinessBand(cs, [], { ...exam, iso: "2026-10-01" }, "CS101", NOW))
+      .toMatchObject({ label: "CS101 Readiness", note: "No topics are linked to Midterm yet." });
   });
 });
 

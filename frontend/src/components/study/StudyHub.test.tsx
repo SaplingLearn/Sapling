@@ -755,6 +755,34 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     expect(ALL.map(opacity)).toEqual(["0.6", "1", "1", "0.6"]);
   });
 
+  it("an exam already sat scopes the page like one ahead, and is worded as coverage", async () => {
+    // Exam 1 was a week ago. The server lists only upcoming work under a
+    // topic's `assessments`, so a past exam is linked through `assessment_ids`.
+    const before = await vi.mocked(api.getAllAssignments).getMockImplementation()!("u1");
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [
+      ...before.assignments,
+      { id: "e1", user_id: "u1", title: "Exam 1", due_date: iso(1), assignment_type: "exam", course_id: "c1" },
+    ] });
+    const on: Record<string, string[]> = { var: ["e1"], loop: ["e1", "e2"], rec: ["e2"], arr: [] };
+    vi.mocked(getTopicChecklist).mockResolvedValue({
+      topics: ALL.map(id => ({ ...topic(`t-${id}`, id, null, id, on[id].filter(e => e === "e2")), assessment_ids: on[id] })),
+      needs_refresh: false,
+    } as never);
+    renderHub();
+    // The default tab is still the next exam ahead.
+    await screen.findByText("Ready for Exam 2");
+    fireEvent.click(screen.getByRole("tab", { name: /Exam 1/ }));
+    expect(screen.getByText("Exam 1 coverage")).toBeTruthy();
+    expect(screen.queryByText(/^Ready for/)).toBeNull();
+    expect(screen.queryByTestId("readiness-unlinked-note")).toBeNull();
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("78%"); // mean of 96 and 60
+    expect(screen.getByTestId("roadmap-exam-caption").textContent).toBe("2 concepts on Exam 1");
+    expect(ALL.map(opacity)).toEqual(["1", "1", "0.6", "0.6"]);
+    expect(tileTitle("rec")).toBe("Not on Exam 1");
+    // Up Next is Loops, the one concept on it still to master.
+    expect(within(screen.getByTestId("focus-card")).getByText("Loops")).toBeTruthy();
+  });
+
   it("sets nothing back when no exam is selected at all", async () => {
     vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [] });
     linkExam2("loop", "rec");

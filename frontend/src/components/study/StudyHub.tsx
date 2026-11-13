@@ -15,7 +15,7 @@
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
  *   roadmap categories . getTopicChecklist, and refreshTopicChecklist when the
  *                        course has no current outline (routes/topic_checklist.py)
- *   exam coverage ...... the same checklist (a topic's assessments + node_id)
+ *   exam coverage ...... the same checklist (a topic's assessment_ids + node_id)
  *
  * Its three tool buttons leave for pages of their own (@/lib/toolHrefs):
  * Study Guide -> /study/guide, Flashcards -> /flashcards, Quiz -> /quiz.

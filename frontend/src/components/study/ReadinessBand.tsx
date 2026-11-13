@@ -46,7 +46,7 @@ function LegendChip({ status, count, on, onToggle }: { status: Status; count: nu
 }
 
 type BandProps = {
-  /** "Ready for <exam>", or the course's name when the figure is the course's. */
+  /** "Ready for <exam>" ("<exam> coverage" once it is past), or the course's name when the figure is the course's. */
   label: string;
   /** Says the selected exam has nothing linked, when the figure is the course's for that reason. */
   note: string | null;
