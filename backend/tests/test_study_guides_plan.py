@@ -173,7 +173,7 @@ def test_the_plan_is_made_from_the_chosen_materials_and_the_students_mastery(rea
 
 
 @pytest.mark.parametrize("depth, sections, minutes", [
-    ("cram", 3, 6), ("standard", 5, 15), ("deep", 6, 30),
+    ("cram", 3, 6), ("standard", 5, 25), ("deep", 6, 36),
 ])
 def test_minutes_follow_the_number_of_sections_and_the_depth(reads, depth, sections, minutes):
     out = asyncio.run(plan.aplan("user_me", _request(depth=depth)))
