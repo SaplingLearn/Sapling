@@ -32,17 +32,18 @@
 .banner {
   position: sticky; top: calc(var(--guide-bar, 80px) + 4px); z-index: 4;
   display: flex; flex-direction: column; gap: 10px; padding: 14px 18px;
-  border-radius: var(--r-lg); background: var(--sap-900); color: var(--ink-0);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  background: var(--bg-panel); color: var(--text);
+  box-shadow: var(--shadow-md);
 }
 .bannerRow { display: flex; align-items: center; gap: 12px; }
 .bannerLabel { flex: 1; min-width: 0; font-weight: 700; }
-.bannerStep { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--sap-200); white-space: nowrap; }
-.bannerTrack { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink-0) 16%, transparent); overflow: hidden; }
-.bannerBar { height: 100%; border-radius: 2px; background: var(--sap-300); transition: width 520ms var(--ease); }
+.bannerStep { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
+.bannerTrack { height: 4px; border-radius: 2px; background: var(--bg-inset); overflow: hidden; }
+.bannerBar { height: 100%; border-radius: 2px; background: var(--brand-forest); transition: width 520ms var(--ease); }
 .spinner {
   flex: none; width: 18px; height: 18px; border-radius: 50%;
-  border: 2.5px solid color-mix(in srgb, var(--ink-0) 25%, transparent); border-top-color: var(--sap-300);
+  border: 2.5px solid var(--bg-inset); border-top-color: var(--brand-forest);
   animation: guideSpin 0.9s linear infinite;
 }
 @keyframes guideSpin { to { transform: rotate(360deg); } }

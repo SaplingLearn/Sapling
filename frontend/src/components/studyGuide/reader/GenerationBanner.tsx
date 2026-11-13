@@ -3,7 +3,7 @@ import type { GenerationStep } from "@/lib/studyGuide/types";
 
 import s from "./reader.module.css";
 
-/** The dark strip that follows the page while the guide is being written. */
+/** The strip that follows the page while the guide is being written. */
 export function GenerationBanner({ label, step }: { label: string; step: GenerationStep | null }) {
   const percent = step && step.total > 0 ? Math.min(100, Math.round((step.step / step.total) * 100)) : 0;
   return (
