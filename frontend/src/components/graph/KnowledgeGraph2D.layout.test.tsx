@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
-import { RING_REACH, planBounds, planRadial, splitEdges } from "@/lib/graph/radialLayout";
+import { planBounds, planRadial, splitEdges } from "@/lib/graph/radialLayout";
 import { KnowledgeGraph2D } from "./KnowledgeGraph2D";
 
 afterEach(cleanup);
@@ -68,18 +68,23 @@ function positions(container: HTMLElement): Map<string, { x: number; y: number }
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
 describe("KnowledgeGraph2D — where concepts settle", () => {
-  it("seats thirty unlinked concepts on three rings round their course, not one wide wheel", () => {
+  it("settles thirty unlinked concepts on their planned seats, not on rings round their course", () => {
     const nodes = [root("c1"), ...concepts(30)];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={1240} height={744} />);
     const at = positions(container);
-    const centre = at.get("root-c1")!;
-    expect(centre).toEqual({ x: 620, y: 372 });
-    const radii = nodes.slice(1).map((n) => dist(at.get(n.id)!, centre)).sort((a, b) => a - b);
-    // Planned at 96, 164 and 232 (6, 10 and 14 concepts); the simulation lets
-    // them ease outward by a few units and no more.
-    const near = (r: number) => radii.filter((d) => d >= r - 4 && d <= r + 14).length;
-    expect([near(96), near(164), near(232)]).toEqual([6, 10, 14]);
-    expect(radii[radii.length - 1]).toBeLessThan(232 + 14);
+    const plan = planRadial(nodes, [], 1240, 744);
+    const centre = plan.centers.get("root-c1")!;
+    expect(dist(at.get("root-c1")!, centre)).toBeLessThan(1e-6);
+    for (const n of nodes.slice(1)) {
+      const o = plan.orbit.get(n.id)!;
+      const seat = { x: centre.x + Math.cos(o.angle) * o.radius, y: centre.y + Math.sin(o.angle) * o.radius };
+      // The simulation leaves a concept on its seat, give or take a hair.
+      expect(dist(at.get(n.id)!, seat), n.id).toBeLessThan(2);
+    }
+    // Rings would leave a handful of distances from the root; nearly every
+    // concept has its own.
+    const radii = new Set(nodes.slice(1).map((n) => Math.round(dist(at.get(n.id)!, centre) / 4)));
+    expect(radii.size).toBeGreaterThanOrEqual(20);
   });
 
   it.each([5, 12, 30, 60])("leaves every one of %i concepts room for its caption", (count) => {
@@ -110,16 +115,17 @@ describe("KnowledgeGraph2D — where concepts settle", () => {
     }
   });
 
-  it("is as compact for a long prerequisite chain as for unlinked concepts", () => {
+  it("coils a long prerequisite chain up, so the course still opens whole at full size", () => {
     const nodes = [root("c1"), ...concepts(30)];
     const edges = chain(nodes.slice(1).map((n) => n.id));
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={1240} height={744} />);
-    const at = positions(container);
-    const centre = at.get("root-c1")!;
-    const furthest = Math.max(...nodes.slice(1).map((n) => dist(at.get(n.id)!, centre)));
-    // One ring per level put the thirtieth concept some 2,000 units out.
-    expect(furthest).toBeLessThan(232 + RING_REACH.x);
-    // …so the whole course opens at full size.
+    // Laid out link after link, the thirtieth concept would sit some 3,500 units out.
+    for (const [id, p] of positions(container)) {
+      expect(p.x, id).toBeGreaterThan(0);
+      expect(p.x, id).toBeLessThan(1240);
+      expect(p.y, id).toBeGreaterThan(0);
+      expect(p.y, id).toBeLessThan(744);
+    }
     expect(viewTransform(container)).toBe("translate(0, 0) scale(1)");
   });
 
@@ -130,7 +136,7 @@ describe("KnowledgeGraph2D — where concepts settle", () => {
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={1240} height={744} legible />);
     const at = positions(container);
     const plan = planRadial(nodes, splitEdges(nodes, edges).concept, 1240, 744);
-    for (const [id, c] of plan.centers) expect(dist(at.get(id)!, c), id).toBeLessThan(RING_REACH.y);
+    for (const [id, c] of plan.centers) expect(dist(at.get(id)!, c), id).toBeLessThan(6);
   });
 });
 
@@ -197,7 +203,7 @@ describe("KnowledgeGraph2D — re-planning", () => {
     ["legible", { legible: true }],
   ])("carries each course to its new place when the window is re-measured (%s)", (_name, props) => {
     const nodes = [root("c1"), root("c2"), root("c3"), ...concepts(10, "c1"), ...concepts(10, "c2"), ...concepts(10, "c3")];
-    // Squarish: the courses sit in a ring. Then wide: they sit in a row.
+    // Squarish: the courses sit in two rows. Then wide: they sit in one.
     const shown = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={700} height={700} {...props} />);
     const before = positions(shown.container);
     shown.rerender(<KnowledgeGraph2D nodes={nodes} edges={[]} width={2000} height={500} {...props} />);

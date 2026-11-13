@@ -184,8 +184,9 @@ describe("KnowledgeGraph2D links — the hand-drawn bar", () => {
   it("draws the course's own links faint and thin, in the same colour", () => {
     const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={500} height={400} />);
     const anchors = edgesOf(container).filter(isAnchor);
-    // One to each concept nothing leads into: a, and d (only `related` to a).
-    expect(anchors).toHaveLength(2);
+    // One, to the concept the course starts from: a. (d is only `related`
+    // to a, so it hangs off a rather than starting a strand of its own.)
+    expect(anchors).toHaveLength(1);
     for (const e of anchors) {
       expect(e).toHaveAttribute("stroke", "#3e6f8a");
       expect(Number(e.getAttribute("stroke-opacity"))).toBe(0.16);
@@ -197,7 +198,7 @@ describe("KnowledgeGraph2D links — the hand-drawn bar", () => {
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={500} height={400} colorMode="mastery" />,
     );
     const faint = edgesOf(mastery.container).filter(isAnchor);
-    expect(faint).toHaveLength(2);
+    expect(faint).toHaveLength(1);
     for (const e of faint) expect(Number(e.getAttribute("stroke-opacity"))).toBe(0.16);
   });
 

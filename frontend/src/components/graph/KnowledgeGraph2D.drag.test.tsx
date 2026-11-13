@@ -286,7 +286,11 @@ describe("KnowledgeGraph2D — dragging a course", SLOW, () => {
     );
     const before = positions(container);
     const from = before.get("root-c1")!;
-    const to = { x: from.x - 30, y: from.y + 180 };
+    // Away from the other course, so the two never meet, and a little to one side.
+    const other = before.get("root-c2")!;
+    const len = dist(from, other);
+    const [ux, uy] = [(from.x - other.x) / len, (from.y - other.y) / len];
+    const to = { x: from.x + ux * 180 - uy * 30, y: from.y + uy * 180 + ux * 30 };
     drag(container, "root-c1", to);
     const after = positions(container);
     expect(dist(after.get("root-c1")!, to)).toBeLessThan(1);
@@ -326,9 +330,15 @@ describe("KnowledgeGraph2D — dragging a course", SLOW, () => {
     drag(container, "root-c1", target);
     const after = positions(container);
     const plan = layout.planRadial(nodes, [], W, H);
-    const reach = Math.max(...[...plan.orbit.values()].map((o) => o.radius)) + 32;
-    // Clear of each other: both courses' concepts plus a gap.
-    expect(dist(after.get("root-c1")!, after.get("root-c2")!)).toBeGreaterThan(2 * reach + 40 - 2);
+    const [a, b] = ["root-c1", "root-c2"].map((id) => {
+      const at = after.get(id)!;
+      const box = plan.boxes.get(id)!;
+      return { minX: at.x + box.minX, maxX: at.x + box.maxX, minY: at.y + box.minY, maxY: at.y + box.maxY };
+    });
+    // Clear of each other: the two courses' planned boxes, a gap apart.
+    const gapX = Math.max(a.minX - b.maxX, b.minX - a.maxX);
+    const gapY = Math.max(a.minY - b.maxY, b.minY - a.maxY);
+    expect(Math.max(gapX, gapY)).toBeGreaterThan(40 - 2);
     // No two concepts overlap, across the two courses.
     const pts = [...after].filter(([id]) => !id.startsWith("root-")).map(([, p]) => p);
     expect(closest(pts)).toBeGreaterThanOrEqual(CLEAR - 1);

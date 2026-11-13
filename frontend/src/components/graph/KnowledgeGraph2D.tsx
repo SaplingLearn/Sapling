@@ -50,7 +50,6 @@ import {
   planBounds,
   planRadial,
   pushCoursesApart,
-  reachByCourse,
   splitEdges,
   type RadialPlan,
 } from "@/lib/graph/radialLayout";
@@ -149,11 +148,12 @@ const ROOT_CLEARANCE = 58;
 /**
  * Collide radius of a concept: two concepts keep at least twice this between
  * their centres, room for their marks and captions. It is under half the
- * planned spacing (68 between rings), so concepts on their planned seats
- * never touch, and only a move pushes anything aside.
+ * closest the plan seats two concepts (one above the other, SPACE_Y apart),
+ * so concepts on their planned seats never touch, and only a move pushes
+ * anything aside.
  */
 const CONCEPT_CLEARANCE = 32;
-/** Space kept between two courses' outermost concepts' clearances. */
+/** Space kept between two courses' planned boxes. */
 const COURSE_GAP = 40;
 /** The share of two courses' overlap closed each tick while pushing them apart. */
 const COURSE_PUSH = 0.15;
@@ -487,8 +487,8 @@ function KnowledgeGraph2DImpl({
     [nodes, edges],
   );
 
-  // Radial plan (rings per course) — read by the orbit force every tick.
-  const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map() });
+  // The plan (each concept's seat round its course) — read by the orbit force every tick.
+  const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map(), boxes: new Map() });
   // Course roots the student dragged keep their spot across re-plans.
   const movedRootsRef = React.useRef(new Set<string>());
   // Where each course root rests: its planned centre, or where the student
@@ -533,16 +533,16 @@ function KnowledgeGraph2DImpl({
     // only real concept-to-concept edges join the simulation and the render.
     const { concept: conceptEdges } = splitEdges(nodes, edges);
     const plan = planRadial(nodes, conceptEdges, width, height);
-    // A course's size for keeping courses apart is its planned rings: a
+    // A course's size for keeping courses apart is its planned box: a
     // concept the student carried far off does not make its course bigger.
-    const courseReach = reachByCourse(plan.orbit);
+    const courseBox = plan.boxes;
     for (const [id, seat] of placedRef.current) {
       const o = plan.orbit.get(id);
       if (o) Object.assign(o, seat);
     }
     planRef.current = plan;
 
-    // Open on the whole graph: when the planned rings overflow the window,
+    // Open on the whole graph: when the planned courses overflow the window,
     // zoom out to fit — until the student pans or zooms themselves. Only at
     // the default zoom: a caller that asks for its own opening zoom (quiz
     // home's neighbourhood fragment) is framed on where its nodes actually
@@ -685,7 +685,7 @@ function KnowledgeGraph2DImpl({
             id: r.id,
             x: r.fx!,
             y: r.fy!,
-            reach: Math.max(ROOT_CLEARANCE, (courseReach.get(r.id) ?? 0) + CONCEPT_CLEARANCE),
+            box: courseBox.get(r.id) ?? { minX: -ROOT_CLEARANCE, minY: -ROOT_CLEARANCE, maxX: ROOT_CLEARANCE, maxY: ROOT_CLEARANCE },
             held: r.id === held,
           })),
           COURSE_GAP,
@@ -750,18 +750,14 @@ function KnowledgeGraph2DImpl({
   // Legible focus: the hovered concept and its direct neighbours — from the
   // props (concept edges + the course's inner-circle links), never the sim.
   const focusId = hoverFocusId(legible, hovered);
-  // The same radial plan the simulation uses, recomputed from props for render.
+  // The same plan the simulation uses, recomputed from props for render
+  // (each course's plan is remembered, so this costs only the packing).
   const planned = React.useMemo(() => {
     const { concept } = splitEdges(nodes, edges);
     const plan = planRadial(nodes, concept, width, height);
-    // Each course's outermost ring, for its region label.
-    const outer = new Map<string, number>();
-    for (const o of plan.orbit.values()) {
-      if (o.rootId) outer.set(o.rootId, Math.max(outer.get(o.rootId) ?? 0, o.radius));
-    }
     const roots = nodes.filter((n) => n.is_subject_root);
     const rootOfCourse = new Map(roots.map((r) => [r.course_id, r.id]));
-    return { concept, plan, outer, roots, rootOfCourse };
+    return { concept, plan, roots, rootOfCourse };
   }, [nodes, edges, width, height]);
   // The host's key asked to zoom to a course (Dashboard: click a row).
   const zoomSeq = zoomRequest?.seq;
@@ -781,13 +777,16 @@ function KnowledgeGraph2DImpl({
       live && live.x != null && live.y != null
         ? { x: live.x, y: live.y }
         : rootId ? planned.plan.centers.get(rootId) : undefined;
-    if (!rootId || !c) return;
-    const reach = (planned.outer.get(rootId) ?? 60) + 50;
-    // Fit the course, but never so far out that its labels are still faded.
-    const fit = Math.min(width / (reach * 2), height / (reach * 2));
+    const box = rootId ? planned.plan.boxes.get(rootId) : undefined;
+    if (!rootId || !c || !box) return;
+    // Fit the course's planned box with a margin, centred on it, but never so
+    // far out that its labels are still faded.
+    const fit = Math.min(width / (box.maxX - box.minX + 100), height / (box.maxY - box.minY + 100));
     const scale = Math.min(MAX_ZOOM, Math.max(1.05, fit));
+    const mx = c.x + (box.minX + box.maxX) / 2;
+    const my = c.y + (box.minY + box.maxY) / 2;
     viewTouchedRef.current = true;
-    easeView({ tx: width / 2 - c.x * scale, ty: height / 2 - c.y * scale, scale });
+    easeView({ tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale });
     // Only a new request zooms; layout changes alone don't re-zoom.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomSeq, zoomCourse]);
