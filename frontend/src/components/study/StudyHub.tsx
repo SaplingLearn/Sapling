@@ -40,6 +40,7 @@ import { Roadmap } from "./Roadmap";
 import s from "./StudyHub.module.css";
 import type { Assessment } from "./studyModel";
 import { useDatesEditor, useSelectAddedExam } from "./useDatesEditor";
+import { useFlip } from "./useFlip";
 import { COURSE_PICKED, examPicked, useHubState, type HubState, type SetHub } from "./useHubState";
 import { useHubView } from "./useHubView";
 import { useConceptGraph, useCourseOutline, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
@@ -152,6 +153,10 @@ function HubPage(props: {
   };
   const startReviews = () => nav.leaveTo(nav.cardsHref(view.reviews.map(x => x.t.name)));
   const { focus } = view;
+  // A change of exam moves the band and the Up Next block to their new state
+  // (the roadmap below does the same, on the same clock: ./hubMotion.ts).
+  const readiness = React.useRef<HTMLElement | null>(null);
+  useFlip(readiness, view.exam?.id ?? "");
 
   return (
     <div className={s.shell} style={{ background: "var(--bg)" }}>
@@ -163,8 +168,11 @@ function HubPage(props: {
           bellOpen={st.menu === "bell"} onBell={open => set({ menu: open ? "bell" : null })}
           onSelectExam={selectExam} onPickDeadline={pickDeadline} onAdd={() => openDates(true)} onManage={() => openDates(false)} />
 
-        {/* Re-keyed on the course and exam, so the band replays its entrance for each. */}
-        <section aria-label="Readiness" key={`${cid}:${view.exam?.id ?? ""}`} className={`${s.areaReady} ${s.readyGrid} ${s.examEnter}`} style={{ padding: "16px 0", borderBottom: "1px solid var(--border)" }}>
+        {/* Re-keyed on the course only: a course change turns the page (the
+            entrance), a change of exam is tweened in place by useFlip. Positioned
+            and packed to the top because useFlip measures against this box and
+            tweens its height. */}
+        <section ref={readiness} aria-label="Readiness" key={cid} className={`${s.areaReady} ${s.readyGrid} ${s.paneEnter}`} style={{ position: "relative", alignContent: "start", padding: "16px 0", borderBottom: "1px solid var(--border)" }}>
           <ReadinessBand label={view.band.label} note={view.band.note} concepts={view.band.concepts} ready={view.ready}
             selectedId={view.sel?.id ?? null} level={st.lvl} onSelect={id => set({ topic: id })} onLevel={lvl => set({ lvl })} />
           {focus

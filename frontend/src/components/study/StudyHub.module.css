@@ -48,14 +48,11 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* The main column, re-keyed on the selected course: a course switch reads as
-   the page turning rather than as a flicker. */
+/* The main column (the exam tabs, the readiness + Up Next block, the roadmap),
+   re-keyed on the selected course: a course switch reads as the page turning
+   rather than as a flicker. A change of exam TAB is not an entrance: what is
+   on the page moves to its new state (useFlip.ts, on hubMotion.ts's clock). */
 .paneEnter { animation: studyPaneEnter 260ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
-
-/* The readiness + focus block, re-keyed on the selected exam tab. Shorter than
-   the course swap — the surrounding chrome doesn't change, so a long one reads
-   as lag. */
-.examEnter { animation: studyPaneEnter 190ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
 
 /* Roadmap columns arrive left to right. The delay is set inline per column
    (--i), capped there so a long roadmap doesn't trail. */

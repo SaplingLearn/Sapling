@@ -2,9 +2,16 @@
 /**
  * Animates a change in which keyed items (`data-flip="<key>"`) a container
  * shows, so it reads as one layout rearranging: items that stay slide to their
- * new place, new ones fade and rise in, gone ones fade and shrink out, and the
- * container's height follows. The rule is ./flipPlan.ts; this measures and
- * plays it.
+ * new place, new ones fade in, gone ones fade out, and the container's height
+ * follows. An item whose key carries its content (a label, a count) is
+ * crossfaded in place when that content changes: the old one goes as the new
+ * one comes. Such an item needs the same string as its React `key`, so the
+ * old element is taken out whole instead of being rewritten into the new one
+ * (there would be nothing left to fade out). The rule is ./flipPlan.ts; this
+ * measures and plays it, on the hub's switch clock (./hubMotion.ts).
+ *
+ * A new item also rises 10px and a gone one shrinks a little, unless it is
+ * marked `data-flip-how="fade"` (text and small marks, which must not move).
  *
  * It only animates when `trigger` changes, and never under reduced motion.
  * Everything runs through the Web Animations API, which leaves no inline
@@ -13,14 +20,17 @@
  *
  * Each item's box is read with offsetLeft/offsetTop, in its offset parent's
  * space, so a tracked item that holds tracked items must be positioned (and
- * so must the container). Offsets ignore transforms: a measurement taken
- * mid-animation is still the resting layout.
+ * so must the container), with no other positioned element in between.
+ * Offsets ignore transforms: a measurement taken mid-animation is still the
+ * resting layout. The container's rows must not stretch with its height
+ * (`align-content: start` on a grid), or tweening the height would move them.
  */
 import React from "react";
 import { flipPlan, type FlipItem } from "./flipPlan";
+import { HUB_EASE, HUB_STAGGER_MS, HUB_SWITCH_MS, reducedMotion } from "./hubMotion";
 
-type Seen = FlipItem & { el: HTMLElement };
-type Layout = { trigger: string; height: number; items: Map<string, Seen> };
+type Seen = FlipItem & { el: HTMLElement; fade: boolean };
+type Layout = { root: HTMLElement; trigger: string; height: number; items: Map<string, Seen> };
 type Live = { anims: Animation[]; ghosts: HTMLElement[] };
 
 const keyOf = (el: Element | null | undefined) => el?.getAttribute("data-flip") ?? null;
@@ -28,14 +38,15 @@ const keyOf = (el: Element | null | undefined) => el?.getAttribute("data-flip") 
 function measure(root: HTMLElement, trigger: string): Layout {
   const items = new Map<string, Seen>();
   for (const el of root.querySelectorAll<HTMLElement>("[data-flip]")) {
-    const box = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
-    items.set(keyOf(el)!, { el, box, parent: keyOf(el.parentElement?.closest("[data-flip]")) });
+    items.set(keyOf(el)!, {
+      el,
+      box: { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight },
+      parent: keyOf(el.parentElement?.closest("[data-flip]")),
+      fade: el.getAttribute("data-flip-how") === "fade",
+    });
   }
-  return { trigger, height: root.offsetHeight, items };
+  return { root, trigger, height: root.offsetHeight, items };
 }
-
-const canAnimate = (root: HTMLElement) =>
-  typeof root.animate === "function" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** A copy of an item that is gone, back where it was, out of reach of pointer, focus and tests. */
 function ghostOf(was: Seen, host: HTMLElement): HTMLElement {
@@ -53,33 +64,38 @@ function ghostOf(was: Seen, host: HTMLElement): HTMLElement {
   return ghost;
 }
 
-function play(root: HTMLElement, prev: Layout, now: Layout, live: Live) {
-  const css = getComputedStyle(root);
-  const easing = css.getPropertyValue("--ease").trim() || "ease-out";
-  const ms = (token: string, fallback: number) => parseFloat(css.getPropertyValue(token)) || fallback;
-  const slow = ms("--dur-slow", 420);
-  const quick = ms("--dur", 220);
-  const run = (el: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) => {
-    const anim = el.animate(frames, { easing, ...timing });
+function play(prev: Layout, now: Layout, live: Live) {
+  const run = (el: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions = {}) => {
+    const anim = el.animate(frames, { duration: HUB_SWITCH_MS, easing: HUB_EASE, ...timing });
     live.anims.push(anim);
     return anim;
   };
   const plan = flipPlan(prev.items, now.items);
   for (const m of plan.move) {
-    run(now.items.get(m.key)!.el, [{ transform: `translate(${m.dx}px, ${m.dy}px)` }, { transform: "none" }], { duration: slow });
+    run(now.items.get(m.key)!.el, [{ transform: `translate(${m.dx}px, ${m.dy}px)` }, { transform: "none" }]);
   }
-  // From hidden and 10px low (the hub's studyPaneEnter) to wherever the item rests.
-  plan.enter.forEach((key, i) => {
-    run(now.items.get(key)!.el, [{ opacity: 0, transform: "translateY(10px)", offset: 0 }], { duration: quick, delay: Math.min(i, 6) * 30, fill: "backwards" });
-  });
+  // One keyframe each: the other end is wherever the item rests (or rested).
+  for (const key of plan.enter) {
+    const item = now.items.get(key)!;
+    // An entrance of the item's own (a roadmap column's, in CSS) would run
+    // over this one and past its end: this one takes its place.
+    for (const own of item.el.getAnimations?.() ?? []) own.cancel();
+    if (item.fade) run(item.el, [{ opacity: 0, offset: 0 }]);
+    // The hub's studyPaneEnter, a beat behind and ending with everything else.
+    else run(item.el, [{ opacity: 0, transform: "translateY(10px)", offset: 0 }], { delay: HUB_STAGGER_MS, duration: HUB_SWITCH_MS - HUB_STAGGER_MS, fill: "backwards" });
+  }
   for (const key of plan.leave) {
     const was = prev.items.get(key)!;
-    const ghost = ghostOf(was, was.parent ? now.items.get(was.parent)!.el : root);
+    // Still on the page: React rewrote this element into its successor (no
+    // `key`), so what it used to show is gone and there is nothing to copy.
+    if (was.el.isConnected) continue;
+    const ghost = ghostOf(was, was.parent ? now.items.get(was.parent)!.el : now.root);
     live.ghosts.push(ghost);
-    run(ghost, [{ opacity: 0, transform: "scale(0.94)", offset: 1 }], { duration: quick, fill: "forwards" }).onfinish = () => ghost.remove();
+    const gone = was.fade ? { opacity: 0, offset: 1 } : { opacity: 0, transform: "scale(0.94)", offset: 1 };
+    run(ghost, [gone], { fill: "forwards" }).onfinish = () => ghost.remove();
   }
   if (Math.abs(prev.height - now.height) >= 1) {
-    run(root, [{ height: `${prev.height}px` }, { height: `${now.height}px` }], { duration: slow });
+    run(now.root, [{ height: `${prev.height}px` }, { height: `${now.height}px` }]);
   }
 }
 
@@ -98,27 +114,37 @@ export function useFlip(root: React.RefObject<HTMLElement | null>, trigger: stri
     const el = root.current;
     if (!el) return;
     const prev = last.current;
-    const changed = prev !== null && prev.trigger !== trigger;
+    // A container that was replaced (re-keyed) starts over: it has its own entrance.
+    const changed = prev !== null && prev.root === el && prev.trigger !== trigger;
     // Before measuring: a height still animating would be read as the new height.
     if (changed) settle();
     const now = measure(el, trigger);
     last.current = now;
-    if (!prev || !changed || !canAnimate(el)) return;
+    if (!prev || !changed || typeof el.animate !== "function" || reducedMotion()) return;
     // The new layout is already in place; a browser that refuses a keyframe
     // must cost the motion, not the page.
-    try { play(el, prev, now, live.current); } catch { settle(); }
+    try { play(prev, now, live.current); } catch { settle(); }
   });
 
-  // A resize moves everything without a commit: take the layout again, or the
-  // next change would slide the items in from where they no longer are.
+  // The layout also moves without a commit here: on a resize, and when a
+  // child re-renders by itself (the figure counting changes its own width).
+  // Take it again then, or the next change would start from where the items
+  // no longer are. Watched from the parent, which outlives a re-keyed container.
   React.useEffect(() => {
-    const el = root.current;
-    if (!el?.parentElement || typeof ResizeObserver !== "function") return;
-    const observer = new ResizeObserver(() => {
-      if (last.current) last.current = measure(el, last.current.trigger);
-    });
-    observer.observe(el.parentElement);
-    return () => observer.disconnect();
+    const parent = root.current?.parentElement;
+    if (!parent) return;
+    const again = () => {
+      const el = root.current;
+      if (el && last.current) last.current = measure(el, last.current.trigger);
+    };
+    const resized = typeof ResizeObserver === "function" ? new ResizeObserver(again) : null;
+    resized?.observe(parent);
+    const mutated = new MutationObserver(again);
+    mutated.observe(parent, { childList: true, characterData: true, subtree: true });
+    return () => {
+      resized?.disconnect();
+      mutated.disconnect();
+    };
   }, [root]);
 
   React.useEffect(() => settle, [settle]);

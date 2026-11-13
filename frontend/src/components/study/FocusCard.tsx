@@ -8,6 +8,10 @@
  * It follows the CLICKED concept, never the hovered one: it is in flow above
  * the roadmap and changes height with the concept, so previewing the hovered
  * tile here pushed the whole roadmap up or down under the pointer.
+ *
+ * On a change of exam the block stays where it is and its content is
+ * crossfaded by the hub's useFlip (the `data-flip` parts; the body's key
+ * carries the concept, so a new concept is a new body).
  */
 import React from "react";
 import Link from "next/link";
@@ -91,18 +95,18 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
     { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]) },
   ];
   return (
-    <div data-testid="focus-card" className={s.focus} style={{ position: "relative", ...BLOCK, minWidth: 0 }}>
+    <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={s.focus} style={{ position: "relative", ...BLOCK, minWidth: 0 }}>
       {/* The line stays while a clicked concept is shown (only its second half
           is about the queue), so picking one does not change the block's height. */}
       {masteredExam && (
-        <p data-testid="focus-fallback-note" style={FALLBACK_NOTE}>
+        <p key={`${masteredExam}:${upNext}`} data-testid="focus-fallback-note" data-flip={`focus-note:${masteredExam}:${upNext}`} data-flip-how="fade" style={FALLBACK_NOTE}>
           Everything on {masteredExam} is mastered.{upNext && " From the rest of the course:"}
         </p>
       )}
       {/* One row, like the Dashboard's lead plan row: the concept on the
           left, the ways straight into it on the right. Stacked once the
           block is too narrow for that (StudyHub.module.css). */}
-      <div className={s.focusBody}>
+      <div key={`${concept.id}:${upNext}`} className={s.focusBody} data-flip={`focus-body:${concept.id}:${upNext}`} data-flip-how="fade">
         <div className={s.focusMain}>
           <span style={MICRO_ON_DARK}>{upNext ? "Up Next" : concept.group}</span>
           <div className={s.focusConcept}>
@@ -135,7 +139,7 @@ export function FocusEmpty({ hasConcepts }: { hasConcepts: boolean }) {
     ? ["Every concept is mastered", "Keep them fresh with a mixed quiz before the exam."]
     : ["No concepts yet", "Upload course material in the Library to build this course's roadmap."];
   return (
-    <div className={s.focusEmpty} style={{ ...BLOCK, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+    <div key={String(hasConcepts)} className={s.focusEmpty} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade" style={{ ...BLOCK, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
       <span style={{ fontFamily: DISPLAY, fontSize: "var(--fs-xl)", fontWeight: 600 }}>{title}</span>
       <span style={{ fontSize: "var(--fs-md)", color: "rgba(255,255,255,0.86)" }}>{body}</span>
     </div>

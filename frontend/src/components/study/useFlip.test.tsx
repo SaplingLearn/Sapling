@@ -8,18 +8,20 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
+import { HUB_EASE, HUB_STAGGER_MS, HUB_SWITCH_MS } from "./hubMotion";
 import { useFlip } from "./useFlip";
 
 type Columns = Record<string, Record<string, number>>;
 type Started = { el: HTMLElement; frames: Keyframe[]; timing: KeyframeAnimationOptions; anim: { cancel: ReturnType<typeof vi.fn>; onfinish: null | (() => void) } };
 
-/** Columns side by side (216px apart), each with tiles at the given y. */
-function Board({ columns, trigger, height = 0 }: { columns: Columns; trigger: string; height?: number }) {
+/** Columns side by side (216px apart), each with tiles at the given y; `label` is a line of text keyed on what it says. */
+function Board({ columns, trigger, height = 0, label, keyed = true, rootKey = "" }: { columns: Columns; trigger: string; height?: number; label?: string; keyed?: boolean; rootKey?: string }) {
   const root = React.useRef<HTMLDivElement | null>(null);
   useFlip(root, trigger);
   return (
     <section>
-      <div ref={root} data-testid="root" data-h={height}>
+      <div ref={root} key={rootKey} data-testid="root" data-h={height}>
+        {label && <span key={keyed ? label : "label"} data-flip={`label:${label}`} data-flip-how="fade" data-x={90} data-y={4}>{label}</span>}
         {Object.entries(columns).map(([col, tiles], i) => (
           <div key={col} data-flip={`col:${col}`} data-x={i * 216} className="colEnter">
             {Object.entries(tiles).map(([tile, y]) => (
@@ -111,25 +113,73 @@ describe("useFlip", () => {
     expect(ghosts(root)).toEqual([column]);
   });
 
-  it("raises in what came into a column that was there, and leaves a new column to its own entrance", () => {
+  it("raises in what came: a tile into its column, a new column whole", () => {
     const { rerender, getByTestId } = render(<Board columns={EXAM} trigger="e1" />);
     rerender(<Board columns={WHOLE} trigger="" />);
     const root = getByTestId("root");
+    const a = root.querySelector<HTMLElement>('[data-flip="col:a"]')!;
     const entered = started.filter(s => s.timing.fill === "backwards");
-    expect(entered.map(s => s.el)).toEqual([getByTestId("tile-3")]);
-    expect(entered[0].frames).toEqual([{ opacity: 0, transform: "translateY(10px)", offset: 0 }]);
-    // Column a and its tiles: nothing from here.
-    const a = root.querySelector('[data-flip="col:a"]')!;
-    expect([a, getByTestId("tile-1"), getByTestId("tile-2")].flatMap(startedOn)).toEqual([]);
+    expect(entered.map(s => s.el)).toEqual([a, getByTestId("tile-3")]);
+    for (const s of entered) expect(s.frames).toEqual([{ opacity: 0, transform: "translateY(10px)", offset: 0 }]);
+    // Column a's tiles come in with it, not each on its own.
+    expect([getByTestId("tile-1"), getByTestId("tile-2")].flatMap(startedOn)).toEqual([]);
     expect(ghosts(root)).toEqual([]);
   });
 
-  it("staggers what comes in, up to a cap", () => {
-    const many = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`n${i}`, 76 + i * 46]));
-    const { rerender } = render(<Board columns={{ b: { 4: 30 } }} trigger="e1" />);
-    rerender(<Board columns={{ b: { 4: 30, ...many } }} trigger="" />);
-    expect(started.filter(s => s.timing.fill === "backwards").map(s => s.timing.delay))
-      .toEqual([0, 30, 60, 90, 120, 150, 180, 180, 180]);
+  it("runs everything on the hub's one clock; what comes in starts a beat later and ends with the rest", () => {
+    const { rerender } = render(<Board columns={WHOLE} trigger="" height={400} label="Ready for Exam 2" />);
+    rerender(<Board columns={{ b: { 4: 30, 5: 76 } }} trigger="e1" height={160} label="Exam 1 coverage" />);
+    const ends = started.map(s => Number(s.timing.delay ?? 0) + Number(s.timing.duration));
+    expect(started.length).toBeGreaterThan(5); // a slide, an entrance, copies going, a crossfade, the height
+    expect(new Set(ends)).toEqual(new Set([HUB_SWITCH_MS]));
+    expect(new Set(started.map(s => s.timing.easing))).toEqual(new Set([HUB_EASE]));
+    expect(new Set(started.map(s => s.timing.delay ?? 0))).toEqual(new Set([0, HUB_STAGGER_MS]));
+    expect(started.filter(s => s.timing.delay).map(s => s.el.textContent)).toEqual(["5"]);
+  });
+
+  it("crossfades in place an item whose key carries its text: no movement either way", () => {
+    const { rerender, getByTestId, getByText } = render(<Board columns={{}} trigger="" label="Ready for Exam 2" />);
+    rerender(<Board columns={{}} trigger="e1" label="Exam 1 coverage" />);
+    const root = getByTestId("root");
+    const [old] = ghosts(root);
+    expect(ghosts(root)).toHaveLength(1);
+    expect(old.textContent).toBe("Ready for Exam 2");
+    expect([old.style.left, old.style.top]).toEqual(["90px", "4px"]);
+    expect(startedOn(old).map(s => s.frames)).toEqual([[{ opacity: 0, offset: 1 }]]);
+    const now = getByText("Exam 1 coverage", { ignore: "[inert]" });
+    expect(startedOn(now).map(s => [s.frames, s.timing.delay])).toEqual([[[{ opacity: 0, offset: 0 }], undefined]]);
+  });
+
+  it("copies nothing for an element React rewrote in place: its old text is gone", () => {
+    const { rerender, getByTestId, getByText } = render(<Board columns={{}} trigger="" label="Ready for Exam 2" keyed={false} />);
+    rerender(<Board columns={{}} trigger="e1" label="Exam 1 coverage" keyed={false} />);
+    expect(ghosts(getByTestId("root"))).toEqual([]);
+    expect(startedOn(getByText("Exam 1 coverage")).map(s => s.frames)).toEqual([[{ opacity: 0, offset: 0 }]]);
+  });
+
+  it("an entering item's own CSS entrance is cancelled, so the two do not run over each other", () => {
+    const own = { cancel: vi.fn() };
+    HTMLElement.prototype.getAnimations = function (this: HTMLElement) {
+      return (this.className === "colEnter" ? [own] : []) as unknown as Animation[];
+    };
+    try {
+      const { rerender } = render(<Board columns={EXAM} trigger="e1" />);
+      rerender(<Board columns={WHOLE} trigger="" />);
+      // Column a came in; column b was there (its entrance, long over, is left alone).
+      expect(own.cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).getAnimations;
+    }
+  });
+
+  it("a container that was replaced starts over instead of animating from the old one", () => {
+    const { rerender, getByTestId } = render(<Board columns={WHOLE} trigger="" rootKey="course-1" />);
+    rerender(<Board columns={EXAM} trigger="e9" rootKey="course-2" />);
+    expect(started).toEqual([]);
+    expect(ghosts(getByTestId("root"))).toEqual([]);
+    // And from there on it animates as usual.
+    rerender(<Board columns={WHOLE} trigger="" rootKey="course-2" />);
+    expect(started.length).toBeGreaterThan(0);
   });
 
   it("tweens the container's height when it changed", () => {

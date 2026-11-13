@@ -60,13 +60,20 @@ describe("flipPlan", () => {
     expect(flipPlan(prev, next).leave).toEqual(["tile:2", "col:b"]);
   });
 
-  it("an item that came enters on its own only inside a parent that was already there", () => {
+  it("an item that came enters on its own only when its parent was already there", () => {
     const prev = layout({ "col:a": at(0, 0), "tile:1": at(0, 30, "col:a") });
     const next = layout({
       "col:a": at(0, 0), "tile:1": at(0, 30, "col:a"), "tile:2": at(0, 76, "col:a"),
       "col:b": at(216, 0), "tile:3": at(0, 30, "col:b"),
     });
-    // Column b has its own entrance and takes tile 3 in with it.
-    expect(flipPlan(prev, next)).toEqual({ move: [], enter: ["tile:2"], leave: [] });
+    // Tile 2 enters its column; column b enters whole, with tile 3 inside it.
+    expect(flipPlan(prev, next)).toEqual({ move: [], enter: ["tile:2", "col:b"], leave: [] });
+  });
+
+  it("a change of key at one place is one item going and another coming", () => {
+    // How a label is crossfaded: its key carries its text.
+    const prev = layout({ band: at(0, 0), "label:Ready for Exam 2": at(90, 4, "band") });
+    const next = layout({ band: at(0, 0), "label:Exam 1 coverage": at(90, 4, "band") });
+    expect(flipPlan(prev, next)).toEqual({ move: [], enter: ["label:Exam 1 coverage"], leave: ["label:Ready for Exam 2"] });
   });
 });

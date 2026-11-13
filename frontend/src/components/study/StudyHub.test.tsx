@@ -869,6 +869,100 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     expect(screen.getByTestId("focus-fallback-note").textContent).toBe("Everything on Exam 2 is mastered.");
   });
 
+  describe("one change, not a replay", () => {
+    const legendCounts = () => ["Mastered", "Learning", "Struggling", "Not Started"]
+      .map(l => screen.getByRole("button", { name: new RegExp(`^\\d+\\s*${l}$`) }).textContent);
+    /** Exam 1 (past) is on Variables and Loops, Exam 2 on Loops and Recursion, Quiz 3 on nothing. */
+    const threeTabs = async () => {
+      const before = await vi.mocked(api.getAllAssignments).getMockImplementation()!("u1");
+      vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [
+        ...before.assignments,
+        { id: "e1", user_id: "u1", title: "Exam 1", due_date: iso(1), assignment_type: "exam", course_id: "c1" },
+      ] });
+      const on: Record<string, string[]> = { var: ["e1"], loop: ["e1", "e2"], rec: ["e2"], arr: [] };
+      vi.mocked(getTopicChecklist).mockResolvedValue({
+        topics: ALL.map(id => ({ ...topic(`t-${id}`, id, null, id), assessment_ids: on[id] })),
+        needs_refresh: false,
+      } as never);
+    };
+    const tab = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
+
+    it("a change of exam keeps the band and the Up Next block on the page, with the new exam's values", async () => {
+      await threeTabs();
+      renderHub();
+      await screen.findByText("Ready for Exam 2");
+      const section = screen.getByLabelText("Readiness");
+      const figure = screen.getByTestId("readiness-pct");
+      const card = screen.getByTestId("focus-card");
+      expect(figure.textContent).toBe("45%");
+      expect(legendCounts()).toEqual(["0 Mastered", "1 Learning", "1 Struggling", "0 Not Started"]);
+
+      tab(/Exam 1/);
+      // The same nodes, not a new band that replays its entrance.
+      expect(screen.getByLabelText("Readiness")).toBe(section);
+      expect(screen.getByTestId("readiness-pct")).toBe(figure);
+      expect(screen.getByTestId("focus-card")).toBe(card);
+      // Reduced motion (this suite): the new values are there at once.
+      expect(figure.textContent).toBe("78%");
+      expect(screen.getByText("Exam 1 coverage")).toBeTruthy();
+      expect(screen.queryByText("Ready for Exam 2")).toBeNull();
+      expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "0 Struggling", "0 Not Started"]);
+      expect(within(card).getByText("Loops")).toBeTruthy();
+      expect(within(card).queryByText("Recursion")).toBeNull();
+
+      tab(/Quiz 3/);
+      expect(screen.getByTestId("readiness-pct")).toBe(figure);
+      expect(figure.textContent).toBe("47%");
+      expect(screen.getByText(COURSE_READINESS)).toBeTruthy();
+      expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
+      // Nothing of the switch is left in the band or the block either.
+      expect(section.querySelectorAll("[inert]")).toHaveLength(0);
+      expect(section.style.height).toBe("");
+    });
+
+    it("clicking through the tabs quickly ends on the last one's values", async () => {
+      await threeTabs();
+      renderHub();
+      await screen.findByText("Ready for Exam 2");
+      // No waiting in between: each click lands before the last has settled.
+      tab(/Exam 1/);
+      tab(/Quiz 3/);
+      tab(/Exam 2/);
+      tab(/Exam 1/);
+      expect(screen.getByRole("tab", { selected: true }).textContent).toBe("Exam 1Sun, Nov 1");
+      expect(screen.getByTestId("readiness-pct").textContent).toBe("78%");
+      expect(screen.getByText("Exam 1 coverage")).toBeTruthy();
+      expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "0 Struggling", "0 Not Started"]);
+      expect(tiles()).toEqual(["var", "loop"]);
+      expect(screen.getByTestId("roadmap-exam-caption").textContent).toBe("2 concepts on Exam 1");
+      expect(within(screen.getByTestId("focus-card")).getByText("Loops")).toBeTruthy();
+      // One line under one tab, one of each label, no copies left anywhere.
+      expect(document.querySelectorAll("[data-tab-line]")).toHaveLength(1);
+      expect(document.querySelectorAll("[inert]")).toHaveLength(0);
+      expect(screen.getAllByText(/coverage$|^Ready for|Readiness$/)).toHaveLength(1);
+      settled();
+    });
+
+    it("a change of COURSE still replaces the band (the page turns)", async () => {
+      vi.mocked(api.getGraph).mockResolvedValue({
+        nodes: [
+          node("var", "Variables", "mastered", 0.96),
+          { ...node("lim", "Limits", "learning", 0.5), course_id: "c2" },
+        ],
+        edges: [], stats: {},
+      });
+      renderHub({ courses: [COURSE, COURSE2] });
+      await hubLoaded();
+      const section = screen.getByLabelText("Readiness");
+      const figure = screen.getByTestId("readiness-pct");
+      pickCourse("MA225");
+      await screen.findByTestId("tile-lim");
+      expect(screen.getByLabelText("Readiness")).not.toBe(section);
+      expect(screen.getByTestId("readiness-pct")).not.toBe(figure);
+      expect(screen.getByTestId("readiness-pct").textContent).toBe("50%");
+    });
+  });
+
   it("Quick Reviews are the same list on every tab", async () => {
     linkExam2("loop");
     renderHub();
@@ -886,6 +980,114 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     expect(names()).toEqual(["Loops", "Recursion"]);
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
     expect(names()).toEqual(["Loops", "Recursion"]);
+  });
+});
+
+describe("StudyHub with motion on (a fake animation clock)", () => {
+  type Fake = { el: HTMLElement; cancelled: boolean; onfinish: null | (() => void); cancel: () => void };
+  let anims: Fake[];
+  let frames: Map<number, FrameRequestCallback>;
+  let clock: number;
+  const realMatchMedia = window.matchMedia;
+  /** Lets every animation and count that is running reach its end. */
+  const finish = () => act(() => {
+    clock += 1000;
+    for (const a of anims.splice(0)) if (!a.cancelled) a.onfinish?.();
+    const due = [...frames.values()];
+    frames.clear();
+    for (const cb of due) cb(clock);
+  });
+  const copies = () => [...document.querySelectorAll<HTMLElement>("[inert]")];
+  const tab = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
+
+  beforeEach(async () => {
+    anims = [];
+    frames = new Map();
+    clock = 0;
+    let handle = 0;
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia;
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frames.set(++handle, cb); return handle; });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id); });
+    HTMLElement.prototype.animate = function (this: HTMLElement) {
+      const fake: Fake = { el: this, cancelled: false, onfinish: null, cancel() { fake.cancelled = true; } };
+      anims.push(fake);
+      return fake as unknown as Animation;
+    } as unknown as typeof HTMLElement.prototype.animate;
+    // Exam 1 (past) is on Variables and Loops, Exam 2 on Loops and Recursion.
+    const before = await vi.mocked(api.getAllAssignments).getMockImplementation()!("u1");
+    vi.mocked(api.getAllAssignments).mockResolvedValue({ assignments: [
+      ...before.assignments,
+      { id: "e1", user_id: "u1", title: "Exam 1", due_date: iso(1), assignment_type: "exam", course_id: "c1" },
+    ] });
+    const on: Record<string, string[]> = { var: ["e1"], loop: ["e1", "e2"], rec: ["e2"], arr: [] };
+    vi.mocked(getTopicChecklist).mockResolvedValue({
+      topics: Object.keys(on).map(id => ({ ...topic(`t-${id}`, id, null, id), assessment_ids: on[id] })),
+      needs_refresh: false,
+    } as never);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.matchMedia = realMatchMedia;
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).animate;
+  });
+
+  it("mid-switch the old state is on its way out as copies no query or key press reaches; then it is gone", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    await finish(); // whatever the load itself set going
+    expect(copies()).toEqual([]);
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("45%");
+
+    tab(/Exam 1/);
+    // The figure has not moved yet; the new label is in, the old one is a copy on its way out.
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("45%");
+    const texts = copies().map(c => c.textContent);
+    expect(texts).toContain("Ready for Exam 2");
+    // Two legend counts changed (0 Mastered, 1 Struggling), Recursion's square
+    // went, and so did the Up Next body and the roadmap column that held it.
+    expect(copies()).toHaveLength(6);
+    expect(texts.filter(t => t === "0" || t === "1")).toEqual(["0", "1"]);
+    expect(copies().filter(c => c.getAttribute("aria-label") === "Recursion · Struggling")).toHaveLength(1);
+    expect(texts.filter(t => t?.includes("Recursion")).length).toBe(2);
+    expect(screen.getAllByText("Exam 1 coverage")).toHaveLength(1);
+    // Recursion left the roadmap: its copy carries no test id, and the live tiles are the exam's.
+    expect(copies().some(c => c.textContent?.includes("Recursion"))).toBe(true);
+    expect(screen.queryByTestId("tile-rec")).toBeNull();
+    expect(screen.getAllByTestId(/^tile-(?!actions-)/).map(t => t.getAttribute("data-testid"))).toEqual(["tile-var", "tile-loop"]);
+    for (const copy of copies()) {
+      expect(copy.getAttribute("aria-hidden")).toBe("true");
+      expect(copy.outerHTML).not.toMatch(/data-testid|data-flip=/);
+    }
+
+    await finish();
+    expect(copies()).toEqual([]);
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("78%");
+    expect(screen.getAllByText("Exam 1 coverage")).toHaveLength(1);
+    expect(screen.queryByText("Ready for Exam 2")).toBeNull();
+  });
+
+  it("clicking through the tabs without waiting settles on the last one, with nothing left over", async () => {
+    renderHub();
+    await screen.findByText("Ready for Exam 2");
+    await finish();
+    tab(/Exam 1/);
+    tab(/Quiz 3/);
+    tab(/Exam 2/);
+    tab(/Exam 1/);
+    // Every animation of the three switches that were cut short was cancelled.
+    const lastSwitch = anims.filter(a => !a.cancelled);
+    expect(anims.some(a => a.cancelled)).toBe(true);
+    // Only the last switch's copies are in the page: one old label, not three.
+    expect(copies().filter(c => /^Ready for|coverage$|Readiness$/.test(c.textContent ?? ""))).toHaveLength(1);
+    expect(lastSwitch.length).toBeGreaterThan(0);
+    await finish();
+    expect(copies()).toEqual([]);
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("78%");
+    expect(screen.getByText("Exam 1 coverage")).toBeTruthy();
+    expect(screen.getAllByTestId(/^tile-(?!actions-)/).map(t => t.getAttribute("data-testid"))).toEqual(["tile-var", "tile-loop"]);
+    expect(document.querySelectorAll("[data-tab-line]")).toHaveLength(1);
+    expect(screen.getByRole("tab", { selected: true }).querySelector("[data-tab-line]")).toBeTruthy();
   });
 });
 

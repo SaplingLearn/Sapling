@@ -6,28 +6,64 @@
  * The row itself is not animated (only the tab list is, re-keyed on the
  * course): an animated ancestor would trap the deadlines pop-up and its
  * click-away layer inside the row.
+ *
+ * The selected tab's underline slides over from the tab that had it, on the
+ * clock the rest of the hub changes on (./hubMotion.ts).
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
+import { HUB_EASE, HUB_SWITCH_MS, reducedMotion } from "./hubMotion";
 import { DISPLAY, ELLIPSIS, POPOVER } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
 
 const TYPE_DOT: Record<AssessType, string> = { Exam: "var(--err)", Quiz: "#6A3E68", Homework: "var(--info)" };
 
-const TAB: React.CSSProperties = { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, flexShrink: 0, padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" };
+/* The 2px under every tab is a transparent border (a hover tints it); the
+   selected tab's line is drawn over it, so it can slide between tabs. */
+const TAB: React.CSSProperties = { position: "relative", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, flexShrink: 0, padding: "0 0 8px", border: 0, borderBottom: "2px solid transparent", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" };
+/* The title darkens as the line arrives (the app-wide reduced-motion reset collapses it). */
+const TITLE_FADE = `color ${HUB_SWITCH_MS}ms ${HUB_EASE}`;
+const TAB_LINE: React.CSSProperties = { position: "absolute", left: 0, right: 0, bottom: -2, height: 2, background: "var(--brand-forest)", transformOrigin: "0 50%" };
 const ICON_BUTTON: React.CSSProperties = { width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", position: "relative" };
 const BADGE: React.CSSProperties = { position: "absolute", top: 2, right: 1, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: "var(--err)", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px var(--bg)" };
 
 function ExamTab({ exam, on, today, onSelect }: { exam: Assessment; on: boolean; today: Date; onSelect: () => void }) {
   return (
-    <button role="tab" aria-selected={on} className={on ? undefined : s.hoverTab} onClick={onSelect}
-      style={{ ...TAB, borderBottom: `2px solid ${on ? "var(--brand-forest)" : "transparent"}` }}>
-      <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: on ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap" }}>{exam.title}</span>
+    <button role="tab" aria-selected={on} data-tab={exam.id} className={on ? undefined : s.hoverTab} onClick={onSelect} style={TAB}>
+      <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: on ? "var(--text)" : "var(--text-muted)", transition: TITLE_FADE, whiteSpace: "nowrap" }}>{exam.title}</span>
       <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtDow(exam.iso, today)}</span>
+      {on && <span data-tab-line="" aria-hidden="true" style={TAB_LINE} />}
     </button>
   );
+}
+
+/**
+ * Slides the selected tab's line in from the tab that was selected before:
+ * the line is already under its own tab (that is the layout), and starts the
+ * animation drawn over the old one. Both tabs are measured at the change, so
+ * nothing measured earlier can be out of date. Not under reduced motion.
+ */
+function useSlidingLine(list: React.RefObject<HTMLElement | null>, selectedId: string | null) {
+  const before = React.useRef<string | null>(null);
+  const running = React.useRef<Animation | null>(null);
+  React.useLayoutEffect(() => {
+    const was = before.current;
+    before.current = selectedId;
+    // A switch mid-slide drops the slide: the new line starts from the last tab's place.
+    running.current?.cancel();
+    running.current = null;
+    if (!list.current || !was || !selectedId || was === selectedId || reducedMotion()) return;
+    const tabs = [...list.current.querySelectorAll<HTMLElement>("[data-tab]")];
+    const from = tabs.find(t => t.dataset.tab === was);
+    const to = tabs.find(t => t.dataset.tab === selectedId);
+    const line = to?.querySelector<HTMLElement>("[data-tab-line]");
+    if (!from || !to || !line || !to.offsetWidth || typeof line.animate !== "function") return;
+    const start = `translateX(${from.offsetLeft - to.offsetLeft}px) scaleX(${from.offsetWidth / to.offsetWidth})`;
+    running.current = line.animate([{ transform: start }, { transform: "none" }], { duration: HUB_SWITCH_MS, easing: HUB_EASE });
+  }, [list, selectedId]);
+  React.useEffect(() => () => running.current?.cancel(), []);
 }
 
 function DeadlineRow({ item, today, onPick }: { item: Assessment; today: Date; onPick: () => void }) {
@@ -95,9 +131,11 @@ export interface ExamTabsProps {
 
 export function ExamTabs(props: ExamTabsProps) {
   const { exams, exam, soon, today, bellOpen, onBell, onAdd } = props;
+  const tabs = React.useRef<HTMLDivElement | null>(null);
+  useSlidingLine(tabs, exam?.id ?? null);
   return (
     <div className={s.areaTabs} style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px solid var(--border)", minWidth: 0 }}>
-      <div key={props.courseId} className={s.paneEnter} role="tablist" aria-label="Exams" style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
+      <div ref={tabs} key={props.courseId} className={s.paneEnter} role="tablist" aria-label="Exams" style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
         {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
         {exams.length === 0 && (
           <button onClick={onAdd} style={{ alignSelf: "center", padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--brand-forest)", cursor: "pointer" }}>+ Add Exam or Deadline</button>

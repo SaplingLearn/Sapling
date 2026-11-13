@@ -38,7 +38,7 @@ function ColumnHead({ column }: { column: RoadmapColumn }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingBottom: 2 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{column.label}</span>
-        <span className="mono" style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", flexShrink: 0 }}>{column.frac}</span>
+        <span key={column.frac} className="mono" data-flip={`frac:${column.key}:${column.frac}`} data-flip-how="fade" style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", flexShrink: 0 }}>{column.frac}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: "4px 3px" }}>
         {column.bars.map((b, i) => <span key={i} className={s.bar} style={{ height: 4, borderRadius: "var(--r-full)", background: b }} />)}
