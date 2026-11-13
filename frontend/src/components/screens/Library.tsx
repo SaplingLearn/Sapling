@@ -118,7 +118,7 @@ export function Library() {
       if (!run.isCurrent()) return;
       setDocuments(docs.documents || []);
       setCourses(crs.courses || []);
-      setGuides(saved.guides || []);
+      setGuides(saved.guides);
       setLoadError(false);
     } catch (err) {
       if (!run.isCurrent()) return;
@@ -152,7 +152,7 @@ export function Library() {
   // Saved study guides are not documents: they follow the course filter and
   // the search, and show under "all" and "study guide" only.
   const shownGuides = React.useMemo(
-    () => (cat === "all" || cat === "study_guide" ? libraryGuides(guides, courseFilter, query) : []),
+    () => libraryGuides(guides, { category: cat, courseFilter, query }),
     [guides, cat, courseFilter, query],
   );
 
@@ -278,7 +278,7 @@ export function Library() {
               </div>
             )}
             <LibraryGuides guides={shownGuides} courses={courses} />
-            {filtered.length === 0 && shownGuides.length === 0 && !(loadError && documents.length === 0) && (
+            {filtered.length + shownGuides.length === 0 && !(loadError && documents.length === 0) && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
                 <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>

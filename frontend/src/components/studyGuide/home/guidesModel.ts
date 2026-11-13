@@ -59,12 +59,19 @@ export function statusText(status: GuideStatus): string {
   return status === "failed" ? "Could not finish" : "";
 }
 
+/** The Library's category pills a saved guide shows under. */
+const GUIDE_CATEGORIES = new Set(["all", "study_guide"]);
+
 /**
- * The saved guides the Library shows under its course filter and search. A
- * guide always belongs to a class, so "Uncategorized" has none.
+ * The saved guides the Library shows under its category, course filter and
+ * search. A guide is not a document, so it shows under "all" and "study
+ * guide" only; it always belongs to a class, so "Uncategorized" has none.
  */
-export function libraryGuides(guides: GuideCard[], courseFilter: string, query: string): GuideCard[] {
-  if (courseFilter === "uncategorized") return [];
+export function libraryGuides(
+  guides: GuideCard[],
+  { category, courseFilter, query }: { category: string; courseFilter: string; query: string },
+): GuideCard[] {
+  if (!GUIDE_CATEGORIES.has(category) || courseFilter === "uncategorized") return [];
   const saved = guides.filter(guide => guide.saved_at !== null);
   const inCourse = courseFilter === "all" ? saved : saved.filter(guide => guide.course_id === courseFilter);
   return searchGuides(inCourse, query);

@@ -109,16 +109,18 @@ describe("libraryGuides", () => {
   const all = [savedA, savedB, C];
 
   it("keeps only the guides saved to the Library", () => {
-    expect(ids(libraryGuides(all, "all", ""))).toEqual(["a", "b"]);
+    expect(ids(libraryGuides(all, { category: "all", courseFilter: "all", query: "" }))).toEqual(["a", "b"]);
   });
 
   it("follows the course filter; a guide is never uncategorized", () => {
-    expect(ids(libraryGuides(all, "c2", ""))).toEqual(["b"]);
-    expect(libraryGuides(all, "uncategorized", "")).toEqual([]);
+    expect(ids(libraryGuides(all, { category: "all", courseFilter: "c2", query: "" }))).toEqual(["b"]);
+    expect(libraryGuides(all, { category: "all", courseFilter: "uncategorized", query: "" })).toEqual([]);
+    expect(ids(libraryGuides(all, { category: "study_guide", courseFilter: "all", query: "" }))).toEqual(["a", "b"]);
+    expect(libraryGuides(all, { category: "slides", courseFilter: "all", query: "" })).toEqual([]);
   });
 
   it("follows the search", () => {
-    expect(ids(libraryGuides(all, "all", "limits"))).toEqual(["b"]);
-    expect(libraryGuides(all, "c1", "limits")).toEqual([]);
+    expect(ids(libraryGuides(all, { category: "all", courseFilter: "all", query: "limits" }))).toEqual(["b"]);
+    expect(libraryGuides(all, { category: "all", courseFilter: "c1", query: "limits" })).toEqual([]);
   });
 });
