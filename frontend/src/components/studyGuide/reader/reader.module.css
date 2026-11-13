@@ -46,25 +46,29 @@
 /* A band of light that crosses the filled part while the guide is written. */
 .bannerBar::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ink-0) 55%, transparent) 50%, transparent 70%);
-  background-size: 220% 100%;
-  animation: guideShimmer 1.6s linear infinite;
+  background: linear-gradient(100deg, transparent 42%, color-mix(in srgb, var(--ink-0) 55%, transparent) 50%, transparent 58%) no-repeat;
+  background-size: 300% 100%;
+  animation: guideShimmer 1.8s linear infinite;
 }
 /* Text that is being written: the same band of light crosses the letters.
    Without motion the gradient rests on the text's own colour. */
 .shimmerText {
   background-image: linear-gradient(
     100deg,
-    var(--shimmer-ink, var(--text)) 35%,
+    var(--shimmer-ink, var(--text)) 42%,
     color-mix(in srgb, var(--shimmer-ink, var(--text)) 30%, var(--bg-panel)) 50%,
-    var(--shimmer-ink, var(--text)) 65%
+    var(--shimmer-ink, var(--text)) 58%
   );
-  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-size: 300% 100%;
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
-  animation: guideShimmer 1.6s linear infinite;
+  animation: guideShimmer 1.8s linear infinite;
 }
-@keyframes guideShimmer { from { background-position: 110% 0; } to { background-position: -110% 0; } }
+/* One band per loop. The gradient is three times as wide as what it lights
+   and is not repeated: at 100% its band sits just off the left edge, at 0%
+   just off the right, so exactly one band crosses and none follows it in. */
+@keyframes guideShimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .bannerBar::after { display: none; }
   .shimmerText { background-image: none; -webkit-text-fill-color: currentColor; color: var(--shimmer-ink, var(--text)); }
