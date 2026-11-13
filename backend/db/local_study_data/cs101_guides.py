@@ -16,16 +16,44 @@ SECTIONS = {
         "A variable is a name bound to a value, and the value's type decides what you can do with it.",
         (
             b.prose(
-                ("A **variable** is a named place in memory that holds a value. Declaring one tells the "
-                 "compiler its **type**, and the type fixes how many bytes it takes and which operations "
-                 "make sense on it.", "lec03"),
-                "Assignment copies a value into the variable. It does not link two variables together: "
-                "after `b = a`, changing `a` leaves `b` alone.",
-                summary="A variable is a typed, named place for a value. Assignment copies; it does not link.",
+                ("A **variable** is a named place that holds a value, and its **type** says what kind "
+                 "of value that is. Declaring `int count;` asks for a place big enough for a whole "
+                 "number and gives it the name count. From then on the type decides what the program "
+                 "may do with it: an int can be added and compared, and it cannot quietly hold half "
+                 "of something.", "lec03"),
+                "**Assignment** copies a value into that place. It does not tie two variables "
+                "together. After `b = a;` the two hold the same number, but they are separate places, "
+                "so changing a later leaves b exactly as it was. Read every assignment from right to "
+                "left: work out the value on the right first, then store it in the name on the left.",
+                summary="A variable is a typed, named place for a value. Assignment copies the value; "
+                        "it does not link two variables.",
             ),
             b.terms(_C["variables"],
                     ("Assignment", "The statement that copies a value into a variable."),
                     ("Integer division", "Division of two ints, which drops the fraction.")),
+            b.prose(
+                "The type also decides what an operator means, and division is where this catches "
+                "people. With two int operands, `/` is **integer division**: it drops the fraction, "
+                "so 7 / 2 is 3 and not 3.5. Nothing is rounded and no warning appears. The fraction "
+                "is gone before the result is stored, even when the variable receiving it could have "
+                "held one. When a result looks too small or comes out as zero, check the types of "
+                "both operands before you check the arithmetic.",
+                summary="With two ints, division drops the fraction: 7 / 2 is 3. Check the operand "
+                        "types first.",
+                at="standard",
+            ),
+            b.prose(
+                "One character separates the two operators you will use most. A single `=` assigns. "
+                "A double `==` compares and gives back true or false, which C stores as 1 or 0. "
+                "Mixing them up still compiles, and that is what makes it dangerous. `if (x = 5)` "
+                "stores 5 in x and then treats that 5 as true, so the branch always runs and x has "
+                "been changed on the way. The table lays the two side by side. Its last row is the "
+                "classic bug, and it is the first thing to look for when a condition seems to be "
+                "ignored.",
+                summary="= stores a value and == tests for equality. Writing = inside a condition "
+                        "compiles, changes the variable and is always true.",
+                at="standard",
+            ),
             b.compare(
                 "Assignment and comparison", ("=", "=="),
                 ("What it does", "Copies the right side into the left", "Tests whether two values are equal"),
@@ -46,17 +74,47 @@ SECTIONS = {
         "Branches choose which code runs, and loops repeat it until a condition turns false.",
         (
             b.prose(
-                ("**Control flow** is the order statements run in. An `if` picks a branch. A loop "
-                 "repeats its body, checking its condition before every pass.", "lec03"),
-                "Exam questions rarely ask what a loop is. They ask how many times its body runs and "
-                "what it prints, so the skill to practise is tracing.",
-                summary="Branches choose and loops repeat. Trace a loop by listing the values its variable takes.",
+                ("**Control flow** is the order in which statements run. Left alone, a program runs "
+                 "from top to bottom, one line after the next. An `if` statement changes that: it "
+                 "runs its block only when its condition is true, and an `else` block runs when the "
+                 "condition is false. Exactly one of the two branches runs each time the `if` is "
+                 "reached.", "lec03"),
+                ("A **loop** repeats its body. A `while` loop checks its condition before every pass, "
+                 "the first one included, so its body can run zero times. A `for` loop packs the "
+                 "start, the condition and the step into one line and stops by the same rule. Both "
+                 "stop the first time the condition is false, and the check happens only at the top "
+                 "of a pass, never half way through one.", "lec03"),
+                summary="An if picks one branch and a loop repeats its body. A loop checks its "
+                        "condition before every pass and stops the first time it is false.",
+            ),
+            b.prose(
+                ("Questions about loops rarely ask what a loop is. They ask how many times its body "
+                 "runs and what it prints, and the reliable method is the one from lecture: list the "
+                 "values the loop variable takes while the condition holds. A loop that starts at 0 "
+                 "and adds 3 while below 10 takes 0, 3, 6 and 9, so its body runs four times. The "
+                 "value 12 is computed too, but it fails the check and the body never sees it. The "
+                 "formula below gives the same count without the list, which is useful for checking "
+                 "your work.", "lec03"),
+                summary="To trace a loop, list the values its variable takes while the condition "
+                        "holds, then count them.",
+                at="standard",
             ),
             b.formula(
                 "Passes of a counting loop",
                 r"\text{passes} = \left\lceil \frac{\text{stop} - \text{start}}{\text{step}} \right\rceil",
                 "Passes equal stop minus start, divided by step, rounded up.",
                 "lec03",
+            ),
+            b.prose(
+                "The formula has one catch, and it is the most common slip in this unit: the "
+                "comparison sign. With `<` the stop value itself is never used. With `<=` it is, and "
+                "the loop makes one more pass whenever the variable lands exactly on it. That is the "
+                "**off-by-one error**. When you are unsure, do not argue it out in your head. Write "
+                "the last value that passes the check and the first that fails, side by side, and "
+                "the count settles itself. The example does this for a loop that steps by 4.",
+                summary="With < the stop value is left out and with <= it is included. Write the "
+                        "last value that passes and the first that fails.",
+                at="standard",
             ),
             b.example(
                 "Count the passes",
@@ -65,6 +123,30 @@ SECTIONS = {
                 ("Check the next one", "17 < 14 is false", "The loop stops before the body runs for 17."),
                 ("Count them", "4 passes", "One pass for each value listed."),
                 source="lec03",
+            ),
+            b.prose(
+                "It helps to count checks as well as passes. A loop whose body runs four times "
+                "checks its condition five times, four that pass and one that fails, and the failing "
+                "check is what ends it. This explains two things that look odd at first. The loop "
+                "variable is still there after the loop and holds the first value that failed, 17 in "
+                "the example and not 13. And a loop whose condition is false at the start makes one "
+                "check, runs no passes and is not an error. A question that asks for the value of i "
+                "after the loop is testing exactly this.",
+                summary="A loop with n passes makes n + 1 checks. After it ends, the loop variable "
+                        "holds the first value that failed the check.",
+                at="deep",
+            ),
+            b.prose(
+                ("Because a for loop and a while loop stop by the same rule, any for loop can be "
+                 "rewritten as a while loop. The start goes on a line above, the condition stays at "
+                 "the top, and the step becomes the last line of the body. Doing that rewrite on "
+                 "paper is a good way to trace a for loop that confuses you, since it puts the three "
+                 "parts in the order they really run. The start runs once. Then the condition, the "
+                 "body and the step repeat in that order until the condition fails. The step always "
+                 "comes after the body, which is why the body sees the start value first.", "lec03"),
+                summary="A for loop is a while loop with its start above it and its step at the end "
+                        "of the body. Rewrite it that way to trace it.",
+                at="deep",
             ),
             b.check(
                 "A loop starts i at 0 and adds 3 while i is below 10. How many times does the body run?",
@@ -79,22 +161,51 @@ SECTIONS = {
         "A function names a block of code, takes arguments by value and hands back one result.",
         (
             b.prose(
-                ("A **function** packages steps under a name. A call copies each **argument** into the "
-                 "matching **parameter**, runs the body and returns one value.", "lec05"),
-                ("C passes by value. The function works on copies, so nothing it does to a parameter "
-                 "reaches the caller's variable unless it is given a pointer.", "lec05"),
-                summary="A call copies arguments into parameters. Changes to a parameter stay inside the function.",
+                ("A **function** has a name, parameters and a return type. Calling it copies each "
+                 "**argument** into the matching **parameter**, runs the body and hands back the "
+                 "return value. The call then stands for that value in the expression it was "
+                 "written in.", "lec05"),
+                ("C passes arguments by value. The function works on its own copies, so when it "
+                 "changes a parameter it changes that copy and not the caller's variable. To change "
+                 "the caller's data it has to be handed a pointer to it.", "lec05"),
+                summary="A call copies arguments into parameters and returns one value. Changes to a "
+                        "parameter stay inside the function.",
                 at="brief",
             ),
             b.terms(("Parameter", "A variable in the function's definition that receives an argument."),
                     ("Argument", "The value the caller passes in."),
                     ("Return value", "The one value a call evaluates to.")),
+            b.prose(
+                ("It pays to slow a call down into its steps, because every question about functions "
+                 "is a question about one of them. First the arguments are worked out, in the "
+                 "caller. Then each value is copied into its parameter, which is a new variable that "
+                 "exists only for this call. The body runs, using those parameters. Last, the return "
+                 "value is handed back and the parameters disappear. Nothing in that sequence "
+                 "touches the caller's variables, and that is the whole reason a function like the "
+                 "one in the example cannot change what it was given.", "lec05"),
+                summary="A call works out the arguments, copies them into new parameters, runs the "
+                        "body and returns. The caller's variables are never touched.",
+                at="standard",
+            ),
             b.example(
                 "What does the caller see?",
                 "void bump(int n) { n = n + 1; } is called as bump(x) with x equal to 5. What is x afterwards?",
                 ("Copy the argument", "n = 5", "The call copies the value of x into the parameter n."),
                 ("Run the body", "n = 6", "Only the copy changes."),
                 ("Return", "x = 5", "n is destroyed and x was never touched."),
+            ),
+            b.prose(
+                "The other half of a function is what comes back. A call hands back one value, and "
+                "the caller has to do something with it: store it, print it or use it inside a "
+                "larger expression. Calling a function and ignoring its result is allowed and is "
+                "nearly always a mistake, because the work was done and then dropped. A function "
+                "whose return type is void hands back nothing and is called only for its effect. "
+                "bump in the example is one of these, and since its only effect was on a copy, the "
+                "call achieved nothing. When you read code, find each call and ask two things: what "
+                "goes in, and where does the result go.",
+                summary="A call returns one value, and the caller must use it. Ask of every call "
+                        "what goes in and where the result goes.",
+                at="standard",
             ),
             b.check(
                 "A function changes one of its int parameters. What happens to the caller's variable?",
@@ -109,12 +220,26 @@ SECTIONS = {
         "A local variable exists only while its function runs, and only that function can name it.",
         (
             b.prose(
-                ("**Scope** is where a name can be used. **Lifetime** is how long the value exists. A "
-                 "local variable has both tied to one call of its function.", "lec05"),
-                "That is why returning the address of a local variable is a bug: the address is still a "
-                "number, but the variable it named is gone.",
-                summary="Locals live for one call and are visible only inside it. Globals live for the whole run.",
+                ("**Scope** is where in the code a name can be used, and **lifetime** is how long "
+                 "its value exists. A variable declared inside a function is local: only that "
+                 "function can name it, and it is created when the function is called.", "lec05"),
+                ("A local is gone when its function returns, and the next call starts with a fresh "
+                 "one. A global variable is declared outside every function and lives for the whole "
+                 "run, where any function can read it and change it.", "lec05"),
+                summary="Locals live for one call and are visible only inside it. Globals live for "
+                        "the whole run.",
                 at="brief",
+            ),
+            b.prose(
+                "The two ideas are easy to blur, because for a local variable they begin and end "
+                "together. Keep them apart with two questions. Scope asks where: on which lines of "
+                "the program may this name appear? Lifetime asks when: between which moments of the "
+                "run does the value exist? A local answers both with one call of its function. A "
+                "global answers them with the rest of the file and the whole run. The table lines "
+                "the answers up, and its lifetime row is the one that explains the bugs.",
+                summary="Scope is where a name can be used and lifetime is when its value exists. "
+                        "For a local, both are one call.",
+                at="standard",
             ),
             b.compare(
                 "Local and global variables", ("Local", "Global"),
@@ -122,6 +247,22 @@ SECTIONS = {
                 ("Lifetime", "One call of the function", "The whole run of the program"),
                 ("Visible from", "That function only", "Every function below the declaration"),
                 emphasis=1,
+            ),
+            b.prose(
+                "The bug this leads to is returning the address of a local variable. The address is "
+                "only a number, so it can be returned without any complaint. But the variable it "
+                "named is gone the moment the function returns, and that memory is free to be used "
+                "by the next call. The caller is left holding a pointer to a place that no longer "
+                "belongs to anything, and reading through it may give the old value once and "
+                "nonsense the next time.",
+                "Globals avoid that problem and bring another. Since every function can change a "
+                "global, a wrong value in one could have come from anywhere, and you have to read "
+                "the whole program to find out. Prefer locals, and pass values in as arguments. When "
+                "you trace code, note where each variable was declared, because that tells you both "
+                "who can see it and how long it will last.",
+                summary="Never return the address of a local: it is gone when the function returns. "
+                        "Prefer locals to globals, so fewer functions can change a value.",
+                at="standard",
             ),
             b.check(
                 "A function returns the address of one of its local variables. Why is that a bug?",
@@ -170,6 +311,19 @@ SECTIONS = {
                  "Say it out loud: p is where, *p is what. Draw the box and the arrow before you answer."),
             ),
             b.prose(
+                ("There is a third way for a pointer to go bad, besides never being set and being "
+                 "NULL: it can outlive the thing it points at. Local variables live on the stack and "
+                 "vanish when their function returns, so a pointer to a local must not be kept after "
+                 "that return. The address inside it is unchanged and looks perfectly normal, which "
+                 "is what makes the bug hard to see. Before you follow any pointer, ask whether the "
+                 "variable it was aimed at still exists. If the pointer came back from a function, "
+                 "or was stored somewhere that lasts longer than that function, check twice.",
+                 "lec09"),
+                summary="A pointer can outlive what it points at. Never keep a pointer to a local "
+                        "variable after its function returns.",
+                at="deep",
+            ),
+            b.prose(
                 "When a question asks what a variable holds after a few lines of pointer code, the "
                 "hard part is reading the symbols, because the same star means two different things. "
                 "In a declaration, `int *p` says that p is a pointer to an int, and nothing is "
@@ -199,6 +353,19 @@ SECTIONS = {
                 ("Write through p", "*p = 7", "The assignment stores 7 where p points."),
                 ("Read x", "x = 7", "x and *p are the same place in memory."),
                 source="lec09",
+            ),
+            b.prose(
+                ("The example is worth one more look, because its last step is the idea the rest of "
+                 "the course leans on. x and `*p` are not two variables that happen to agree. They "
+                 "are two names for one place, so there is no moment at which one has changed and "
+                 "the other has not. The same holds across a function call. C copies every argument, "
+                 "so a function handed x gets a copy and cannot change the original. A function "
+                 "handed `&x` also gets a copy, but a copy of the address, and that address still "
+                 "leads to the caller's x. That is why a function that must change a variable takes "
+                 "a pointer to it.", "lec09"),
+                summary="x and *p are two names for one place. A function changes its caller's "
+                        "variable only when it is given that variable's address.",
+                at="deep",
             ),
             b.prose(
                 ("Pointers are not a topic you finish and leave behind. An array's name acts as a "
@@ -266,6 +433,18 @@ SECTIONS = {
                 "lec11",
             ),
             b.prose(
+                ("The formula also shows why C cannot warn you about a bad index. An index is only a "
+                 "distance from the start, and the arithmetic works just as well for a distance that "
+                 "runs off the end. Nothing stored with the array records how long it is, so the "
+                 "program has no length to compare your index against. That is your job. Any code "
+                 "that walks an array needs the length handed to it separately, and a loop over an "
+                 "array of n items must stop while the index is still below n, because n itself is "
+                 "the first index that is out of range.", "lec11"),
+                summary="An index is a distance from the start and the array stores no length, so C "
+                        "cannot check it. A loop must stop before index n.",
+                at="deep",
+            ),
+            b.prose(
                 "Sizing a buffer is where the two rules above meet. A buffer has to hold every letter "
                 "and the terminator, so the space you need is the string's length plus one. Declare "
                 "it one byte short and the code still compiles and runs. The terminator is written "
@@ -283,6 +462,19 @@ SECTIONS = {
                 ("Add the terminator", "5 + 1", "Every C string ends with one zero byte."),
                 ("Answer", "6 bytes", "A buffer of 5 would overflow by one byte."),
                 source="lec11",
+            ),
+            b.prose(
+                ("A string has no stored length either, and that is the reason for the terminator. "
+                 "Code that prints or measures a string starts at the first byte and keeps going "
+                 "until it meets the zero byte. So the terminator is part of the data and not a "
+                 "formality. If it is missing, because the buffer was one byte short or because you "
+                 "filled the array one character at a time and never wrote it, the code runs on past "
+                 "the end of the array into whatever memory follows. Two numbers describe every "
+                 "string, and they always differ by one: the length `strlen` reports and the bytes "
+                 "the string needs.", "lec11"),
+                summary="Code finds the end of a string by looking for the zero byte, so a missing "
+                        "terminator sends it past the array.",
+                at="deep",
             ),
             b.check(
                 "char word[4] = \"cat\"; What does word[3] hold?",
@@ -358,6 +550,19 @@ SECTIONS = {
                 source="lec07",
             ),
             b.prose(
+                ("A trace also shows what recursion costs. factorial(3) needed four frames, one each "
+                 "for 3, 2, 1 and 0, and all four were alive at the moment the base case was "
+                 "reached. In general factorial(n) holds n + 1 frames at its deepest point. This is "
+                 "the difference between a recursive function that never stops and a loop that never "
+                 "stops. The loop just keeps running. The recursive function adds a frame with every "
+                 "call, the stack has only so much room, and the program is ended when it overflows. "
+                 "So a stack overflow in your own code is a message: go and look at the base case.",
+                 "lec07"),
+                summary="factorial(n) holds n + 1 frames at its deepest. Runaway recursion ends in a "
+                        "stack overflow, which points you at the base case.",
+                at="deep",
+            ),
+            b.prose(
                 ("Writing a recursive function is the same skill run backwards. Homework 6 asks you "
                  "to state the base case and the recursive case before you write any code, and that "
                  "order is the method: decide which input you can answer directly, then decide how "
@@ -367,6 +572,20 @@ SECTIONS = {
                 summary="To write one, state the base case and the recursive case before any code. "
                         "Each call is an ordinary function call with its own frame.",
                 at="standard",
+            ),
+            b.prose(
+                ("Problem 5 of Homework 6 is a good test of that method, because the smaller input "
+                 "is not n - 1. It asks for the number of digits in a positive integer. Ask the two "
+                 "questions in order. Which input can be answered directly? A number with a single "
+                 "digit. How does any other input become a smaller one? Not by subtracting 1, which "
+                 "would take thousands of calls, but by making the number one digit shorter. Notice "
+                 "what you never have to do: follow the calls all the way down in your head. Assume "
+                 "the call on the smaller input returns the right answer and decide only what this "
+                 "frame adds to it. That assumption is safe as long as every call moves toward the "
+                 "base case.", "hw6"),
+                summary="The smaller input is not always n - 1. Assume the call below is right, and "
+                        "decide only what this frame adds.",
+                at="deep",
             ),
             b.concept_map(
                 "What recursion builds on",
@@ -436,6 +655,19 @@ SECTIONS = {
                 emphasis=3,
             ),
             b.prose(
+                ("There is a second way to find a growth rate that needs no code at all: double the "
+                 "input and see what happens to the work. If the work doubles, the algorithm is "
+                 "O(n). If it goes up about four times, it is O(n^2). If it rises by a single step, "
+                 "it is O(log n). The lab timings from the sorting lecture can be read this way. "
+                 "Insertion sort took 12 milliseconds for 1000 items and 47 for 2000, about four "
+                 "times as long, which is the mark of n^2. Use the doubling test to check an answer "
+                 "you reached by counting loops, or when a question gives you a table of timings in "
+                 "place of code.", "lec15"),
+                summary="Double the input: work that doubles is O(n), work that quadruples is "
+                        "O(n^2), and one extra step is O(log n).",
+                at="deep",
+            ),
+            b.prose(
                 "To find the Big-O of code you are handed, count how many times the innermost line "
                 "runs. Loops that follow one another add, and loops that sit inside one another "
                 "multiply. An inner loop of n steps that runs once for each of n outer passes is n "
@@ -454,6 +686,18 @@ SECTIONS = {
                 "Keep the largest term",
                 r"3n^2 + 5n + 2 = O(n^2)",
                 "Three n squared plus five n plus two is big O of n squared.",
+            ),
+            b.prose(
+                "Dropping terms can feel like cheating, so test it on the count in the formula. At "
+                "n = 10 the three terms are 300, 50 and 2, and the first is already most of the "
+                "total. At n = 1,000 they are 3,000,000, 5,000 and 2, and the smaller two no longer "
+                "matter at all. The constant 3 goes for a different reason. It changes how long each "
+                "step takes, which depends on the machine, and not how the work grows: doubling n "
+                "multiplies 3n^2 by four exactly as it multiplies n^2 by four. Big-O keeps only "
+                "what would survive a change of machine.",
+                summary="As n grows the largest term swamps the rest, and a constant factor does not "
+                        "change how the work scales, so both are dropped.",
+                at="deep",
             ),
             b.check(
                 "A function loops over n items, and inside that loop it loops over the same n items again. "
@@ -539,15 +783,47 @@ SECTIONS = {
         "A linked list trades fast indexing for fast insertion: nodes are chained by pointers.",
         (
             b.prose(
-                ("A **linked list** is a chain of **nodes**. Each node is a struct holding a value and a "
-                 "pointer to the next node, and the list is known by its **head** pointer.", "lec17"),
-                ("Inserting at the front never moves an element, so it is O(1). Reaching item i means "
-                 "following i pointers, so indexing is O(n), the reverse of an array.", "lec17"),
-                summary="Nodes chained by pointers. Insert at the front in O(1), but index in O(n).",
+                ("A **linked list** is made of **nodes**. Each node is a struct that holds a value "
+                 "and a pointer to the next node, and the list as a whole is known by a single "
+                 "pointer to its first node, the **head**. The last node points to NULL. That NULL "
+                 "is the only thing that marks the end, and it is how a loop over the list knows to "
+                 "stop.", "lec17"),
+                ("This layout trades one strength for another. To insert at the front you point the "
+                 "new node at the old head and move the head to the new node. No element moves, so "
+                 "the cost is O(1) however long the list is. Reaching item i is the price: there is "
+                 "no index arithmetic, only i pointers to follow from the head, so indexing is "
+                 "O(n).", "lec17"),
+                summary="A linked list is nodes chained by pointers from a head to NULL. Inserting "
+                        "at the front is O(1), but reaching item i is O(n).",
             ),
             b.terms(_C["linkedlists"],
                     ("Node", "One element of the list: a value and a pointer to the next node."),
                     ("Head", "The pointer to the first node. An empty list has a NULL head.")),
+            b.prose(
+                ("Set a linked list beside an array and each is strong exactly where the other is "
+                 "weak. An array keeps its items side by side, so it can jump to item i with "
+                 "arithmetic, but putting a new item at the front means shifting every other item "
+                 "along by one. A linked list scatters its nodes and joins them with pointers, so "
+                 "nothing ever has to shift, but there is no way to jump: you walk. Neither is "
+                 "better. The question to ask is which operation the program does most. Many lookups "
+                 "by position favour an array. Many insertions and removals at the front favour a "
+                 "list.", "lec17"),
+                summary="Arrays index fast and insert slowly at the front; linked lists do the "
+                        "reverse. Choose by the operation you do most.",
+                at="deep",
+            ),
+            b.prose(
+                ("Every operation on a linked list is a small number of pointer assignments, and the "
+                 "order of those assignments is what questions test. Inserting at the front takes "
+                 "two. If you move the head first, the old first node has nothing pointing at it any "
+                 "more, and the rest of the list is lost with it. So the rule is to connect the new "
+                 "node to the list before you disconnect anything: aim the new node's next pointer "
+                 "at the old head, and only then move the head. The example goes through it. Draw "
+                 "one box per node as you read.", "lec17"),
+                summary="Link the new node to the list before you move the head. Moving the head "
+                        "first loses the rest of the list.",
+                at="standard",
+            ),
             b.example(
                 "Insert at the front",
                 "The list is 5 -> 9 and head points at the node holding 5. Insert 2 at the front.",
@@ -555,6 +831,31 @@ SECTIONS = {
                 ("Link it in", "new->next = head", "The new node now points at the old first node."),
                 ("Move the head", "head = new", "The list is 2 -> 5 -> 9. Doing this before the link would lose the list."),
                 source="lec17",
+            ),
+            b.prose(
+                "Removing the first node is insertion run backwards, with one extra step that is "
+                "easy to forget. Move the head to the second node and the list is correct again, but "
+                "the old first node is still sitting in memory with nothing pointing at it. So keep "
+                "a pointer to it before you move the head, and free it afterwards. Order matters "
+                "here as well: read the old node's next pointer before you free the node, because "
+                "after that its contents cannot be trusted. Like insertion, this changes two "
+                "pointers and moves no elements, so it costs the same for three items or three "
+                "thousand.",
+                summary="To remove the first node, save a pointer to it, move the head to the second "
+                        "node, then free the saved node.",
+                at="deep",
+            ),
+            b.prose(
+                "Walking a list uses the same picture. Keep a pointer to the current node, start it "
+                "at the head, and move it to the next node until it is NULL. Two cases need care "
+                "because they sit at the edges. An empty list has a NULL head, so a loop that "
+                "follows the head without checking fails on its first step. And the loop must test "
+                "the current pointer itself, not the node after it, or it stops one node early and "
+                "skips the last value. The map shows why this topic arrives now: a node is a struct, "
+                "it is reached through a pointer, and it is made with malloc.",
+                summary="Walk a list from the head until the pointer is NULL. Check for an empty "
+                        "list, and test the current node, not the next one.",
+                at="standard",
             ),
             b.concept_map(
                 "What a linked list is built from",
