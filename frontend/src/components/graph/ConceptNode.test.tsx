@@ -120,7 +120,7 @@ describe("ConceptNode", () => {
     const mark = body(container);
     expect(mark).toHaveAttribute("fill", "#7b4b99");
     expect(num(mark, "opacity")).toBe(1);
-    // radiusFor(_, true) is 22, clamped into the reference box.
+    // radiusFor(_, true) is 34, clamped into the reference box.
     expect(num(mark, "data-r")).toBe(NODE_REF_BOX / 2 - 0.75);
   });
 

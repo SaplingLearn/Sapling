@@ -231,44 +231,92 @@ describe("KnowledgeGraph2D — dragging a concept", SLOW, () => {
 });
 
 describe("KnowledgeGraph2D — dragging a course", SLOW, () => {
+  /** Two courses of twelve, the first with a short strand of links. */
+  const twoCourses = () => {
+    const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
+    const ids = nodes.filter((n) => !n.is_subject_root && n.course_id === "c1").map((n) => n.id);
+    return { nodes, ids, edges: chain(ids.slice(0, 4)) };
+  };
+  /**
+   * A drag target away from the other course, so the two never meet, and a
+   * little to one side; inside the window, where a dragged node is kept.
+   */
+  const awayFrom = (from: Pt, other: Pt, by = 180) => {
+    const len = dist(from, other);
+    const [ux, uy] = [(from.x - other.x) / len, (from.y - other.y) / len];
+    const inside = (v: number, size: number) => Math.min(size - 60, Math.max(60, v));
+    return { x: inside(from.x + ux * by - uy * 30, W), y: inside(from.y + uy * by + ux * 30, H) };
+  };
+
   it.each([
     ["plain", false],
     ["legible", true],
-  ])("carries its concepts with it and stays where it is let go (%s)", (_name, legible) => {
-    const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
+  ])("brings its concepts along on ropes and stays where it is let go (%s)", (_name, legible) => {
+    const { nodes, ids, edges } = twoCourses();
     const { container } = render(
-      <KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} legible={legible} />,
+      <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} legible={legible} />,
     );
     const before = positions(container);
     const from = before.get("root-c1")!;
-    // Away from the other course, so the two never meet, and a little to one side.
-    const other = before.get("root-c2")!;
-    const len = dist(from, other);
-    const [ux, uy] = [(from.x - other.x) / len, (from.y - other.y) / len];
-    const to = { x: from.x + ux * 180 - uy * 30, y: from.y + uy * 180 + ux * 30 };
+    const to = awayFrom(from, before.get("root-c2")!);
     drag(container, "root-c1", to);
     const after = positions(container);
     // A legible course root is elastic: its concepts tug it, its home holds it.
     expect(dist(after.get("root-c1")!, to)).toBeLessThan(legible ? 40 : 1);
-    // Every concept of the course kept about its place round it.
-    const moved = { x: after.get("root-c1")!.x - from.x, y: after.get("root-c1")!.y - from.y };
-    for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === "c1")) {
-      const was = before.get(n.id)!;
-      expect(dist(after.get(n.id)!, { x: was.x + moved.x, y: was.y + moved.y }), n.id).toBeLessThan(20);
+    const centre = after.get("root-c1")!;
+    for (const id of ids) {
+      // Every concept came after it: the course is still one body round its
+      // root (a concept on a strand hangs off the strand, so a little further).
+      expect(dist(after.get(id)!, centre), id).toBeLessThan(1.2 * dist(before.get(id)!, from) + 40);
     }
+    // …on ropes, not as one rigid block: some sit differently round it now.
+    const shifted = ids.map((id) =>
+      dist(
+        { x: after.get(id)!.x - centre.x, y: after.get(id)!.y - centre.y },
+        { x: before.get(id)!.x - from.x, y: before.get(id)!.y - from.y },
+      ),
+    );
+    expect(Math.max(...shifted)).toBeGreaterThan(20);
+    // The other course did not move.
+    expect(dist(after.get("root-c2")!, before.get("root-c2")!)).toBeLessThan(legible ? 20 : 1);
   });
 
-  it("pulls its concepts after it while it is being dragged", () => {
-    const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(12, "c2")];
-    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={W} height={H} />);
+  it("trails its concepts behind it while it is being dragged", () => {
+    const { nodes, ids, edges } = twoCourses();
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} />);
     const before = positions(container);
     const from = before.get("root-c1")!;
-    const to = { x: from.x, y: from.y + 200 };
+    const to = awayFrom(from, before.get("root-c2")!, 220);
     drag(container, "root-c1", to, { hold: true });
     const held = positions(container);
-    // Still holding on: the concepts are well on their way after it.
-    for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === "c1")) {
-      expect(held.get(n.id)!.y - before.get(n.id)!.y, n.id).toBeGreaterThan(100);
-    }
+    const along = (id: string) => {
+      const [dx, dy] = [to.x - from.x, to.y - from.y];
+      const len = Math.hypot(dx, dy);
+      return ((held.get(id)!.x - before.get(id)!.x) * dx + (held.get(id)!.y - before.get(id)!.y) * dy) / len;
+    };
+    const moved = ids.map(along);
+    // Still holding on: the concepts are coming after it…
+    expect(moved.reduce((sum, m) => sum + m, 0) / moved.length).toBeGreaterThan(30);
+    // …some well behind the others: a rope pulls only once it is taut.
+    expect(Math.max(...moved) - Math.min(...moved)).toBeGreaterThan(40);
+  });
+});
+
+describe("KnowledgeGraph2D — the course node", () => {
+  it.each([
+    ["plain", false],
+    ["legible", true],
+  ])("is bigger than any concept and labelled with its course code (%s)", (_name, legible) => {
+    const nodes = [root("c1"), ...concepts(12)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const { container } = render(
+      <KnowledgeGraph2D nodes={nodes} edges={chain(ids.slice(0, 8))} width={W} height={H} legible={legible} />,
+    );
+    const radius = (id: string) =>
+      Number(container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"] [data-testid="graph-node-circle"]`)!.getAttribute("data-r"));
+    const largest = Math.max(...ids.map(radius));
+    expect(radius("root-c1")).toBeGreaterThanOrEqual(1.45 * largest);
+    const label = container.querySelector('[data-node-id="root-c1"] [data-testid="graph-course-label"]')!;
+    expect(label.textContent).toBe("C1 101");
   });
 });

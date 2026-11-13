@@ -213,6 +213,15 @@ export function conceptLabelSize(legible: boolean, focused: boolean, scale: numb
   return legible && focused ? Math.min(24, 10.5 / Math.min(1, scale)) : 10.5;
 }
 
+/**
+ * A course root's label size: 13 at full size, growing as the view zooms out
+ * so it reads at about 13px on screen however far out (24 at most), in
+ * either mode, so every course can be found at a glance.
+ */
+export function courseLabelSize(scale: number): number {
+  return Math.min(24, 13 / Math.min(1, scale));
+}
+
 /** A concept label's weight: the focused concept's own label is bold. */
 export function conceptLabelWeight(legible: boolean, isFocus: boolean): number | undefined {
   return legible && isFocus ? 600 : undefined;

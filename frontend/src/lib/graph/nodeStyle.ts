@@ -99,10 +99,17 @@ export function shadeFor(baseHex: string, nodeId: string, as: "css" | "hex" = "c
   return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${l.toFixed(0)}%)`;
 }
 
+/**
+ * A course root's radius: half again the largest concept (20 by mastery, 23
+ * by importance in legible mode), so a course's own node is plain to see
+ * among its concepts.
+ */
+export const COURSE_NODE_R = 34;
+
 /** Visual radius of a concept mark, in the tree's own units. Subject roots are
- *  a flat 22 — they anchor a family and don't encode mastery. */
+ *  a flat `COURSE_NODE_R` — they anchor a family and don't encode mastery. */
 export function radiusFor(mastery: number, isRoot = false): number {
-  if (isRoot) return 22;
+  if (isRoot) return COURSE_NODE_R;
   return 8 + (mastery || 0) * 12;
 }
 

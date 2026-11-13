@@ -11,6 +11,7 @@ import {
 } from "d3-force";
 import { type GraphEdge, type GraphNode } from "@/lib/data";
 import {
+  COURSE_NODE_R,
   courseLabel,
   edgeWidthFor,
   masteryFillFor,
@@ -28,6 +29,7 @@ import {
   conceptLabelOpacity,
   conceptLabelSize,
   conceptLabelWeight,
+  courseLabelSize,
   hoverFocusId,
   hoverMastery,
   isDragPinned,
@@ -812,7 +814,7 @@ function KnowledgeGraph2DImpl({
         "collide",
         forceCollide<SimNode>().radius((d) =>
           d.is_subject_root
-            ? 40
+            ? COURSE_NODE_R + 14
             : legibleRef.current
               ? (radiusRef.current.get(d.id) ?? 8) + 13
               : 20 + (d.mastery_score || 0) * 6,
@@ -842,8 +844,11 @@ function KnowledgeGraph2DImpl({
         for (const [id, home] of rootHomeRef.current) {
           const root = nodeById.get(id);
           if (!root || root.fx != null || root.x == null || root.y == null) continue;
-          // A root being pulled along by a drag goes where it's pulled.
-          if (freeRef.current.leader.has(id)) continue;
+          // A root being pulled along by another node's drag goes where it's
+          // pulled; one that was itself dragged keeps to its home (where it
+          // was let go).
+          const rope = freeRef.current.leader.get(id);
+          if (rope && rope.leader !== null) continue;
           root.vx = (root.vx ?? 0) + (home.x - root.x) * 0.1 * alpha;
           root.vy = (root.vy ?? 0) + (home.y - root.y) * 0.1 * alpha;
         }
@@ -1117,6 +1122,31 @@ function KnowledgeGraph2DImpl({
     easeView({ tx: c.tx, ty: c.ty, scale: nextScale });
   };
 
+  /**
+   * The ropes a drag of `n` hangs things on: everything linked to it, each
+   * tied to the node it was reached through by a rope as long as their link
+   * is now (`FOLLOW_GAP` at least). A course root also holds every concept of
+   * its course that no link reaches, each on a rope as long as it now is
+   * from the root, so a dragged course trails its whole body behind it.
+   */
+  const tethersFor = (n: SimNode): Map<string, Tether> => {
+    const at = new Map(simNodesRef.current.map((sn) => [sn.id, sn]));
+    const ropeBetween = (id: string, leaderId: string | null): Tether => {
+      const a = at.get(id);
+      const b = leaderId ? at.get(leaderId) : undefined;
+      const len = a?.x != null && a.y != null && b?.x != null && b.y != null ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+      return { leader: leaderId, gap: Math.max(FOLLOW_GAP, len) };
+    };
+    const leader = new Map<string, Tether>();
+    for (const [id, leaderId] of followersOf(n.id, simLinksRef.current)) leader.set(id, ropeBetween(id, leaderId));
+    if (n.is_subject_root) {
+      for (const [id, o] of planRef.current.orbit) {
+        if (o.rootId === n.id && !leader.has(id)) leader.set(id, ropeBetween(id, n.id));
+      }
+    }
+    return leader;
+  };
+
   const onNodePointerDown = (e: React.PointerEvent, n: SimNode) => {
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -1124,19 +1154,11 @@ function KnowledgeGraph2DImpl({
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     flingRef.current = n.x != null && n.y != null ? { x: n.x, y: n.y, t: performance.now(), vx: 0, vy: 0 } : null;
     simRef.current?.alphaTarget(0.3).restart();
-    if (!n.is_subject_root) {
-      // A still-settling earlier drag adopts its layout before this one starts.
-      if (freeRef.current.leader.size) settleFreed();
-      const at = new Map(simNodesRef.current.map((sn) => [sn.id, sn]));
-      const leader = new Map<string, Tether>();
-      for (const [id, leaderId] of followersOf(n.id, simLinksRef.current)) {
-        const a = at.get(id);
-        const b = leaderId ? at.get(leaderId) : undefined;
-        const len = a?.x != null && a.y != null && b?.x != null && b.y != null ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
-        leader.set(id, { leader: leaderId, gap: Math.max(FOLLOW_GAP, len) });
-      }
-      freeRef.current = { leader, dragging: n.id };
-    }
+    // A still-settling earlier drag adopts its layout before this one starts.
+    if (freeRef.current.leader.size) settleFreed();
+    // A course root moves with the same physics as a concept: what it holds
+    // follows it on ropes (see tethersFor).
+    freeRef.current = { leader: tethersFor(n), dragging: n.id };
     n.fx = n.x;
     n.fy = n.y;
     // dragRef/fx are refs — render once so the tooltip hides and the pinned
@@ -1231,7 +1253,8 @@ function KnowledgeGraph2DImpl({
           if (n.x != null && n.y != null) rootHomeRef.current.set(n.id, { x: n.x, y: n.y });
         }
         if (n.is_subject_root && !legible) {
-          // Classic layout: course roots stay pinned where they were dropped.
+          // Classic layout: course roots stay pinned where they were dropped,
+          // and their concepts keep following them there on their ropes.
           n.fx = n.x;
           n.fy = n.y;
         } else {
@@ -1520,13 +1543,16 @@ function KnowledgeGraph2DImpl({
             strokeOpacity={nodeStrokeOpacity(isPinned, isHovered)}
           />
         )}
-        {n.is_subject_root && !legible && (
+        {n.is_subject_root && (
+          // Every course root is labelled with its course code, in both
+          // modes, and stays readable zoomed out (`courseLabelSize`).
           <text
+            data-testid="graph-course-label"
             x={0}
-            y={r + 16}
+            y={r + 4 + courseLabelSize(view.scale) * 0.92}
             textAnchor="middle"
             fontFamily="var(--font-display)"
-            fontSize={13}
+            fontSize={courseLabelSize(view.scale)}
             fontWeight={600}
             fill={color}
             pointerEvents="none"
