@@ -153,5 +153,5 @@ export async function generateGuide(
     const finished = dispatch(data, handlers);
     if (finished) return finished;
   }
-  throw new GuideGenerationError("The guide stream ended early.", true);
+  throw new GuideGenerationError("The connection dropped before the guide was finished. Retry picks up where it stopped.", true);
 }

@@ -110,7 +110,7 @@ describe("generateGuide", () => {
     streams(event("progress", "outline", "Outline ready", { content: CONTENT }));
     const given = handlers();
     const err = await failure(generateGuide("u1", "g1", "resume", given));
-    expect(err.message).toBe("The guide stream ended early.");
+    expect(err.message).toBe("The connection dropped before the guide was finished. Retry picks up where it stopped.");
     expect(err.retryable).toBe(true);
     // What arrived before the cut was still handed on.
     expect(given.onOutline).toHaveBeenCalledWith(CONTENT);
