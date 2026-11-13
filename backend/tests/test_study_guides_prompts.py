@@ -187,7 +187,9 @@ def test_the_section_message_says_what_to_write_and_what_the_others_cover():
     assert "Title: Loops" in section and "Concept: Loops" in section
     assert "Main idea: A loop repeats a block until its condition is false." in section
     assert "How well the student knows it: struggling" in section
-    assert "Share of the guide: 70%" in section
+    # The writer scales its length by the share: it is given the share that
+    # would be even beside it, so it can tell more room from less.
+    assert "Share of the guide: 70% (an even share is 50%)" in section
 
 
 def test_without_history_the_section_says_nothing_about_mastery_or_quizzes():

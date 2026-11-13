@@ -168,7 +168,10 @@ def _section(brief: Brief, content: GuideContent, section: Section) -> str:
     ]
     if section.concept and brief.tiers:
         lines.append(f"How well the student knows it: {section.tier}")
-    lines.append(f"Share of the guide: {section.weight}%")
+    # The writer scales its length by the share, so it needs the share that
+    # would mean "no weaker and no stronger than the rest" to compare with.
+    even = round(100 / max(len(content.sections), 1))
+    lines.append(f"Share of the guide: {section.weight}% (an even share is {even}%)")
     return "\n".join(lines)
 
 

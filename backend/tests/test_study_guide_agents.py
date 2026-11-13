@@ -290,6 +290,105 @@ def test_section_prompt_states_the_grounding_rules():
         assert f"- {word}:" in prompt
 
 
+# ── How much the section writer is asked to write ─────────────────────────────
+
+
+def _said(prompt: str) -> str:
+    """The prompt as the model reads it: one line, single spaces."""
+    return " ".join(prompt.split())
+
+
+def test_the_lengths_are_floors_and_ranges_that_fit_inside_each_other():
+    words, passages = agents.SECTION_WORDS, agents.SECTION_PASSAGES
+    assert words == {"cram": (90, 160), "standard": (280, 450), "deep": (500, 800)}
+    assert passages == {"cram": (1, 2), "standard": (3, 4), "deep": (4, 6)}
+    assert agents.PARAGRAPH_WORDS == (60, 130) and agents.PARAGRAPH_FLOOR == 40
+    # A deeper guide always has more to read, and a mastered section less
+    # than any other section of its guide.
+    assert words["cram"][1] < words["standard"][0] and words["standard"][1] < words["deep"][0]
+    assert {depth: agents.mastered_words(depth) for depth in words} == {
+        "cram": (45, 90), "standard": (140, 280), "deep": (250, 500),
+    }
+    # The fewest passages can hold the most words: a passage is at most three
+    # paragraphs (`ProseItem`), and a usual paragraph tops out at 130 words.
+    for depth, (_, most) in words.items():
+        assert most <= passages[depth][1] * 3 * agents.PARAGRAPH_WORDS[1]
+
+
+@pytest.mark.parametrize("depth", ["cram", "standard", "deep"])
+def test_section_prompt_states_each_depths_passages_and_words(depth):
+    said = _said(PROMPTS["section"])
+    rule = said[said.index(f"- {depth}:"):]
+    rule = rule[: rule.index(" - ", 1)] if " - " in rule[1:] else rule
+    fewest, most = agents.SECTION_WORDS[depth]
+    low, high = agents.SECTION_PASSAGES[depth]
+
+    assert f"{fewest} to {most} words of prose" in rule
+    assert re.search(rf"\b{low} (?:or|to) {high} passages", rule)
+
+
+def test_section_prompt_says_what_the_word_counts_count():
+    said = _said(PROMPTS["section"])
+
+    assert "the words of your paragraphs in the whole section" in said
+    assert "Summary lines and blocks do not count" in said
+    assert "A run with its summary line is one passage" in said
+
+
+def test_section_prompt_states_the_paragraph_length_and_its_floor():
+    said = _said(PROMPTS["section"])
+
+    assert "normally 60 to 130 words" in said
+    assert "Never write a paragraph under 40 words or a one-sentence paragraph" in said
+    # The one short paragraph allowed: a sentence that leads into a block.
+    assert "A bridge is one sentence that stands alone directly above a block" in said
+    assert "never more than one for a block" in said
+    # The contract clips a paragraph, so the writer is told where.
+    assert "over 1200 characters is cut off" in said
+
+
+def test_section_prompt_asks_for_clear_sentences_and_never_for_brevity():
+    said = _said(PROMPTS["section"])
+    voice = said[said.index("VOICE"):said.index("GROUNDING")]
+
+    assert "clear, complete sentences" in voice and "short" not in voice
+    for asks_for_less in ("under about 120 words", "shortest useful", "brief setup", "One short passage"):
+        assert asks_for_less not in said
+    assert "Longer means more explanation, never more words around the same content" in said
+
+
+def test_section_prompt_puts_prose_before_and_around_every_block():
+    said = _said(PROMPTS["section"])
+
+    assert "Every section opens with at least two full paragraphs before its first block" in said
+    assert "each block has prose directly above it that leads into it, or directly below it" in said
+    # The sample shows it: two paragraphs, a block, prose that reads it.
+    shape = PROMPTS["section"][PROMPTS["section"].index("SHAPE"):]
+    first_block = shape.index("```block")
+    assert shape[:first_block].count("paragraph") >= 2 and ">> " in shape[:first_block]
+    assert "what to take from the block above" in shape
+
+
+def test_section_prompt_keeps_read_and_skim_apart():
+    said = _said(PROMPTS["section"])
+
+    assert "one or two short plain sentences, at most a third as long as the run" in said
+    assert "the two must never look alike" in said
+    assert "give every run one (a bridge is the exception)" in said
+
+
+def test_section_prompt_halves_a_mastered_section_and_scales_by_share():
+    said = _said(PROMPTS["section"])
+
+    assert "For one they have mastered, write a refresher at about half length" in said
+    assert "(cram 45 to 90 words, standard 140 to 280, deep 250 to 500)" in said
+    assert 'behind "Show full section"' in said
+    assert "Above the even share, write toward the top of the range" in said
+    assert "The share never takes you outside the range" in said
+    # A thin source still wins over a word count.
+    assert "when the sources say little, the grounding rule comes first" in said
+
+
 def test_only_the_block_prompt_carries_the_rewrite_marker():
     assert BLOCK_REWRITE_MARKER in PROMPTS["block"]
     assert BLOCK_REWRITE_MARKER not in PROMPTS["section"]
