@@ -389,6 +389,10 @@ SECTION_WORDS: dict[str, tuple[int, int]] = {
     "deep": (500, 800),
 }
 SECTION_PASSAGES: dict[str, tuple[int, int]] = {"cram": (1, 2), "standard": (3, 4), "deep": (4, 6)}
+#: The most blocks one section has, the check among them. Every block has a
+#: passage of its own in front of it, so this is never more than the most
+#: passages.
+SECTION_BLOCKS: dict[str, int] = {"cram": 2, "standard": 4, "deep": 6}
 #: A paragraph's usual length in words, and the length none goes under.
 PARAGRAPH_WORDS = (60, 130)
 PARAGRAPH_FLOOR = 40
@@ -452,13 +456,12 @@ Prose
 tables in prose.
 - A paragraph is several connected sentences that explain one thing, \
 normally {_range(PARAGRAPH_WORDS)} words. Never write a paragraph under \
-{PARAGRAPH_FLOOR} words or a one-sentence paragraph, with one exception, the \
-bridge. A paragraph over 1200 characters is cut off, so stop well before \
-that.
-- A bridge is one sentence that stands alone directly above a block and \
-tells the student what to do with the block or what to look for in it \
-("Switch between the two states and watch which line moves."). Use one only \
-where it helps, never more than one for a block, and give it no summary line.
+{PARAGRAPH_FLOOR} words, and never a one-sentence paragraph. A paragraph over \
+1200 characters is cut off, so stop well before that.
+- The last sentence of a paragraph that leads into a block may tell the \
+student what to do with the block or what to look for in it ("Switch between \
+the two states and watch which line moves."). It is part of the paragraph: \
+never set such a sentence on a line of its own.
 - A short code sample may stand between paragraphs as a fenced code block \
 that names its language: a line that is exactly {_FENCE}python (or the \
 language it is in), the code, then a line that is exactly {_FENCE}. It counts \
@@ -475,14 +478,16 @@ label in square brackets: ... before every pass [S2]. Cite only labels that \
 appear in SOURCES.
 - After each run of one to three paragraphs, write one line that starts with \
 ">> ". It is the skim summary of that run: one or two short plain sentences, \
-at most a third as long as the run, that replace those paragraphs when the \
-student switches to Skim mode. A run with its summary line is one passage. \
-Read mode shows your paragraphs and Skim mode shows only these lines, so the \
-two must never look alike: the paragraphs carry the explanation, and the \
-summary only its conclusion. A run with no summary line disappears in Skim \
-mode, so give every run one (a bridge is the exception). The summary line is \
-shown as plain text: write money plainly ($4) there, and use no ** marks and \
-no $...$ math in it.
+about 8 to 25 words and at most a third as long as the run, that replace \
+those paragraphs when the student switches to Skim mode. A run with its \
+summary line is one passage. Read mode shows your paragraphs and Skim mode \
+shows only these lines, so the two must never look alike: the paragraphs \
+carry the explanation, and the summary only its conclusion. Every passage \
+gets a ">> " line, including the short ones between blocks, so that Skim \
+always has a sentence between two blocks: a run with no summary line \
+disappears in Skim mode and would leave its blocks back to back. The summary \
+line is shown as plain text: write money plainly ($4) there, and use no ** \
+marks and no $...$ math in it.
 
 Blocks
 {_BLOCK_FORMAT}
@@ -494,7 +499,7 @@ paragraphs, and each JSON line stands for one whole block.
 
 The opening paragraph. It marks a **key term** and ends a sourced sentence with a label [S1].
 
-A second full paragraph of the opening run.
+A second full paragraph of the opening run. It explains what the first block is about to show.
 
 >> One or two short sentences that stand in for the two paragraphs above.
 
@@ -502,17 +507,15 @@ A second full paragraph of the opening run.
 {{"type": "formula", "name": "...", "latex": "...", "spoken": "...", "source": "S1"}}
 {_FENCE}
 
-A paragraph that says what to take from the block above, then explains the next idea [S2].
+A paragraph that says what to take from the block above, then explains the idea the next block works through [S2].
 
 >> Its summary.
-
-One sentence that leads into the block below.
 
 {_FENCE}block
 {{"type": "worked_example", "title": "...", "problem": "...", "steps": [...], "source": "S2"}}
 {_FENCE}
 
-The last run of prose.
+A paragraph that pulls the section together: what the student should now be able to do.
 
 >> Its summary.
 
@@ -526,29 +529,37 @@ paragraph would, and never repeat in a block what the prose beside it just \
 said. Do not use the same block type twice in a section, except \
 worked_example when the goal or depth below asks for more practice.
 
-Prose and blocks alternate. Every section opens with at least two full \
-paragraphs before its first block. After that, each block has prose directly \
-above it that leads into it, or directly below it that says what to take from \
-it, so no block is left to explain itself. The check question is the one \
-exception: it closes the section and needs no prose after it.
+Explanation comes first, then the block. Every section opens with at least \
+two full paragraphs before its first block. Never put two blocks next to each \
+other. Before every block, write at least one full paragraph that explains \
+what the block is about to show, work through or test. So a section never \
+has more blocks than passages, and it reads: explain, show, explain, \
+practise, sum up, test.
+- A mistakes block follows prose about why those slips happen.
+- The check question is the last thing in the section, and most sections \
+should have one. The paragraph before it pulls the section together: what \
+the student should now be able to do.
 
 GOAL AND DEPTH
 DEPTH sets how much you write. The word counts below are the words of your \
 paragraphs in the whole section. Summary lines and blocks do not count.
 - cram: the essentials, in full sentences that still read as text. \
 {_range(SECTION_PASSAGES["cram"]).replace(" to ", " or ")} passages, \
-{_range(SECTION_WORDS["cram"])} words of prose, and at most two blocks: what \
-to memorise and nothing else. Paragraphs here may be as short as \
-{PARAGRAPH_FLOOR} words.
+{_range(SECTION_WORDS["cram"])} words of prose, and at most \
+{SECTION_BLOCKS["cram"]} blocks, counting the check: what to memorise and \
+nothing else. Paragraphs here may be as short as {PARAGRAPH_FLOOR} words.
 - standard: a proper written explanation: what it is, why it works, how it \
 is tested and how it connects to the rest. \
 {_range(SECTION_PASSAGES["standard"]).replace(" to ", " or ")} passages, \
-{_range(SECTION_WORDS["standard"])} words of prose, and three to five blocks.
+{_range(SECTION_WORDS["standard"])} words of prose, and at most \
+{SECTION_BLOCKS["standard"]} blocks, counting the check (usually three or \
+four).
 - deep: everything standard gives, plus the reasoning behind it, the edge \
 cases the sources raise and a second angle on the idea. \
 {_range(SECTION_PASSAGES["deep"])} passages, \
-{_range(SECTION_WORDS["deep"])} words of prose, and four to six blocks, with \
-worked examples among them.
+{_range(SECTION_WORDS["deep"])} words of prose, and at most \
+{SECTION_BLOCKS["deep"]} blocks, counting the check (usually four or five), \
+with worked examples among them.
 
 Count before you finish: a section under its range reads as notes, not as a \
 guide. Longer means more explanation, never more words around the same \
@@ -573,9 +584,9 @@ SECTION moves you within the range for DEPTH, or below it.
 with or have not explored, start from the basics and go slower, with more \
 examples. For one they have mastered, write a refresher at about half \
 length, between half of the range's lower figure and that figure \
-({_REFRESHER_WORDS}), in about half the passages. The page shows a mastered \
-section folded to its one-line main idea, with your text behind "Show full \
-section".
+({_REFRESHER_WORDS}), in about half the passages and with about half the \
+blocks. The page shows a mastered section folded to its one-line main idea, \
+with your text behind "Show full section".
 - Share of the guide. The weaker the student is on a concept, the larger its \
 share. Above the even share, write toward the top of the range; below it, \
 toward the bottom; at it, the middle. The share never takes you outside the \

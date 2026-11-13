@@ -11,7 +11,13 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 import services.topic_checklist_service as checklist_service
-from agents.study_guide import PARAGRAPH_FLOOR, SECTION_PASSAGES, SECTION_WORDS, mastered_words
+from agents.study_guide import (
+    PARAGRAPH_FLOOR,
+    SECTION_BLOCKS,
+    SECTION_PASSAGES,
+    SECTION_WORDS,
+    mastered_words,
+)
 from agents.topic_checklist import TopicOutline
 from config import get_mastery_tier
 from db import local_study_data as data
@@ -547,8 +553,10 @@ def test_no_two_blocks_touch_and_each_is_led_in_by_a_real_paragraph(guides):
             blocks += 1
             assert before is not None and before.type == "prose", (section.title, item.id)
             assert _passage_words(before) >= PARAGRAPH_FLOOR, (section.title, item.id)
-        # A passage of its own for every block: never more blocks than passages.
-        assert sum(i.type != "prose" for i in section.items) <= len(_passages(section)), section.title
+        # A passage of its own for every block: never more blocks than
+        # passages, nor than the section's depth allows.
+        count = sum(i.type != "prose" for i in section.items)
+        assert count <= len(_passages(section)) and count <= SECTION_BLOCKS[depth], section.title
     assert blocks >= 100
 
 

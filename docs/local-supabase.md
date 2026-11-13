@@ -244,9 +244,12 @@ answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
   the length its guide's depth asks the section writer for (90 to 160 words
   of prose for a cram sheet, 280 to 450 for standard, 500 to 800 for a deep
   review, and about half for a mastered concept), with a one or two sentence
-  Skim summary per passage. CS101's "Pointers, recursion and Big-O" (Midterm
-  2, standard) is the one to open to see the usual output: it is seeded as
-  just written, with every block type between its passages.
+  Skim summary per passage. No two blocks stand back to back, in Read or in
+  Skim: each block follows a passage that explains it, and the check closes
+  the section after a passage that sums it up. CS101's "Pointers, recursion
+  and Big-O" (Midterm 2, standard) is the one to open to see the usual
+  output: it is seeded as just written, with every block type between its
+  passages.
 - **Course outline**: four units (the roadmap's columns), stored under the
   outline's real evidence hash so the Study page does not regenerate it with
   the model. Every exam and quiz is linked to concepts of its own: a quiz to
@@ -261,9 +264,10 @@ The content lives in `backend/db/local_study_data/`, one module per class
 (`cs101_concepts.py`, `cs101_guides.py`). A section is drafted once per
 concept, in layers: an opening every length has, the passages a standard
 guide adds and the ones a deep guide adds, so one draft serves guides of
-different depths. A
+different depths. Blocks are layered the same way (a cram section keeps one
+block and its check). A
 guide is built the way a generation run leaves it: the server's own check
-decides whether each chart is plotted from data (three are, from numbers in
+decides whether each chart is plotted from data (two are, from numbers in
 the lecture they cite) and stamps the evidence line on a quiz mistake.
 
 Every row has a deterministic `study-…` id and every write is an upsert, so

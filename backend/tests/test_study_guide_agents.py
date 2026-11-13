@@ -315,6 +315,20 @@ def test_the_lengths_are_floors_and_ranges_that_fit_inside_each_other():
         assert most <= passages[depth][1] * 3 * agents.PARAGRAPH_WORDS[1]
 
 
+def test_the_block_counts_fit_the_passages_and_the_words():
+    """Every block has a passage of its own in front of it, so the most
+    blocks a depth allows must fit its passages, and the paragraphs that
+    takes (two to open, one more per further block) must fit its words."""
+    usual = agents.PARAGRAPH_WORDS[0]
+    for depth, most_blocks in agents.SECTION_BLOCKS.items():
+        _, most_words = agents.SECTION_WORDS[depth]
+        assert most_blocks <= agents.SECTION_PASSAGES[depth][1]
+        floor = agents.PARAGRAPH_FLOOR if depth == "cram" else usual
+        assert (2 + most_blocks - 1) * floor <= most_words, depth
+    # A mastered cram section has room for its opening and the check alone.
+    assert 2 * agents.PARAGRAPH_FLOOR <= agents.mastered_words("cram")[1] < 3 * agents.PARAGRAPH_FLOOR
+
+
 @pytest.mark.parametrize("depth", ["cram", "standard", "deep"])
 def test_section_prompt_states_each_depths_passages_and_words(depth):
     said = _said(PROMPTS["section"])
@@ -325,6 +339,7 @@ def test_section_prompt_states_each_depths_passages_and_words(depth):
 
     assert f"{fewest} to {most} words of prose" in rule
     assert re.search(rf"\b{low} (?:or|to) {high} passages", rule)
+    assert f"at most {agents.SECTION_BLOCKS[depth]} blocks, counting the check" in rule
 
 
 def test_section_prompt_says_what_the_word_counts_count():
@@ -339,10 +354,12 @@ def test_section_prompt_states_the_paragraph_length_and_its_floor():
     said = _said(PROMPTS["section"])
 
     assert "normally 60 to 130 words" in said
-    assert "Never write a paragraph under 40 words or a one-sentence paragraph" in said
-    # The one short paragraph allowed: a sentence that leads into a block.
-    assert "A bridge is one sentence that stands alone directly above a block" in said
-    assert "never more than one for a block" in said
+    assert "Never write a paragraph under 40 words, and never a one-sentence paragraph" in said
+    # A lead-in to a block is the end of its paragraph, never a line alone:
+    # alone it would have no Skim summary, and Skim would show two blocks
+    # back to back.
+    assert "never set such a sentence on a line of its own" in said
+    assert "bridge" not in said
     # The contract clips a paragraph, so the writer is told where.
     assert "over 1200 characters is cut off" in said
 
@@ -357,24 +374,58 @@ def test_section_prompt_asks_for_clear_sentences_and_never_for_brevity():
     assert "Longer means more explanation, never more words around the same content" in said
 
 
-def test_section_prompt_puts_prose_before_and_around_every_block():
+def test_section_prompt_never_lets_two_blocks_touch():
     said = _said(PROMPTS["section"])
 
     assert "Every section opens with at least two full paragraphs before its first block" in said
-    assert "each block has prose directly above it that leads into it, or directly below it" in said
-    # The sample shows it: two paragraphs, a block, prose that reads it.
-    shape = PROMPTS["section"][PROMPTS["section"].index("SHAPE"):]
-    first_block = shape.index("```block")
-    assert shape[:first_block].count("paragraph") >= 2 and ">> " in shape[:first_block]
-    assert "what to take from the block above" in shape
+    assert "Never put two blocks next to each other" in said
+    assert (
+        "Before every block, write at least one full paragraph that explains what the "
+        "block is about to show, work through or test"
+    ) in said
+    assert "a section never has more blocks than passages" in said
+    assert "explain, show, explain, practise, sum up, test" in said
+    assert "A mistakes block follows prose about why those slips happen" in said
+
+
+def test_section_prompt_closes_on_a_summing_up_and_the_check():
+    said = _said(PROMPTS["section"])
+
+    assert "The check question is the last thing in the section" in said
+    assert "The paragraph before it pulls the section together" in said
+    assert "what the student should now be able to do" in said
+
+
+def _sample_layout() -> list[str]:
+    """The SHAPE sample as the kinds of its parts, in order."""
+    shape = PROMPTS["section"]
+    shape = shape[shape.index("SHAPE"):shape.index("CHOOSING BLOCKS")]
+    parts = [part.strip() for part in shape.split("\n\n")[1:] if part.strip()]
+    return ["block" if p.startswith("```block") else "summary" if p.startswith(">> ") else "paragraph" for p in parts]
+
+
+def test_the_sample_layout_follows_its_own_rules():
+    layout = _sample_layout()
+
+    assert layout[:3] == ["paragraph", "paragraph", "summary"]
+    assert layout[-1] == "block" and layout.count("block") == 3
+    # Every block stands directly under the summary line of its own passage:
+    # never under another block, and never under a paragraph with no summary.
+    assert all(layout[at - 1] == "summary" for at, kind in enumerate(layout) if kind == "block")
+    assert all(layout[at - 1] == "paragraph" for at, kind in enumerate(layout) if kind == "summary")
+    assert '{"type": "check"' in PROMPTS["section"].split("CHOOSING BLOCKS")[0].rsplit("```block", 1)[1]
 
 
 def test_section_prompt_keeps_read_and_skim_apart():
     said = _said(PROMPTS["section"])
 
-    assert "one or two short plain sentences, at most a third as long as the run" in said
+    assert "one or two short plain sentences, about 8 to 25 words and at most a third as long as the run" in said
     assert "the two must never look alike" in said
-    assert "give every run one (a bridge is the exception)" in said
+    # Skim hides a passage with no summary, so every passage has one.
+    assert (
+        'Every passage gets a ">> " line, including the short ones between blocks, so that '
+        "Skim always has a sentence between two blocks"
+    ) in said
 
 
 def test_section_prompt_halves_a_mastered_section_and_scales_by_share():
@@ -382,6 +433,7 @@ def test_section_prompt_halves_a_mastered_section_and_scales_by_share():
 
     assert "For one they have mastered, write a refresher at about half length" in said
     assert "(cram 45 to 90 words, standard 140 to 280, deep 250 to 500)" in said
+    assert "in about half the passages and with about half the blocks" in said
     assert 'behind "Show full section"' in said
     assert "Above the even share, write toward the top of the range" in said
     assert "The share never takes you outside the range" in said
