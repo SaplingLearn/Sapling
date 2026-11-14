@@ -123,7 +123,7 @@ def test_a_course_narrows_the_candidates(wired):
     fake, calls = _answers({"c0": 0.9})
     wired.monkeypatch.setattr(suggest.decisions, "decide", fake)
     out = run(suggest.suggest_flashcard_set("u1", "all of it", course_id="c2"))
-    assert wired.graph.filters["course_id"] == "eq.c2"
+    assert wired.graph.filters == {"user_id": "eq.u1", "course_id": "eq.c2"}
     assert [c["name"] for c in calls[0]["state"]["concepts"]] == ["Vectors"]
     assert [c["name"] for c in out["concepts"]] == ["Vectors"]
 
