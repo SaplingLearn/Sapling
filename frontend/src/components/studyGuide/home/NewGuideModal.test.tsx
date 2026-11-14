@@ -6,7 +6,7 @@
  * The pure rules behind it are pinned in newGuideModel.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -314,6 +314,27 @@ describe("planned outline", () => {
     await waitFor(() => expect(screen.getByTestId("guide-new-outline-minutes")).toHaveTextContent("about 4 min"));
     expect(screen.getByTestId("guide-new-outline-section-0")).toHaveTextContent("100%");
     expect(screen.queryByTestId("guide-new-outline-section-1")).toBeNull();
+  });
+
+  it("never shows another class's outline while the new class's is planned", async () => {
+    const user = await modal();
+    await screen.findByTestId("guide-new-outline-section-0");
+    const limits = deferred<GuidePlan>();
+    mocks.options.mockResolvedValue({
+      scopes: [{ kind: "course", id: null, title: "Whole course", due_date: null, suggested_material_ids: ["m1"] }],
+      materials: [material("m1", "Limits notes.pdf")],
+    });
+    mocks.plan.mockReturnValue(limits.promise);
+    await user.click(screen.getByTestId("guide-new-class"));
+    await user.click(screen.getByTestId("guide-new-class-option-c2"));
+    await screen.findByTestId("guide-new-material-m1");
+    await waitFor(() => expect(lastPlanRequest().course_id).toBe("c2"));
+    // CS101's sections are gone: the outline waits for Calculus's own.
+    expect(screen.queryByTestId("guide-new-outline-section-0")).toBeNull();
+    expect(screen.getByTestId("guide-new-outline")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => limits.resolve({ sections: [{ title: "Limits", tier: "learning", weight: 100 }], minutes: 5 }));
+    expect(await screen.findByTestId("guide-new-outline-section-0")).toHaveTextContent("Limits");
   });
 
   it("aborts the call before it, and a late answer to it is ignored", async () => {
