@@ -66,6 +66,10 @@ const scopeCaption = (scope: ExamScope) =>
 /** Key it on the course, so a course change replays its entrance. */
 export interface RoadmapProps {
   columns: RoadmapColumn[];
+  /** The course's categories are still being read, so `columns` is empty
+   *  because nothing can be grouped YET — not because the course has no
+   *  concepts. Keeps the empty state from claiming the latter. */
+  pending?: boolean;
   /** What the selected exam covers (and `columns` is cut down to); null when
    *  no exam is selected or it has no concepts linked. */
   scope: ExamScope | null;
@@ -80,7 +84,7 @@ export interface RoadmapProps {
   closeTileMenu: (conceptId: string) => void;
 }
 
-export function Roadmap({ columns, scope, cards, tileMenu, openCols, quizShown, nav, set, closeTileMenu }: RoadmapProps) {
+export function Roadmap({ columns, pending = false, scope, cards, tileMenu, openCols, quizShown, nav, set, closeTileMenu }: RoadmapProps) {
   /* Stacking: every column is its own stacking context (its colEnter
      opacity/transform animation), and so is any hovered (lifted) or dimmed
      tile. A z-index on the menu alone is therefore trapped and later
@@ -113,7 +117,9 @@ export function Roadmap({ columns, scope, cards, tileMenu, openCols, quizShown, 
           </div>
         ))}
       </div>
-      {columns.length === 0 && <div style={{ fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Concepts from this course&apos;s knowledge graph will appear here.</div>}
+      {/* Never while `pending`: "this course has nothing" is a claim about
+          the student's data, and a course mid-read has not made it yet. */}
+      {columns.length === 0 && !pending && <div style={{ fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Concepts from this course&apos;s knowledge graph will appear here.</div>}
     </section>
   );
 }

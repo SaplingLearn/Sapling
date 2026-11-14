@@ -164,13 +164,16 @@ export function useStudyRecords(userId: string): StudyRecords {
  * may be generated again, and re-reads the selected course. What is on screen
  * stays until the new answer lands.
  *
- * `ready` is false from the moment the COURSE (or term) changes until that
- * course's read settles. The graph is loaded per SEMESTER, so it survives a
- * course switch: without this the hub had concepts but no categories for a
- * moment and drew the whole roadmap under the layer fallback — every concept
- * stacked in "Foundations" and "Core Methods" — before the real categories
- * replaced it. A `reload` of the course already shown does NOT clear it: that
- * one deliberately keeps what is on screen until the new answer lands.
+ * `ready` is whether the outline in hand is the SELECTED course's. It is
+ * DERIVED, not a flag an effect sets: the course id changes during render and
+ * effects run after it, so a flag would still read `true` for the one render
+ * where the new course is paired with the previous course's outline — long
+ * enough to draw the whole roadmap under the layer fallback, which is the bug
+ * it is here to prevent. Comparing the key the last read settled for against
+ * the key being rendered cannot be late. The graph is loaded per SEMESTER, so
+ * it survives a course switch and the hub has concepts before categories.
+ * A `reload` of the course already shown keeps `ready` true: that one
+ * deliberately leaves what is on screen until the new answer lands.
  */
 type OutlineRefresh = { settled: boolean; topics: Promise<ChecklistTopic[] | null> };
 
@@ -181,19 +184,21 @@ export function useCourseOutline(
   semesterReady: boolean,
 ): { outline: ChecklistTopic[]; ready: boolean; reload: (courseId: string) => void } {
   const [outline, setOutline] = React.useState<ChecklistTopic[]>([]);
-  const [ready, setReady] = React.useState(false);
+  /** The key whose read last settled ("" for none): `ready` is this matching. */
+  const [loadedFor, setLoadedFor] = React.useState("");
   const [reads, setReads] = React.useState(0);
   const refreshes = React.useRef(new Map<string, OutlineRefresh>());
   /** The course and term whose outline is on screen ("" for none). */
   const shownFor = React.useRef("");
+  /** What this render is for; `ready` and the effect agree by construction. */
+  const key = userId && cid && semesterReady ? `${userId}|${cid}|${semester}` : "";
 
   React.useEffect(() => {
-    if (!userId || !cid || !semesterReady) { shownFor.current = ""; setOutline([]); setReady(false); return; }
+    if (!userId || !cid || !semesterReady) { shownFor.current = ""; setOutline([]); setLoadedFor(""); return; }
     // Latest request wins: a course or semester change, or a reload, drops
     // everything the previous read still has in flight, its refresh included.
     let live = true;
-    const key = `${userId}|${cid}|${semester}`;
-    if (shownFor.current !== key) { setOutline([]); setReady(false); }
+    if (shownFor.current !== key) setOutline([]);
     shownFor.current = key;
     const sem = semester || undefined;
     /** The course's one refresh attempt, if it can still add to this read:
@@ -217,20 +222,22 @@ export function useCourseOutline(
       .then(r => {
         if (!live) return;
         setOutline(r.topics || []);
-        setReady(true);
+        setLoadedFor(key);
         if (!r.needs_refresh) return;
         pendingRefresh()?.then(topics => { if (live && topics) setOutline(topics); });
       })
-      // Ready on failure too: a course whose checklist cannot be read has no
-      // categories to wait for, and the layer fallback is then the answer.
-      .catch(err => { if (live) { console.error("study checklist load failed", err); setReady(true); } });
+      // Settled on failure too: a course whose checklist cannot be read has
+      // no categories to wait for, and the layer fallback is then the answer.
+      .catch(err => { if (live) { console.error("study checklist load failed", err); setLoadedFor(key); } });
     return () => { live = false; };
-  }, [userId, cid, semester, semesterReady, reads]);
+  }, [key, userId, cid, semester, semesterReady, reads]);
 
   const reload = React.useCallback((courseId: string) => {
     refreshes.current.delete(`${userId}|${courseId}|${semester}`);
     setReads(n => n + 1);
   }, [userId, semester]);
 
-  return { outline, ready, reload };
+  // `key` is "" when the hook is gated off (no user, course or term); nothing
+  // has been read for that, so it is not ready either.
+  return { outline, ready: key !== "" && loadedFor === key, reload };
 }

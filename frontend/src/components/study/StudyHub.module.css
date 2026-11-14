@@ -200,14 +200,17 @@
 .focusConcept { display: flex; align-items: center; gap: 14px; min-height: 79px; }
 /* The clamp box is the LINE box, and the display face's glyphs are taller than
    the 1.2 line it is set on, so `overflow: hidden` was shaving the bottom off
-   every descender ("Algorithms" lost the tail of its g). The padding gives the
-   clip box room for them and the negative margin gives that room back to the
-   layout, so the concept row is still the 79px it reserves. */
+   every descender ("Algorithms" lost the tail of its g). Measured overflow was
+   ~1.3px, so 0.1em (2.2px) clears it with headroom; the negative margin gives
+   that room back to the layout, so the concept row is still the 79px it
+   reserves. Deliberately not more: every px of padding here is a px off the
+   4px gap to the prerequisite line below, which is the only place to take it
+   from without making the block taller. */
 .focusName {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden; text-wrap: balance;
-  padding-bottom: 0.18em;
-  margin-bottom: -0.18em;
+  padding-bottom: 0.1em;
+  margin-bottom: -0.1em;
 }
 .focusActions { display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; }
 /* With no concept to show (a course with none yet, or all mastered) the block

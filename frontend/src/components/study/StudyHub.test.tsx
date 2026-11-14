@@ -510,7 +510,7 @@ const pickCourse = (code: string) => {
   fireEvent.click(screen.getAllByRole("button").find(b => b.getAttribute("aria-haspopup") === "listbox")!);
   fireEvent.click(screen.getByRole("option", { name: new RegExp(code) }));
 };
-const roadmapText = (text: string) => within(screen.getByLabelText("Roadmap")).queryByText(text);
+const roadmapText = (text: string | RegExp) => within(screen.getByLabelText("Roadmap")).queryByText(text);
 /** A refresh that stays in flight until the test lands it. */
 const pendingRefresh = () => {
   let land!: (topics: unknown[]) => void;
@@ -607,9 +607,16 @@ describe("StudyHub generates the course's topic outline", () => {
       // the moment the course changes — but the columns they belong in are
       // not. The roadmap stays empty rather than stacking every concept under
       // the layer fallback and renaming them a moment later.
-      await waitFor(() => expect(roadmapText("Foundations")).toBeNull());
+      //
+      // Asserted WITHOUT waiting: readiness is derived during render, so there
+      // is no first render where the new course is paired with the previous
+      // course's outline. A flag set in an effect would pass `waitFor` and
+      // still have drawn the fallback once.
+      expect(roadmapText("Foundations")).toBeNull();
       expect(roadmapText("Core Methods")).toBeNull();
       expect(screen.queryByTestId("tile-lim")).toBeNull();
+      // And it does not claim the course HAS no concepts while it is reading.
+      expect(roadmapText(/will appear here/)).toBeNull();
       // The course picker is still there to switch again with.
       expect(screen.getAllByRole("button").some(b => b.getAttribute("aria-haspopup") === "listbox")).toBe(true);
       await act(async () => { landC2([]); });

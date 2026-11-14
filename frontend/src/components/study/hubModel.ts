@@ -161,8 +161,9 @@ export function chipsThatFit(names: string[], reserve = 0): number {
   let k = 0;
   let used = reserve;
   for (; k < names.length; k++) {
-    const reserve = k < names.length - 1 ? MORE_CHIP : 0;
-    if (used + chipWidth(names[k]) + reserve > CHIP_LINE) break;
+    // Not `reserve`: that is the parameter, already spent into `used`.
+    const forMore = k < names.length - 1 ? MORE_CHIP : 0;
+    if (used + chipWidth(names[k]) + forMore > CHIP_LINE) break;
     used += chipWidth(names[k]);
   }
   return Math.max(k, Math.min(ALWAYS_SHOWN, names.length));

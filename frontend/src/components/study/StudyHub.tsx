@@ -188,7 +188,7 @@ function HubPage(props: {
             had concepts but no categories for a moment and drew every one of
             them under the layer fallback — all stacked in "Foundations" with a
             generic "Core Methods" — before the real categories replaced it. */}
-        <Roadmap key={`roadmap:${cid}`} columns={props.outlineReady ? view.columns : []} scope={view.scope} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
+        <Roadmap key={`roadmap:${cid}`} columns={props.outlineReady ? view.columns : []} pending={!props.outlineReady} scope={view.scope} cards={view.cardCount} tileMenu={st.tileMenu} openCols={st.openCols}
           quizShown={quizShown} nav={nav} set={set} closeTileMenu={props.closeTileMenu} />
 
         {/* The 40px side bleed (padding + negative margin, in the stylesheet so

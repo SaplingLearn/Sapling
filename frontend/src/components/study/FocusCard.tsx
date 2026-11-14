@@ -27,8 +27,12 @@ const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "v
 const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
 const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
 const PRETTY = { textWrap: "pretty" } as React.CSSProperties;
-/** What the gap mark takes of the prerequisite line (chip + the line's gap). */
-const GAP_MARK_W = 31;
+/** The gap mark's own chip: the icon, its padding, and the line's gap after
+ *  it. Derived, so it cannot drift from what the mark actually renders. */
+const GAP_MARK_ICON = 13;
+const GAP_MARK_PAD = 6;
+const PREREQ_GAP = 6;
+const GAP_MARK_W = GAP_MARK_ICON + GAP_MARK_PAD * 2 + PREREQ_GAP;
 
 function MasteryRing({ concept }: { concept: Concept }) {
   return (
@@ -79,8 +83,8 @@ function GapWarning({ concept }: { concept: Concept }) {
   return (
     <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0, display: "flex" }}>
       <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
-        style={{ ...CHIP, padding: "0 6px", background: "var(--warn-soft)", cursor: "default" }}>
-        <WarnIcon size={13} />
+        style={{ ...CHIP, padding: `0 ${GAP_MARK_PAD}px`, background: "var(--warn-soft)", cursor: "default" }}>
+        <WarnIcon size={GAP_MARK_ICON} />
       </span>
       {open && (
         <span style={{ position: "absolute", left: -4, top: "100%", paddingTop: 6, zIndex: 25 }}>
@@ -100,12 +104,17 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 6, height: 22, minWidth: 0, overflow: "hidden", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, overflow: "hidden", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
       {gapOn && <GapWarning concept={gapOn} />}
       {prereqs.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
+      {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
+          fit (chipsThatFit), so one that does not must truncate visibly — the
+          row clips, and a hard cut mid-word reads as a rendering bug. The
+          title carries the full name either way. */}
       {prereqs.slice(0, fit).map(t => (
-        <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, background: "rgba(255,255,255,0.12)" }}>
-          <StatusDot st={t.st} size={7} />{t.name}
+        <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "rgba(255,255,255,0.12)" }}>
+          <StatusDot st={t.st} size={7} />
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
         </span>
       ))}
       {rest.length > 0 && <MorePrereqs rest={rest} />}
