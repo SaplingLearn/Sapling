@@ -53,7 +53,8 @@ export function CheckBlockView({ block }: { block: CheckBlock }) {
     setBusy(true);
     try {
       const result = await answerCheck(userId, guide.id, block.id, option.id);
-      setMoved(result.mastery && { optionId: option.id, change: result.mastery });
+      // An uncounted pick leaves the first answer, and what it moved, shown.
+      if (result.counted) setMoved(result.mastery && { optionId: option.id, change: result.mastery });
       update(current => recordAnswer(current, block.id, option.id, result));
     } catch {
       toast.error("Your answer could not be checked. Try again.");

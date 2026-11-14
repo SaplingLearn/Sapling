@@ -99,4 +99,17 @@ describe("an answer", () => {
     expect(wrong.explain_incorrect).toBe("Count the passes.");
     expect(wrong.explain_correct).toBeNull();
   });
+
+  it("keeps the first answer when a later pick was not counted, as the server does", () => {
+    const first = recordAnswer(guide(), "s1-i8", "a", result({ correct: false, explanation: "Count the passes." }));
+    const later = recordAnswer(first, "s1-i8", "b", result({ counted: false }));
+    expect(later).toBe(first);
+    expect(later.answers["s1-i8"]).toEqual({ option_id: "a", correct: false });
+    expect(check(later).explain_incorrect).toBe("Count the passes.");
+  });
+
+  it("shows an uncounted pick when it holds no first answer (another tab gave it)", () => {
+    const shown = recordAnswer(guide(), "s1-i8", "b", result({ counted: false }));
+    expect(shown.answers["s1-i8"]).toEqual({ option_id: "b", correct: true });
+  });
 });

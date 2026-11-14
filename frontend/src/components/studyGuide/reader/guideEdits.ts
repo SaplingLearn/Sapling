@@ -68,6 +68,11 @@ export function toggleRead(readSections: string[], sectionId: string): string[] 
  * A check question was answered. The guide then holds what the server would
  * send for it on the next load: the answer, the question's correct option and
  * the explanation for this pick, and the mastery the answer may have moved.
+ *
+ * The server keeps only the first answer, so a later pick comes back
+ * uncounted and the guide keeps the first one it holds. Only when it holds
+ * none (another tab answered first) is the uncounted pick shown, as the
+ * nearest thing to what the server has.
  */
 export function recordAnswer(
   guide: GuideDetail,
@@ -75,6 +80,7 @@ export function recordAnswer(
   optionId: string,
   result: AnswerResult,
 ): GuideDetail {
+  if (!result.counted && guide.answers[blockId]) return guide;
   const explained = result.correct
     ? { explain_correct: result.explanation }
     : { explain_incorrect: result.explanation };
