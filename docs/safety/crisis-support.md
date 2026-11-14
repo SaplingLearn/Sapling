@@ -191,19 +191,21 @@ When several categories match, the most severe is reported: `acute_danger`,
 then `suicidal_ideation`, then `self_harm`.
 
 **Notes are screened as documents** (`source="document"`). A match that sits
-entirely inside a quotation (`"..."`, `“...”`, `'...'`, or a `>` block-quote
-line) does not count, so lecture notes quoting a patient ("a patient says 'I
-want to kill myself'") or a play can still be summarized. It still counts
-when the quotation's own sentence speaks in the first person outside it ("I
-keep thinking 'I want to die'", "I wrote: 'I want to die.'"). That sentence
+entirely inside a quotation (`"..."`, `“...”`, `„...“` or `'...'`) does not
+count, so lecture notes quoting a patient ("a patient says 'I want to kill
+myself'") or a play can still be summarized. It still counts when the
+quotation's own sentence speaks in the first person outside it ("I keep
+thinking 'I want to die'", "I wrote: 'I want to die.'"). That sentence
 is the one the quotation sits in: a quotation that closes on its own ".", "!"
 or "?" ends it, so a first person in the next sentence does not count ('The
 patient said "I want to die." I think this shows depression.' is set aside).
-An apostrophe ("I'm", "'cause", "students'")
-is never a quote mark, an unclosed or multi-line quote sets nothing aside,
-and a quotation over 600 characters is screened like the rest. What the
-student TYPES (a chat message, a topic, a description) is always screened
-whole.
+An apostrophe ("I'm", "'cause", "students'") is never a quote mark, an
+unclosed or multi-line quote sets nothing aside, and a quotation over 600
+characters is screened like the rest. Only quotation marks make a
+quotation: a Markdown `>` line is screened like any other line, because
+students write their own callouts that way ("> I want to kill myself" in a
+note gets the card). What the student TYPES (a chat message, a topic, a
+description) is always screened whole.
 
 **To extend:** add a `Phrase` to `EXPLICIT` (choose its category, write the
 pattern against the normalized form, reuse `_MYSELF` / `_INTENT`), or a
@@ -226,10 +228,14 @@ negatives.
   line, or a first-person sentence in lecture notes that names suicide with
   no topic word.
 - **Quotations in notes are set aside**, so a student who writes their own
-  crisis line in quotation marks in a note, with no first-person word
-  around it, is not screened there. Their messages to the tutor and the note
-  chat are screened whole. The card says the student can keep studying, and their next
-  message is screened afresh.
+  crisis line in quotation marks in a note, with no first-person word in
+  the quotation's sentence around it, is not screened there. Their messages
+  to the tutor and the note chat are screened whole. The card says the
+  student can keep studying, and their next message is screened afresh.
+- **Block quotes in notes are not set aside.** A lecture note that quotes a
+  patient or a play on a Markdown `>` line, without quotation marks, gets
+  the card when it is summarized: a false positive, chosen over missing a
+  student's own `>` callout.
 - **A model-based screen** would catch indirect language. It would also need
   its own labelled eval set, measured false-negative and false-positive
   rates, eval spend, and a latency budget on every turn. It would also send

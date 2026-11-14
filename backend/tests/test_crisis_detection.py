@@ -418,7 +418,6 @@ QUOTED_IN_NOTES: list[str] = [
     'PSYCH 101 week 4: depression. A patient says "I want to kill myself" and the clinician asks about a plan.',
     "Macbeth, Act 5: “I want to die” is the line we discussed.",
     "Romantic poetry. The speaker's refrain, 'I wish I were dead', closes each stanza.",
-    "Abnormal psych lecture\n> I want to end my life\nThe quoted patient met criteria for MDD.",
     'Case study: the client reported "my self-harm got worse" after the move.',
     "Lecture: „I want to die“ is the German-style quote example.",
 ]
@@ -434,6 +433,10 @@ STILL_SCREENED_IN_NOTES: list[str] = [
     'Today was awful. "Whatever." I want to die.',
     'I keep thinking "I want to kill myself" every night',
     'I wrote "I want to die" in my journal again',
+    # a `>` line is a Markdown callout, often the student's own: never a quote
+    "> I want to kill myself",
+    "Abnormal psych lecture\n> I want to end my life\nThe patient met criteria for MDD.",
+    "Week 3 notes\n  > **Reminder:** I want to die\n",
     # an unclosed or line-spanning quote hides nothing
     'The quote starts here "and then\nI want to kill myself',
     'A stray " mark, then I want to kill myself',

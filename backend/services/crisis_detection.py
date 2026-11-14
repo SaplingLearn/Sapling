@@ -35,17 +35,17 @@ How matching works (every list below is a regex over `normalize(text)`):
    gonna lie", "not kidding" introduce a statement and negate nothing; and
    only a hedge about one's own state ("I don't think I'm suicidal")
    negates: "I'm not saying I'll kill myself" is a warning sign. TOPIC_GUARDS
-   veto MENTIONS
-   (never explicit phrases) anywhere in the text when it names an academic
-   topic ("Durkheim", "euthanasia", "theory of suicide").
+   veto MENTIONS (never explicit phrases) anywhere in the text when it names
+   an academic topic ("Durkheim", "euthanasia", "theory of suicide").
 
 5. `detect(text, source="document")` (a stored note or card, never a typed
    message) sets quotations aside: a match entirely inside "...", “...”,
-   '...' or a `>` block-quote line does not count unless the quotation's own
-   sentence speaks in the first person outside it. That sentence is the one
-   the quotation sits in: a break inside the quotation does not end it, a
-   colon that introduces it ('I wrote: "..."') does not either, and a
-   quotation closing on its own '.', '!' or '?' ends it there. The quotations
+   „...“ or '...' does not count unless the quotation's own sentence speaks
+   in the first person outside it. That sentence is the one the quotation
+   sits in: a break inside the quotation does not end it, a colon that
+   introduces it ('I wrote: "..."') does not either, and a quotation closing
+   on its own '.', '!' or '?' ends it there. A Markdown `>` line is NOT a
+   quotation (students write their own callouts that way). The quotations
    are found on the RAW text (normalizing drops quote marks) and carried
    through as marker tokens.
 
@@ -401,8 +401,6 @@ _QUOTED = re.compile(
     rf"|{_OPENS}['‘](?!{_ELISION})(?=\S)([^'‘’\n]{{1,{_QUOTE_MAX}}})(?<=\S)['’]{_CLOSES_SINGLE}",
     re.IGNORECASE,
 )
-#: A Markdown block quote: the rest of a line that starts with `>`.
-_BLOCK_QUOTE = re.compile(r"^[ \t]*>(.*)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -430,19 +428,11 @@ class _Forms:
 def _mark_quotations(text: str) -> str:
     """`text` with a quote marker token around every quotation, found on the
     RAW text (normalizing drops the quote marks)."""
-    spans = sorted(
-        [m.span(1) for m in _BLOCK_QUOTE.finditer(text) if m.group(1).strip()]
-        + [next(m.span(g) for g in range(1, 5) if m.group(g) is not None)
-           for m in _QUOTED.finditer(text)]
-    )
-    merged: list[list[int]] = []
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
+    # Quotation marks only: a Markdown `>` line is as often the student's own
+    # callout as a quotation, so it is screened like the rest.
     parts, last = [], 0
-    for start, end in merged:
+    for m in _QUOTED.finditer(text):  # in order, never overlapping
+        start, end = next(m.span(g) for g in range(1, 5) if m.group(g) is not None)
         parts += [text[last:start], _QUOTE_OPEN, text[start:end], _QUOTE_CLOSE]
         last = end
     return "".join(parts) + text[last:]
@@ -547,9 +537,10 @@ def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | Non
     """The most severe crisis phrase in `text`, or None. Never raises on str.
 
     `source="document"` sets quotations aside: a match entirely inside one
-    ("...", “...”, '...', a `>` block-quote line) does not count, unless the
-    quotation's own sentence speaks in the first person outside it ("I keep
-    thinking 'I want to die'"). Lecture notes quote patients and plays; a
+    ("...", “...”, '...'; never a Markdown `>` line, which is as often the
+    student's own callout) does not count, unless the quotation's own
+    sentence speaks in the first person outside it ("I keep thinking 'I want
+    to die'"). Lecture notes quote patients and plays; a
     student's own words are not in quotation marks. A typed message is always
     screened whole."""
     if not text or not text.strip():
