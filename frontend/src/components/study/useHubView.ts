@@ -40,10 +40,12 @@ export function useHubView(input: {
   cards: FlashcardRow[];
   records: StudyRecords;
   outline: ChecklistTopic[];
+  /** That outline is the selected course's, not a previous course's or none yet. */
+  outlineReady: boolean;
   st: HubState;
   today: Date;
 }) {
-  const { course, graph, cards, records, outline, st, today } = input;
+  const { course, graph, cards, records, outline, outlineReady, st, today } = input;
   const { assignments, attempts, guides } = records;
   const cid = course.course_id;
   const label = courseLabel(course);
@@ -62,10 +64,21 @@ export function useHubView(input: {
 
   // What the selected exam covers. The readiness band, the roadmap and Up
   // Next all follow it; with nothing linked they are the whole course's.
+  // Until the outline is the selected course's, what the exam covers is not
+  // known: the band names the exam over no figure yet, and Up Next waits,
+  // rather than showing the whole course's figure with "No topics are linked
+  // to <exam> yet." and then jumping when the outline lands.
+  const scopePending = !outlineReady && exam !== null;
   const scope = React.useMemo(() => examScope(topics, outline, exam), [topics, outline, exam]);
-  const upNext = React.useMemo(() => examQueue(topics, scope), [topics, scope]);
+  const upNext = React.useMemo(
+    () => (scopePending ? { queue: [], fallback: false } : examQueue(topics, scope)),
+    [scopePending, topics, scope],
+  );
   const marks = conceptMarks(byId, upNext.queue[0] || null, st.topic, st.hover);
-  const band = React.useMemo(() => readinessBand(topics, outline, exam, label, today), [topics, outline, exam, label, today]);
+  const band = React.useMemo(() => {
+    const full = readinessBand(topics, outline, exam, label, today);
+    return scopePending ? { ...full, concepts: [], note: null } : full;
+  }, [scopePending, topics, outline, exam, label, today]);
 
   // Reviews are picked over the whole course, whichever exam is selected.
   const reviews = React.useMemo(() => quickReviews(topics, today), [topics, today]);
@@ -77,7 +90,7 @@ export function useHubView(input: {
 
   return {
     label, list, upcoming, soon: dueThisWeek(upcoming, today), exams, exam,
-    topics, byId, ...marks, scope,
+    topics, byId, ...marks, scope, scopePending,
     // The exam Up Next has run out of: its queue is the rest of the course's.
     masteredExam: upNext.fallback && scope ? scope.title : null,
     focusPrereqs: prerequisitesOf(marks.focus, byId),

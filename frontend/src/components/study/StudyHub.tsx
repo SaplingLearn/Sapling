@@ -131,7 +131,7 @@ function HubPage(props: {
 }) {
   const { course, userId, today, isMobile, quizShown, records, st, set } = props;
   const cid = course.course_id;
-  const view = useHubView({ course, graph: props.graph, cards: props.cards, records, outline: props.outline, st, today });
+  const view = useHubView({ course, graph: props.graph, cards: props.cards, records, outline: props.outline, outlineReady: props.outlineReady, st, today });
   const nav = useToolNav(cid);
   const editor = useDatesEditor({
     userId, courseId: cid, list: view.list, today,
@@ -180,7 +180,7 @@ function HubPage(props: {
           {focus
             ? <FocusCard concept={focus} upNext={focus.id === view.rec?.id} masteredExam={view.masteredExam} prereqs={view.focusPrereqs}
                 cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} nav={nav} />
-            : <FocusEmpty hasConcepts={view.topics.length > 0} />}
+            : <FocusEmpty hasConcepts={view.topics.length > 0} pending={view.scopePending} />}
         </section>
 
         {/* No columns until the outline is the SELECTED course's. The graph is

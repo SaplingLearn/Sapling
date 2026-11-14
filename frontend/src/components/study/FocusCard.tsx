@@ -182,8 +182,15 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
   );
 }
 
-/** The block with nothing to work on: every concept mastered, or none yet. */
-export function FocusEmpty({ hasConcepts }: { hasConcepts: boolean }) {
+/**
+ * The block with nothing to work on: every concept mastered, or none yet.
+ * `pending` while what the selected exam covers is still being read: the
+ * block keeps its place and says nothing, as the roadmap under it does.
+ */
+export function FocusEmpty({ hasConcepts, pending = false }: { hasConcepts: boolean; pending?: boolean }) {
+  if (pending) {
+    return <div key="pending" className={s.focusEmpty} data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" style={BLOCK} />;
+  }
   const [title, body] = hasConcepts
     ? ["Every concept is mastered", "Keep them fresh with a mixed quiz before the exam."]
     : ["No concepts yet", "Upload course material in the Library to build this course's roadmap."];
