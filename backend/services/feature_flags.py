@@ -209,6 +209,16 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Keep not-yet-started tutor sessions in Postgres so every replica "
             "can continue, end or delete them. Global: per-user rules and "
             "rollouts do not apply.", False),
+    # Hourly ops alert emails to admins (services/spend_alerts.py): today's AI
+    # spend over budget, per-student spend outliers, and spikes in
+    # auth.permission_denied / error.5xx. Resolved GLOBALLY (user_id=None).
+    # Seeded "on" by 20261114192656_spend_alerts_flag.sql; switching it off
+    # (or SAPLING_FLAG_SPEND_ALERTS=off) is the kill switch. Server-only.
+    FlagDef("spend_alerts", ("off", "on"),
+            "Email admins (at most once a day per alert) when today's AI spend "
+            "or one student's spend passes its threshold, or permission-denied "
+            "/ 5xx events spike. Global: per-user rules and rollouts do not "
+            "apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

@@ -95,6 +95,9 @@ EMAIL_CATEGORIES: dict[str, str] = {
     "welcome": "transactional",
     "broadcast_test": "transactional",  # the admin mailing themself
     "broadcast": "notification",
+    # Staff-only operational alerts (services/spend_alerts.py): they must reach
+    # an admin whatever their notification preference.
+    "ops_alert": "transactional",
 }
 
 

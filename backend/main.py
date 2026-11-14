@@ -77,6 +77,7 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.spend_alerts import start_spend_alerts, stop_spend_alerts
 from services.local_seed_watcher import (
     start_watcher as start_local_seed_watcher,
     stop_watcher as stop_local_seed_watcher,
@@ -219,6 +220,11 @@ async def _start(stack: AsyncExitStack) -> None:
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
     stack.push_async_callback(stop_sweeper)
+    # Hourly AI-spend / auth / 5xx alert emails to admins (never under pytest,
+    # APP_ENV=test or a non-real model mode; the `spend_alerts` flag is the
+    # kill switch).
+    start_spend_alerts()
+    stack.push_async_callback(stop_spend_alerts)
     # #715: on a developer's LOCAL stack only, copy the rich sample dataset
     # onto each Google account that signs in. Not started anywhere else.
     start_local_seed_watcher()
