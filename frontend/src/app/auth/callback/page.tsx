@@ -6,11 +6,23 @@ import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
 import { postSignInRoute } from '@/lib/localSeed';
 import { stashPendingToken } from '@/lib/pendingToken';
+import { signInErrorMessage } from '@/components/marketing/signInErrors';
 
 interface MeBody {
   onboarding_completed?: boolean;
   name?: string;
   avatar_url?: string;
+}
+
+/** Error codes are short snake_case identifiers (signInErrors.ts keys). */
+const ERROR_CODE_RE = /^[a-z_]{1,40}$/;
+
+/** What the page says while it hands a failed sign-in on: the reason, not
+ * "Signing you in…" (a popup whose window can't close stays on it). An
+ * unapproved sign-in is not a failure here: it goes on to /pending. */
+function statusText(error: string | null): string {
+  if (!error || error === 'not_approved') return 'Signing you in…';
+  return ERROR_CODE_RE.test(error) ? signInErrorMessage(error) : signInErrorMessage('signin_failed');
 }
 
 /** Backoff between GET /api/auth/me attempts; one more attempt than delays. */
@@ -60,6 +72,9 @@ function CallbackInner() {
       return true;
     };
 
+    // A cancelled Google sign-in arrives here as error=cancelled (popup mode;
+    // a same-tab one goes straight to /?error=cancelled), like any failure:
+    // the opener's sign-in box, or the landing's, says "Sign-in was cancelled."
     const fail = (errCode: string) => {
       if (broadcast({ success: false, error: errCode })) return;
       router.replace(`/?error=${encodeURIComponent(errCode)}`);
@@ -143,6 +158,8 @@ function CallbackInner() {
 
   return (
     <div
+      role="status"
+      data-testid="auth-callback-status"
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -153,7 +170,7 @@ function CallbackInner() {
         fontSize: 14,
       }}
     >
-      Signing you in…
+      {statusText(searchParams.get('error'))}
     </div>
   );
 }

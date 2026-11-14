@@ -42,9 +42,11 @@ Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
 differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
-`tutor_pending_sessions`: wiped, never bundled), and every privacy/consent/notification choice in
+`tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
+wipe), and every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
-each environment, and is never carried from one to the other. The imported
+each environment, and is never carried from one to the other — the Terms and
+Privacy Policy accepted on one environment included. The imported
 documents therefore index under the TARGET's stored `share_class_context`.
 `users.total_xp`/`level` are not copied either: they are recomputed from the
 imported XP ledger, which is what `xp_service` treats them as (a cache of it).

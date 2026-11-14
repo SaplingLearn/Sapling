@@ -89,6 +89,7 @@ export function Navbar({
 
         <div className="ld-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'nowrap', flexShrink: 0 }}>
           <button
+            data-testid="signin-trigger"
             onClick={onSignIn}
             className="ld-navlink ld-nav-signin"
             style={{ ...TAB, background: 'none', border: 'none', cursor: 'pointer', color: theme.ink }}
@@ -96,6 +97,7 @@ export function Navbar({
             Sign In
           </button>
           <button
+            data-testid="landing-get-started"
             onClick={onGetStarted}
             style={{
               background: theme.btnBg, color: theme.btnFg, border: 'none', borderRadius: 7,

@@ -1,5 +1,13 @@
 # Feature · Onboarding
 
+> **Status (2026-11-12): out of date.** This audit describes `OnboardingFlow.tsx`, which was
+> deleted (#292). Onboarding is now its own route, `/onboarding`
+> (`components/screens/Onboarding.tsx` plus `components/onboarding/`), reached only after Google
+> sign-in. Two of the recommendations below are done: the middleware sends a student who has not
+> finished onboarding to `/onboarding` (and a finished one away from it), and each new screen moves
+> focus to its heading. The flow no longer asks for majors or a learning style. Read the code, not
+> this page, for current behavior.
+
 > Covers: `OnboardingFlow.tsx` — the 6-step sign-up experience rendered on top of the landing page. Mounted from `src/app/page.tsx:941`. Auth hand-off is documented in `features/auth.md`.
 
 ---

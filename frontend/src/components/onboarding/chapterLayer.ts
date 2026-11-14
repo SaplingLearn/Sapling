@@ -4,9 +4,10 @@
  * clusters (a faint preview for the active chapter, 15 nodes migrating in per
  * finished one). From the Claude Design onboarding handoff.
  *
- * Renderer-agnostic so the same choreography runs on whichever canvas owns
- * the scene: the landing hero's (Get Started zooms into the landing's own
- * nodes) or OnboardingGraph's on the /onboarding route.
+ * Renderer-agnostic: OnboardingGraph draws its ambient scene and hands this
+ * layer the camera and the chapter state. (It also drove the landing hero's
+ * canvas while Get Started played onboarding over the landing; that takeover
+ * went with sign-in-first onboarding.)
  */
 
 export type GraphPhase = "idle" | "out" | "active" | "complete";
@@ -67,7 +68,7 @@ export function createChapterLayer(): ChapterLayer {
   return {
     step(nowMs, dtF, s) {
       if (s.phase === "idle") {
-        // Back on the landing: drop the clusters so a replay starts clean.
+        // Not started (or reset): drop the clusters so a replay starts clean.
         nodes = []; initSteps = new Set(); doneSteps = new Set();
       }
       if (s.phase === "active" && !initSteps.has(s.activeChapter)) {
@@ -162,24 +163,4 @@ export function createChapterLayer(): ChapterLayer {
       ctx.shadowBlur = 0; ctx.shadowColor = "transparent"; ctx.globalAlpha = 1;
     },
   };
-}
-
-/**
- * Hand-off from the onboarding screen to the landing hero's canvas while the
- * Get Started takeover is up. The hero's frame loop reads it every frame; the
- * listeners let a parked loop (reduced motion) repaint on a change.
- */
-export const graphStage: ChapterState & { active: boolean } = {
-  active: false, phase: "idle", zoom: "rest", activeChapter: 0, completed: [],
-};
-const stageListeners = new Set<() => void>();
-
-export function setGraphStage(patch: Partial<typeof graphStage>) {
-  Object.assign(graphStage, patch);
-  stageListeners.forEach(fn => fn());
-}
-
-export function onGraphStage(fn: () => void): () => void {
-  stageListeners.add(fn);
-  return () => { stageListeners.delete(fn); };
 }

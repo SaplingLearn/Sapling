@@ -1,50 +1,28 @@
 """
 backend/routes/calendar.py
 
-Syllabus extraction, assignment CRUD, Google Calendar OAuth and sync.
+Syllabus extraction, assignment CRUD, Google Calendar sync. The Google Calendar
+consent flow (/auth-url, /callback) lives in routes/calendar_connect.py.
 Migrated from SQLite to Supabase REST API.
 """
 
-import hmac as _hmac
 import json
-import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi import Request as FastAPIRequest
-from fastapi.responses import RedirectResponse
 
-from config import (
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI,
-    GOOGLE_SCOPES,
-    FRONTEND_URL,
-    SECURE_COOKIES,
-)
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 from db.connection import table
-from db.scope import service_route
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
 from services.calendar_service import extract_assignments_from_file, save_new_assignments
-from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
+from services.encryption import encrypt, decrypt, decrypt_if_present
 from services.request_context import current_request_id
-# Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
-# the single source of truth for CSRF handling — see services/auth/oauth_state.py.
-# These are pure helpers with no request state, so importing them keeps the
-# calendar connect flow DRY without duplicating the security-critical bits.
-from services.auth.oauth_state import (
-    _google_client_config,
-    _encode_state,
-    _decode_state,
-    _generate_pkce_pair,
-    _encode_oauth_cookie,
-    _decode_oauth_cookie,
-)
+from routes.calendar_connect import router as consent_router
 
 try:
-    from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
@@ -53,6 +31,10 @@ except ImportError:
     GOOGLE_AVAILABLE = False
 
 router = APIRouter()
+# The Google Calendar consent flow (/auth-url, /callback) lives in its own
+# module and is included here, so it shares this router's /api/calendar mount
+# and its hide_calendar gate (main.py).
+router.include_router(consent_router)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,7 +42,8 @@ router = APIRouter()
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
     creds = Credentials(
         token=decrypt(token_row["access_token"]),
-        refresh_token=decrypt(token_row["refresh_token"]),
+        # NULL when Google never sent one; then there is nothing to refresh with.
+        refresh_token=decrypt_if_present(token_row.get("refresh_token")),
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -164,135 +147,6 @@ def _read_assignments(user_id, *, due_gte=None, limit=None):
             "course_name": meta.get("course_name") or "",
         })
     return out
-
-
-# ── Google Calendar OAuth connect ─────────────────────────────────────────────
-# The dedicated calendar consent flow (auth-url → Google → callback). It grants
-# only GOOGLE_SCOPES (calendar) and lands the tokens in `oauth_tokens`. It was
-# dropped in the SQLite→Supabase migration (#61) even though config.GOOGLE_SCOPES
-# / GOOGLE_REDIRECT_URI and the frontend "Connect Google" button still target it.
-
-CALENDAR_OAUTH_STATE_COOKIE = "sapling_calendar_oauth_state"
-_CALENDAR_OAUTH_COOKIE_MAX_AGE = 600
-
-
-def _calendar_client_config() -> dict:
-    """Sign-in client config, re-pointed at the calendar redirect URI. The
-    consent flow and the token exchange must use the SAME redirect_uri or Google
-    rejects the code, so both routes go through this."""
-    cfg = _google_client_config()
-    cfg["web"]["redirect_uris"] = [GOOGLE_REDIRECT_URI]
-    return cfg
-
-
-@router.get("/auth-url")
-def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
-    """Begin the Google Calendar consent flow for the authenticated user.
-
-    ``require_self`` ties the initiating request to the caller's session, and the
-    user_id is then sealed into the HMAC-signed state cookie — so the callback
-    binds the resulting tokens to *this* user and never to an attacker-supplied
-    parameter (the holistic auth-scoping concern on #61, sibling of #123).
-    """
-    require_self(user_id, request)
-    if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=400, detail="Google Calendar not configured")
-
-    code_verifier, code_challenge = _generate_pkce_pair()
-    nonce = secrets.token_urlsafe(32)
-
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
-    auth_url, _ = flow.authorization_url(
-        prompt="consent",             # force a refresh_token even on re-consent
-        access_type="offline",        # so long-lived sync survives token expiry
-        include_granted_scopes="true",
-        state=_encode_state({"action": "calendar", "n": nonce}),
-        code_challenge=code_challenge,
-        code_challenge_method="S256",
-    )
-
-    resp = RedirectResponse(auth_url)
-    resp.set_cookie(
-        key=CALENDAR_OAUTH_STATE_COOKIE,
-        value=_encode_oauth_cookie({"n": nonce, "cv": code_verifier, "uid": user_id}),
-        max_age=_CALENDAR_OAUTH_COOKIE_MAX_AGE,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite="lax",
-        path="/",
-    )
-    return resp
-
-
-# #115: Google's redirect carries no session; the user comes from the signed
-# state cookie -> service role under db_user_scope.
-@router.get("/callback", dependencies=[Depends(service_route)])
-def calendar_callback(
-    request: FastAPIRequest,
-    code: str = Query(None),
-    state: str = Query(None),
-    error: str = Query(None),
-):
-    """Handle Google's redirect: validate CSRF state, exchange the code, and
-    store the tokens scoped to the user sealed in the signed state cookie."""
-    cookie_payload = _decode_oauth_cookie(request.cookies.get(CALENDAR_OAUTH_STATE_COOKIE))
-
-    def _finish(query: str) -> RedirectResponse:
-        resp = RedirectResponse(f"{FRONTEND_URL}/calendar?{query}")
-        resp.set_cookie(
-            key=CALENDAR_OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
-
-    if error:
-        # User denied consent (or Google returned an error) — bounce cleanly.
-        return _finish("calendar_error=access_denied")
-    if not GOOGLE_AVAILABLE:
-        return _finish("calendar_error=google_not_configured")
-    if not code:
-        return _finish("calendar_error=missing_code")
-
-    # CSRF: the state nonce must match the one sealed in the signed cookie, and
-    # the user_id is read from that cookie (not a request param) so tokens can
-    # only ever bind to the session that initiated the connect.
-    state_nonce = (_decode_state(state) or {}).get("n") if state else None
-    cookie_nonce = cookie_payload.get("n") if cookie_payload else None
-    user_id = cookie_payload.get("uid") if cookie_payload else None
-    if (
-        not cookie_payload
-        or not cookie_nonce
-        or not state_nonce
-        or not user_id
-        or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
-    ):
-        return _finish("calendar_error=invalid_state")
-
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
-    try:
-        flow.fetch_token(code=code, code_verifier=cookie_payload.get("cv"))
-    except Exception:
-        return _finish("calendar_error=oauth_exchange_failed")
-    creds = flow.credentials
-
-    table("oauth_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": encrypt(creds.token),
-            "refresh_token": encrypt_if_present(creds.refresh_token),
-            # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
-            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
-        },
-        on_conflict="user_id",
-    )
-    return _finish("connected=true")
 
 
 # ── Syllabus extraction ───────────────────────────────────────────────────────
@@ -428,6 +282,9 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 
 @router.get("/status/{user_id}")
 def calendar_status(user_id: str, request: FastAPIRequest):
+    """Whether the student's Google Calendar is connected. A token row exists
+    only for a grant that covers the calendar scopes, created only by the
+    consent flow (routes/calendar_connect.py), so the row is the answer."""
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
         "access_token,expires_at",

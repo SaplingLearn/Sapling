@@ -99,6 +99,12 @@ const eslintConfig = [
       "src/app/pending/page.tsx",
       "src/app/setting-up/page.tsx",
       "src/components/screens/Onboarding.tsx",
+      // Onboarding's screens and chrome, split out of Onboarding.tsx.
+      "src/components/onboarding/screens.tsx",
+      "src/components/onboarding/CourseStep.tsx",
+      "src/components/onboarding/LegalStep.tsx",
+      "src/components/onboarding/ConsentSheet.tsx",
+      "src/components/onboarding/chrome.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",

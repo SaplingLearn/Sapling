@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractErrorDetail, humanizeError, isNotFound, statusOf } from './errorMessage';
+import { errorCodeOf, extractErrorDetail, humanizeError, isNotFound, statusOf } from './errorMessage';
 import { ApiError } from './api';
 
 const FALLBACK = "Couldn't load that.";
@@ -259,5 +259,31 @@ describe('coded error envelope', () => {
     });
     expect(humanizeError(err, FALLBACK))
       .toBe('Something went wrong on our end. Try again in a moment.');
+  });
+});
+
+describe('coded HTTPException details (`detail: {code, message}`)', () => {
+  const notApproved = new ApiError(
+    '{"detail":{"code":"not_approved","message":"Your account is not approved yet."}}',
+    403,
+    { body: { detail: { code: 'not_approved', message: 'Your account is not approved yet.' } } },
+  );
+
+  it('humanizeError reads the message inside the detail', () => {
+    expect(humanizeError(notApproved, FALLBACK)).toBe('Your account is not approved yet.');
+  });
+
+  it('errorCodeOf reads the code inside the detail', () => {
+    expect(errorCodeOf(notApproved)).toBe('not_approved');
+    // Also off a raw JSON message with no parsed body.
+    expect(errorCodeOf(new Error('{"detail":{"code":"legal_outdated","message":"x"}}'))).toBe('legal_outdated');
+  });
+
+  it("errorCodeOf prefers ApiError.code, reads the quiz envelope's error.code, and is undefined otherwise", () => {
+    expect(errorCodeOf(new ApiError('', 429, { code: 'QUIZ_RATE_LIMITED' }))).toBe('QUIZ_RATE_LIMITED');
+    expect(errorCodeOf(new ApiError('', 422, { body: { error: { code: 'QUIZ_X' } } }))).toBe('QUIZ_X');
+    expect(errorCodeOf(new ApiError('{"detail":"Not found."}', 404))).toBeUndefined();
+    expect(errorCodeOf(new DOMException('aborted', 'AbortError'))).toBeUndefined();
+    expect(errorCodeOf(null)).toBeUndefined();
   });
 });

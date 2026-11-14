@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, waitFor } from '@testing-library/react';
+import { render, cleanup, waitFor, screen } from '@testing-library/react';
 
 let search = '';
 const replace = vi.fn();
@@ -241,5 +241,56 @@ describe('#741 an unapproved sign-in hands its pending token to /pending', () =>
     render(<CallbackPage />);
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=not_approved'));
     expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
+  });
+});
+
+describe('a cancelled Google sign-in says so (popup and same-tab)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('popup mode tells the opener it was cancelled, and says so while it closes', async () => {
+    search = 'error=cancelled&popup_id=p1';
+    const posted: unknown[] = [];
+    class FakeChannel {
+      constructor(public name: string) {}
+      postMessage(m: unknown) { posted.push(m); }
+      close() {}
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {});
+    render(<CallbackPage />);
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({ type: 'sapling_signin', success: false, error: 'cancelled' });
+    expect(close).toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('auth-callback-status').textContent).toBe('Sign-in was cancelled.');
+  });
+
+  it('same-tab goes back to the landing with the code, where the sign-in box explains it', async () => {
+    search = 'error=cancelled';
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=cancelled'));
+    expect(screen.getByTestId('auth-callback-status').textContent).toBe('Sign-in was cancelled.');
+    expect(setActiveUser).not.toHaveBeenCalled();
+  });
+
+  it('never prints an unknown or malformed code as it came', async () => {
+    search = 'error=%3Cb%3Ehi%3C%2Fb%3E';
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    expect(screen.getByTestId('auth-callback-status').textContent).toBe('Sign-in failed. Please try again.');
+  });
+
+  it('a sign-in in progress still says "Signing you in…"', () => {
+    search = 'user_id=u1&is_approved=true';
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(<CallbackPage />);
+    expect(screen.getByTestId('auth-callback-status').textContent).toBe('Signing you in…');
   });
 });

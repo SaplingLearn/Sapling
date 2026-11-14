@@ -314,6 +314,37 @@ class TestQuizErrorEnvelope:
         assert r.status_code == 404
         assert "error" not in r.json()
 
+    @pytest.mark.parametrize("path,body", [
+        ("/api/onboarding/profile", {"user_id": "u1", "first_name": "", "year": "phd"}),
+        ("/api/auth/pending/status", {"token": ""}),
+    ])
+    def test_a_non_quiz_422_never_says_quiz(self, path, body):
+        """Request validation on onboarding or sign-in used to come back with
+        error.code QUIZ_VALIDATION_ERROR and "That quiz request wasn't valid —
+        please try again." — the quiz's sentence, shown to a student who was
+        signing up. Non-quiz 422s keep the plain shape."""
+        r = client.post(path, json=body)
+        assert r.status_code == 422
+        data = r.json()
+        assert "error" not in data
+        assert isinstance(data["detail"], list)
+        assert "quiz" not in r.text.lower()
+
+    def test_a_quiz_code_never_leaves_the_quiz_routes(self):
+        from services.quiz.errors import QuizErrorCode, error_content
+
+        assert error_content(
+            "/api/onboarding/profile", 422, [], "rid",
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR,
+            message="That quiz request wasn't valid — please try again.",
+        ) == {"detail": [], "request_id": "rid"}
+        # On a quiz route it is the envelope, as before.
+        body = error_content(
+            "/api/quiz/generate", 422, [], "rid",
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR, message="m",
+        )
+        assert body["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+
     def test_a_cross_field_rule_still_comes_out_as_an_envelope(self):
         """A model_validator raising ValueError puts the EXCEPTION OBJECT in
         the error's `ctx`, which json.dumps cannot serialize — so handing

@@ -43,19 +43,34 @@ ALLOWED_EMAIL_DOMAINS = [
     if d.strip()
 ]
 
+# Google Calendar access. Asked for ONLY by the calendar consent flow
+# (GET /api/calendar/auth-url, from onboarding's Connect step or the Calendar
+# page), and "connected" means a grant that covers every one of these.
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
-# Unified scopes for sign-in: identity + calendar access in one consent screen
+# Sign-in asks for identity only (owner decision, 2026-11-12). A student who
+# already granted calendar access keeps it: sign-in asks Google to include the
+# scopes granted earlier (include_granted_scopes), and refreshes the stored
+# calendar tokens only when that grant still covers GOOGLE_SCOPES
+# (services/auth/signin.py).
 AUTH_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/calendar.readonly",
 ]
+
+# The Terms of Service and Privacy Policy versions in force. Each is the "Last
+# updated" date on the public /terms and /privacy pages. Onboarding refuses a
+# submit that accepted any other version and records the ones accepted
+# (services/legal.py). They live here, not in services/legal.py, so that every
+# layer can read them, including the db/ ops scripts (.importlinter). The
+# frontend keeps the same two values in frontend/src/lib/legal/versions.ts, and
+# tests/test_legal_versions.py fails when they differ: bump both together.
+TERMS_VERSION = "2026-10-22"
+PRIVACY_VERSION = "2026-11-03"
 
 
 # Transactional + broadcast email over Resend (services/email_service.py).

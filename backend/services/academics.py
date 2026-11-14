@@ -72,6 +72,42 @@ def current_term(today: date | None = None) -> dict | None:
     return upcoming[0] if upcoming else None
 
 
+def _ended_before(term: dict, d: date) -> bool:
+    end = term.get("end_date")
+    if not end:
+        return False
+    try:
+        return date.fromisoformat(str(end)[:10]) < d
+    except ValueError:
+        return False
+
+
+def onboarding_term(today: date | None = None) -> dict | None:
+    """The term a new student's onboarding courses enroll into, or None if no
+    terms are seeded.
+
+    :func:`current_term` while it has not ended (today inside it, or before
+    every seeded term). In a gap between terms ``current_term`` is the term
+    that just ENDED, which is right for reading a student's history and wrong
+    for someone signing up now: the courses they pick are next term's. Then it
+    is the next term that starts after today, and the current term again only
+    when no later term is seeded.
+
+    ``current_term`` itself is unchanged: every other caller still reads the
+    gap as "the term that just ended" (#766)."""
+    d = today or date.today()
+    cur = current_term(d)
+    if cur is None or not _ended_before(cur, d):
+        return cur
+    nxt = table("terms").select(
+        "*",
+        filters={"start_date": f"gt.{d.isoformat()}"},
+        order="start_date.asc,sort_key.asc",
+        limit=1,
+    )
+    return nxt[0] if nxt else cur
+
+
 def list_terms() -> list[dict]:
     """All terms, most recent first — backs GET /api/semesters."""
     return table("terms").select(

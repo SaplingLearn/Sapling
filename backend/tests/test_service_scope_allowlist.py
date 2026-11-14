@@ -53,7 +53,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "friendships are cross-user (plan §6.3: social last)",
     # ── Endpoints ──
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
-    ("routes/calendar.py", "calendar_callback", "service_route"):
+    ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
     ("routes/gamification.py", "get_leaderboard", "service_route"):
         "cross-user projection (everyone's weekly XP); scope + privacy applied in code",
@@ -136,6 +136,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: an inline run records its outcome",
     ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/legal.py", "record_acceptances", "service_scope"):
+        "legal_acceptances is service-only (bucket E): the Terms/Privacy versions accepted at onboarding",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",

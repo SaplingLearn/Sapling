@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useSignInErrorParam } from './useSignInErrorParam';
+import { useSignInErrorParam, useSignInRequestParam } from './useSignInErrorParam';
 
 describe('useSignInErrorParam (#756)', () => {
   afterEach(() => window.history.replaceState({}, '', '/'));
@@ -27,5 +27,25 @@ describe('useSignInErrorParam (#756)', () => {
     const { result } = renderHook(() => useSignInErrorParam());
     expect(result.current[0]).toBeNull();
     expect(window.location.search).toBe('');
+  });
+});
+
+describe('useSignInRequestParam', () => {
+  afterEach(() => window.history.replaceState({}, '', '/'));
+
+  it('reads ?signin= once, strips it and leaves ?error= for its own reader', () => {
+    window.history.replaceState({}, '', '/?signin=1&error=cancelled#faq');
+    const { result } = renderHook(() => useSignInRequestParam());
+    expect(result.current[0]).toBe(true);
+    expect(window.location.search).toBe('?error=cancelled');
+    expect(window.location.hash).toBe('#faq');
+    act(() => result.current[1]());
+    expect(result.current[0]).toBe(false);
+  });
+
+  it('is false without the param', () => {
+    window.history.replaceState({}, '', '/');
+    const { result } = renderHook(() => useSignInRequestParam());
+    expect(result.current[0]).toBe(false);
   });
 });

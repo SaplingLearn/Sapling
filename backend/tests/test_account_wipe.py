@@ -23,6 +23,7 @@ WIPED = (
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
+    "legal_acceptances",
     "gradescope_credentials", "user_cosmetics", "friendships", "rooms",
     "room_members", "feedback", "issue_reports", "events", "llm_usage",
     "admin_audit_log", "offering_concept_stats",
