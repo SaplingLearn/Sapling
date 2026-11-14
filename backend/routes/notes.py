@@ -20,7 +20,7 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import events_service
+from services import crisis_support, events_service
 from services.academics import (
     course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
     term_id_for_label, user_offering_ids_for_course,
@@ -371,6 +371,12 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
+def _note_texts(note: dict) -> tuple[str | None, ...]:
+    """The student-written note text an agent action hands a model (the title
+    and body; `last_summary` is model output, not the student's words)."""
+    return (note.get("title"), note.get("body"))
+
+
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -388,6 +394,11 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # docs/safety/crisis-support.md: before any limit or budget; no summary is made or saved
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "note_summarize", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis)
     user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
@@ -411,6 +422,11 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # docs/safety/crisis-support.md: before any limit or budget; nothing is extracted or linked
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "note_extract_concepts", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis, concepts=[], linked=0)
     user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
@@ -444,10 +460,18 @@ class NoteChatBody(BaseModel):
 
 @router.post("/{note_id}/chat")
 async def note_chat(note_id: str, body: NoteChatBody, request: Request):
+    # docs/safety/crisis-support.md: the message first, before every limit and budget
+    if crisis := await crisis_support.screen_async(request, body.user_id, "note_chat", body.message):
+        return crisis_support.json_body(crisis, degraded=False)
     await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # ...then the note the chat agent reads
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "note_chat", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis, degraded=False)
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
     try:
@@ -486,6 +510,11 @@ async def send_to_tutor(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # docs/safety/crisis-support.md: nothing is handed to the tutor (no topic, no preface)
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "note_send_to_tutor", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis)
     title = (note.get("title") or "").strip() or "Untitled note"
     topic = title.splitlines()[0][:80]
     preface_parts: list[str] = []

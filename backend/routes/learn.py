@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 import services.tutor as tutor_service
+from services import crisis_support
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from routes._docs import same_doc
 
@@ -89,24 +90,36 @@ router = APIRouter()
 @router.post("/start-session")
 @same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_start", body.topic):
+        return crisis_support.start_json(crisis)
     return await tutor_service.start_session(body, request)
 
 
 @router.post("/chat")
 @same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
+        return crisis_support.turn_json(crisis)
     return await tutor_service.chat(body, request)
 
 
 @router.post("/chat/stream")
 @same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
+        return crisis_support.sse_response(crisis, request)
     return await tutor_service.chat_stream(body, request)
 
 
 @router.post("/start-session/stream")
 @same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_start", body.topic):
+        return crisis_support.sse_response(crisis, request, session_id=None)
     return await tutor_service.start_session_stream(body, request)
 
 
