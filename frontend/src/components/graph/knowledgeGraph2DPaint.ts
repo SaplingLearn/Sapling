@@ -215,11 +215,13 @@ export function conceptLabelSize(legible: boolean, focused: boolean, scale: numb
 
 /**
  * A course root's label size: 13 at full size, growing as the view zooms out
- * so it reads at about 13px on screen however far out (24 at most), in
- * either mode, so every course can be found at a glance.
+ * so it reads at about 13px on screen down to `floorZoom` (the zoom buttons'
+ * furthest), in either mode, so every course can be found at a glance.
+ * Further out (a window that fits the graph only there) it shrinks with the
+ * view, as the nodes do, so it never crowds them.
  */
-export function courseLabelSize(scale: number): number {
-  return Math.min(24, 13 / Math.min(1, scale));
+export function courseLabelSize(scale: number, floorZoom: number): number {
+  return 13 / Math.min(1, Math.max(scale, floorZoom));
 }
 
 /** A concept label's weight: the focused concept's own label is bold. */

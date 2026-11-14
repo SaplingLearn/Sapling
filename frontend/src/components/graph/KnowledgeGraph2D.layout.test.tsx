@@ -194,11 +194,61 @@ describe("KnowledgeGraph2D — the opening view", () => {
     expect(viewTransform(shown.container)).toBe(theirs);
   });
 
-  it("never opens further out than the zoom buttons can go", () => {
-    // Far too much for a window this small: the fit stops at the zoom floor.
-    const nodes = [root("c1"), root("c2"), ...concepts(40, "c1"), ...concepts(40, "c2")];
-    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={120} height={90} />);
-    expect(view(container).scale).toBe(0.25);
+  describe("a window too small for the graph even at the buttons' furthest zoom (0.25)", () => {
+    // A phone, or a narrow dashboard column.
+    const TWO = [root("c1"), root("c2"), ...concepts(40, "c1"), ...concepts(40, "c2")];
+    const fitIn = (w: number, h: number) => {
+      const b = planBounds(planRadial(TWO, [], w, h), w, h)!;
+      return Math.min(w / (b.maxX - b.minX), h / (b.maxY - b.minY));
+    };
+
+    it("still opens on the whole graph, every concept on screen", () => {
+      const fit = fitIn(200, 150);
+      expect(fit).toBeLessThan(0.25);
+      expect(fit).toBeGreaterThan(0.1);
+      const { container } = render(<KnowledgeGraph2D nodes={TWO} edges={[]} width={200} height={150} />);
+      const v = view(container);
+      expect(v.scale).toBeCloseTo(fit, 9);
+      for (const [, p] of positions(container)) {
+        expect(p.x * v.scale + v.tx).toBeGreaterThanOrEqual(0);
+        expect(p.x * v.scale + v.tx).toBeLessThanOrEqual(200);
+        expect(p.y * v.scale + v.ty).toBeGreaterThanOrEqual(0);
+        expect(p.y * v.scale + v.ty).toBeLessThanOrEqual(150);
+      }
+    });
+
+    it("zooms out no further than that opening view", () => {
+      const fit = fitIn(200, 150);
+      const { container } = render(<KnowledgeGraph2D nodes={TWO} edges={[]} width={200} height={150} />);
+      fireEvent.click(screen.getByTestId("graph-zoom-out"));
+      expect(view(container).scale).toBeCloseTo(fit, 9);
+      fireEvent.click(screen.getByTestId("graph-zoom-in"));
+      fireEvent.click(screen.getByTestId("graph-zoom-out"));
+      fireEvent.click(screen.getByTestId("graph-zoom-out"));
+      expect(view(container).scale).toBeCloseTo(fit, 9);
+    });
+
+    it("shrinks legible nodes with the view, so they keep their room", () => {
+      // Down to 0.25 a legible concept is at least 7px on screen (28 graph
+      // units at 0.25), a course node 10px (40). Further out they keep those
+      // sizes in the graph rather than growing until neighbours overlap.
+      const { container } = render(<KnowledgeGraph2D legible nodes={TWO} edges={[]} width={200} height={150} />);
+      expect(view(container).scale).toBeLessThan(0.25);
+      const radii = (sel: string) =>
+        Array.from(container.querySelectorAll(`${sel} [data-testid="graph-node-circle"]`)).map((s) =>
+          Number(s.getAttribute("data-r")),
+        );
+      const conceptRadii = radii('[data-testid="graph-node"]:not([data-node-id^="root-"])');
+      expect(conceptRadii).toHaveLength(80);
+      expect(Math.max(...conceptRadii)).toBeLessThanOrEqual(28);
+      expect(Math.max(...radii('[data-testid="graph-node"][data-node-id^="root-"]'))).toBeLessThanOrEqual(40);
+    });
+
+    it("never opens further out than 0.1", () => {
+      expect(fitIn(120, 90)).toBeLessThan(0.1);
+      const { container } = render(<KnowledgeGraph2D nodes={TWO} edges={[]} width={120} height={90} />);
+      expect(view(container).scale).toBe(0.1);
+    });
   });
 });
 

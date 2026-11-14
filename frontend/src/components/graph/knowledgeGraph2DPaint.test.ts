@@ -9,6 +9,7 @@ import {
   conceptLabelOpacity,
   conceptLabelSize,
   conceptLabelWeight,
+  courseLabelSize,
   hoverFocusId,
   hoverMastery,
   inCourseFocus,
@@ -246,6 +247,17 @@ describe("node paint", () => {
     expect(legibleNodeOpacity(b, null, focus, null)).toBe(1);
     expect(legibleNodeOpacity(b, null, focus, "c1")).toBe(1);
     expect(legibleNodeOpacity(b, null, focus, "c2")).toBe(0.15);
+  });
+
+  it("course labels: about 13px on screen down to the zoom floor, then shrinking with the view", () => {
+    const onScreen = (scale: number) => courseLabelSize(scale, 0.25) * scale;
+    expect(courseLabelSize(2, 0.25)).toBe(13);
+    expect(onScreen(1)).toBe(13);
+    expect(onScreen(0.5)).toBeCloseTo(13, 9);
+    expect(onScreen(0.379)).toBeCloseTo(13, 9);
+    expect(onScreen(0.25)).toBeCloseTo(13, 9);
+    expect(courseLabelSize(0.1, 0.25)).toBe(52);
+    expect(onScreen(0.125)).toBeCloseTo(6.5, 9);
   });
 
   it("concept labels: size, weight and opacity", () => {

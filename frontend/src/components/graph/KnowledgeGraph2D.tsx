@@ -132,9 +132,14 @@ type DragState =
   | { kind: "pan"; pointerId: number; startX: number; startY: number; originTx: number; originTy: number }
   | null;
 
-// The furthest zoom-out, and the floor of the opening fit: a large course
-// planned with room around every concept still opens whole.
+// The furthest the zoom buttons go (a large course planned with room around
+// every concept still opens whole in an ordinary window), and the zoom down
+// to which nodes and course labels keep their smallest on-screen sizes.
 const MIN_ZOOM = 0.25;
+// A window too small to show the whole graph even at MIN_ZOOM (a phone, a
+// narrow dashboard column) opens further out, down to this, so no concept
+// starts off screen. The zoom buttons then go out as far as that opening view.
+const FIT_MIN_ZOOM = 0.1;
 // Layout and physics. Every concept is planned a place round its course
 // (`lib/graph/radialLayout`), and the orbit force holds it near there while
 // links pull and concepts push apart. Dragging a concept frees it and
@@ -280,8 +285,18 @@ export function followForce(
   if (!moving || (free.dragging == null && alpha < 0.02)) settle();
 }
 
-/** Smallest on-screen node radius (px) in legible mode. */
+/** Smallest on-screen node radius (px) in legible mode, down to MIN_ZOOM. */
 const MIN_SCREEN_R = 7;
+/** A course node's: plainly bigger than the smallest concept however far out. */
+const MIN_COURSE_SCREEN_R = 10;
+/**
+ * A legible node's smallest radius, in graph units, at zoom `scale`: its
+ * on-screen minimum down to MIN_ZOOM. Further out (a window that fits the
+ * graph only below MIN_ZOOM) the whole drawing shrinks together, so the nodes
+ * keep their room and never overlap.
+ */
+const legibleMinR = (scale: number, isRoot: boolean | undefined) =>
+  (isRoot ? MIN_COURSE_SCREEN_R : MIN_SCREEN_R) / Math.max(scale, MIN_ZOOM);
 
 /**
  * The visible part of a link: rim of the source to rim of the target, so no
@@ -575,12 +590,11 @@ function KnowledgeGraph2DImpl({
       const s = resolve(l.source);
       const t = resolve(l.target);
       if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
-      // Same radii the render draws: legible nodes never shrink below
-      // MIN_SCREEN_R on screen.
+      // Same radii the render draws (`legibleMinR`).
       const legible = legibleRef.current;
       const rOf = (n: SimNode) => {
         const r = radiusRef.current.get(n.id) ?? 0;
-        return legible ? Math.max(r, MIN_SCREEN_R / viewScaleRef.current) : r;
+        return legible ? Math.max(r, legibleMinR(viewScaleRef.current, n.is_subject_root)) : r;
       };
       const [x1, y1, x2, y2] = organicRef.current
         ? organicLinkSegment(
@@ -690,7 +704,7 @@ function KnowledgeGraph2DImpl({
       const bw = b ? b.maxX - b.minX : 0;
       const bh = b ? b.maxY - b.minY : 0;
       if (b && (bw > width || bh > height)) {
-        const scale = Math.max(MIN_ZOOM, Math.min(1, width / bw, height / bh));
+        const scale = Math.max(FIT_MIN_ZOOM, Math.min(1, width / bw, height / bh));
         const mx = (b.minX + b.maxX) / 2;
         const my = (b.minY + b.maxY) / 2;
         fittedViewRef.current = { tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale };
@@ -1116,7 +1130,10 @@ function KnowledgeGraph2DImpl({
   /** Zoom by `factor` about a window point, from wherever the view is headed. */
   const zoomAbout = (factor: number, mx: number, my: number) => {
     const base = viewTargetRef.current ?? viewNowRef.current;
-    const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, base.scale * factor));
+    // Out as far as the opening view, when the window fits the graph only
+    // below MIN_ZOOM.
+    const floor = Math.min(MIN_ZOOM, fittedViewRef.current?.scale ?? MIN_ZOOM);
+    const nextScale = Math.min(MAX_ZOOM, Math.max(floor, base.scale * factor));
     const f = nextScale / base.scale;
     const c = clampView(mx - (mx - base.tx) * f, my - (my - base.ty) * f, nextScale);
     easeView({ tx: c.tx, ty: c.ty, scale: nextScale });
@@ -1313,9 +1330,10 @@ function KnowledgeGraph2DImpl({
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
   const zoomLabels = labelOpacityAt(view.scale);
-  // Legible nodes never shrink below MIN_SCREEN_R on screen, however far out.
+  // Legible nodes never shrink below MIN_SCREEN_R on screen, down to
+  // MIN_ZOOM (`legibleMinR`).
   const drawRadius = (n: GraphNode) =>
-    legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
+    legible ? Math.max(nodeRadius(n), legibleMinR(view.scale, n.is_subject_root)) : nodeRadius(n);
   // O(1) endpoint resolution for edges whose source/target is still an id
   // string (before the link force swaps in node objects) — replaces the old
   // per-edge .find() over all nodes.
@@ -1549,10 +1567,10 @@ function KnowledgeGraph2DImpl({
           <text
             data-testid="graph-course-label"
             x={0}
-            y={r + 4 + courseLabelSize(view.scale) * 0.92}
+            y={r + 4 + courseLabelSize(view.scale, MIN_ZOOM) * 0.92}
             textAnchor="middle"
             fontFamily="var(--font-display)"
-            fontSize={courseLabelSize(view.scale)}
+            fontSize={courseLabelSize(view.scale, MIN_ZOOM)}
             fontWeight={600}
             fill={color}
             pointerEvents="none"

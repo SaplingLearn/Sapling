@@ -319,4 +319,28 @@ describe("KnowledgeGraph2D — the course node", () => {
     const label = container.querySelector('[data-node-id="root-c1"] [data-testid="graph-course-label"]')!;
     expect(label.textContent).toBe("C1 101");
   });
+
+  it.each([
+    ["zoomed out to fit, as the dashboard opens", 520, 380],
+    ["zoomed out past the buttons' furthest, as on a phone", 200, 150],
+  ])("stays plainly bigger than its concepts %s (legible)", (_name, w, h) => {
+    // Far out, legible concepts are held at 7px on screen. Without its own
+    // floor (10px) the course node would shrink to their size.
+    const nodes = [root("c1"), root("c2"), ...concepts(40), ...concepts(40, "c2")];
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={w} height={h} legible />);
+    const transform = Array.from(container.querySelectorAll("g"))
+      .map((g) => g.getAttribute("transform") ?? "")
+      .find((t) => t.includes("scale("))!;
+    const scale = Number(/scale\(([-\d.e]+)\)/.exec(transform)![1]);
+    expect(scale).toBeLessThan(0.4);
+    const radii = (sel: string) =>
+      Array.from(container.querySelectorAll(`${sel} [data-testid="graph-node-circle"]`)).map((s) => Number(s.getAttribute("data-r")));
+    const roots = radii('[data-testid="graph-node"][data-node-id^="root-"]');
+    const conceptRadii = radii('[data-testid="graph-node"]:not([data-node-id^="root-"])');
+    expect(roots).toHaveLength(2);
+    // A fifth bigger than any concept, as at full size…
+    expect(Math.min(...roots)).toBeGreaterThanOrEqual(1.2 * Math.max(...conceptRadii));
+    // …and 10px on screen, down to 0.25 (further out, the drawing shrinks as one).
+    expect(Math.min(...roots) * Math.max(scale, 0.25)).toBeGreaterThanOrEqual(10 - 1e-9);
+  });
 });
