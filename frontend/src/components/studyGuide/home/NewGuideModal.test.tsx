@@ -38,10 +38,11 @@ import { PLAN_DEBOUNCE_MS } from "./usePlan";
 
 const onClose = vi.fn();
 const onCreated = vi.fn();
+const onCreatedLater = vi.fn();
 
 function renderModal(props: Partial<NewGuideModalProps> = {}) {
   return render(
-    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} {...props} />,
+    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} onCreatedLater={onCreatedLater} {...props} />,
   );
 }
 
@@ -84,6 +85,7 @@ beforeEach(() => {
   resetMocks();
   onClose.mockReset();
   onCreated.mockReset();
+  onCreatedLater.mockReset();
 });
 afterEach(cleanup);
 

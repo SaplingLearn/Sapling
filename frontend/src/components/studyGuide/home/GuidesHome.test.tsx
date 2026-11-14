@@ -223,6 +223,23 @@ describe("opening the New study guide dialog", () => {
     expect(mocks.create).toHaveBeenCalledWith("u1", expect.objectContaining({ course_id: "c1", material_ids: ["d1", "d2", "d3"] }));
   });
 
+  it("lists a guide whose create finished after the dialog was closed, and stays on the home", async () => {
+    const created = deferred<{ id: string }>();
+    mocks.create.mockReturnValue(created.promise);
+    const user = await home();
+    await user.click(screen.getByTestId("guides-new"));
+    await screen.findByTestId("guide-new-material-d1");
+    await user.click(screen.getByTestId("guide-new-generate"));
+    await user.click(screen.getByTestId("guide-new-cancel"));
+    expect(screen.queryByTestId("guide-new-dialog")).toBeNull();
+
+    mocks.list.mockResolvedValue({ guides: [...THREE, guide({ id: "g-new", title: "Trees", generated_at: null, status: "generating" })] });
+    created.resolve({ id: "g-new" });
+    expect(await screen.findByTestId("guides-card-g-new")).toBeTruthy();
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("says the classes could not be loaded, not that there are none, and Try again reads them", async () => {
     mocks.courses.mockRejectedValueOnce(new Error("500"));
     const user = await home();

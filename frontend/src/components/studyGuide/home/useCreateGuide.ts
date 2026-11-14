@@ -13,8 +13,13 @@ export interface CreateGuide {
 }
 
 /** Creates the guide's row. Writing it is the reader's job, so a success
- *  hands the new id on and the dialog's choices are left as they were. */
-export function useCreateGuide(userId: string, onCreated: (guideId: string) => void): CreateGuide {
+ *  hands the new id on and the dialog's choices are left as they were. A
+ *  success after the dialog has closed goes to `onCreatedLater` instead. */
+export function useCreateGuide(
+  userId: string,
+  onCreated: (guideId: string) => void,
+  onCreatedLater: () => void,
+): CreateGuide {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   /** The dialog is still there. It is unmounted when it closes. */
@@ -32,8 +37,10 @@ export function useCreateGuide(userId: string, onCreated: (guideId: string) => v
     try {
       const { id } = await createGuide(userId, request);
       // Closed meanwhile: the student chose to stay. The guide's row exists
-      // and waits on the home, not finished, until it is opened.
+      // and waits on the home, not finished, until it is opened; the home
+      // has to read its list again to show it.
       if (open.current) onCreated(id);
+      else onCreatedLater();
     } catch (err) {
       console.error("study guide create failed", err);
       if (!open.current) return;

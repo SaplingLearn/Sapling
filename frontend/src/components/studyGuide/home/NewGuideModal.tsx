@@ -36,6 +36,8 @@ export interface NewGuideModalProps {
   onClose: () => void;
   /** The guide's row exists: the reader takes it from here. */
   onCreated: (guideId: string) => void;
+  /** The guide's row was created after the dialog closed: it exists, unopened. */
+  onCreatedLater: () => void;
 }
 
 /**
@@ -44,11 +46,11 @@ export interface NewGuideModalProps {
  * opening starts from the defaults.
  */
 export function NewGuideModal({
-  userId, courses, coursesReady, coursesFailed, onRetryCourses, semester, onClose, onCreated,
+  userId, courses, coursesReady, coursesFailed, onRetryCourses, semester, onClose, onCreated, onCreatedLater,
 }: NewGuideModalProps) {
   const guide = useNewGuide({ userId, courses, semester });
   const plan = usePlan(userId, guide.request);
-  const create = useCreateGuide(userId, onCreated);
+  const create = useCreateGuide(userId, onCreated, onCreatedLater);
   const [uploading, setUploading] = React.useState(false);
   const { form, request } = guide;
 

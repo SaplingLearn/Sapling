@@ -69,6 +69,7 @@ export function GuidesHome({
           semester={term.semester}
           onClose={() => setCreating(false)}
           onCreated={guideId => router.push(studyGuideReaderHref(guideId))}
+          onCreatedLater={list.reload}
         />
       )}
     </div>
