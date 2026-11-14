@@ -14,6 +14,17 @@ TUTOR_TOPIC_MAX = 500
 TUTOR_MESSAGE_MAX = 10_000
 
 
+#: Ceiling for any id a request supplies. Ids here are TEXT, not uuid —
+#: `users.id` is `user_<google id>`, the rest are uuid strings — so none is
+#: near this. The bound exists because these values are interpolated into
+#: PostgREST filters (`filters={"id": f"eq.{...}"}`), and an over-long value
+#: builds a query URL too long to send: PostgREST rejects it and the request
+#: answers 500. Verified against the running app before this was added — a
+#: 50,000-character `session_id` on /api/learn/chat returned 500, where a
+#: merely wrong one correctly returns 404.
+ID_MAX = 128
+
+
 class StartSessionBody(BaseModel):
     user_id: str = "user_andres"
     topic: str = Field(default="", max_length=TUTOR_TOPIC_MAX)
@@ -24,7 +35,7 @@ class StartSessionBody(BaseModel):
 
 
 class ChatBody(BaseModel):
-    session_id: str
+    session_id: str = Field(..., max_length=ID_MAX)
     user_id: str = "user_andres"
     message: str = Field(..., max_length=TUTOR_MESSAGE_MAX)
     mode: str = "socratic"
@@ -39,7 +50,7 @@ class ChatBody(BaseModel):
 
 
 class EndSessionBody(BaseModel):
-    session_id: str
+    session_id: str = Field(..., max_length=ID_MAX)
     user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
@@ -49,7 +60,7 @@ class RenameSessionBody(BaseModel):
 
 
 class ActionBody(BaseModel):
-    session_id: str
+    session_id: str = Field(..., max_length=ID_MAX)
     user_id: str = "user_andres"
     action_type: str = "hint"
     mode: str = "socratic"
@@ -62,7 +73,7 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     question_format: Literal["multiple_choice", "short_answer", "numeric", "symbolic", "mixed"] = "multiple_choice"
     user_id: str = "user_andres"
-    concept_node_id: str
+    concept_node_id: str = Field(..., max_length=ID_MAX)
     # Bounds come from services/quiz_config.py — the same constants
     # GET /api/quiz/config serves, so the client can't offer a value
     # this model rejects (#540 A2).
@@ -79,7 +90,7 @@ class GenerateQuizBody(BaseModel):
     # questions should be RE-SERVED verbatim instead of regenerated. The
     # server derives which items those were from that attempt's own
     # `quiz_responses` rows, so the client only has to name the attempt.
-    source_attempt_id: Optional[str] = None
+    source_attempt_id: Optional[str] = Field(default=None, max_length=ID_MAX)
     # Optional override for that derivation: the identities
     # (`services/quiz_identity.py::question_hash`) to re-serve. Hashes are
     # internal — the client projection strips them — so nothing sends this
@@ -163,7 +174,7 @@ class AnswerItem(BaseModel):
 
 
 class SubmitQuizBody(BaseModel):
-    quiz_id: str
+    quiz_id: str = Field(..., max_length=ID_MAX)
     # A quiz has at most a few dozen questions; the list was unbounded, so one
     # request could carry an arbitrary number of answer rows.
     answers: list[AnswerItem] = Field(..., max_length=200)
@@ -295,8 +306,8 @@ class ToggleReactionBody(BaseModel):
 
 
 class FriendRequestBody(BaseModel):
-    from_user_id: str
-    to_user_id: str
+    from_user_id: str = Field(..., max_length=ID_MAX)
+    to_user_id: str = Field(..., max_length=ID_MAX)
 
 
 class ExportBody(BaseModel):
@@ -309,7 +320,7 @@ class ExportBody(BaseModel):
 # ── Learn (mode switch) ─────────────────────────────────────────────────────
 
 class ModeSwitchBody(BaseModel):
-    session_id: str
+    session_id: str = Field(..., max_length=ID_MAX)
     user_id: str = "user_andres"
     new_mode: str
 
@@ -629,7 +640,7 @@ class SyllabusApplyBody(BaseModel):
     user_id: str
     course_id: str
     semester: Optional[str] = None
-    doc_id: str
+    doc_id: str = Field(..., max_length=ID_MAX)
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction
 
