@@ -240,7 +240,8 @@ def test_a_syllabus_exam_stored_as_other_is_an_assessment(state):
     ("project", "Quiz app", False),
 ])
 def test_an_assessment_is_what_the_study_page_calls_an_exam_or_a_quiz(kind, title, expected):
-    """Mirrors `classifyAssessment` (frontend/src/components/study/studyModel.ts)."""
+    """`exam_proximity.is_assessment`, as the checklist uses it. Mirrors
+    `classifyAssessment` (frontend/src/components/study/studyModel.ts)."""
     assert svc.is_assessment({"assignment_type": kind, "title": title}) is expected
 
 

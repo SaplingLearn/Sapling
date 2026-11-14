@@ -286,7 +286,7 @@ const TYPE_BY_RAW = new Map<string, AssessType>([
 ]);
 
 /** Exams/quizzes vs homework, from the stored type or (for "other" rows) the title.
- *  The backend's `is_assessment` (services/topic_checklist_service.py) is the same
+ *  The backend's `is_assessment` (services/exam_proximity.py) is the same
  *  rule, so the topic outline links topics to every exam tab: change the two together. */
 export function classifyAssessment(rawType: string | null | undefined, title: string): AssessType {
   const known = TYPE_BY_RAW.get((rawType || "").toLowerCase());

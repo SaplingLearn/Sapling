@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -23,6 +22,7 @@ from services.academics import (
     user_offering_ids_for_course,
 )
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_json
+from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -32,27 +32,6 @@ MAX_DOCUMENTS = 30
 MAX_ASSESSMENTS = 50
 MAX_SOURCE_CHARS = 60000
 EDGE_READ_BATCH = 100
-#: Assignments read to find an enrollment's exams and quizzes. `other` rows
-#: are kept or not by their title, so more are read than kept.
-ASSESSMENT_READ_LIMIT = MAX_ASSESSMENTS * 4
-#: See `is_assessment`.
-_ASSESSMENT_TITLE = re.compile(r"\b(midterm|final|exam|quiz)\b", re.IGNORECASE)
-
-
-def is_assessment(row: dict) -> bool:
-    """Whether an assignment row is an exam or a quiz: its stored type, or,
-    for an `other` (or untyped) row, its title. A syllabus import stores
-    every assignment as `other` (services/documents/persistence.py), so the
-    title is often all there is.
-
-    The SAME rule as `classifyAssessment` in
-    frontend/src/components/study/studyModel.ts, which makes the Study
-    page's exam tabs: a tab whose exam this outline never saw has no topics
-    linked to it, ever. Change the two together."""
-    kind = (row.get("assignment_type") or "").lower()
-    if kind in ("exam", "quiz"):
-        return True
-    return kind in ("", "other") and bool(_ASSESSMENT_TITLE.search(row.get("title") or ""))
 
 
 def topic_key(name: str) -> str:
@@ -122,6 +101,11 @@ def _tracked_graph(user_id: str, course_id: str) -> tuple[list[dict], list[tuple
             text = f"{source} is a prerequisite for {target}." if edge["relationship_type"] == "prerequisite" else f"{target} builds on {source}."
             relationships.append((edge["id"], text))
     return nodes, relationships
+
+
+#: Assignments read to find an enrollment's exams and quizzes. `other` rows
+#: are kept or not by their title (`is_assessment`), so more are read than kept.
+ASSESSMENT_READ_LIMIT = MAX_ASSESSMENTS * 4
 
 
 def _assessments(scope: dict, columns: str) -> tuple[list[dict], bool]:
