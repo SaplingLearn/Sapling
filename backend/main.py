@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from config import APP_ENV, FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -234,7 +234,20 @@ def _drop_request_arguments(_request, _attributes):
     return None
 
 
-app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
+def api_docs_urls(app_env: str) -> dict:
+    """FastAPI's docs/redoc/openapi URLs for `app_env`. The interactive docs
+    and the schema map every route and body shape, which is reconnaissance for
+    anyone probing a deployed API, so they are served only to a developer's
+    machine, CI and the local E2E stack (APP_ENV local/test)."""
+    serve = app_env in {"local", "test"}
+    return {
+        "docs_url": "/docs" if serve else None,
+        "redoc_url": "/redoc" if serve else None,
+        "openapi_url": "/openapi.json" if serve else None,
+    }
+
+
+app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan, **api_docs_urls(APP_ENV))
 
 # Emit a span per HTTP request (method, route, status, latency) so request
 # traces and errors show up in Logfire alongside the Pydantic AI agent spans.
