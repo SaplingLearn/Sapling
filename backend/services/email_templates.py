@@ -221,9 +221,17 @@ def _signoff(closing: str) -> str:
     )
 
 
-def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubscribe_url: str) -> str:
-    """The shared shell. Every entry of `rows` must already be safe HTML rows."""
+def _layout(
+    *, title: str, preheader: str, rows: list[str], reason: str, unsubscribe_url: str | None,
+) -> str:
+    """The shared shell. Every entry of `rows` must already be safe HTML rows.
+    `unsubscribe_url=None` (an operational alert) renders no unsubscribe line."""
     site = _site()
+    unsubscribe = (
+        f'<br>\n<a href="{_e(unsubscribe_url)}" style="color:{_MUTED};text-decoration:underline;">'
+        "Unsubscribe</a> from Sapling emails."
+        if unsubscribe_url else ""
+    )
     return f"""<!doctype html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -256,8 +264,7 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 </table>
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
 <tr><td class="px" align="left" style="padding:20px 48px 0 48px;font-family:{_SANS};font-size:13px;line-height:1.7;color:{_MUTED};">
-{_e(reason)}<br>
-<a href="{_e(unsubscribe_url)}" style="color:{_MUTED};text-decoration:underline;">Unsubscribe</a> from Sapling emails.
+{_e(reason)}{unsubscribe}
 </td></tr>
 </table>
 </td></tr>
@@ -267,9 +274,10 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 """
 
 
-def _text(*blocks: str, unsubscribe_url: str, reason: str) -> str:
+def _text(*blocks: str, unsubscribe_url: str | None, reason: str) -> str:
     body = "\n\n".join(b.strip("\n") for b in blocks if b)
-    return f"{body}\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
+    unsubscribe = f"Unsubscribe: {unsubscribe_url}\n" if unsubscribe_url else ""
+    return f"{body}\n\n--\n{reason}\n{unsubscribe}"
 
 
 def _text_steps(items: list[tuple[str, str]]) -> str:
@@ -492,10 +500,12 @@ _OPS_REASON = "You're getting this because you are a Sapling admin."
 
 
 def ops_alert(
-    title: str, points: list[tuple[str, str]], *, dashboard_url: str, unsubscribe_url: str,
+    title: str, points: list[tuple[str, str]], *, dashboard_url: str,
 ) -> tuple[str, str, str]:
     """An operational alert to admins (services/spend_alerts.py). `points` are
-    (label, detail) lines of aggregate numbers only — never student content."""
+    (label, detail) lines of aggregate numbers only — never student content.
+    No unsubscribe link: it is an `operational` kind, which the suppression
+    list does not stop (email_service.EMAIL_CATEGORIES)."""
     subject = f"[Sapling alert] {title}"
     rows = [
         _row(_headline(title)),
@@ -505,12 +515,12 @@ def ops_alert(
     ]
     html = _layout(
         title=subject, preheader=title[:140], rows=rows,
-        reason=_OPS_REASON, unsubscribe_url=unsubscribe_url,
+        reason=_OPS_REASON, unsubscribe_url=None,
     )
     text = _text(
         title,
         "\n".join(f"- {label}: {detail}" for label, detail in points),
         f"Admin analytics: {dashboard_url}",
-        unsubscribe_url=unsubscribe_url, reason=_OPS_REASON,
+        unsubscribe_url=None, reason=_OPS_REASON,
     )
     return subject, html, text

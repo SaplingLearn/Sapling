@@ -210,8 +210,9 @@ def test_a_failing_check_does_not_hide_the_others(db, outbox, monkeypatch):
 
 def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
     """Through the real send_email: RESEND_API_KEY unset sends nothing, and
-    ops_alert is transactional (an admin's notification opt-out cannot mute it)."""
-    assert email_service.email_category("ops_alert") == "transactional"
+    ops_alert is operational (neither an admin's notification opt-out nor an
+    unsubscribe click can mute it)."""
+    assert email_service.email_category("ops_alert") == "operational"
     claims = []
 
     class Sends:
@@ -229,6 +230,41 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["skipped"]}
     assert claims[0]["dedupe_key"].startswith("ops_alert:error_5xx_spike:2026-11-14:")
     assert "admin@example.edu" not in claims[0]["dedupe_key"]
+
+
+def test_a_suppressed_admin_still_gets_the_alert(db, monkeypatch):
+    """An admin who once clicked Unsubscribe (on a broadcast or on an alert)
+    is on email_suppressions; the ops alert still goes out, and it carries no
+    unsubscribe link of its own."""
+    sent = []
+
+    class Sends:
+        def upsert(self, row, **_):
+            return [{"id": "row-1", **row}]
+
+        def update(self, *_a, **_k):
+            return []
+
+    monkeypatch.setattr(email_service, "table", lambda name: Sends())
+    monkeypatch.setattr(email_service, "is_suppressed", lambda _h: True)
+    monkeypatch.setattr(config, "RESEND_API_KEY", "re_test_key")
+    monkeypatch.setattr(email_service, "MIN_REQUEST_INTERVAL_S", 0.0)
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"id": "re_1"}
+
+    monkeypatch.setattr(
+        email_service, "_post_to_resend", lambda payload, key: sent.append(payload) or Resp(),
+    )
+    _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
+    assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["sent"]}
+    (payload,) = sent
+    assert "List-Unsubscribe" not in payload.get("headers", {})
+    assert "unsubscribe" not in payload["text"].lower()
+    assert "unsubscribe" not in payload["html"].lower()
 
 
 def test_never_runnable_under_pytest():

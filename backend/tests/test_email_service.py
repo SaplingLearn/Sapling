@@ -282,6 +282,7 @@ def test_every_kind_is_categorized_in_one_place():
     assert email_service.email_category("broadcast") == "notification"
     for kind in ("welcome", "waitlist_approved", "waitlist_confirmation", "broadcast_test"):
         assert email_service.email_category(kind) == "transactional"
+    assert email_service.email_category("ops_alert") == "operational"
     assert email_service.email_category("weekly_digest") == "notification"  # unknown: honour opt-out
 
 
@@ -388,6 +389,36 @@ def test_suppressed_recipient_is_recorded_and_not_sent(tables, resend):
     assert tables["email_suppressions"].select.call_args.kwargs["filters"] == {
         "recipient_hash": f"eq.{email_service.recipient_hash(TO)}"
     }
+
+
+def test_operational_kind_reaches_a_suppressed_recipient_without_unsubscribe(tables, resend):
+    """An ops alert must reach an admin even after they unsubscribed from
+    Sapling email (one click on any earlier mail): it skips the suppression
+    list and carries no List-Unsubscribe header to click."""
+    tables["email_suppressions"].select.return_value = [
+        {"recipient_hash": email_service.recipient_hash(TO)}
+    ]
+    _opted_out(tables)
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "sent"
+    assert tables["email_sends"].upsert.call_args.args[0]["status"] == "queued"
+    payload = resend.post.call_args.kwargs["json"]
+    assert "List-Unsubscribe" not in payload.get("headers", {})
+    assert "List-Unsubscribe-Post" not in payload.get("headers", {})
+    tables["user_settings"].select_with_count.assert_not_called()
+
+
+def test_suppressed_recipient_still_gets_no_broadcast(tables, resend):
+    tables["email_suppressions"].select.return_value = [
+        {"recipient_hash": email_service.recipient_hash(TO)}
+    ]
+    assert _send(kind="broadcast", dedupe_key="broadcast:b1:h", broadcast_id="b1") == "suppressed"
+    resend.post.assert_not_called()
+
+
+def test_operational_kind_keeps_the_never_twice_claim(tables, resend):
+    tables["email_sends"].upsert.return_value = []  # key already claimed
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "duplicate"
+    resend.post.assert_not_called()
 
 
 def test_claim_failure_does_not_send(tables, resend):
@@ -526,6 +557,14 @@ def test_every_template_carries_the_unsubscribe_link_and_brand():
         assert subject
         assert unsub in html and unsub in text
         assert "#445D22" in html and "Sapling" in html
+
+
+def test_ops_alert_template_has_no_unsubscribe_link():
+    subject, html, text = email_templates.ops_alert(
+        "Spend over $10", [("Today", "$15.00")], dashboard_url="https://sapling.example/admin",
+    )
+    assert "Sapling" in html and "$15.00" in text
+    assert "unsubscribe" not in html.lower() and "unsubscribe" not in text.lower()
 
 
 def test_welcome_escapes_the_first_name():

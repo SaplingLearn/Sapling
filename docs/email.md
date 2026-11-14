@@ -1,6 +1,6 @@
 # Email (Resend)
 
-Sapling sends four kinds of email, all through `backend/services/email_service.py`
+Sapling sends five kinds of email, all through `backend/services/email_service.py`
 (the only module that talks to Resend):
 
 | kind | category | when | dedupe (never twice) |
@@ -9,6 +9,7 @@ Sapling sends four kinds of email, all through `backend/services/email_service.p
 | `waitlist_approved` | transactional | an admin approves a waitlist email (Admin → Allowlist, single or bulk) | per address, so a revoke and re-approve doesn't re-send |
 | `welcome` | transactional | an account's first approved sign-in while `users.welcomed_at` is NULL | per account |
 | `broadcast` | notification | Admin → Email, sent to a chosen audience | per broadcast × address |
+| `ops_alert` | operational | an hourly spend/error check fires (`services/spend_alerts.py`), to admins only | per alert × UTC day × address |
 
 The category lives in one place, `email_service.EMAIL_CATEGORIES` (a kind
 missing from it counts as notification). **Notification** mail is not sent to
@@ -18,6 +19,9 @@ audiences leave those accounts out of their counts. The setting is matched by
 address hash, so it also covers that person's waitlist address, and a toggle
 reaches a running send within a minute. **Transactional** mail (waitlist,
 "you're in", welcome) ignores that setting. Only the suppression list stops it.
+**Operational** mail (staff alerts) ignores both: it reaches an admin even
+after they unsubscribed from Sapling email, and so carries no unsubscribe link
+or `List-Unsubscribe` header. Only the dedupe claim and the kill switch apply.
 
 **Kill switch:** with `RESEND_API_KEY` unset, nothing is sent. Each send is
 recorded as `skipped`, and the admin portal shows a "not configured" banner.
@@ -63,11 +67,12 @@ keyed off `SESSION_SECRET`. **Rotating `SESSION_SECRET` orphans every
 suppression and invalidates every unsubscribe link**, so don't rotate it
 casually.
 
-**Unsubscribe:** every email carries a footer link and RFC 8058 one-click
+**Unsubscribe:** every email except an operational alert carries a footer link and RFC 8058 one-click
 headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 `{FRONTEND_URL}/api/email/unsubscribe?t=…`, which the frontend proxies to the
 backend. GET shows a confirm page and POST suppresses, because mail scanners
-prefetch GETs. A suppressed address gets no email of any kind; a send to it
+prefetch GETs. A suppressed address gets no email of any kind but an
+operational alert; a send to it
 returns and records `suppressed`, including over an earlier `skipped`/`failed`
 row for the same key.
 

@@ -7,8 +7,10 @@ Every send goes through `send_email`, which:
    false — returned as `opted_out`, no row written. Transactional kinds (the
    waitlist/welcome lifecycle mail) ignore that setting;
 2. refuses a recipient on the suppression list (`email_suppressions`) — for
-   EVERY kind of email, recorded as `suppressed` (an earlier `skipped`/`failed`
-   row for the key is flipped to `suppressed` too, so the ledger says why);
+   every kind of email but the OPERATIONAL ones (staff alerts, which must
+   reach an admin and carry no unsubscribe link), recorded as `suppressed`
+   (an earlier `skipped`/`failed` row for the key is flipped to `suppressed`
+   too, so the ledger says why);
 3. claims the send's `dedupe_key` in `email_sends` with INSERT … ON CONFLICT DO
    NOTHING before anything leaves the process. A key that is `sent`, or
    `queued` under a live lease, is never sent again: that is the "never twice"
@@ -87,17 +89,21 @@ STALE_QUEUED_AFTER = timedelta(minutes=15)
 #: The ONE kind → category map. "transactional" mail is about the person's own
 #: account or signup and always sends (the suppression list aside);
 #: "notification" mail (broadcasts, digests, marketing) also honours
-#: `user_settings.notification_email`. A kind missing here is treated as
-#: "notification", so a new kind respects the opt-out until classified.
+#: `user_settings.notification_email`; "operational" mail is a staff-only
+#: alert that must reach its admin whatever they unsubscribed from, so it
+#: skips the opt-out AND the suppression list and carries no unsubscribe link
+#: or List-Unsubscribe header (the dedupe claim still applies). A kind missing
+#: here is treated as "notification", so a new kind respects the opt-out until
+#: classified.
 EMAIL_CATEGORIES: dict[str, str] = {
     "waitlist_confirmation": "transactional",
     "waitlist_approved": "transactional",
     "welcome": "transactional",
     "broadcast_test": "transactional",  # the admin mailing themself
     "broadcast": "notification",
-    # Staff-only operational alerts (services/spend_alerts.py): they must reach
-    # an admin whatever their notification preference.
-    "ops_alert": "transactional",
+    # Staff-only alerts (services/spend_alerts.py): they must reach an admin
+    # whatever their notification preference or unsubscribe history.
+    "ops_alert": "operational",
 }
 
 
@@ -421,7 +427,9 @@ def send_email(
         logger.warning("email recipient hashing failed kind=%s key=%s", kind, dedupe_key, exc_info=True)
         return "failed"
 
-    if email_category(kind) != "transactional":
+    category = email_category(kind)
+    operational = category == "operational"
+    if category == "notification":
         try:
             opted_out = rhash in notification_opt_out_hashes()
         except Exception:  # noqa: BLE001
@@ -434,7 +442,7 @@ def send_email(
             return "opted_out"
 
     try:
-        suppressed = is_suppressed(rhash)
+        suppressed = False if operational else is_suppressed(rhash)
         row = {
             "kind": kind,
             "dedupe_key": dedupe_key,
@@ -480,11 +488,12 @@ def send_email(
         "subject": subject,
         "html": html,
         "text": text,
-        "headers": {
+    }
+    if not operational:
+        payload["headers"] = {
             "List-Unsubscribe": f"<{unsubscribe_url(to)}>",
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-    }
+        }
     reply_to = (getattr(config, "EMAIL_REPLY_TO", "") or "").strip()
     if reply_to:
         payload["reply_to"] = reply_to
