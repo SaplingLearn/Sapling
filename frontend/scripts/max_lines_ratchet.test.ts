@@ -134,6 +134,16 @@ describe("measuring", () => {
     expect(await ratchet.measureText(eslint, code, "src/lib/hidden.ts")).toEqual({ "src/lib/hidden.ts": 7 });
   });
 
+  it("prefilters on every line break ESLint counts, so a CR-only file still reaches the rule", async () => {
+    // measure() skips any file with no more raw lines than the limit; splitting
+    // on "\n" alone read a bare-CR file as one line and skipped it.
+    const crOnly = lines(9).replaceAll("\n", "\r");
+    expect(ratchet.rawLineCount(crOnly)).toBe(9);
+    expect(ratchet.rawLineCount("a\r\nb\u2028c\u2029d\ne")).toBe(5);
+    const eslint = ratchet.measuringESLint(ROOT, options, ["src/lib/cr.ts"]);
+    expect(await ratchet.measureText(eslint, crOnly, "src/lib/cr.ts")).toEqual({ "src/lib/cr.ts": 9 });
+  });
+
   it("refuses a file it cannot parse instead of reading it as short", async () => {
     const eslint = ratchet.measuringESLint(ROOT, options, ["src/lib/broken.ts"]);
     await expect(ratchet.measureText(eslint, "export const = ;", "src/lib/broken.ts")).rejects.toThrow(

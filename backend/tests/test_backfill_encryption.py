@@ -201,7 +201,8 @@ def test_ciphertext_under_another_key_is_left_alone_and_reported(db, monkeypatch
     })
     monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
 
-    assert bf.main() == 0
+    # Cells left for a person to settle: the run is not done.
+    assert bf.main() == 1
     assert db.rows["messages"][0]["content"] == foreign
     assert decrypt(db.rows["messages"][1]["content"]) == "plain text"
     assert db.rows["sessions"][0]["summary_json"] == foreign_json
@@ -235,6 +236,43 @@ def test_main_refuses_to_run_with_the_wrong_key(db, monkeypatch, capsys):
     assert bf.main() == 2
     assert "REFUSING to run" in capsys.readouterr().out
     assert db.selected == [] and db.updates == []
+
+
+def test_base64_shaped_plaintext_is_left_reported_and_not_a_success(db, monkeypatch, capsys):
+    """A legacy plaintext long enough to decode to a nonce and a tag ("A" * 40
+    is 30 bytes) cannot be told apart from foreign ciphertext. It is left as it
+    is, like foreign ciphertext, but the run must not read as done."""
+    shaped = "A" * 40
+    assert bf._looks_like_ciphertext(shaped) is True
+    db.rows["oauth_tokens"] = [{"user_id": "u", "access_token": shaped, "refresh_token": None}]
+    monkeypatch.setattr(bf, "RUNNERS", {"oauth_tokens": bf.backfill_oauth_tokens})
+    monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
+
+    assert bf.main() == 1
+    assert db.rows["oauth_tokens"][0]["access_token"] == shaped
+    assert db.updates == []
+    out = capsys.readouterr().out
+    assert "oauth_tokens.access_token: 1" in out and "base64-shaped" in out
+
+
+def test_apply_refuses_when_the_canary_cannot_be_read(db, monkeypatch, capsys):
+    """verify_encryption_key answers "skipped" for a failed canary read too, so
+    it is not a confirmed key: --apply with the wrong key would encrypt every
+    plaintext cell under it. A dry run only reads, so it still goes ahead."""
+    monkeypatch.setattr(bf, "verify_encryption_key", lambda *, seed: "skipped")
+    db.rows["messages"] = [{"id": 1, "content": "x"}]
+
+    monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
+    assert bf.main() == 2
+    assert "REFUSING to --apply" in capsys.readouterr().out
+    assert db.selected == [] and db.updates == []
+
+    monkeypatch.setattr("sys.argv", ["backfill_encryption"])
+    assert bf.main() == 0
+    out = capsys.readouterr().out
+    assert "WARNING: this database has no readable key canary" in out
+    assert "Would encrypt 1 cells total." in out
+    assert db.updates == []
 
 
 def test_plaintext_json_text_is_not_mistaken_for_ciphertext(db):

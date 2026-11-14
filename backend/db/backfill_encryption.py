@@ -422,13 +422,22 @@ def main() -> int:
     # legacy plaintext looks like. seed=False: this script must never write the
     # canary itself (a wrong key would then lock the real backend out).
     try:
-        if verify_encryption_key(seed=False) == "skipped":
-            print("WARNING: this database has no readable key canary, so the key could not be")
-            print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
-            print()
+        key_check = verify_encryption_key(seed=False)
     except EncryptionKeyMismatch as e:
         print(f"REFUSING to run: {e}")
         return 2
+    if key_check == "skipped":
+        # "skipped" is no canary OR a canary read that failed, never a confirmed
+        # match. A dry run only reads, so it may go on; --apply with an
+        # unconfirmed key could encrypt every plaintext cell under the wrong one.
+        if args.apply:
+            print("REFUSING to --apply: the key canary could not be read, so ENCRYPTION_KEY is not")
+            print("confirmed for this database. Retry once it reads; a database no backend has")
+            print("booted against has no canary yet (boot the backend once to seed it).")
+            return 2
+        print("WARNING: this database has no readable key canary, so the key could not be")
+        print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
+        print()
 
     UNDECRYPTABLE.clear()
     grand_total = 0
@@ -456,7 +465,8 @@ def main() -> int:
     if UNDECRYPTABLE:
         print()
         print("Left untouched: cells that look like ciphertext but do not open with this key")
-        print("(written under another ENCRYPTION_KEY, or damaged). Look at these by hand:")
+        print("(written under another ENCRYPTION_KEY, or damaged, or a legacy plaintext that")
+        print("happens to be base64-shaped, which is still unencrypted). Look at these by hand:")
         for (tbl, col), n in sorted(UNDECRYPTABLE.items()):
             print(f"  {tbl}.{col}: {n}")
     if failed:
@@ -465,8 +475,8 @@ def main() -> int:
         # run for months behind an exit 0.
         print()
         print(f"FAILED tables (not backfilled): {', '.join(failed)}")
-        return 1
-    return 0
+    # Cells left for a person to settle mean the run is not done either.
+    return 1 if failed or UNDECRYPTABLE else 0
 
 
 if __name__ == "__main__":

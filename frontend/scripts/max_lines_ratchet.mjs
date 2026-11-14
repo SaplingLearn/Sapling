@@ -113,6 +113,15 @@ export function collect(results, root) {
 }
 
 /**
+ * A file's raw line count, split on every separator ESLint counts as a line
+ * break: a file of bare-CR lines must not read as one line in the prefilter
+ * and never reach the rule.
+ */
+export function rawLineCount(text) {
+  return text.split(/\r\n|[\r\n\u2028\u2029]/u).length;
+}
+
+/**
  * Every linted, git-tracked file over the limit, with its line count.
  *
  * Only files with more RAW lines than the limit are parsed: the rule counts a
@@ -126,7 +135,7 @@ export async function measure(root = FRONTEND, baselined = [], options) {
   const files = [];
   for (const rel of trackedFiles(root)) {
     const full = path.join(root, rel);
-    if (fs.readFileSync(full, "utf8").split("\n").length <= opts.max) continue;
+    if (rawLineCount(fs.readFileSync(full, "utf8")) <= opts.max) continue;
     if (!(await eslint.isPathIgnored(full))) files.push(rel);
   }
   return files.length ? collect(await eslint.lintFiles(files), root) : {};
