@@ -7,6 +7,7 @@ import { importCloze } from "@/lib/api";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
 import { pastePlaceholder } from "../importModalModel";
 import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props {
   cards: ParsedCard[];
@@ -137,7 +138,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cloze cards.`);
     } catch (err) {
-      toast.error(`Cloze failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't make cloze cards from that text."));
     } finally {
       setClozing(false);
     }

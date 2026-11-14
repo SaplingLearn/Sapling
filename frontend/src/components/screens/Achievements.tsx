@@ -13,6 +13,7 @@ import { BadgeGrid, CAT_META, CAT_ORDER, type CategoryFilter } from "./achieveme
 import { BadgeModal } from "./achievements/BadgeModal";
 import { LeaderboardTab } from "./achievements/LeaderboardTab";
 import { ActivityTab } from "./achievements/ActivityTab";
+import { humanizeError } from "@/lib/errorMessage";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
 // rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
@@ -226,7 +227,7 @@ export function Achievements() {
       // own save decides the final state.
       if (seq === editSeq.current) {
         showFeatured(savedRef.current);
-        toast.error(`Couldn't save showcase: ${String(err)}`);
+        toast.error(humanizeError(err, "Couldn't save your showcase. Try again."));
       }
     } finally {
       savesInFlight.current -= 1;

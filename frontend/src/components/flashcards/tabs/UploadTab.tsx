@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importParse } from "@/lib/api";
 import { parseCSV, parseTSV, parseJSON, type ParsedCard } from "@/lib/flashcardParsers";
 import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -58,7 +59,7 @@ export function UploadTab({ onCards }: Props) {
         toast.error(`Unsupported file type: .${ext}`);
       }
     } catch (err) {
-      toast.error(`Couldn't parse: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't read that file."));
     } finally {
       setBusy(false);
     }

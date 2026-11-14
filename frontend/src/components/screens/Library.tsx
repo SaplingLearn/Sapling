@@ -33,6 +33,7 @@ import type { Document as Doc, ConceptNote } from "@/lib/types";
 import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
 import { libraryGuides } from "../studyGuide/home/guidesModel";
 import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
+import { humanizeError } from "@/lib/errorMessage";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -571,7 +572,7 @@ function DetailPanel({
       await deleteDocument(doc.id, userId);
       await onDeleted();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that document. Try again."));
     }
   });
 

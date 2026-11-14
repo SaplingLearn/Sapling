@@ -199,7 +199,9 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
       reset();
       onDone();
     } catch (err) {
-      toast.error(String(err));
+      toast.error(humanizeError(
+        err, mode === "create" ? "Couldn't create that room." : "Couldn't join that room.",
+      ));
     }
   };
 
@@ -279,7 +281,7 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
       // Never swallow: an empty list has to mean "no public rooms", not
       // "the fetch broke" (#463/#185 convention). This is a secondary
       // surface, so it toasts rather than taking over with a banner.
-      toast.error(`Couldn't load public rooms. ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load public rooms."));
     }
   }, [userId, toast]);
 
@@ -299,7 +301,7 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
       // it too or the joined room lingers as "discoverable" (#485 review).
       await refresh();
     } catch (err) {
-      toast.error(String(err));
+      toast.error(humanizeError(err, "Couldn't join that room."));
     } finally {
       setJoining(null);
     }
@@ -813,7 +815,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== tmpId));
-      toast.error(`Send failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't send that message. Try again."));
     }
   };
 
@@ -827,7 +829,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       setEditing(null);
       setEditValue("");
     } catch (err) {
-      toast.error(`Edit failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't edit that message."));
     }
   };
 
@@ -837,7 +839,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       await deleteRoomMessage(roomId, m.id, userId);
       setMessages(prev => prev.map(x => x.id === m.id ? { ...x, is_deleted: true, text: null } : x));
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that message."));
     }
   };
 
@@ -861,7 +863,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
         return { ...m, reactions };
       }));
     } catch (err) {
-      toast.error(`Reaction failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't add that reaction."));
     }
     setPicker(null);
   };
@@ -893,7 +895,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       }
       toast.success("Image sent");
     } catch (err) {
-      toast.error(`Upload failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that image."));
     }
   };
 
@@ -913,7 +915,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight;
       });
     } catch (err) {
-      toast.error(`Couldn't load earlier messages: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load earlier messages."));
     } finally {
       setLoadingEarlier(false);
     }
@@ -1237,7 +1239,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
       toast.success("Left the room");
       onChange();
     } catch (err) {
-      toast.error(`Leave failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't leave that room."));
     }
   });
 
@@ -1296,7 +1298,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
                 toast.success(`Removed ${m.name}`);
                 refresh();
               } catch (err) {
-                toast.error(`Kick failed: ${String(err)}`);
+                toast.error(humanizeError(err, "Couldn't remove that member."));
               }
             }}
             last={i === data.members.length - 1}
@@ -1386,7 +1388,7 @@ function StudyMatch({ roomId }: { roomId: string }) {
         toast.success(`Best match: ${top.partner?.name} at ${Math.round((top.compatibility_score || 0) * 100)}%`);
       }
     } catch (err) {
-      toast.error(`Matching failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't find a study match right now."));
     } finally {
       setLoading(false);
     }

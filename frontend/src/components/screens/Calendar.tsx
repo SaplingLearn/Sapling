@@ -184,7 +184,7 @@ export function Calendar() {
       const res = await syncCalendar(userId);
       toast.success(`Synced ${res.synced_count} event${res.synced_count === 1 ? "" : "s"} to Google.`);
     } catch (err) {
-      toast.error(`Sync failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't sync your calendar. Try again."));
     }
   };
 
@@ -194,7 +194,7 @@ export function Calendar() {
       const res = await importGoogleEvents(userId, 60);
       setGoogleEvents(res.events || []);
     } catch (err) {
-      toast.error(`Import failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't import those events."));
     } finally {
       setImportingGoogle(false);
     }
@@ -206,7 +206,7 @@ export function Calendar() {
       setGoogleConnected(false);
       toast.success("Google Calendar disconnected.");
     } catch (err) {
-      toast.error(`Disconnect failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't disconnect that calendar."));
     }
   };
   const disconnectConfirm = useConfirm(doDisconnect);
@@ -738,7 +738,7 @@ function AssignmentTable({
       toast.success("Assignment deleted.");
       await onReload();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that. Try again."));
     } finally {
       setDeletingId(null);
     }
@@ -757,7 +757,7 @@ function AssignmentTable({
       );
       await onReload();
     } catch (err) {
-      toast.error(`Export failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't export that. Try again."));
     } finally {
       setExporting(false);
     }
@@ -784,7 +784,7 @@ function AssignmentTable({
       await onReload();
       cancel();
     } catch (err) {
-      toast.error(`Save failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save that. Try again."));
     } finally {
       setSaving(false);
     }

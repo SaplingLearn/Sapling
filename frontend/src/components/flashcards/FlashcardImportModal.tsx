@@ -22,6 +22,7 @@ import {
   removeCard, validCardsOf,
 } from "./importModalModel";
 import s from "./FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 type TabKey = "paste" | "upload" | "url" | "ai" | "photo";
 
@@ -133,7 +134,7 @@ function useCommit(
       onImported(res.inserted);
       onClose();
     } catch (err) {
-      toast.error(`Import failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't import those cards. Try again."));
     } finally {
       setCommitting(false);
     }
@@ -166,7 +167,7 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
       onChange(numberedCards(res.cards));
       toast.success("Cleaned up.");
     } catch (err) {
-      if (run.isCurrent()) toast.error(`Cleanup failed: ${String(err)}`);
+      if (run.isCurrent()) toast.error(humanizeError(err, "Couldn't tidy up that import."));
     } finally {
       if (run.isCurrent()) setCleaning(false);
     }
