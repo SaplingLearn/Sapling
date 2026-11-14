@@ -538,7 +538,9 @@ async def send_to_tutor(
     ):
         return crisis_support.json_body(crisis)
     # Limits come after the crisis screen: a student in crisis never gets a 429.
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+    # No model runs here (the tutor session is limited where it starts), so
+    # the cheap note budget, not a note-AI unit.
+    await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
     title = (note.get("title") or "").strip() or "Untitled note"
     topic = title.splitlines()[0][:80]
     preface_parts: list[str] = []
@@ -561,8 +563,11 @@ async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
     # No NOTE_AI_ACTION unit: this picks a linked concept and runs no model.
-    # The quiz itself is generated (and limited) by /api/quiz/generate.
+    # The quiz itself is generated (and limited) by /api/quiz/generate. The
+    # cheap note budget bounds it, charged before any read (no crisis screen
+    # here, so nothing has to come first).
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
