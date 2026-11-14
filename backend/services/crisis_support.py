@@ -9,14 +9,26 @@ first. The call is one line at the top of the handler:
     if crisis := await crisis_support.screen_async(request, user_id, "tutor_chat", body.message):
         return crisis_support.turn_json(crisis)
 
-(`screen` is the same for a sync `def` route). The notes routes screen the
-note they read, so their screen sits right after that read; nothing between
-auth and it limits anything.
+(`screen` is the same for a sync `def` route).
 
-A crisis turn makes no model call, consumes no rate-limit, budget or quota
-unit (the per-user LLM budget is checked at the model chokepoint, which a
-crisis turn never reaches), and writes nothing a turn writes: no message row,
-lazy session, summary, concept, card or graph change. The triggering text is
+The one exception is text the student STORED rather than typed: a note's
+title and body, read by the notes agent actions. A match there never
+blocks. The notes routes screen the note right after they read it (still
+before any limit) with `screen_content_async`, then run their action
+through `alongside`, which returns the action's own answer with the card
+beside it: its result, or the error it raised (a 429, a 413, a 500), whose
+body main.py's exception handlers give the card through `error_body`. The
+action itself is limited, budgeted and written exactly as without a match.
+A note is often material the student quotes (a patient, a play), which no
+phrase list can tell from their own words, so they get the result they
+asked for and the resources with it. The note chat's typed message still
+blocks.
+
+A crisis turn (a blocking screen) makes no model call, consumes no
+rate-limit, budget or quota unit (the per-user LLM budget is checked at the
+model chokepoint, which a crisis turn never reaches), and writes nothing a
+turn writes: no message row, lazy session, summary, concept, card or graph
+change. The triggering text is
 never stored, logged, fingerprinted or sent anywhere (no `content=` on the
 event either).
 

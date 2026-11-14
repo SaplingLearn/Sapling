@@ -7,6 +7,16 @@ or acute danger to an AI surface in Sapling, the surface does not run the
 model and does not carry on with the lesson. It shows a fixed, warm card with
 crisis resources instead, and records nothing of the turn.
 
+One kind of text is handled differently: a note the student STORED, read by
+the notes agent actions (Summarize, Extract concepts, the note chat, Send to
+tutor). A match in a note's title or body never blocks the action. The
+action runs as usual and the same card is shown BESIDE its result. A note
+is often material the student is quoting (a patient, a play, a poem), and
+no phrase list can tell a quoted patient from a student quoting themselves,
+so the student gets what they asked for and the resources with it. What the
+student TYPES (a chat message, the note chat's message, a topic, a
+description) still blocks, on every surface.
+
 (First built on the learning loop and removed with it by the revert
 e5a08d47; this is the same path re-landed on the surfaces main has. The loop
 re-land, PR #866, should screen its own routes the same way: see "Adding a
@@ -24,12 +34,20 @@ surface" below.)
    turn runs no model, so no limiter has anything to protect. The screen is
    one call at the very top of the route handler
    (`crisis_support.screen_async(request, user_id, surface, *texts)`, or
-   `screen` in a sync `def` route). The notes routes screen the note they
-   read, so their screen sits right after that read; nothing between the
-   handler's start and the screen limits anything. The per-user LLM budget
+   `screen` in a sync `def` route). The per-user LLM budget
    (`services/llm_budget.py`, flag `llm_budget`) is checked at the model
    chokepoint, which a crisis turn never reaches. A crisis turn consumes no
    rate-limit slot, budget token or quota unit and writes no `llm_usage` row.
+
+   The notes routes screen the note they read with
+   `crisis_support.screen_content_async`, right after that read and still
+   before any limit, and then run their action through
+   `crisis_support.alongside(card, action())`. The action is limited and
+   budgeted as usual (it runs a model), so it can be refused with a 429; the
+   card then rides on that 429, and on any other error the action raises
+   (a 413, a 500), in the error body's `crisis_support` key (main.py's
+   exception handlers add it through `crisis_support.error_body`). The
+   student never gets a refusal without the card.
 2. **Authenticate, on a match only.** The screen runs before the handler's
    own auth, so on a match it checks the caller itself (`require_self` on the
    body's `user_id`): a stranger gets the route's 401/403 before anything is
@@ -38,7 +56,7 @@ surface" below.)
    `off` by default and fails closed, so with the flag off every route
    behaves exactly as before.
 4. **Respond.** On a match with the flag on, the route returns the card
-   instead of its result:
+   instead of its result (a note's content: beside it, see below):
    - JSON routes: `{"reply": <the copy as text>, "crisis_support": {...}}`
      plus the route's own neutral keys (`graph_update: {}`, `session_id:
      null`, `cards: []`, `concepts: []`, ...), so a client that ignores the
@@ -46,11 +64,17 @@ surface" below.)
    - Streams: one `done` event whose `data` is that same body. That is the
      tutor streams' normal terminal event, so the existing stream consumer
      resolves it like any turn.
+   - A note's content: the action's normal result plus `crisis_support` and
+     `crisis_support_alongside: true` (no `reply` of the card's: the note
+     chat's `reply` is the agent's), or its error body plus
+     `crisis_support`.
    - The frontend renders `crisis_support` as a calm card
      (`frontend/src/components/safety/CrisisSupportCard.tsx`): inline in a
      conversation; as a dialog where there is none (the tutor's start screen,
      a note action, a flashcard generator, the study guide's "ask the
-     tutor").
+     tutor"). With `crisis_support_alongside` the notetaker shows the result
+     too (the new summary, the linked concepts, the chat reply under the
+     card) and opens the tutor for Send to tutor once the card is closed.
 5. **Record.** One `safety.crisis_support_shown` event (category `system`)
    with `surface`, `category` (`acute_danger` / `suicidal_ideation` /
    `self_harm`) and `tier` (`explicit` / `mention`), and the user id. It
@@ -63,7 +87,9 @@ surface" below.)
    where event_type = 'safety.crisis_support_shown' order by created_at desc;`
 
 A crisis turn makes no model call and writes nothing a turn writes: no
-message row, lazy tutor session, summary, concept, card or graph change.
+message row, lazy tutor session, summary, concept, card or graph change. (A
+note action whose note matched is not a crisis turn: it runs, writes and is
+limited exactly as without the card.)
 Because no message row is written, the exchange is not in the transcript
 after a reload, and the tutor's next turn does not see it in its history.
 
@@ -73,24 +99,26 @@ PostHog, not to Logfire.
 
 ## Surfaces covered
 
-| Surface (`event.payload.surface`) | Route(s) | Text screened | Instead of |
+| Surface (`event.payload.surface`) | Route(s) | Text screened | The card |
 |---|---|---|---|
-| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it) |
-| `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic` | opening a session |
-| `note_chat` | `POST /api/notes/{id}/chat` | `message` (first), then the note title + body | a note-chat reply (the agent reads the note) |
-| `note_send_to_tutor` | `POST /api/notes/{id}/send-to-tutor` | note title + body | handing the note to the tutor |
-| `note_summarize` | `POST /api/notes/{id}/summarize` | note title + body | a summary |
-| `note_extract_concepts` | `POST /api/notes/{id}/extract-concepts` | note title + body | concept extraction |
-| `flashcard_set_suggest` | `POST /api/flashcards/sets/suggest` | `description` | sorting a described set |
-| `flashcard_import_paste` | `POST /api/flashcards/import/generate` (`source: "paste"`) | `text` | generating cards from pasted text |
-| `flashcard_import_cloze` | `POST /api/flashcards/import/cloze` | `paragraph` | generating cloze cards |
-| `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | generating cards for a topic |
+| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it) |
+| `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic` | instead of opening a session |
+| `note_chat` | `POST /api/notes/{id}/chat` | `message` (first), then the note title + body | the message: instead of a reply; the note: beside the reply |
+| `note_send_to_tutor` | `POST /api/notes/{id}/send-to-tutor` | note title + body | beside handing the note to the tutor |
+| `note_summarize` | `POST /api/notes/{id}/summarize` | note title + body | beside the summary |
+| `note_extract_concepts` | `POST /api/notes/{id}/extract-concepts` | note title + body | beside concept extraction |
+| `flashcard_set_suggest` | `POST /api/flashcards/sets/suggest` | `description` | instead of sorting a described set |
+| `flashcard_import_paste` | `POST /api/flashcards/import/generate` (`source: "paste"`) | `text` | instead of generating cards from pasted text |
+| `flashcard_import_cloze` | `POST /api/flashcards/import/cloze` | `paragraph` | instead of generating cloze cards |
+| `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | instead of generating cards for a topic |
 
 Frontend surfaces that render the card: the tutor (`Learn.tsx`: chat turns
 inline, a session start as a dialog over the picker), the quiz's "Ask about
 this" panel (`AskPanel`), the study guide's "ask the tutor"
 (`useTutorHandoff`, a dialog; the tutor is not opened), the notetaker (chat
-inline; Summarize, Extract concepts and Send to tutor as a dialog), and the
+inline, the reply under the card when the note matched; Summarize, Extract
+concepts and Send to tutor as a dialog over their result, or over the error
+toast when the answer was a 429 carrying the card), and the
 flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab
 and the review start that generates cards (dialogs).
 
@@ -132,7 +160,7 @@ and the review start that generates cards (dialogs).
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
 | Screen, flag, event, response builders | `backend/services/crisis_support.py` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
@@ -144,7 +172,11 @@ and the review start that generates cards (dialogs).
   `Surface` to `crisis_support.py`, calls the screen as its handler's first
   statement, returns the card with the route's neutral keys, adds a `Case` to
   `test_crisis_support_routes.py` (`test_every_surface_is_covered` fails
-  until it does) and renders the card on its frontend surface.
+  until it does) and renders the card on its frontend surface. A route that
+  reads text the student STORED rather than typed (like the notes actions)
+  uses `screen_content_async` and runs its work through `alongside`
+  instead, so the card shows beside the result; its `Case` sets
+  `note_field`, which makes it a non-blocking (`CONTENT`) case.
   `test_no_student_text_reaches_a_model_unscreened` reads every write route
   of the modules that run a model (`MODEL_ROUTE_MODULES`): a route whose body
   carries free text must call the screen or be listed in `NOT_SCREENED` with
@@ -182,14 +214,21 @@ sentence breaks, stretched letters squeezed):
   negation, so "I'm not okay, I'll kill myself" and "I won't lie, I'm
   suicidal" still match, except for a short aside set off on both sides
   right after the negation word: "I'm not, like, suicidal", "I am not
-  (really) suicidal" and "I am not, and never will be, suicidal" are
-  negations, while "I'm not, I swear, okay, I'll kill myself" (a new "I") and
-  "I'm not okay, honestly, suicidal" (the aside is not right after "not") are
-  not; an idiom that introduces a statement ("I won't
-  lie", "not gonna lie", "not gonna sugarcoat it", "I'm not kidding") negates
-  nothing, so "not gonna lie suicidal thoughts every day" matches; a hedge about one's own state, "I don't think I'm
-  suicidal", is a negation, but "I'm not saying I'll kill myself" and "I
-  don't think I'll kill myself tonight" are not), and technical compounds ("suicide squad",
+  (really) suicidal", "I would never, ever, kill myself" and "I am not, and
+  never will be, suicidal" are negations, while "I'm not, I swear, okay,
+  I'll kill myself" (a new "I"), "I'm not okay, honestly, suicidal" (the
+  aside is not right after "not") and "not, want to kill myself" (a bare
+  comma, not an aside) are not; an idiom that introduces a statement ("I
+  won't lie", "not gonna lie", "not gonna sugarcoat it", "I'm not kidding")
+  negates nothing, so "not gonna lie suicidal thoughts every day" matches; a
+  negation followed by a comparative or intensifier ("I have never been more
+  suicidal", "never been this suicidal before", "I've never wanted to kill
+  myself more than today"), by a feeling about the act ("I'm no longer
+  afraid to kill myself", "not able to stop") or itself negated ("I can't not
+  think about killing myself") says the phrase is there and negates nothing;
+  a hedge about one's own state, "I don't think I'm suicidal", is a
+  negation, but "I'm not saying I'll kill myself" and "I don't think I'll
+  kill myself tonight" are not), and technical compounds ("suicide squad",
   "suicide inhibitor", "suicide burn"). "this problem is killing me", "kill
   the process", "dying to know", "dead code", "kill switch" and "die roll"
   never match anything. **TOPIC_GUARDS** ("Durkheim", "euthanasia", "Hamlet",
@@ -199,37 +238,17 @@ sentence breaks, stretched letters squeezed):
 When several categories match, the most severe is reported: `acute_danger`,
 then `suicidal_ideation`, then `self_harm`.
 
-**Notes are screened as documents** (`source="document"`). A match that sits
-entirely inside a quotation (`"..."`, `“...”`, `„...“` or `'...'`) does not
-count when the quotation's own sentence attributes it to someone else, so
-lecture notes quoting a patient ("a patient says 'I want to kill myself'")
-or a play can still be summarized. Attributed means, outside the quotation
-and in its sentence: a reporting verb with a subject ('a patient says
-"..."', '"...," she said', '"...," said the patient': says, said, asks,
-writes, tells, cries, sings, reports, ...), a third-person speaker word just
-before it ('the speaker's refrain, "..."', patient, client, character,
-narrator, author, ...; so 'Patient: "..."'), or a name before the colon
-that introduces it, when that name is a known dramatic or literary speaker
-('Macbeth: "..."', 'Lady Macbeth:', 'HAMLET:', '**Ophelia:**') or the note
-reads as a script: two or more lines opening with DIFFERENT capitalized
-names and a colon ('Doctor: How are you?' then 'Jane: "..."'). Anything else
-before a colon is a label, not a speaker: 'Note:', 'Today:', 'Ugh:',
-'Update:', and a lone unknown name ('Sarah: "..."'). A verb with no subject
-('Wrote it again: "..."') is not a speaker either. A quotation with no speaker is the student's own and counts: 'Note:
-"I want to kill myself"', or a note whose body is only '"I want to die"'. It
-also counts, attributed or not, when the quotation's sentence speaks in the
-first person outside it ("I keep thinking 'I want to die'", "I wrote: 'I
-want to die.'"). That sentence
-is the one the quotation sits in: a quotation that closes on its own ".", "!"
-or "?" ends it, so a first person in the next sentence does not count ('The
-patient said "I want to die." I think this shows depression.' is set aside).
-An apostrophe ("I'm", "'cause", "students'") is never a quote mark, an
-unclosed or multi-line quote sets nothing aside, and a quotation over 600
-characters is screened like the rest. Only quotation marks make a
-quotation: a Markdown `>` line is screened like any other line, because
-students write their own callouts that way ("> I want to kill myself" in a
-note gets the card). What the student TYPES (a chat message, a topic, a
-description) is always screened whole.
+**A quotation is just text.** Crisis language inside quotation marks
+matches exactly like the same words outside them, in a typed message and in
+a note alike: 'a patient says "I want to kill myself"' matches. (An earlier
+draft set a note's quotations aside when someone else was said to speak
+them. Review kept finding the student's own words read as someone else's:
+'Skipped the doctor appointment again, "I want to kill myself"', a chat log
+pasted into a note. No phrase list can tell a quoted patient from a student
+quoting themselves, so the exception was removed.) What makes a lecture
+note quoting a patient or a play workable is the response, not the
+detector: a match in a note shows the card beside the summary instead of
+replacing it.
 
 **To extend:** add a `Phrase` to `EXPLICIT` (choose its category, write the
 pattern against the normalized form, reuse `_MYSELF` / `_INTENT`), or a
@@ -245,33 +264,24 @@ negatives.
   to stop", "I won't be a problem much longer", "I've been giving my things
   away" and "I can't do this anymore" do not match. Leetspeak ("k1ll") and
   spaced-out letters do not match either. English only.
-- **False positives remain.** A literature or psychology question that uses
-  an explicit first-person phrase ("the speaker says 'I want to die'") gets
-  the card. So can a quiz option about suicide quoted in the quiz's "Ask
-  about this" opening message, a note or poem with an UNQUOTED first-person
-  line, or a first-person sentence in lecture notes that names suicide with
-  no topic word.
-- **Attributed quotations in notes are set aside**, so a student who writes
-  their own crisis line in quotation marks AND gives it to someone else in
-  the same sentence ('mom said "..."'), with no first-person word around
-  it, is not screened there. A `Name:` sets a quotation aside only for a
-  known dramatic or literary speaker, or in a note with two or more
-  different speaker lines (a script). Labels are kept out of that count
-  (`_LABELS`), so a note whose lines open with two different labels the
-  list lacks ('Sad: ...' then 'Tired: "..."') reads as a script and sets its
-  quotation aside. Their messages to the
-  tutor and the note chat are screened whole. The card says the student can
-  keep studying, and their next message is screened afresh.
-- **Unattributed quotations in notes are screened.** Lecture notes that
-  quote a line with no speaker in its sentence ('Macbeth, Act 5: "I want to
-  die" is the line we discussed') get the card when summarized: a false
-  positive, chosen over missing a student's own quoted line. So does a
-  quotation after a lone unknown name ('Sarah: "I want to die"'): it may be
-  a friend's words or a character's, but it may be the student's own.
-- **Block quotes in notes are not set aside.** A lecture note that quotes a
-  patient or a play on a Markdown `>` line, without quotation marks, gets
-  the card when it is summarized: a false positive, chosen over missing a
-  student's own `>` callout.
+- **False positives remain, and cost the most on typed text.** A literature
+  or psychology question TYPED to the tutor that uses an explicit
+  first-person phrase ("the speaker says 'I want to die'") gets the card
+  instead of an answer. So can a quiz option about suicide quoted in the
+  quiz's "Ask about this" opening message.
+- **A note's false positive costs the student nothing but the card.** A
+  psychology or literature note that quotes a patient or a play ("a patient
+  says 'I want to kill myself'", "Macbeth: 'I want to die'"), or names
+  suicide in a first-person sentence with no topic word, shows the
+  resources beside its summary (its concepts, its chat reply, its trip to
+  the tutor) every time an AI action reads it, and logs a
+  `safety.crisis_support_shown` event each time. Nothing is withheld.
+- **Send to tutor carries the note's title.** The tutor opens with the
+  note's first title line filled in as its topic, and starting that session
+  is a typed-text screen (`tutor_start`): for a note whose TITLE matched,
+  the card shows beside Send to tutor and then again, instead of a session,
+  when the student presses Start. A note whose body matched starts the
+  tutor normally.
 - **A model-based screen** would catch indirect language. It would also need
   its own labelled eval set, measured false-negative and false-positive
   rates, eval spend, and a latency budget on every turn. It would also send
@@ -346,8 +356,11 @@ A crisis turn makes no model call, so it needs no handler in
 `agents/function_handlers_e2e.py`, and none was added.
 `test_function_mode_the_scripted_model_is_never_called_on_a_crisis_message`
 registers a counting handler for every agent task, sends crisis text to every
-surface under `SAPLING_MODEL_MODE=function`, and asserts zero calls. Its
-control turn proves the counter does see a model call when one is made.
+blocking surface under `SAPLING_MODEL_MODE=function`, and asserts zero calls.
+Its control turn proves the counter does see a model call when one is made.
+A notes action whose note matched DOES run its model (the card is shown
+beside the result), so under function mode it uses the notes tasks'
+ordinary registered handlers.
 
 ## Verifying
 
