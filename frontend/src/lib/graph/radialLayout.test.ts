@@ -208,10 +208,16 @@ describe("planCourse", () => {
     }
   });
 
-  it("puts the course root off to one side of its concepts, not in the middle of a disc of them", () => {
-    const { box } = unlinked(30);
-    const off = Math.hypot((box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
-    expect(off).toBeGreaterThan(0.1 * widthOf(box));
+  it("puts the course root in the middle of its concepts", () => {
+    const busy = busyCourse();
+    for (const plan of [unlinked(30), unlinked(50), planCourse(idsOf(busy.nodes.slice(1)), busy.edges, "root-c1")]) {
+      const seats = [...plan.seats.values()];
+      const mx = seats.reduce((sum, p) => sum + p.x, 0) / seats.length;
+      const my = seats.reduce((sum, p) => sum + p.y, 0) / seats.length;
+      const spread = seats.reduce((sum, p) => sum + Math.hypot(p.x - mx, p.y - my), 0) / seats.length;
+      // The root sits at the origin of its seats: well inside its group.
+      expect(Math.hypot(mx, my)).toBeLessThanOrEqual(0.45 * spread);
+    }
   });
 
   it("grows each course into a shape of its own", () => {

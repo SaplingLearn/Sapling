@@ -18,8 +18,9 @@
 //   settle, the course is turned to a shape a little wider than tall (the
 //   same for every window, so a resize never re-plans it), and a last pass
 //   keeps every concept clear of the others' captions and of the course root.
-// - The root ends up off to one side of its group, never at the middle of
-//   a disc of concepts.
+// - Last, the course root moves into the middle of its concepts, to the
+//   roomiest spot there (`centreRoot`); the few concepts right beside it make
+//   room, and nothing else moves.
 //
 // The synthesized course→concept spokes from /api/graph are dropped: the
 // root's own links are `courseLinks`, and only real concept-to-concept edges
@@ -91,10 +92,16 @@ const LOBES: ReadonlyArray<readonly [number, number, number]> = [
 ];
 /**
  * How far to one side of the body a course grows, as a share of the room
- * its other concepts need: the root ends up off to one side of its group,
- * never in the middle of a disc of them.
+ * its other concepts need: the group grows lopsided, never a disc round the
+ * body. (The root moves into the group's middle afterwards: `centreRoot`.)
  */
 const GROW_LEAN = 0.6;
+/**
+ * How far from the middle of its concepts the course root may be put, as a
+ * share of their mean distance from that middle: it takes the roomiest spot
+ * within that.
+ */
+const CENTRE_REACH = 0.4;
 
 // The work, bounded: the distance layout costs the square of a group's size
 // each round, so a very large group gets fewer rounds.
@@ -108,8 +115,8 @@ const SETTLE_ROUNDS = 40;
 const CROWD = SPACE_X * 1.1;
 const CROWD_PUSH = 0.06;
 const LINK_PULL = 0.15;
-/** Rounds of the last pass that keeps concepts apart. */
-const SPACING_ROUNDS = 80;
+/** The most rounds of the last pass that keeps concepts apart (it stops once nothing needs to move). */
+const SPACING_ROUNDS = 400;
 /** Rounds of place trading; a large course gets fewer. */
 const UNTANGLE_ROUNDS = 16;
 const UNTANGLE_LARGE = 400;
@@ -467,12 +474,14 @@ function eachClosePair(
  * (planning space) step apart, half each, and any concept within
  * `ROOT_ROOM` of the course root (on screen) steps straight out from it.
  */
-function keepApart(n: number, X: Float64Array, Y: Float64Array, rooted: boolean) {
+function keepApart(n: number, X: Float64Array, Y: Float64Array, rooted: boolean): boolean {
+  let moved = false;
   eachClosePair(n, X, Y, SPACE_X, (i, j) => {
     const ex = X[j] - X[i];
     const ey = Y[j] - Y[i];
     const d = Math.hypot(ex, ey);
     if (d >= SPACE_X) return;
+    moved = true;
     // From exactly on top of each other, side by side.
     const ux = d > 1e-9 ? ex / d : 1;
     const uy = d > 1e-9 ? ey / d : 0;
@@ -482,12 +491,13 @@ function keepApart(n: number, X: Float64Array, Y: Float64Array, rooted: boolean)
     X[j] += ux * push;
     Y[j] += uy * push;
   });
-  if (!rooted) return;
+  if (!rooted) return moved;
   for (let i = 0; i < n; i++) {
     const sx = X[i];
     const sy = Y[i] / STRETCH;
     const d = Math.hypot(sx, sy);
     if (d >= ROOT_ROOM) continue;
+    moved = true;
     if (d < 1e-9) {
       X[i] = ROOT_ROOM;
       Y[i] = 0;
@@ -496,6 +506,7 @@ function keepApart(n: number, X: Float64Array, Y: Float64Array, rooted: boolean)
     X[i] = (sx * ROOT_ROOM) / d;
     Y[i] = ((sy * ROOT_ROOM) / d) * STRETCH;
   }
+  return moved;
 }
 
 /**
@@ -545,6 +556,46 @@ function untangle(
       }
     }
     if (!traded) break;
+  }
+}
+
+/**
+ * Move the course root into the middle of its concepts, leaving them where
+ * they are: to the spot within `CENTRE_REACH` of their middle (on screen)
+ * with the most room round it, counting distance from the middle against a
+ * spot. The plan is then re-centred on it. Any concept nearer it than
+ * `ROOT_ROOM` steps out to make room in the spacing pass that follows, which
+ * moves little else.
+ */
+function centreRoot(n: number, X: Float64Array, Y: Float64Array) {
+  if (n < 3) return;
+  let mx = 0;
+  let my = 0;
+  for (let i = 0; i < n; i++) {
+    mx += X[i];
+    my += Y[i] / STRETCH;
+  }
+  mx /= n;
+  my /= n;
+  let spread = 0;
+  for (let i = 0; i < n; i++) spread += Math.hypot(X[i] - mx, Y[i] / STRETCH - my);
+  const reach = (CENTRE_REACH * spread) / n;
+  const step = Math.max(4, reach / 12);
+  let best = { x: mx, y: my, score: -Infinity };
+  for (let gx = -reach; gx <= reach + 1e-9; gx += step) {
+    for (let gy = -reach; gy <= reach + 1e-9; gy += step) {
+      const off = Math.hypot(gx, gy);
+      if (off > reach + 1e-9) continue;
+      let room = Infinity;
+      for (let i = 0; i < n; i++) room = Math.min(room, Math.hypot(X[i] - mx - gx, Y[i] / STRETCH - my - gy));
+      // Room counts up to what the root needs; past that, nearer the middle wins.
+      const score = Math.min(room, ROOT_ROOM) - 0.5 * off;
+      if (score > best.score + 1e-9) best = { x: mx + gx, y: my + gy, score };
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    X[i] -= best.x;
+    Y[i] -= best.y * STRETCH;
   }
 }
 
@@ -714,7 +765,9 @@ export function planCourse(conceptIds: readonly string[], edges: readonly GraphE
   untangle(n, X, Y, links, spokes);
   settle(n, X, Y, links, spokes, rooted);
   turnToward(n, X, Y, rooted);
-  for (let r = 0; r < SPACING_ROUNDS; r++) keepApart(n, X, Y, rooted);
+  // After the turn, so moving the root never turns the course another way.
+  if (rooted) centreRoot(n, X, Y);
+  for (let r = 0; r < SPACING_ROUNDS && keepApart(n, X, Y, rooted); r++);
 
   // Back to the screen's proportions, round the root (or the group's middle).
   let shiftX = 0;

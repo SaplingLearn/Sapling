@@ -219,7 +219,8 @@ describe("KnowledgeGraph2D — re-planning", () => {
     expect(dist(first.centers.get("root-c3")!, plan.centers.get("root-c3")!)).toBeGreaterThan(400);
     for (const [id, centre] of plan.centers) {
       // Left to the springs, a course stopped well short of a far-off new home.
-      expect(dist(after.get(id)!, centre), id).toBeLessThan(6);
+      // (A legible root is elastic: its concepts, all round it, tug it a little.)
+      expect(dist(after.get(id)!, centre), id).toBeLessThan("legible" in props ? 15 : 6);
       // …and its concepts came with it, each where it sat round its course.
       const course = id.replace("root-", "");
       for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === course)) {
