@@ -17,6 +17,7 @@ import { useUser } from "@/context/UserContext";
 import { humanizeError } from "@/lib/errorMessage";
 import { SUGGEST_MAX, SUGGEST_MIN, suggestFlashcardSet } from "@/lib/flashcardSetsApi";
 import { useLatestRequest } from "@/lib/useLatestRequest";
+import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
 import { describeNote, namesOnMap, type MapColumn } from "./flashcardsModel";
@@ -51,6 +52,8 @@ export function Hero({ courseId, columns, canSort, examples, figures, onSorted }
   const [note, setNote] = React.useState("");
   const input = React.useRef<HTMLInputElement | null>(null);
   const req = useLatestRequest();
+  // docs/safety/crisis-support.md: a description the crisis screen answered
+  const crisis = useCrisisSupport();
   // The answer is matched against the map as it is when the answer lands.
   const map = React.useRef(columns);
   React.useEffect(() => { map.current = columns; });
@@ -67,6 +70,7 @@ export function Hero({ courseId, columns, canSort, examples, figures, onSorted }
     try {
       const r = await suggestFlashcardSet(userId, description, courseId);
       if (!run.isCurrent()) return;
+      if (crisis.intercept(r)) return; // nothing was sorted
       const { found } = namesOnMap((r.concepts || []).map(c => c.name), map.current);
       const said = describeNote(found.length, r.considered || 0);
       if (found.length) onSorted(found, r.name || "", said);
@@ -123,6 +127,7 @@ export function Hero({ courseId, columns, canSort, examples, figures, onSorted }
           </div>
         ))}
       </dl>
+      {crisis.dialog}
     </section>
   );
 }

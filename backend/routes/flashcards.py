@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from models import Id, LongText, ShortText
 
 from routes._errors import domain_status
+from services import crisis_support
 from services.auth_guard import require_self
 from services.flashcards import (
     FlashcardError,
@@ -274,6 +275,11 @@ def create_set(body: FlashcardSetCreateBody, request: Request):
 @router.post("/sets/suggest")
 async def suggest_set(body: FlashcardSetSuggestBody, request: Request):
     """Concepts a described set should hold (a suggestion; nothing is saved)."""
+    # docs/safety/crisis-support.md: first, before the suggest limiter and the budget
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "flashcard_set_suggest", body.description
+    ):
+        return crisis_support.json_body(crisis, name="", concepts=[], considered=0, backend="none")
     # The guard can read the DB: off the event loop in an async handler (#756).
     await run_in_threadpool(require_self, body.user_id, request)
     with _flashcard_errors():
@@ -317,6 +323,12 @@ def import_parse(body: ImportParseBody, request: Request):
 
 @router.post("/import/generate")
 def import_generate(body: ImportGenerateBody, request: Request):
+    # docs/safety/crisis-support.md: first, before the import limiter and the budget
+    # (pasted text only: a library document is uploaded course material)
+    if body.source == "paste" and (crisis := crisis_support.screen(
+        request, body.user_id, "flashcard_import_paste", body.text
+    )):
+        return crisis_support.json_body(crisis, cards=[])
     require_self(body.user_id, request)
     return _rate_limited_import(
         import_flow.import_generate, body.user_id, source=body.source, text=body.text,
@@ -334,5 +346,8 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
 
 @router.post("/import/cloze")
 def import_cloze(body: ImportClozeBody, request: Request):
+    # docs/safety/crisis-support.md: first, before the import limiter and the budget
+    if crisis := crisis_support.screen(request, body.user_id, "flashcard_import_cloze", body.paragraph):
+        return crisis_support.json_body(crisis, cards=[])
     require_self(body.user_id, request)
     return _rate_limited_import(import_flow.import_cloze, body.user_id, body.paragraph)

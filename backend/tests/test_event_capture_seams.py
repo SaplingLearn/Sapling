@@ -157,6 +157,10 @@ def test_event_taxonomy_is_pinned():
         "db.unscoped_query",
         "db.rls_shadow_divergence",
         "db.rls_denied",
+        # docs/safety/crisis-support.md: the crisis screen fired. Emit
+        # coverage (and the no-content / no-PostHog pins) lives in
+        # test_crisis_support_routes.py.
+        "safety.crisis_support_shown",
     })
 
 

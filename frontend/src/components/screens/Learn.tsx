@@ -13,6 +13,8 @@ import { SharedContextToggle, useSharedContext } from "../chat/SharedContextTogg
 import { ModelToggle, useModelPref, type ModelPref } from "../chat/ModelToggle";
 import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { crisisSupportIn } from "@/lib/crisisSupport";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
@@ -449,6 +451,7 @@ function LearnInner() {
     return (
       <FullHeightScreen className="fade-in">
         <DisclaimerModal />
+        {session.crisisDialog}
         <TopBar
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
@@ -495,6 +498,7 @@ function LearnInner() {
   return (
     <FullHeightScreen>
       <DisclaimerModal />
+      {session.crisisDialog}
 
       {isMobile && (
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
@@ -863,6 +867,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   setFocusedNodeId: (id: string | null) => void;
 }) {
   const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId } = prefs;
+  // docs/safety/crisis-support.md: a session start the crisis screen answered
+  // (no session was opened) shows the card as a dialog over the picker.
+  const crisis = useCrisisSupport();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -1020,6 +1027,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           },
           signal: controller.signal,
         });
+        // The crisis card instead of a greeting: no session was opened.
+        if (crisis.intercept(res)) { if (isCurrent()) setMessages([]); return; }
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
@@ -1041,6 +1050,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         if (!isCurrent()) return;
         setStreamingText(null);
         const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        if (crisis.intercept(res)) { if (isCurrent()) setMessages([]); return; }
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
@@ -1270,7 +1280,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       // it loses nothing: the JSON route persisted the pair server-side, so
       // re-opening the original session shows the turn (PR #461 review).
       if (sessionIdRef.current === turnSessionId) {
-        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+        // docs/safety/crisis-support.md: a crisis turn renders as the card
+        const crisisSupport = crisisSupportIn(res) ?? undefined;
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
       if (isSessionEndedError(err)) { endedTurn(); return; }
@@ -1437,6 +1449,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
     sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
     handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, startNextFromSummary, stopStream,
+    crisisDialog: crisis.dialog,
   };
 }
 

@@ -101,6 +101,12 @@ account.import                audit     outcome, counts (internal, peer-initiate
 account.purge                 audit     outcome (purged | incomplete); purged: days_since_delete,
                                         counts; incomplete: error (exception class). NO user
                                         id (the 30-day purge, services/account_purge.py)
+safety.crisis_support_shown   system    surface (services/crisis_support.SURFACES), category
+                                        (acute_danger / suicidal_ideation / self_harm), tier
+                                        (explicit / mention) — a student message matched the
+                                        crisis screen and got the resources card instead of a
+                                        model turn. Never the text, not even content_fp; NOT
+                                        mirrored to PostHog (docs/safety/crisis-support.md)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -270,6 +276,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "db.unscoped_query",
     "db.rls_shadow_divergence",
     "db.rls_denied",
+    # docs/safety/crisis-support.md: a student message matched the crisis
+    # screen and got the resources card instead of a model turn
+    # (services/crisis_support.py). category="system", like decision.made:
+    # the server emits it about a turn, so it is not counted as activity.
+    # Payload surface / category / tier: enums only; never the message,
+    # never even a content fingerprint. NOT mirrored to PostHog
+    # (posthog_client._NOT_MIRRORED says why).
+    "safety.crisis_support_shown",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one

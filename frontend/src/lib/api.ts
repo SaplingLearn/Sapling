@@ -17,6 +17,7 @@ import type {
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
+import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 
@@ -335,7 +336,8 @@ export const startSession = (
   useSharedContext = true,
   modelPref?: ModelPref,
 ) =>
-  fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
+  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
@@ -368,7 +370,7 @@ export const sendChat = (
   modelPref?: ModelPref,
   turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean } & WithCrisisSupport>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -386,7 +388,7 @@ export interface GraphDelta {
   mastery_changes: MasteryChange[];
 }
 
-export interface ChatResult {
+export interface ChatResult extends WithCrisisSupport {
   reply: string;
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
@@ -1066,7 +1068,7 @@ export const importGenerate = (
     | { source: "paste"; text: string; count: number; difficulty: "recall" | "application" | "conceptual" }
     | { source: "library_doc"; documentId: string; count: number; difficulty: "recall" | "application" | "conceptual" },
 ) =>
-  fetchJSON<ImportGenerateResponse>(`/api/flashcards/import/generate`, {
+  fetchJSON<ImportGenerateResponse & WithCrisisSupport>(`/api/flashcards/import/generate`, {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
@@ -1085,7 +1087,7 @@ export const importCleanup = (userId: string, cards: ImportCard[]) =>
   });
 
 export const importCloze = (userId: string, paragraph: string) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cloze`, {
+  fetchJSON<{ cards: ImportCard[] } & WithCrisisSupport>(`/api/flashcards/import/cloze`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, paragraph }),
   });
@@ -2064,25 +2066,26 @@ export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId:
   );
 
 export const summarizeNote = (noteId: string, userId: string) =>
-  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no summary.
+  fetchJSON<{ summary?: string } & WithCrisisSupport>(`/api/notes/${noteId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
-  fetchJSON<{ concepts: string[]; linked: number }>(
+  fetchJSON<{ concepts: string[]; linked: number } & WithCrisisSupport>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
 
 export const noteChat = (noteId: string, userId: string, message: string) =>
-  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+  fetchJSON<{ reply: string } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, message }),
   });
 
 export const sendNoteToTutor = (noteId: string, userId: string) =>
-  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+  fetchJSON<{ topic?: string; course_id?: string; preface?: string } & WithCrisisSupport>(
     `/api/notes/${noteId}/send-to-tutor`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

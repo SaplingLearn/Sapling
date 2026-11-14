@@ -230,6 +230,20 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Daily job: permanently erase the personal data of accounts their "
             "student deleted more than 30 days ago. Irreversible. Global: "
             "per-user rules and rollouts do not apply.", False),
+    # docs/safety/crisis-support.md: the crisis-support path. On: a student
+    # message that states suicidal ideation, self-harm or acute danger gets
+    # the fixed resources card INSTEAD of a model turn, on every surface
+    # services/crisis_support.py lists. Server-only: the client renders the
+    # card whenever a response carries one. SHIPS OFF until the owner has
+    # reviewed the copy (services/crisis_support_copy.py).
+    FlagDef("crisis_support", ("off", "on"),
+            "Crisis-support path: a student message stating suicidal ideation, "
+            "self-harm or acute danger gets a fixed card with crisis resources "
+            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
+            "turn, on every tutor, notes and flashcard AI surface. Keep OFF "
+            "until the owner has reviewed the copy in "
+            "services/crisis_support_copy.py (checklist: "
+            "docs/safety/crisis-support.md).", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
