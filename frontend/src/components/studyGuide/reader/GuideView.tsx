@@ -98,6 +98,7 @@ export function GuideView({ userId, guide, mode, today, update, onToggleRead, on
 
   return (
     <ReaderProvider value={reader}>
+      {tutor.crisisDialog}
       {failure && (
         <GenerationError
           message={failure.message}

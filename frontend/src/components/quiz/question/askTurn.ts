@@ -13,12 +13,27 @@ import {
   streamChat,
   type StreamChatHandlers,
 } from "@/lib/api";
+import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 /** The tutor mode a "why was I wrong" question wants. */
 export const TUTOR_MODE = "socratic";
 
 /** The turn was aborted mid-request: the caller returns, writing nothing more. */
 export const ABORTED = Symbol("aborted");
+
+/**
+ * docs/safety/crisis-support.md: the backend answered with the crisis-support
+ * card instead of a session or a reply. The panel shows the card in the
+ * thread; no session was opened and nothing of the turn was recorded.
+ */
+export interface CrisisAnswer {
+  crisis: CrisisSupport;
+}
+
+function crisisAnswer(response: unknown): CrisisAnswer | null {
+  const crisis = crisisSupportIn(response);
+  return crisis ? { crisis } : null;
+}
 
 /** What the turn has streamed so far — shared with the panel's token handler. */
 export interface TurnProgress {
@@ -31,15 +46,16 @@ export interface TurnProgress {
 /**
  * Open the tutor session on the concept. A stream that falls over retries on
  * the JSON route — the greeting is thrown away either way, so there is no
- * partial text to lose. Resolves the (possibly missing) session id, or
- * `ABORTED` when the turn was cancelled while the stream was opening.
+ * partial text to lose. Resolves the (possibly missing) session id,
+ * `ABORTED` when the turn was cancelled while the stream was opening, or a
+ * `CrisisAnswer` when the crisis screen answered instead of a session.
  */
 export async function openTutorSession(
   userId: string,
   conceptName: string,
   courseId: string | null,
   signal: AbortSignal,
-): Promise<string | null | typeof ABORTED> {
+): Promise<string | null | typeof ABORTED | CrisisAnswer> {
   try {
     const started = await startSessionStream(
       userId,
@@ -50,7 +66,7 @@ export async function openTutorSession(
       undefined,
       { signal },
     );
-    return started.session_id ?? null;
+    return crisisAnswer(started) ?? started.session_id ?? null;
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (!shouldFallBackToJson(err)) throw err;
@@ -61,7 +77,7 @@ export async function openTutorSession(
       courseId ?? undefined,
       true,
     );
-    return started.session_id;
+    return crisisAnswer(started) ?? started.session_id;
   }
 }
 
@@ -85,7 +101,7 @@ export async function chatWithFallback(
   { sid, userId, message, turnId, signal, progress }: ChatLeg,
   { onToken, onProgress }: Pick<StreamChatHandlers, "onToken" | "onProgress">,
   beforeFallback: () => void,
-): Promise<string | typeof ABORTED> {
+): Promise<string | typeof ABORTED | CrisisAnswer> {
   try {
     // `graph_update` events are deliberately unhandled: this panel is a
     // read of the student's own mistake, not a study turn that should
@@ -95,13 +111,13 @@ export async function chatWithFallback(
       onProgress,
       signal,
     }, turnId);
-    return res.reply || "";
+    return crisisAnswer(res) ?? (res.reply || "");
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (progress.sawToken || !shouldFallBackToJson(err)) throw err;
     beforeFallback();
     const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
-    return res.reply || "";
+    return crisisAnswer(res) ?? (res.reply || "");
   }
 }
 
