@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac as _hmac
 import logging
+import math
 import threading
 import time as _time
 from datetime import datetime, timezone
@@ -173,8 +174,8 @@ class AccountRecord(NamedTuple):
     """What the guard knows about a session's account."""
 
     state: str
-    #: Unix seconds. A session issued (`iat`) before it is revoked; None when
-    #: the account never signed out.
+    #: Unix seconds (sub-second, as stored). A session issued (`iat`) before
+    #: its whole second is revoked; None when the account never signed out.
     sessions_valid_after: float | None = None
 
 
@@ -277,9 +278,12 @@ def get_session_user_id(request: Request, *, allow_unapproved: bool = False) -> 
     record = account_record(user_id)
     if record.state in (ACCOUNT_MISSING, ACCOUNT_DELETED):
         raise HTTPException(status_code=401, detail="Not authenticated")
+    # Whole seconds on both sides: `iat` is minted rounded down to the second
+    # while the cut-off is sub-second, so a session minted in the sign-out's
+    # own second (sign out, then straight back in) must not compare as older.
     if (
         record.sessions_valid_after is not None
-        and session_issued_at(payload) < record.sessions_valid_after
+        and session_issued_at(payload) < math.floor(record.sessions_valid_after)
     ):
         raise HTTPException(status_code=401, detail="Session revoked")
     if record.state == ACCOUNT_UNAPPROVED and not allow_unapproved:

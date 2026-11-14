@@ -95,6 +95,21 @@ class TestRevocation:
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 60))
         assert auth_guard._real_get_session_user_id(_request(_token_at(now - 30))) == "user_alice"
 
+    def test_session_minted_in_the_sign_out_second_is_honoured(self, real_guard):
+        # `iat` is whole seconds; the cut-off is sub-second. A session minted
+        # in the same second as the sign-out (sign out, then sign straight back
+        # in) must not be refused because its iat was rounded down.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.7))
+        assert auth_guard._real_get_session_user_id(_request(_token_at(now))) == "user_alice"
+
+    def test_session_minted_a_second_before_the_sign_out_is_revoked(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.7))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now - 1)))
+        assert exc.value.detail == "Session revoked"
+
     def test_never_signed_out_revokes_nothing(self, real_guard):
         real_guard.select.return_value = _row(sessions_valid_after=None)
         assert auth_guard._real_get_session_user_id(_request(_token_at(int(time.time()) - 3600))) == "user_alice"
