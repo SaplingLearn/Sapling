@@ -7,7 +7,7 @@ from typing import Optional
 
 from db.connection import SUPABASE_URL, SUPABASE_KEY, table
 from services import abuse_limits
-from services.request_limits import client_ip, enforce_abuse_limit
+from services.request_limits import enforce_abuse_limit, public_route_limit
 from services.upload_validation import DOCX, PDF, sniff_type
 
 BUCKET = "application_resumes"
@@ -87,8 +87,11 @@ def apply(
     portfolio_link: str = Form(""),
     resume: Optional[UploadFile] = File(None),
 ):
-    # Public: the budget is per client address (see request_limits.client_ip).
-    enforce_abuse_limit(abuse_limits.CAREERS_APPLY, client_ip(request))
+    # Public: per client address when it is a public one, else a shared ceiling
+    # (request_limits.public_route_limit).
+    enforce_abuse_limit(*public_route_limit(
+        request, abuse_limits.CAREERS_APPLY, abuse_limits.CAREERS_APPLY_SHARED,
+    ))
     position = position.strip()
     full_name = full_name.strip()
     email = email.strip()

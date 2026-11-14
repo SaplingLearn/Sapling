@@ -405,7 +405,6 @@ def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> Sapli
 @router.post("/{note_id}/summarize")
 async def summarize(note_id: str, body: AgentActionBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -414,6 +413,8 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         request, body.user_id, "note_summarize", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis)
+    # Limits come after the crisis screen: a student in crisis never gets a 429.
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
@@ -434,7 +435,6 @@ async def extract_concepts(
     note_id: str, body: AgentActionBody, request: Request
 ):
     await guard_off_loop(require_self, body.user_id, request)
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -443,6 +443,8 @@ async def extract_concepts(
         request, body.user_id, "note_extract_concepts", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis, concepts=[], linked=0)
+    # Limits come after the crisis screen: a student in crisis never gets a 429.
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
@@ -480,7 +482,6 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     if crisis := await crisis_support.screen_async(request, body.user_id, "note_chat", body.message):
         return crisis_support.json_body(crisis, degraded=False)
     await guard_off_loop(require_self, body.user_id, request)
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -489,6 +490,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         request, body.user_id, "note_chat", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis, degraded=False)
+    # Limits come after the crisis screen: a student in crisis never gets a 429.
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
     try:
@@ -524,7 +527,6 @@ async def send_to_tutor(
     note_id: str, body: AgentActionBody, request: Request
 ):
     await guard_off_loop(require_self, body.user_id, request)
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -533,6 +535,8 @@ async def send_to_tutor(
         request, body.user_id, "note_send_to_tutor", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis)
+    # Limits come after the crisis screen: a student in crisis never gets a 429.
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     title = (note.get("title") or "").strip() or "Untitled note"
     topic = title.splitlines()[0][:80]
     preface_parts: list[str] = []

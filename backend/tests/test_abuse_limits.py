@@ -35,12 +35,25 @@ def _exhaust(limit: request_limits.AbuseLimit, subject: str) -> None:
         ) is None
 
 
-def _assert_no_handler_db(db) -> None:
+# Routes whose crisis screen (docs/safety/crisis-support.md) must read the
+# note before any limit applies: a student in crisis never gets a 429. That one
+# read of the student's own note is the only table access allowed past a spent
+# budget there; nothing is written and no model runs.
+_CRISIS_SCREENS_NOTE = ("/summarize", "/extract-concepts", "/chat", "/send-to-tutor")
+
+
+def _assert_no_handler_db(db, path: str = "") -> None:
     """No table was read or written, apart from the feature-flag snapshot a
-    router-level nav gate reads (services/feature_flags.py)."""
-    paths = [c.args[0] for verb in (db.get, db.post, db.patch, db.delete)
-             for c in verb.call_args_list if c.args]
-    assert all("feature_flag" in p for p in paths), paths
+    router-level nav gate reads (services/feature_flags.py) and, on the note
+    routes the crisis screen covers, the read of the note itself."""
+    allowed = ["feature_flag"]
+    if path.startswith("/api/notes/") and path.endswith(_CRISIS_SCREENS_NOTE):
+        allowed.append("/rest/v1/notes")
+    reads = [c.args[0] for c in db.get.call_args_list if c.args]
+    writes = [c.args[0] for verb in (db.post, db.patch, db.delete)
+              for c in verb.call_args_list if c.args]
+    assert all(any(a in p for a in allowed) for p in reads), reads
+    assert all("feature_flag" in p for p in writes), writes
 
 
 def _assert_rate_limited(r, limit: request_limits.AbuseLimit) -> None:
@@ -86,8 +99,9 @@ JSON_ROUTES = [
      {"user_id": "user_andres", "type": "global", "rating": 3}),
     (abuse_limits.ISSUE_REPORT_SUBMIT, "user_andres", "post", "/api/issue-reports",
      {"user_id": "user_andres", "topic": "Bug", "description": "It broke"}),
-    # Public: keyed by the client address.
-    (abuse_limits.NEWSLETTER_SUBSCRIBE, TESTCLIENT_IP, "post", "/api/newsletter/subscribe",
+    # Public: TestClient's "testclient" is not a public address, so it falls
+    # under the shared ceiling (request_limits.public_route_limit).
+    (abuse_limits.NEWSLETTER_SUBSCRIBE_SHARED, "shared", "post", "/api/newsletter/subscribe",
      {"email": "x@example.com"}),
 ]
 
@@ -102,7 +116,7 @@ def test_json_route_answers_429_once_its_budget_is_spent(limit, subject, method,
     with patch("db.connection._client") as db:
         r = getattr(client, method)(path, json=body)
     _assert_rate_limited(r, limit)
-    _assert_no_handler_db(db)
+    _assert_no_handler_db(db, path)
 
 
 def _pdf_upload():
@@ -157,8 +171,9 @@ CAREERS_FORM = {
 
 
 def test_careers_apply_is_limited_per_client_address():
-    _exhaust(abuse_limits.CAREERS_APPLY, TESTCLIENT_IP)
-    with patch("routes.careers.table") as t:
+    _exhaust(abuse_limits.CAREERS_APPLY, "9.9.9.9")
+    with patch("services.request_limits.client_ip", return_value="9.9.9.9"), \
+         patch("routes.careers.table") as t:
         r = client.post("/api/careers/apply", data=CAREERS_FORM)
     _assert_rate_limited(r, abuse_limits.CAREERS_APPLY)
     t.assert_not_called()
@@ -166,16 +181,48 @@ def test_careers_apply_is_limited_per_client_address():
 
 def test_public_budgets_are_per_address_not_global():
     """Another address's spent budget does not limit this one."""
-    _exhaust(abuse_limits.CAREERS_APPLY, "203.0.113.9")
-    with patch("routes.careers.httpx"), patch("routes.careers.table") as t:
+    _exhaust(abuse_limits.CAREERS_APPLY, "9.9.9.9")
+    with patch("services.request_limits.client_ip", return_value="1.1.1.1"), \
+         patch("routes.careers.httpx"), patch("routes.careers.table") as t:
         t.return_value.insert.return_value = [{"id": "app1"}]
         r = client.post("/api/careers/apply", data=CAREERS_FORM)
     assert r.status_code == 200
 
 
+def test_a_proxy_address_falls_under_the_shared_ceiling_not_the_strict_one():
+    """Behind an untrusted proxy every caller shares its private address: the
+    strict per-address budget would lock everyone out at once, so the looser
+    shared ceiling applies instead."""
+    _exhaust(abuse_limits.CAREERS_APPLY, "10.0.0.5")
+    with patch("services.request_limits.client_ip", return_value="10.0.0.5"), \
+         patch("routes.careers.httpx"), patch("routes.careers.table") as t:
+        t.return_value.insert.return_value = [{"id": "app1"}]
+        r = client.post("/api/careers/apply", data=CAREERS_FORM)
+    assert r.status_code == 200
+
+
+def test_the_shared_ceiling_still_stops_a_flood_from_behind_a_proxy():
+    _exhaust(abuse_limits.CAREERS_APPLY_SHARED, "shared")
+    with patch("services.request_limits.client_ip", return_value="10.0.0.5"), \
+         patch("routes.careers.table") as t:
+        r = client.post("/api/careers/apply", data=CAREERS_FORM)
+    _assert_rate_limited(r, abuse_limits.CAREERS_APPLY_SHARED)
+    t.assert_not_called()
+
+
+@pytest.mark.parametrize("host,public", [
+    ("203.0.113.9", False),  # TEST-NET documentation range: not global
+    ("8.8.8.8", True), ("2606:4700:4700::1111", True),
+    ("10.0.0.5", False), ("100.64.0.1", False), ("127.0.0.1", False),
+    ("::1", False), ("testclient", False), ("unknown", False),
+])
+def test_only_globally_routable_addresses_count_as_public(host, public):
+    assert request_limits.is_public_address(host) is public
+
+
 def test_a_forwarding_header_does_not_buy_a_fresh_budget():
     """The address is request.client, never a client-set header."""
-    _exhaust(abuse_limits.NEWSLETTER_SUBSCRIBE, TESTCLIENT_IP)
+    _exhaust(abuse_limits.NEWSLETTER_SUBSCRIBE_SHARED, "shared")
     r = client.post("/api/newsletter/subscribe", json={"email": "x@example.com"},
                     headers={"CF-Connecting-IP": "198.51.100.7", "X-Forwarded-For": "198.51.100.7"})
     assert r.status_code == 429

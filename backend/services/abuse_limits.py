@@ -101,3 +101,17 @@ NEWSLETTER_SUBSCRIBE = abuse_limit(
     "newsletter", limit=30, window_sec=_HOUR,
     detail="We've received a lot of sign-ups from this connection.",
 )
+
+# The same routes when the caller's address is not a public one: behind a
+# proxy that uvicorn has not been told to trust, every caller arrives from the
+# proxy's private address, so a per-address budget would be one budget for
+# everyone. These ceilings still stop a flood without locking real applicants
+# out (request_limits.public_route_limit picks which applies).
+CAREERS_APPLY_SHARED = abuse_limit(
+    "careers-apply-shared", limit=300, window_sec=_HOUR,
+    detail="We're receiving a lot of applications right now.",
+)
+NEWSLETTER_SUBSCRIBE_SHARED = abuse_limit(
+    "newsletter-shared", limit=600, window_sec=_HOUR,
+    detail="We're receiving a lot of sign-ups right now.",
+)

@@ -409,6 +409,30 @@ def client_ip(request) -> str:
     return getattr(client, "host", None) or "unknown"
 
 
+def is_public_address(host: str) -> bool:
+    """Whether ``host`` is a globally routable IP: a real caller's address,
+    not a proxy's private, loopback, link-local or carrier-grade NAT one."""
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return False
+
+
+def public_route_limit(request, per_address: AbuseLimit, shared: AbuseLimit) -> tuple[AbuseLimit, str]:
+    """The budget and key for a public route. A public client address gets
+    its own strict ``per_address`` budget; anything else (a proxy's private
+    address, ``"unknown"``) is one caller among all of them, so it falls under
+    the looser ``shared`` ceiling instead of locking everyone out at once.
+    Setting ``FORWARDED_ALLOW_IPS`` for the platform proxy (docs/deploy/
+    railway.md) turns every caller into the first case."""
+    host = client_ip(request)
+    if is_public_address(host):
+        return per_address, host
+    return shared, "shared"
+
+
 async def read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
     """Read at most ``max_bytes`` (+1 to detect overflow) from an UploadFile so
     an oversize upload can't be pulled fully into memory before we reject it.

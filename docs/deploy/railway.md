@@ -364,3 +364,9 @@ lost. A longer lease only delays how soon THAT worker's claims pick up a job
 whose heartbeat stopped (a crash, or a hung handler past
 `JOBS_MAX_HEARTBEAT_SECONDS`). Changing `MIN_LEASE_SECONDS` itself needs every
 worker on the new image (stop the old ones first).
+
+## Real client addresses behind Railway's proxy
+
+The public, unauthenticated routes (`POST /api/careers/apply`, `POST /api/newsletter/subscribe`) are rate-limited per client address (`services/request_limits.py::public_route_limit`). Uvicorn only takes the caller's address from `X-Forwarded-For` when the hop that sent it is trusted, and by default it trusts only `127.0.0.1`. Behind Railway's edge the backend therefore sees the proxy's private address for every caller, and those routes fall back to one shared, looser ceiling (`*_SHARED` in `services/abuse_limits.py`) rather than the strict per-address budget.
+
+To give each caller their own budget, set `FORWARDED_ALLOW_IPS` on the API service to the address range Railway's proxy connects from (uvicorn reads this variable directly). Only do this when the service is reachable solely through Railway's edge: a trusted hop's `X-Forwarded-For` is believed as sent.
