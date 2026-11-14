@@ -47,7 +47,9 @@ export function scopeNote(scope: ScopeOption): string {
   return due ? `${KIND_LABEL[scope.kind]} · due ${due}` : KIND_LABEL[scope.kind];
 }
 
-const capped = (ids: string[]): string[] => ids.slice(0, MAX_MATERIALS);
+/** Past the cap, the newest. A class lists its materials oldest first, so
+ *  they are the last ids of a list in that order. */
+const capped = (ids: string[]): string[] => ids.slice(-MAX_MATERIALS);
 
 /** The scope's suggested materials that the class still has, up to the cap. */
 export function suggestedIds(scope: ScopeOption | null, materials: MaterialOption[]): string[] {
@@ -72,7 +74,7 @@ export function withNewMaterials(selected: string[], before: MaterialOption[], a
   const known = new Set(before.map(material => material.id));
   const kept = selected.filter(id => after.some(material => material.id === id));
   const added = after.filter(material => !known.has(material.id) && !kept.includes(material.id));
-  return capped([...kept, ...added.map(material => material.id)]);
+  return capped(inListOrder([...kept, ...added.map(material => material.id)], after));
 }
 
 /** The picked ids in the order the class lists its materials. */

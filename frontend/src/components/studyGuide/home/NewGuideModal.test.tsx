@@ -191,6 +191,7 @@ describe("materials", () => {
   });
 
   it("stops at 30: past it a tile turns off but not on, and a note says why", async () => {
+    // Listed oldest first, as the class sends them: d1 is the oldest.
     const materials = Array.from({ length: MAX_MATERIALS + 2 }, (_, i) => material(`d${i + 1}`));
     mocks.options.mockResolvedValue({
       scopes: [{ kind: "course", id: null, title: "Whole course", due_date: null, suggested_material_ids: [] }],
@@ -199,19 +200,20 @@ describe("materials", () => {
     const user = await modal();
     expect(screen.queryByTestId("guide-new-materials-cap")).toBeNull();
 
+    // All takes the newest 30: the two oldest are what is left out.
     await user.click(screen.getByTestId("guide-new-materials-all"));
-    expect(selected()).toHaveLength(30);
+    expect(selected()).toEqual(materials.slice(2).map(m => m.id));
     expect(screen.getByTestId("guide-new-materials-cap")).toHaveTextContent("A guide uses up to 30 materials.");
-    expect(tile("d31")).toHaveAttribute("aria-disabled", "true");
-    await user.click(tile("d31"));
-    expect(tile("d31")).toHaveAttribute("aria-pressed", "false");
+    expect(tile("d1")).toHaveAttribute("aria-disabled", "true");
+    await user.click(tile("d1"));
+    expect(tile("d1")).toHaveAttribute("aria-pressed", "false");
     expect(selected()).toHaveLength(30);
 
     // One off makes room for one on.
-    await user.click(tile("d1"));
+    await user.click(tile("d32"));
     expect(screen.queryByTestId("guide-new-materials-cap")).toBeNull();
-    await user.click(tile("d31"));
-    expect(tile("d31")).toHaveAttribute("aria-pressed", "true");
+    await user.click(tile("d1"));
+    expect(tile("d1")).toHaveAttribute("aria-pressed", "true");
     expect(selected()).toHaveLength(30);
     await waitFor(() => expect(lastPlanRequest().material_ids).toHaveLength(30));
   });
