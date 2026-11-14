@@ -64,6 +64,8 @@ export function GuidesHome({
           userId={userId}
           courses={term.courses}
           coursesReady={term.ready}
+          coursesFailed={term.failed}
+          onRetryCourses={term.reload}
           semester={term.semester}
           onClose={() => setCreating(false)}
           onCreated={guideId => router.push(studyGuideReaderHref(guideId))}

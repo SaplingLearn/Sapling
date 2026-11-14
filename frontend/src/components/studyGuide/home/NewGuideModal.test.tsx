@@ -41,7 +41,7 @@ const onCreated = vi.fn();
 
 function renderModal(props: Partial<NewGuideModalProps> = {}) {
   return render(
-    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady semester="" onClose={onClose} onCreated={onCreated} {...props} />,
+    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} {...props} />,
   );
 }
 

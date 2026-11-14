@@ -5,17 +5,21 @@ import { courseSelectOptions } from "@/lib/courseSelectOptions";
 import type { ScopeOption } from "@/lib/studyGuide/types";
 
 import { Field } from "./Field";
+import m from "./newGuide.module.css";
 import { scopeKey, scopeNote } from "./newGuideModel";
 
 const FULL_WIDTH = { display: "block" } as const;
 
 /** Which class the guide is for: the student's courses in the active term. */
 export function ClassField({
-  courses, ready, value, onChange,
+  courses, ready, failed, onRetry, value, onChange,
 }: {
   courses: EnrolledCourse[];
   /** The course list has answered. */
   ready: boolean;
+  /** The course list could not be read: the student may well have classes. */
+  failed: boolean;
+  onRetry: () => void;
   value: string;
   onChange: (courseId: string) => void;
 }) {
@@ -26,12 +30,18 @@ export function ClassField({
         value={value}
         options={courseSelectOptions(courses).map(option => ({ ...option, testId: `guide-new-class-option-${option.value}` }))}
         onChange={onChange}
-        placeholder={ready ? "Choose a class" : "Loading…"}
+        placeholder={failed ? "Not available" : ready ? "Choose a class" : "Loading…"}
         ariaLabel="Class"
         disabled={courses.length === 0}
         style={FULL_WIDTH}
         testId="guide-new-class"
       />
+      {failed && (
+        <p className={m.note} role="alert">
+          Couldn&apos;t load your classes.{" "}
+          <button type="button" className={m.pick} data-testid="guide-new-class-retry" onClick={onRetry}>Try again</button>
+        </p>
+      )}
     </Field>
   );
 }

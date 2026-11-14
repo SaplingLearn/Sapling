@@ -28,7 +28,7 @@ const onClose = vi.fn();
 const onCreated = vi.fn();
 
 const renderModal = () =>
-  render(<NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady semester="" onClose={onClose} onCreated={onCreated} />);
+  render(<NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} />);
 
 /** The dialog with CS101's options in. */
 async function modal() {

@@ -222,4 +222,20 @@ describe("opening the New study guide dialog", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/study/guide/g-new"));
     expect(mocks.create).toHaveBeenCalledWith("u1", expect.objectContaining({ course_id: "c1", material_ids: ["d1", "d2", "d3"] }));
   });
+
+  it("says the classes could not be loaded, not that there are none, and Try again reads them", async () => {
+    mocks.courses.mockRejectedValueOnce(new Error("500"));
+    const user = await home();
+    await user.click(screen.getByTestId("guides-new"));
+    expect(await screen.findByText(/Couldn't load your classes/)).toHaveAttribute("role", "alert");
+    expect(screen.queryByText("Add a class first to make a guide.")).toBeNull();
+    expect(screen.getByTestId("guide-new-generate")).toBeDisabled();
+
+    await user.click(screen.getByTestId("guide-new-class-retry"));
+    await screen.findByTestId("guide-new-material-d1");
+    expect(screen.getByTestId("guide-new-class")).toHaveTextContent("CS101");
+    expect(screen.queryByTestId("guide-new-class-retry")).toBeNull();
+    expect(screen.getByTestId("guide-new-generate")).toBeEnabled();
+    expect(mocks.courses).toHaveBeenCalledTimes(2);
+  });
 });

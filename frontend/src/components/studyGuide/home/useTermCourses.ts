@@ -13,6 +13,10 @@ export interface TermCourses {
   semester: string;
   /** The course list has answered: an empty one now means "no courses". */
   ready: boolean;
+  /** The course list could not be read, so an empty one says nothing. */
+  failed: boolean;
+  /** Reads the course list again. */
+  reload: () => void;
 }
 
 /**
@@ -21,22 +25,33 @@ export interface TermCourses {
  */
 export function useTermCourses(userId: string): TermCourses {
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
-  const [ready, setReady] = React.useState(false);
+  const [status, setStatus] = React.useState<"loading" | "ready" | "failed">("loading");
+  const [attempt, setAttempt] = React.useState(0);
   const [semester] = useActiveSemester();
 
   React.useEffect(() => {
     if (!userId) return;
     let live = true;
     getCourses(userId)
-      .then(r => { if (live) setCourses(r.courses || []); })
-      .catch(err => console.error("study guide courses load failed", err))
-      .finally(() => { if (live) setReady(true); });
+      .then(r => {
+        if (!live) return;
+        setCourses(r.courses || []);
+        setStatus("ready");
+      })
+      .catch(err => {
+        console.error("study guide courses load failed", err);
+        if (live) setStatus("failed");
+      });
     return () => { live = false; };
-  }, [userId]);
+  }, [userId, attempt]);
 
+  const reload = React.useCallback(() => {
+    setStatus("loading");
+    setAttempt(n => n + 1);
+  }, []);
   const scoped = React.useMemo(
     () => (semester ? courses.filter(course => courseInTerm(course, semester)) : courses),
     [courses, semester],
   );
-  return { courses: scoped, enrolled: courses, semester, ready };
+  return { courses: scoped, enrolled: courses, semester, ready: status === "ready", failed: status === "failed", reload };
 }

@@ -27,6 +27,10 @@ export interface NewGuideModalProps {
   courses: EnrolledCourse[];
   /** The course list has answered. */
   coursesReady: boolean;
+  /** The course list could not be read. */
+  coursesFailed: boolean;
+  /** Reads the course list again. */
+  onRetryCourses: () => void;
   /** The active term's label, "" when no term is picked. */
   semester: string;
   onClose: () => void;
@@ -39,7 +43,9 @@ export interface NewGuideModalProps {
  * from, beside the outline those choices plan. Mounted while open, so every
  * opening starts from the defaults.
  */
-export function NewGuideModal({ userId, courses, coursesReady, semester, onClose, onCreated }: NewGuideModalProps) {
+export function NewGuideModal({
+  userId, courses, coursesReady, coursesFailed, onRetryCourses, semester, onClose, onCreated,
+}: NewGuideModalProps) {
   const guide = useNewGuide({ userId, courses, semester });
   const plan = usePlan(userId, guide.request);
   const create = useCreateGuide(userId, onCreated);
@@ -53,7 +59,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, onClose
           <div className={m.body}>
             <div className={m.form}>
               <div className={m.pair} onKeyDown={closeOpenList}>
-                <ClassField courses={courses} ready={coursesReady} value={form.courseId} onChange={guide.pickCourse} />
+                <ClassField courses={courses} ready={coursesReady} failed={coursesFailed} onRetry={onRetryCourses} value={form.courseId} onChange={guide.pickCourse} />
                 <ScopeField scopes={guide.scopes} placeholder={scopePlaceholder(guide)} value={form.scope ? scopeKey(form.scope) : ""} onChange={guide.pickScope} />
               </div>
               <div className={m.choices}>
