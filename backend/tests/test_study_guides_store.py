@@ -593,3 +593,29 @@ def test_an_unreadable_guide_is_never_written_over(db):
 
     assert db.stored("bad") == before
     assert db.stored("bad")["content"] == ciphertext
+
+
+def test_answers_that_cannot_be_read_are_never_written_over(db):
+    """The answer write replaces the whole column: over answers that only
+    need the right key it would keep just the new one."""
+    db.add("g1", answers="bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ=")
+    guide = run(store.aload_guide(ME, "g1"))
+    assert (guide.answers, guide.answers_unreadable, guide.unreadable) == ({}, True, False)
+
+    with pytest.raises(GuideInvalid, match="answers on this guide cannot be read"):
+        run(store.arecord_answer(guide, "s1-i2", CheckAnswer(option_id="b", correct=True)))
+
+    assert db.stored("g1")["answers"] == "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
+
+
+def test_answers_that_became_unreadable_before_the_retry_are_not_written_over(db):
+    """The compare-and-set missed and the re-read finds answers it cannot
+    read: still refused."""
+    db.add("g1")
+    guide = run(store.aload_guide(ME, "g1"))
+    db.stored("g1").update(answers="garbage", updated_at=db._tick())
+
+    with pytest.raises(GuideInvalid):
+        run(store.arecord_answer(guide, "s1-i2", CheckAnswer(option_id="b", correct=True)))
+
+    assert db.stored("g1")["answers"] == "garbage"

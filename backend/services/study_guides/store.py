@@ -54,6 +54,7 @@ LIST_LIMIT = 200
 GUIDE_NOT_FOUND_DETAIL = "Study guide not found."
 GUIDE_BUSY_DETAIL = "This study guide is being changed. Try again."
 GUIDE_UNREADABLE_DETAIL = "This guide cannot be read, so it was left as it is."
+ANSWERS_UNREADABLE_DETAIL = "Your answers on this guide cannot be read, so they were left as they are."
 
 #: Everything a ``GuideRow`` is built from. ``previous_content`` is written
 #: here and never read back: nothing shows the previous version yet.
@@ -81,7 +82,9 @@ class GuideRow:
 
     ``unreadable`` is True when the stored content could not be decrypted or
     read. ``content`` is then an empty placeholder, and the row is never
-    written over (``asave_content`` refuses)."""
+    written over (``asave_content`` refuses). ``answers_unreadable`` is the
+    same for the stored check answers: ``answers`` is then empty, and no
+    answer is recorded over them (``arecord_answer`` refuses)."""
 
     id: str
     user_id: str
@@ -104,6 +107,7 @@ class GuideRow:
     created_at: str
     updated_at: str
     unreadable: bool = False
+    answers_unreadable: bool = False
 
 
 # ── Rows ─────────────────────────────────────────────────────────────────────
@@ -159,16 +163,17 @@ def _content(raw: dict) -> tuple[GuideContent, bool]:
         return GuideContent(title=UNTITLED), True
 
 
-def _answers(raw: dict) -> dict[str, CheckAnswer]:
+def _answers(raw: dict) -> tuple[dict[str, CheckAnswer], bool]:
+    """``(the row's check answers, whether they are unreadable)``."""
     try:
         stored = decrypt_json_column(raw.get("answers")) or {}
-        return {block_id: CheckAnswer.model_validate(a) for block_id, a in stored.items()}
+        return {block_id: CheckAnswer.model_validate(a) for block_id, a in stored.items()}, False
     except Exception as exc:
         logger.warning(
             "study guide %s: answers could not be read (%s); showing none",
             raw.get("id"), type(exc).__name__,
         )
-        return {}
+        return {}, True
 
 
 def _strings(value: Any) -> list[str]:
@@ -177,6 +182,7 @@ def _strings(value: Any) -> list[str]:
 
 def _to_row(raw: dict) -> GuideRow:
     content, unreadable = _content(raw)
+    answers, answers_unreadable = _answers(raw)
     return GuideRow(
         id=raw["id"],
         user_id=raw["user_id"],
@@ -191,7 +197,7 @@ def _to_row(raw: dict) -> GuideRow:
         content=content,
         material_ids=_strings(raw.get("material_ids")),
         read_sections=_strings(raw.get("read_sections")),
-        answers=_answers(raw),
+        answers=answers,
         feedback=raw.get("feedback"),
         saved_at=raw.get("saved_at"),
         generating_at=raw.get("generating_at"),
@@ -199,6 +205,7 @@ def _to_row(raw: dict) -> GuideRow:
         created_at=raw.get("created_at") or "",
         updated_at=raw.get("updated_at") or "",
         unreadable=unreadable,
+        answers_unreadable=answers_unreadable,
     )
 
 
@@ -419,8 +426,14 @@ async def arecord_answer(guide: GuideRow, block_id: str, answer: CheckAnswer) ->
     The write is a compare-and-set on ``updated_at``, so a double click cannot
     record two first answers: the loser re-reads once and finds the block
     answered. A second lost race means the guide is being written right now:
-    ``GuideBusy``."""
+    ``GuideBusy``.
+
+    Stored answers that cannot be read are never written over
+    (``GuideInvalid``): the write replaces the whole column, so it would keep
+    only this one answer."""
     for retry in (True, False):
+        if guide.answers_unreadable:
+            raise GuideInvalid(ANSWERS_UNREADABLE_DETAIL)
         if block_id in guide.answers:
             return False
         rows = await table(TABLE).aupdate(
@@ -435,6 +448,7 @@ async def arecord_answer(guide: GuideRow, block_id: str, answer: CheckAnswer) ->
 
 
 __all__ = [
+    "ANSWERS_UNREADABLE_DETAIL",
     "CLAIM_STALE_AFTER",
     "GUIDE_UNREADABLE_DETAIL",
     "LIST_LIMIT",
