@@ -47,7 +47,7 @@ def _has_usable_text(text: str | None) -> bool:
     return len((text or "").strip()) >= MIN_EXTRACTED_CHARS
 
 
-def _budget_failed_frames(e: LLMBudgetExceeded, request_id: str | None) -> list[str]:
+def _budget_failed_frames(e: LLMBudgetExceeded, request_id: str | None) -> list[dict[str, str]]:
     """#119: the upload stream's terminal pair for a per-user LLM budget
     refusal (services/llm_budget.py) — the budget's own message and code."""
     return [

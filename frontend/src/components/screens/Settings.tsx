@@ -105,7 +105,7 @@ function Toggle({
 
 export function Settings() {
   const toast = useToast();
-  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile, setAvatarUrl } = useUser();
+  const { userId, userName, avatarUrl, userReady, signOut, setAvatarUrl } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();

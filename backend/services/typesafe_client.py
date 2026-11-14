@@ -159,7 +159,7 @@ _transport_override: httpx.AsyncBaseTransport | None = None
 
 
 def _prune_locked() -> None:
-    for key, (loop_ref, _client_) in list(_clients.items()):
+    for key, (loop_ref, _) in list(_clients.items()):
         loop = loop_ref()
         if loop is None or loop.is_closed():
             del _clients[key]

@@ -29,7 +29,6 @@ export function IntroOverlay({
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element -- original static SVG */}
         <img src="/design/sapling/originals/logo-symbol.svg" alt="" aria-hidden="true" width={46} height={65} />
         <div
           style={{

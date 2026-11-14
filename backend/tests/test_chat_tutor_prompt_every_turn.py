@@ -134,10 +134,11 @@ def test_history_turn_stream_carries_rules(mode):
     cap = _Capture()
 
     async def _drive():
-        async for _ in agent.run_stream_events(
+        async with agent.run_stream_events(
             "and the step size?", deps=_deps(), message_history=_history()
-        ):
-            pass
+        ) as stream:
+            async for _ in stream:
+                pass
 
     with agent.override(model=_model(cap)):
         asyncio.run(_drive())

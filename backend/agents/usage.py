@@ -108,6 +108,20 @@ def _log_recovered_retries(result: Any, task: AgentTask | None, feature: str) ->
         )
 
 
+def _run_usage(result: Any) -> Any:
+    """The run's usage, on either side of pydantic-ai's method -> property move.
+
+    1.107.x deprecates ``result.usage()`` for the property ``result.usage``
+    (removed in 2.0); older 1.x only has the method. A RunUsage instance means
+    the property form, anything else (an older bound method, a test double)
+    is called as before.
+    """
+    from pydantic_ai.usage import RunUsage
+
+    usage = result.usage
+    return usage if isinstance(usage, RunUsage) else usage()
+
+
 def record_agent_usage(
     result: Any,
     *,
@@ -135,7 +149,7 @@ def record_agent_usage(
             feature=feature,
             task=task,
             model=served_model_name(result, task),
-            usage=result.usage(),
+            usage=_run_usage(result),
             user_id=user_id,
             request_id=request_id,
         )

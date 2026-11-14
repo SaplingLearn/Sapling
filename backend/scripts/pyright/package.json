@@ -1,0 +1,8 @@
+{
+  "name": "sapling-backend-typecheck",
+  "private": true,
+  "description": "pyright for backend/scripts/type_ratchet.py, pinned with integrity hashes in package-lock.json",
+  "dependencies": {
+    "pyright": "1.1.414"
+  }
+}

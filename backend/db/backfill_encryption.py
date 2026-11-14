@@ -15,14 +15,30 @@ Detection rule
 --------------
 For every cell, try `decrypt(value)`:
     - succeeds → already encrypted, skip
-    - fails    → plaintext (or corrupted); encrypt and write
+    - fails, but the value has the SHAPE of our ciphertext (base64 of at least
+      a nonce and a tag) → skip and report it. That is a cell written under
+      another ENCRYPTION_KEY; encrypting it again would bury it one layer
+      deeper, where the read helpers hand ciphertext back as the value.
+    - fails otherwise → plaintext; encrypt and write
+
+Before anything is read, the key is checked against the database's key canary
+(services/encryption_canary.py, read-only here): a script holding the wrong
+key would see EVERY cell as "fails to decrypt" and stops instead.
+
+Every table is read in pages. One unpaged select returns at most PostgREST's
+1,000 rows, and a second run would then see only that already-encrypted page
+and report nothing left to do.
 
 This is idempotent: re-running it after a successful run is a no-op
-(every cell is already valid ciphertext, so every check skips).
+(every cell is already valid ciphertext, so every check skips). The rule is
+the same for every column shape, JSON included: a cell that decrypts is
+encrypted, whatever the plaintext inside it turns out to be.
 
 Usage
 -----
-Dry run (default — counts only, no writes):
+Dry run (default — counts only, no writes). Always read its counts before
+an --apply: a detection fix can make one run touch far more rows than the
+last one did.
     python -m db.backfill_encryption
 
 Apply (writes to Supabase):
@@ -38,17 +54,22 @@ encryption module + the supabase client all resolve correctly.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import json
 import sys
+from collections import Counter
+from collections.abc import Iterator
 from typing import Any, Callable
 
-from db.connection import table
+from db.connection import page_all, table
 from services.encryption import (
     decrypt,
-    decrypt_json,
     encrypt,
     encrypt_if_present,
     encrypt_json,
 )
+from services.encryption_canary import EncryptionKeyMismatch, verify_encryption_key
 
 
 # ── Detection ─────────────────────────────────────────────────────────────────
@@ -66,16 +87,46 @@ def _is_already_encrypted(value: Any) -> bool:
         return False
 
 
-def _is_already_encrypted_json(value: Any) -> bool:
-    """Same as above but for JSON columns. After the schema migration
-    these are TEXT, so a legacy JSONB row is now a JSON string."""
-    if value is None or not isinstance(value, str):
+# AES-GCM output is nonce (12 bytes) + ciphertext + tag (16 bytes).
+_MIN_CIPHERTEXT_BYTES = 12 + 16
+
+#: Cells that look like ciphertext but do not open with this key, per
+#: (table, column). Never written; `main` reports them.
+UNDECRYPTABLE: Counter[tuple[str, str]] = Counter()
+
+
+def _looks_like_ciphertext(value: Any) -> bool:
+    """True if `value` has the shape `encrypt` produces: strict base64 that
+    decodes to at least a nonce and a tag. Ordinary plaintext (spaces,
+    punctuation, short values) never does."""
+    if not isinstance(value, str):
         return False
     try:
-        decrypt_json(value)
-        return True
-    except Exception:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
         return False
+    return len(raw) >= _MIN_CIPHERTEXT_BYTES
+
+
+def _needs_encryption(table_name: str, column: str, value: Any) -> bool:
+    """Whether the backfill should encrypt this cell.
+
+    False for a cell that already decrypts, and for one that looks like
+    ciphertext under ANOTHER key: that one is counted in UNDECRYPTABLE and left
+    exactly as it is.
+    """
+    if _is_already_encrypted(value):
+        return False
+    if _looks_like_ciphertext(value):
+        UNDECRYPTABLE[(table_name, column)] += 1
+        return False
+    return True
+
+
+def _rows(table_name: str, columns: str, pk: str) -> Iterator[dict]:
+    """Every row of the table, paged in primary-key order. The updates this
+    script makes never touch the key, so the paging stays stable under them."""
+    return page_all(table(table_name), columns, order=pk)
 
 
 # ── Backfill primitives ───────────────────────────────────────────────────────
@@ -88,16 +139,16 @@ def _encrypt_text_column(
     apply: bool,
 ) -> dict[str, int]:
     """Encrypt one or more TEXT columns on a table. Returns counts."""
-    rows = table(table_name).select(",".join([pk, *columns])) or []
     counts = {col: 0 for col in columns}
-    counts["scanned"] = len(rows)
-    for row in rows:
+    counts["scanned"] = 0
+    for row in _rows(table_name, ",".join([pk, *columns]), pk):
+        counts["scanned"] += 1
         update: dict[str, str] = {}
         for col in columns:
             v = row.get(col)
             if v is None:
                 continue
-            if _is_already_encrypted(v):
+            if not _needs_encryption(table_name, col, v):
                 continue
             update[col] = encrypt_if_present(v)
             counts[col] += 1
@@ -117,16 +168,16 @@ def _encrypt_required_text_column(
 ) -> dict[str, int]:
     """Encrypt columns that store a string that must always be present
     (no None passthrough). Used for OAuth tokens."""
-    rows = table(table_name).select(",".join([pk, *columns])) or []
     counts = {col: 0 for col in columns}
-    counts["scanned"] = len(rows)
-    for row in rows:
+    counts["scanned"] = 0
+    for row in _rows(table_name, ",".join([pk, *columns]), pk):
+        counts["scanned"] += 1
         update: dict[str, str] = {}
         for col in columns:
             v = row.get(col)
             if v is None or not isinstance(v, str) or v == "":
                 continue
-            if _is_already_encrypted(v):
+            if not _needs_encryption(table_name, col, v):
                 continue
             update[col] = encrypt(v)
             counts[col] += 1
@@ -146,21 +197,24 @@ def _encrypt_json_column(
 ) -> dict[str, int]:
     """Encrypt a JSON-shaped TEXT column (was JSONB before the schema
     migration, now stores a JSON string)."""
-    import json as _json
-
-    rows = table(table_name).select(f"{pk},{column}") or []
-    counts = {column: 0, "scanned": len(rows)}
-    for row in rows:
+    counts = {column: 0, "scanned": 0}
+    for row in _rows(table_name, f"{pk},{column}", pk):
+        counts["scanned"] += 1
         v = row.get(column)
         if v is None:
             continue
-        if _is_already_encrypted_json(v):
+        # Decrypts = encrypted, and nothing more: do NOT also require the
+        # plaintext to parse as JSON (a corrupt row is stored as encrypt(raw)
+        # below, so that check would re-encrypt it on every later run), and do
+        # NOT use decrypt_json (it falls back to json.loads on plaintext, so
+        # every legacy JSON-text row would look encrypted and be skipped).
+        if not _needs_encryption(table_name, column, v):
             continue
         # Legacy row: parse the JSON text, then encrypt the parsed object
         # so the on-disk shape matches what new writes produce.
         if isinstance(v, str):
             try:
-                parsed = _json.loads(v)
+                parsed = json.loads(v)
             except Exception:
                 # Corrupt JSON; encrypt the raw string so it still
                 # round-trips through decrypt_if_present.
@@ -188,16 +242,16 @@ def _encrypt_numeric_column(
     apply: bool,
 ) -> dict[str, int]:
     """Encrypt former-NUMERIC columns now stored as TEXT (e.g. points)."""
-    rows = table(table_name).select(",".join([pk, *columns])) or []
     counts = {col: 0 for col in columns}
-    counts["scanned"] = len(rows)
-    for row in rows:
+    counts["scanned"] = 0
+    for row in _rows(table_name, ",".join([pk, *columns]), pk):
+        counts["scanned"] += 1
         update: dict[str, str] = {}
         for col in columns:
             v = row.get(col)
             if v is None:
                 continue
-            if _is_already_encrypted(v):
+            if not _needs_encryption(table_name, col, v):
                 continue
             # Legacy plaintext — could be a float, a numeric string after
             # the ::TEXT cast, or already a stringified number.
@@ -213,18 +267,15 @@ def _encrypt_numeric_column(
 # ── Per-table runners ─────────────────────────────────────────────────────────
 
 def backfill_users(apply: bool) -> dict:
-    return _encrypt_text_column(
-        "users",
-        ["name", "first_name", "last_name", "email", "bio", "location"],
-        pk="id",
-        apply=apply,
-    )
+    # Only `email` is left on `users`: the 0024 identity split moved the
+    # profile fields to `user_profiles` and dropped them here.
+    return _encrypt_text_column("users", ["email"], pk="id", apply=apply)
 
 
-def backfill_user_settings(apply: bool) -> dict:
+def backfill_user_profiles(apply: bool) -> dict:
     return _encrypt_text_column(
-        "user_settings",
-        ["bio", "location"],
+        "user_profiles",
+        ["name", "first_name", "last_name", "bio", "location"],
         pk="user_id",
         apply=apply,
     )
@@ -327,7 +378,7 @@ def backfill_room_summaries(apply: bool) -> dict:
 
 RUNNERS: dict[str, Callable[[bool], dict]] = {
     "users": backfill_users,
-    "user_settings": backfill_user_settings,
+    "user_profiles": backfill_user_profiles,
     "oauth_tokens": backfill_oauth_tokens,
     "assignments": backfill_assignments,
     "documents": backfill_documents,
@@ -367,13 +418,37 @@ def main() -> int:
     print(f"Tables: {', '.join(targets)}")
     print()
 
+    # With the wrong key every cell fails to decrypt, which is exactly what
+    # legacy plaintext looks like. seed=False: this script must never write the
+    # canary itself (a wrong key would then lock the real backend out).
+    try:
+        key_check = verify_encryption_key(seed=False)
+    except EncryptionKeyMismatch as e:
+        print(f"REFUSING to run: {e}")
+        return 2
+    if key_check == "skipped":
+        # "skipped" is no canary OR a canary read that failed, never a confirmed
+        # match. A dry run only reads, so it may go on; --apply with an
+        # unconfirmed key could encrypt every plaintext cell under the wrong one.
+        if args.apply:
+            print("REFUSING to --apply: the key canary could not be read, so ENCRYPTION_KEY is not")
+            print("confirmed for this database. Retry once it reads; a database no backend has")
+            print("booted against has no canary yet (boot the backend once to seed it).")
+            return 2
+        print("WARNING: this database has no readable key canary, so the key could not be")
+        print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
+        print()
+
+    UNDECRYPTABLE.clear()
     grand_total = 0
+    failed: list[str] = []
     for name in targets:
         print(f"── {name} ──")
         try:
             counts = RUNNERS[name](apply=args.apply)
         except Exception as e:
             print(f"  FAILED: {e}")
+            failed.append(name)
             continue
         scanned = counts.pop("scanned", 0)
         print(f"  scanned: {scanned} rows")
@@ -387,7 +462,21 @@ def main() -> int:
     print(f"{verb} {grand_total} cells total.")
     if not args.apply:
         print("Re-run with --apply to write.")
-    return 0
+    if UNDECRYPTABLE:
+        print()
+        print("Left untouched: cells that look like ciphertext but do not open with this key")
+        print("(written under another ENCRYPTION_KEY, or damaged, or a legacy plaintext that")
+        print("happens to be base64-shaped, which is still unencrypted). Look at these by hand:")
+        for (tbl, col), n in sorted(UNDECRYPTABLE.items()):
+            print(f"  {tbl}.{col}: {n}")
+    if failed:
+        # A table that failed was not backfilled, so the run is not done: say
+        # so in the exit code too. The dropped-column runners failed on every
+        # run for months behind an exit 0.
+        print()
+        print(f"FAILED tables (not backfilled): {', '.join(failed)}")
+    # Cells left for a person to settle mean the run is not done either.
+    return 1 if failed or UNDECRYPTABLE else 0
 
 
 if __name__ == "__main__":

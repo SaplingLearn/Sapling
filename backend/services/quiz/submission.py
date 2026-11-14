@@ -532,7 +532,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         from services.achievement_service import check_achievements
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
-        pass
+        logger.warning("quizzes_completed achievement check failed", exc_info=True)
 
     # G8: read AFTER the achievement pass — a badge earned by this submit pays
     # its own XP and moves earned_count, so a snapshot taken before it would

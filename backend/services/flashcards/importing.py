@@ -589,7 +589,7 @@ def generate_flashcards(
     context: str = "",
     documents: list[dict] | None = None,
     weak_concepts: list[str] | None = None,
-) -> list[dict]:
+) -> list[Card]:
     """Generate flashcards grounded in the student's course material, via the
     flashcard agent. Moved off gemini_service in #146.
 

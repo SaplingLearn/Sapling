@@ -61,11 +61,19 @@ def _check(canary: str) -> None:
         )
 
 
-def verify_encryption_key() -> str:
+def verify_encryption_key(*, seed: bool = True) -> str:
     """Return "ok" | "seeded" | "skipped"; raise EncryptionKeyMismatch on a
-    definite mismatch."""
+    definite mismatch.
+
+    ``seed=False`` only ever reads: with no canary there it returns "skipped"
+    instead of writing one. For anything that is not the backend's own boot
+    (an ops script), because a canary seeded by a process holding the wrong
+    key would lock the real backend out.
+    """
     try:
         canary = _read_canary()
+        if canary is None and not seed:
+            return "skipped"
         if canary is None:
             # DO NOTHING on conflict: never overwrite a canary another key wrote.
             # Re-read either way, so losing a seed race to a different key is

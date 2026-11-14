@@ -13,6 +13,13 @@
 # in-flight PR. `ruff format` is available to run manually; CI does not gate on
 # it yet. (line-length below only informs the formatter when it's used.)
 #
+# The bug-finding rules (ASYNC, bugbear `B`, blind-except `BLE`) are NOT in
+# `select`, on purpose. A per-file-ignores entry switches a rule off for the
+# whole file, so with ~400 existing violations in ~150 files a NEW blind
+# `except` in any of those files would pass. scripts/lint_ratchet.py runs them
+# instead and holds each file to its own count (lint_baseline.json); CI runs it
+# right after `ruff check .`.
+#
 # Burning the baseline down: most entries are F401 (unused import) and F841
 # (unused variable) — delete the dead import/var and remove the file's line
 # from the baseline. E402 (import-not-at-top) entries are mostly intentional

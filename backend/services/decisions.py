@@ -640,7 +640,7 @@ def _fit_state(state: Any, truncatable: Sequence[str], question_tokens: int) -> 
     # The document with every trimmable list emptied, plus each list's items.
     sizes = {key: [len(dumps(item)) for item in items] for key, items in lists.items()}
     total = len(dumps({**state, **{key: [] for key in lists}}))
-    for key, item_sizes in sizes.items():
+    for item_sizes in sizes.values():
         total += sum(item_sizes) + 2 * (len(item_sizes) - 1)
     if fits(total):
         return state
