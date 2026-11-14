@@ -44,8 +44,11 @@ _HEADERS = {
 _COPY = {
     email_service.SUPPRESSION_SCOPE_ALL: (
         ("Unsubscribe from Sapling emails?",
-         "You'll stop receiving all emails from Sapling at this address, including account updates."),
-        ("You're unsubscribed", "You won't receive any more emails from Sapling at this address."),
+         "You'll stop receiving Sapling's newsletters, announcements and account updates at this "
+         "address. If you get Sapling admin alerts, they have their own unsubscribe link."),
+        ("You're unsubscribed",
+         "You won't receive any more Sapling newsletters, announcements or account updates at this "
+         "address. If you get Sapling admin alerts, they have their own unsubscribe link."),
     ),
     email_service.SUPPRESSION_SCOPE_OPS: (
         ("Stop Sapling admin alerts?",

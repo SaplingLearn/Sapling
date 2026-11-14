@@ -97,6 +97,18 @@ def test_unsubscribe_post_suppresses_the_hash(unsub_tables):
     unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
 
 
+def test_the_all_scope_pages_do_not_promise_every_email_stops(unsub_tables):
+    """An `all` unsubscribe leaves admin alerts running (they have their own
+    link), so neither page may say every email from Sapling stops."""
+    token = email_service.unsubscribe_token("a@bu.edu")
+    for r in (client.get(f"/api/email/unsubscribe?t={token}"),
+              client.post(f"/api/email/unsubscribe?t={token}")):
+        assert r.status_code == 200
+        text = r.text.lower()
+        assert "all emails" not in text and "any more emails" not in text
+        assert "admin alerts" in text and "their own unsubscribe link" in text
+
+
 def test_the_ops_alert_link_stops_ops_alerts_only(unsub_tables):
     token = email_service.unsubscribe_token("a@bu.edu", scope="ops_alert")
     page = client.get(f"/api/email/unsubscribe?t={token}&scope=ops_alert")
