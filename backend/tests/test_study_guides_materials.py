@@ -135,6 +135,17 @@ def test_the_whole_course_suggests_every_material():
     assert materials.suggest_materials(SHELF, WHOLE_COURSE, SCOPES) == [m.id for m in SHELF]
 
 
+def test_past_what_a_guide_reads_the_newest_materials_are_suggested():
+    """A guide reads at most `MAX_SOURCES`. The oldest are the ones left out,
+    as the source budget leaves them out, never this week's lecture."""
+    shelf = [_material(f"week{n:02d}", f"2026-09-{n:02d}") for n in range(1, 31)]
+    shelf += [_material(f"oct{n:02d}", f"2026-10-{n:02d}") for n in range(1, 6)]
+    for scope in (WHOLE_COURSE, UNDATED):
+        suggested = materials.suggest_materials(shelf, scope, SCOPES)
+        assert suggested == [m.id for m in shelf[-materials.MAX_SOURCES:]]
+        assert suggested[-1] == "oct05"
+
+
 def test_the_first_exam_suggests_everything_up_to_its_date_but_the_syllabus():
     assert materials.suggest_materials(SHELF, MIDTERM_1, SCOPES) == ["week1", "on-midterm-1"]
 
@@ -236,6 +247,39 @@ def test_a_row_that_does_not_decrypt_is_skipped_with_a_warning(docs, caplog):
     assert len(warnings) == 1 and "d2" in warnings[0].getMessage()
     assert warnings[0].exc_info is None  # no traceback
     assert "bm90" not in sources[0].text + sources[1].text
+
+
+def test_a_column_that_does_not_decrypt_costs_the_document_only_that_column(docs, caplog):
+    docs.add("d1", created_at="2026-09-01T09:00:00+00:00", summary="Damaged.",
+             concepts=_notes("Recursion"), text="Recursion calls itself.")
+    docs.rows[0]["summary"] = "bm90IGNpcGhlcnRleHQgYXQgYWxsLCBqdXN0IGJhc2U2NCB0ZXh0"
+    with caplog.at_level(logging.WARNING, logger=materials.logger.name):
+        (source,) = run(materials.aload_sources(ME, OFFERING, ["d1"]))
+    assert source.text == "Key concepts:\n- Recursion: About Recursion.\n\nRecursion calls itself."
+    assert source.concepts == ["Recursion"]
+    (warning,) = [r for r in caplog.records if r.name == materials.logger.name]
+    assert "d1" in warning.getMessage() and "summary" in warning.getMessage()
+
+
+def test_concept_notes_that_are_not_a_list_of_notes_cost_only_the_notes(docs):
+    """Some old rows hold a sentence where the notes go (encrypted, not JSON)."""
+    docs.add("d1", created_at="2026-09-01T09:00:00+00:00", summary="The syllabus.")
+    docs.rows[0]["concept_notes"] = encrypt("Covers variables, functions, recursion.")
+    (source,) = run(materials.aload_sources(ME, OFFERING, ["d1"]))
+    assert (source.text, source.concepts) == ("Summary: The syllabus.", [])
+    assert run(materials.aload_concepts(ME, OFFERING, ["d1"])) == []
+
+
+@pytest.mark.parametrize("stored", [
+    pytest.param([{"name": "Recursion", "description": "About Recursion."}], id="jsonb"),
+    pytest.param('[{"name": "Recursion", "description": "About Recursion."}]', id="json-text"),
+])
+def test_concept_notes_stored_before_encryption_still_read(docs, stored):
+    docs.add("d1", created_at="2026-09-01T09:00:00+00:00", text="Recursion calls itself.")
+    docs.rows[0]["concept_notes"] = stored
+    (source,) = run(materials.aload_sources(ME, OFFERING, ["d1"]))
+    assert source.concepts == ["Recursion"]
+    assert run(materials.aload_concepts(ME, OFFERING, ["d1"])) == ["Recursion"]
 
 
 def test_an_old_row_without_extracted_text_still_reads(docs):
