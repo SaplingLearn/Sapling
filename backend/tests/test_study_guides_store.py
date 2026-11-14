@@ -150,21 +150,28 @@ def db(monkeypatch):
 
 
 def _at_rest(content: GuideContent) -> dict:
-    """The content as stored: what is sent, and the section mark that is not."""
-    return {**content.model_dump(mode="json"), "last_section_number": content.last_section_number}
+    """The content as stored: what is sent, and the marks that are not."""
+    return {
+        **content.model_dump(mode="json"),
+        **{name: getattr(content, name) for name in ("last_section_number", "materials_read_at")},
+    }
 
 
-def test_the_section_mark_is_stored_but_never_sent(db):
+def test_the_content_marks_are_stored_but_never_sent(db):
     db.add("g1")
     guide = run(store.aload_guide(ME, "g1"))
-    marked = guide.content.model_copy(update={"last_section_number": 7})
+    read_at = "2026-11-03T00:00:00+00:00"
+    marked = guide.content.model_copy(
+        update={"last_section_number": 7, "materials_read_at": read_at})
 
     run(store.asave_content(guide, marked))
 
-    assert decrypt_json(db.stored("g1")["content"])["last_section_number"] == 7
+    stored = decrypt_json(db.stored("g1")["content"])
+    assert (stored["last_section_number"], stored["materials_read_at"]) == (7, read_at)
     reread = run(store.aload_guide(ME, "g1")).content
-    assert reread.last_section_number == 7
-    assert "last_section_number" not in reread.model_dump(mode="json")
+    assert (reread.last_section_number, reread.materials_read_at) == (7, read_at)
+    sent = reread.model_dump(mode="json")
+    assert "last_section_number" not in sent and "materials_read_at" not in sent
 
 
 def test_content_is_ciphertext_at_rest_and_reads_back_equal(db):

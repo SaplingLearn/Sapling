@@ -123,7 +123,7 @@ def _own(user_id: str, guide_id: str) -> dict[str, str]:
 
 #: `GuideContent` fields kept out of every dump (they are never sent) that
 #: are stored all the same.
-_STORED_ONLY = ("last_section_number",)
+_STORED_ONLY = ("last_section_number", "materials_read_at")
 
 
 def _encrypt_content(content: GuideContent) -> str:

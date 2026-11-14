@@ -128,9 +128,12 @@ def guide_sources(brief: Brief, listed: list[Source]) -> list[Source]:
 
 async def anew_content(
     guide: GuideRow, inputs: Inputs, *, updating: bool, new_labels: list[str],
+    materials_read_at: str | None,
 ) -> GuideContent:
     """The guide's content as the outline agent plans it now: every section
-    present, `queued` unless an update keeps it. Nothing is saved here."""
+    present, `queued` unless an update keeps it. `materials_read_at` is when
+    the materials it is planned from were chosen or read. Nothing is saved
+    here."""
     brief, current = inputs.brief, guide.content
     fewest, most = plan_range(guide, updating=updating, new_labels=new_labels)
     planned = await writer.awrite_outline(
@@ -151,6 +154,7 @@ async def anew_content(
         sources=guide_sources(brief, current.sources if updating else []),
         scope_label=current.scope_label,
         last_section_number=max(used, _highest_number(sections)),
+        materials_read_at=materials_read_at,
     )
 
 

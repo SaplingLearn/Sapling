@@ -394,6 +394,11 @@ class GuideContent(BaseModel):
     #: content (`store`), never sent: `exclude` keeps it out of every dump.
     #: 0 on content from before it was kept: its sections' ids then say.
     last_section_number: int = Field(default=0, ge=0, exclude=True)
+    #: When the materials this content was planned from were chosen or read
+    #: (ISO), stored the same way: the guide is dated from it once it is
+    #: ready, so a lecture uploaded after it still counts as new. None on
+    #: content from before it was kept.
+    materials_read_at: str | None = Field(default=None, exclude=True)
 
 
 # ── Wire shapes ───────────────────────────────────────────────────────────────

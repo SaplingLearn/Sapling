@@ -249,9 +249,11 @@ def test_the_outline_event_is_the_saved_guide_with_every_section_queued(world, f
     events, rows = run(_follow(world))
 
     outline = GuideContent.model_validate(events[2].data["content"])
-    # Saved before it was sent; the section mark is stored, never sent.
-    assert rows[2]["content"] == outline.model_copy(update={"last_section_number": 3})
+    # Saved before it was sent; the content's marks are stored, never sent.
+    assert rows[2]["content"] == outline.model_copy(update={
+        "last_section_number": 3, "materials_read_at": rows[2]["created_at"]})
     assert "last_section_number" not in events[2].data["content"]
+    assert "materials_read_at" not in events[2].data["content"]
     assert rows[2]["status"] == "generating"
     assert outline.title == "Recursion and what it builds on"
     assert outline.deck == "Three sections written from your own course material."
@@ -298,13 +300,14 @@ def test_each_section_is_saved_before_its_event_and_checks_are_withheld(world, f
 
 def test_a_finished_guide_is_ready_with_no_queued_section_and_the_claim_free(world, function_mode):
     world.guide()
-    started = datetime.now(timezone.utc)
 
     events, rows = run(_follow(world))
 
     row = world.stored()
     assert row["status"] == "ready"
-    assert datetime.fromisoformat(row["generated_at"]) >= started
+    # A first guide is made from the materials chosen when it was created:
+    # a lecture uploaded since is new to it.
+    assert row["generated_at"] == row["created_at"]
     assert row["generating_at"] is None
     assert row["material_ids"] == ["doc-1"]
     assert row["previous_content"] is None and row["answers"] is None
@@ -752,23 +755,28 @@ def test_a_regenerate_that_fails_after_a_section_can_be_resumed(world, monkeypat
     assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
     # Not made yet: the date is still the old guide's.
     assert row["generated_at"] == MADE_AT
+    read_at = world.content().materials_read_at
     script.sections.clear()
     resumed_at = datetime.now(timezone.utc)
     events, _ = run(_follow(world))
     assert events[-1].type == "done" and script.written == ["One", "Two", "Two"]
     assert [s.status for s in world.content().sections] == ["written", "written"]
-    # The resume is what made the new guide: it is dated from then.
-    assert datetime.fromisoformat(world.stored()["generated_at"]) >= resumed_at
+    # The resume made the new guide ready, from the materials the regenerate
+    # read: it is dated from that read, not from the resume.
+    made = world.stored()["generated_at"]
+    assert made == read_at and datetime.fromisoformat(made) < resumed_at
 
 
 @pytest.mark.parametrize("left_as", ["generating", "failed"])
 def test_a_resume_that_finishes_a_cut_update_dates_the_guide(world, monkeypatch, left_as):
     """The Update saved its first section and its stream was cut (the row
     stays `generating`), or it failed there. Either way the guide becomes
-    ready only when the resume ends, so that is when it was made."""
+    ready only when the resume ends, dated from when the Update read its
+    materials."""
     _updatable(world)
     outline = _outline(_planned("Recursion", keep_id="s1"), _planned("Types"), _planned("Scope"))
     script = Script(monkeypatch, outline=outline, sections={"Scope": RuntimeError("boom")})
+    updated_at = datetime.now(timezone.utc)
     run(_follow(world, "update"))
     assert (world.stored()["status"], world.stored()["generated_at"]) == ("failed", MADE_AT)
     world.stored()["status"] = left_as
@@ -779,20 +787,77 @@ def test_a_resume_that_finishes_a_cut_update_dates_the_guide(world, monkeypatch,
 
     row = world.stored()
     assert events[-1].type == "done" and row["status"] == "ready"
-    assert datetime.fromisoformat(row["generated_at"]) >= resumed_at
+    assert updated_at <= datetime.fromisoformat(row["generated_at"]) < resumed_at
     assert events[-1].data["guide"]["generated_at"] == row["generated_at"]
+
+
+def test_a_lecture_uploaded_before_a_late_resume_is_still_new_after_it(world, monkeypatch):
+    """A Regenerate failed after its first section. A lecture was uploaded
+    before the resume that finished it, which reads only the Regenerate's
+    materials: the lecture is still new, and an Update can add it."""
+    _ready(world)
+    script = Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
+                    sections={"Two": RuntimeError("boom")})
+    run(_follow(world, "regenerate"))
+    world.documents["doc-3"] = ("lecture-10.pdf", "Scope is lexical.", ["Scope"])
+    world.lectures.append({"id": "doc-3", "offering_id": OFFERING,
+                           "created_at": datetime.now(timezone.utc).isoformat()})
+
+    script.sections.clear()
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done" and script.offered[-1] == ["document:doc-1"]
+    assert _new_lectures(world) == 1
+    assert run(generation.aprepare_generation(ME, GUIDE, "update")).new_labels == ["S2"]
+
+
+def test_a_lecture_uploaded_while_an_update_runs_is_still_new_after_it(world, monkeypatch):
+    """The run read its materials before the lecture arrived, so the guide is
+    dated from that read, not from when the run finished."""
+    _updatable(world)
+    script = Script(monkeypatch, outline=_outline(
+        _planned("Recursion", keep_id="s1"), _planned("Types")))
+    plan = script.awrite_outline
+
+    async def uploaded_meanwhile(brief, **kwargs):
+        world.documents["doc-3"] = ("lecture-10.pdf", "Scope is lexical.", ["Scope"])
+        world.lectures.append({"id": "doc-3", "offering_id": OFFERING,
+                               "created_at": datetime.now(timezone.utc).isoformat()})
+        return await plan(brief, **kwargs)
+
+    monkeypatch.setattr(writer, "awrite_outline", uploaded_meanwhile)
+
+    events, _ = run(_follow(world, "update"))
+
+    assert events[-1].type == "done"
+    assert world.stored()["material_ids"] == ["doc-1", "doc-2"]
+    assert _new_lectures(world) == 1
+    assert run(generation.aprepare_generation(ME, GUIDE, "update")).new_labels == ["S3"]
 
 
 def test_a_resume_with_nothing_left_to_write_still_dates_the_guide_it_makes_ready(world, monkeypatch):
     """Every section was saved, and the run was cut before its last write."""
-    world.guide(generated_at=MADE_AT, content=encrypt_json(_written_guide().model_dump(mode="json")))
+    read_at = "2026-11-03T00:00:00+00:00"
+    content = {**_written_guide().model_dump(mode="json"), "materials_read_at": read_at}
+    world.guide(generated_at=MADE_AT, content=encrypt_json(content))
     script = Script(monkeypatch)
-    resumed_at = datetime.now(timezone.utc)
 
     events, _ = run(_follow(world))
 
     assert events[-1].type == "done" and script.written == []
-    assert datetime.fromisoformat(world.stored()["generated_at"]) >= resumed_at
+    assert world.stored()["generated_at"] == read_at
+
+
+def test_content_from_before_the_read_was_kept_is_dated_no_later_than_it_was(world, monkeypatch):
+    """No read time is stored with it: the previous date stands, so a lecture
+    is counted as new rather than hidden."""
+    world.guide(generated_at=MADE_AT, content=encrypt_json(_written_guide().model_dump(mode="json")))
+    Script(monkeypatch)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done"
+    assert (world.stored()["status"], world.stored()["generated_at"]) == ("ready", MADE_AT)
 
 
 def test_a_failed_first_section_is_not_saved_until_a_later_one_is_written(world, monkeypatch):
