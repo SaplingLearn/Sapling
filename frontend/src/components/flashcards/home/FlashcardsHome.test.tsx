@@ -503,6 +503,35 @@ describe("Flashcards home: decks", () => {
     expect(screen.getByRole("button", { name: "Review Sorting and trees" })).toBeEnabled();
   });
 
+  it("a crisis answer for a later concept still brings in the cards already made for the earlier ones", async () => {
+    // docs/safety/crisis-support.md: Sorting's cards were generated and saved
+    // before the screen answered for Trees. They must reach the page (not be
+    // made again on the next Start).
+    const made = [card("g1", "Sorting", { course_id: null })];
+    mocks.generate
+      .mockResolvedValueOnce(generated(made))
+      .mockResolvedValueOnce({ flashcards: [], reply: "the card as text", crisis_support: crisisFixture } as never)
+      .mockResolvedValue(generated([]));
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+    const readsBefore = mocks.cards.mock.calls.length;
+    mocks.cards.mockResolvedValue({ flashcards: [...CARDS_NO_DUE, ...made] });
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mocks.cards).toHaveBeenCalledTimes(readsBefore + 1)); // the re-read
+    expect(screen.queryByText(/Card 1 of/)).toBeNull();
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The next Start asks only for the concept that still has none.
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(3));
+    expect(mocks.generate.mock.calls[2][1]).toBe("Trees");
+  });
+
   it("the deck's body, or Edit in its menu, opens the builder with the set loaded", async () => {
     mocks.sets.mockResolvedValue({ sets: [VARS_SET] });
     const user = await home();

@@ -93,8 +93,11 @@ export function useStart(input: StartInput) {
   const { intercept } = crisis;
 
   /** Generates for each name in turn; resolves with the cards that were made,
-   *  or null when the crisis screen answered (the run ends there). */
-  const generate = React.useCallback(async (names: string[], perConcept: number, run: RequestToken) => {
+   *  and whether the crisis screen answered (the run ends there: the cards
+   *  made for the earlier names are already saved). */
+  const generate = React.useCallback(async (
+    names: string[], perConcept: number, run: RequestToken,
+  ): Promise<{ made: Card[]; crisis: boolean }> => {
     const { userId, courseId, semester } = live.current;
     const made: Card[] = [];
     /** Asked for and answered with no cards: the generator writes from the
@@ -104,7 +107,7 @@ export function useStart(input: StartInput) {
       setProgress({ name: names[i], at: i + 1, of: names.length });
       try {
         const r = await generateFlashcards(userId, names[i], perConcept, semester || undefined, courseId || undefined);
-        if (run.isCurrent() && intercept(r)) return null;
+        if (run.isCurrent() && intercept(r)) return { made, crisis: true };
         const cards = r.flashcards || [];
         if (!cards.length) none.push(names[i]);
         made.push(...cards);
@@ -116,7 +119,7 @@ export function useStart(input: StartInput) {
       }
     }
     if (none.length && run.isCurrent()) toast.warn(noCardsMessage(none));
-    return made;
+    return { made, crisis: false };
   }, [toast, intercept]);
 
   /** Resolves true when a review was started. */
@@ -137,8 +140,15 @@ export function useStart(input: StartInput) {
       const have = indexOf(all);
       const missing = plan.onlyDue ? [] : (plan.generate ?? plan.names).filter(name => !countsFor(have, name).cards);
       if (missing.length) {
-        const made = await generate(missing, plan.perConcept, run);
-        if (!run.isCurrent() || made === null) return false;
+        const { made, crisis: answered } = await generate(missing, plan.perConcept, run);
+        if (!run.isCurrent()) return false;
+        if (answered) {
+          // The card is showing and nothing starts, but the cards made for
+          // the concepts before it are saved: bring them onto the page, or
+          // they stay invisible and the next Start would make them again.
+          if (made.length) await cards.reload();
+          return false;
+        }
         if (made.length) {
           // The re-read list is the truth; what the generate calls returned
           // stands in for anything it does not (yet) hold, or for a re-read
