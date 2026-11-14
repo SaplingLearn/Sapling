@@ -110,6 +110,8 @@ describe('#191 stale identity reconciliation', () => {
     // stub — the routing decision is pure and pinned here instead.
     expect(shouldBounceToSignin('/dashboard')).toBe(true);
     expect(shouldBounceToSignin('/gradebook/cs101')).toBe(true);
+    expect(shouldBounceToSignin('/flashcards')).toBe(true);
+    expect(shouldBounceToSignin('/study/guide')).toBe(true);
     expect(shouldBounceToSignin('/')).toBe(false);
     expect(shouldBounceToSignin('/about')).toBe(false);
     expect(shouldBounceToSignin('/auth/callback')).toBe(false);

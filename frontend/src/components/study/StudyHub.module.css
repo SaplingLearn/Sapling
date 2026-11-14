@@ -1,0 +1,276 @@
+/* The hub speaks the Dashboard's visual language (globals.css tokens, .btn,
+   .chip, .label-micro, the display face for titles and figures) WITHOUT its
+   cards: sections sit open on the page and are told apart by hairlines, micro
+   labels and whitespace. Only a single item that has to stand out (the Up
+   Next block, a row you can act on) gets a fill. */
+
+/* Hover states. */
+.hoverOption:hover { background: var(--bg-subtle) !important; }
+.hoverIcon:hover { background: var(--bg-soft) !important; color: var(--text) !important; }
+.hoverTab:hover { border-bottom-color: var(--sap-300) !important; }
+.hoverTabOn:hover { border-bottom-color: var(--brand-forest); }
+.hoverSeg { transition: transform 120ms ease; }
+.hoverSeg:hover { transform: scale(1.15); }
+.hoverLegend:hover { background: var(--bg-subtle) !important; color: var(--text) !important; }
+.hoverMore:hover { background: var(--bg-subtle) !important; color: var(--text) !important; }
+.hoverQr { transition: filter var(--dur-fast) var(--ease); }
+.hoverQr:hover { filter: brightness(0.97); }
+.hoverRemove:hover { background: var(--err-soft) !important; }
+
+/* "+" after the last exam tab. Dashed, like the editor's own add-a-row
+   button, so the two read as the same action. The bottom margin is the tabs'
+   own bottom padding, which centres it on their two lines of text. */
+.addExam {
+  width: 28px; height: 28px; margin-bottom: 8px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1px dashed var(--border-strong); border-radius: var(--r-sm);
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.addExam:hover { background: var(--sap-50); border-color: var(--brand-forest); color: var(--brand-forest); }
+
+/* A tool button is the Dashboard's header action exactly (.btn .btn--sm at
+   40px, as DashboardActions sets it). */
+.tool { height: 40px; padding: 0 16px; font-size: var(--fs-md); white-space: nowrap; }
+
+/* Thin scrollbar for the Quick Reviews list. */
+.catScroll { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+/* ── motion ──────────────────────────────────────────────────────────────────
+   Clicking around the hub used to swap content with no in-between: a new
+   course, a new exam tab or a new concept selection simply replaced what was
+   there. These are plain CSS animations and transitions, so they cost no
+   JS chunk and the app-wide prefers-reduced-motion reset in globals.css
+   (the `*, *::before, *::after` rule) collapses every one of them. */
+
+@keyframes studyPaneEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The main column (the exam tabs, the readiness + Up Next block, the roadmap),
+   re-keyed on the selected course: a course switch reads as the page turning
+   rather than as a flicker. A change of exam TAB is not an entrance: what is
+   on the page moves to its new state (useFlip.ts, on hubMotion.ts's clock). */
+.paneEnter { animation: studyPaneEnter 260ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+
+/* Roadmap columns arrive left to right. The delay is set inline per column
+   (--i), capped there so a long roadmap doesn't trail. */
+.colEnter { animation: studyPaneEnter 240ms cubic-bezier(0.2, 0.85, 0.35, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+
+/* Concept tiles: selection, prerequisite highlighting and the legend filter
+   all change a tile's border, background and opacity. Easing them is what
+   makes hovering a tile feel like it's pointing at its prerequisites rather
+   than redrawing the roadmap. */
+.tile {
+  /* A filled row with no border, like the Dashboard's Today's-plan rows: the
+     roadmap is a list of things to open, not a wall of little cards. */
+  background: var(--bg-subtle);
+  transition: background-color 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
+}
+/* Hover moves the fill, not a filter or a transform: either would also hit
+   the action menu that opens inside the tile. */
+.tile:hover { background: var(--bg-soft); }
+/* "..." on a tile: the menu that goes straight into a tool for this concept. */
+.tileMore {
+  width: 24px; height: 24px; margin-right: -4px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: var(--r-sm); background: transparent;
+  color: var(--text-muted); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tileMore:hover, .tileMore[aria-expanded="true"] { background: var(--border); color: var(--text); }
+.tileNext { background: var(--sap-50); box-shadow: inset 0 0 0 1.5px var(--brand-forest); }
+.tileNext:hover { background: var(--sap-100); }
+.tileSel, .tileSel:hover { background: var(--sap-100); box-shadow: inset 0 0 0 1.5px var(--brand-forest); }
+
+/* The readiness ring and the mastery bars grow to their value instead of
+   appearing at it. */
+.ring { transition: stroke-dasharray 520ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+.bar { transition: width 420ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+
+/* Popovers: the course menu, the bell, the AI pace note, the "+N more"
+   prerequisites, a tile's action menu and the Quick Reviews list. The class
+   was defined here but never put on any of them, so they all just appeared. */
+@keyframes studyPop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.pop { animation: studyPop var(--dur-fast) var(--ease) both; transform-origin: top; }
+
+/* ── responsive layout ───────────────────────────────────────────────────────
+   The hub used to size itself from ONE JS breakpoint (useIsMobile, 768px)
+   while its desktop grid needed roughly 1500px: a fixed 360px rail beside the
+   main column, and inside that a fixed 540px focus card beside the readiness
+   figure. Everything from ~1440px down drove the readiness column to zero and
+   the card painted over "Ready for <exam>".
+
+   Width now comes from the CONTAINER, not the viewport, because the side nav
+   collapses (64px) and expands (~200px): a viewport media query is wrong in
+   one of those two states, a container query is right in both.
+
+   The hub also no longer clips itself to the viewport. The roadmap and the
+   right rail used to be their own scrollports, so reading further down the
+   roadmap meant finding and scrolling that inner pane while the page itself
+   stayed put. Both now grow with their content and the SHELL scrolls (it is
+   already the app's scrollport: ShellFrame sets flex:1 / overflow-y:auto), so
+   one scroll gesture moves the whole page. */
+
+.shell {
+  container-type: inline-size;
+  container-name: studyhub;
+}
+
+.hub {
+  position: relative;
+  /* The app's own type scale (globals.css --fs-*), the one the Dashboard
+     reads at: 13px body, 11-12px meta. The hub used to re-declare the scale
+     one step up, which made the same row read larger here than there. */
+  display: grid;
+  /* The Dashboard's frame: its page padding (18 / 32 / 24) and a right column
+     as wide as its Today column (up to 360px), so the two pages keep the same
+     edges when you move between them. The gap is wider than the Dashboard's
+     16px because nothing here is boxed: open columns need the air a card's
+     border would otherwise give them.
+     CLAMPED, not fixed, so the rail gives ground as the container narrows (a
+     fixed one charged the whole loss to the main column when the side nav
+     expanded). */
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 24cqi, 340px);
+  /* The rail spans rows 2-4; when it is taller than the main column, its
+     extra height goes to the roadmap row (1fr), not into the gaps under the
+     exam tabs and the readiness band. */
+  grid-template-rows: auto auto auto 1fr;
+  align-content: start;
+  column-gap: 40px;
+  padding: 18px 32px 24px;
+  box-sizing: border-box;
+}
+
+.areaHeader  { grid-column: 1 / 3; grid-row: 1; }
+.areaTabs    { grid-column: 1; grid-row: 2; }
+.areaReady   { grid-column: 1; grid-row: 3; }
+.areaRoadmap { grid-column: 1; grid-row: 4; }
+.areaRail {
+  grid-column: 2;
+  grid-row: 2 / 5;
+  /* Side bleed for the Quick Reviews pop-up shadow; absorbed by the column
+     gap (40px) on the left and the page padding (32px) on the right, so the
+     content sits where it looks like it does and the rail ends on the page's
+     right edge. The narrow layout drops it — there is no gap to bleed into,
+     and it pushed the rail past the viewport edge. */
+  padding: 6px 32px 0 40px;
+  margin: 0 -32px 0 -40px;
+}
+
+/* The readiness figure beside the Up Next block. */
+.readyGrid {
+  display: grid;
+  /* Fixed shares of the row, so the band always runs the full width of the
+     column (its right edge is the exam row's) and the Up Next block does not
+     move when the figure's content changes. The figure used to be sized to
+     its content and the block capped at 480px: on a wide window that left a
+     blank strip to the right, and the block's left edge shifted whenever a
+     prerequisite warning appeared or went away. */
+  grid-template-columns: minmax(240px, 5fr) minmax(300px, 7fr);
+  align-items: start;
+  gap: 32px;
+}
+
+/* ── the Up Next block ───────────────────────────────────────────────────────
+   Sized from its OWN width (it is anywhere from 300px to ~700px wide depending
+   on the window and the side nav), not the page's. Wide: one row, the concept
+   on the left and its actions on the right. Narrow: one column. */
+.focus { container-type: inline-size; container-name: focus; }
+.focusBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+/* The block is the SAME height whichever concept is in it. Its one variable
+   part is the name, which runs to one or two lines: the concept row is always
+   as tall as a two-line name over its line of prerequisites (2 x 26.4 + 4 +
+   22), and a third line is clamped. The prerequisites never wrap and the
+   actions never wrap. A block that grew and shrank moved everything under it
+   each time you picked a different concept.
+
+   That 79px is also the ceiling on the mastery ring: it is the tallest thing
+   in the row, so a ring past ~72px would make the BLOCK taller rather than
+   just filling it. */
+.focusMain { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.focusConcept { display: flex; align-items: center; gap: 14px; min-height: 79px; }
+/* The clamp box is the LINE box, and the display face's glyphs are taller than
+   the 1.2 line it is set on, so `overflow: hidden` was shaving the bottom off
+   every descender ("Algorithms" lost the tail of its g). Measured overflow was
+   ~1.3px, so 0.1em (2.2px) clears it with headroom; the negative margin gives
+   that room back to the layout, so the concept row is still the 79px it
+   reserves. Deliberately not more: every px of padding here is a px off the
+   4px gap to the prerequisite line below, which is the only place to take it
+   from without making the block taller. */
+.focusName {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; text-wrap: balance;
+  padding-bottom: 0.1em;
+  margin-bottom: -0.1em;
+}
+.focusActions { display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; }
+/* With no concept to show (a course with none yet, or all mastered) the block
+   keeps the height it has with one: padding + label line + gap + concept row. */
+.focusEmpty { box-sizing: border-box; min-height: calc(32px + 14.5px + 10px + 79px); }
+@container focus (min-width: 480px) {
+  .focusBody { grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; align-items: center; }
+  .focusMain { grid-column: 1; grid-row: 1; }
+  .focusActions { grid-column: 2; grid-row: 1; }
+}
+/* Stacked: the actions share the row equally, so a longer label ("Review 12
+   flashcards") shortens with an ellipsis instead of wrapping to a second row. */
+@container focus (max-width: 479.98px) {
+  .focusAct { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; text-overflow: ellipsis; }
+}
+/* The block is the side nav's olive (--sidenav-bg), so the two green surfaces
+   on the page are one colour. Its buttons: the lead one inverted (paper, with
+   forest text), the rest a wash of white. */
+.focusAct {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 12px; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.13); color: #fff;
+  font-size: var(--fs-md); font-weight: 600; text-decoration: none; white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.focusAct:hover { background: rgba(255, 255, 255, 0.22); }
+.focusActPrimary { background: var(--bg-panel); color: var(--brand-forest); }
+.focusActPrimary:hover { background: #fff; }
+
+/* Below this the 360px rail no longer leaves the roadmap a usable column
+   (200px tiles plus the readiness pair), so the rail goes under the main
+   column and everything gets the full width. */
+@container studyhub (max-width: 1060px) {
+  .hub {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    padding: 18px 24px 24px;
+  }
+  .areaHeader, .areaTabs, .areaReady, .areaRoadmap, .areaRail {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .areaRail { padding: 6px 2px 0 0; margin: 0; }
+  .readyGrid { gap: 24px; }
+  /* The header and the exam-tab row hold more than fits in one line here. */
+  .headRow, .areaTabs { flex-wrap: wrap; }
+}
+
+/* Past here the two floors (270 + 300 + 32) no longer fit, so the card does
+   finally go under the figure — there is no width left to hold it beside. */
+@container studyhub (max-width: 730px) {
+  .readyGrid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+}
+
+@container studyhub (max-width: 700px) {
+  /* The Dashboard's mobile padding. */
+  .hub { padding: 8px 20px 16px; }
+  .readyGrid { gap: 20px; }
+}
+
+/* Leaving for a tool: the hub fades back while the route changes. */
+.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms ease; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .leaving { transition: none; } }

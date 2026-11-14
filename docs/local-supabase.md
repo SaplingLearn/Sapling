@@ -91,9 +91,9 @@ staging/prod are unaffected:
 
 The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in with
 Google creates *your* user (`user_<google-id>`), not the seeded `seed-user-demo`;
-on a local backend that account is filled with the rich sample dataset (below).
+on a local backend that account is filled with the sample data (below).
 
-### Your own account gets the rich sample dataset automatically (#684, #715)
+### Your own account gets the sample data automatically (#684, #715)
 
 On a local backend, signing in with a **new** Google account is enough. It
 lands on a **"Setting up your sample data…"** screen (`/setting-up`) instead
@@ -101,6 +101,18 @@ of `/onboarding`, and moves on to the dashboard once the data is in (a few
 seconds). If seeding fails, the screen shows the error and a **Continue
 anyway** link to `/onboarding`, and keeps waiting: the backend retries, and if
 a retry succeeds the screen still moves on to the dashboard.
+
+A new account gets two datasets, in this order, before it is let in:
+
+1. **The rich copy**: the active rich user's five classes with a little of
+   everything (below).
+2. **The study dataset**: a term of study guides, quizzes, flashcards,
+   documents and exams dated around today, in three of those classes
+   ([what it writes](#the-study-dataset-seed_local_study)).
+
+The second one adds little to the wait. It is about 760 rows, but in 16 bulk
+writes and a few dozen lookups (building and encrypting the rows takes under
+0.1 s), where the rich copy before it is a few hundred single-row round trips.
 
 How it works: `services/local_seed_watcher.py` is a backend lifespan task that
 runs only on a local backend. It seeds, one at a time, every account that is a
@@ -112,6 +124,15 @@ never redone, a seed that stopped midway is finished on a later pass, and an
 account you already onboarded — one with your own data in it — is left alone.
 For that account, run the [manual command](#manual-fallback) instead.
 
+The same column is what makes the study dataset a once-only write. Unlike the
+rich copy, the study seed rewrites its rows (new dates, answers cleared), so
+`seed_owner` runs it only while the account is not onboarded and completes
+onboarding straight after. No later sign-in, watcher pass, restart or
+`seed_local_rich --owner-…` run touches those rows again; only
+`python -m db.seed_local_study` does, when you ask. If the study seed fails,
+the account is not held back: the backend logs one warning naming the command
+to retry with, and the account is ready with the rich copy alone.
+
 The watcher idles on a 30-second poll (`LOCAL_SEED_WATCH_INTERVAL_SECONDS`; a
 value that is not a positive number falls back to 30 with a warning), but a
 sign-in does not wait for it: the post-sign-in routing and the hold screen ask
@@ -122,7 +143,7 @@ onboarded. A failed account is retried with a backoff (10 s, doubling, capped
 at 5 minutes); its error stays in the backend log and on the hold screen until
 a retry succeeds or you finish onboarding by hand.
 
-The seed adds the active rich user's five enrollments, graph and mastery
+The rich copy adds the active rich user's five enrollments, graph and mastery
 history, documents and private chunks, notes, quizzes, gradebook, study guides,
 chat sessions, flashcards, and rooms. It completes local onboarding; your
 Google identity, profile, approval, settings, and existing study data remain
@@ -132,11 +153,12 @@ submissions you made).
 
 Use **All semesters**, or choose Fall 2025, Spring 2026, or Fall 2026, to
 inspect the fixture's term-specific courses. Re-seeding inserts nothing and
-preserves edits to the sample data. Each developer gets independent sample
-records; the normal `rich-user-*` E2E fixtures keep their original IDs and
-ownership. Once seeded, the data is yours: drop a sample course and it stays
-dropped, because the watcher never re-runs a finished seed. (Re-running the
-manual command does re-add missing sample rows.)
+preserves edits to the sample data, the study dataset's included. Each
+developer gets independent sample records; the normal `rich-user-*` E2E
+fixtures keep their original IDs and ownership. Once seeded, the data is
+yours: drop a sample course and it stays dropped, because the watcher never
+re-runs a finished seed. (Re-running the manual command does re-add missing
+sample rows.)
 
 Known limits, by decision: when your account already has a row the seed would
 create under the same natural key (say, your own enrollment in a sample
@@ -161,6 +183,11 @@ virtual environment (after signing in once):
 python -m db.seed_local_rich --owner-email you@gmail.com
 ```
 
+On an account that is not onboarded yet it does exactly what the watcher does:
+both datasets, then onboarding. On an onboarded account it adds missing rich
+rows and nothing else; the study dataset there is its own command (next
+section).
+
 The command finds your existing account by decrypting local user emails.
 `--owner-user-id` also accepts your account ID (shown by `GET /api/auth/me` in
 your signed-in browser), as an alternative to email. Unknown or ambiguous
@@ -169,6 +196,106 @@ accounts fail before any data is written.
 The chunks use encrypted text and deterministic synthetic 768-dimensional
 embeddings: the fixtures exercise storage and retrieval without calling a
 model, and are not a semantic-search relevance benchmark.
+
+#### The study dataset: `seed_local_study`
+
+The rich dataset is fixed and small. The E2E journeys, the oracles and the
+integration suite assert on its `rich-*` accounts row for row, so its dates
+never move and it cannot grow: one study guide, six flashcards, three quizzes,
+every exam in the past. On its own the Study Guides home shows one card and
+the Study page shows zero minutes and no upcoming exam.
+
+So a developer's own account gets a second dataset on top: a term of study
+data dated relative to the day it is written. A new account gets it by itself
+at its first sign-in (above). Run the command from `backend/` when you want it
+again: on an account that signed in before this was automatic, after a failed
+first attempt, or to bring a stale account's dates back to today (the owner
+flag is required; it never defaults to a fixture account):
+
+```bash
+python -m db.seed_local_study --owner-email you@gmail.com   # or --owner-user-id
+```
+
+It writes into three of the sample classes, CS101, MATH210 and BIO110, about
+760 rows in all: 51 concepts (the rich copy's 13 among them, updated in place)
+and 59 prerequisites, 35 documents, 26 assignments, 41 quiz attempts with 193
+answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
+13 study guides and 3 course outlines. Per class:
+
+- **Concept tree**: 16 to 18 concepts with prerequisites, spread over all four
+  mastery tiers, with a mastery event for every quiz and tutor session.
+- **Documents**: 11 or 12 lectures, slides, a reading, an assignment and a
+  syllabus, uploaded over the last eleven weeks, each with a summary, concept
+  notes and a few paragraphs of text.
+- **Coursework**: an exam already sat, one inside two weeks and a final inside
+  thirty days, with homework, quizzes and a project around them.
+- **Quiz**: 11 to 15 finished quizzes over the last month (38 in all), one
+  waiting to be resumed and two abandoned, with their per-answer responses
+  and a quiz digest (common mistakes, weak areas) per concept.
+- **Flashcards**: a deck per concept (196 cards in all), from never reviewed to
+  well worn, and three saved sets, some tied to an exam.
+- **Tutor**: four or five sessions. The Study page's daily minutes come from
+  these, the quizzes and the card reviews.
+- **Study guides**: four or five guides (thirteen in all). Between them they
+  cover every scope, goal and depth, three to eight sections, every block
+  type, saved and unsaved, read marks, answered checks and feedback. At least
+  two say "2 new lectures", one is still generating, one has a section that
+  failed and one is in the pre-redesign format. Each section is written at
+  the length its guide's depth asks the section writer for (90 to 160 words
+  of prose for a cram sheet, 280 to 450 for standard, 500 to 800 for a deep
+  review, and about half for a mastered concept), with a one or two sentence
+  Skim summary per passage. No two blocks stand back to back, in Read or in
+  Skim: each block follows a passage that explains it, and the check closes
+  the section after a passage that sums it up. CS101's "Pointers, recursion
+  and Big-O" (Midterm 2, standard) is the one to open to see the usual
+  output: it is seeded as just written, with every block type between its
+  passages.
+- **Course outline**: four units (the roadmap's columns), stored under the
+  outline's real evidence hash so the Study page does not regenerate it with
+  the model. Every exam and quiz is linked to concepts of its own: a quiz to
+  the two or three it names, a midterm to its units, the final to everything,
+  and a quiz or midterm the rich copy left on the same enrollment to its
+  concepts too. On the Study page the readiness band follows an exam's tab
+  only while the exam is ahead (today to thirty days out, where the outline
+  is served); the tab of an exam already sat reads as the whole class.
+
+The content lives in `backend/db/local_study_data/`, one module per class
+(`cs101.py`), with its concept tree and its study guides beside it
+(`cs101_concepts.py`, `cs101_guides.py`). A section is drafted once per
+concept, in layers: an opening every length has, the passages a standard
+guide adds and the ones a deep guide adds, so one draft serves guides of
+different depths. Blocks are layered the same way (a cram section keeps one
+block and its check). A
+guide is built the way a generation run leaves it: the server's own check
+decides whether each chart is plotted from data (two are, from numbers in
+the lecture they cite) and stamps the evidence line on a quiz mistake.
+
+Every row has a deterministic `study-…` id and every write is an upsert, so
+the command is safe to re-run: on a later day it moves the same rows back to
+"now", and it puts them back as seeded (a check you answered, a guide you
+regenerated). That reset is why only the command, never a sign-in, repeats
+it. A concept or prerequisite your account already has is updated
+under the id it has. Rows that are not the seed's are left alone, apart from
+the quiz digest and the course outline of the concepts and classes it fills.
+A sample class you dropped is skipped.
+
+Things worth knowing:
+
+- The guide left generating holds a fresh generation claim. Open it within
+  fifteen minutes to see the outline waiting; after that the reader resumes
+  it with the real model, as it does for any guide left that way.
+- Flashcards carry no due date: the app stores none
+  (`services/flashcards/cards.py`), so "review state" is the review count,
+  the last rating and when.
+- Lecture counts on your own account also include lectures the seed did not
+  write (the rich seed's `linear-algebra-notes.pdf`, your uploads).
+
+Local only, like the rich seed: it calls no model and nothing outside the
+local stack, and every encrypted column is written under the local
+`ENCRYPTION_KEY`. It is NOT part of the default `python -m db.seed_local_rich`
+dataset, `scripts/local-up.sh`, a reset or the E2E baseline: the `rich-*`
+accounts keep the fixed dataset. The one E2E journey that signs in a new
+Google account (`frontend/e2e/local-seed.spec.ts`) gets both, as you do.
 
 `scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
 `SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your

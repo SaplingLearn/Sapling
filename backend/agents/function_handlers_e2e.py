@@ -40,6 +40,7 @@ from agents._providers import (
     register_function_handler,
     set_function_stream_delay_ms,
 )
+from agents.study_guide import BLOCK_REWRITE_MARKER
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -316,6 +317,43 @@ register_function_handler(
 )
 
 
+# ── Flashcards ──────────────────────────────────────────────────────────────
+#
+# ONE agent (agents/flashcard.py, task "flashcard", output `Flashcards`: a list
+# of {front, back}) serves every flashcard model call, all of them request-path
+# (the route awaits the agent and answers with its cards):
+#   POST /api/flashcards/generate         (stores the cards; the Flashcards page
+#                                          calls it on arriving with `start=1`)
+#   POST /api/flashcards/import/generate  (cards for review)
+#   POST /api/flashcards/import/cleanup   (the "cleaned" deck)
+#   POST /api/flashcards/import/cloze     (cloze cards)
+#   POST /api/flashcards/import/parse     with source `ocr` (cards off a photo)
+# Unregistered, function mode's dispatch raised UnregisteredHandlerError and
+# each of those answered 502.
+#
+# Fixed output, like every handler here: the same three cards whatever was
+# asked for (the requested count, the topic and the task are ignored), so a
+# journey asserts these strings and a deck's size is always 3 per model call.
+# Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_FLASHCARDS = [
+    {
+        "front": "[e2e-function-model] What must every recursive function have?",
+        "back": "A base case that stops the recursion.",
+    },
+    {
+        "front": "[e2e-function-model] What does the recursive step do?",
+        "back": "It calls the function on a smaller version of the same problem.",
+    },
+    {
+        "front": "[e2e-function-model] What happens without a base case?",
+        "back": "The calls never stop, and the call stack overflows.",
+    },
+]
+
+register_function_handler("flashcard", _structured_output({"cards": E2E_FLASHCARDS}))
+
+
 # ── Notetaker agent actions (F5a) ───────────────────────────────────────────
 #
 # routes/notes.py runs three request-path notetaker actions the browser awaits
@@ -412,3 +450,205 @@ def _topic_checklist_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("topic_checklist", _topic_checklist_handler)
+
+
+# ── Study guide (redesign) ──────────────────────────────────────────────────
+#
+# services/study_guides runs three agents on the one `study_guide` task, all on
+# the request path (the generate stream and the block regenerate route), so
+# one handler answers all three:
+#   study_guide_outline_agent (structured) -> E2E_STUDY_GUIDE_OUTLINE
+#   study_guide_section_agent (text)       -> E2E_STUDY_GUIDE_SECTION_TEXT
+#   study_guide_block_agent   (text)       -> a block of the type it was given
+# The two text agents are told apart by BLOCK_REWRITE_MARKER, which only the
+# block agent's user message carries. The block to rewrite follows it.
+#
+# The outline's concepts are graph nodes the rich seed gives rich-user-active
+# in CS101 (db/seed_local_rich.py), one struggling, one learning and one
+# mastered, so the reader's weighting and its collapsed mastered section both
+# show. Every section gets the same body: the server assigns the item ids, so
+# they still differ per section. The body parses with no rejected block
+# (tests/test_e2e_function_handlers.py pins that), so generation never calls
+# the block agent; the check's correct option is "b". No `mistakes` block (it
+# has to cite quiz history the lane's student may not have) and no `chart`.
+
+E2E_STUDY_GUIDE_OUTLINE = {
+    "title": "Recursion and what it builds on",
+    "deck": "Three sections written from your own course material.",
+    "takeaways": [
+        "Every recursive function needs a base case so it can stop calling itself.",
+        "Control flow decides which statement runs next.",
+        "A variable is a name bound to a value of one type.",
+    ],
+    "sections": [
+        {
+            "title": "Recursion",
+            "concept": "Recursion",
+            "one_line": "A recursive function solves a problem by calling itself on a smaller copy of it.",
+            "keep_id": None,
+        },
+        {
+            "title": "Control flow",
+            "concept": "Control Flow",
+            "one_line": "Conditions and loops decide which statement runs next.",
+            "keep_id": None,
+        },
+        {
+            "title": "Variables and types",
+            "concept": "Variables and Types",
+            "one_line": "A variable is a name bound to a value, and the value has a type.",
+            "keep_id": None,
+        },
+    ],
+}
+
+_E2E_STUDY_GUIDE_BLOCKS = {
+    "formula": {
+        "type": "formula",
+        "name": "Factorial, defined recursively",
+        "latex": "n! = n \\cdot (n-1)!",
+        "spoken": "n factorial equals n times the factorial of n minus one.",
+        "source": "S1",
+    },
+    "worked_example": {
+        "type": "worked_example",
+        "title": "Trace factorial(3)",
+        "problem": (
+            "factorial(n) returns 1 when n is 1, and n times factorial(n - 1) "
+            "otherwise. Trace factorial(3)."
+        ),
+        "steps": [
+            {
+                "title": "Go down to the base case",
+                "math": "factorial(3) -> factorial(2) -> factorial(1)",
+                "why": "Each call waits on a smaller one until the input is 1.",
+            },
+            {
+                "title": "Answer the base case",
+                "math": "factorial(1) = 1",
+                "why": "The base case returns without another call.",
+            },
+            {
+                "title": "Multiply back up",
+                "math": "2 times 1 = 2, then 3 times 2 = 6",
+                "why": "Each waiting call finishes with the value it was waiting for.",
+            },
+        ],
+    },
+    "comparison": {
+        "type": "comparison",
+        "title": "Recursion and loops",
+        "columns": ["Recursion", "Loop"],
+        "rows": [
+            {
+                "label": "Repeats by",
+                "cells": ["Calling itself", "Running its body again"],
+                "emphasis": False,
+            },
+            {
+                "label": "Stops when",
+                "cells": ["The base case is reached", "The condition turns false"],
+                "emphasis": True,
+            },
+        ],
+    },
+    "key_terms": {
+        "type": "key_terms",
+        "title": "New in this section",
+        "terms": [
+            {"term": "Base case", "definition": "The input a recursive function answers directly."},
+            {"term": "Recursive step", "definition": "The call a function makes to itself on a smaller input."},
+            {"term": "Call stack", "definition": "The calls that are still waiting on a smaller call."},
+        ],
+    },
+    "concept_map": {
+        "type": "concept_map",
+        "title": "How these ideas build",
+        "nodes": [
+            {"concept": "Variables and Types", "step": "Foundations"},
+            {"concept": "Control Flow", "step": "Next"},
+            {"concept": "Recursion", "step": "Then"},
+        ],
+    },
+    "check": {
+        "type": "check",
+        "question": (
+            "factorial(n) returns 1 when n is 1, and n times factorial(n - 1) "
+            "otherwise. What does factorial(3) return?"
+        ),
+        "options": [
+            {"id": "a", "text": "3"},
+            {"id": "b", "text": "6"},
+            {"id": "c", "text": "9"},
+        ],
+        "correct_id": "b",
+        "explain_correct": "factorial(3) is 3 times factorial(2), which is 2 times factorial(1), which is 1. That makes 6.",
+        "explain_incorrect": "Write one line per call until you reach the base case, then multiply back up.",
+        "concept": "Recursion",
+    },
+}
+
+
+def _fenced(block: dict) -> str:
+    return f"```block\n{json.dumps(block)}\n```"
+
+
+E2E_STUDY_GUIDE_SECTION_TEXT = "\n\n".join([
+    "A recursive function solves a problem by calling itself on a smaller copy "
+    "of the same problem. Every one needs a **base case**: an input it answers "
+    "directly, without another call [S1].",
+    "The **recursive step** is the other half. It has to move the input toward "
+    "the base case on every call, or the calls never stop.",
+    ">> A recursive function calls itself on a smaller input until it reaches "
+    "a base case it can answer directly.",
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["formula"]),
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["worked_example"]),
+    "On an exam you are usually asked to trace the calls, not to define "
+    "recursion. Write one line per call and stop at the base case.",
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["comparison"]),
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["key_terms"]),
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["concept_map"]),
+    _fenced(_E2E_STUDY_GUIDE_BLOCKS["check"]),
+])
+
+# The rewritten key terms: a title and terms that differ from the section
+# body's, so the journey that regenerates the section's key terms sees the
+# block change (it asserts this title).
+E2E_STUDY_GUIDE_BLOCK_TEXT = _fenced({
+    "type": "key_terms",
+    "title": "Key terms, rewritten",
+    "terms": [
+        {"term": "Base case", "definition": "The smallest input, answered without another call."},
+        {"term": "Stack overflow", "definition": "What happens when the calls never reach a base case."},
+    ],
+})
+
+_E2E_BLOCK_TYPE = re.compile(r'"type"\s*:\s*"(\w+)"')
+
+
+def _rewritten_block(block_type: str | None) -> str:
+    """The reply to a rewrite of one block. The route only accepts a block of
+    the type it asked for, so every type the section body has gets itself
+    back, marked in its title. A check is never regenerated, and the body has
+    no chart or mistakes block: those, like a type that cannot be read, get
+    the key terms."""
+    block = _E2E_STUDY_GUIDE_BLOCKS.get(block_type)
+    if block is None or block_type in ("key_terms", "check"):
+        return E2E_STUDY_GUIDE_BLOCK_TEXT
+    name = "name" if "name" in block else "title"
+    return _fenced({**block, name: f"{block[name]}, rewritten"})
+
+
+def _study_guide_handler(messages, info) -> ModelResponse:
+    if info.output_tools:
+        # The outline is the task's only structured agent.
+        return _structured_output(E2E_STUDY_GUIDE_OUTLINE)(messages, info)
+    _, marker, block = _last_user_prompt_text(messages).partition(BLOCK_REWRITE_MARKER)
+    if not marker:
+        return ModelResponse(parts=[TextPart(content=E2E_STUDY_GUIDE_SECTION_TEXT)])
+    # Read as text: a rejected block need not be JSON.
+    found = _E2E_BLOCK_TYPE.search(block)
+    return ModelResponse(parts=[TextPart(content=_rewritten_block(found and found.group(1)))])
+
+
+register_function_handler("study_guide", _study_guide_handler)

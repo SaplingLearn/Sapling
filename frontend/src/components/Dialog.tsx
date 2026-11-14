@@ -109,6 +109,12 @@ interface DialogProps {
   labelledBy?: string;
   title?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  /**
+   * Panel width as a CSS length (e.g. `min(980px, calc(100vw - 32px))`), for
+   * a dialog wider than the `size` presets. Replaces the preset width only:
+   * the panel's max-width still applies, so it never outgrows a small screen.
+   */
+  width?: string;
   dismissible?: boolean;
   showCloseButton?: boolean;
   padding?: string;
@@ -129,6 +135,7 @@ export default function Dialog({
   labelledBy,
   title,
   size = 'md',
+  width,
   dismissible = true,
   showCloseButton = true,
   padding = '28px',
@@ -172,7 +179,7 @@ export default function Dialog({
           background: 'var(--bg-panel)',
           borderRadius: 'var(--r-lg)',
           padding,
-          width: SIZE_WIDTH[size],
+          width: width ?? SIZE_WIDTH[size],
           maxWidth: 'min(95vw, calc(100vw - 32px))',
           maxHeight: 'calc(100vh - 48px)',
           overflowY: 'auto',

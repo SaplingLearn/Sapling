@@ -1,0 +1,26 @@
+/* The small pieces every study-guide surface shares, so the home's cards, the
+   Library's saved guides and the New study guide dialog say the same thing
+   the same way: a label pill, a mastery swatch and its label, a class. */
+
+.pill {
+  display: inline-block; box-sizing: border-box; max-width: 100%; height: 26px; padding: 0 10px;
+  border-radius: var(--r-full); background: var(--bg-soft); color: var(--text-dim);
+  font-family: var(--font-sans); font-size: var(--fs-sm); font-weight: 700; line-height: 26px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.swatch { flex: none; display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.tierLabel { flex: none; font-family: var(--font-sans); font-size: var(--fs-sm); font-weight: 700; white-space: nowrap; }
+
+.classTag {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  font-family: var(--font-sans); font-size: var(--fs-md); font-weight: 700; color: var(--text);
+}
+.classCode { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.classDot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+
+/* Read out, not shown. */
+.readOut {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}

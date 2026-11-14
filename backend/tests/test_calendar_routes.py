@@ -96,7 +96,7 @@ class TestSaveAssignments:
              patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
              patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = [
-                {"title": "HW1", "due_date": "2026-03-01"},
+                {"enrollment_id": "e1", "title": "HW1", "due_date": "2026-03-01"},
             ]
             t.return_value.insert.return_value = []
             body = {
@@ -108,7 +108,11 @@ class TestSaveAssignments:
             }
             r = client.post("/api/calendar/save", json=body)
         assert r.status_code == 200
-        assert r.json()["saved_count"] == 1
+        assert r.json() == {
+            "saved_count": 1,
+            "skipped_count": 1,
+            "skipped": [{"title": "HW1", "due_date": "2026-03-01", "reason": "duplicate"}],
+        }
 
     def test_save_skips_when_iso_datetime_matches_existing_date(self):
         """#16: same title + same calendar day (ISO date vs datetime) → one row."""
@@ -116,7 +120,7 @@ class TestSaveAssignments:
              patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
              patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = [
-                {"title": "Final Exam", "due_date": "2026-05-01"},
+                {"enrollment_id": "e1", "title": "Final Exam", "due_date": "2026-05-01"},
             ]
             t.return_value.insert.return_value = []
             body = {
@@ -128,6 +132,53 @@ class TestSaveAssignments:
             r = client.post("/api/calendar/save", json=body)
         assert r.status_code == 200
         assert r.json()["saved_count"] == 0
+        # The skip echoes the calendar day the row would have been stored on.
+        assert r.json()["skipped"] == [
+            {"title": "Final Exam", "due_date": "2026-05-01", "reason": "duplicate"}]
+
+    def test_save_says_nothing_was_skipped_when_everything_saved(self):
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
+            t.return_value.select.return_value = []
+            body = {"user_id": "user_andres", "assignments": [
+                {"title": "Midterm", "due_date": "2026-04-01", "assignment_type": "exam", "course_id": "CS101"}]}
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json() == {"saved_count": 1, "skipped_count": 0, "skipped": []}
+
+    def test_save_reports_a_course_the_student_is_not_enrolled_in(self):
+        """The Study hub toasted "Dates saved" on a save that wrote nothing:
+        the answer now names each row left out and why."""
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.enrollment_id_for", return_value=None):
+            body = {"user_id": "user_andres", "assignments": [
+                {"title": "Final", "due_date": "2026-05-10", "assignment_type": "exam", "course_id": "DROPPED"}]}
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json() == {
+            "saved_count": 0,
+            "skipped_count": 1,
+            "skipped": [{"title": "Final", "due_date": "2026-05-10", "reason": "no_enrollment"}],
+        }
+        t.return_value.insert.assert_not_called()
+
+    def test_save_same_title_and_day_in_another_course_is_not_a_duplicate(self):
+        """Two courses can both have a "Final Exam" on one day. The duplicate
+        key used to span every course of the student, so the second exam was
+        dropped without a word."""
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.enrollment_id_for",
+                   side_effect=lambda _u, course, **_k: {"CS101": "e1", "MA242": "e2"}[course]):
+            t.return_value.select.return_value = [
+                {"enrollment_id": "e1", "title": "Final Exam", "due_date": "2026-05-10"},
+            ]
+            body = {"user_id": "user_andres", "assignments": [
+                {"title": "Final Exam", "due_date": "2026-05-10", "assignment_type": "exam", "course_id": "MA242"}]}
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json() == {"saved_count": 1, "skipped_count": 0, "skipped": []}
+        (row,) = t.return_value.insert.call_args[0][0]
+        assert row["enrollment_id"] == "e2" and row["title"] == "Final Exam"
 
 
 # ── GET /api/calendar/upcoming/{user_id} ─────────────────────────────────────

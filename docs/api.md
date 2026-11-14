@@ -23,15 +23,20 @@ Every route is mounted under `/api/<name>` in `backend/main.py`. Unless noted, r
 
 **Flashcards**
 
-- `POST` `/api/flashcards/generate` — Generate flashcards for a topic
+- `POST` `/api/flashcards/generate` — Generate and store flashcards for a topic: body `{user_id, topic, count, session_id?, semester?, course_id?}`. With a `course_id` the cards are grounded in that course's documents, prioritise only that course's weak concepts, and are filed under the selected `semester`'s offering of it (else the student's enrolled offering). Answers `{flashcards: [...], context_used}`; each card carries the `course_id` it was filed under (`null` when none)
 - `POST` `/api/flashcards/import/parse` — Parse cards from paste, file, URL, or photo (no save)
 - `POST` `/api/flashcards/import/generate` — AI-generate cards from a topic / prompt
 - `POST` `/api/flashcards/import/cleanup` — Clean up parsed cards before commit
 - `POST` `/api/flashcards/import/cloze` — Convert sentences into cloze-deletion cards
 - `POST` `/api/flashcards/import/commit` — Commit parsed cards to the user's deck
-- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
+- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards (optional `?topic=`, `?semester=`). Each card has a derived `course_id` and a `due_at` that is always `null` until a review scheduler exists
 - `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
 - `DELETE` `/api/flashcards/{card_id}` — Delete a card
+- `GET` `/api/flashcards/sets/{user_id}` — List a user's saved sets (optional `?course_id=`)
+- `POST` `/api/flashcards/sets` — Save a set (name, course, concept names, options)
+- `POST` `/api/flashcards/sets/suggest` — Describe a set in a sentence and get the concepts it should hold (a suggestion; nothing is saved): body `{user_id, description, course_id?}` (description 3 to 300 characters), answers `{name, concepts: [{name, course_id, source, confidence}], considered, backend}` where `source` is `named` (the description says it) or `model`. 422 for the description's length; 429 with `Retry-After` past 10 model-backed requests a minute
+- `PATCH` `/api/flashcards/sets/{set_id}` — Change a saved set's name, concepts, options, or exam
+- `DELETE` `/api/flashcards/sets/{set_id}` — Delete a saved set (its cards stay)
 
 **Gradebook**
 
@@ -67,13 +72,26 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 - `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook (`202 {pending}` when a queued sync outlasts the wait)
 - `GET` `/api/gradescope/sync/{sapling_course_id}/status` — Poll a queued sync: 202 while it runs, then the POST's answer
 
+**Study**
+
+The Study hub's Daily Goal panel. Minutes are an estimate from timestamps the app already records, not a logged timer: each completed quiz attempt (start to finish, capped at 30 minutes, on the day it was completed); half a minute per flashcard reviewed that day (a card counts only on its latest review day); and tutor chat from message times (per session, per day: its first to its last message that day, capped at 60 minutes, so a chat opened last week counts on each day it is used). Each activity is rounded to whole minutes (never 0 when there was any), and a day's `minutes` is the sum of the three. Both routes are hidden with the rest of Study by the `hide_study` flag.
+
+- `GET` `/api/study/{user_id}/daily` — Estimated study minutes for the last seven local days, oldest first, plus the goal: `{goal_minutes, today, days: [{date, minutes, quiz, flashcards, tutor, quizzes, cards, sessions}]}`. Optional `?tz_offset_min=` is the browser's `Date#getTimezoneOffset()` (minutes behind UTC, default `0`; clamped to real-world offsets)
+- `PATCH` `/api/study/{user_id}/daily-goal` — Set the daily goal: body `{minutes}` (5 to 600), answers `{goal_minutes}`
+
 **Study Guide**
 
-- `GET` `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
-- `GET` `/api/study-guide/{user_id}/cached` — List all cached study guides
-- `GET` `/api/study-guide/{user_id}/courses` — List courses for guide generation
-- `GET` `/api/study-guide/{user_id}/exams` — List exam-type assignments
-- `POST` `/api/study-guide/regenerate` — Invalidate cache and regenerate a guide
+A study guide is the student's own durable document: many per class, for an exam, an assignment or the whole course, written as prose with typed blocks. Every route checks that `{user_id}` is the caller and is hidden with the rest of Study by the `hide_study` flag. The shapes are in `backend/models/study_guide.py` (mirrored in `frontend/src/lib/studyGuide/types.ts`); the design is `docs/design/study-guide-redesign.md`. A refusal answers `{detail, request_id}` with `detail` a sentence the UI can show: 404 for a guide, class, exam or block that is missing or not the caller's, 409 while another request is writing the guide, 422 for a choice that does not hold up, 429 past one of three hourly limits per student (60 guides created, 20 generation runs, 40 block rewrites; `STUDY_GUIDE_CREATE_RATE_LIMIT`, `STUDY_GUIDE_GENERATE_RATE_LIMIT` and `STUDY_GUIDE_BLOCK_RATE_LIMIT` override them), 502 when the model could not write.
+
+- `GET` `/api/study-guide/{user_id}/guides` — Every guide the student has, newest first: `{guides: GuideCard[]}`. A card carries the title, class (`course_id`, `course_name`, `course_code`: the short code, or the name for a course with none) and term, scope, goal, depth, status, `saved_at`, `new_materials` (lectures added since it was made), `bars` (each section's title, mastery tier and share) and `counts` (`sections`, `blocks`, `practice`, `minutes`)
+- `GET` `/api/study-guide/{user_id}/options?course_id=&semester=` — What a new guide for the class can be for and from which materials: `{scopes, materials}`. Scopes are the whole course first, then the class's exams and assignments by date, each with `suggested_material_ids`
+- `POST` `/api/study-guide/{user_id}/plan` — The planned outline for the modal's choices (body `GuideRequest`): `{sections: [{title, tier, weight}], minutes}`. No model runs
+- `POST` `/api/study-guide/{user_id}/guides` — Create a guide (body `GuideRequest`): 201 `{id}`. The row is `generating` with no sections yet; the reader starts the generation. 422 when the scope's kind and id disagree, when none of the chosen materials is the class's, or when none of them has text to read yet; 429 past the hourly limit on new guides (a refused request is not counted)
+- `GET` `/api/study-guide/{user_id}/guides/{guide_id}` — One guide as the reader renders it (`GuideDetail`): the card, its content, the live scope title and date, read sections, answers, feedback and `mastery` (the live tier of each concept it mentions). A check question the student has not answered comes with `correct_id` and both explanations null
+- `PATCH` `/api/study-guide/{user_id}/guides/{guide_id}` — Reader state, only the fields sent: `{read_sections?, saved?, feedback?}` answers `{read_sections, saved_at, feedback}`. `saved` puts the guide in the Library or takes it out. 422 for a section id the guide does not have
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/generate` — **Streaming SSE.** Body `{mode}`: `resume` (write whatever is not written yet), `update` (read the lectures added since the guide was made and write only the sections the new outline does not keep) or `regenerate` (read them too and write everything again); the last two keep the previous version. Events use the upload stream's envelope `{type, step, message, data}`, in this order: a `status` before each step (`message` is the label, `data` is `{step, total}`; `total` is an upper bound until the outline is planned and can drop after it, so read each pair together); when the run plans (a guide with no sections yet, an Update, a Regenerate) a `progress` with step `outline` (`data.content`, every section listed); one `progress` with step `section` per section the run writes (`data.section`, its `status` `written` or `failed`); then `done` (`data.guide` is the finished `GuideDetail`). A failure ends the stream with `error` instead (`message` is the reason, `data.retryable`). A stream can also be one event: `done` when another request finished the work first, `error` when another request took the guide first. A new guide's outline and each section are saved before their event is sent. An Update or Regenerate saves nothing until its first section is written, so one that fails before then leaves the guide exactly as it was (still `ready`); after an `error`, read the guide again: `generating` or `failed` means a `resume` finishes it. 404, 409, 422 (a `resume` with nothing left to write, an `update` with no new lecture it can read, a guide or materials that cannot be read) and 429 are answered as statuses before the stream opens; a 409 means another run is writing the guide, so poll the guide instead
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate` — Rewrite one block and leave the rest of the guide as it is: `{block}`. 409 while the guide is being written, 422 for a check question (its id carries the student's answer), 429 past the hourly limit on block rewrites, 502 when no valid new version came back
+- `POST` `/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer` — Answer a check question: body `{option_id}` (`a` to `d`), answers `{correct, correct_id, explanation, counted, mastery}`. Only the first answer is stored and moves mastery of the question's concept (`counted: true`, `mastery: {concept, before, after}` when a concept moved); a repeat is graded and explained with `counted: false`. 404 when the block is not a check question of the guide, 409 when the answer could not be stored because the guide was being changed at that moment (the write lost its compare-and-set twice; ask again), 422 for an option it does not have
 
 **Calendar**
 
@@ -176,7 +194,7 @@ gradebook. Failed imports do not advance the last-successful-sync timestamp.
 
 ## Complete route index
 
-Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09: 236 operations. Regenerate it from the running backend's `/openapi.json` when routers change.
+Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) on 2026-11-09 (236 operations then; 247 in the schema as of 2026-11-12); the five `/api/flashcards/sets` routes (`suggest` included) were added by hand on 2026-11-12; so were the two `/api/study` routes and the nine `/api/study-guide` routes that replaced the old five. Regenerate it from the running backend's `/openapi.json` when routers change.
 
 <details><summary><code>/api/admin</code> (71)</summary>
 
@@ -329,7 +347,7 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 
 </details>
 
-<details><summary><code>/api/flashcards</code> (9)</summary>
+<details><summary><code>/api/flashcards</code> (14)</summary>
 
 - `POST /api/flashcards/generate`
 - `POST /api/flashcards/import/cleanup`
@@ -338,6 +356,11 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 - `POST /api/flashcards/import/generate`
 - `POST /api/flashcards/import/parse`
 - `POST /api/flashcards/rate`
+- `POST /api/flashcards/sets`
+- `POST /api/flashcards/sets/suggest`
+- `DELETE /api/flashcards/sets/{set_id}`
+- `PATCH /api/flashcards/sets/{set_id}`
+- `GET /api/flashcards/sets/{user_id}`
 - `GET /api/flashcards/user/{user_id}`
 - `DELETE /api/flashcards/{card_id}`
 
@@ -531,13 +554,24 @@ Generated from the app's OpenAPI schema (`app.openapi()` in `backend/main.py`) o
 
 </details>
 
-<details><summary><code>/api/study-guide</code> (5)</summary>
+<details><summary><code>/api/study</code> (2)</summary>
 
-- `POST /api/study-guide/regenerate`
-- `GET /api/study-guide/{user_id}/cached`
-- `GET /api/study-guide/{user_id}/courses`
-- `GET /api/study-guide/{user_id}/exams`
-- `GET /api/study-guide/{user_id}/guide`
+- `GET /api/study/{user_id}/daily`
+- `PATCH /api/study/{user_id}/daily-goal`
+
+</details>
+
+<details><summary><code>/api/study-guide</code> (9)</summary>
+
+- `GET /api/study-guide/{user_id}/guides`
+- `POST /api/study-guide/{user_id}/guides`
+- `GET /api/study-guide/{user_id}/guides/{guide_id}`
+- `PATCH /api/study-guide/{user_id}/guides/{guide_id}`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate`
+- `POST /api/study-guide/{user_id}/guides/{guide_id}/generate`
+- `GET /api/study-guide/{user_id}/options`
+- `POST /api/study-guide/{user_id}/plan`
 
 </details>
 

@@ -1007,7 +1007,6 @@ def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str) -> None:
     from services.document_indexing import schedule_document_index
 
     steps = (
-        ("invalidate_study_guide_cache", docs._invalidate_study_guide_cache, (user_id, offering_id)),
         ("update_course_context", docs._refresh_course_context, (offering_id, user_id)),
         ("check_upload_achievements", docs._check_upload_achievements, (user_id,)),
         ("index_document", schedule_document_index, (doc_id, user_id)),

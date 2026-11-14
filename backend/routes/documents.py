@@ -67,7 +67,6 @@ from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
     POST_ROLL_DRAIN_TIMEOUT_S,
     _POST_ROLL_TASKS,
     _check_upload_achievements,
-    _invalidate_study_guide_cache,
     _log_post_roll_exc,
     _refresh_course_context,
     _spawn_post_roll,
@@ -374,7 +373,6 @@ async def upload_document_sync(
         response.setdefault("categories", [])
         return response
 
-    background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     # update_course_context aggregates an OFFERING's enrollments (#759: the
     # abstract course id matched none, so it only cleared the cache).
     background_tasks.add_task(_refresh_course_context, offering_id, user_id)

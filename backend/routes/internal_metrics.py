@@ -172,7 +172,8 @@ def internal_metrics(authorization: str | None = Header(default=None)) -> dict:
       errors_*, the *_failed signals) appear only when `events` holds a row from
       the last 30 days, and the llm_* keys only when `llm_usage` does — both
       tables go silent under the `EVENTS_LOGGING_ENABLED=false` kill switch.
-      `study_guides` is never sent: that table is a cache.
+      `study_guides` is not sent: `canopy_metrics()` was written when that
+      table was a cache and does not count it.
     - **`llm_cost_cents` is a LOWER bound.** It is `ROUND(SUM(cost_usd) * 100)`
       — integer cents, half-up — and `cost_usd` is NULL for a model
       `services/llm_pricing.py` has no price for; those calls add tokens but no

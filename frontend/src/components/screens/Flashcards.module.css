@@ -1,0 +1,35 @@
+/* The Flashcards page, in the Study hub's language: the Dashboard's page
+   padding, the big display title with the course field beside it and the
+   page's actions on the right. Under it, either the home
+   (components/flashcards/home/home.module.css) or the review
+   (components/flashcards/review/review.module.css). No side panel, no boxed
+   toolbar. */
+
+.page {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 32px 24px;
+  box-sizing: border-box;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+/* Title, course field, actions: the hub's header row and line box. */
+.head { display: flex; align-items: center; gap: 16px; padding: 6px 0 18px; flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+/* The Dashboard's header action (.btn .btn--sm at 40px). */
+.action { height: 40px; padding: 0 16px; font-size: var(--fs-md); white-space: nowrap; }
+
+/* In a review the course field gives way to what is being reviewed: a set's
+   name, the one concept, or "6 concepts". */
+.deckName {
+  flex: 0 1 auto; min-width: 0; max-width: 100%;
+  font-size: var(--fs-base); font-weight: 600; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+@media (max-width: 768px) {
+  .page { padding: 8px 20px 16px; }
+  .head { padding: 14px 0; }
+}

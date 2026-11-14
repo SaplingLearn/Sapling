@@ -1,0 +1,133 @@
+/* The review: one centred column, and the one place on the page that is
+   allowed colour. Every colour is an app token (globals.css) or a tint of one:
+   the mastery-state three for how a card was rated, the course's own colour
+   as the card's accent (--fc-accent, set on the stage), the side nav's olive
+   for the answer side. */
+
+.stage { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 32px 0 8px; }
+.column { width: 100%; max-width: 620px; }
+.message { text-align: center; padding: 48px 0; color: var(--text-muted); }
+
+/* ── progress: "Card N of M", the tally, one segment per card ─────────────── */
+
+.meta {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 8px; font-size: var(--fs-sm); color: var(--text-muted);
+}
+.tally { display: inline-flex; align-items: center; gap: 12px; }
+.tallyItem { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--bg-soft); }
+.dot[data-kind="easy"], .segment[data-rated="easy"], .stackPart[data-kind="easy"] { background: var(--state-mastery); }
+.dot[data-kind="hard"], .segment[data-rated="hard"], .stackPart[data-kind="hard"] { background: var(--state-progress); }
+.dot[data-kind="forgot"], .segment[data-rated="forgot"], .stackPart[data-kind="forgot"] { background: var(--state-struggle); }
+
+/* The 3px of padding is room for the current segment's outline. */
+.segments { display: flex; gap: 3px; padding: 3px 0; }
+.segment {
+  flex: 1 1 0; min-width: 0; height: 6px; border-radius: var(--r-full); background: var(--bg-soft);
+  transition: background-color var(--dur) var(--ease);
+}
+.segment[data-current="true"] { outline: 2px solid var(--brand-forest); outline-offset: 1px; }
+
+/* A deck past the segment cap keeps the continuous bar. */
+.progress { height: 6px; margin: 3px 0; border-radius: var(--r-full); background: var(--bg-soft); overflow: hidden; }
+.progressFill {
+  width: 100%; height: 100%; background: var(--brand-forest);
+  transform-origin: left; transition: transform var(--dur) var(--ease);
+}
+
+/* ── the card ────────────────────────────────────────────────────────────── */
+
+.card { width: 100%; max-width: 620px; min-height: 320px; perspective: 1400px; cursor: pointer; }
+.cardInner {
+  position: relative; width: 100%; min-height: 320px;
+  transform-style: preserve-3d;
+  transition: transform 500ms cubic-bezier(.2, .85, .35, 1);
+}
+.cardInner[data-flipped="true"] { transform: rotateY(180deg); }
+
+/* The question side stays plain paper; its colour is the concept chip. (It
+   used to carry the course's colour along its top edge, which read as a
+   stripe stuck on a rounded card.) */
+.face {
+  position: relative; width: 100%; min-height: 320px; padding: 32px;
+  display: flex; flex-direction: column; justify-content: center;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  backface-visibility: hidden;
+}
+/* The answer side is tinted with the side nav's olive, so a flip is a change
+   of colour and not only of text. */
+.faceBack {
+  position: absolute; inset: 0; transform: rotateY(180deg);
+  background: color-mix(in srgb, var(--sidenav-bg) 14%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--sidenav-bg) 45%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+.faceHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+/* The concept the card is about, in the course's colour. */
+.topic {
+  min-width: 0; max-width: 65%; padding: 3px 10px; border-radius: var(--r-full);
+  font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--fc-accent, var(--brand-forest)) 16%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--fc-accent, var(--brand-forest)) 40%, transparent);
+  color: color-mix(in srgb, var(--fc-accent, var(--brand-forest)) 60%, var(--text));
+}
+/* Two classes, so these win over .h-serif's own line-height whatever order
+   the stylesheets load in. */
+.face .faceText { font-size: 24px; line-height: 1.35; font-weight: 500; }
+.faceBack .faceText { font-size: 20px; }
+.faceHint { margin-top: 18px; font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* ── ratings: three equal buttons the card's width, each filled softly in its
+   own colour (the pairs the app's chips use) ─────────────────────────────── */
+
+.rates { width: 100%; max-width: 620px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rate {
+  --rate-bg: var(--bg-panel); --rate-fg: var(--text);
+  height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid transparent; border-radius: var(--r-md);
+  background: var(--rate-bg); color: var(--rate-fg);
+  font: inherit; font-size: var(--fs-md); font-weight: 600;
+  text-transform: capitalize; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.rate[data-kind="forgot"] { --rate-bg: var(--err-soft); --rate-fg: var(--err); }
+.rate[data-kind="hard"] { --rate-bg: var(--warn-soft); --rate-fg: var(--warn); }
+.rate[data-kind="easy"] { --rate-bg: var(--sap-100); --rate-fg: var(--brand-forest); }
+.rate:hover:not(:disabled) { background: color-mix(in srgb, var(--rate-fg) 14%, var(--rate-bg)); }
+.rate:disabled { opacity: 0.45; cursor: not-allowed; }
+.key {
+  font-size: 10px; padding: 1px 5px; border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--rate-fg) 14%, transparent); color: inherit;
+}
+
+.foot {
+  width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.delete { margin-right: -10px; font-size: var(--fs-xs); color: var(--text-muted); }
+.delete:hover { color: var(--err); }
+
+/* ── deck complete: how the session went ─────────────────────────────────── */
+
+.summary { width: 100%; max-width: 620px; padding: 40px 0; text-align: center; color: var(--text-muted); }
+.summaryTitle { font-size: var(--fs-2xl); color: var(--text); }
+.stack {
+  display: flex; gap: 2px; height: 10px; max-width: 420px; margin: 18px auto 12px;
+  border-radius: var(--r-full); overflow: hidden; background: var(--bg-soft);
+}
+.stackPart { height: 100%; min-width: 6px; }
+.counts { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 18px; font-size: var(--fs-md); color: var(--text-dim); }
+.counts .tallyItem b { font-weight: 600; color: var(--text); }
+.summaryActions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+
+@media (max-width: 768px) {
+  .stage { padding-top: 20px; }
+}
+
+/* The app-wide reduced-motion reset already collapses these; said here too so
+   the flip and the strip do not depend on it. */
+@media (prefers-reduced-motion: reduce) {
+  .cardInner, .segment, .progressFill, .rate { transition: none; }
+}
