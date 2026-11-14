@@ -163,6 +163,15 @@ export function BirthdayScreen({ dob, blocked, confirming, minor, onDob, onConfi
     const next = { ...dob, [part]: value };
     onDob({ ...next, d: keepDay(next.d, next.m, next.y) });
   };
+  // "No, change it" removes itself: hand focus to the year it cleared.
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  const wasConfirming = useRef(confirming);
+  useLayoutEffect(() => {
+    if (wasConfirming.current && !confirming && !blocked) {
+      fieldsRef.current?.querySelector<HTMLElement>('[data-testid="onboarding-dob-year"]')?.focus();
+    }
+    wasConfirming.current = confirming;
+  }, [confirming, blocked]);
   return (
     <section className="ob-screen ob-screen--roomy">
       <ScreenHead title="When's your birthday?" />
@@ -173,7 +182,7 @@ export function BirthdayScreen({ dob, blocked, confirming, minor, onDob, onConfi
         ) : confirming ? (
           <ConfirmUnder13 onConfirm={onConfirmUnder13} onChange={onChangeBirthday} />
         ) : (
-          <div className="ob-dob">
+          <div className="ob-dob" ref={fieldsRef}>
             <DobSelect label="Month" value={dob.m} width={170} onChange={v => set("m", v)} options={MONTH_OPTIONS} />
             <DobSelect label="Day" value={dob.d} width={100} onChange={v => set("d", v)} options={dayOptions(dob.m, dob.y)} />
             <DobSelect label="Year" value={dob.y} width={120} onChange={v => set("y", v)} options={yearOptions()} />

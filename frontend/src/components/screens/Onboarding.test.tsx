@@ -358,6 +358,8 @@ describe("Onboarding: screens", () => {
     // A slipped year: back to the fields, month and day kept, nothing remembered.
     fireEvent.click(screen.getByTestId("onboarding-under13-change"));
     expect(screen.queryByTestId("onboarding-under13-confirm")).toBeNull();
+    // The button removed itself: focus goes to the year it cleared.
+    expect(document.activeElement).toBe(screen.getByTestId("onboarding-dob-year"));
     expect(localStorage.getItem(ageGateKey("user_a"))).toBeNull();
     await waitFor(() => expect(storedDraft()).toMatchObject({ dobM: "1", dobD: "1", dobY: "" }));
     pickDob("year", "2000");
