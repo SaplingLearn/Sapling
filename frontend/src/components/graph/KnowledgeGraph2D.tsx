@@ -5,6 +5,7 @@ import {
   forceLink,
   forceManyBody,
   forceCollide,
+  type ForceLink,
   type Simulation,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
@@ -47,6 +48,8 @@ import {
   relatedDash,
 } from "./knowledgeGraph2DPaint";
 import {
+  ROOT_ROOM,
+  clearOfKept,
   courseLinks,
   forceOrbit,
   importanceRadii,
@@ -66,6 +69,8 @@ type SimLink = SimulationLinkDatum<SimNode> & {
   relationship_type?: GraphEdge["relationship_type"];
   /** A course → inner-circle link: drawn faint and thin. */
   anchor?: boolean;
+  /** The length the link force holds it at: as long as it was planned (see `restLength`). */
+  rest?: number;
   source: string | SimNode;
   target: string | SimNode;
 };
@@ -178,6 +183,19 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
+/** The shortest a link is held at by the link force. */
+const LINK_REST = 56;
+/**
+ * The length the link force holds a link at: as long as the link is where
+ * its two ends are (planned, or left by a drag), never under `LINK_REST`.
+ * A link that only ever pulled toward `LINK_REST` drew every concept freed
+ * by a drag in on its neighbours, however far apart they were planned.
+ */
+const restLength = (a: { x?: number; y?: number } | undefined, b: { x?: number; y?: number } | undefined) =>
+  a?.x != null && a.y != null && b?.x != null && b.y != null
+    ? Math.max(LINK_REST, Math.hypot(a.x - b.x, a.y - b.y))
+    : LINK_REST;
+
 /** A link may always stretch to at least this before it pulls (px). */
 const FOLLOW_GAP = 70;
 /** Share of the extra stretch closed per tick (before velocity decay). */
@@ -230,6 +248,13 @@ type FollowNode = Pick<SimulationNodeDatum, "x" | "y" | "vx" | "vy" | "fx">;
 type OrbitSlot = { rootId: string | null; angle: number; radius: number };
 
 /**
+ * The nearest a concept may come to rest to what it sits round: clear of
+ * its course root's mark and course code (`ROOT_ROOM`, as it was planned),
+ * however a drag pushed the two together; with no root, just off the middle.
+ */
+const restFloor = (rootId: string | null) => (rootId ? ROOT_ROOM : 40);
+
+/**
  * A rope stretched past its length pulls the follower `n` after its leader
  * `l` — or, when the follower is pinned (a classic-layout course root), pulls
  * the leader back instead. `n` is positioned (the caller checked).
@@ -279,7 +304,10 @@ export function followForce(
     if (o && id !== free.dragging) {
       const c = centerOf(o.rootId);
       o.angle = Math.atan2(n.y - c.y, n.x - c.x);
-      o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
+      // Never nearer its course root than it was planned to be: a course
+      // dragged into its own concepts parts them, and the orbit force (next)
+      // moves any it ran into back out to this distance.
+      o.radius = Math.max(restFloor(o.rootId), Math.hypot(n.x - c.x, n.y - c.y));
     }
     if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
   }
@@ -323,10 +351,11 @@ export function settleQuietly<N extends SimulationNodeDatum, L extends Simulatio
 
 /**
  * Sets a newly planned simulation going, and says whether it is already at
- * rest when first drawn. Normally it is settled before it is drawn
- * (`settleQuietly`). With reduced motion — and in test mode, so node
- * coordinates are identical on every load — it settles synchronously on a
- * fixed tick count. Mid-drag it plays on, on screen.
+ * rest when first drawn (the caller then frames it where it rests, at once).
+ * Normally it is settled before it is drawn (`settleQuietly`). With reduced
+ * motion — and in test mode, so node coordinates are identical on every
+ * load — it settles synchronously on a fixed tick count, and is at rest
+ * too. Mid-drag it plays on, on screen.
  */
 function startPlanned<N extends SimulationNodeDatum, L extends SimulationLinkDatum<N>>(
   sim: Simulation<N, L>,
@@ -334,7 +363,7 @@ function startPlanned<N extends SimulationNodeDatum, L extends SimulationLinkDat
 ): boolean {
   if (IS_TEST_MODE || prefersReducedMotion()) {
     sim.alpha(1).tick(200).alpha(0).stop();
-    return false;
+    return true;
   }
   if (dragging) {
     sim.alpha(0.9).restart();
@@ -636,8 +665,9 @@ function KnowledgeGraph2DImpl({
   // d3 mutates node x/y in place, so JSX renders (which read the same
   // objects) and these direct writes always agree on the latest positions.
   const applyPositions = React.useCallback(() => {
-    // Links name their ends by id (no link force swaps in node objects);
-    // the id→node map is built once per tick, on the first link drawn.
+    // A link's ends are node objects once the link force has taken the
+    // links up (it swaps them in for the ids), and ids until then; for
+    // those the id→node map is built once per tick, on the first one met.
     let byId: Map<string, SimNode> | null = null;
     const resolve = (end: string | SimNode): SimNode | undefined => {
       if (typeof end === "object") return end;
@@ -691,7 +721,12 @@ function KnowledgeGraph2DImpl({
   );
 
   // The plan (each concept's seat round its course) — read by the orbit force every tick.
-  const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map(), boxes: new Map() });
+  const planRef = React.useRef<RadialPlan>({
+    centers: new Map(),
+    orbit: new Map(),
+    boxes: new Map(),
+    middle: { x: width / 2, y: height / 2 },
+  });
   // Course roots the student dragged keep their spot across re-plans.
   const movedRootsRef = React.useRef(new Set<string>());
   // Legible: where each free course root settles back to.
@@ -723,12 +758,14 @@ function KnowledgeGraph2DImpl({
       const o = planRef.current.orbit.get(m.id);
       if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
       o.angle = Math.atan2(m.y - root.y, m.x - root.x);
-      if (movedIds.has(m.id)) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
+      if (movedIds.has(m.id)) o.radius = Math.max(restFloor(root.id), Math.hypot(m.x - root.x, m.y - root.y));
       // Kept for later plans too (a window re-measured, a concept added).
       placedRef.current.set(m.id, { angle: o.angle, radius: o.radius });
     }
   }, []);
-  // Every course a set of freed concepts belongs to adopts its new layout.
+  // Every course a set of freed concepts belongs to adopts its new layout,
+  // and every link the length it now has: the link force holds the layout
+  // the drag left, rather than pulling it back toward the one before.
   const settleFreed = React.useCallback(() => {
     const ids = new Set(freeRef.current.leader.keys());
     freeRef.current = { leader: new Map(), dragging: null };
@@ -737,6 +774,11 @@ function KnowledgeGraph2DImpl({
       roots.add(planRef.current.centers.has(id) ? id : (planRef.current.orbit.get(id)?.rootId ?? null));
     }
     for (const rootId of roots) adoptLayoutAround(rootId, ids);
+    for (const l of simLinksRef.current) {
+      if (typeof l.source === "object" && typeof l.target === "object") l.rest = restLength(l.source, l.target);
+    }
+    const linkForce = simRef.current?.force("link") as ForceLink<SimNode, SimLink> | undefined;
+    linkForce?.distance((l) => l.rest ?? LINK_REST);
   }, [adoptLayoutAround]);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
@@ -752,10 +794,16 @@ function KnowledgeGraph2DImpl({
     // only real concept-to-concept edges join the simulation and the render.
     const { concept: conceptEdges } = splitEdges(nodes, edges);
     const plan = planRadial(nodes, conceptEdges, width, height, openZoom);
+    const kept = new Set<string>();
     for (const [id, seat] of placedRef.current) {
       const o = plan.orbit.get(id);
-      if (o) Object.assign(o, seat);
+      if (!o) continue;
+      Object.assign(o, seat);
+      kept.add(id);
     }
+    // A concept added since was planned among the others' fresh seats, not
+    // where the student left them: it takes the nearest free room.
+    if (kept.size) clearOfKept(plan, kept);
     planRef.current = plan;
 
     // Open on the whole graph: when the planned courses overflow the window,
@@ -836,7 +884,7 @@ function KnowledgeGraph2DImpl({
         return { ...n, x: center.x, y: center.y, ...pin, vx: 0, vy: 0, index: undefined } as SimNode;
       }
       const o = plan.orbit.get(n.id);
-      const c = (o?.rootId && plan.centers.get(o.rootId)) || { x: width / 2, y: height / 2 };
+      const c = (o?.rootId && plan.centers.get(o.rootId)) || plan.middle;
       const a = o?.angle ?? 0;
       const r = o?.radius ?? 80;
       return {
@@ -850,6 +898,15 @@ function KnowledgeGraph2DImpl({
     });
 
     const nextIds = new Set(nextNodes.map((n) => n.id));
+    // Where the plan seats each node (a course where the student left it):
+    // a link is held at the length it has between its ends' seats.
+    const seatOf = (id: string): { x: number; y: number } => {
+      const centre = rootHomeRef.current.get(id) ?? plan.centers.get(id);
+      if (centre) return centre;
+      const o = plan.orbit.get(id);
+      const c = (o?.rootId && (rootHomeRef.current.get(o.rootId) ?? plan.centers.get(o.rootId))) || plan.middle;
+      return o ? { x: c.x + Math.cos(o.angle) * o.radius, y: c.y + Math.sin(o.angle) * o.radius } : c;
+    };
     const nextLinks: SimLink[] = [
       ...courseLinks(plan).map((e) => ({ ...e, anchor: true })),
       ...conceptEdges.map((e) => ({ ...e, anchor: false })),
@@ -861,6 +918,7 @@ function KnowledgeGraph2DImpl({
         strength: e.strength,
         relationship_type: e.relationship_type,
         anchor: e.anchor,
+        rest: restLength(seatOf(e.source), seatOf(e.target)),
       }));
 
     simNodesRef.current = nextNodes;
@@ -878,7 +936,7 @@ function KnowledgeGraph2DImpl({
     const centerOf = (rootId: string | null) => {
       const root = rootId ? nodeById.get(rootId) : undefined;
       if (root && root.x != null && root.y != null) return { x: root.x, y: root.y };
-      return { x: width / 2, y: height / 2 };
+      return planRef.current.middle;
     };
 
     const sim = simRef.current;
@@ -887,7 +945,7 @@ function KnowledgeGraph2DImpl({
         "link",
         forceLink<SimNode, SimLink>(nextLinks)
           .id((d) => d.id)
-          .distance(56)
+          .distance((l) => l.rest ?? LINK_REST)
           .strength((l) => (l.anchor ? 0 : 0.06 + (l.strength || 0.5) * 0.12)),
       )
       .force("charge", forceManyBody<SimNode>().strength(-70).distanceMax(220))
@@ -1236,9 +1294,8 @@ function KnowledgeGraph2DImpl({
     simRef.current?.alphaTarget(0.3).restart();
     // A still-settling earlier drag adopts its layout before this one starts.
     if (freeRef.current.leader.size) settleFreed();
-    // A course root moves with the same physics as a concept: what it holds
-    // follows it on ropes (see tethersFor).
-    freeRef.current = { leader: tethersFor(n), dragging: n.id };
+    // Nothing is freed yet: a press that never moves (a click, a pointer held
+    // down) leaves every concept on its seat. See onPointerMove.
     n.fx = n.x;
     n.fy = n.y;
     // dragRef/fx are refs — render once so the tooltip hides and the pinned
@@ -1281,6 +1338,10 @@ function KnowledgeGraph2DImpl({
     if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
+      // The drag begins: the node and everything linked to it are freed from
+      // their seats and follow it on ropes. A course root moves with the
+      // same physics as a concept: what it holds follows it (see tethersFor).
+      if (freeRef.current.dragging !== n.id) freeRef.current = { leader: tethersFor(n), dragging: n.id };
       const { x, y } = clientToSvg(e.clientX, e.clientY);
       // Keep the dragged node inside the window: map the visible bounds back
       // into content coords through the current view transform.

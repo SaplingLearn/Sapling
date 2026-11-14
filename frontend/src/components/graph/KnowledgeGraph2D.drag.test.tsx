@@ -21,7 +21,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
-import { courseLinks, planRadial } from "@/lib/graph/radialLayout";
+import { ROOT_ROOM, SPACE_X, SPACE_Y, courseLinks, planRadial } from "@/lib/graph/radialLayout";
 
 let KnowledgeGraph2D: (typeof import("./KnowledgeGraph2D"))["KnowledgeGraph2D"];
 
@@ -128,6 +128,17 @@ function drag(container: HTMLElement, id: string, to: Pt, { hold = false } = {})
 
 const W = 1240;
 const H = 900;
+
+/** Press on a node, hold it there without moving for `held` frames, and let go. */
+function press(container: HTMLElement, id: string, held: number) {
+  const svg = container.querySelector("svg[role=img]")!;
+  const g = container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"]`)!;
+  const p = onScreen(container, positions(container).get(id)!);
+  fireEvent.pointerDown(g, { pointerId: 1, button: 0, clientX: p.x, clientY: p.y });
+  frames(held);
+  fireEvent.pointerUp(svg, { pointerId: 1, clientX: p.x, clientY: p.y });
+  frames(600);
+}
 
 /** Press on a node and let go where it was: a click. */
 function click(container: HTMLElement, id: string) {
@@ -308,6 +319,103 @@ describe("KnowledgeGraph2D — dragging a course", SLOW, () => {
     expect(moved.reduce((sum, m) => sum + m, 0) / moved.length).toBeGreaterThan(30);
     // …some well behind the others: a rope pulls only once it is taut.
     expect(Math.max(...moved) - Math.min(...moved)).toBeGreaterThan(40);
+  });
+});
+
+describe("KnowledgeGraph2D — what a drag leaves behind", SLOW, () => {
+  const course = () => {
+    const nodes = [root("c1"), ...concepts(14)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    return { nodes, ids, edges: chain(ids.slice(0, 8)) };
+  };
+  const MODES = [
+    ["plain", false],
+    ["legible", true],
+  ] as const;
+
+  it.each(MODES)("a press held on a node and never moved moves nothing (%s)", (_name, legible) => {
+    // The node and what is linked to it are freed from their seats when the
+    // drag begins, not when the pointer goes down: freed on the press, the
+    // links drew a held course in on itself, and it stayed that way.
+    for (const pick of ["root-c1", "c1-n03"]) {
+      const { nodes, edges } = course();
+      const { container } = render(
+        <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} legible={legible} />,
+      );
+      const before = positions(container);
+      press(container, pick, 180);
+      const after = positions(container);
+      for (const [id, p] of before) expect(dist(after.get(id)!, p), `${pick}: ${id}`).toBeLessThan(1);
+      cleanup();
+      frames(4);
+    }
+  });
+
+  it.each(MODES)("a course dragged into its own concepts keeps them clear of it (%s)", (_name, legible) => {
+    const { nodes, ids, edges } = course();
+    const { container } = render(
+      <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} legible={legible} />,
+    );
+    const before = positions(container);
+    const from = before.get("root-c1")!;
+    // Straight at its nearest concept, and 200 on.
+    const near = ids.reduce((a, b) => (dist(before.get(a)!, from) < dist(before.get(b)!, from) ? a : b));
+    const d = dist(before.get(near)!, from);
+    const to = {
+      x: from.x + ((before.get(near)!.x - from.x) / d) * 200,
+      y: from.y + ((before.get(near)!.y - from.y) / d) * 200,
+    };
+    drag(container, "root-c1", to);
+    const after = positions(container);
+    // None is left under the course's mark and code (`ROOT_ROOM`, less the
+    // little the simulation's other forces give).
+    for (const id of ids) expect(dist(after.get(id)!, after.get("root-c1")!), id).toBeGreaterThan(ROOT_ROOM - 10);
+  });
+
+  it.each(MODES)("a drag leaves the links it did not stretch as long as they were (%s)", (_name, legible) => {
+    // The link force holds each link at its planned length. Pulling toward a
+    // short fixed length instead drew a dragged strand in to half its size.
+    const { nodes, ids, edges } = course();
+    const { container } = render(
+      <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} legible={legible} />,
+    );
+    const lengths = () => {
+      const at = positions(container);
+      return edges.map((e) => dist(at.get(e.source)!, at.get(e.target)!));
+    };
+    const before = lengths();
+    const held = positions(container).get(ids[3])!;
+    drag(container, ids[3], { x: held.x + 90, y: held.y + 50 });
+    lengths().forEach((len, i) => expect(len, `link ${i}`).toBeGreaterThan(0.85 * before[i]));
+  });
+
+  it.each(MODES)("a concept added after a drag takes free room among the concepts as they were left (%s)", (_name, legible) => {
+    // Every concept of a dragged course keeps its seat in later plans; the
+    // new one is planned as if they had not, so it must be moved clear.
+    const nodes = [root("c1"), ...concepts(20)];
+    const ids = nodes.slice(1).map((n) => n.id);
+    const edges = chain(ids.slice(0, 6));
+    for (const pick of [8, 11]) {
+      const shown = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} legible={legible} />);
+      const at = positions(shown.container).get(ids[pick])!;
+      drag(shown.container, ids[pick], { x: at.x + 60, y: at.y + 30 });
+      const added: GraphNode = { ...concepts(1)[0], id: "c1-new", name: "Added" };
+      shown.rerender(
+        <KnowledgeGraph2D nodes={[...nodes, added]} edges={edges} width={W} height={H} legible={legible} />,
+      );
+      frames(600);
+      const after = positions(shown.container);
+      const p = after.get("c1-new")!;
+      for (const id of ids) {
+        const q = after.get(id)!;
+        // Clear of every other concept's mark and caption (most of the room
+        // the plan keeps: the simulation gives a little).
+        expect(((p.x - q.x) / SPACE_X) ** 2 + ((p.y - q.y) / SPACE_Y) ** 2, `${pick}: ${id}`).toBeGreaterThan(0.7);
+      }
+      expect(dist(p, after.get("root-c1")!)).toBeGreaterThan(ROOT_ROOM - 10);
+      cleanup();
+      frames(4);
+    }
   });
 });
 

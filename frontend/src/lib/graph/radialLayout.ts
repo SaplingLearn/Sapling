@@ -1079,6 +1079,12 @@ export type RadialPlan = {
   orbit: Map<string, { rootId: string | null; radius: number; angle: number; spoke: boolean }>;
   /** Each course's planned box, relative to its root; a course with no concepts has its root's. */
   boxes: Map<string | null, Box>;
+  /**
+   * Where concepts with no course root in the graph are planned round: the
+   * middle of the canvas, or, when there are courses too, a place of their
+   * own among them.
+   */
+  middle: Pt;
 };
 
 /**
@@ -1130,7 +1136,7 @@ export function planRadial(
   const roomY = Math.max(height / (spread ? openZoom : 1) - 2 * COURSE_MARGIN, 1);
   let grow = 1;
   if (spread) {
-    const whole = roots.length ? roots.map((r) => boxes.get(r.id)!) : [...boxes.values()];
+    const whole = [...boxes.values()];
     grow = Math.max(1, arrangeCourses(whole, roomX, roomY, 1 / openZoom)?.scale ?? 1);
     if (grow > 1) {
       for (const [rootId, course] of courses) {
@@ -1151,12 +1157,74 @@ export function planRadial(
     });
   }
 
+  // Concepts with no course root of their own, in a graph that has courses,
+  // are set out as one more group among the courses (last, so the courses
+  // come first), not on top of whichever course is in the middle.
   const rootBoxes = roots.map((r) => boxes.get(r.id)!);
-  const spots = spread ? spreadCourses(rootBoxes, roomX, roomY) : packCourses(rootBoxes, width, height);
+  const loose = roots.length ? boxes.get(null) : undefined;
+  const packed = loose ? [...rootBoxes, loose] : rootBoxes;
+  const spots = spread ? spreadCourses(packed, roomX, roomY) : packCourses(packed, width, height);
   const centers: RadialPlan["centers"] = new Map(
     roots.map((r, i) => [r.id, { x: width / 2 + spots[i].x, y: height / 2 + spots[i].y }]),
   );
-  return { centers, orbit, boxes };
+  const at = loose ? spots[roots.length] : { x: 0, y: 0 };
+  return { centers, orbit, boxes, middle: { x: width / 2 + at.x, y: height / 2 + at.y } };
+}
+
+/**
+ * Makes room for concepts planned afresh among concepts that were not. A
+ * drag leaves a course's concepts where the student put them (`kept`), in
+ * this plan and every later one; a concept added afterwards is planned as
+ * if they all sat where a fresh plan has them, so its seat may be one a
+ * kept concept now sits in. Each such concept that is nearer another of its
+ * course than their captions allow (`SPACE_X` side by side, `SPACE_Y` one
+ * above the other), or nearer its course root than `ROOT_ROOM`, moves to
+ * the nearest free room. The kept concepts never move. Changes `plan`.
+ */
+export function clearOfKept(plan: RadialPlan, kept: ReadonlySet<string>): void {
+  const groups = new Map<string | null, string[]>();
+  for (const [id, o] of plan.orbit) {
+    if (!groups.has(o.rootId)) groups.set(o.rootId, []);
+    groups.get(o.rootId)!.push(id);
+  }
+  for (const [rootId, ids] of groups) {
+    const fresh = ids.filter((id) => !kept.has(id)).sort(byId);
+    if (!fresh.length || fresh.length === ids.length) continue;
+    const at = new Map<string, Pt>();
+    for (const id of ids) {
+      const o = plan.orbit.get(id)!;
+      at.set(id, { x: Math.cos(o.angle) * o.radius, y: Math.sin(o.angle) * o.radius });
+    }
+    const free = (id: string, p: Pt) => {
+      if (rootId != null && Math.hypot(p.x, p.y) < ROOT_ROOM) return false;
+      for (const [other, q] of at) {
+        if (other === id) continue;
+        if (((p.x - q.x) / SPACE_X) ** 2 + ((p.y - q.y) / SPACE_Y) ** 2 < 1) return false;
+      }
+      return true;
+    };
+    for (const id of fresh) {
+      const from = at.get(id)!;
+      if (free(id, from)) continue;
+      // Outward from its planned seat, ring by ring, the first spot with room.
+      let found: Pt | null = null;
+      for (let ring = 1; ring <= 40 && !found; ring++) {
+        const reach = ring * (SPACE_Y / 2);
+        const steps = 8 * ring;
+        const turn = unitOf(`${id}\u0001clear`) * Math.PI * 2;
+        for (let k = 0; k < steps && !found; k++) {
+          const a = turn + (k / steps) * Math.PI * 2;
+          const p = { x: from.x + Math.cos(a) * reach * STRETCH, y: from.y + Math.sin(a) * reach };
+          if (free(id, p)) found = p;
+        }
+      }
+      if (!found) continue;
+      at.set(id, found);
+      const o = plan.orbit.get(id)!;
+      o.radius = Math.hypot(found.x, found.y);
+      o.angle = Math.atan2(found.y, found.x);
+    }
+  }
 }
 
 /**
@@ -1186,7 +1254,7 @@ export function planBounds(plan: RadialPlan, width: number, height: number) {
   };
   for (const c of plan.centers.values()) grow(c.x, c.y, ROOT_REACH);
   for (const o of plan.orbit.values()) {
-    const c = (o.rootId && plan.centers.get(o.rootId)) || { x: width / 2, y: height / 2 };
+    const c = (o.rootId && plan.centers.get(o.rootId)) || plan.middle || { x: width / 2, y: height / 2 };
     grow(c.x + Math.cos(o.angle) * o.radius, c.y + Math.sin(o.angle) * o.radius, CONCEPT_REACH);
   }
   return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;

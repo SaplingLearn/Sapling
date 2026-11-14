@@ -9,6 +9,7 @@ import {
   ROOT_ROOM,
   SPACE_X,
   SPACE_Y,
+  clearOfKept,
   courseLinks,
   forceOrbit,
   importanceRadii,
@@ -560,6 +561,88 @@ describe("planRadial, for a graph that opens zoomed out", () => {
   });
 });
 
+describe("planRadial, concepts with no course root", () => {
+  const loose = concepts(6, "gone", "g");
+
+  it("gives them a place of their own among the courses", () => {
+    const nodes = [root("c1"), ...concepts(10, "c1"), ...loose];
+    const plan = planRadial(nodes, [], W, H);
+    const course = plan.boxes.get("root-c1")!;
+    const own = plan.boxes.get(null)!;
+    const c = plan.centers.get("root-c1")!;
+    const m = plan.middle;
+    // The two boxes, where they are put, do not overlap.
+    const apartX = c.x + course.minX >= m.x + own.maxX || m.x + own.minX >= c.x + course.maxX;
+    const apartY = c.y + course.minY >= m.y + own.maxY || m.y + own.minY >= c.y + course.maxY;
+    expect(apartX || apartY).toBe(true);
+    // `planBounds` takes in both.
+    const b = planBounds(plan, W, H)!;
+    expect(b.minX).toBeLessThanOrEqual(Math.min(c.x + course.minX, m.x + own.minX) + 1e-6);
+    expect(b.maxX).toBeGreaterThanOrEqual(Math.max(c.x + course.maxX, m.x + own.maxX) - 1e-6);
+  });
+
+  it("leaves the courses where they would be without them when there are none", () => {
+    const nodes = [root("c1"), root("c2"), ...concepts(10, "c1"), ...concepts(8, "c2")];
+    expect(planRadial(nodes, [], W, H).middle).toEqual({ x: W / 2, y: H / 2 });
+  });
+
+  it("plans them round the middle of the canvas when the graph has no course at all", () => {
+    expect(planRadial(loose, [], 500, 340).middle).toEqual({ x: 250, y: 170 });
+  });
+});
+
+describe("clearOfKept", () => {
+  const seatOf = (plan: RadialPlan, id: string) => {
+    const o = plan.orbit.get(id)!;
+    return { x: Math.cos(o.angle) * o.radius, y: Math.sin(o.angle) * o.radius };
+  };
+  const crowded = (a: Pt, b: Pt) => ((a.x - b.x) / SPACE_X) ** 2 + ((a.y - b.y) / SPACE_Y) ** 2 < 1 - 1e-9;
+  const nodes = [root("c1"), ...concepts(12)];
+  const ids = nodes.slice(1).map((n) => n.id);
+  const [left, fresh] = [ids[3], ids[7]];
+
+  it("moves a concept planned onto a kept concept's seat to free room, and nothing else", () => {
+    const plan = planRadial(nodes, [], W, H);
+    // The student left one concept where another is planned; that one was not kept.
+    Object.assign(plan.orbit.get(left)!, { ...plan.orbit.get(fresh)! });
+    const kept = new Set(ids.filter((id) => id !== fresh));
+    const before = new Map(ids.map((id) => [id, seatOf(plan, id)]));
+    clearOfKept(plan, kept);
+    for (const id of kept) expect(seatOf(plan, id)).toEqual(before.get(id));
+    const moved = seatOf(plan, fresh);
+    for (const id of kept) expect(crowded(moved, seatOf(plan, id)), id).toBe(false);
+    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThanOrEqual(ROOT_ROOM - 1e-9);
+    // It goes no further than it has to.
+    expect(Math.hypot(moved.x - before.get(fresh)!.x, moved.y - before.get(fresh)!.y)).toBeLessThan(2 * SPACE_X);
+  });
+
+  it("leaves a concept that already has room where it was planned", () => {
+    const plan = planRadial(nodes, [], W, H);
+    const before = new Map(ids.map((id) => [id, { ...plan.orbit.get(id)! }]));
+    clearOfKept(plan, new Set(ids.slice(0, 6)));
+    for (const id of ids) expect(plan.orbit.get(id)).toEqual(before.get(id));
+  });
+
+  it("does nothing to a course none of whose concepts were kept, or all of them", () => {
+    const plan = planRadial(nodes, [], W, H);
+    Object.assign(plan.orbit.get(left)!, { ...plan.orbit.get(fresh)! });
+    const before = new Map(ids.map((id) => [id, { ...plan.orbit.get(id)! }]));
+    clearOfKept(plan, new Set());
+    clearOfKept(plan, new Set(ids));
+    for (const id of ids) expect(plan.orbit.get(id)).toEqual(before.get(id));
+  });
+
+  it("puts the same concept in the same place every time", () => {
+    const run = () => {
+      const plan = planRadial(nodes, [], W, H);
+      Object.assign(plan.orbit.get(left)!, { ...plan.orbit.get(fresh)! });
+      clearOfKept(plan, new Set(ids.filter((id) => id !== fresh)));
+      return plan.orbit.get(fresh);
+    };
+    expect(run()).toEqual(run());
+  });
+});
+
 describe("planBounds", () => {
   it("reaches past every concept by the room its mark and caption need", () => {
     const plan = planRadial([root("c1"), ...concepts(30)], [], W, H);
@@ -599,6 +682,7 @@ describe("forceOrbit", () => {
     centers: new Map(),
     orbit: new Map([["a", { rootId: "r", radius, angle, spoke: false }]]),
     boxes: new Map(),
+    middle: { x: 0, y: 0 },
   });
   /** One tick, the course centred on (100, 100) unless said otherwise; the planned place is (200, 100). */
   const run = (

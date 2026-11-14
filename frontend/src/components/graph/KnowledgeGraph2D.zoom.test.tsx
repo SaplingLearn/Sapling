@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * `initialZoom`: the zoom a graph opens and resets at, centred on the window.
- * Quiz home's live neighbourhood uses it so a small fragment fills its frame;
- * every other caller keeps the default, the identity view.
+ * `initialZoom`: the zoom a graph opens and resets at, framed on its nodes
+ * where they come to rest. Quiz home's live neighbourhood uses it so a small
+ * fragment fills its frame; every other caller keeps the default.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,18 +25,56 @@ const viewTransform = (container: HTMLElement) =>
     .map(g => g.getAttribute("transform") ?? "")
     .find(t => t.includes("scale("));
 
+/**
+ * The view, and where the nodes' frame (each mark with the room a frame
+ * keeps round it: 24 past it, 10 more under it for the caption) shows in
+ * the window.
+ */
+function framed(container: HTMLElement) {
+  const m = /translate\(([-\d.e]+), ([-\d.e]+)\) scale\(([-\d.e]+)\)/.exec(viewTransform(container) ?? "")!;
+  const [tx, ty, scale] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  let [left, right, top, bottom] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const g of container.querySelectorAll('[data-testid="graph-node"]')) {
+    const [, x, y] = /translate\(([-\d.e]+),\s*([-\d.e]+)\)/.exec(g.getAttribute("transform")!)!;
+    const r = Number(g.querySelector('[data-testid="graph-node-circle"]')!.getAttribute("data-r"));
+    left = Math.min(left, (Number(x) - r - 24) * scale + tx);
+    right = Math.max(right, (Number(x) + r + 24) * scale + tx);
+    top = Math.min(top, (Number(y) - r - 24) * scale + ty);
+    bottom = Math.max(bottom, (Number(y) + r + 34) * scale + ty);
+  }
+  return { scale, left, right, top, bottom };
+}
+
 describe("KnowledgeGraph2D — initialZoom", () => {
   it("defaults to the identity view", () => {
     const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} />);
     expect(viewTransform(container)).toBe("translate(0, 0) scale(1)");
   });
 
-  it("opens zoomed and centred on the window", () => {
+  it("opens zoomed, framed on where its nodes rest", () => {
+    // A window the two-node fragment fits in at 2×. (These tests run with
+    // reduced motion, where the graph is settled before it is drawn: it is
+    // framed at once, as it is for everyone else.)
     const { container } = render(
-      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={800} height={600} initialZoom={2} />,
     );
-    // Centred: the window's midpoint (200, 150) stays where it was.
-    expect(viewTransform(container)).toBe("translate(-200, -150) scale(2)");
+    const f = framed(container);
+    expect(f.scale).toBe(2);
+    // The nodes' frame sits in the middle of the window.
+    expect((f.left + f.right) / 2).toBeCloseTo(400, 4);
+    expect((f.top + f.bottom) / 2).toBeCloseTo(300, 4);
+  });
+
+  it("opens a fragment too large for its window at the opening zoom further out, all of it showing", () => {
+    const { container } = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={260} height={200} initialZoom={2} />,
+    );
+    const f = framed(container);
+    expect(f.scale).toBeLessThan(2);
+    expect(f.left).toBeGreaterThanOrEqual(-1e-6);
+    expect(f.right).toBeLessThanOrEqual(260 + 1e-6);
+    expect(f.top).toBeGreaterThanOrEqual(-1e-6);
+    expect(f.bottom).toBeLessThanOrEqual(200 + 1e-6);
   });
 
   it("resets to the opening zoom, framed on the nodes, not to 1", () => {
@@ -134,9 +172,12 @@ describe("KnowledgeGraph2D — initialZoom", () => {
 
   it("re-centres when the window is measured to a new size", () => {
     const view = render(
-      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={800} height={600} initialZoom={2} />,
     );
-    view.rerender(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={340} initialZoom={2} />);
-    expect(viewTransform(view.container)).toBe("translate(-300, -170) scale(2)");
+    view.rerender(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={900} height={640} initialZoom={2} />);
+    const f = framed(view.container);
+    expect(f.scale).toBe(2);
+    expect((f.left + f.right) / 2).toBeCloseTo(450, 4);
+    expect((f.top + f.bottom) / 2).toBeCloseTo(320, 4);
   });
 });

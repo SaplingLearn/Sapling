@@ -145,6 +145,26 @@ describe("KnowledgeGraph2D — where concepts settle", () => {
   });
 });
 
+describe("KnowledgeGraph2D — concepts with no course root", () => {
+  it("sets them down beside the courses, not on top of the one in the middle", () => {
+    // Their course is not among the student's (a dropped course): no root.
+    const loose = concepts(6, "gone");
+    const nodes = [root("c1"), ...concepts(10), ...loose];
+    const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={[]} width={1240} height={900} />);
+    const at = positions(container);
+    for (const o of loose) {
+      for (const n of nodes.filter((m) => m.course_id === "c1")) {
+        expect(dist(at.get(o.id)!, at.get(n.id)!), `${o.id} / ${n.id}`).toBeGreaterThan(80);
+      }
+    }
+  });
+
+  it("still plans a fragment with no course at all round the middle of the window", () => {
+    const plan = planRadial(concepts(7), [], 500, 340);
+    expect(plan.middle).toEqual({ x: 250, y: 170 });
+  });
+});
+
 describe("KnowledgeGraph2D — the opening view", () => {
   const SMALL = [root("c1"), ...concepts(5)];
   const BIG = [root("c1"), ...concepts(60)];
