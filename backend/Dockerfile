@@ -1,10 +1,10 @@
 # Keep in step with requirements.lock's `--python-version` and ci.yml's
-# python-version: the lock is compiled for this Python and applied here as hard
-# constraints (tests/test_docker_lock_install.py checks all three agree).
+# python-version: the lock is compiled for this Python and installed here with
+# --require-hashes (tests/test_docker_lock_install.py checks all three agree).
 #
 # Three images from one file (#116, docs/architecture-hardening-plan.md phase 2):
 #
-#   api     FastAPI only. requirements.txt under the lock: no torch, Docling,
+#   api     FastAPI only. requirements.lock, hash-checked: no torch, Docling,
 #           transformers or Chromium (tests/test_api_image_imports.py proves the
 #           app imports and starts without them).
 #   worker  `python -m worker`: the api's packages plus requirements-worker.txt
@@ -38,20 +38,21 @@ RUN target="${SAPLING_IMAGE_TARGET:-full}"; \
     esac
 
 # ── api ──────────────────────────────────────────────────────────────────────
-# The lock applied as constraints, exactly as in the heavy stage below (its
-# comment explains why), minus the CPU torch step and its pins: nothing here
-# installs torch, so there is nothing to keep off PyPI's CUDA builds.
+# The lock itself, hash-checked, exactly as CI and the E2E lane install it:
+# requirements.lock is requirements.txt's full resolution (--universal, so it
+# carries the hashes of every platform's wheels, linux amd64/arm64 included),
+# and this image installs nothing else. `--require-hashes` makes pip refuse any
+# artifact whose sha256 the lock does not list, so a tampered or re-uploaded
+# wheel fails the build instead of shipping.
 FROM python:3.13-slim AS api
 
 WORKDIR /app
 
-COPY requirements.txt requirements.lock ./
+COPY requirements.lock ./
 COPY scripts/lock_constraints.py scripts/lock_constraints.py
-RUN python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt \
-    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements.txt \
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
     && python scripts/lock_constraints.py verify requirements.lock \
-    && pip check \
-    && rm /tmp/lock-constraints.txt
+    && pip check
 
 COPY . .
 
@@ -73,12 +74,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Dependencies (#694). CI and the E2E lane install requirements.lock with
-# --require-hashes; this image cannot, because the lock deliberately leaves out
-# the OCR stack (torch/docling/transformers, requirements-worker.txt) and
-# --require-hashes is all-or-nothing. Installing the bare requirements let every
-# transitive dependency float: genai-prices 0.1.x reached the deployed image
-# while CI pinned 0.0.66, and every llm_usage row recorded 0 tokens for two
-# months (#689). So the lock is applied as CONSTRAINTS instead:
+# --require-hashes. So does this stage (step 2), but it cannot stop there: the
+# lock deliberately leaves out the OCR stack (torch/docling/transformers,
+# requirements-worker.txt), and --require-hashes is all-or-nothing within one
+# pip run, so the OCR stack goes in a second, unhashed run. Installing the
+# bare requirements let every transitive dependency float: genai-prices 0.1.x
+# reached the deployed image while CI pinned 0.0.66, and every llm_usage row
+# recorded 0 tokens for two months (#689). So that second run applies the lock
+# as CONSTRAINTS:
 #
 #   1. torch AND torchvision from the CPU-only wheel index, so CUDA stays out
 #      of the image. torchvision is not a direct requirement, but docling
@@ -93,21 +96,27 @@ WORKDIR /app
 #      the index ever serves a torch newer than its torchvision (a release-day
 #      window), `pip check` in step 4 fails the build; it never ships a
 #      mismatched pair. `--report` records exactly what was installed, for
-#      step 2. Its own layer, before the lock is copied, so a lock bump does
+#      step 3. Its own layer, before the lock is copied, so a lock bump does
 #      not re-download torch.
-#   2. The lock becomes a hash-free constraints file (a hashed constraint turns
+#   2. requirements.lock with --require-hashes: the API's whole set (everything
+#      requirements.txt resolves to), hash-checked as in the api stage and CI.
+#      pip prints a dependency-conflict notice here listing torch's own
+#      dependencies (numpy, sympy, ...): step 1 was --no-deps and they arrive
+#      in step 3. Expected; `pip check` in step 4 is the gate.
+#   3. The lock becomes a hash-free constraints file (a hashed constraint turns
 #      pip's all-or-nothing hash checking on). `pin` appends `name==version`
-#      for EVERY distribution step 1's report lists, so step 3 cannot replace
-#      any of them with a PyPI (CUDA) build. The lock never pins those names
-#      (tests/dependency_manifest.py OCR_STACK); if it ever did at another
-#      version, pip's resolver fails step 3 rather than picking one.
-#   3. requirements.txt + requirements-worker.txt under `-c`: every package the
-#      lock pins resolves to the locked version or the build FAILS. Packages
-#      the lock does not list install unconstrained: the OCR stack itself AND
-#      its own dependencies that nothing else pulls in (numpy, scipy,
-#      huggingface-hub, tokenizers, safetensors, opencv, ...). Those still
-#      float, so for the OCR path this image is NOT exactly what CI tests; CI
-#      does not install the OCR stack.
+#      for EVERY distribution step 1's report lists, so the install below
+#      cannot replace any of them with a PyPI (CUDA) build. The lock never
+#      pins those names (tests/dependency_manifest.py OCR_STACK); if it ever
+#      did at another version, pip's resolver fails the install rather than
+#      picking one. Then requirements-worker.txt under `-c`: every package the
+#      lock pins is already installed at its locked (hash-checked) version and
+#      must stay there or the build FAILS. Packages the lock does not list
+#      install unconstrained and unhashed: the OCR stack itself AND its own
+#      dependencies that nothing else pulls in (numpy, scipy, huggingface-hub,
+#      tokenizers, safetensors, opencv, ...). Those still float, so for the
+#      OCR path this image is NOT exactly what CI tests; CI does not install
+#      the OCR stack.
 #   4. `verify` fails the build if any installed package differs from its lock
 #      pin or any nvidia-*/cuda-* distribution is installed. `cpu-torch` fails
 #      it unless torch.version.cuda is None, torch and everything that
@@ -119,11 +128,12 @@ WORKDIR /app
 RUN pip install --no-cache-dir --no-deps --index-url https://download.pytorch.org/whl/cpu \
     --report /tmp/cpu-index-report.json "torch>=2.5,<3" torchvision
 
-COPY requirements.txt requirements-worker.txt requirements.lock ./
+COPY requirements-worker.txt requirements.lock ./
 COPY scripts/lock_constraints.py scripts/lock_constraints.py
-RUN python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt \
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt \
     && python scripts/lock_constraints.py pin >> /tmp/lock-constraints.txt \
-    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements.txt -r requirements-worker.txt \
+    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements-worker.txt \
     && python scripts/lock_constraints.py verify requirements.lock \
     && python scripts/lock_constraints.py cpu-torch \
     && pip check \
