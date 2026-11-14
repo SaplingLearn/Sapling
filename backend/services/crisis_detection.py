@@ -31,7 +31,10 @@ How matching works (every list below is a regex over `normalize(text)`):
    inhibitor", "kill switch" never matches at all). A negation
    (NEGATION_GUARDS) reaches only within its own clause: a comma, dash,
    bracket, joining word ("but", "and") or new first-person subject ends it,
-   so "I'm not okay, I'll kill myself" still matches; "I won't lie", "not
+   so "I'm not okay, I'll kill myself" still matches. The one thing it
+   crosses is a short aside set off on both sides right after the negation
+   ("I'm not, like, suicidal", "I am not, and never will be, suicidal"),
+   never one with a new "I" in it or a second clause after it; "I won't lie", "not
    gonna lie", "not kidding" introduce a statement and negate nothing; and
    only a hedge about one's own state ("I don't think I'm suicidal")
    negates: "I'm not saying I'll kill myself" is a warning sign. TOPIC_GUARDS
@@ -278,13 +281,27 @@ _INTRODUCES = (
     r"|exaggerate|exaggerating)(?![a-z0-9])"
 )
 
+#: An aside the negation may cross, set off on BOTH sides by a comma, bracket
+#: or dash right after the negation word: one to four gap words ("I'm not,
+#: like, suicidal", "I am not (really) suicidal"), or a coordinated "and never
+#: (have been | will be)" ("I am not, and never will be, suicidal"). Never a
+#: new first-person subject, a clause joiner or an introducing idiom (those
+#: are not gap words), so "I'm not, I swear, okay, I'll kill myself" is not
+#: negated; and only one aside, closed before the phrase.
+_ASIDE = (
+    rf" ,(?:(?! {_INTRODUCES})(?: {_GAP_WORD}){{1,4}}"
+    r"| and (?:never|not)(?: (?:ever|have|has|had|will|would|be|been|was|were|am|is|are)){0,3}) ,"
+)
+
 #: NEGATION_GUARDS veto like GUARDS, but are matched over the CLAUSE form of
 #: the text (`_Forms.clause`), where a comma, dash or bracket is a `,` token
 #: no gap word can cross: "I'm not okay, I'll kill myself" is not negated.
 NEGATION_GUARDS: tuple[str, ...] = (
     # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
-    # (up to two words between the negation and the phrase, same clause).
-    rf"{_NEGATION}(?! {_INTRODUCES})(?: ,)?(?: ever)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
+    # (up to two words between the negation and the phrase, same clause; an
+    # `_ASIDE` right after the negation is crossed).
+    rf"{_NEGATION}(?! {_INTRODUCES})(?:{_ASIDE}| ,)?(?: ever)?(?! {_INTRODUCES})"
+    rf"(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
     # A hedge about one's own STATE: "I don't think I'm suicidal". Never about
     # an act or a plan ("I don't think I'll kill myself tonight"), and never
     # "not saying"/"don't mean" ("I'm not saying I'll kill myself" is a

@@ -279,6 +279,27 @@ GENUINE_NEGATIONS: list[str] = [
     "I don't think I'm suicidal",
     "I'm stressed, but I'm not suicidal",
     "I'm tired, I would never kill myself though",
+    # an aside set off by commas, brackets or dashes does not end the clause
+    "I'm not, like, suicidal",
+    "I would never, ever, kill myself",
+    "I am not (really) suicidal",
+    "I'm not - and never have been - suicidal",
+    "I am not, and never will be, suicidal",
+    "I'm not, you know, suicidal",
+    "I would never — not ever — kill myself",
+]
+
+#: ...but only an aside right after the negation, of a few words, with no
+#: new first-person subject or clause joiner, and closed before the phrase.
+ASIDE_IS_NOT_A_NEGATION: list[str] = [
+    "I'm not okay, honestly, suicidal again",
+    "I'm not, like, okay, suicidal every night",
+    "I'm not, honestly, okay, I'm suicidal",
+    "I'm not, like, kidding suicidal again",
+    "I'm not, I swear, okay, I want to kill myself",
+    "No, not really, honestly, I'm suicidal",
+    "I'm not, but I am, suicidal",
+    "I'm not okay (I'm suicidal)",
 ]
 
 
@@ -366,6 +387,11 @@ def test_a_negation_never_reaches_across_a_clause(text):
 @pytest.mark.parametrize("text", GENUINE_NEGATIONS)
 def test_a_negation_in_the_same_clause_still_vetoes(text):
     assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", ASIDE_IS_NOT_A_NEGATION)
+def test_only_a_short_aside_right_after_the_negation_is_crossed(text):
+    assert detect(text) is not None, f"{text!r}: the negation does not reach the phrase"
 
 
 def test_mentions_need_first_person_in_the_same_sentence():

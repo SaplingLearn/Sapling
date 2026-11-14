@@ -176,7 +176,12 @@ sentence breaks, stretched letters squeezed):
   want to die", "I'm not suicidal"; `NEGATION_GUARDS` reach only within their
   own clause: a comma, dash, bracket, "but"/"and" or a new "I" ends the
   negation, so "I'm not okay, I'll kill myself" and "I won't lie, I'm
-  suicidal" still match; an idiom that introduces a statement ("I won't
+  suicidal" still match, except for a short aside set off on both sides
+  right after the negation word: "I'm not, like, suicidal", "I am not
+  (really) suicidal" and "I am not, and never will be, suicidal" are
+  negations, while "I'm not, I swear, okay, I'll kill myself" (a new "I") and
+  "I'm not okay, honestly, suicidal" (the aside is not right after "not") are
+  not; an idiom that introduces a statement ("I won't
   lie", "not gonna lie", "not gonna sugarcoat it", "I'm not kidding") negates
   nothing, so "not gonna lie suicidal thoughts every day" matches; a hedge about one's own state, "I don't think I'm
   suicidal", is a negation, but "I'm not saying I'll kill myself" and "I
