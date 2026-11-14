@@ -80,6 +80,11 @@ class Generation:
     #: is told which they are: a regenerate keeps no section to set them
     #: against.
     new_labels: list[str]
+    #: When the run listed the lectures it reads, taken before it read them.
+    #: An update or a regenerate saves it as `generated_at` in the same write
+    #: as `material_ids`, so a lecture uploaded while it runs still counts as
+    #: new afterwards. A resume reads nothing new and never saves it.
+    read_at: str
 
 
 @dataclass
@@ -159,8 +164,10 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
         raise GuideInvalid(UNKNOWN_MODE_DETAIL)
     guide = await store.aload_guide(user_id, guide_id)
     _refuse(guide, mode)
-    # A resume finishes the guide as it was planned. The other two stamp it
-    # as made now, so they read every lecture that stamp stops counting as new.
+    # A resume finishes the guide as it was planned. The other two read the
+    # lectures added since it was made, and are dated from just before that
+    # read: a lecture that lands after it is new to the next Update.
+    read_at = datetime.now(timezone.utc).isoformat()
     new = [] if mode == "resume" else await anew_lectures(guide)
     own = [material_id for material_id in await amaterial_ids(guide) if material_id not in new]
     # The new lectures last: past the source budget the last ids are read.
@@ -179,6 +186,7 @@ async def aprepare_generation(user_id: str, guide_id: str, mode: str) -> Generat
         # A new lecture that could not be read is not recorded as a material.
         material_ids=[*own, *(source.source.id.removeprefix("document:") for source in read)],
         new_labels=[source.label for source in read],
+        read_at=read_at,
     )
 
 
@@ -233,13 +241,16 @@ async def _aplan(run: _Run) -> None:
 
 async def _areplacement(run: _Run) -> dict[str, Any]:
     """What the save that replaces a guide changes besides its content: the
-    materials it is now made from, the previous version (kept only when it
-    was a finished guide with something to read, so a half-written one never
-    takes the place of the last good version), and the read marks and check
-    answers, which go with the sections they were on."""
+    materials it is now made from and when they were read (`generated_at`,
+    what a lecture is new against: the two always change in one write), the
+    previous version (kept only when it was a finished guide with something
+    to read, so a half-written one never takes the place of the last good
+    version), and the read marks and check answers, which go with the
+    sections they were on."""
     loaded, generation = run.guide, run.generation
     changes: dict[str, Any] = {
         "material_ids": generation.material_ids,
+        "generated_at": generation.read_at,
         "keep_previous": loaded.status == "ready" and bool(outline.written(loaded.content)),
     }
     if generation.mode == "regenerate":
@@ -301,18 +312,19 @@ def _refuse_nothing_to_read(run: _Run, todo: list[Section]) -> None:
         raise GuideGenerationFailed(writer.FAILED_DETAIL)
 
 
-async def _afinish(run: _Run, *, planned: bool) -> None:
+async def _afinish(run: _Run) -> None:
     """The run's last save: the guide is ready and the claim is given up in
     the same write."""
     changes: dict[str, Any] = {"status": "ready"}
-    # `generated_at` is when the guide was made from its materials: the
-    # lectures added after it are the new ones. A run that planned the guide
-    # dates it, and so does a resume that makes it ready (it was `generating`
-    # or `failed`: a first generation, an Update or a Regenerate that was cut
-    # short). A resume that only fills in sections of a guide that stayed
-    # `ready` read nothing new, so it leaves the date alone.
-    if planned or run.guide.status != "ready":
-        changes["generated_at"] = datetime.now(timezone.utc).isoformat()
+    # `generated_at` is when the guide's materials were read: the lectures
+    # added after it are the new ones. An Update or a Regenerate saved it
+    # with their first section, and a resume read nothing new, so only a
+    # first generation dates the guide here: from when it was made, which is
+    # when its materials were chosen. Never from now: a lecture uploaded
+    # while the run wrote, or before the guide was first opened, would never
+    # count as new.
+    if run.guide.generated_at is None:
+        changes["generated_at"] = run.guide.created_at or datetime.now(timezone.utc).isoformat()
     await run.asave(release=True, **changes)
 
 
@@ -400,7 +412,7 @@ async def _aevents(run: _Run) -> AsyncIterator[SaplingEvent]:
     _refuse_nothing_to_read(run, todo)
 
     yield _status("check", "Checking citations and blocks", total, total)
-    await _afinish(run, planned=planning)
+    await _afinish(run)
     _log_generated(run)
     yield await _adone(run)
 
