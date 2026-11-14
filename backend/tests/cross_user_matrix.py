@@ -341,7 +341,9 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
 SWAP_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
     ("POST", "/api/issue-reports"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
-    ("GET", "/api/profile/username/check"): ((200,), "unauthenticated availability check by design"),
+    ("GET", "/api/profile/username/check"): ((200,), "availability for the SESSION; the user_id "
+                                                     "param is accepted but ignored (it used to "
+                                                     "confirm the user_id -> username mapping)"),
 }
 
 #: Routes with a self param that are intentionally cross-user; covered by the
@@ -897,7 +899,7 @@ def allowlist_cases(a_user: str = USER_A, b_user: str = USER_B) -> list[Case]:
              expect=(200,), note="roles for a signed-in viewer (anonymous: 401, #115)"),
         Case("allowlist", "GET", "/api/profile/username/check", "/api/profile/username/check",
              query={"username": "rich-active", "user_id": b_user}, expect=(200,),
-             note="username availability"),
+             note="username availability for the signed-in viewer (anonymous: 401)"),
         Case("allowlist", "GET", "/api/social/public-rooms", "/api/social/public-rooms",
              query={"user_id": b_user}, expect=(200,),
              note="public room list: A's public room, never the private one or any invite code",

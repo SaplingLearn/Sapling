@@ -29,6 +29,7 @@ from models import (
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
+from services.request_limits import check_rate_limit
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.profile import (
@@ -98,8 +99,51 @@ _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
 # #115: unauthenticated, and answers about OTHER users' usernames -> service role.
+#: Username checks per minute, per signed-in viewer. The Settings field
+#: debounces, so a real user makes a handful; this only stops scripted
+#: enumeration of the username space.
+_USERNAME_CHECK_LIMIT = 30
+_USERNAME_CHECK_WINDOW = 60
+
+
 @router.get("/username/check", dependencies=[Depends(service_route)])
-def check_username(username: str = Query(...), user_id: Optional[str] = Query(None)):
+def check_username(
+    request: Request,
+    username: str = Query(...),
+    user_id: Optional[str] = Query(None),
+):
+    """Is `username` free for the SIGNED-IN viewer?
+
+    Two things changed here (testathon hardening), both about what this
+    endpoint told an ANONYMOUS caller:
+
+    1. It required no session at all, and ran as the service role, so anyone
+       on the internet could ask "does this username exist?" as often as they
+       liked — an unauthenticated oracle over the whole username space, and a
+       free way to harvest the handles of a closed @bu.edu beta.
+
+    2. Worse, the `user_id` QUERY PARAM was trusted: passing
+       `?username=X&user_id=Y` answered `reason: "self"` exactly when user Y
+       owned username X. That is an unauthenticated CONFIRMATION of the
+       user_id -> username mapping, for any id an attacker could observe.
+
+    The viewer is now the session, never the query. `user_id` is still
+    accepted so existing clients (and the cross-user matrix) keep their
+    request shape, but it is IGNORED: "self" is decided by who is calling.
+    """
+    viewer_id = get_session_user_id(request)
+    retry = check_rate_limit(
+        f"username-check:{viewer_id}",
+        limit=_USERNAME_CHECK_LIMIT,
+        window_sec=_USERNAME_CHECK_WINDOW,
+    )
+    if retry is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many username checks. Please slow down.",
+            headers={"Retry-After": str(retry)},
+        )
+
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
         return {"available": False, "reason": "invalid"}
@@ -107,7 +151,8 @@ def check_username(username: str = Query(...), user_id: Optional[str] = Query(No
     existing = table("user_profiles").select("user_id", filters={"username": f"eq.{name}"})
     if not existing:
         return {"available": True}
-    if user_id and existing[0]["user_id"] == user_id:
+    # The SESSION decides "self" — not the caller-supplied user_id (see above).
+    if existing[0]["user_id"] == viewer_id:
         return {"available": True, "reason": "self"}
     return {"available": False, "reason": "taken"}
 

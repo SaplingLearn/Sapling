@@ -737,8 +737,13 @@ class TestViewerResolution:
 # ── GET /api/profile/username/check ────────────────────────────────────────
 
 class TestCheckUsername:
+    """The endpoint requires a session (testathon hardening): it used to be an
+    anonymous oracle over the username space, and its `user_id` query param
+    confirmed the user_id -> username mapping to anyone who asked. "self" is
+    now decided by the SESSION, and the param is ignored."""
+
     def test_available_when_no_existing_row(self):
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = []
             r = client.get("/api/profile/username/check?username=freshname")
         assert r.status_code == 200
@@ -746,7 +751,7 @@ class TestCheckUsername:
 
     def test_taken_when_different_user_holds_it(self):
         # username lives on user_profiles now (keyed by user_id).
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": "other_user"}]
             r = client.get("/api/profile/username/check?username=taken")
         assert r.status_code == 200
@@ -755,21 +760,44 @@ class TestCheckUsername:
         assert body["reason"] == "taken"
 
     def test_available_when_held_by_self(self):
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": USER_ID}]
-            r = client.get(f"/api/profile/username/check?username=mine&user_id={USER_ID}")
+            r = client.get("/api/profile/username/check?username=mine")
         assert r.status_code == 200
         body = r.json()
         assert body["available"] is True
         assert body["reason"] == "self"
 
+    def test_anonymous_caller_is_refused(self):
+        """No session -> 401, so the oracle is not open to the internet."""
+        with patch("routes.profile.get_session_user_id",
+                   side_effect=HTTPException(status_code=401, detail="Not authenticated")),              patch_profile_table() as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/profile/username/check?username=freshname")
+        assert r.status_code == 401
+
+    def test_user_id_param_cannot_claim_someone_elses_name(self):
+        """The identity oracle: passing the OWNER's id as `user_id` must not
+        turn "taken" into "self" — that confirmed who owned a username."""
+        with _mock_session_user(), patch_profile_table() as t:
+            t.return_value.select.return_value = [{"user_id": "other_user"}]
+            r = client.get(
+                "/api/profile/username/check?username=taken&user_id=other_user"
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is False
+        assert body["reason"] == "taken"
+
     def test_invalid_format_short(self):
-        r = client.get("/api/profile/username/check?username=ab")
+        with _mock_session_user():
+            r = client.get("/api/profile/username/check?username=ab")
         assert r.status_code == 200
         assert r.json() == {"available": False, "reason": "invalid"}
 
     def test_invalid_format_special_chars(self):
-        r = client.get("/api/profile/username/check?username=bad-name!")
+        with _mock_session_user():
+            r = client.get("/api/profile/username/check?username=bad-name!")
         assert r.status_code == 200
         assert r.json() == {"available": False, "reason": "invalid"}
 
