@@ -229,11 +229,13 @@ def _delete_files(user_id: str) -> None:
     storage_service.delete_objects(storage_service.STORAGE_BUCKET, storage_service.avatar_paths(user_id))
     # screenshot_urls is client-supplied too: only paths under the student's
     # own upload prefix (`<user id>/<uuid>.<ext>`, routes/feedback.py) go.
+    # `_storage_path` already refuses a `.`/`..`/empty segment, so the prefix
+    # check cannot be climbed out of.
     shots = [
         p for r in page_all(table("issue_reports"), "id,screenshot_urls",
                             filters={"user_id": f"eq.{user_id}"}, order="id")
         for p in (_storage_path(u, ISSUE_BUCKET) for u in (r.get("screenshot_urls") or []))
-        if p and p.startswith(f"{user_id}/") and ".." not in p
+        if p and p.startswith(f"{user_id}/")
     ]
     storage_service.delete_objects(ISSUE_BUCKET, shots)
 

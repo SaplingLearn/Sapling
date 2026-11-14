@@ -267,6 +267,18 @@ def test_client_supplied_references_to_someone_elses_files_are_left_alone(
     assert db.of("room_messages", id="m9")[0]["image_url"] is None  # the reference goes
 
 
+def test_a_screenshot_whose_name_merely_contains_dots_is_deleted(db, storage, revoked, events):
+    """Only a `..` SEGMENT escapes the student's folder (`_object_path`
+    refuses it); `a..b.png` is an ordinary file name and must go."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    db.of("issue_reports", user_id=U)[0]["screenshot_urls"] = [
+        f"{U}/a..b.png", f"{U}/../{OTHER}/x.png", f"{U}/..", f"{U}/sub/../x.png"]
+
+    ap.purge_account(U, now=NOW)
+
+    assert (ap.ISSUE_BUCKET, [f"{U}/a..b.png"]) in storage
+
+
 def _encode_uri(path):
     """What supabase-js getPublicUrl does to the object path (encodeURI)."""
     return quote(path, safe=";,/?:@&=+$-_.!~*'()#")
