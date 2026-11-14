@@ -26,6 +26,7 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
+from services.account_credentials import remove_credentials, revoke_google_tokens
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
@@ -462,6 +463,11 @@ def delete_account(
     # #115: the soft delete is account state (`users` is SELECT-only for the
     # student's token) -> service role.
     with service_scope():
+        # Owner decision 2026-11-14: the Google tokens and the Gradescope
+        # login go NOW, not with the 30-day purge (services/account_purge.py).
+        # First, so a failure here is a 500 the student can retry: once the
+        # account is hidden the guard refuses their session for good.
+        google_tokens = remove_credentials(user_id)
         table("users").update(
             {"deleted_at": datetime.now(timezone.utc).isoformat()},
             filters={"id": f"eq.{user_id}"},
@@ -479,6 +485,9 @@ def delete_account(
     # -> WARN + skip). It drains our queue and the SDK's first, and repeats
     # after the consent TTL. Only reached once the soft delete landed.
     background_tasks.add_task(delete_posthog_person, user_id)
+    # Revoke the Google grant itself (best effort, never raises): our copy of
+    # the tokens is already gone, this ends Sapling's access at Google.
+    background_tasks.add_task(revoke_google_tokens, google_tokens)
     return {"deleted": True}
 
 
