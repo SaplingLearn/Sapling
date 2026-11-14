@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import APP_ENV, FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from services.cors_origins import allowed_origins as cors_allowed_origins
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -277,14 +278,12 @@ if recost_api_key and RecostMiddleware is not None:
         project_id=RECOST_PROJECT_ID,
     )
 
-_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-_allowed_origins = list({
-    FRONTEND_URL.rstrip("/"),
-    "http://localhost:3000",
-    "https://saplinglearn.com",
-    "https://www.saplinglearn.com",
-    *_extra,
-} - {""})
+# Localhost dev origins only on a local/test backend (services/cors_origins.py).
+_allowed_origins = cors_allowed_origins(
+    FRONTEND_URL,
+    APP_ENV,
+    [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()],
+)
 
 app.add_middleware(
     CORSMiddleware,
