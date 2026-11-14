@@ -38,7 +38,7 @@ from db.connection import page_all, pg_quote_value, table
 from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcastTestBody
 from services import email_service, email_templates, email_variables
 from services.admin_audit import log_admin_action
-from services.auth_guard import get_session_user_id, require_admin
+from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.encryption import decrypt, decrypt_if_present
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ def _broadcast_view(row: dict) -> dict:
 def create_broadcast(body: EmailBroadcastBody, request: Request, background_tasks: BackgroundTasks):
     """Resolve the audience NOW (the count the admin confirmed is the list that
     gets mailed), record the broadcast, and send it in the background."""
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     recipients = list(resolve_audiences([body.audience])[body.audience].values())
     rows = table("email_broadcasts").insert({
@@ -466,7 +466,7 @@ def resume_broadcast(broadcast_id: str, request: Request, background_tasks: Back
     goes back through `email_sends` dedupe: whoever already got it is a no-op,
     failed sends are retried, and anyone who joined the audience since gets it.
     The claim is a conditional update, so two clicks start one run."""
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     try:
         uuid.UUID(broadcast_id)

@@ -27,6 +27,16 @@ def _email_domain_allowed(email: str) -> bool:
     return domain in ALLOWED_EMAIL_DOMAINS
 
 
+def _email_verified(user_info: dict) -> bool:
+    """Whether Google vouches that the account owns its email address.
+
+    The domain allowlist, the waitlist and the account lookup all key on the
+    email, so an unverified one (a Google account created with an address its
+    owner never proved) must not sign in. Only an explicit JSON `true` counts:
+    a missing or non-boolean `verified_email` is refused."""
+    return user_info.get("verified_email") is True
+
+
 def fetch_google_userinfo(access_token: str) -> dict | None:
     """Google's userinfo for the signed-in account, or None on any failure."""
     # Fetch user info from Google. Uses httpx (the codebase's sanctioned HTTP

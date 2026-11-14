@@ -55,6 +55,8 @@ WORKER_PATH_MODULES = (
 
 #: Read in those modules but not on a worker's path, or not the API's to share.
 EXCLUDED = {
+    "ADMIN_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
+    "ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
     "ACCOUNT_SYNC_INBOUND_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_URL": "admin account-copy routes only",

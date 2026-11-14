@@ -33,12 +33,13 @@ Sapling does not use JWTs. Sessions are minimal HMAC-signed payloads of the form
 base64url(payload).base64url(signature)
 ```
 
-- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>}`. The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
+- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>, "typ": "session", "iat": <unix_timestamp>}`. The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
 - **Algorithm:** HMAC-SHA256 over the base64 payload using `SESSION_SECRET` (≥32 bytes, validated at runtime in `sessionToken.ts:6`).
 - **Frontend signs** with `crypto.subtle.importKey` + `crypto.subtle.sign('HMAC', …)`.
 - **Backend verifies** with `hmac.compare_digest()` for timing-safe comparison (`auth_guard.py:35`).
-- **Expiry:** 30 days (`SESSION_MAX_AGE = 2_592_000` in `sessionToken.ts:1`); enforced on both ends (`auth_guard.py:48`, `sessionToken.ts:60`).
-- **Lookup:** Backend reads the token from cookie `sapling_session` first, falling back to the `auth_token` query parameter (`auth_guard.py:19`).
+- **Expiry:** 7 days from issue (`SESSION_MAX_AGE = 604800` in `sessionToken.ts`, `config.SESSION_MAX_AGE_SECONDS` on the backend); both ends refuse a session whose `iat` is older, whatever its `exp` says. A token minted before `iat` existed is dated `exp - 30 days`.
+- **Lookup:** Backend reads the token from the `sapling_session` cookie only. The `?auth_token=` query parameter is not a credential (tokens in URLs reach access logs, Referer headers and browser history); the OAuth handoff token travels in the frontend callback URL and reaches the session BFF in a JSON body.
+- **Revocation:** `users.sessions_valid_after`; a session issued before it is refused (`auth_guard.get_session_user_id`, through its 30 s account cache).
 
 ### 1.3 Cookie Hardening
 
@@ -49,11 +50,11 @@ The session cookie is set exclusively by the Next.js route handler — never by 
 | Flag        | Value                | Purpose                                             |
 |-------------|----------------------|-----------------------------------------------------|
 | `httpOnly`  | `true`               | Inaccessible to JavaScript; mitigates XSS exfil     |
-| `secure`    | `true`               | HTTPS-only                                          |
+| `secure`    | `true`               | HTTPS-only (production builds, and any https request) |
 | `sameSite`  | `lax`                | Implicit CSRF defense for state-changing requests   |
 | `path`      | `/`                  | Whole site                                          |
 | `domain`    | `.saplinglearn.com`  | Shared across all subdomains (api, app, www)        |
-| `maxAge`    | 30 days              | Set to `0` on sign-out for immediate deletion       |
+| `maxAge`    | 7 days               | Set to `0` on sign-out for immediate deletion       |
 
 `COOKIE_DOMAIN=.saplinglearn.com` is shipped via `wrangler.toml [vars]` (commit `b1377ec`); the leading dot is what permits `api.saplinglearn.com` and the app origin to share the same session.
 
@@ -61,7 +62,11 @@ The session cookie is set exclusively by the Next.js route handler — never by 
 
 ### 1.4 Sign-out
 
-`UserContext.signOut()` issues `DELETE /api/auth/session`, which writes a `Max-Age=0` cookie under the same domain/Secure/SameSite settings, then clears in-memory and storage state. Tokens are stateless, so revocation is by cookie deletion + 30-day expiry; there is no server-side blacklist.
+`UserContext.signOut()` issues `DELETE /api/auth/session`. The BFF first calls the backend's `POST /api/auth/logout` with the cookie, which sets `users.sessions_valid_after = now()` and so revokes every session the account was issued until then (sign-out is everywhere); it then writes a `Max-Age=0` cookie under the same domain/Secure/SameSite settings, and the client clears in-memory and storage state. Other backend processes honour the revocation within the guard's 30 s account cache.
+
+### 1.5 Boot refusals
+
+`config.validate_config()` refuses to start a process whose `APP_ENV` is local/test/dev/development but which looks deployed (an https `FRONTEND_URL` or `GOOGLE_AUTH_REDIRECT_URI` off localhost, `SECURE_COOKIES=true`, or a hosting platform's env), and, outside local, refuses the `SESSION_SECRET` / `ENCRYPTION_KEY` values committed to the repository. FastAPI's `/docs`, `/redoc` and `/openapi.json` are served only when `APP_ENV` is local or test.
 
 ---
 
@@ -75,7 +80,7 @@ Three building blocks gate every authenticated route:
 
 - **`get_session_user_id(request)`** — verifies the HMAC token and returns the `user_id`; raises `401` on missing/invalid/expired tokens.
 - **`require_self(user_id, request)`** — confirms the session user matches the target resource owner; raises `403 "Forbidden: not your account"` otherwise.
-- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise.
+- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise. Step-up: the session must also have been issued within `ADMIN_REAUTH_WINDOW_SECONDS` (12 h), else `401` with `detail.code = "reauth_required"` and the admin console asks for a fresh Google sign-in. **`require_admin_recent(request)`** applies the stricter `ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS` (30 min) to account wipe/seed/copy, role assign/revoke, email broadcasts and feature-flag changes.
 - **`require_role(role_slug)`** — generic factory that returns a checker for any role.
 
 Errors are surfaced as standard FastAPI `HTTPException` with deterministic status codes (`401` unauthenticated, `403` authorized-but-forbidden).
