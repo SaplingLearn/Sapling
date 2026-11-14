@@ -36,8 +36,9 @@ TUTOR_SESSION_START = abuse_limit(
 
 # ── Notes agent actions (routes/notes.py) ───────────────────────────────────
 
-#: summarize / extract-concepts / chat / send-to-tutor / generate-quiz on a
-#: note share one budget: each is a model call behind a button.
+#: summarize / extract-concepts / chat / send-to-tutor on a note share one
+#: budget: each is a model call behind a button. (generate-quiz runs no model
+#: and spends none of it.)
 NOTE_AI_ACTION = abuse_limit(
     "note-ai", limit=20, window_sec=_MINUTE,
     detail="You've asked for a lot of note help in a short time.",

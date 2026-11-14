@@ -87,7 +87,6 @@ JSON_ROUTES = [
     (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/chat",
      {"user_id": "u1", "message": "explain"}),
     (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/send-to-tutor", {"user_id": "u1"}),
-    (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/generate-quiz", {"user_id": "u1"}),
     (abuse_limits.SOCIAL_MESSAGE_SEND, "u1", "post", "/api/social/rooms/r1/messages",
      {"user_id": "u1", "text": "hello"}),
     (abuse_limits.SOCIAL_MESSAGE_EDIT, "u1", "patch", "/api/social/rooms/r1/messages/m1",
@@ -117,6 +116,26 @@ def test_json_route_answers_429_once_its_budget_is_spent(limit, subject, method,
         r = getattr(client, method)(path, json=body)
     _assert_rate_limited(r, limit)
     _assert_no_handler_db(db, path)
+
+
+def test_generate_quiz_from_a_note_spends_no_note_ai_unit():
+    """/notes/{id}/generate-quiz picks a linked concept; it runs no model (the
+    quiz itself is generated, and limited, by /api/quiz/generate). So a spent
+    note-AI budget does not refuse it, and neither it nor its 404 spends a
+    unit of that budget."""
+    from unittest.mock import AsyncMock
+
+    limit = abuse_limits.NOTE_AI_ACTION
+    linked = [{"id": "g1", "concept_name": "Recursion", "mastery_score": 0.2}]
+    with patch("routes.notes.get_note", AsyncMock(return_value=None)):
+        assert client.post("/api/notes/n1/generate-quiz", json={"user_id": "u1"}).status_code == 404
+    with patch("routes.notes.get_note", AsyncMock(return_value={"id": "n1", "user_id": "u1"})), \
+         patch("routes.notes.list_linked_concepts", AsyncMock(return_value=linked)):
+        assert client.post("/api/notes/n1/generate-quiz", json={"user_id": "u1"}).status_code == 200
+        _exhaust(limit, "u1")  # every unit was still there to spend
+        r = client.post("/api/notes/n1/generate-quiz", json={"user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"concept_node_id": "g1", "concept_name": "Recursion"}
 
 
 def _pdf_upload():

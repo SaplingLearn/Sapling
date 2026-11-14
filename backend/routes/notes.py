@@ -560,8 +560,9 @@ async def send_to_tutor(
 async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
+    # No NOTE_AI_ACTION unit: this picks a linked concept and runs no model.
+    # The quiz itself is generated (and limited) by /api/quiz/generate.
     await guard_off_loop(require_self, body.user_id, request)
-    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
