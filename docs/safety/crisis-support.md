@@ -197,10 +197,22 @@ then `suicidal_ideation`, then `self_harm`.
 
 **Notes are screened as documents** (`source="document"`). A match that sits
 entirely inside a quotation (`"..."`, `“...”`, `„...“` or `'...'`) does not
-count, so lecture notes quoting a patient ("a patient says 'I want to kill
-myself'") or a play can still be summarized. It still counts when the
-quotation's own sentence speaks in the first person outside it ("I keep
-thinking 'I want to die'", "I wrote: 'I want to die.'"). That sentence
+count when the quotation's own sentence attributes it to someone else, so
+lecture notes quoting a patient ("a patient says 'I want to kill myself'")
+or a play can still be summarized. Attributed means, outside the quotation
+and in its sentence: a reporting verb with a subject ('a patient says
+"..."', '"...," she said', '"...," said the patient': says, said, asks,
+writes, tells, cries, sings, reports, ...), a third-person speaker word just
+before it ('the speaker's refrain, "..."', patient, client, character,
+narrator, author, ...), or a capitalized name before the colon that
+introduces it ('Macbeth: "..."', 'Lady Macbeth:'). A label before a colon is
+not a speaker ('Note:', 'Today:', 'Journal:', 'Me:', 'Dear diary:', a word
+ending in "ly"), and neither is a verb with no subject ('Wrote it again:
+"..."'). A quotation with no speaker is the student's own and counts: 'Note:
+"I want to kill myself"', or a note whose body is only '"I want to die"'. It
+also counts, attributed or not, when the quotation's sentence speaks in the
+first person outside it ("I keep thinking 'I want to die'", "I wrote: 'I
+want to die.'"). That sentence
 is the one the quotation sits in: a quotation that closes on its own ".", "!"
 or "?" ends it, so a first person in the next sentence does not count ('The
 patient said "I want to die." I think this shows depression.' is set aside).
@@ -232,11 +244,18 @@ negatives.
   about this" opening message, a note or poem with an UNQUOTED first-person
   line, or a first-person sentence in lecture notes that names suicide with
   no topic word.
-- **Quotations in notes are set aside**, so a student who writes their own
-  crisis line in quotation marks in a note, with no first-person word in
-  the quotation's sentence around it, is not screened there. Their messages
-  to the tutor and the note chat are screened whole. The card says the
-  student can keep studying, and their next message is screened afresh.
+- **Attributed quotations in notes are set aside**, so a student who writes
+  their own crisis line in quotation marks AND gives it to someone else in
+  the same sentence ('mom said "..."', 'Sam: "..."'), with no first-person
+  word around it, is not screened there. A capitalized word before a colon
+  that is not on the label list (`_LABELS`) reads as a name, so an unlisted
+  label ('Ugh: "..."') sets its quotation aside too. Their messages to the
+  tutor and the note chat are screened whole. The card says the student can
+  keep studying, and their next message is screened afresh.
+- **Unattributed quotations in notes are screened.** Lecture notes that
+  quote a line with no speaker in its sentence ('Macbeth, Act 5: "I want to
+  die" is the line we discussed') get the card when summarized: a false
+  positive, chosen over missing a student's own quoted line.
 - **Block quotes in notes are not set aside.** A lecture note that quotes a
   patient or a play on a Markdown `>` line, without quotation marks, gets
   the card when it is summarized: a false positive, chosen over missing a

@@ -42,15 +42,22 @@ How matching works (every list below is a regex over `normalize(text)`):
    an academic topic ("Durkheim", "euthanasia", "theory of suicide").
 
 5. `detect(text, source="document")` (a stored note or card, never a typed
-   message) sets quotations aside: a match entirely inside "...", “...”,
-   „...“ or '...' does not count unless the quotation's own sentence speaks
-   in the first person outside it. That sentence is the one the quotation
-   sits in: a break inside the quotation does not end it, a colon that
-   introduces it ('I wrote: "..."') does not either, and a quotation closing
-   on its own '.', '!' or '?' ends it there. A Markdown `>` line is NOT a
-   quotation (students write their own callouts that way). The quotations
-   are found on the RAW text (normalizing drops quote marks) and carried
-   through as marker tokens.
+   message) sets aside a quotation ATTRIBUTED TO SOMEONE ELSE: a match
+   entirely inside "...", “...”, „...“ or '...' does not count when the
+   quotation's own sentence, outside it, gives it a speaker and has no
+   first-person word. A speaker is a reporting verb with a subject ('a
+   patient says "..."', '"...," said the patient', `_REPORTING`), a
+   third-person speaker word just before it ('the speaker's refrain, "..."',
+   `_SPEAKER`), or a capitalized name before a colon ('Macbeth: "..."',
+   never a label such as 'Note:', 'Today:', 'Dear diary:', `_LABELS`). A
+   quotation with no speaker is the student's own and counts ('Note: "I want
+   to die"', a note that is only '"I want to die"'). The sentence is the one
+   the quotation sits in: a break inside the quotation does not end it, a
+   colon that introduces it ('I wrote: "..."') does not either, and a
+   quotation closing on its own '.', '!' or '?' ends it there. A Markdown `>`
+   line is NOT a quotation (students write their own callouts that way). The
+   quotations are found on the RAW text (normalizing drops quote marks and
+   case) and carried through as marker tokens; a `Name:` is read there too.
 
 Phrases are word-bounded: a pattern never matches inside a longer word.
 
@@ -419,13 +426,119 @@ _QUOTED = re.compile(
     re.IGNORECASE,
 )
 
+# ── Who a quotation is attributed to (documents only) ──────────────────────
+
+#: A reporting verb (normalized form) that gives a quotation a speaker, when
+#: it has a subject: 'a patient says "..."', '"...," said the patient'. Bare
+#: ('Wrote it again: "..."') it is the student's own report and counts.
+_REPORTING = re.compile(
+    r"(?:say|says|said|state|states|stated|ask|asks|asked|writes|wrote|tell|tells|told"
+    r"|cry|cries|cried|scream|screams|screamed|whisper|whispers|whispered|reply|replies|replied"
+    r"|exclaim|exclaims|exclaimed|shout|shouts|shouted|sing|sings|sang|sung|recite|recites"
+    r"|recited|report|reports|reported|declare|declares|declared|admit|admits|admitted|explain"
+    r"|explains|explained|add|adds|added|continues|continued|insist|insists|insisted|mutter"
+    r"|mutters|muttered|sob|sobs|sobbed|yell|yells|yelled|lament|laments|lamented|speak|speaks"
+    r"|spoke|utter|utters|uttered|respond|responds|responded|answered|remark|remarked|mention"
+    r"|mentions|mentioned|claim|claims|claimed|sigh|sighs|sighed|beg|begs|begged|plead|pleads"
+    r"|pleaded|repeat|repeats|repeated|texted|confesses|confessed|announces|announced)"
+)
+#: Reporting only after a speaker ('the author notes "..."'), never a noun
+#: ('Lecture notes: "..."').
+_REPORTING_AFTER_SPEAKER = re.compile(r"(?:notes|noted|quotes|quoted)")
+#: A third-person speaker: one of these among the last few words before the
+#: quotation introduces it ('the speaker's refrain, "..."', 'Patient: "..."').
+#: Possessives ("speakers") are in the normalized form. Not "her" (as often
+#: 'I talked to her' as 'her words'), and not a generic "the" + noun.
+_SPEAKER = re.compile(
+    r"(?:his|their"
+    r"|(?:patient|client|character|narrator|speaker|author|poet|protagonist|antagonist|persona"
+    r"|interviewee|respondent|participant|clinician|therapist|counselor|doctor|nurse|physician"
+    r"|psychiatrist|hero|heroine|villain|victim)s?)"
+)
+#: A third-person pronoun: a speaker only as the subject of a reporting verb,
+#: or right before the quotation ('she: "..."'), never further back ('they
+#: were asleep: "..."').
+_PRONOUN = re.compile(r"(?:he|she|they)")
+#: Words that end a quotation's clause after it: what follows is a new
+#: statement, not its attribution ('"..." and mom asked about school').
+_JOINER = re.compile(r"(?:and|but|so|then|or|because|cause|while|when|after|before|until|plus)")
+#: How many words before the quotation, and after it, can attribute it.
+_ATTRIBUTION_BEFORE, _ATTRIBUTION_AFTER = 5, 3
+
+#: A capitalized name right before the colon that introduces a quotation
+#: ('Macbeth: "..."', 'Lady Macbeth:', '**HAMLET:**'), on the RAW text.
+_NAME_COLON = re.compile(
+    r"(?:^|[^\w'’.-])((?:[^\W\d_][\w'’.-]*[ \t]+){0,2}[^\W\d_][\w'’.-]*)[*_]*[ \t]*:[*_]*[ \t]*$"
+)
+#: Capitalized words before a colon that are labels, not speakers: a
+#: student's own 'Note:', 'Today:', 'Dear diary:', 'Me:'. Any word ending in
+#: "ly" ('Honestly:', 'Lately:') is one too.
+_LABELS = frozenset((
+    "note notes nb ps today tonight tonite yesterday tomorrow morning evening night afternoon"
+    " journal diary dear me myself self i im ive my mine mood feeling feelings feel thought"
+    " thoughts update entry reminder todo status day week weekend lecture class lesson monday"
+    " tuesday wednesday thursday friday saturday sunday summary reflection vent rant truth mind"
+    " current goal goals question answer q a front back title topic quote idea edit also and so"
+    " then now again same fyi tldr draft list important caption example definition term mantra"
+    " confession secret prompt response honest real talk inner voice brain heart head header"
+    " heading subject warning tw cw content trigger"
+).split())
+
+
+def _named_speaker(prefix: str) -> bool:
+    """`prefix` (raw text up to a quotation's opening mark) ends in a
+    capitalized name and a colon: 'Macbeth: ', never 'Note: '."""
+    m = _NAME_COLON.search(prefix)
+    if m is None:
+        return False
+    words: list[str] = []
+    for word in reversed(m.group(1).split()):  # the capitalized words before the colon
+        if not word[0].isupper():
+            break
+        words.append(word)
+    if not words:
+        return False
+    for word in words:
+        word = _APOSTROPHES.sub("", word).strip(".-").casefold()
+        if word in _LABELS or word.endswith("ly"):
+            return False
+    return True
+
+
+def _attributed(before: str, after: str) -> bool:
+    """The words of a quotation's sentence before it (`before`) and after it
+    (`after`), normalized, give it a speaker other than the student."""
+    # A `|` here is a colon that introduces the quotation (or one inside an
+    # earlier quotation): a verb right after one has no subject.
+    words = before.split()
+    last = [i for i, w in enumerate(words) if w != "|"][-_ATTRIBUTION_BEFORE:]
+    if last and _PRONOUN.fullmatch(words[last[-1]]):
+        return True
+    for i in last:
+        word = words[i]
+        if _SPEAKER.fullmatch(word):
+            return True
+        subject = words[i - 1] if i else "|"
+        if subject != "|" and (_REPORTING.fullmatch(word) or (
+                _REPORTING_AFTER_SPEAKER.fullmatch(word)
+                and (_SPEAKER.fullmatch(subject) or _PRONOUN.fullmatch(subject)))):
+            return True  # a reporting verb with a subject before it
+    head = [w for w in after.split() if w != "|"][:_ATTRIBUTION_AFTER]
+    for i, word in enumerate(head):
+        if _JOINER.fullmatch(word):
+            return False
+        if _REPORTING.fullmatch(word) and (i or len(head) > 1):
+            return True  # '"..." she said', '"..." said the patient'
+    return False
+
 
 @dataclass(frozen=True)
 class _Forms:
     """`text` is `normalize`'s form. `clause` is the same with a `,` token at
     each clause break; `commas` are those tokens' offsets in `clause`, which
-    map a `clause` offset back onto `text`. `quoted` are the (start, end)
-    spans of `text` that sat inside a quotation (documents only). `breaks`
+    map a `clause` offset back onto `text`. `quoted` are the (start, end,
+    named) spans of `text` that sat inside a quotation (documents only),
+    `named` when a `Name:` introduced it on the raw text. `breaks`
     are the offsets of the `|` tokens that end a sentence AROUND a quotation:
     a break inside a quotation does not count unless it is the quotation's
     last token ('"I want to die." I think ...' ends its sentence at the
@@ -434,7 +547,7 @@ class _Forms:
     text: str
     clause: str
     commas: tuple[int, ...]
-    quoted: tuple[tuple[int, int], ...] = ()
+    quoted: tuple[tuple[int, int, bool], ...] = ()
     breaks: tuple[int, ...] = ()
 
     def from_clause(self, index: int) -> int:
@@ -442,24 +555,28 @@ class _Forms:
         return index - 2 * bisect_left(self.commas, index)
 
 
-def _mark_quotations(text: str) -> str:
+def _mark_quotations(text: str) -> tuple[str, list[bool]]:
     """`text` with a quote marker token around every quotation, found on the
-    RAW text (normalizing drops the quote marks)."""
+    RAW text (normalizing drops the quote marks), and, per quotation in
+    order, whether a capitalized `Name:` introduces it (normalizing drops
+    case too)."""
     # Quotation marks only: a Markdown `>` line is as often the student's own
     # callout as a quotation, so it is screened like the rest.
-    parts, last = [], 0
+    parts, named, last = [], [], 0
     for m in _QUOTED.finditer(text):  # in order, never overlapping
         start, end = next(m.span(g) for g in range(1, 5) if m.group(g) is not None)
         parts += [text[last:start], _QUOTE_OPEN, text[start:end], _QUOTE_CLOSE]
+        named.append(_named_speaker(text[max(start - 121, 0):start - 1]))  # before the mark
         last = end
-    return "".join(parts) + text[last:]
+    return "".join(parts) + text[last:], named
 
 
 def _forms(text: str, *, quotes: bool = False) -> _Forms:
     # A marker character the student typed is just a non-word character.
     text = _MARKERS.sub(" ", text[:MAX_SCREEN_CHARS])
+    named: list[bool] = []
     if quotes:
-        text = _mark_quotations(text)
+        text, named = _mark_quotations(text)
     folded = unicodedata.normalize("NFKD", text).casefold()
     folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
     folded = _INVISIBLE.sub("", folded)
@@ -476,18 +593,21 @@ def _forms(text: str, *, quotes: bool = False) -> _Forms:
     words: list[str] = []  # `text`'s tokens
     clause: list[str] = []  # `clause`'s tokens
     commas: list[int] = []
-    quoted: list[tuple[int, int]] = []
+    quoted: list[tuple[int, int, bool]] = []
     breaks: list[int] = []
     c_len = n_len = 0  # length of each joined form so far
     opened: int | None = None
     last_break: int | None = None  # set while the open quotation ends in a break
+    names = iter(named)  # one per quote open marker, in order
+    is_named = False
     for token in folded.split():
         if token == _QUOTE_OPEN:
             opened, last_break = (n_len + 1 if words else 0), None
+            is_named = next(names, False)
             continue
         if token == _QUOTE_CLOSE:
             if opened is not None and n_len > opened:
-                quoted.append((opened, n_len))
+                quoted.append((opened, n_len, is_named))
                 if last_break is not None:
                     breaks.append(last_break)
             opened = None
@@ -553,12 +673,13 @@ Source = Literal["message", "document"]
 def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | None:
     """The most severe crisis phrase in `text`, or None. Never raises on str.
 
-    `source="document"` sets quotations aside: a match entirely inside one
-    ("...", “...”, '...'; never a Markdown `>` line, which is as often the
-    student's own callout) does not count, unless the quotation's own
-    sentence speaks in the first person outside it ("I keep thinking 'I want
-    to die'"). Lecture notes quote patients and plays; a
-    student's own words are not in quotation marks. A typed message is always
+    `source="document"` sets aside a quotation attributed to someone else: a
+    match entirely inside one ("...", “...”, '...'; never a Markdown `>`
+    line, which is as often the student's own callout) does not count when
+    its sentence gives it another speaker ("a patient says '...'", "Macbeth:
+    '...'") and does not speak in the first person outside it ("I keep
+    thinking 'I want to die'" counts, so does "Note: 'I want to die'").
+    Lecture notes quote patients and plays. A typed message is always
     screened whole."""
     if not text or not text.strip():
         return None
@@ -604,14 +725,15 @@ def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | Non
 
 def _quoted_by_someone_else(forms: _Forms, span: tuple[int, int]) -> bool:
     """`span` lies inside one quotation whose sentence, outside the quotation,
-    has no first-person word ("a patient says '...'", not "I said '...'").
+    names someone else as its speaker and has no first-person word ("a
+    patient says '...'", not "I said '...'" and not "Note: '...'").
 
     The quotation's sentence is the one it sits in (`_Forms.breaks`): a break
     inside the quotation neither ends nor shifts it, but a quotation that ends
     with its own sentence punctuation ends the sentence there."""
     norm, breaks = forms.text, forms.breaks
     start, end = span
-    for q_start, q_end in forms.quoted:
+    for q_start, q_end, named in forms.quoted:
         if q_start <= start and end <= q_end:
             i = bisect_left(breaks, q_start)
             before = breaks[i - 1] + 1 if i else 0
@@ -622,8 +744,10 @@ def _quoted_by_someone_else(forms: _Forms, span: tuple[int, int]) -> bool:
                 after = q_end
             else:
                 after = breaks[j]
-            outside = norm[before:q_start] + " " + norm[q_end:after]
-            return not _FIRST_PERSON.search(outside)
+            lead, tail = norm[before:q_start], norm[q_end:after]
+            if _FIRST_PERSON.search(lead + " " + tail):
+                return False  # the student's own sentence
+            return named or _attributed(lead, tail)
     return False
 
 

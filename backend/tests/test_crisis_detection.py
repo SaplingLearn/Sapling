@@ -437,16 +437,51 @@ def test_long_notes_are_screened_whole():
 
 # ── Documents: a quotation is not the student's own words ──────────────────
 
-#: Note text that QUOTES crisis language (a case study, a play, a poem). With
-#: source="document" a match inside the quotation does not count, unless the
-#: quotation's own sentence speaks in the first person.
+#: Note text that QUOTES someone else's crisis language (a case study, a play,
+#: a poem). With source="document" a match inside the quotation does not
+#: count when the quotation's sentence attributes it to someone else (a
+#: reporting verb, a third-person speaker, a `Name:` line) and does not speak
+#: in the first person outside it.
 QUOTED_IN_NOTES: list[str] = [
     'PSYCH 101 week 4: depression. A patient says "I want to kill myself" and the clinician asks about a plan.',
-    "Macbeth, Act 5: “I want to die” is the line we discussed.",
+    "Macbeth, Act 5. Macbeth: “I want to die” is the line we discussed.",
     "Romantic poetry. The speaker's refrain, 'I wish I were dead', closes each stanza.",
     'Case study: the client reported "my self-harm got worse" after the move.',
-    "Lecture: „I want to die“ is the German-style quote example.",
+    "Lecture: the narrator says „I want to die“ in the German-style quote example.",
+    '"I want to die," she said, and the nurse wrote it down.',
+    '"I want to kill myself," said the patient.',
+    'Hamlet says "I want to die" to Horatio.',
+    'HAMLET: "I want to die"',
+    'Lady Macbeth: "I want to die"',
+    '**Ophelia:** "I want to die"',
+    'The author notes "I want to die" as the turning point.',
+    'Patient: "I want to kill myself."',
 ]
+
+#: A quotation nobody else is said to have spoken is the student's own: a
+#: label before a colon is not a speaker, and neither is a reporting verb
+#: with no subject ('Wrote it again: "..."' is the student's).
+UNATTRIBUTED_QUOTES_IN_NOTES: list[str] = [
+    'Note: "I want to kill myself"',
+    'Today: "I want to die"',
+    '"I want to die"',
+    'Journal: "I want to die"',
+    'Dear diary: "I want to die"',
+    'Me: "I want to kill myself"',
+    "Monday: 'I want to kill myself'",
+    'Honestly: "I want to die"',
+    'Wrote it again: "I want to die"',
+    'Mood: "I want to die" and mom asked about school later',
+    'Dear Diary: "I want to die"',
+    'They were asleep: "I want to die"',
+    'Talked to her today: "I want to die"',
+    "Week 4 notes\n“I want to die”\nhomework due Friday",
+]
+
+
+@pytest.mark.parametrize("text", UNATTRIBUTED_QUOTES_IN_NOTES)
+def test_an_unattributed_quotation_in_a_note_still_matches(text):
+    assert detect(text, source="document") is not None
 
 #: Crisis language in a note that is still the student's own: outside any
 #: quotation, or quoted inside a sentence that speaks in the first person.
@@ -526,5 +561,5 @@ def test_detect_any_passes_the_source_on():
 
 def test_quotes_never_change_the_normalized_form():
     for text in (*QUOTED_IN_NOTES, *STILL_SCREENED_IN_NOTES, *QUOTE_ENDS_ITS_SENTENCE,
-                 *QUOTE_IN_A_FIRST_PERSON_SENTENCE):
+                 *QUOTE_IN_A_FIRST_PERSON_SENTENCE, *UNATTRIBUTED_QUOTES_IN_NOTES):
         assert crisis_detection._forms(text, quotes=True).text == normalize(text)
