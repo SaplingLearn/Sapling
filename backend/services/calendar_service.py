@@ -14,6 +14,7 @@ from agents.usage import record_agent_usage
 from services.extraction_service import extract_text_from_file
 from services.assignment_dedupe import assignment_dedupe_key
 from services.encryption import encrypt_if_present
+from services.prompt_safety import wrap_document_input
 from db.connection import table
 
 logger = logging.getLogger(__name__)
@@ -162,7 +163,8 @@ async def _extract_via_agent(
     )
     result = record_agent_usage(
         await syllabus_extraction_agent.run(
-            extracted_text, deps=deps, usage_limits=WORKER_LIMITS
+            wrap_document_input(extracted_text), deps=deps,
+            usage_limits=WORKER_LIMITS,
         ),
         feature="document", task="syllabus", user_id=user_id,
     )
