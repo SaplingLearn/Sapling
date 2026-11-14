@@ -110,7 +110,14 @@ export class GuideGenerationError extends Error {
 /** No event for this long means the stream is dead, not slow. */
 const STREAM_IDLE_MS = 300_000;
 
-function dispatch(event: StreamEvent, handlers: GenerationHandlers): GuideDetail | null {
+/** The run's `done` event. Its guide is null when the run saved the guide but
+ *  could not read it back. */
+interface Done {
+  guide: GuideDetail | null;
+}
+
+/** Hands one event on. Returns the `done` event, and null for any other. */
+function dispatch(event: StreamEvent, handlers: GenerationHandlers): Done | null {
   const data = event.data ?? {};
   if (event.type === "status") {
     handlers.onStatus?.(event.message, data as unknown as GenerationStep);
@@ -125,22 +132,23 @@ function dispatch(event: StreamEvent, handlers: GenerationHandlers): GuideDetail
       typeof data.code === "string" ? data.code : null,
     );
   } else if (event.type === "done") {
-    return data.guide as GuideDetail;
+    return { guide: (data.guide as GuideDetail | null | undefined) ?? null };
   }
   return null;
 }
 
 /**
- * Run (or resume) a guide's generation and resolve with the finished guide.
- * A 409 means another request is already writing it: re-read the guide,
- * wait, and ask again.
+ * Run (or resume) a guide's generation and resolve with the finished guide,
+ * or with null when the run finished and saved it but could not read it back
+ * (the caller reads it). A 409 means another request is already writing it:
+ * re-read the guide, wait, and ask again.
  */
 export async function generateGuide(
   userId: string,
   guideId: string,
   mode: GenerateMode,
   handlers: GenerationHandlers = {},
-): Promise<GuideDetail> {
+): Promise<GuideDetail | null> {
   const events = streamSSE<StreamEvent>(
     `${API_URL}${guidePath(userId, guideId)}/generate`,
     {
@@ -153,8 +161,8 @@ export async function generateGuide(
     { idleTimeoutMs: STREAM_IDLE_MS },
   );
   for await (const { data } of events) {
-    const finished = dispatch(data, handlers);
-    if (finished) return finished;
+    const done = dispatch(data, handlers);
+    if (done) return done.guide;
   }
   throw new GuideGenerationError("The connection dropped before the guide was finished. Retry picks up where it stopped.", true);
 }

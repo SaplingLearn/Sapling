@@ -89,6 +89,13 @@ describe("generateGuide", () => {
     await expect(generateGuide("u1", "g1", "resume")).resolves.toBe(GUIDE);
   });
 
+  it("resolves with no guide at a `done` without one: the run saved it but could not read it back", async () => {
+    streams(event("done", "done", "Guide ready", { guide: null }), event("status", "x", "After the end", {}));
+    const given = handlers();
+    await expect(generateGuide("u1", "g1", "regenerate", given)).resolves.toBeNull();
+    expect(given.onStatus).not.toHaveBeenCalled();
+  });
+
   it("rejects with the stream's error and whether trying again can help", async () => {
     streams(event("error", "error", "You are out of AI credit for today.", { retryable: false }), DONE);
     const refused = await failure(generateGuide("u1", "g1", "regenerate"));

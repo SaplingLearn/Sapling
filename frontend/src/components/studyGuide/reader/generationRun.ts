@@ -59,7 +59,9 @@ function heldElsewhere(err: unknown): boolean {
 }
 
 /**
- * Write the guide and resolve with it once it is done.
+ * Write the guide and resolve with it once it is done. A run that saved the
+ * guide but could not read it back ends with no guide: it is finished all the
+ * same, so the guide is read here, as after a 409, rather than written again.
  *
  * A 409, or a stream that lost the guide to another request
  * (`heldElsewhere`), means another run holds the guide. Re-read it, so what
@@ -79,7 +81,7 @@ function heldElsewhere(err: unknown): boolean {
 export async function writeGuide({ userId, guideId, mode, handlers, onHeld }: Run): Promise<GuideDetail> {
   for (let tries = 1; ; tries++) {
     try {
-      return await generateGuide(userId, guideId, mode, handlers);
+      return (await generateGuide(userId, guideId, mode, handlers)) ?? (await getGuide(userId, guideId));
     } catch (err) {
       if (!heldElsewhere(err)) throw err;
     }

@@ -579,4 +579,25 @@ describe("regenerating the whole guide", () => {
     expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
     expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
   });
+
+  it("reads the guide when the run saved it but could not read it back, and never writes it again", async () => {
+    const rewritten = { ...finishedGuide(), title: "Loops, rewritten" };
+    rewritten.content = { ...rewritten.content, title: rewritten.title };
+    // The run's `done` carries no guide.
+    mocks.generateGuide.mockResolvedValue(null);
+    mocks.getGuide.mockResolvedValueOnce(fixtureGuide()).mockResolvedValue(rewritten);
+    const user = userEvent.setup();
+    renderReader();
+    await screen.findByTestId("guide-title");
+
+    await user.click(screen.getByTestId("guide-menu"));
+    await user.click(screen.getByTestId("guide-menu-regenerate"));
+
+    expect(await screen.findByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.getByTestId("guide-title")).toHaveTextContent("Loops, rewritten");
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(mocks.getGuide).toHaveBeenCalledTimes(2);
+  });
 });
