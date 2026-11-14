@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChartBlock } from "@/lib/studyGuide/types";
 
-import { CHART, chartHasAfter, chartScale, linePath, shownIn, tickLabel, ticks } from "./chartModel";
+import { CHART, chartHasAfter, chartScale, linePath, shownIn, tickLabels, ticks } from "./chartModel";
 
 const chart = (over: Partial<ChartBlock> = {}): ChartBlock => ({
   type: "chart",
@@ -86,9 +86,19 @@ describe("ticks", () => {
     expect(ticks([1, 2], 3)).toEqual([1, 1.5, 2]);
   });
 
-  it("labels whole numbers whole and the rest with one decimal", () => {
-    expect(tickLabel(25)).toBe("25");
-    expect(tickLabel(1.5)).toBe("1.5");
-    expect(tickLabel(0.333)).toBe("0.3");
+  it("labels whole numbers whole, and the rest with the decimals their step needs", () => {
+    expect(tickLabels(ticks([0, 100], 5))).toEqual(["0", "25", "50", "75", "100"]);
+    expect(tickLabels(ticks([1, 2], 3))).toEqual(["1", "1.5", "2"]);
+    // A quarter is 0.25, not 0.3.
+    expect(tickLabels(ticks([0, 1], 5))).toEqual(["0", "0.25", "0.5", "0.75", "1"]);
+    expect(tickLabels(ticks([0, 7], 5))).toEqual(["0", "1.75", "3.5", "5.25", "7"]);
+  });
+
+  it("never gives two ticks of a narrow domain the same label", () => {
+    expect(tickLabels(ticks([0, 0.1], 5))).toEqual(["0", "0.025", "0.05", "0.075", "0.1"]);
+    // A step with no short exact form: every tick to three significant digits of the step.
+    const thirds = tickLabels(ticks([0, 1 / 3], 5));
+    expect(thirds).toEqual(["0", "0.0833", "0.1667", "0.25", "0.3333"]);
+    expect(new Set(thirds).size).toBe(5);
   });
 });
