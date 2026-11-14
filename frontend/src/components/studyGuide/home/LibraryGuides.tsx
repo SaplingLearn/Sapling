@@ -12,9 +12,26 @@ import s from "./home.module.css";
 /**
  * The study guides saved to the Library, as their own short section over the
  * documents: the home's card, down to its title and last row. Each opens in
- * the reader. Nothing is rendered when there are none.
+ * the reader. Nothing is rendered when there are none, and one line with
+ * Retry when they could not be read.
  */
-export function LibraryGuides({ guides, courses }: { guides: GuideCard[]; courses: EnrolledCourse[] }) {
+export function LibraryGuides({
+  guides, courses, failed, onRetry,
+}: {
+  guides: GuideCard[];
+  courses: EnrolledCourse[];
+  /** The guides could not be read: not the same as having none. */
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  if (failed) {
+    return (
+      <div className={s.libraryError} role="alert" data-testid="library-guides-error">
+        Couldn&apos;t load your saved study guides.
+        <button type="button" className="btn btn--ghost btn--sm" data-testid="library-guides-retry" onClick={onRetry}>Retry</button>
+      </div>
+    );
+  }
   if (guides.length === 0) return null;
   return (
     <section className={s.librarySection} aria-label="Saved study guides">

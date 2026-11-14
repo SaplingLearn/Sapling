@@ -4,11 +4,12 @@
  *
  * They are a section of their own over the documents, each a link to its
  * reader. They follow the course filter and the search; the document counts
- * stay document counts; and a guides call that fails (Study hidden by its
- * flag 404s it) leaves the Library as it was.
+ * stay document counts. They are read on their own, so the documents never
+ * wait on them; a guides call that fails says so in one line; and nothing is
+ * asked for while Study is hidden by its flag (the server 404s it then).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
@@ -21,6 +22,10 @@ vi.mock("@/lib/api", () => ({
   scanCourseConcepts: vi.fn(),
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn() }));
+const flagState = vi.hoisted(() => ({ hideStudy: false }));
+vi.mock("@/context/FlagsContext", () => ({
+  useFlagMap: () => ({ flags: flagState.hideStudy ? { hide_study: "on" } : {}, ready: true }),
+}));
 
 import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
 import { listGuides } from "@/lib/studyGuide/api";
@@ -59,6 +64,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  flagState.hideStudy = false;
 });
 
 describe("Library: saved study guides", () => {
@@ -134,11 +140,54 @@ describe("Library: saved study guides", () => {
     expect(screen.queryByText(/Your library is quiet/i)).toBeNull();
   });
 
-  it("a failed guides call means no guides, not a broken Library", async () => {
-    vi.mocked(listGuides).mockRejectedValue(new Error("404"));
+  it("shows the documents without waiting for the guides", async () => {
+    let answer!: (value: { guides: GuideCard[] }) => void;
+    vi.mocked(listGuides).mockReturnValue(new Promise(resolve => { answer = resolve; }));
     renderLibrary();
     expect(await screen.findByTestId("library-doc-a")).toBeTruthy();
+    expect(screen.queryByTestId("library-guide-g1")).toBeNull();
+
+    await act(async () => answer({ guides: [SAVED_CS] }));
+    expect(screen.getByTestId("library-guide-g1")).toBeTruthy();
+  });
+
+  it("is not called quiet while the guides are still on their way", async () => {
+    vi.mocked(getDocuments).mockResolvedValue({ documents: [] } as never);
+    vi.mocked(listGuides).mockReturnValue(new Promise(() => {}));
+    renderLibrary();
+    await screen.findByTestId("library-search");
+    await act(async () => {});
+    expect(screen.queryByText(/Your library is quiet/i)).toBeNull();
+  });
+
+  it("a failed guides call says so in one line with Retry, and the documents still show", async () => {
+    vi.mocked(listGuides).mockRejectedValueOnce(new Error("500"));
+    renderLibrary();
+    expect(await screen.findByTestId("library-guides-error")).toHaveAttribute("role", "alert");
+    expect(screen.getByTestId("library-doc-a")).toBeTruthy();
+    // The documents loaded: the Library itself did not fail.
     expect(screen.queryByTestId("library-load-error")).toBeNull();
-    expect(screen.queryByText("Study guides")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("library-guides-retry"));
+    expect(await screen.findByTestId("library-guide-g1")).toBeTruthy();
+    expect(screen.queryByTestId("library-guides-error")).toBeNull();
+    expect(vi.mocked(listGuides)).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed guides call with no documents is not called quiet", async () => {
+    vi.mocked(getDocuments).mockResolvedValue({ documents: [] } as never);
+    vi.mocked(listGuides).mockRejectedValue(new Error("500"));
+    renderLibrary();
+    await screen.findByTestId("library-guides-error");
+    expect(screen.queryByText(/Your library is quiet/i)).toBeNull();
+  });
+
+  it("asks for no guides while Study is hidden, and an empty Library is quiet", async () => {
+    flagState.hideStudy = true;
+    vi.mocked(getDocuments).mockResolvedValue({ documents: [] } as never);
+    renderLibrary();
+    expect(await screen.findByText(/Your library is quiet/i)).toBeTruthy();
+    expect(vi.mocked(listGuides)).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("library-guides-error")).toBeNull();
   });
 });

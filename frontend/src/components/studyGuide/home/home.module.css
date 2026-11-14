@@ -183,6 +183,8 @@
 
 .librarySection { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
 .libraryGrid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+/* The guides could not be read: one line, as the Library's own refresh error. */
+.libraryError { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: var(--text-muted); }
 
 @container guideshome (min-width: 1560px) {
   .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
