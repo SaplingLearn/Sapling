@@ -1607,6 +1607,53 @@ def test_the_claim_is_kept_fresh_before_each_block_rescue(world, monkeypatch):
     assert events[-1].type == "done" and len(set(tokens)) == 3
 
 
+def test_the_claim_is_kept_fresh_while_a_slow_outline_runs(world, monkeypatch):
+    """The outline's output retries can outlast the stale window: the claim
+    is refreshed while it runs, not only between calls."""
+    world.guide()
+    Script(monkeypatch)
+    monkeypatch.setattr(generation, "HEARTBEAT_S", 0.01)
+    tokens: list[str] = []
+
+    async def slow_outline(brief, **kwargs):
+        tokens.append(world.stored()["generating_at"])
+        await anyio.sleep(0.1)
+        tokens.append(world.stored()["generating_at"])
+        return _outline(_planned("One"))
+
+    monkeypatch.setattr(writer, "awrite_outline", slow_outline)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].type == "done"
+    assert tokens[0] and tokens[1] and tokens[0] != tokens[1]
+
+
+def test_a_run_overtaken_while_its_outline_runs_stops_there(world, monkeypatch):
+    world.guide()
+    script = Script(monkeypatch)
+    monkeypatch.setattr(generation, "HEARTBEAT_S", 0.01)
+    taken_over = "2026-11-12T12:00:00+00:00"
+    finished: list[bool] = []
+
+    async def overtaken_outline(brief, **kwargs):
+        world.stored()["generating_at"] = taken_over
+        await anyio.sleep(5)
+        finished.append(True)
+        return _outline(_planned("One"))
+
+    monkeypatch.setattr(writer, "awrite_outline", overtaken_outline)
+
+    events, _ = run(_follow(world))
+
+    assert events[-1].message == "Another request took over writing this guide."
+    # The outline call was cancelled, not waited out, and nothing was saved.
+    assert finished == [] and script.written == []
+    row = world.stored()
+    assert row["generating_at"] == taken_over and row["status"] == "generating"
+    assert world.content().sections == []
+
+
 def test_a_run_overtaken_between_rescues_stops_there(world, monkeypatch):
     world.guide()
     Script(monkeypatch, outline=_outline(_planned("One")))

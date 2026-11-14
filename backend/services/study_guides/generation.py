@@ -28,7 +28,7 @@ that fails before it leaves the guide exactly as it was.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -58,6 +58,10 @@ logger = logging.getLogger(__name__)
 MODES = ("resume", "update", "regenerate")
 #: How long a finished run waits on the write that gives its claim back.
 RELEASE_TIMEOUT_S = 5.0
+#: How often the claim is refreshed while one call runs long. The outline's
+#: run can retry its output twice, each request up to three slow attempts:
+#: longer than `store.CLAIM_STALE_AFTER`, which this stays well inside.
+HEARTBEAT_S = store.CLAIM_STALE_AFTER.total_seconds() / 3
 
 UNKNOWN_MODE_DETAIL = "Unknown generation mode."
 ALREADY_WRITTEN_DETAIL = "This guide is already written."
@@ -122,6 +126,28 @@ class _Run:
     async def arelease(self) -> None:
         claim, self.claim = self.claim, None
         await arelease_guide(self.guide.user_id, self.guide.id, claim)
+
+
+async def _akept_fresh[T](run: _Run, call: Callable[[], Awaitable[T]]) -> T:
+    """`call()`, with the run's claim refreshed every `HEARTBEAT_S` while it
+    runs, so a slow model call is not taken for an abandoned run. A refresh
+    that finds the claim lost cancels the call (nothing more is paid for)
+    and raises `ClaimLost`; anything `call` raises is raised as itself."""
+
+    async def beat() -> None:
+        while True:
+            await anyio.sleep(HEARTBEAT_S)
+            await run.atouch()
+
+    try:
+        async with anyio.create_task_group() as beats:
+            beats.start_soon(beat)
+            result = await call()
+            beats.cancel_scope.cancel()
+    except BaseExceptionGroup as group:
+        lost = group.subgroup(store.ClaimLost)
+        raise (lost or group).exceptions[0] from None
+    return result
 
 
 async def arelease_guide(user_id: str, guide_id: str, claim: str) -> None:
@@ -227,10 +253,10 @@ async def _aplan(run: _Run) -> None:
     An Update or Regenerate holds its outline until a section is written."""
     generation = run.generation
     generation.charge.keep()
-    run.content = await outline.anew_content(
+    run.content = await _akept_fresh(run, lambda: outline.anew_content(
         run.guide, generation.inputs,
         updating=generation.mode == "update", new_labels=generation.new_labels,
-    )
+    ))
     if run.on_row:
         await run.asave(status="generating", material_ids=generation.material_ids)
 
