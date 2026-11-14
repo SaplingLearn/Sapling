@@ -38,9 +38,12 @@ How matching works (every list below is a regex over `normalize(text)`):
 5. `detect(text, source="document")` (a stored note or card, never a typed
    message) sets quotations aside: a match entirely inside "...", “...”,
    '...' or a `>` block-quote line does not count unless the quotation's own
-   sentence speaks in the first person outside it. The quotations are found
-   on the RAW text (normalizing drops quote marks) and carried through as
-   marker tokens.
+   sentence speaks in the first person outside it. That sentence is the one
+   the quotation sits in: a break inside the quotation does not end it, a
+   colon that introduces it ('I wrote: "..."') does not either, and a
+   quotation closing on its own '.', '!' or '?' ends it there. The quotations
+   are found on the RAW text (normalizing drops quote marks) and carried
+   through as marker tokens.
 
 Phrases are word-bounded: a pattern never matches inside a longer word.
 
@@ -348,11 +351,17 @@ _CLAUSE_BREAK = re.compile(r"(?:[,()\[\]{}–—]|(?<!\S)-+(?!\S))+")
 _CLAUSE = ","
 #: Where a quotation opens and closes (documents only); never in `text`.
 _QUOTE_OPEN, _QUOTE_CLOSE = "\x01", "\x02"
-_NON_WORD = re.compile(r"[^a-z0-9|,\x01\x02]+")
+_NON_WORD = re.compile(r"[^a-z0-9|,\x01\x02\x03]+")
 #: `_SENTENCE_BREAK` for marked text: a marker inside a run of sentence
 #: punctuation (`."` closing a quote, then `:`) does not split the run.
 _SENTENCE_BREAK_MARKED = re.compile(r"[.!?;:\n\r](?:[\x01\x02]*[.!?;:\n\r])*")
-_MARKERS = re.compile(r"[\x01\x02]")
+#: Follows the `|` of a colon that introduces a quotation ('I wrote: "..."'):
+#: that break does not end the quotation's sentence. Never in `text`.
+_INTRO = "\x03"
+#: What follows such a colon: the opening mark (single ones are already gone
+#: with the apostrophes), then the quote's open marker.
+_OPENS_NEXT = re.compile(r'\s*["“„]?\x01')
+_MARKERS = re.compile(r"[\x01\x02\x03]")
 _REPEATED_LETTER = re.compile(r"([a-z])\1{2,}")
 
 #: Longest quotation set aside in a document. A longer "quotation" is more
@@ -384,12 +393,17 @@ class _Forms:
     """`text` is `normalize`'s form. `clause` is the same with a `,` token at
     each clause break; `commas` are those tokens' offsets in `clause`, which
     map a `clause` offset back onto `text`. `quoted` are the (start, end)
-    spans of `text` that sat inside a quotation (documents only)."""
+    spans of `text` that sat inside a quotation (documents only). `breaks`
+    are the offsets of the `|` tokens that end a sentence AROUND a quotation:
+    a break inside a quotation does not count unless it is the quotation's
+    last token ('"I want to die." I think ...' ends its sentence at the
+    quote), and neither does a colon that introduces one."""
 
     text: str
     clause: str
     commas: tuple[int, ...]
     quoted: tuple[tuple[int, int], ...] = ()
+    breaks: tuple[int, ...] = ()
 
     def from_clause(self, index: int) -> int:
         # Each `,` token before `index` added two characters (it and a space).
@@ -419,7 +433,7 @@ def _mark_quotations(text: str) -> str:
 
 def _forms(text: str, *, quotes: bool = False) -> _Forms:
     # A marker character the student typed is just a non-word character.
-    text = text[:MAX_SCREEN_CHARS].replace(_QUOTE_OPEN, " ").replace(_QUOTE_CLOSE, " ")
+    text = _MARKERS.sub(" ", text[:MAX_SCREEN_CHARS])
     if quotes:
         text = _mark_quotations(text)
     folded = unicodedata.normalize("NFKD", text).casefold()
@@ -427,8 +441,7 @@ def _forms(text: str, *, quotes: bool = False) -> _Forms:
     folded = _INVISIBLE.sub("", folded)
     folded = _APOSTROPHES.sub("", folded)
     if quotes:
-        folded = _SENTENCE_BREAK_MARKED.sub(
-            lambda m: " | " + "".join(f" {c} " for c in _MARKERS.findall(m.group())), folded)
+        folded = _SENTENCE_BREAK_MARKED.sub(_marked_break, folded)
     else:
         folded = _SENTENCE_BREAK.sub(" | ", folded)
     folded = _CLAUSE_BREAK.sub(f" {_CLAUSE} ", folded)
@@ -440,16 +453,24 @@ def _forms(text: str, *, quotes: bool = False) -> _Forms:
     clause: list[str] = []  # `clause`'s tokens
     commas: list[int] = []
     quoted: list[tuple[int, int]] = []
+    breaks: list[int] = []
     c_len = n_len = 0  # length of each joined form so far
     opened: int | None = None
+    last_break: int | None = None  # set while the open quotation ends in a break
     for token in folded.split():
         if token == _QUOTE_OPEN:
-            opened = n_len + 1 if words else 0
+            opened, last_break = (n_len + 1 if words else 0), None
             continue
         if token == _QUOTE_CLOSE:
             if opened is not None and n_len > opened:
                 quoted.append((opened, n_len))
+                if last_break is not None:
+                    breaks.append(last_break)
             opened = None
+            continue
+        if token == _INTRO:
+            if breaks and breaks[-1] == n_len - 1:
+                breaks.pop()
             continue
         c_len += 1 if clause else 0
         if token == _CLAUSE:
@@ -457,10 +478,23 @@ def _forms(text: str, *, quotes: bool = False) -> _Forms:
         else:
             n_len += (1 if words else 0) + len(token)
             words.append(token)
+            if opened is None:
+                if token == "|":
+                    breaks.append(n_len - 1)
+            else:
+                last_break = n_len - 1 if token == "|" else None
         clause.append(token)
         c_len += len(token)
     return _Forms(text=" ".join(words), clause=" ".join(clause), commas=tuple(commas),
-                  quoted=tuple(quoted))
+                  quoted=tuple(quoted), breaks=tuple(breaks))
+
+
+def _marked_break(m: re.Match[str]) -> str:
+    """A sentence break in marked text, keeping the quote markers in its run,
+    plus `_INTRO` after a lone colon that opens a quotation."""
+    markers = _MARKERS.findall(m.group())
+    intro = m.group() == ":" and _OPENS_NEXT.match(m.string, m.end()) is not None
+    return " | " + (f" {_INTRO} " if intro else "") + "".join(f" {c} " for c in markers)
 
 
 def normalize(text: str) -> str:
@@ -521,7 +555,7 @@ def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | Non
         return _guarded(span, guards)
 
     def set_aside(span: tuple[int, int]) -> bool:
-        return _quoted_by_someone_else(norm, span, forms.quoted)
+        return _quoted_by_someone_else(forms, span)
 
     for phrase, regex in _EXPLICIT:
         for m in regex.finditer(norm):
@@ -543,17 +577,27 @@ def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | Non
     return None
 
 
-def _quoted_by_someone_else(
-    norm: str, span: tuple[int, int], quoted: tuple[tuple[int, int], ...]
-) -> bool:
+def _quoted_by_someone_else(forms: _Forms, span: tuple[int, int]) -> bool:
     """`span` lies inside one quotation whose sentence, outside the quotation,
-    has no first-person word ("a patient says '...'", not "I said '...'")."""
+    has no first-person word ("a patient says '...'", not "I said '...'").
+
+    The quotation's sentence is the one it sits in (`_Forms.breaks`): a break
+    inside the quotation neither ends nor shifts it, but a quotation that ends
+    with its own sentence punctuation ends the sentence there."""
+    norm, breaks = forms.text, forms.breaks
     start, end = span
-    for q_start, q_end in quoted:
+    for q_start, q_end in forms.quoted:
         if q_start <= start and end <= q_end:
-            before = norm.rfind("|", 0, q_start) + 1
-            after = norm.find("|", q_end)
-            outside = norm[before:q_start] + " " + norm[q_end:len(norm) if after == -1 else after]
+            i = bisect_left(breaks, q_start)
+            before = breaks[i - 1] + 1 if i else 0
+            j = bisect_left(breaks, q_end - 1)
+            if j == len(breaks):
+                after = len(norm)
+            elif breaks[j] == q_end - 1:  # the quotation ends in a break
+                after = q_end
+            else:
+                after = breaks[j]
+            outside = norm[before:q_start] + " " + norm[q_end:after]
             return not _FIRST_PERSON.search(outside)
     return False
 

@@ -375,6 +375,43 @@ def test_a_documents_own_crisis_language_still_matches(text):
     assert detect(text, source="document") is not None
 
 
+#: A quotation that ends with its own sentence punctuation ends its sentence
+#: there: the first person in the NEXT sentence is not the quote's speaker.
+#: A break inside the quotation neither shifts nor extends its sentence.
+QUOTE_ENDS_ITS_SENTENCE: list[str] = [
+    'The patient said "I want to die." I think this shows depression.',
+    'The patient said "I want to die!" I think this shows depression.',
+    'The patient asked "Why do I want to die?" I think she was in crisis.',
+    "The patient said “I want to die.” I think this shows depression.",
+    "The speaker says 'I wish I were dead.' I think the poem is bleak.",
+    'The patient said "I am tired. I want to die." I think this shows depression.',
+    'Patient: "I want to die." I asked about a plan.',
+    'She said "No. Stop." Then the patient said "I want to die." I wrote it down.',
+]
+
+#: ...but the quote's OWN sentence still counts, before or after the quote,
+#: across a colon that introduces it, and after an earlier quote's sentence.
+QUOTE_IN_A_FIRST_PERSON_SENTENCE: list[str] = [
+    'I wrote "I want to die." in my journal',
+    'I keep thinking "I want to die!" every night',
+    'Do I really think "I want to die?" every night',
+    'I wrote in my journal: "I want to die."',
+    'Last night I thought: "I want to kill myself."',
+    'She said "Stop." Then I said "I want to die."',
+]
+
+
+@pytest.mark.parametrize("text", QUOTE_ENDS_ITS_SENTENCE)
+def test_a_quote_ending_in_punctuation_ends_its_own_sentence(text):
+    assert detect(text) is not None, "a typed message is screened in full"
+    assert detect(text, source="document") is None
+
+
+@pytest.mark.parametrize("text", QUOTE_IN_A_FIRST_PERSON_SENTENCE)
+def test_a_quote_in_a_first_person_sentence_still_matches(text):
+    assert detect(text, source="document") is not None
+
+
 def test_detect_any_passes_the_source_on():
     quoted = QUOTED_IN_NOTES[0]
     assert detect_any([quoted]) is not None
@@ -383,5 +420,6 @@ def test_detect_any_passes_the_source_on():
 
 
 def test_quotes_never_change_the_normalized_form():
-    for text in (*QUOTED_IN_NOTES, *STILL_SCREENED_IN_NOTES):
+    for text in (*QUOTED_IN_NOTES, *STILL_SCREENED_IN_NOTES, *QUOTE_ENDS_ITS_SENTENCE,
+                 *QUOTE_IN_A_FIRST_PERSON_SENTENCE):
         assert crisis_detection._forms(text, quotes=True).text == normalize(text)

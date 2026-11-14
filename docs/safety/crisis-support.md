@@ -191,7 +191,11 @@ entirely inside a quotation (`"..."`, `“...”`, `'...'`, or a `>` block-quote
 line) does not count, so lecture notes quoting a patient ("a patient says 'I
 want to kill myself'") or a play can still be summarized. It still counts
 when the quotation's own sentence speaks in the first person outside it ("I
-keep thinking 'I want to die'"). An apostrophe ("I'm", "'cause", "students'")
+keep thinking 'I want to die'", "I wrote: 'I want to die.'"). That sentence
+is the one the quotation sits in: a quotation that closes on its own ".", "!"
+or "?" ends it, so a first person in the next sentence does not count ('The
+patient said "I want to die." I think this shows depression.' is set aside).
+An apostrophe ("I'm", "'cause", "students'")
 is never a quote mark, an unclosed or multi-line quote sets nothing aside,
 and a quotation over 600 characters is screened like the rest. What the
 student TYPES (a chat message, a topic, a description) is always screened
