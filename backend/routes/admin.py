@@ -48,7 +48,7 @@ from services.admin import (
 )
 from routes._errors import domain_status
 from services.admin_audit import log_admin_action
-from services.auth_guard import require_admin, get_session_user_id
+from services.auth_guard import require_admin, require_admin_recent, get_session_user_id
 from routes.admin_flags import record_flag_change
 from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
 from services.users_search import paginate_users
@@ -111,14 +111,14 @@ def update_role(role_id: str, request: Request, body: dict = {}):
 
 @router.post("/roles/assign")
 def assign_role(body: AssignRoleBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     return roles.assign_role(body, actor)
 
 
 @router.delete("/roles/revoke")
 def revoke_role(body: RevokeRoleBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     with _admin_errors():
         return roles.revoke_role(body, actor)

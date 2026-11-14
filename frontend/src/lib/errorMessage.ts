@@ -59,6 +59,10 @@ function detailOf(body: Body): string | undefined {
 
   const detail = body.detail;
   if (typeof detail === "string") return detail.trim() || undefined;
+  // A coded detail (`{code, message}`, e.g. the admin step-up's
+  // `reauth_required` or #756's `not_approved`) carries its own sentence.
+  const detailMessage = asRecord(detail)?.message;
+  if (typeof detailMessage === "string" && detailMessage.trim()) return detailMessage.trim();
   // FastAPI request-validation failures nest the message under detail[].msg.
   if (Array.isArray(detail)) {
     for (const entry of detail) {

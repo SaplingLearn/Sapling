@@ -128,7 +128,7 @@ def drive_callback(staging, monkeypatch):
     userinfo.raise_for_status.return_value = None
     userinfo.json.return_value = {
         "id": "112233", "email": "student@bu.edu",
-        "name": "Ada Lovelace", "picture": "https://example.com/a.png",
+        "name": "Ada Lovelace", "picture": "https://example.com/a.png", "verified_email": True,
     }
     monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
     monkeypatch.setattr(ach_module, "check_achievements", lambda *a, **k: None)

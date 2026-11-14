@@ -4,7 +4,27 @@
  */
 export const SESSION_COOKIE_NAME = 'sapling_session';
 
-export const SESSION_MAX_AGE = 2592000; // 30 days
+/**
+ * A session's lifetime from issue (`iat`), in seconds: 7 days. Twin of backend
+ * config.py `SESSION_MAX_AGE_SECONDS`, which refuses an older session whatever
+ * its `exp` says. Sign-out revokes a session sooner, server-side
+ * (`users.sessions_valid_after`, via the session BFF's DELETE).
+ */
+export const SESSION_MAX_AGE = 604800;
+
+/** What the BFF minted before `iat` existed: such a session is dated
+ * `exp - LEGACY_SESSION_LIFETIME` (backend auth_guard.session_issued_at). */
+const LEGACY_SESSION_LIFETIME = 2592000; // 30 days
+
+/** Tolerance for an `iat` slightly in the future (separate clocks). */
+const IAT_CLOCK_SKEW = 300;
+
+/** When a verified session payload was issued (unix seconds). */
+export function issuedAt(payload: { iat?: unknown; exp?: unknown }): number | null {
+  if (typeof payload.iat === 'number') return Math.floor(payload.iat);
+  if (typeof payload.exp === 'number') return Math.floor(payload.exp) - LEGACY_SESSION_LIFETIME;
+  return null;
+}
 
 /**
  * The token's `typ` claim (#756) — twin of backend services/session_tokens.py.
@@ -45,10 +65,14 @@ async function importKey(): Promise<CryptoKey> {
 }
 
 export async function signSession(userId: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  // `iat` is what server-side revocation (sign-out) and the admin step-up
+  // window compare against (backend services/auth_guard.py).
   const payload = JSON.stringify({
     user_id: userId,
-    exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE,
+    exp: now + SESSION_MAX_AGE,
     typ: 'session',
+    iat: now,
   });
   const payloadB64 = toBase64Url(new TextEncoder().encode(payload));
   const key = await importKey();
@@ -63,8 +87,9 @@ export function tokenTypeOf(payload: { typ?: unknown }): TokenType | null {
   return typ === 'session' || typ === 'handoff' ? typ : null;
 }
 
-/** Verify a `sapling_session` cookie value: signature, expiry, and that it is a
- * SESSION token — a `handoff` token is not a session (#756). */
+/** Verify a `sapling_session` cookie value: signature, expiry, age (at most
+ * SESSION_MAX_AGE since `iat`), and that it is a SESSION token — a `handoff`
+ * token is not a session (#756). Revocation is the backend's to decide. */
 export async function verifySession(
   token: string,
 ): Promise<{ userId: string } | null> {
@@ -82,7 +107,10 @@ export async function verifySession(
     );
     if (!valid) return null;
     const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(payloadB64)));
-    if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp < now) return null;
+    const iat = issuedAt(payload);
+    if (iat === null || iat > now + IAT_CLOCK_SKEW || now - iat > SESSION_MAX_AGE) return null;
     if (typeof payload.user_id !== 'string') return null;
     if (tokenTypeOf(payload) !== 'session') return null;
     return { userId: payload.user_id };

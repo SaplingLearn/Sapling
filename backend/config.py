@@ -26,12 +26,31 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 _sc_env = os.getenv("SECURE_COOKIES")
 SECURE_COOKIES: bool = _sc_env.lower() == "true" if _sc_env is not None else FRONTEND_URL.startswith("https://")
+# Whether SECURE_COOKIES was switched on EXPLICITLY (not derived from
+# FRONTEND_URL): one of the deployment markers `validate_config` reads.
+SECURE_COOKIES_EXPLICIT: bool = _sc_env is not None and _sc_env.strip().lower() == "true"
 
 # Deployment mode (#174). Defaults to "production" so the config is fail-closed:
 # a deployment that sets nothing gets the strict checks. Set APP_ENV=local (or
-# development/dev/test) to relax SESSION_SECRET for local dev.
+# development/dev/test) to relax SESSION_SECRET for local dev. A process that
+# looks like a real deployment refuses to boot in those modes (validate_config).
 APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
+
+# ── Session lifetime, revocation and admin step-up ──────────────────────────
+# A `sapling_session` token carries `iat` (issued at, unix seconds). The guard
+# (services/auth_guard.py) refuses a session older than SESSION_MAX_AGE_SECONDS
+# whatever its `exp` says, and the frontend BFF mints cookies with the same
+# lifetime (frontend/src/lib/sessionToken.ts SESSION_MAX_AGE; keep them equal).
+SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600
+# Admin routes need a session issued within this window (step-up: an older one
+# answers 401 `reauth_required` and the admin signs in with Google again).
+ADMIN_REAUTH_WINDOW_SECONDS = int(os.getenv("ADMIN_REAUTH_WINDOW_SECONDS", str(12 * 3600)))
+# The stricter window for destructive admin actions: account wipe/seed/copy,
+# role changes, email broadcasts and feature-flag changes.
+ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS = int(
+    os.getenv("ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS", str(30 * 60))
+)
 
 # Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
 # Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.
@@ -110,7 +129,108 @@ def validate_config() -> None:
             + ", ".join(missing)
             + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET for local dev.)"
         )
+    _refuse_local_mode_on_a_real_deployment()
+    _refuse_committed_demo_secrets()
     _warn_db_user_scope_config()
+
+
+# The secrets committed to the repo for local dev and CI. Anyone can read them,
+# so outside local dev they are as good as no secret: a SESSION_SECRET from this
+# list lets anyone mint a session for any account, an ENCRYPTION_KEY from it
+# decrypts every encrypted column. Compared exactly (after strip); never echoed.
+KNOWN_DEMO_SESSION_SECRETS = frozenset({
+    # backend/.env.local.example, frontend/.env.local.example and
+    # frontend/package.json's "start:test".
+    "sapling-local-dev-session-secret-change-only-if-you-know-why",
+    # frontend/.env.example's placeholder (long enough to pass the length check).
+    "replace-me-with-at-least-32-bytes-of-random-string",
+})
+KNOWN_DEMO_ENCRYPTION_KEYS = frozenset({
+    # backend/.env.local.example
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    # tests/conftest.py and the CI workflows
+    "0" * 64,
+})
+
+# Hosts that mean "this machine" (or a docker-compose service name).
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "backend", "frontend"})
+
+# Environment variables only a hosting platform sets. Any of them present means
+# this process is a real deployment, whatever APP_ENV says.
+_PLATFORM_MARKERS = (
+    "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID",
+    "RENDER", "FLY_APP_NAME", "K_SERVICE", "DYNO",
+)
+
+
+def _is_public_https(url: str) -> bool:
+    """Whether `url` is https on a host other than this machine."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse((url or "").strip())
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if parsed.scheme != "https" or not host:
+        return False
+    return not (host in _LOOPBACK_HOSTS or host.endswith(".localhost"))
+
+
+def real_deployment_markers() -> list[str]:
+    """Why this process looks like a real (shared, internet-facing) deployment
+    rather than a developer's machine, CI or the local E2E stack. Names only,
+    never values; empty when nothing says so."""
+    reasons = []
+    if _is_public_https(FRONTEND_URL):
+        reasons.append("FRONTEND_URL is a public https origin")
+    if _is_public_https(GOOGLE_AUTH_REDIRECT_URI):
+        reasons.append("GOOGLE_AUTH_REDIRECT_URI is a public https URL")
+    if SECURE_COOKIES_EXPLICIT:
+        reasons.append("SECURE_COOKIES=true")
+    for name in _PLATFORM_MARKERS:
+        if (os.getenv(name) or "").strip():
+            reasons.append(f"{name} is set (hosting platform)")
+    return reasons
+
+
+def _refuse_local_mode_on_a_real_deployment() -> None:
+    """A local APP_ENV relaxes SESSION_SECRET, and `local`/`test` arm
+    POST /api/auth/test-login, which mints a session for ANY user id with no
+    credential. On a real deployment that is a takeover of every account, so a
+    process that looks deployed refuses to boot in those modes."""
+    if not IS_LOCAL:
+        return
+    reasons = real_deployment_markers()
+    if reasons:
+        raise RuntimeError(
+            f"Refusing to start: APP_ENV={APP_ENV!r} is only for a developer's machine, CI or "
+            "the local E2E stack (it enables POST /api/auth/test-login and relaxes "
+            "SESSION_SECRET), but this process looks like a real deployment ("
+            + "; ".join(reasons)
+            + "). Set APP_ENV=production or APP_ENV=staging on deployed services."
+        )
+
+
+def _refuse_committed_demo_secrets() -> None:
+    """Outside local dev, refuse the SESSION_SECRET / ENCRYPTION_KEY values
+    committed to the repository (KNOWN_DEMO_*). Names the variable, never the
+    value."""
+    if IS_LOCAL:
+        return
+    bad = []
+    if (SESSION_SECRET or "").strip() in KNOWN_DEMO_SESSION_SECRETS:
+        bad.append("SESSION_SECRET")
+    if (os.getenv("ENCRYPTION_KEY") or "").strip().lower() in KNOWN_DEMO_ENCRYPTION_KEYS:
+        bad.append("ENCRYPTION_KEY")
+    if bad:
+        raise RuntimeError(
+            "Refusing to start: " + " and ".join(bad)
+            + (" is" if len(bad) == 1 else " are")
+            + " set to a value committed to the repository (a local-dev or CI example "
+            f"anyone can read). Generate a fresh value for APP_ENV={APP_ENV!r}; "
+            "see backend/.env.example."
+        )
 
 
 def _warn_db_user_scope_config() -> None:

@@ -31,7 +31,7 @@ from services.account_seed import seeder
 from services.account_summary import summarize_account
 from services.account_wipe import AccountWipeIncomplete, wipe_account_data
 from services.admin_audit import log_admin_action
-from services.auth_guard import get_session_user_id, require_admin
+from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def account_summary(user_id: str, request: Request):
 
 @router.post("/{user_id}/seed")
 def seed_account(user_id: str, body: SeedAccountBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     _require_confirm(body.confirm, "SEED")
     if body.major not in seeder.packs():
@@ -176,7 +176,7 @@ def seed_account(user_id: str, body: SeedAccountBody, request: Request):
 
 @router.post("/{user_id}/wipe")
 def wipe_account(user_id: str, body: WipeAccountBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     _require_confirm(body.confirm, "WIPE")
     _require_user(user_id)
