@@ -473,6 +473,24 @@ class TestWeekDelta:
         assert "week_delta" not in n1  # the client falls back to mastery_events
         assert len(n1["mastery_events"]) == 5  # the rest of the node is intact
 
+    def test_a_failed_history_read_sends_no_week_delta_rather_than_zero(self):
+        """A PostgREST blip on the events read is NOT "no events this week":
+        sending 0.0 would show "+0% this week" on every concept."""
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
+            factory, _ = self._tables([])
+            factory("node_mastery_events").select.side_effect = RuntimeError("PostgREST down")
+            with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+                graph = run()
+            for node_id in ("n1", "n2"):
+                node = self._node(graph, node_id)
+                assert "week_delta" not in node
+                assert node["mastery_events"] == []
+                assert node["learning_velocity"] == 0.0
+
     def test_the_async_twin_answers_the_same_capped_history(self):
         import asyncio
 

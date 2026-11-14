@@ -221,7 +221,17 @@ def _node_events_filters(nodes: list) -> dict | None:
     return {"node_id": f"in.({','.join(node_ids)})"} if node_ids else None
 
 
-def _node_events(nodes: list) -> list:
+def _node_events_failed(exc: Exception) -> None:
+    logger.warning(
+        "graph: mastery events could not be read (%s); velocity and "
+        "mastery_events fall back to empty, week_delta is left off",
+        type(exc).__name__,
+    )
+
+
+def _node_events(nodes: list) -> list | None:
+    """Every event of ``nodes``, oldest first. ``None`` when the read fails,
+    so the caller can tell "no events" from "events unknown"."""
     filters = _node_events_filters(nodes)
     if filters is None:
         return []
@@ -229,11 +239,12 @@ def _node_events(nodes: list) -> list:
         return table("node_mastery_events").select(
             _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
         ) or []
-    except Exception:
-        return []
+    except Exception as exc:
+        _node_events_failed(exc)
+        return None
 
 
-async def _anode_events(nodes: list) -> list:
+async def _anode_events(nodes: list) -> list | None:
     filters = _node_events_filters(nodes)
     if filters is None:
         return []
@@ -241,8 +252,9 @@ async def _anode_events(nodes: list) -> list:
         return await table("node_mastery_events").aselect(
             _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
         ) or []
-    except Exception:
-        return []
+    except Exception as exc:
+        _node_events_failed(exc)
+        return None
 
 
 #: `week_delta` (the Study hub's "+N% this week") covers a ROLLING window: the
@@ -295,11 +307,16 @@ def _week_read_failed(exc: Exception) -> None:
     )
 
 
-def _week_deltas(nodes: list, event_rows: list, cutoff: datetime) -> dict[str, float] | None:
+def _week_deltas(
+    nodes: list, event_rows: list | None, cutoff: datetime,
+) -> dict[str, float] | None:
     """Each node's mastery change since ``cutoff``, over EVERY event of the
     window. Summed from ``event_rows`` when that read is complete; otherwise
-    from a paged read bounded to the window. ``None`` when that read fails:
-    the truncated history would under-count, so the caller sends no number."""
+    from a paged read bounded to the window. ``None`` when either read fails
+    (``event_rows is None``): an unread or truncated history would report a
+    wrong number, so the caller sends none."""
+    if event_rows is None:
+        return None
     if _history_is_complete(event_rows):
         return _sum_week_deltas(event_rows, cutoff)
     try:
@@ -314,9 +331,11 @@ def _week_deltas(nodes: list, event_rows: list, cutoff: datetime) -> dict[str, f
 
 
 async def _aweek_deltas(
-    nodes: list, event_rows: list, cutoff: datetime,
+    nodes: list, event_rows: list | None, cutoff: datetime,
 ) -> dict[str, float] | None:
     """Async twin of :func:`_week_deltas` (#117)."""
+    if event_rows is None:
+        return None
     if _history_is_complete(event_rows):
         return _sum_week_deltas(event_rows, cutoff)
     try:
@@ -349,7 +368,8 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     week_deltas = _week_deltas(nodes, event_rows, _week_cutoff())
     user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
     return _assemble_graph(
-        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
+        user_rows,
         week_deltas=week_deltas,
     )
 
@@ -377,7 +397,8 @@ async def aget_graph(user_id: str, semester: str | None = None) -> dict:
     event_rows = await _anode_events(nodes)
     week_deltas = await _aweek_deltas(nodes, event_rows, _week_cutoff())
     return _assemble_graph(
-        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows, user_rows,
+        user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
+        user_rows,
         week_deltas=week_deltas,
     )
 
