@@ -134,6 +134,7 @@ const FLAG_KILL_SWITCHES = [
   // services/spend_alerts.py: the API's hourly admin alert emails. No job
   // reads it; shared so the switch reads the same on every service.
   "spend_alerts",
+  "account_purge",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

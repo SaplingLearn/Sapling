@@ -98,6 +98,9 @@ account.copy_push             audit     direction, peer_env, outcome, counts
 account.copy_pull             audit     direction, peer_env, outcome, counts
 account.export                audit     outcome (internal, peer-initiated)
 account.import                audit     outcome, counts (internal, peer-initiated)
+account.purge                 audit     outcome (purged | incomplete); purged: days_since_delete,
+                                        counts; incomplete: error (exception class). NO user
+                                        id (the 30-day purge, services/account_purge.py)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -239,6 +242,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "account.copy_pull",
     "account.export",
     "account.import",
+    "account.purge",
     # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
     # backend that actually served them, and (in shadow mode) the second
     # backend's answers plus per-key agreement. category="system": the server
