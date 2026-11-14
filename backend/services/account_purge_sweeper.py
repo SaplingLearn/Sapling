@@ -4,7 +4,8 @@ Once a day each API process runs one pass (`run_pass`). It first removes the
 credentials any soft-deleted account still holds (`sweep_leftover_credentials`:
 the self-delete removes them at once, so a row is left only when that delete
 and its after-response retries failed); that runs whatever the flag says,
-since the credentials were due at the delete itself. Then, when the
+since the credentials were due at the delete itself, and on one replica at a
+time (a `services/pg_lease.py` lease, under `stateless_locks`). Then, when the
 `account_purge` flag is
 on (resolved globally, at the start of every pass, so turning it off stops
 the next pass without a restart) it claims accounts deleted more than
@@ -34,7 +35,7 @@ import sys
 import threading
 
 from db.connection import rpc
-from services import account_credentials, account_purge, events_service
+from services import account_credentials, account_purge, events_service, pg_lease
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ LEASE_SECONDS = 60 * 60
 #: Most accounts one pass purges (one claim each, so a lease starts when its
 #: account's purge does).
 BATCH_SIZE = 50
+#: The cross-replica lease one credential sweep holds (services/pg_lease.py),
+#: renewed while it runs and released when it ends: another replica's pass
+#: that starts meanwhile skips its sweep.
+CREDENTIAL_SWEEP_LEASE_KEY = "account_purge:credential_sweep"
+CREDENTIAL_SWEEP_LEASE_SECONDS = 10 * 60
 
 _task: asyncio.Task | None = None
 _stop: threading.Event | None = None
@@ -110,11 +116,30 @@ def purge_once(stop: threading.Event | None = None) -> int:
     return purged
 
 
-def sweep_leftover_credentials() -> int:
+def sweep_leftover_credentials(stop: threading.Event | None = None) -> int:
     """Remove (and revoke at Google) the credentials of every soft-deleted
     account that still holds some, at any age. Returns how many accounts were
     cleaned. A failure is logged with the account id and retried on the next
-    pass. Never raises."""
+    pass. A stop request (shutdown) ends it before the next account. Never
+    raises.
+
+    One replica sweeps at a time: the sweep holds the
+    CREDENTIAL_SWEEP_LEASE_KEY lease (`stateless_locks`), and a pass that
+    finds it held elsewhere skips its sweep. With that flag off, or the lease
+    store unreachable, every replica sweeps, as before: the sweep is
+    idempotent, so that costs duplicate work, never harm."""
+    try:
+        with pg_lease.lease(CREDENTIAL_SWEEP_LEASE_KEY, CREDENTIAL_SWEEP_LEASE_SECONDS) as held:
+            if not held:
+                logger.info("[account-purge] another replica is sweeping leftover credentials; skipped")
+                return 0
+            return _sweep_leftover_credentials(stop)
+    except Exception:  # the lease's own release is best effort; belt and braces
+        logger.warning("[account-purge] the leftover-credential sweep stopped", exc_info=True)
+        return 0
+
+
+def _sweep_leftover_credentials(stop: threading.Event | None) -> int:
     try:
         owners = account_credentials.deleted_accounts_with_credentials()
     except Exception:
@@ -122,6 +147,8 @@ def sweep_leftover_credentials() -> int:
         return 0
     cleaned = 0
     for user_id in owners:
+        if stop is not None and stop.is_set():
+            break
         try:
             account_credentials.revoke_google_tokens(account_credentials.remove_credentials(user_id))
             cleaned += 1
@@ -135,8 +162,11 @@ def sweep_leftover_credentials() -> int:
 
 def run_pass(stop: threading.Event | None = None) -> int:
     """One daily pass: the leftover credentials, then the purge (flag-gated).
-    Returns how many accounts were purged. Never raises."""
-    sweep_leftover_credentials()
+    Returns how many accounts were purged. Stops early on a stop request.
+    Never raises."""
+    if stop is not None and stop.is_set():
+        return 0
+    sweep_leftover_credentials(stop)
     return purge_once(stop)
 
 

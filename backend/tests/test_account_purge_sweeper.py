@@ -172,6 +172,97 @@ def test_every_pass_sweeps_credentials_even_with_the_purge_flag_off(monkeypatch,
     assert claims["calls"] == [] and purged == []
 
 
+def test_a_stop_request_ends_the_credential_sweep_between_accounts(monkeypatch, leftovers):
+    """Shutdown sets the stop event; the sweep stops at the next account
+    instead of working through the whole list."""
+    import threading
+
+    from services import account_credentials as ac
+
+    stop = threading.Event()
+    leftovers["owners"] = ["user_a", "user_b", "user_c"]
+
+    def revoke(tokens):
+        leftovers["revoked"].append(tokens)
+        stop.set()  # shutdown arrives while user_a is being cleaned
+
+    monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
+    assert sw.sweep_leftover_credentials(stop) == 1
+    assert leftovers["removed"] == ["user_a"]
+
+
+def test_a_pass_that_starts_stopped_sweeps_nothing(monkeypatch, claims, purged, leftovers):
+    import threading
+
+    stop = threading.Event()
+    stop.set()
+    leftovers["owners"] = ["user_a"]
+    sw.run_pass(stop)
+    assert leftovers["removed"] == [] and claims["calls"] == []
+
+
+# ── one replica sweeps per pass (services/pg_lease.py, stateless_locks) ─────
+
+
+@pytest.fixture
+def leases(monkeypatch):
+    """claim_lease/renew_lease/release_lease at db.connection.rpc (pg_lease's seam)."""
+    import db.connection as dbconn
+    from services import pg_lease
+    from tests.test_pg_lease import FakeLeases
+
+    pg_lease.reset_db_state()
+    fake = FakeLeases()
+    monkeypatch.setattr(dbconn, "rpc", fake.rpc)
+    yield fake
+    pg_lease.reset_db_state()
+
+
+def test_the_sweep_is_skipped_while_another_replica_holds_its_lease(monkeypatch, leases, leftovers):
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_LOCKS", "on")
+    leftovers["owners"] = ["user_a"]
+    leases.rows[sw.CREDENTIAL_SWEEP_LEASE_KEY] = ("other-replica", float("inf"))
+
+    assert sw.sweep_leftover_credentials() == 0
+    assert leftovers["removed"] == []
+
+
+def test_the_sweep_holds_the_lease_while_it_runs_and_lets_it_go(monkeypatch, leases, leftovers):
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_LOCKS", "on")
+    from services import account_credentials as ac
+
+    leftovers["owners"] = ["user_a"]
+    held_during: list[bool] = []
+    real_remove = ac.remove_credentials
+
+    def remove(uid):
+        held_during.append(sw.CREDENTIAL_SWEEP_LEASE_KEY in leases.rows)
+        return real_remove(uid)
+
+    monkeypatch.setattr(ac, "remove_credentials", remove)
+    assert sw.sweep_leftover_credentials() == 1
+    assert held_during == [True]
+    assert sw.CREDENTIAL_SWEEP_LEASE_KEY not in leases.rows  # released on exit
+    claim = next(c for c in leases.calls if c[0] == "claim_lease")
+    assert claim[1]["p_key"] == sw.CREDENTIAL_SWEEP_LEASE_KEY
+
+
+def test_with_stateless_locks_off_every_replica_sweeps_and_no_lease_is_read(monkeypatch, leases, leftovers):
+    monkeypatch.delenv("SAPLING_FLAG_STATELESS_LOCKS", raising=False)
+    leftovers["owners"] = ["user_a"]
+    assert sw.sweep_leftover_credentials() == 1
+    assert leases.calls == []
+
+
+def test_an_unavailable_lease_store_still_sweeps(monkeypatch, leases, leftovers):
+    # Fail open, like every pg_lease caller: the sweep is idempotent, so a
+    # second replica sweeping is wasted work, never harm.
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_LOCKS", "on")
+    leases.error = RuntimeError("db down")
+    leftovers["owners"] = ["user_a"]
+    assert sw.sweep_leftover_credentials() == 1
+
+
 def test_never_started_under_pytest():
     assert sw.sweeper_enabled() is False
     asyncio.run(_start_and_stop())
