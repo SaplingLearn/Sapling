@@ -121,8 +121,15 @@ def _own(user_id: str, guide_id: str) -> dict[str, str]:
     return {"id": f"eq.{guide_id}", "user_id": f"eq.{user_id}"}
 
 
+#: `GuideContent` fields kept out of every dump (they are never sent) that
+#: are stored all the same.
+_STORED_ONLY = ("last_section_number",)
+
+
 def _encrypt_content(content: GuideContent) -> str:
-    return encrypt_json(content.model_dump(mode="json"))
+    stored = content.model_dump(mode="json")
+    stored.update((name, getattr(content, name)) for name in _STORED_ONLY)
+    return encrypt_json(stored)
 
 
 def _encrypt_answers(answers: dict[str, CheckAnswer]) -> str:

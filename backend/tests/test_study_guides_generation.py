@@ -249,8 +249,9 @@ def test_the_outline_event_is_the_saved_guide_with_every_section_queued(world, f
     events, rows = run(_follow(world))
 
     outline = GuideContent.model_validate(events[2].data["content"])
-    # Saved before it was sent.
-    assert rows[2]["content"] == outline
+    # Saved before it was sent; the section mark is stored, never sent.
+    assert rows[2]["content"] == outline.model_copy(update={"last_section_number": 3})
+    assert "last_section_number" not in events[2].data["content"]
     assert rows[2]["status"] == "generating"
     assert outline.title == "Recursion and what it builds on"
     assert outline.deck == "Three sections written from your own course material."
@@ -942,6 +943,26 @@ def test_update_keeps_the_sections_the_outline_keeps_with_their_state(world, mon
         "Writing section 3 of 3: Control flow, again",
         "Checking citations and blocks",
     ]
+
+
+def test_a_section_an_update_dropped_never_gives_its_id_to_a_new_one(world, monkeypatch):
+    """The first update drops the guide's highest section, `s2`, and adds
+    none. The next one's new section is `s3`, not `s2` again: a tab still
+    showing the old `s2` may answer its check `s2-i2`, and that answer must
+    not be graded against another question."""
+    _updatable(world)
+    script = Script(monkeypatch, outline=_outline(_planned("Recursion", keep_id="s1")))
+    run(_follow(world, "update"))
+    assert [s.id for s in world.content().sections] == ["s1"]
+
+    world.documents["doc-3"] = ("lecture-10.pdf", "Scope is lexical.", ["Scope"])
+    world.lectures.append({"id": "doc-3", "offering_id": OFFERING,
+                           "created_at": "2099-01-01T00:00:00+00:00"})
+    script.outline = _outline(_planned("Recursion", keep_id="s1"), _planned("Scope"))
+    events, _ = run(_follow(world, "update"))
+
+    assert events[-1].type == "done"
+    assert [s.id for s in world.content().sections] == ["s1", "s3"]
 
 
 def test_the_update_outline_is_asked_with_the_current_sections_and_the_new_source(

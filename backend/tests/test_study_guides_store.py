@@ -149,6 +149,24 @@ def db(monkeypatch):
 # ── Encryption round trip ───────────────────────────────────────────────────
 
 
+def _at_rest(content: GuideContent) -> dict:
+    """The content as stored: what is sent, and the section mark that is not."""
+    return {**content.model_dump(mode="json"), "last_section_number": content.last_section_number}
+
+
+def test_the_section_mark_is_stored_but_never_sent(db):
+    db.add("g1")
+    guide = run(store.aload_guide(ME, "g1"))
+    marked = guide.content.model_copy(update={"last_section_number": 7})
+
+    run(store.asave_content(guide, marked))
+
+    assert decrypt_json(db.stored("g1")["content"])["last_section_number"] == 7
+    reread = run(store.aload_guide(ME, "g1")).content
+    assert reread.last_section_number == 7
+    assert "last_section_number" not in reread.model_dump(mode="json")
+
+
 def test_content_is_ciphertext_at_rest_and_reads_back_equal(db):
     content = _content()
     guide_id = run(store.ainsert_guide(
@@ -160,7 +178,7 @@ def test_content_is_ciphertext_at_rest_and_reads_back_equal(db):
     raw = db.stored(guide_id)
     assert isinstance(raw["content"], str)
     assert "while loop" not in raw["content"] and "Midterm" not in raw["content"]
-    assert decrypt_json(raw["content"]) == content.model_dump(mode="json")
+    assert decrypt_json(raw["content"]) == _at_rest(content)
     assert (raw["status"], raw["format"], raw["generated_at"]) == ("generating", 2, None)
 
     guide = run(store.aload_guide(ME, guide_id))
@@ -188,8 +206,8 @@ def test_save_keeps_the_previous_version_encrypted(db):
     raw = db.stored("g1")
     assert isinstance(raw["previous_content"], str)
     assert "while loop" not in raw["previous_content"]
-    assert decrypt_json(raw["previous_content"]) == before.content.model_dump(mode="json")
-    assert decrypt_json(raw["content"]) == rewritten.model_dump(mode="json")
+    assert decrypt_json(raw["previous_content"]) == _at_rest(before.content)
+    assert decrypt_json(raw["content"]) == _at_rest(rewritten)
     assert raw["answers"] is None
     assert after.content == rewritten
     assert (after.status, after.generated_at) == ("ready", "2026-11-12T00:00:00+00:00")

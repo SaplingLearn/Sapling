@@ -61,9 +61,15 @@ def plan_range(guide: GuideRow, *, updating: bool, new_labels: list[str]) -> tup
 # ── The outline as sections ───────────────────────────────────────────────────
 
 
-def _first_free_number(sections: list[Section]) -> int:
+def _highest_number(sections: list[Section]) -> int:
     used = [int(m.group(1)) for s in sections if (m := _SECTION_NUMBER.fullmatch(s.id))]
-    return max(used, default=0) + 1
+    return max(used, default=0)
+
+
+def last_number(content: GuideContent) -> int:
+    """The highest section number the guide has ever used: its stored mark,
+    or a higher id among its sections (content from before the mark)."""
+    return max(content.last_section_number, _highest_number(content.sections))
 
 
 def _new_section(section_id: str, planned: OutlineSection, brief: Brief) -> Section:
@@ -84,17 +90,20 @@ def planned_sections(
     *,
     updating: bool,
     use_history: bool,
+    used: int = 0,
 ) -> list[Section]:
     """The outline as the guide's sections. The server decides ids, tiers and
     weights. On an update, a section the outline keeps (`keep_id` names a
     written section of `current`, once) stays exactly as it is. Every other
-    one is new, `queued`, and numbered after every id `current` uses. A
-    regenerate keeps none, and numbers the same way: an id is never used
-    again, so an answer or a read mark sent for an old section (by a tab
-    still showing it) cannot land on a new one."""
+    one is new, `queued`, and numbered after every id `current` uses and
+    after `used`, the highest number the guide used before (its sections
+    dropped by an earlier update included). A regenerate keeps none, and
+    numbers the same way: an id is never used again, so an answer or a read
+    mark sent for an old section (by a tab still showing it) cannot land on
+    a new one."""
     keepable = [section for section in current if updating and section.status == "written"]
     kept = {section.id: section for section in keepable}
-    numbers = count(_first_free_number(current))
+    numbers = count(max(used, _highest_number(current)) + 1)
     sections = [
         kept.pop(planned.keep_id, None) or _new_section(f"s{next(numbers)}", planned, brief)
         for planned in outline
@@ -128,17 +137,20 @@ async def anew_content(
         brief, low=fewest, high=most, deps=inputs.deps,
         current=_keepable(guide, updating), new_labels=new_labels,
     )
+    used = last_number(current)
+    sections = planned_sections(
+        planned.sections[:most], current.sections, brief,
+        updating=updating, use_history=guide.use_history, used=used,
+    )
     return GuideContent(
         # An update keeps the name the student knows the guide by.
         title=current.title if updating else planned.title,
         deck=planned.deck,
         takeaways=planned.takeaways,
-        sections=planned_sections(
-            planned.sections[:most], current.sections, brief,
-            updating=updating, use_history=guide.use_history,
-        ),
+        sections=sections,
         sources=guide_sources(brief, current.sources if updating else []),
         scope_label=current.scope_label,
+        last_section_number=max(used, _highest_number(sections)),
     )
 
 

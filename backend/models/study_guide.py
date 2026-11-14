@@ -389,6 +389,11 @@ class GuideContent(BaseModel):
     #: What the guide is for, as the student named it ("Midterm 2"); "Whole
     #: course" for a course-scope guide.
     scope_label: str = Field(default="", max_length=200)
+    #: The highest section number (`s<n>`) the guide has ever used, so a new
+    #: section never takes the id of one an Update dropped. Stored with the
+    #: content (`store`), never sent: `exclude` keeps it out of every dump.
+    #: 0 on content from before it was kept: its sections' ids then say.
+    last_section_number: int = Field(default=0, ge=0, exclude=True)
 
 
 # ── Wire shapes ───────────────────────────────────────────────────────────────

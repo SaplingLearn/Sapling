@@ -125,6 +125,24 @@ def test_a_regenerate_keeps_nothing_and_reuses_no_id_the_guide_had():
         ("s5", "queued", []), ("s6", "queued", []), ("s7", "queued", [])]
 
 
+def test_new_sections_are_numbered_after_every_number_the_guide_ever_used():
+    """`s3` was dropped by an earlier update; the guide's mark remembers it."""
+    sections = outline.planned_sections(
+        [_planned("Kept", keep_id="s1"), _planned("New")],
+        [_section("s1"), _section("s2")], _brief(DOC_1),
+        updating=True, use_history=True, used=3,
+    )
+
+    assert [s.id for s in sections] == ["s1", "s4"]
+
+
+def test_the_last_number_is_the_mark_or_a_higher_id():
+    marked = GuideContent(title="Guide", sections=[_section("s1")], last_section_number=5)
+    assert outline.last_number(marked) == 5
+    # Content from before the mark was kept: its ids say.
+    assert outline.last_number(GuideContent(title="Guide", sections=[_section("s2")])) == 2
+
+
 def test_a_guide_with_no_sections_yet_starts_at_s1():
     sections = outline.planned_sections(
         [_planned("One"), _planned("Two")], [], _brief(DOC_1), updating=False, use_history=True,
