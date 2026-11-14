@@ -98,7 +98,7 @@ class ImportCommitBody(BaseModel):
     user_id: str
     course_id: str | None = None
     topic: str = Field(..., max_length=200)
-    cards: list[CardInput]
+    cards: list[CardInput] = Field(..., max_length=2_000)
     dedup: bool = True
 
 
@@ -113,7 +113,7 @@ class ImportGenerateBody(BaseModel):
 
 class ImportCleanupBody(BaseModel):
     user_id: str
-    cards: list[CardInput]
+    cards: list[CardInput] = Field(..., max_length=2_000)
 
 
 class ImportClozeBody(BaseModel):
@@ -127,7 +127,7 @@ class FlashcardSetCreateBody(BaseModel):
     user_id: str
     name: str
     course_id: str
-    concepts: list[str]
+    concepts: list[str] = Field(..., max_length=200)
     options: dict | None = None
     exam_id: str | None = None
 

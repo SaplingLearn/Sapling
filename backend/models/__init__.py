@@ -7,9 +7,16 @@ from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
+# Tutor free text goes STRAIGHT INTO AN LLM PROMPT, so an unbounded value is
+# not just a big row — it is someone else's model spend. The per-user LLM
+# budget catches the cost after the fact; these stop the request being made.
+TUTOR_TOPIC_MAX = 500
+TUTOR_MESSAGE_MAX = 10_000
+
+
 class StartSessionBody(BaseModel):
     user_id: str = "user_andres"
-    topic: str = ""
+    topic: str = Field(default="", max_length=TUTOR_TOPIC_MAX)
     mode: str = "socratic"
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
@@ -19,7 +26,7 @@ class StartSessionBody(BaseModel):
 class ChatBody(BaseModel):
     session_id: str
     user_id: str = "user_andres"
-    message: str
+    message: str = Field(..., max_length=TUTOR_MESSAGE_MAX)
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
@@ -38,7 +45,7 @@ class EndSessionBody(BaseModel):
 
 class RenameSessionBody(BaseModel):
     user_id: str
-    topic: str
+    topic: str = Field(..., max_length=TUTOR_TOPIC_MAX)
 
 
 class ActionBody(BaseModel):
@@ -152,27 +159,29 @@ class AnswerQuestionBody(BaseModel):
 
 class AnswerItem(BaseModel):
     question_id: Union[int, str]
-    selected_label: str
+    selected_label: str = Field(..., max_length=200)
 
 
 class SubmitQuizBody(BaseModel):
     quiz_id: str
-    answers: list[AnswerItem]
+    # A quiz has at most a few dozen questions; the list was unbounded, so one
+    # request could carry an arbitrary number of answer rows.
+    answers: list[AnswerItem] = Field(..., max_length=200)
 
 
 # ── Calendar ──────────────────────────────────────────────────────────────────
 
 class AssignmentItem(BaseModel):
-    title: str
+    title: str = Field(..., max_length=300)
     course_id: str = ""  # Changed from course_name to course_id
-    due_date: str
-    assignment_type: str = "other"
-    notes: Optional[str] = None
+    due_date: str = Field(..., max_length=64)
+    assignment_type: str = Field(default="other", max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=5_000)
 
 
 class SaveAssignmentsBody(BaseModel):
     user_id: str = "user_andres"
-    assignments: list[AssignmentItem]
+    assignments: list[AssignmentItem] = Field(..., max_length=500)
 
 
 class StudyBlockBody(BaseModel):
@@ -189,7 +198,7 @@ class ImportSaveBody(BaseModel):
     as Sapling assignments. The frontend maps Google event fields to
     AssignmentItem shape before posting here.
     """
-    assignments: list[AssignmentItem]
+    assignments: list[AssignmentItem] = Field(..., max_length=500)
 
 
 # ── Graph (Courses) ─────────────────────────────────────────────────────────
@@ -294,7 +303,7 @@ class ExportBody(BaseModel):
     # No default — caller must always supply the real user_id.
     # Prevents accidental exports under the wrong account.
     user_id: str
-    assignment_ids: list[str]
+    assignment_ids: list[str] = Field(..., max_length=500)
 
 
 # ── Learn (mode switch) ─────────────────────────────────────────────────────
@@ -554,7 +563,7 @@ class CreateCategoryBody(BaseModel):
 class BulkUpdateCategoriesBody(BaseModel):
     user_id: str
     semester: Optional[str] = None
-    categories: list[CategoryItem]        # full replacement set
+    categories: list[CategoryItem] = Field(..., max_length=100)        # full replacement set
 
 
 class CreateAssignmentBody(BaseModel):
