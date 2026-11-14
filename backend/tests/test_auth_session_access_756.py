@@ -184,7 +184,7 @@ def test_delete_account_drops_the_cached_state(monkeypatch):
     users = MagicMock()
     for module in PROFILE_TABLE_MODULES:
         monkeypatch.setattr(f"{module}.table", lambda name: users)
-    monkeypatch.setattr(profile_module, "delete_posthog_person", lambda *_a, **_k: None)
+    monkeypatch.setattr("services.profile.deletion.delete_posthog_person", lambda *_a, **_k: None)
     app = FastAPI()
     app.include_router(profile_module.router, prefix="/api/profile")
     resp = TestClient(app).request(
@@ -433,7 +433,7 @@ def test_removed_student_can_still_erase_and_export(real_guard, monkeypatch, met
 
     monkeypatch.setattr(auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id)
     monkeypatch.setattr(profile_module, "require_self", auth_guard._real_require_self)
-    monkeypatch.setattr(profile_module, "delete_posthog_person", lambda *_a, **_k: None)
+    monkeypatch.setattr("services.profile.deletion.delete_posthog_person", lambda *_a, **_k: None)
     data = MagicMock()
     data.select.return_value = [{"id": "user_alice"}]
     data.update.return_value = []

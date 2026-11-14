@@ -28,13 +28,12 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
-from services.account_credentials import delete_credentials, google_tokens, revoke_google_tokens
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
-from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.profile import (
+    DeletionNotConfirmed,
     UserNotFound,
     achievements_view,
     cosmetics_catalog,
@@ -43,6 +42,7 @@ from services.profile import (
     public_profile,
     replace_featured_achievements,
 )
+from services.profile import delete_account as _delete_account
 from services.profile import users as _users
 from services.profile.full_export import stream_export
 from services.profile.achievements import _get_featured_achievements  # noqa: F401  (re-export, #118)
@@ -460,51 +460,12 @@ def delete_account(
 ):
     # #756: a removed (unapproved) student may still erase their account.
     require_self(user_id, request, allow_unapproved=True)
-
-    if body.confirmation != "DELETE":
-        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
-
-    # #115: the soft delete is account state (`users` is SELECT-only for the
-    # student's token) -> service role.
-    with service_scope():
-        # Owner decision 2026-11-14: the Google tokens and the Gradescope
-        # login go NOW, not with the 30-day purge (services/account_purge.py).
-        # Read the tokens to revoke, but delete nothing until the account is
-        # hidden: a failure up to the hide is a 500 the student retries, and
-        # the retry must still find the tokens, or the Google grant would
-        # stay live with nothing left to revoke it.
-        tokens = google_tokens(user_id)
-        table("users").update(
-            {"deleted_at": datetime.now(timezone.utc).isoformat()},
-            filters={"id": f"eq.{user_id}"},
-        )
     try:
-        with service_scope():
-            delete_credentials(user_id)
-    except Exception as exc:
-        # The account is hidden, so the guard refuses a retry. Do not fail
-        # the delete that happened: the grant is still revoked below with the
-        # tokens read above, and the purge removes the leftover rows.
-        logger.warning("[account] credential delete failed after the soft delete: %s",
-                       type(exc).__name__)
-    # ADR 0028: from here on the PostHog worker's consent check reads
-    # deleted_at, so nothing — not even items already queued — names this user
-    # (which would re-create the person the delete below removes). Drop the
-    # cached "allowed" answer now.
-    clear_analytics_consent_cache(user_id)
-    # #756: the auth guard refuses a deleted account; drop its cached "active"
-    # answer so this process stops honouring the session now, not at the TTL.
-    clear_account_state_cache(user_id)
-    # Best-effort PostHog person + event delete, AFTER the response so it adds
-    # no latency and cannot fail the deletion (it never raises; unconfigured
-    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
-    # after the consent TTL. Only reached once the soft delete landed.
-    background_tasks.add_task(delete_posthog_person, user_id)
-    # Revoke the Google grant itself (best effort, never raises): our copy of
-    # the tokens is gone (or goes with the purge), this ends Sapling's access
-    # at Google.
-    background_tasks.add_task(revoke_google_tokens, tokens)
-    return {"deleted": True}
+        return _delete_account(
+            user_id, body.confirmation, after_response=background_tasks.add_task,
+        )
+    except DeletionNotConfirmed as exc:
+        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'") from exc
 
 
 # ── Data Export ──────────────────────────────────────────────────────────────

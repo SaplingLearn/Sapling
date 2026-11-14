@@ -105,6 +105,7 @@ PROFILE_TABLE_MODULES = (
     "services.profile.account",
     "services.profile.achievements",
     "services.profile.cosmetics",
+    "services.profile.deletion",
     "services.profile.full_export",
     "services.profile.public",
     "services.profile.users",

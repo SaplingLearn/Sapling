@@ -1,9 +1,12 @@
 """Credentials go at the student's own account delete (owner decision 2026-11-14).
 
-`DELETE /api/profile/{user_id}/account` reads the Google tokens, hides the
-account, then removes the Google OAuth tokens and the Gradescope login and
-schedules a best-effort revoke of the Google grant with the tokens it read;
-`services/account_credentials.py` does the reading, removing and revoking.
+`DELETE /api/profile/{user_id}/account` is a thin wrapper over
+`services/profile/deletion.py::delete_account` (#118), which reads the Google
+tokens, hides the account, then removes the Google OAuth tokens and the
+Gradescope login and schedules a best-effort revoke of the Google grant with
+the tokens it read; `services/account_credentials.py` does the reading,
+removing and revoking. The ordering is tested at the service level; the
+route's own tests only check the HTTP mapping.
 """
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +16,8 @@ from fastapi.testclient import TestClient
 
 from services import account_credentials as ac
 from services.encryption import encrypt
+from services.profile import DeletionNotConfirmed
+from services.profile import deletion
 from tests.split_patches import patch_profile_table
 
 USER = "user_cred"
@@ -43,18 +48,31 @@ class Tables:
         return []
 
 
-def _delete_account(tables, **patches):
-    from main import app
+class AfterResponse:
+    """The `after_response` scheduler (the route passes BackgroundTasks.add_task):
+    records what the delete scheduled, runs nothing."""
 
-    revoke = patches.get("revoke", MagicMock())
-    with patch("routes.profile.require_self"), \
-         patch_profile_table(side_effect=tables), \
-         patch("routes.profile.delete_posthog_person"), \
-         patch("routes.profile.revoke_google_tokens", revoke):
-        r = TestClient(app, raise_server_exceptions=False).request(
-            "DELETE", f"/api/profile/{USER}/account", json={"confirmation": "DELETE"},
-        )
-    return r, revoke
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def __call__(self, fn, *args):
+        self.calls.append((fn, args))
+
+    def revoked(self):
+        """The token lists scheduled for revoke at Google."""
+        return [args[0] for fn, args in self.calls if fn is ac.revoke_google_tokens]
+
+
+def _delete_account(tables, confirmation="DELETE"):
+    """Run the service's delete over `tables`. Returns (result or the raised
+    exception, the scheduler)."""
+    later = AfterResponse()
+    with patch_profile_table(side_effect=tables):
+        try:
+            result = deletion.delete_account(USER, confirmation, after_response=later)
+        except Exception as exc:  # noqa: BLE001 — the test inspects it
+            result = exc
+    return result, later
 
 
 def _tokens():
@@ -64,9 +82,9 @@ def _tokens():
 def test_self_delete_hides_the_account_then_removes_credentials():
     tables = Tables(_tokens())
 
-    r, revoke = _delete_account(tables)
+    result, later = _delete_account(tables)
 
-    assert r.status_code == 200 and r.json() == {"deleted": True}
+    assert result == {"deleted": True}
     writes = [(op, name) for op, name, _ in tables.log]
     assert writes == [("update", "users"), ("delete", "oauth_tokens"),
                       ("delete", "gradescope_credentials")]
@@ -74,7 +92,7 @@ def test_self_delete_hides_the_account_then_removes_credentials():
     for op, name, filters in tables.log[1:]:
         assert filters == {"user_id": f"eq.{USER}"}, name
     # The grant is revoked after the response: refresh token first.
-    revoke.assert_called_once_with(["1//refresh", "ya29.access"])
+    assert later.revoked() == [["1//refresh", "ya29.access"]]
 
 
 def test_a_failed_soft_delete_keeps_the_tokens_so_the_retry_revokes_the_grant():
@@ -92,45 +110,61 @@ def test_a_failed_soft_delete_keeps_the_tokens_so_the_retry_revokes_the_grant():
 
     tables("users").update.side_effect = update
 
-    first, revoke = _delete_account(tables)
+    first, later = _delete_account(tables)
 
-    assert first.status_code == 500
+    assert isinstance(first, RuntimeError)
     assert tables.log == [] and tables.oauth_row is not None  # nothing removed
-    revoke.assert_not_called()
+    assert later.calls == []
 
-    retry, revoke = _delete_account(tables)
+    retry, later = _delete_account(tables)
 
-    assert retry.status_code == 200
-    revoke.assert_called_once_with(["1//refresh", "ya29.access"])
+    assert retry == {"deleted": True}
+    assert later.revoked() == [["1//refresh", "ya29.access"]]
     assert tables.oauth_row is None
 
 
-def test_a_token_read_failure_is_a_500_that_changes_nothing():
+def test_a_token_read_failure_raises_and_changes_nothing():
     tables = Tables(_tokens())
     tables("oauth_tokens").select.side_effect = RuntimeError("db down")
 
-    r, revoke = _delete_account(tables)
+    result, later = _delete_account(tables)
 
-    assert r.status_code == 500 and tables.log == []
-    revoke.assert_not_called()
+    assert isinstance(result, RuntimeError) and tables.log == []
+    assert later.calls == []
 
 
-def test_a_credential_delete_failure_after_the_hide_still_revokes_the_grant():
-    """Once the account is hidden the student cannot retry (the guard refuses
-    the session), so a failed row delete does not fail the request: the grant
-    is revoked with the tokens read before the hide, and the 30-day purge
-    removes the leftover rows (services/account_purge.py)."""
+def test_wrong_confirmation_touches_nothing():
     tables = Tables(_tokens())
-    tables("gradescope_credentials").delete.side_effect = RuntimeError("db down")
 
-    r, revoke = _delete_account(tables)
+    result, later = _delete_account(tables, confirmation="nope")
+
+    assert isinstance(result, DeletionNotConfirmed)
+    assert tables.log == [] and later.calls == []
+
+
+# ── the route: HTTP mapping only ────────────────────────────────────────────
+
+
+def _route_delete(confirmation):
+    from main import app
+
+    with patch("routes.profile.require_self"), \
+         patch("routes.profile._delete_account", return_value={"deleted": True}) as svc:
+        r = TestClient(app).request(
+            "DELETE", f"/api/profile/{USER}/account", json={"confirmation": confirmation},
+        )
+    return r, svc
+
+
+def test_the_route_hands_the_delete_to_the_service():
+    r, svc = _route_delete("DELETE")
 
     assert r.status_code == 200 and r.json() == {"deleted": True}
-    assert ("update", "users") in [(op, name) for op, name, _ in tables.log]
-    revoke.assert_called_once_with(["1//refresh", "ya29.access"])
+    args, kwargs = svc.call_args
+    assert args == (USER, "DELETE") and callable(kwargs["after_response"])
 
 
-def test_wrong_confirmation_touches_no_credential():
+def test_the_route_answers_an_unconfirmed_delete_400():
     from main import app
 
     tables = Tables()
@@ -138,7 +172,22 @@ def test_wrong_confirmation_touches_no_credential():
         r = TestClient(app).request(
             "DELETE", f"/api/profile/{USER}/account", json={"confirmation": "nope"},
         )
-    assert r.status_code == 400 and tables.log == []
+    assert r.status_code == 400 and r.json()["detail"] == "Confirmation must be 'DELETE'"
+    assert tables.log == []
+
+
+def test_a_credential_delete_failure_after_the_hide_still_revokes_the_grant():
+    """Once the account is hidden the student cannot retry (the guard refuses
+    the session), so a failed row delete does not fail the delete: the grant
+    is revoked with the tokens read before the hide."""
+    tables = Tables(_tokens())
+    tables("gradescope_credentials").delete.side_effect = RuntimeError("db down")
+
+    result, later = _delete_account(tables)
+
+    assert result == {"deleted": True}
+    assert ("update", "users") in [(op, name) for op, name, _ in tables.log]
+    assert later.revoked() == [["1//refresh", "ya29.access"]]
 
 
 # ── remove_credentials ──────────────────────────────────────────────────────

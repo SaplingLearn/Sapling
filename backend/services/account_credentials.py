@@ -1,7 +1,7 @@
 """Remove an account's stored third-party credentials (owner decision 2026-11-14).
 
 A student's own account delete removes them AT ONCE
-(routes/profile.py::delete_account): it reads the Google tokens
+(services/profile/deletion.py::delete_account): it reads the Google tokens
 (:func:`google_tokens`), hides the account, then deletes the rows
 (:func:`delete_credentials`) and revokes the grant with the tokens it read.
 Nothing is deleted before the hide, so a failed hide is a 500 whose retry

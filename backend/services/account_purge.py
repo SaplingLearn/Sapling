@@ -1,7 +1,7 @@
 """Hard-delete a self-deleted account's personal data after 30 days.
 
 Owner decision 2026-11-14. A student's own "delete account"
-(routes/profile.py::delete_account) hides the account (`users.deleted_at`)
+(services/profile/deletion.py::delete_account) hides the account (`users.deleted_at`)
 and removes its Google tokens and Gradescope login at once
 (services/account_credentials.py). `GRACE_DAYS` after `deleted_at`,
 services/account_purge_sweeper.py claims the account and runs

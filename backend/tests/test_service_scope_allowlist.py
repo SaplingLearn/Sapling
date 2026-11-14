@@ -65,7 +65,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
-    ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
@@ -138,6 +137,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
+    ("services/profile/deletion.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):
