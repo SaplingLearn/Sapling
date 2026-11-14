@@ -123,8 +123,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403 });
   }
 
-  const body = await request.json();
-  const { authToken } = body as { authToken?: string };
+  // `request.json()` THROWS on an absent or malformed body, and the throw
+  // escaped this handler — so `POST /api/auth/session` with a non-JSON body
+  // (trivially reachable: curl, or any client that forgets the body) answered
+  // 500 with a stack trace in the worker logs instead of a 400. Parse
+  // defensively and treat anything unusable as a missing token.
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const authToken =
+    body && typeof body === 'object' && typeof (body as { authToken?: unknown }).authToken === 'string'
+      ? (body as { authToken: string }).authToken
+      : undefined;
 
   if (!SESSION_SECRET) {
     return NextResponse.json(
