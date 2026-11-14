@@ -171,6 +171,19 @@ def test_purges_the_account_and_leaves_another_users_data(db, storage, revoked, 
     assert counts["user_profiles"] == 1 and counts["newsletter_emails"] == 1
 
 
+def test_the_purge_drops_the_cached_analytics_consent(db, storage, revoked, events, monkeypatch):
+    """The purge deletes user_settings (the opt-out the consent check reads),
+    so like every mutator of it, it drops the cached answer (CLAUDE.md)."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    cleared: list[str] = []
+    monkeypatch.setattr(ap, "clear_analytics_consent_cache", cleared.append)
+
+    ap.purge_account(U, now=NOW)
+
+    assert cleared == [U]
+    assert not db.of("user_settings", user_id=U)
+
+
 def test_the_users_row_becomes_an_anonymised_stub(db, storage, revoked, events):
     _seed_account(db, U, deleted_at=LONG_AGO)
 

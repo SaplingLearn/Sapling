@@ -54,6 +54,7 @@ from db.connection import page_all, table
 from models import LeaveRoomBody
 from services import account_credentials, account_wipe, events_service, storage_service
 from services.account_wipe import _delete_keys, _in_list
+from services.analytics_consent import clear_analytics_consent_cache
 from services.social import rooms
 from services.social.errors import Forbidden, NotFound
 from services.social_cache_service import invalidate as invalidate_summary
@@ -299,6 +300,8 @@ def purge_account(user_id: str, *, now: datetime | None = None) -> dict[str, int
         counts["course_chunk_contributors"] += _drop_leftover_contributions(user_id)
         for name, column in PURGE_DELETES:
             counts[name] = counts.get(name, 0) + _delete_where(name, column, user_id)
+        # user_settings (the analytics opt-out) is gone: drop the cached answer.
+        clear_analytics_consent_cache(user_id)
         _stub_user(user_id, now)
     except Exception as exc:
         raise AccountPurgeIncomplete(f"purge of {user_id} stopped: {type(exc).__name__}") from exc
