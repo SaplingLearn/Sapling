@@ -39,7 +39,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Literal, get_args
+from typing import Any, Awaitable, Literal, TypeVar, get_args
 
 from fastapi import Request
 from sse_starlette.sse import EventSourceResponse
@@ -125,6 +125,22 @@ async def screen_async(
         return None
     await auth_guard.guard_off_loop(auth_guard.require_self, user_id, request)
     return await asyncio.to_thread(_resolve, user_id, surface, match)
+
+
+async def screen_content_async(
+    request: Request, user_id: str | None, surface: Surface, *texts: str | None,
+) -> CrisisSupport | None:
+    """`screen_async` for the student's STORED material (a note's title and
+    body), which NEVER blocks: the caller does not stop on a match, it runs
+    its action as usual through `alongside`, which attaches the card to
+    whatever answer goes back. The match is screened, authenticated, flagged
+    and logged exactly as for a typed message.
+
+    A typed message blocks (the card instead of the result): it is what the
+    student is saying now. A note is material they stored, often quoting
+    someone else (a patient, a play), and no pattern can tell those apart, so
+    the student gets the result they asked for and the card beside it."""
+    return await screen_async(request, user_id, surface, *texts)
 
 
 def _check_surface(surface: str) -> None:
@@ -233,6 +249,54 @@ def start_json(support: CrisisSupport) -> dict[str, Any]:
     """A session start: no session is opened (`session_id` null) and the copy
     stands in for the opener."""
     return json_body(support, session_id=None, initial_message=support.reply, graph_state=None)
+
+
+#: Marks a result that carries the card BESIDE it (`alongside`), not instead
+#: of it (`json_body`): the note chat shows both the reply and the card.
+ALONGSIDE = "crisis_support_alongside"
+#: Where `alongside` leaves the card on an exception the action raised;
+#: `error_body` (main.py's exception handlers) puts it in the error answer.
+_ERROR_CARD = "_crisis_support_payload"
+
+_E = TypeVar("_E", bound=BaseException)
+
+
+async def alongside(support: CrisisSupport | None, action: Awaitable[dict[str, Any]]) -> dict[str, Any]:
+    """Await `action` (the route's own work, limits included) and attach the
+    card to whatever answer goes back: its result (`crisis_support` plus
+    `ALONGSIDE`), or the error it raises (a 429, a 413, a 500), whose body
+    main.py's handlers give the card too. With no card, just the action."""
+    if support is None:
+        return await action
+    try:
+        result = await action
+    except Exception as exc:
+        card_from_payload(exc, support.payload)
+        raise
+    return {**result, "crisis_support": support.payload, ALONGSIDE: True}
+
+
+def card_from_payload(exc: _E, payload: dict[str, Any] | None) -> _E:
+    """`exc` carrying `payload` (the card) to the handler that answers it."""
+    if payload is not None:
+        try:
+            setattr(exc, _ERROR_CARD, payload)
+        except AttributeError:  # a slotted exception: the answer goes back without the card
+            logger.warning("crisis support: could not attach the card to %s", type(exc).__name__)
+    return exc
+
+
+def card_from(source: BaseException, target: _E) -> _E:
+    """`target` carrying `source`'s card: for a handler that answers `source`
+    with a new exception (main.py's scope handlers)."""
+    return card_from_payload(target, getattr(source, _ERROR_CARD, None))
+
+
+def error_body(content: dict[str, Any], exc: BaseException) -> dict[str, Any]:
+    """An error answer's body (`content`) with the card the failed action
+    carried (`alongside`), if any."""
+    payload = getattr(exc, _ERROR_CARD, None)
+    return {**content, "crisis_support": payload} if payload is not None else content
 
 
 def _request_id(request: Request) -> str:

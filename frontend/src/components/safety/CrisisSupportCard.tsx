@@ -3,16 +3,18 @@
 /**
  * The crisis-support card (docs/safety/crisis-support.md): a calm card with
  * crisis resources, shown INSTEAD of a tutor reply or an AI result when the
- * backend's crisis screen fired. Not an error: no red, no alert role, no
- * "something went wrong". Every string comes from the payload — the wording
- * lives in backend/services/crisis_support_copy.py alone.
+ * backend's crisis screen fired on what the student typed, or BESIDE a notes
+ * action's result when the note itself matched. Not an error: no red, no
+ * alert role, no "something went wrong". Every string comes from the
+ * payload — the wording lives in backend/services/crisis_support_copy.py
+ * alone.
  *
  * `CrisisSupportCard` sits in a conversation (ChatPanel, the quiz's Ask
  * panel); `CrisisSupportDialog` shows it over a surface that has no
  * conversation to put it in (a session start, a note action, an answer box).
  */
 
-import React, { useCallback, useId, useState } from "react";
+import React, { useCallback, useId, useRef, useState } from "react";
 import Dialog from "../Dialog";
 import { crisisSupportIn, type CrisisSupport, type CrisisSupportAction } from "@/lib/crisisSupport";
 
@@ -134,16 +136,27 @@ export function CrisisSupportDialog({
 /**
  * For a surface with no conversation: `intercept(response)` shows the card
  * (and returns true) when the response carries one, so the caller stops its
- * normal handling; render `dialog` once in the surface.
+ * normal handling; render `dialog` once in the surface. `afterClose` runs
+ * once the student closes the card (a result shown alongside it that leaves
+ * the page, like opening the tutor, waits for that).
  */
 export function useCrisisSupport() {
   const [support, setSupport] = useState<CrisisSupport | null>(null);
-  const intercept = useCallback((response: unknown): boolean => {
+  const afterCloseRef = useRef<(() => void) | null>(null);
+  const intercept = useCallback((response: unknown, afterClose?: () => void): boolean => {
     const found = crisisSupportIn(response);
-    if (found) setSupport(found);
+    if (found) {
+      afterCloseRef.current = afterClose ?? null;
+      setSupport(found);
+    }
     return found !== null;
   }, []);
-  const close = useCallback(() => setSupport(null), []);
+  const close = useCallback(() => {
+    setSupport(null);
+    const then = afterCloseRef.current;
+    afterCloseRef.current = null;
+    then?.();
+  }, []);
   const dialog = <CrisisSupportDialog support={support} onClose={close} />;
   return { intercept, dialog, support };
 }

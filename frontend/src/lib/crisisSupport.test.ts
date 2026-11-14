@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import fixture from "@/test-utils/crisisSupport.json";
-import { crisisSupportIn, crisisSupportOf } from "./crisisSupport";
+import { crisisSupportIn, crisisSupportInError, crisisSupportOf } from "./crisisSupport";
 
 describe("crisisSupportOf", () => {
   it("accepts the backend's payload unchanged", () => {
@@ -20,6 +20,14 @@ describe("crisisSupportOf", () => {
     expect(crisisSupportIn({ crisis_support: null })).toBeNull();
     expect(crisisSupportIn(null)).toBeNull();
     expect(crisisSupportIn("text")).toBeNull();
+  });
+
+  it("reads it off an error answer's body (a note action refused with a 429)", () => {
+    expect(crisisSupportInError({ status: 429, body: { detail: "Slow down.", crisis_support: fixture } })).toEqual(fixture);
+    expect(crisisSupportInError({ status: 429, body: { detail: "Slow down." } })).toBeNull();
+    expect(crisisSupportInError(new Error("network"))).toBeNull();
+    expect(crisisSupportInError(undefined)).toBeNull();
+    expect(crisisSupportInError(null)).toBeNull();
   });
 
   it("is null without a title or without any resource", () => {

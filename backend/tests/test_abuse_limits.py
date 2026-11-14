@@ -35,10 +35,10 @@ def _exhaust(limit: request_limits.AbuseLimit, subject: str) -> None:
         ) is None
 
 
-# Routes whose crisis screen (docs/safety/crisis-support.md) must read the
-# note before any limit applies: a student in crisis never gets a 429. That one
-# read of the student's own note is the only table access allowed past a spent
-# budget there; nothing is written and no model runs.
+# Routes whose crisis screen (docs/safety/crisis-support.md) reads the note
+# before any limit applies, so that a 429 carries the card when the note
+# matched. That one read of the student's own note is the only table access
+# allowed past a spent budget there; nothing is written and no model runs.
 _CRISIS_SCREENS_NOTE = ("/summarize", "/extract-concepts", "/chat", "/send-to-tutor")
 
 

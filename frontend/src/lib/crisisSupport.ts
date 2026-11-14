@@ -1,11 +1,15 @@
 /**
  * The crisis-support card's payload (docs/safety/crisis-support.md).
  *
- * A student-facing AI route whose screen fired answers with `crisis_support`
- * (this shape) plus `reply` (the same copy as text) INSTEAD of its normal
- * result: no model ran and nothing of the turn was recorded. Every string in
- * the payload comes from backend/services/crisis_support_copy.py — the card
- * has no copy of its own, so that file is the one place the wording lives.
+ * A student-facing AI route whose screen fired on what the student TYPED
+ * answers with `crisis_support` (this shape) plus `reply` (the same copy as
+ * text) INSTEAD of its normal result: no model ran and nothing of the turn
+ * was recorded. A notes action whose NOTE matched answers with its normal
+ * result and the card ALONGSIDE it (`crisis_support_alongside: true`), and an
+ * error answer it gives (a 429) carries the card in its body. Every string
+ * in the payload comes from backend/services/crisis_support_copy.py — the
+ * card has no copy of its own, so that file is the one place the wording
+ * lives.
  */
 
 export interface CrisisSupportAction {
@@ -34,6 +38,8 @@ export interface CrisisSupport {
 /** What a response may carry when the crisis screen fired. */
 export interface WithCrisisSupport {
   crisis_support?: CrisisSupport | null;
+  /** The card sits beside a normal result instead of replacing it. */
+  crisis_support_alongside?: boolean;
 }
 
 /** Only these open anything: a phone call, a text, or an https page. */
@@ -84,4 +90,10 @@ export function crisisSupportOf(value: unknown): CrisisSupport | null {
 export function crisisSupportIn(response: unknown): CrisisSupport | null {
   if (!response || typeof response !== "object") return null;
   return crisisSupportOf((response as WithCrisisSupport).crisis_support);
+}
+
+/** The card an error answer carries in its body (an `ApiError`'s `body`), or null. */
+export function crisisSupportInError(error: unknown): CrisisSupport | null {
+  if (!error || typeof error !== "object") return null;
+  return crisisSupportIn((error as { body?: unknown }).body);
 }

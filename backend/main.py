@@ -86,6 +86,7 @@ from services.local_seed_watcher import (
 )
 from services import typesafe_client
 from services import posthog_client
+from services import crisis_support
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -348,6 +349,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         code=getattr(exc, "code", None),
         machine_detail=getattr(exc, "machine_detail", None),
     )
+    # A note action whose note matched the crisis screen answers its error
+    # with the card too (services/crisis_support.py::alongside).
+    content = crisis_support.error_body(content, exc)
     # Preserve headers the raise site set (e.g. Retry-After on a 429) —
     # dropping them would strip the only machine-readable part of a
     # throttling response.
@@ -402,7 +406,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(ScopedAccessDenied)
 async def scoped_access_denied_handler(request: Request, exc: ScopedAccessDenied):
     return await http_exception_handler(
-        request, StarletteHTTPException(status_code=404, detail="Not found"),
+        request, crisis_support.card_from(exc, StarletteHTTPException(status_code=404, detail="Not found")),
     )
 
 
@@ -410,7 +414,9 @@ async def scoped_access_denied_handler(request: Request, exc: ScopedAccessDenied
 async def scope_unavailable_handler(request: Request, exc: ScopeUnavailable):
     return await http_exception_handler(
         request,
-        StarletteHTTPException(status_code=503, detail="Service temporarily unavailable."),
+        crisis_support.card_from(
+            exc, StarletteHTTPException(status_code=503, detail="Service temporarily unavailable."),
+        ),
     )
 
 
@@ -418,7 +424,8 @@ async def scope_unavailable_handler(request: Request, exc: ScopeUnavailable):
 async def unscoped_query_handler(request: Request, exc: UnscopedQueryError):
     logging.getLogger("main").error("unscoped query refused: %s", exc)
     return await http_exception_handler(
-        request, StarletteHTTPException(status_code=500, detail="Internal server error."),
+        request,
+        crisis_support.card_from(exc, StarletteHTTPException(status_code=500, detail="Internal server error.")),
     )
 
 
@@ -434,6 +441,7 @@ async def llm_budget_exceeded_handler(request: Request, exc: LLMBudgetExceeded):
     )
     if isinstance(content.get("error"), dict):
         content["error"]["reset_at"] = exc.reset_at_iso
+    content = crisis_support.error_body(content, exc)
     headers = dict(exc.headers or {})
     if rid:
         headers["X-Request-ID"] = rid
@@ -457,8 +465,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         request_id=rid,
         privacy_signal=privacy_signal_in(getattr(request, "headers", None) or {}),
     )
-    content = quiz_errors.error_content(
-        request.url.path, 500, "Internal server error.", rid,
+    content = crisis_support.error_body(
+        quiz_errors.error_content(request.url.path, 500, "Internal server error.", rid), exc,
     )
     return JSONResponse(
         status_code=500,
