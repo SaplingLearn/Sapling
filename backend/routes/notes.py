@@ -9,6 +9,8 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
@@ -20,12 +22,15 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
+from models import CHAT_MESSAGE_MAX, Id
 from services import events_service
 from services.academics import (
     course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
     term_id_for_label, user_offering_ids_for_course,
 )
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.notes_service import (
     create_note,
     delete_note,
@@ -122,20 +127,29 @@ def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
     return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
 
 
+#: Note bounds (the notetaker's inputs carry the same maxLength). A note body is
+#: plain text; 200k characters is a ~100-page set of lecture notes.
+NOTE_TITLE_MAX = 300
+NOTE_BODY_MAX = 200_000
+NOTE_TAG_MAX = 64
+NOTE_TAGS_MAX = 50
+NoteTag = Annotated[str, Field(max_length=NOTE_TAG_MAX)]
+
+
 class CreateNoteBody(BaseModel):
-    user_id: str
-    course_id: str
-    title: str = ""
-    body: str = ""
-    tags: list[str] = Field(default_factory=list)
+    user_id: Id
+    course_id: Id
+    title: str = Field(default="", max_length=NOTE_TITLE_MAX)
+    body: str = Field(default="", max_length=NOTE_BODY_MAX)
+    tags: list[NoteTag] = Field(default_factory=list, max_length=NOTE_TAGS_MAX)
 
 
 class UpdateNoteBody(BaseModel):
-    user_id: str
-    title: str | None = None
-    body: str | None = None
-    tags: list[str] | None = None
-    course_id: str | None = None
+    user_id: Id
+    title: str | None = Field(default=None, max_length=NOTE_TITLE_MAX)
+    body: str | None = Field(default=None, max_length=NOTE_BODY_MAX)
+    tags: list[NoteTag] | None = Field(default=None, max_length=NOTE_TAGS_MAX)
+    course_id: Id | None = None
 
 
 @router.get("/user/{user_id}")
@@ -284,8 +298,8 @@ async def remove(note_id: str, request: Request, user_id: str):
 
 
 class LinkConceptBody(BaseModel):
-    user_id: str
-    concept_node_id: str
+    user_id: Id
+    concept_node_id: Id
 
 
 @router.get("/{note_id}/concepts")
@@ -329,7 +343,7 @@ async def unlink_concept_route(
 
 
 class AgentActionBody(BaseModel):
-    user_id: str
+    user_id: Id
 
 
 async def _lookup_concept_nodes_by_name(
@@ -385,6 +399,7 @@ def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> Sapli
 @router.post("/{note_id}/summarize")
 async def summarize(note_id: str, body: AgentActionBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -408,6 +423,7 @@ async def extract_concepts(
     note_id: str, body: AgentActionBody, request: Request
 ):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -438,13 +454,14 @@ async def extract_concepts(
 
 
 class NoteChatBody(BaseModel):
-    user_id: str
-    message: str
+    user_id: Id
+    message: str = Field(max_length=CHAT_MESSAGE_MAX)
 
 
 @router.post("/{note_id}/chat")
 async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -483,6 +500,7 @@ async def send_to_tutor(
     note_id: str, body: AgentActionBody, request: Request
 ):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -508,6 +526,7 @@ async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")

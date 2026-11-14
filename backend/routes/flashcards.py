@@ -15,7 +15,9 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from models import Id, LongText, ShortText
 
 from routes._errors import domain_status
 from services.auth_guard import require_self
@@ -59,87 +61,95 @@ router = APIRouter()
 # ── Request / Response models ──────────────────────────────────────────────────
 
 class GenerateFlashcardsBody(BaseModel):
-    user_id: str
-    topic: str
+    user_id: Id
+    topic: str = Field(max_length=500)
     count: int = 5
-    session_id: str | None = None
+    session_id: Id | None = None
     # Optional term label (#141): grounds generation in the SELECTED term's
     # course documents instead of always the current term's.
-    semester: str | None = None
+    semester: ShortText | None = None
     # The selected course's abstract id (#829). When present it scopes the
     # grounding documents directly; `topic` is then only the prompt's label.
-    course_id: str | None = None
+    course_id: Id | None = None
 
 
 class FlashcardRatingBody(BaseModel):
-    user_id: str
-    card_id: str
+    user_id: Id
+    card_id: Id
     rating: int  # 1 = forgot, 2 = hard, 3 = easy
 
 
+#: Cards one import may carry (a large Anki deck is a few thousand).
+IMPORT_CARDS_MAX = 10_000
+
+
 class CardInput(BaseModel):
-    front: str
-    back: str
+    front: LongText
+    back: LongText
 
 
 class ImportParseBody(BaseModel):
-    user_id: str
+    user_id: Id
     source: Literal["anki", "xlsx", "url", "ocr"]
-    payload: str  # base64 for files, plain text for url; filename in options
+    # base64 for files (import_flow caps the decoded file at 5 MB, ~6.7 M
+    # base64 characters), plain text for url; filename in options
+    payload: str = Field(max_length=8_000_000)
     options: dict = {}
 
 
 class ImportCommitBody(BaseModel):
-    user_id: str
-    course_id: str | None = None
-    topic: str
-    cards: list[CardInput]
+    user_id: Id
+    course_id: Id | None = None
+    topic: str = Field(max_length=500)
+    cards: list[CardInput] = Field(max_length=IMPORT_CARDS_MAX)
     dedup: bool = True
 
 
 class ImportGenerateBody(BaseModel):
-    user_id: str
+    user_id: Id
     source: Literal["paste", "library_doc"]
-    text: str | None = None
-    document_id: str | None = None
+    text: str | None = Field(default=None, max_length=200_000)
+    document_id: Id | None = None
     count: int = 25
     difficulty: Literal["recall", "application", "conceptual"] = "recall"
 
 
 class ImportCleanupBody(BaseModel):
-    user_id: str
-    cards: list[CardInput]
+    user_id: Id
+    cards: list[CardInput] = Field(max_length=IMPORT_CARDS_MAX)
 
 
 class ImportClozeBody(BaseModel):
-    user_id: str
-    paragraph: str
+    user_id: Id
+    paragraph: LongText
 
 
 class FlashcardSetCreateBody(BaseModel):
     """A saved set. Field rules (lengths, de-duplication, the option keys) are
     `services/flashcards/sets.py`'s, answered as 422 with a readable detail."""
-    user_id: str
-    name: str
-    course_id: str
-    concepts: list[str]
+    user_id: Id
+    # The service's own rules (NAME_MAX, CONCEPTS_MAX...) answer the readable
+    # 422s; these bounds only cap what is parsed at all.
+    name: ShortText
+    course_id: Id
+    concepts: list[ShortText] = Field(max_length=1000)
     options: dict | None = None
-    exam_id: str | None = None
+    exam_id: Id | None = None
 
 
 class FlashcardSetPatchBody(BaseModel):
     """Only the fields SENT change; `exam_id: null` clears the exam."""
-    user_id: str
-    name: str | None = None
-    concepts: list[str] | None = None
+    user_id: Id
+    name: ShortText | None = None
+    concepts: list[ShortText] | None = Field(default=None, max_length=1000)
     options: dict | None = None
-    exam_id: str | None = None
+    exam_id: Id | None = None
 
 
 class FlashcardSetSuggestBody(BaseModel):
-    user_id: str
-    description: str
-    course_id: str | None = None
+    user_id: Id
+    description: str = Field(max_length=2000)  # the service answers past DESCRIPTION_MAX
+    course_id: Id | None = None
 
 
 # ── Domain errors → HTTP ───────────────────────────────────────────────────────

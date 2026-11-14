@@ -124,6 +124,9 @@ jobs:
           STUDY_GUIDE_GENERATE_RATE_LIMIT: "1000"
           STUDY_GUIDE_BLOCK_RATE_LIMIT: "1000"
           STUDY_GUIDE_CREATE_RATE_LIMIT: "1000"
+          # The abuse limits (backend/services/abuse_limits.py); e2e-up.sh sets
+          # the same value.
+          ABUSE_RATE_LIMIT_MULTIPLIER: "100"
         run: make e2e-up
 
       - name: Run Playwright suite

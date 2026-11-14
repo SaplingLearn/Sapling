@@ -27,6 +27,7 @@ is safe from either: a DB refund is handed to a background thread.
 """
 import logging
 import math
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -308,6 +309,104 @@ def refund_rate_limit(key: str, slot) -> None:
         bucket.remove(slot)
     except ValueError:
         pass
+
+
+# ── Abuse guards: one call per route, a friendly 429 ─────────────────────────
+
+
+class AbuseLimit(NamedTuple):
+    """One per-subject sliding-window budget on an abusable route.
+
+    `name` prefixes the limiter key (``"<name>:<subject>"``), so two routes
+    sharing a name share a budget. `detail` is the student-readable 429
+    message; the wait is appended to it and rides in ``Retry-After`` too.
+    The budgets themselves are declared in ``services/abuse_limits.py``.
+    """
+
+    name: str
+    limit: int
+    window_sec: int
+    detail: str
+
+
+#: Environment knob that multiplies every :class:`AbuseLimit` budget. A local
+#: E2E lane runs every journey as one seeded student from one address against
+#: one backend, so the production numbers would 429 the specs that run last
+#: (the reason ``QUIZ_GENERATE_RATE_LIMIT`` is raised there too). A positive
+#: whole number; anything else is ignored with a warning, so a stray value can
+#: never switch a limit off. Production sets none.
+ABUSE_LIMIT_MULTIPLIER_ENV = "ABUSE_RATE_LIMIT_MULTIPLIER"
+
+
+def _abuse_multiplier() -> int:
+    raw = (os.getenv(ABUSE_LIMIT_MULTIPLIER_ENV) or "").strip()
+    if raw.isdecimal() and int(raw) > 0:
+        return int(raw)
+    if raw:
+        logger.warning("%s=%r is not a positive whole number; using 1",
+                       ABUSE_LIMIT_MULTIPLIER_ENV, raw)
+    return 1
+
+
+def abuse_limit(name: str, *, limit: int, window_sec: int, detail: str) -> AbuseLimit:
+    """Declare an :class:`AbuseLimit`, read once at import (like the
+    study-guide limits): `limit` scaled by ``ABUSE_RATE_LIMIT_MULTIPLIER``."""
+    return AbuseLimit(name, limit * _abuse_multiplier(), window_sec, detail)
+
+
+def _wait_phrase(seconds: int) -> str:
+    if seconds < 90:
+        return "1 second" if seconds == 1 else f"{seconds} seconds"
+    return f"{math.ceil(seconds / 60)} minutes"
+
+
+def rate_limited_error(limit: AbuseLimit, retry_after: int) -> HTTPException:
+    """The 429 every :class:`AbuseLimit` answers with: the friendly detail
+    (the frontend's ``humanizeError`` shows a short plain sentence as is) plus
+    the wait, and a real ``Retry-After`` (main.py forwards ``exc.headers``,
+    #544) — the same shape as the OCR and Gradescope limits."""
+    retry_after = max(1, int(retry_after))
+    return HTTPException(
+        status_code=429,
+        detail=f"{limit.detail} Try again in {_wait_phrase(retry_after)}.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def enforce_abuse_limit(limit: AbuseLimit, subject: str) -> None:
+    """Charge one call to `subject`'s budget under `limit`; 429 past it.
+
+    Sync (a PostgREST call under ``stateless_rate_limit``): for plain ``def``
+    handlers only; an ``async def`` uses :func:`aenforce_abuse_limit`. Call it
+    AFTER the caller is authenticated, so an anonymous request can never
+    spend a student's budget."""
+    retry = check_rate_limit(f"{limit.name}:{subject}", limit=limit.limit,
+                             window_sec=limit.window_sec)
+    if retry is not None:
+        raise rate_limited_error(limit, retry)
+
+
+async def aenforce_abuse_limit(limit: AbuseLimit, subject: str) -> None:
+    """:func:`enforce_abuse_limit` for an ``async def``: never blocks the loop."""
+    retry = await acheck_rate_limit(f"{limit.name}:{subject}", limit=limit.limit,
+                                    window_sec=limit.window_sec)
+    if retry is not None:
+        raise rate_limited_error(limit, retry)
+
+
+def client_ip(request) -> str:
+    """The address a public (unauthenticated) route rate-limits by.
+
+    ``request.client.host`` only. The app trusts no forwarding header itself
+    (it reads neither ``CF-Connecting-IP`` nor ``X-Forwarded-For``), and
+    neither does this: a client-set header would let a caller pick a fresh
+    budget per request. Behind Railway's proxy the real address reaches
+    ``request.client`` only when uvicorn is told to trust that proxy
+    (``FORWARDED_ALLOW_IPS``); until then every public caller shares the
+    proxy's address, and these budgets act as one ceiling per route.
+    """
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None) or "unknown"
 
 
 async def read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:

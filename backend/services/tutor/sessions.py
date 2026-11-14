@@ -17,6 +17,8 @@ from models import EndSessionBody, ModeSwitchBody, RenameSessionBody
 from services import events_service
 from services.academics import offering_course_id
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.encryption import decrypt_if_present, decrypt_json_column, encrypt_json
 from services.streak_service import touch_streak_safe
 from services.tutor.errors import HTTPException
@@ -360,6 +362,7 @@ async def resume_session(session_id: str, request: Request):
 
 async def mode_switch(body: ModeSwitchBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     if body.new_mode not in MODE_DISPLAY_NAMES:
         # sessions.mode is CHECK-constrained to these three; refuse before
         # the write rather than surface the constraint as a 500.
