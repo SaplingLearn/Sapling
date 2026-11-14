@@ -180,3 +180,31 @@ class TestMemberCountsAreBatched:
         out, _ = self._run_public(3)
         for room in out["rooms"]:
             assert "invite_code" not in room
+
+
+class TestPublicRoomDiscoveryIsBoundedAndOrdered:
+    """The discovery read had no limit and no ORDER BY: it pulled every public
+    room in the app for every student who opened Social, and returned them in
+    whatever order Postgres felt like — so the list reshuffled between loads."""
+
+    def _call(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.social import rooms as mod
+
+        rooms_tbl = MagicMock()
+        rooms_tbl.select.return_value = []
+        members_tbl = MagicMock()
+        members_tbl.select.return_value = []
+        with patch.object(mod, "table",
+                          side_effect=lambda name: rooms_tbl if name == "rooms" else members_tbl):
+            mod.list_public_rooms("u1")
+        return rooms_tbl.select.call_args
+
+    def test_read_is_bounded(self):
+        from services.social.rooms import PUBLIC_ROOMS_MAX
+
+        assert self._call().kwargs["limit"] == PUBLIC_ROOMS_MAX
+
+    def test_read_is_newest_first(self):
+        assert self._call().kwargs["order"] == "created_at.desc"

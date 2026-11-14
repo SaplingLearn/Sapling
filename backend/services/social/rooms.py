@@ -124,6 +124,22 @@ def create_room(body: CreateRoomBody):
     return {"room_id": room_id, "invite_code": invite_code}
 
 
+#: How many public rooms the discovery list reads. This query had no limit
+#: and no order at all, which is two problems:
+#:
+#: * Unbounded — it read EVERY public room in the app, for every student who
+#:   opened the Social page, and the client has no pagination to ask for less.
+#: * Non-deterministic — with no ORDER BY, Postgres may return the same rows
+#:   in a different sequence on each call, so the list visibly reshuffles
+#:   between loads for no reason the student can see.
+#:
+#: Newest-first is the useful order for discovery, and the cap is far above
+#: any plausible number of public rooms while still bounding the work and the
+#: payload. If public rooms ever outgrow it, the fix is paging the endpoint,
+#: not raising this.
+PUBLIC_ROOMS_MAX = 200
+
+
 def list_public_rooms(user_id: str):
     """Public rooms (#405): is_public=true rooms, joinable without an invite.
     The select never includes invite_code, so the public listing cannot leak
@@ -131,6 +147,8 @@ def list_public_rooms(user_id: str):
     rooms = table("rooms").select(
         "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
         filters={"is_public": "eq.true"},
+        order="created_at.desc",
+        limit=PUBLIC_ROOMS_MAX,
     ) or []
     counts = _member_counts([r["id"] for r in rooms])
     out = []
