@@ -8,6 +8,7 @@ import logging
 from db.connection import table
 from services import events_service
 from services.academics import (
+    COURSE_NOT_ENROLLED_DETAIL,
     enrolled_offering_for_course,
     resolve_offering,
     term_id_for_label,
@@ -19,7 +20,7 @@ from services.flashcards.context import (
     _get_session_summary,
     _get_weak_concepts,
 )
-from services.flashcards.errors import StorageError, UpstreamError
+from services.flashcards.errors import NotFound, StorageError, UpstreamError
 from services.flashcards.importing import generate_flashcards
 from services.llm_budget import reraise_budget_refusal
 from services.tutor_sessions import session_owned_by
@@ -60,23 +61,27 @@ def _session_context(user_id: str, session_id: str | None) -> str:
 
 def _card_offering(user_id: str, course_id: str | None, semester: str | None) -> str | None:
     """The offering the generated cards are filed under (None: no course was
-    sent, or the id matches no offering, and the cards carry no course).
+    sent, and the cards carry no course).
+
+    A course the student holds no enrollment in (any term) is refused with
+    ``NotFound``, as a saved set for it is (``sets.create_flashcard_set``):
+    its cards would otherwise be filed under a class the student is not in.
 
     The card list scopes by the SELECTED semester's offerings
     (``cards.list_flashcards``), so the first choice is that term's offering
     of the course: filed anywhere else, the cards vanish from the list on the
-    next load and the page generates (and bills) them again. Then the offering
-    the student is enrolled in, which is where their course lives when no
-    semester is selected. Last, what the import route files under: the current
-    term's offering, else any.
+    next load and the page generates (and bills) them again. Otherwise the
+    offering the student is enrolled in.
     """
     if not course_id:
         return None
+    enrolled = enrolled_offering_for_course(user_id, course_id)
+    if not enrolled:
+        raise NotFound(COURSE_NOT_ENROLLED_DETAIL)
     term_id = term_id_for_label(semester) if semester else None
     return (
         (resolve_offering(course_id, term_id, fallback=False) if term_id else None)
-        or enrolled_offering_for_course(user_id, course_id)
-        or resolve_offering(course_id)
+        or enrolled
     )
 
 
@@ -126,16 +131,17 @@ def generate(
     (their library documents for the course, term-scoped when a ``semester`` is
     selected (#141), plus the concepts they are weak on) and store them.
 
-    Raises ``UpstreamError`` when the model call fails and ``StorageError``
-    when the cards cannot be saved.
+    Raises ``NotFound`` for a ``course_id`` the student is not enrolled in,
+    ``UpstreamError`` when the model call fails and ``StorageError`` when the
+    cards cannot be saved.
     """
+    # Generated for a course: file the cards under it, or the list cannot say
+    # which course they belong to. Resolved first, so a course the student is
+    # not enrolled in (or a failed lookup) costs no reads and no generation.
+    offering_id = _card_offering(user_id, course_id, semester)
     context = _session_context(user_id, session_id)
     documents = _get_course_documents(user_id, topic, semester=semester, course_id=course_id)
     weak_concepts = _get_weak_concepts(user_id, topic, course_id=course_id)
-    # Generated for a course: file the cards under it, or the list cannot say
-    # which course they belong to. Resolved before the model call, so a failed
-    # lookup costs no generation.
-    offering_id = _card_offering(user_id, course_id, semester)
 
     try:
         cards = generate_flashcards(

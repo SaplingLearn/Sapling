@@ -49,6 +49,9 @@ from services.flashcards.context import (  # noqa: F401  (re-export, #118)
     _get_session_summary,
     _get_weak_concepts,
 )
+from services.flashcards.import_flow import (  # noqa: F401  (re-export, #118)
+    MAX_UPLOAD_BYTES as _MAX_UPLOAD_BYTES,
+)
 
 router = APIRouter()
 
@@ -147,6 +150,15 @@ _ERROR_STATUS = {
     FlashcardSetInvalid: 422, FlashcardSetNotFound: 404,
     FlashcardSetLimitReached: 409, FlashcardSetRateLimited: 429,
 }
+
+
+def llm_http_error(exc: BaseException) -> HTTPException:
+    """Kept for importers of the pre-split route (#118): the HTTP error a
+    failed generation is answered with, now built from
+    ``generation.generation_failed`` (the 502, or the budget refusal in
+    ``exc`` re-raised as itself)."""
+    err = generation.generation_failed(exc)
+    return HTTPException(status_code=_ERROR_STATUS[UpstreamError], detail=err.detail)
 
 
 @contextmanager

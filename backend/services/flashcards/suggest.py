@@ -146,8 +146,10 @@ def _clean_description(description: str | None) -> str:
 
 async def _candidates(user_id: str, course_id: str | None) -> list[dict]:
     """The student's own concepts (``{concept_name, course_id,
-    mastery_tier}``), most recently studied first, at most ``MAX_CANDIDATES``."""
-    filters = {"user_id": f"eq.{user_id}", "mastery_tier": "neq.subject_root"}
+    mastery_tier}``), most recently studied first, at most ``MAX_CANDIDATES``.
+    Every stored node is a concept: 'subject_root' is a get_graph payload
+    marker, never a stored tier (graph_nodes_mastery_tier_check)."""
+    filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         filters["course_id"] = f"eq.{course_id}"
     rows = await table("graph_nodes").aselect(
