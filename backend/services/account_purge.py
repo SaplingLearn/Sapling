@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 
 from db.connection import page_all, table
 from models import LeaveRoomBody
@@ -156,15 +157,32 @@ def _delete_where(name: str, column: str, user_id: str) -> int:
     return len(table(name).delete(filters={column: f"eq.{user_id}"}) or [])
 
 
+def _object_path(path: str) -> str | None:
+    """`path` if it names an object inside the bucket, else None: no empty,
+    `.` or `..` segment (so no leading or doubled slash) and no NUL."""
+    if not path or "\x00" in path:
+        return None
+    return None if any(seg in ("", ".", "..") for seg in path.split("/")) else path
+
+
 def _storage_path(ref: str | None, bucket: str) -> str | None:
     """The object path `ref` names in `bucket`: a Storage URL (public or not)
-    of that bucket, or a bare object path. None for anything else."""
+    of that bucket, or a bare object path. None for anything else.
+
+    A URL's path is percent-decoded: supabase-js `getPublicUrl` runs it
+    through `encodeURI`, so `a b.png` is stored as `a%20b.png` and only the
+    decoded name is the object Storage holds. Validation runs AFTER decoding,
+    so an encoded `..` or `/` cannot reach outside the folder it names."""
     if not isinstance(ref, str) or not ref.strip():
         return None
     for marker in (f"/storage/v1/object/public/{bucket}/", f"/storage/v1/object/{bucket}/"):
         if marker in ref:
-            return ref.split(marker, 1)[1].split("?", 1)[0] or None
-    return None if "://" in ref else ref.strip().lstrip("/")
+            raw = ref.split(marker, 1)[1].split("?", 1)[0]
+            try:
+                return _object_path(unquote(raw, errors="strict"))
+            except UnicodeDecodeError:
+                return None
+    return None if "://" in ref else _object_path(ref.strip().lstrip("/"))
 
 
 def _leave_rooms(user_id: str) -> int:

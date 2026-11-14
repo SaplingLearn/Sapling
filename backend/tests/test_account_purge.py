@@ -7,6 +7,7 @@ the room cascades added. The REAL admin wipe, chunk withdrawal and
 revoke are recorders.
 """
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import pytest
 
@@ -251,6 +252,48 @@ def test_client_supplied_references_to_someone_elses_files_are_left_alone(
     assert (ap.ISSUE_BUCKET, [f"{U}/mine.png"]) in storage
     assert (ap.CHAT_IMAGES_BUCKET, []) in storage
     assert db.of("room_messages", id="m9")[0]["image_url"] is None  # the reference goes
+
+
+def _encode_uri(path):
+    """What supabase-js getPublicUrl does to the object path (encodeURI)."""
+    return quote(path, safe=";,/?:@&=+$-_.!~*'()#")
+
+
+@pytest.mark.parametrize("name", [
+    "Screenshot 2026-11-14 at 3.04.12 PM.png",
+    "naïve café 写真.png",
+    "100% done+final.png",
+])
+def test_a_public_url_names_the_decoded_object(name):
+    path = f"r1/{U}-1-{name}"
+    url = _chat_url(_encode_uri(path))
+    assert url != _chat_url(path)  # the stored URL really is encoded
+
+    assert ap._storage_path(url, ap.CHAT_IMAGES_BUCKET) == path
+
+
+@pytest.mark.parametrize("ref", [
+    _chat_url(f"r1/%2E%2E/{OTHER}-1-pic.png"),
+    _chat_url(f"r1/..%2F{OTHER}-1-pic.png"),
+    _chat_url(f"%2Fr1/{U}-1-pic.png"),
+    _chat_url(f"r1//{U}-1-pic.png"),
+    _chat_url(f"r1/{U}-1-pic%00.png"),
+    _chat_url(f"r1/{U}-1-%FF.png"),  # not UTF-8
+])
+def test_a_url_that_decodes_out_of_its_folder_names_nothing(ref):
+    assert ap._storage_path(ref, ap.CHAT_IMAGES_BUCKET) is None
+
+
+def test_an_encoded_chat_image_is_deleted_by_its_real_name(db, storage, revoked, events):
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    path = f"r9/{U}-3-Screenshot 2026-11-14 at 3.04.12 PM.png"
+    db.add("rooms", id="r9", owner_id=OTHER, created_by=OTHER, updated_at=None)
+    db.add("room_messages", id="m9", room_id="r9", user_id=U, user_name="Ada",
+           text="enc", image_url=_chat_url(_encode_uri(path)), is_deleted=False)
+
+    ap.purge_account(U, now=NOW)
+
+    assert (ap.CHAT_IMAGES_BUCKET, [path]) in storage
 
 
 def test_storage_bulk_delete_sends_the_paths_and_raises_on_failure(monkeypatch):
