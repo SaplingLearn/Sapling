@@ -4,6 +4,7 @@ Profile routes — public profiles, settings, cosmetics, achievements, account m
 
 import base64
 import functools
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,7 +28,7 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
-from services.account_credentials import remove_credentials, revoke_google_tokens
+from services.account_credentials import delete_credentials, google_tokens, revoke_google_tokens
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
@@ -54,6 +55,7 @@ from services.profile.users import (  # noqa: F401  (re-export, #118)
     _get_user_stats,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -467,13 +469,24 @@ def delete_account(
     with service_scope():
         # Owner decision 2026-11-14: the Google tokens and the Gradescope
         # login go NOW, not with the 30-day purge (services/account_purge.py).
-        # First, so a failure here is a 500 the student can retry: once the
-        # account is hidden the guard refuses their session for good.
-        google_tokens = remove_credentials(user_id)
+        # Read the tokens to revoke, but delete nothing until the account is
+        # hidden: a failure up to the hide is a 500 the student retries, and
+        # the retry must still find the tokens, or the Google grant would
+        # stay live with nothing left to revoke it.
+        tokens = google_tokens(user_id)
         table("users").update(
             {"deleted_at": datetime.now(timezone.utc).isoformat()},
             filters={"id": f"eq.{user_id}"},
         )
+    try:
+        with service_scope():
+            delete_credentials(user_id)
+    except Exception as exc:
+        # The account is hidden, so the guard refuses a retry. Do not fail
+        # the delete that happened: the grant is still revoked below with the
+        # tokens read above, and the purge removes the leftover rows.
+        logger.warning("[account] credential delete failed after the soft delete: %s",
+                       type(exc).__name__)
     # ADR 0028: from here on the PostHog worker's consent check reads
     # deleted_at, so nothing — not even items already queued — names this user
     # (which would re-create the person the delete below removes). Drop the
@@ -488,8 +501,9 @@ def delete_account(
     # after the consent TTL. Only reached once the soft delete landed.
     background_tasks.add_task(delete_posthog_person, user_id)
     # Revoke the Google grant itself (best effort, never raises): our copy of
-    # the tokens is already gone, this ends Sapling's access at Google.
-    background_tasks.add_task(revoke_google_tokens, google_tokens)
+    # the tokens is gone (or goes with the purge), this ends Sapling's access
+    # at Google.
+    background_tasks.add_task(revoke_google_tokens, tokens)
     return {"deleted": True}
 
 

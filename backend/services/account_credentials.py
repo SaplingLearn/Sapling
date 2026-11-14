@@ -1,10 +1,15 @@
 """Remove an account's stored third-party credentials (owner decision 2026-11-14).
 
-A student's own account delete removes them AT ONCE, before the account is
-hidden (routes/profile.py::delete_account); the 30-day purge
-(services/account_purge.py) runs the same removal again, so a credential
-written after the delete (none should be: the guard refuses a deleted
-account's session) is still gone in the end.
+A student's own account delete removes them AT ONCE
+(routes/profile.py::delete_account): it reads the Google tokens
+(:func:`google_tokens`), hides the account, then deletes the rows
+(:func:`delete_credentials`) and revokes the grant with the tokens it read.
+Nothing is deleted before the hide, so a failed hide is a 500 whose retry
+still finds the tokens to revoke. The 30-day purge
+(services/account_purge.py) runs the removal again
+(:func:`remove_credentials`), so a credential the delete could not remove,
+or one written after it (none should be: the guard refuses a deleted
+account's session), is still gone in the end.
 
 * ``oauth_tokens`` — the Google sign-in / Calendar grant. Its tokens are
   read (and decrypted) before the row goes so the grant can be REVOKED at
@@ -48,22 +53,32 @@ def _plain(value) -> str | None:
         return None
 
 
-def remove_credentials(user_id: str) -> list[str]:
-    """Delete `user_id`'s OAuth tokens and Gradescope credentials.
-
-    Returns the Google tokens to revoke afterwards, refresh token first
-    (revoking it ends the whole grant; the access token is the fallback).
-    Raises on a database failure, so a caller can stop before hiding the
-    account — the student can then retry the delete.
-    """
+def google_tokens(user_id: str) -> list[str]:
+    """`user_id`'s stored Google tokens, decrypted, to revoke: refresh token
+    first (revoking it ends the whole grant; the access token is the
+    fallback). Reads only. Raises on a database failure."""
     rows = table("oauth_tokens").select(
         "access_token,refresh_token", filters={"user_id": f"eq.{user_id}"},
     )
     row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
     tokens = [t for t in (_plain(row.get("refresh_token")), _plain(row.get("access_token"))) if t]
+    return list(dict.fromkeys(tokens))
+
+
+def delete_credentials(user_id: str) -> None:
+    """Delete `user_id`'s OAuth tokens and Gradescope credentials. Raises on
+    a database failure. Read :func:`google_tokens` FIRST: once the row is
+    gone nothing can revoke the grant."""
     table("oauth_tokens").delete(filters={"user_id": f"eq.{user_id}"})
     table("gradescope_credentials").delete(filters={"user_id": f"eq.{user_id}"})
-    return list(dict.fromkeys(tokens))
+
+
+def remove_credentials(user_id: str) -> list[str]:
+    """Read the Google tokens, then delete both credential rows. Returns the
+    tokens to revoke afterwards. Raises on a database failure."""
+    tokens = google_tokens(user_id)
+    delete_credentials(user_id)
+    return tokens
 
 
 def _revoke_disabled() -> bool:

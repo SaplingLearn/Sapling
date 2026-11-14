@@ -1,8 +1,9 @@
 """Credentials go at the student's own account delete (owner decision 2026-11-14).
 
-`DELETE /api/profile/{user_id}/account` removes the Google OAuth tokens and
-the Gradescope login BEFORE hiding the account, and schedules a best-effort
-revoke of the Google grant; `services/account_credentials.py` does both.
+`DELETE /api/profile/{user_id}/account` reads the Google tokens, hides the
+account, then removes the Google OAuth tokens and the Gradescope login and
+schedules a best-effort revoke of the Google grant with the tokens it read;
+`services/account_credentials.py` does the reading, removing and revoking.
 """
 from unittest.mock import MagicMock, patch
 
@@ -28,11 +29,18 @@ class Tables:
     def __call__(self, name):
         if name not in self.mocks:
             m = MagicMock()
-            m.select.return_value = [self.oauth_row] if name == "oauth_tokens" and self.oauth_row else []
-            m.delete.side_effect = lambda filters=None, **k: self.log.append(("delete", name, filters)) or []
+            m.select.side_effect = lambda *a, **k: (
+                [self.oauth_row] if name == "oauth_tokens" and self.oauth_row else [])
+            m.delete.side_effect = lambda filters=None, **k: self._delete(name, filters)
             m.update.side_effect = lambda data, filters=None, **k: self.log.append(("update", name, data)) or [{}]
             self.mocks[name] = m
         return self.mocks[name]
+
+    def _delete(self, name, filters):
+        self.log.append(("delete", name, filters))
+        if name == "oauth_tokens":
+            self.oauth_row = None  # a retry reads what is really left
+        return []
 
 
 def _delete_account(tables, **patches):
@@ -49,31 +57,77 @@ def _delete_account(tables, **patches):
     return r, revoke
 
 
-def test_self_delete_removes_credentials_before_hiding_the_account():
-    tables = Tables({"access_token": encrypt("ya29.access"), "refresh_token": encrypt("1//refresh")})
+def _tokens():
+    return {"access_token": encrypt("ya29.access"), "refresh_token": encrypt("1//refresh")}
+
+
+def test_self_delete_hides_the_account_then_removes_credentials():
+    tables = Tables(_tokens())
 
     r, revoke = _delete_account(tables)
 
     assert r.status_code == 200 and r.json() == {"deleted": True}
     writes = [(op, name) for op, name, _ in tables.log]
-    assert writes == [("delete", "oauth_tokens"), ("delete", "gradescope_credentials"),
-                      ("update", "users")]
-    for op, name, filters in tables.log[:2]:
+    assert writes == [("update", "users"), ("delete", "oauth_tokens"),
+                      ("delete", "gradescope_credentials")]
+    assert "deleted_at" in tables.log[0][2]
+    for op, name, filters in tables.log[1:]:
         assert filters == {"user_id": f"eq.{USER}"}, name
-    assert "deleted_at" in tables.log[2][2]
     # The grant is revoked after the response: refresh token first.
     revoke.assert_called_once_with(["1//refresh", "ya29.access"])
 
 
-def test_a_credential_delete_failure_is_a_500_and_the_account_stays_visible():
-    tables = Tables()
+def test_a_failed_soft_delete_keeps_the_tokens_so_the_retry_revokes_the_grant():
+    """The soft delete failing must not strand a live Google grant: the
+    tokens stay stored, and the student's retry still revokes them."""
+    tables = Tables(_tokens())
+    attempts = []
+
+    def update(data, filters=None, **k):
+        attempts.append(data)
+        if len(attempts) == 1:
+            raise RuntimeError("db down")
+        tables.log.append(("update", "users", data))
+        return [{}]
+
+    tables("users").update.side_effect = update
+
+    first, revoke = _delete_account(tables)
+
+    assert first.status_code == 500
+    assert tables.log == [] and tables.oauth_row is not None  # nothing removed
+    revoke.assert_not_called()
+
+    retry, revoke = _delete_account(tables)
+
+    assert retry.status_code == 200
+    revoke.assert_called_once_with(["1//refresh", "ya29.access"])
+    assert tables.oauth_row is None
+
+
+def test_a_token_read_failure_is_a_500_that_changes_nothing():
+    tables = Tables(_tokens())
+    tables("oauth_tokens").select.side_effect = RuntimeError("db down")
+
+    r, revoke = _delete_account(tables)
+
+    assert r.status_code == 500 and tables.log == []
+    revoke.assert_not_called()
+
+
+def test_a_credential_delete_failure_after_the_hide_still_revokes_the_grant():
+    """Once the account is hidden the student cannot retry (the guard refuses
+    the session), so a failed row delete does not fail the request: the grant
+    is revoked with the tokens read before the hide, and the 30-day purge
+    removes the leftover rows (services/account_purge.py)."""
+    tables = Tables(_tokens())
     tables("gradescope_credentials").delete.side_effect = RuntimeError("db down")
 
     r, revoke = _delete_account(tables)
 
-    assert r.status_code == 500
-    assert ("update", "users") not in [(op, name) for op, name, _ in tables.log]
-    revoke.assert_not_called()
+    assert r.status_code == 200 and r.json() == {"deleted": True}
+    assert ("update", "users") in [(op, name) for op, name, _ in tables.log]
+    revoke.assert_called_once_with(["1//refresh", "ya29.access"])
 
 
 def test_wrong_confirmation_touches_no_credential():
