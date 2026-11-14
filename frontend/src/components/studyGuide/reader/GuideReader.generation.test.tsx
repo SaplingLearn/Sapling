@@ -278,6 +278,25 @@ describe("another run holds the guide", () => {
     expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
   });
 
+  it("waits on the other run when the stream itself says the guide is held", async () => {
+    // Both requests passed prepare; the other one won the claim, so this
+    // stream opened and ended with the 409 as an event.
+    vi.useFakeTimers();
+    const held = new GuideGenerationError("Another tab is writing this guide.", true, 409);
+    mocks.generateGuide.mockRejectedValueOnce(held).mockResolvedValueOnce(finishedGuide());
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
+
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+  });
+
   it("shows the error banner when asking again fails for another reason", async () => {
     vi.useFakeTimers();
     mocks.generateGuide

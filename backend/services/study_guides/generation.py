@@ -201,7 +201,8 @@ async def _astart(run: _Run) -> SaplingEvent | None:
     row it loaded. Returns the event the stream ends with when there is
     nothing for this run to do, else None."""
     if not await run.aclaim():
-        return _error(BUSY_DETAIL, retryable=True)
+        # The prepare's 409, as an event: the reader waits for that run.
+        return _error(BUSY_DETAIL, retryable=True, status=409)
     prepared = run.guide
     run.guide = await store.aload_guide(prepared.user_id, prepared.id)
     run.content = run.guide.content
@@ -325,8 +326,14 @@ def _status(step: str, message: str, number: int, total: int) -> SaplingEvent:
     )
 
 
-def _error(message: str, *, retryable: bool) -> SaplingEvent:
-    return SaplingEvent(type="error", step="error", message=message, data={"retryable": retryable})
+def _error(message: str, *, retryable: bool, status: int | None = None) -> SaplingEvent:
+    """An `error` event. `status` is the HTTP status the request would have
+    been answered with had the stream not opened yet (409: another run holds
+    the guide), so the reader can treat the two the same."""
+    data: dict[str, Any] = {"retryable": retryable}
+    if status is not None:
+        data["status"] = status
+    return SaplingEvent(type="error", step="error", message=message, data=data)
 
 
 async def _adone(run: _Run) -> SaplingEvent:

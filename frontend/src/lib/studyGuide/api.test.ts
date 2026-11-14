@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/sse", () => ({ streamSSE: vi.fn() }));
 
+import { statusOf } from "@/lib/errorMessage";
 import { streamSSE } from "@/lib/sse";
 
 import { generateGuide, GuideGenerationError } from "./api";
@@ -104,6 +105,16 @@ describe("generateGuide", () => {
     const err = await failure(generateGuide("u1", "g1", "resume"));
     expect(err.retryable).toBe(true);
     expect(err.message).toBe("The guide could not be written.");
+  });
+
+  it("carries the status an error event stands in for, so a held guide reads as a 409", async () => {
+    streams(event("error", "error", "Another tab is writing this guide.", { retryable: true, status: 409 }));
+    const held = await failure(generateGuide("u1", "g1", "resume"));
+    expect(held.status).toBe(409);
+    expect(statusOf(held)).toBe(409);
+
+    streams(event("error", "error", "The guide could not be written.", { retryable: true }));
+    expect(statusOf(await failure(generateGuide("u1", "g1", "resume")))).toBeUndefined();
   });
 
   it("rejects when the stream closes without `done`", async () => {

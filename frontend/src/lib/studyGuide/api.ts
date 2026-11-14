@@ -94,11 +94,16 @@ interface StreamEvent {
   data?: Record<string, unknown> | null;
 }
 
-/** A generation that ended in an `error` event. */
+/**
+ * A generation that ended in an `error` event. `status` is the HTTP status the
+ * event stands in for, when it carries one: a 409 is another run holding the
+ * guide, exactly as when the request itself is answered with one.
+ */
 export class GuideGenerationError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
+    readonly status?: number,
   ) {
     super(message);
     this.name = "GuideGenerationError";
@@ -120,6 +125,7 @@ function dispatch(event: StreamEvent, handlers: GenerationHandlers): GuideDetail
     throw new GuideGenerationError(
       event.message || "The guide could not be written.",
       data.retryable !== false,
+      typeof data.status === "number" ? data.status : undefined,
     );
   } else if (event.type === "done") {
     return data.guide as GuideDetail;

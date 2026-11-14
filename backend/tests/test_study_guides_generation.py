@@ -1293,8 +1293,10 @@ def test_two_prepared_runs_cannot_both_write(world, monkeypatch):
 
     lost, still_held, charged, won = run(scenario())
 
+    # The 409 prepare would have answered with, so the reader waits on the
+    # other run instead of showing a failure.
     assert [(e.type, e.message, e.data) for e in lost] == [
-        ("error", "Another tab is writing this guide.", {"retryable": True})]
+        ("error", "Another tab is writing this guide.", {"retryable": True, "status": 409})]
     assert still_held and charged == 1
     assert won[-1].type == "done" and len(script.outline_calls) == 1
 
@@ -1368,15 +1370,15 @@ def test_a_run_writes_from_the_row_as_it_is_under_the_claim(world, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("gone", "message", "retryable"),
+    ("gone", "message", "data"),
     [
         # Nothing to claim: the reader asks again and is told it is gone.
-        ("deleted", "Another tab is writing this guide.", True),
-        ("unreadable", store.GUIDE_UNREADABLE_DETAIL, False),
+        ("deleted", "Another tab is writing this guide.", {"retryable": True, "status": 409}),
+        ("unreadable", store.GUIDE_UNREADABLE_DETAIL, {"retryable": False}),
     ],
 )
 def test_a_guide_that_went_away_before_the_claim_ends_the_stream_at_once(
-    world, monkeypatch, gone, message, retryable,
+    world, monkeypatch, gone, message, data,
 ):
     garbage = "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
     world.guide()
@@ -1393,7 +1395,7 @@ def test_a_guide_that_went_away_before_the_claim_ends_the_stream_at_once(
 
     (event,) = run(scenario())
 
-    assert (event.type, event.message, event.data) == ("error", message, {"retryable": retryable})
+    assert (event.type, event.message, event.data) == ("error", message, data)
     assert script.outline_calls == []
     assert request_limits._rate_state[f"study-guide-generate:{ME}"] == []
     if gone == "unreadable":
