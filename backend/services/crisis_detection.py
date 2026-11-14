@@ -34,8 +34,13 @@ How matching works (every list below is a regex over `normalize(text)`):
    so "I'm not okay, I'll kill myself" still matches. The one thing it
    crosses is a short aside set off on both sides right after the negation
    ("I'm not, like, suicidal", "I am not, and never will be, suicidal"),
-   never one with a new "I" in it or a second clause after it; "I won't lie", "not
-   gonna lie", "not kidding" introduce a statement and negate nothing; and
+   never one with a new "I" in it or a second clause after it, and never a
+   bare comma ("not, want to kill myself" is two clauses); "I won't lie",
+   "not gonna lie", "not kidding" introduce a statement and negate nothing;
+   a comparative, an intensifier or a feeling about the act after the
+   negation ("never been more suicidal", "never wanted to kill myself more
+   than today", "no longer afraid to kill myself") and a negated negation
+   ("can't not think about killing myself") say the phrase is there; and
    only a hedge about one's own state ("I don't think I'm suicidal")
    negates: "I'm not saying I'll kill myself" is a warning sign. TOPIC_GUARDS
    veto MENTIONS (never explicit phrases) anywhere in the text when it names
@@ -209,7 +214,8 @@ EXPLICIT: tuple[Phrase, ...] = (
            r"(?:im|i am|ive been|i have been|i was|i feel|i felt|i get|i got|i keep getting|feeling"
            r"|been feeling|been|getting|been getting|ive felt)"
            r"(?: (?:so|really|very|kinda|kind of|pretty|extremely|super|always|constantly|still"
-           rf"|lowkey|honestly|literally|actually|a bit|a little|seriously))* {_SUICIDAL}"),
+           r"|lowkey|honestly|literally|actually|a bit|a little|seriously|this|that|more|as"
+           rf"|even))* {_SUICIDAL}"),
     Phrase("suicidal_ideation", "suicide thoughts",
            r"(?:im|i am|ive been|i have been|i was|i keep|i still|i sometimes|i always|i cant stop"
            r"|cant stop|ive|i)"
@@ -259,12 +265,33 @@ _NEGATED = (
     rf"(?:{_KILL}(?:ing)? ?{_MYSELF}|end my life|{_SUICIDAL}|hurt ?{_MYSELF}|harm ?{_MYSELF}"
     rf"|commit {_SUICIDE})"
 )
+#: Words after which a negation no longer negates the phrase: a comparative
+#: or intensifier ("never been MORE suicidal", "never been THIS suicidal",
+#: "never AS suicidal as now"), or a feeling about the act or about stopping
+#: it ("no longer AFRAID to kill myself", "not ABLE to stop"). They say how
+#: much, or what stands in the way, never the opposite.
+_NOT_NEGATING = (
+    r"more|most|this|that|as|too|afraid|scared|frightened|terrified|ashamed|sorry"
+    r"|embarrassed|nervous|hesitant|worried|guilty|able|stop|stopping"
+)
 #: A word that may sit between a negation and the phrase it negates: never a
 #: clause-joining word or a new first-person subject, which start the NEXT
-#: clause ("I'm not okay but suicidal", "I won't lie I'm suicidal").
+#: clause ("I'm not okay but suicidal", "I won't lie I'm suicidal"), and
+#: never a `_NOT_NEGATING` word.
 _GAP_WORD = (
     r"(?!(?:but|and|so|yet|though|although|because|cause|cuz|bc|plus|or|then"
-    r"|i|im|ill|id|ive)(?![a-z0-9]))[a-z]+"
+    rf"|i|im|ill|id|ive|{_NOT_NEGATING})(?![a-z0-9]))[a-z]+"
+)
+#: A negation that is itself negated ("I can't NOT think about killing
+#: myself") says the phrase is there.
+_NOT_DOUBLED = r"(?<!cant )(?<!cannot )(?<!couldnt )(?<!dont )(?<!didnt )(?<!wont )(?<!never )"
+#: ...and so does a comparison right after the phrase ("I've never wanted to
+#: kill myself MORE than today").
+#: Not a bare "more" that starts something else ("I'm not suicidal more like
+#: burnt out").
+_NOT_COMPARED = (
+    r"(?! (?:more than|more(?= ?(?:\||,|$))|so much|this much|as much|so badly|this badly)"
+    r"(?![a-z0-9]))"
 )
 
 #: Idioms whose negation INTRODUCES what follows instead of negating it ("I
@@ -294,17 +321,18 @@ _ASIDE = (
 NEGATION_GUARDS: tuple[str, ...] = (
     # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
     # (up to two words between the negation and the phrase, same clause; an
-    # `_ASIDE` right after the negation is crossed).
-    rf"{_NEGATION}(?! {_INTRODUCES})(?:{_ASIDE}| ,)?(?: ever)?(?! {_INTRODUCES})"
-    rf"(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
+    # `_ASIDE` right after the negation is crossed, and so is ", ever"; a
+    # bare comma is not: "not, want to kill myself" is two clauses).
+    rf"{_NOT_DOUBLED}{_NEGATION}(?! {_INTRODUCES})(?:{_ASIDE})?(?: ,? ever)?(?! {_INTRODUCES})"
+    rf"(?: {_GAP_WORD}){{0,2}} {_NEGATED}{_NOT_COMPARED}",
     # A hedge about one's own STATE: "I don't think I'm suicidal". Never about
     # an act or a plan ("I don't think I'll kill myself tonight"), and never
     # "not saying"/"don't mean" ("I'm not saying I'll kill myself" is a
     # warning sign). A contraction reads like its spelled-out form.
-    rf"{_NEGATION}(?: really)? (?:think|believe|guess|feel)"
+    rf"{_NOT_DOUBLED}{_NEGATION}(?: really)? (?:think|believe|guess|feel)"
     rf" (?:im|i am|i was|ive been|i have been) {_SUICIDAL}",
-    r"(?:dont|do not|didnt|did not|never|wont|will not|dont really)"
-    r" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead)",
+    rf"{_NOT_DOUBLED}(?:dont|do not|didnt|did not|never|wont|will not|dont really)"
+    rf" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead){_NOT_COMPARED}",
 )
 
 GUARDS: tuple[str, ...] = (

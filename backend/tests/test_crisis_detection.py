@@ -287,6 +287,9 @@ GENUINE_NEGATIONS: list[str] = [
     "I am not, and never will be, suicidal",
     "I'm not, you know, suicidal",
     "I would never — not ever — kill myself",
+    # a "more" that starts the next thought is not a comparison
+    "I'm not suicidal more like burnt out",
+    "I would never kill myself more or less",
 ]
 
 #: ...but only an aside right after the negation, of a few words, with no
@@ -301,6 +304,34 @@ ASIDE_IS_NOT_A_NEGATION: list[str] = [
     "I'm not, but I am, suicidal",
     "I'm not okay (I'm suicidal)",
 ]
+
+
+#: A negation word that does not negate the phrase: a comparative or an
+#: intensifier ("never been more suicidal", "... kill myself more than
+#: today"), a feeling about the act or about stopping it ("no longer afraid
+#: to", "not able to stop"), a double negation ("can't not"), and a bare
+#: comma right after the negation, which ends its clause ("not, want to ...":
+#: only an aside set off on BOTH sides is crossed).
+NEGATION_THAT_DOES_NOT_NEGATE: list[str] = [
+    "I have never been more suicidal",
+    "never been this suicidal before",
+    "I've never wanted to kill myself more than today",
+    "I'm no longer afraid to kill myself",
+    "I can't not think about killing myself",
+    "not, want to kill myself",
+    "I've never been as suicidal as this week",
+    "I'm not scared to kill myself anymore",
+    "I'm not ashamed to say I want to hurt myself",
+    "I've never wanted to die more than now",
+    "I don't think I've ever been this suicidal",
+    "I would never want to hurt myself as much as I do now",
+    "I've never wanted to kill myself more.",
+]
+
+
+@pytest.mark.parametrize("text", NEGATION_THAT_DOES_NOT_NEGATE)
+def test_a_negation_that_does_not_negate_the_phrase_never_vetoes(text):
+    assert detect(text) is not None, f"{text!r}: the negation does not say the opposite"
 
 
 #: "I'm not saying I'll kill myself" is a recognised warning sign, not a
