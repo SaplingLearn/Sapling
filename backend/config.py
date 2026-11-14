@@ -92,6 +92,49 @@ EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
 EMAIL_ASSET_BASE_URL = os.getenv("EMAIL_ASSET_BASE_URL", "").strip()
 
 
+# Ops alerts (services/spend_alerts.py): thresholds for the hourly check that
+# emails admins. The on/off switch is the `spend_alerts` feature flag, not an
+# env var. Read at call time (functions), so tests and operators need no reload.
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def spend_alert_daily_usd() -> float:
+    """Today's (UTC) total LLM cost that triggers the daily-spend alert."""
+    return _env_float("SPEND_ALERT_DAILY_USD", 50.0)
+
+
+def spend_alert_user_daily_usd() -> float:
+    """One student's LLM cost today that makes them an outlier."""
+    return _env_float("SPEND_ALERT_USER_DAILY_USD", 5.0)
+
+
+def spend_alert_denied_per_hour() -> float:
+    """auth.permission_denied events in the last hour that count as a spike."""
+    return _env_float("SPEND_ALERT_DENIED_PER_HOUR", 50)
+
+
+def spend_alert_5xx_per_hour() -> float:
+    """error.5xx events in the last hour that count as a spike."""
+    return _env_float("SPEND_ALERT_5XX_PER_HOUR", 20)
+
+
+def spend_alert_spike_factor() -> float:
+    """A spike must also be this many times the previous 24 h's hourly mean."""
+    return _env_float("SPEND_ALERT_SPIKE_FACTOR", 3.0)
+
+
+def spend_alert_recipients() -> list[str]:
+    """Comma-separated addresses; empty = every admin-role account's email."""
+    raw = os.getenv("SPEND_ALERT_RECIPIENTS", "")
+    return [a.strip() for a in raw.split(",") if "@" in a]
+
+
 STORAGE_BUCKET: str = "avatars"
 MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
 

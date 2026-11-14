@@ -484,3 +484,33 @@ def broadcast(
     text = (body or "").replace("\r\n", "\n").strip()
     text = f"{text}\n\nThanks!\nThe Sapling team\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
     return clean_subject, html, text
+
+
+# ── Staff ───────────────────────────────────────────────────────────────────
+
+_OPS_REASON = "You're getting this because you are a Sapling admin."
+
+
+def ops_alert(
+    title: str, points: list[tuple[str, str]], *, dashboard_url: str, unsubscribe_url: str,
+) -> tuple[str, str, str]:
+    """An operational alert to admins (services/spend_alerts.py). `points` are
+    (label, detail) lines of aggregate numbers only — never student content."""
+    subject = f"[Sapling alert] {title}"
+    rows = [
+        _row(_headline(title)),
+        _spacer(22),
+        _row(_points(points)),
+        _row(_button(dashboard_url, "Open admin analytics")),
+    ]
+    html = _layout(
+        title=subject, preheader=title[:140], rows=rows,
+        reason=_OPS_REASON, unsubscribe_url=unsubscribe_url,
+    )
+    text = _text(
+        title,
+        "\n".join(f"- {label}: {detail}" for label, detail in points),
+        f"Admin analytics: {dashboard_url}",
+        unsubscribe_url=unsubscribe_url, reason=_OPS_REASON,
+    )
+    return subject, html, text
