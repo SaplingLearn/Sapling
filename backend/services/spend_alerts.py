@@ -252,6 +252,9 @@ def run_once(now: datetime | None = None) -> dict[str, list[str]]:
         for address in recipients:
             subject, html, text = email_templates.ops_alert(
                 alert.title, alert.points, dashboard_url=dashboard,
+                unsubscribe_url=email_service.unsubscribe_url(
+                    address, scope=email_service.suppression_scope(EMAIL_KIND),
+                ),
             )
             statuses.append(email_service.send_email(
                 kind=EMAIL_KIND, to=address, subject=subject, html=html, text=text,

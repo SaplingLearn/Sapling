@@ -224,7 +224,7 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
             return []
 
     monkeypatch.setattr(email_service, "table", lambda name: Sends())
-    monkeypatch.setattr(email_service, "is_suppressed", lambda _h: False)
+    monkeypatch.setattr(email_service, "is_suppressed", lambda _h, scope="all": False)
     monkeypatch.setattr(config, "RESEND_API_KEY", "")
     _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["skipped"]}
@@ -232,10 +232,9 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
     assert "admin@example.edu" not in claims[0]["dedupe_key"]
 
 
-def test_a_suppressed_admin_still_gets_the_alert(db, monkeypatch):
-    """An admin who once clicked Unsubscribe (on a broadcast or on an alert)
-    is on email_suppressions; the ops alert still goes out, and it carries no
-    unsubscribe link of its own."""
+def _sending(monkeypatch, suppressed_scopes):
+    """email_service over fakes: the given suppression scopes hold every
+    address; returns the Resend payloads sent."""
     sent = []
 
     class Sends:
@@ -246,7 +245,7 @@ def test_a_suppressed_admin_still_gets_the_alert(db, monkeypatch):
             return []
 
     monkeypatch.setattr(email_service, "table", lambda name: Sends())
-    monkeypatch.setattr(email_service, "is_suppressed", lambda _h: True)
+    monkeypatch.setattr(email_service, "is_suppressed", lambda _h, scope="all": scope in suppressed_scopes)
     monkeypatch.setattr(config, "RESEND_API_KEY", "re_test_key")
     monkeypatch.setattr(email_service, "MIN_REQUEST_INTERVAL_S", 0.0)
 
@@ -259,12 +258,27 @@ def test_a_suppressed_admin_still_gets_the_alert(db, monkeypatch):
     monkeypatch.setattr(
         email_service, "_post_to_resend", lambda payload, key: sent.append(payload) or Resp(),
     )
+    return sent
+
+
+def test_a_broadcast_suppressed_admin_still_gets_the_alert_with_a_scoped_link(db, monkeypatch):
+    """An admin who once clicked Unsubscribe on a broadcast is suppressed for
+    every other kind; the ops alert still goes out, and its own unsubscribe
+    link stops ops alerts only."""
+    sent = _sending(monkeypatch, {"all"})
     _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["sent"]}
     (payload,) = sent
-    assert "List-Unsubscribe" not in payload.get("headers", {})
-    assert "unsubscribe" not in payload["text"].lower()
-    assert "unsubscribe" not in payload["html"].lower()
+    scoped = email_service.unsubscribe_url("admin@example.edu", scope="ops_alert")
+    assert payload["headers"]["List-Unsubscribe"] == f"<{scoped}>"
+    assert scoped in payload["text"]
+
+
+def test_an_admin_who_stopped_ops_alerts_gets_none(db, monkeypatch):
+    sent = _sending(monkeypatch, {"ops_alert"})
+    _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
+    assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["suppressed"]}
+    assert sent == []
 
 
 def test_never_runnable_under_pytest():

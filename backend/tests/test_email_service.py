@@ -325,7 +325,7 @@ def test_unsuppress_deletes_the_hash(tables):
     tables["email_suppressions"].delete.return_value = [{"recipient_hash": rhash}]
     assert email_service.unsuppress(rhash) is True
     assert tables["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{rhash}",
+        "recipient_hash": f"eq.{rhash}", "scope": "eq.all",
     }
     tables["email_suppressions"].delete.return_value = []
     assert email_service.unsuppress(rhash) is False
@@ -387,24 +387,82 @@ def test_suppressed_recipient_is_recorded_and_not_sent(tables, resend):
     resend.post.assert_not_called()
     assert tables["email_sends"].upsert.call_args.args[0]["status"] == "suppressed"
     assert tables["email_suppressions"].select.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{email_service.recipient_hash(TO)}"
+        "recipient_hash": f"eq.{email_service.recipient_hash(TO)}",
+        "scope": "eq.all",
     }
 
 
-def test_operational_kind_reaches_a_suppressed_recipient_without_unsubscribe(tables, resend):
-    """An ops alert must reach an admin even after they unsubscribed from
-    Sapling email (one click on any earlier mail): it skips the suppression
-    list and carries no List-Unsubscribe header to click."""
-    tables["email_suppressions"].select.return_value = [
-        {"recipient_hash": email_service.recipient_hash(TO)}
-    ]
+def _suppressed_for(tables, *scopes):
+    """email_suppressions holds TO's hash under `scopes` only."""
+    rhash = email_service.recipient_hash(TO)
+
+    def select(columns, filters=None, **_):
+        scope = (filters or {}).get("scope", "").removeprefix("eq.")
+        if filters.get("recipient_hash") == f"eq.{rhash}" and scope in scopes:
+            return [{"recipient_hash": rhash}]
+        return []
+
+    tables["email_suppressions"].select.side_effect = select
+
+
+def test_a_broadcast_unsubscribe_does_not_stop_ops_alerts(tables, resend):
+    """An admin who unsubscribed from Sapling email (one click on a broadcast)
+    still gets ops alerts: an operational send checks only the ops-scoped
+    suppression, and ignores the notification opt-out."""
+    _suppressed_for(tables, "all")
     _opted_out(tables)
     assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "sent"
     assert tables["email_sends"].upsert.call_args.args[0]["status"] == "queued"
-    payload = resend.post.call_args.kwargs["json"]
-    assert "List-Unsubscribe" not in payload.get("headers", {})
-    assert "List-Unsubscribe-Post" not in payload.get("headers", {})
+    assert tables["email_suppressions"].select.call_args.kwargs["filters"]["scope"] == "eq.ops_alert"
     tables["user_settings"].select_with_count.assert_not_called()
+
+
+def test_an_ops_unsubscribe_stops_ops_alerts_and_nothing_else(tables, resend):
+    _suppressed_for(tables, "ops_alert")
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "suppressed"
+    resend.post.assert_not_called()
+    assert _send(kind="welcome", dedupe_key="welcome:user_1") == "sent"
+    assert _send(kind="broadcast", dedupe_key="broadcast:b1:h", broadcast_id="b1") == "sent"
+
+
+def test_an_ops_alert_carries_the_ops_scoped_unsubscribe(tables, resend):
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "sent"
+    headers = resend.post.call_args.kwargs["json"]["headers"]
+    scoped = email_service.unsubscribe_url(TO, scope="ops_alert")
+    assert headers["List-Unsubscribe"] == f"<{scoped}>"
+    assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert "scope=ops_alert" in scoped and scoped != email_service.unsubscribe_url(TO)
+
+
+def test_a_scoped_token_verifies_only_for_its_own_scope(tables):
+    rhash = email_service.recipient_hash(TO)
+    ops = email_service.unsubscribe_token(TO, scope="ops_alert")
+    everything = email_service.unsubscribe_token(TO)
+    assert email_service.verify_unsubscribe_token(ops, "ops_alert") == rhash
+    assert email_service.verify_unsubscribe_token(ops) is None
+    assert email_service.verify_unsubscribe_token(everything, "ops_alert") is None
+    assert email_service.verify_unsubscribe_token(everything, "nonsense") is None
+
+
+def test_suppress_and_unsuppress_are_scoped(tables):
+    rhash = email_service.recipient_hash(TO)
+    email_service.suppress(rhash, "unsubscribe", scope="ops_alert")
+    call = tables["email_suppressions"].upsert.call_args
+    assert call.args[0] == {"recipient_hash": rhash, "reason": "unsubscribe", "scope": "ops_alert"}
+    assert call.kwargs["on_conflict"] == "recipient_hash,scope"
+    email_service.unsuppress(rhash, scope="ops_alert")
+    assert tables["email_suppressions"].delete.call_args.kwargs["filters"] == {
+        "recipient_hash": f"eq.{rhash}", "scope": "eq.ops_alert",
+    }
+
+
+def test_the_ops_alert_template_carries_the_link_it_is_given():
+    url = "https://sapling.example/api/email/unsubscribe?t=x&scope=ops_alert"
+    _, html, text = email_templates.ops_alert(
+        "Spend spike", [("Spend", "$12")], dashboard_url="https://d.example", unsubscribe_url=url,
+    )
+    assert "scope=ops_alert" in html and url in text
+    assert "admin alerts" in html.lower() and "admin alerts" in text.lower()
 
 
 def test_suppressed_recipient_still_gets_no_broadcast(tables, resend):
@@ -559,12 +617,13 @@ def test_every_template_carries_the_unsubscribe_link_and_brand():
         assert "#445D22" in html and "Sapling" in html
 
 
-def test_ops_alert_template_has_no_unsubscribe_link():
+def test_ops_alert_template_offers_to_stop_admin_alerts_not_all_email():
     subject, html, text = email_templates.ops_alert(
         "Spend over $10", [("Today", "$15.00")], dashboard_url="https://sapling.example/admin",
+        unsubscribe_url="https://u.example/?scope=ops_alert",
     )
     assert "Sapling" in html and "$15.00" in text
-    assert "unsubscribe" not in html.lower() and "unsubscribe" not in text.lower()
+    assert "from Sapling emails" not in html and "Unsubscribe from Sapling admin alerts:" in text
 
 
 def test_welcome_escapes_the_first_name():

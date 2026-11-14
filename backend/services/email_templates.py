@@ -223,13 +223,15 @@ def _signoff(closing: str) -> str:
 
 def _layout(
     *, title: str, preheader: str, rows: list[str], reason: str, unsubscribe_url: str | None,
+    unsubscribe_from: str = "Sapling emails",
 ) -> str:
     """The shared shell. Every entry of `rows` must already be safe HTML rows.
-    `unsubscribe_url=None` (an operational alert) renders no unsubscribe line."""
+    `unsubscribe_from` names what the footer link stops; `unsubscribe_url=None`
+    renders no unsubscribe line."""
     site = _site()
     unsubscribe = (
         f'<br>\n<a href="{_e(unsubscribe_url)}" style="color:{_MUTED};text-decoration:underline;">'
-        "Unsubscribe</a> from Sapling emails."
+        f"Unsubscribe</a> from {_e(unsubscribe_from)}."
         if unsubscribe_url else ""
     )
     return f"""<!doctype html>
@@ -274,9 +276,12 @@ def _layout(
 """
 
 
-def _text(*blocks: str, unsubscribe_url: str | None, reason: str) -> str:
+def _text(
+    *blocks: str, unsubscribe_url: str | None, reason: str, unsubscribe_from: str | None = None,
+) -> str:
     body = "\n\n".join(b.strip("\n") for b in blocks if b)
-    unsubscribe = f"Unsubscribe: {unsubscribe_url}\n" if unsubscribe_url else ""
+    label = f"Unsubscribe from {unsubscribe_from}" if unsubscribe_from else "Unsubscribe"
+    unsubscribe = f"{label}: {unsubscribe_url}\n" if unsubscribe_url else ""
     return f"{body}\n\n--\n{reason}\n{unsubscribe}"
 
 
@@ -499,13 +504,17 @@ def broadcast(
 _OPS_REASON = "You're getting this because you are a Sapling admin."
 
 
+_OPS_UNSUBSCRIBE_FROM = "Sapling admin alerts"
+
+
 def ops_alert(
-    title: str, points: list[tuple[str, str]], *, dashboard_url: str,
+    title: str, points: list[tuple[str, str]], *, dashboard_url: str, unsubscribe_url: str,
 ) -> tuple[str, str, str]:
     """An operational alert to admins (services/spend_alerts.py). `points` are
     (label, detail) lines of aggregate numbers only — never student content.
-    No unsubscribe link: it is an `operational` kind, which the suppression
-    list does not stop (email_service.EMAIL_CATEGORIES)."""
+    `unsubscribe_url` is the ops-scoped link (email_service.unsubscribe_url
+    with scope `ops_alert`): it stops these alerts only, and no other
+    unsubscribe stops them."""
     subject = f"[Sapling alert] {title}"
     rows = [
         _row(_headline(title)),
@@ -514,13 +523,13 @@ def ops_alert(
         _row(_button(dashboard_url, "Open admin analytics")),
     ]
     html = _layout(
-        title=subject, preheader=title[:140], rows=rows,
-        reason=_OPS_REASON, unsubscribe_url=None,
+        title=subject, preheader=title[:140], rows=rows, reason=_OPS_REASON,
+        unsubscribe_url=unsubscribe_url, unsubscribe_from=_OPS_UNSUBSCRIBE_FROM,
     )
     text = _text(
         title,
         "\n".join(f"- {label}: {detail}" for label, detail in points),
         f"Admin analytics: {dashboard_url}",
-        unsubscribe_url=None, reason=_OPS_REASON,
+        unsubscribe_url=unsubscribe_url, reason=_OPS_REASON, unsubscribe_from=_OPS_UNSUBSCRIBE_FROM,
     )
     return subject, html, text

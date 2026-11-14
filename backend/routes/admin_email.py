@@ -104,9 +104,14 @@ def _outcome(sent: int, failed: int) -> str:
 
 
 def _suppressed_hashes() -> set[str]:
+    """Addresses a broadcast must skip: the `all` scope only (an ops-alert
+    unsubscribe does not stop a broadcast)."""
     return {
         r["recipient_hash"]
-        for r in page_all(table("email_suppressions"), "recipient_hash", order="recipient_hash")
+        for r in page_all(
+            table("email_suppressions"), "recipient_hash",
+            filters={"scope": f"eq.{email_service.SUPPRESSION_SCOPE_ALL}"}, order="recipient_hash",
+        )
         if r.get("recipient_hash")
     }
 

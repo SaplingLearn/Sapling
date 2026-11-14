@@ -6,11 +6,13 @@ Every send goes through `send_email`, which:
    future digest) for an account whose `user_settings.notification_email` is
    false — returned as `opted_out`, no row written. Transactional kinds (the
    waitlist/welcome lifecycle mail) ignore that setting;
-2. refuses a recipient on the suppression list (`email_suppressions`) — for
-   every kind of email but the OPERATIONAL ones (staff alerts, which must
-   reach an admin and carry no unsubscribe link), recorded as `suppressed`
-   (an earlier `skipped`/`failed` row for the key is flipped to `suppressed`
-   too, so the ledger says why);
+2. refuses a recipient on the suppression list (`email_suppressions`) for
+   the kind's SCOPE (`suppression_scope`): `all` for every kind but the
+   operational ones, `ops_alert` for those (staff alerts, which a broadcast
+   unsubscribe must not stop, but which carry an unsubscribe link of their own
+   that stops only them). Recorded as `suppressed` (an earlier
+   `skipped`/`failed` row for the key is flipped to `suppressed` too, so the
+   ledger says why);
 3. claims the send's `dedupe_key` in `email_sends` with INSERT … ON CONFLICT DO
    NOTHING before anything leaves the process. A key that is `sent`, or
    `queued` under a live lease, is never sent again: that is the "never twice"
@@ -90,11 +92,11 @@ STALE_QUEUED_AFTER = timedelta(minutes=15)
 #: account or signup and always sends (the suppression list aside);
 #: "notification" mail (broadcasts, digests, marketing) also honours
 #: `user_settings.notification_email`; "operational" mail is a staff-only
-#: alert that must reach its admin whatever they unsubscribed from, so it
-#: skips the opt-out AND the suppression list and carries no unsubscribe link
-#: or List-Unsubscribe header (the dedupe claim still applies). A kind missing
-#: here is treated as "notification", so a new kind respects the opt-out until
-#: classified.
+#: alert that a broadcast/newsletter unsubscribe must not stop, so it skips the
+#: opt-out and checks only its OWN suppression scope (`ops_alert`), which its
+#: own unsubscribe link and List-Unsubscribe header set (the dedupe claim
+#: still applies). A kind missing here is treated as "notification", so a new
+#: kind respects the opt-out until classified.
 EMAIL_CATEGORIES: dict[str, str] = {
     "waitlist_confirmation": "transactional",
     "waitlist_approved": "transactional",
@@ -109,6 +111,20 @@ EMAIL_CATEGORIES: dict[str, str] = {
 
 def email_category(kind: str) -> str:
     return EMAIL_CATEGORIES.get(kind, "notification")
+
+
+#: What a suppression (`email_suppressions.scope`) stops. `all`: every kind
+#: but the operational ones (an unsubscribe from any ordinary email, a bounce,
+#: a complaint). `ops_alert`: the operational alerts only (their own
+#: unsubscribe link). An address can hold both.
+SUPPRESSION_SCOPE_ALL = "all"
+SUPPRESSION_SCOPE_OPS = "ops_alert"
+SUPPRESSION_SCOPES = frozenset({SUPPRESSION_SCOPE_ALL, SUPPRESSION_SCOPE_OPS})
+
+
+def suppression_scope(kind: str) -> str:
+    """The suppression scope that stops `kind`, and that its unsubscribe link sets."""
+    return SUPPRESSION_SCOPE_OPS if email_category(kind) == "operational" else SUPPRESSION_SCOPE_ALL
 
 
 # ── Identity ────────────────────────────────────────────────────────────────
@@ -132,34 +148,41 @@ def recipient_hash(email: str) -> str:
     ).hexdigest()
 
 
-def _token_sig(rhash: str) -> str:
-    return hmac.new(_derived_key(_UNSUB_LABEL), rhash.encode("ascii"), hashlib.sha256).hexdigest()
+def _token_sig(rhash: str, scope: str = SUPPRESSION_SCOPE_ALL) -> str:
+    # The `all` signature is the original one (links already sent must keep
+    # working); any other scope is signed in, so a link cannot be re-scoped.
+    message = rhash if scope == SUPPRESSION_SCOPE_ALL else f"{rhash}:{scope}"
+    return hmac.new(_derived_key(_UNSUB_LABEL), message.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def unsubscribe_token(email: str) -> str:
+def unsubscribe_token(email: str, scope: str = SUPPRESSION_SCOPE_ALL) -> str:
     """`<recipient_hash>.<sig>` — URL-safe (hex + '.'), no expiry: an
-    unsubscribe link in a years-old email must still work."""
+    unsubscribe link in a years-old email must still work. The signature
+    binds `scope`."""
     rhash = recipient_hash(email)
-    return f"{rhash}.{_token_sig(rhash)}"
+    return f"{rhash}.{_token_sig(rhash, scope)}"
 
 
-def verify_unsubscribe_token(token: str | None) -> Optional[str]:
-    """The recipient_hash a token names, or None when it is malformed/forged."""
-    if not token or not isinstance(token, str):
+def verify_unsubscribe_token(token: str | None, scope: str = SUPPRESSION_SCOPE_ALL) -> Optional[str]:
+    """The recipient_hash a token names for `scope`, or None when it is
+    malformed, forged, or signed for another scope."""
+    if not token or not isinstance(token, str) or scope not in SUPPRESSION_SCOPES:
         return None
     rhash, sep, sig = token.strip().partition(".")
     if not sep or not _HEX64.match(rhash) or not _HEX64.match(sig):
         return None
-    if not hmac.compare_digest(sig, _token_sig(rhash)):
+    if not hmac.compare_digest(sig, _token_sig(rhash, scope)):
         return None
     return rhash
 
 
-def unsubscribe_url(email: str) -> str:
-    """Public one-click link. Built on FRONTEND_URL because the frontend
-    proxies /api/* to this backend (frontend/next.config.ts rewrites)."""
+def unsubscribe_url(email: str, scope: str = SUPPRESSION_SCOPE_ALL) -> str:
+    """Public one-click link that suppresses `email` for `scope`. Built on
+    FRONTEND_URL because the frontend proxies /api/* to this backend
+    (frontend/next.config.ts rewrites)."""
     base = (getattr(config, "FRONTEND_URL", "") or "").rstrip("/")
-    return f"{base}/api/email/unsubscribe?t={unsubscribe_token(email)}"
+    url = f"{base}/api/email/unsubscribe?t={unsubscribe_token(email, scope)}"
+    return url if scope == SUPPRESSION_SCOPE_ALL else f"{url}&scope={scope}"
 
 
 def is_configured() -> bool:
@@ -170,31 +193,32 @@ def is_configured() -> bool:
 
 
 @runs_as_service  # #115: email_suppressions is service-only
-def is_suppressed(rhash: str) -> bool:
+def is_suppressed(rhash: str, scope: str = SUPPRESSION_SCOPE_ALL) -> bool:
     rows = table("email_suppressions").select(
-        "recipient_hash", filters={"recipient_hash": f"eq.{rhash}"}, limit=1,
+        "recipient_hash", filters={"recipient_hash": f"eq.{rhash}", "scope": f"eq.{scope}"}, limit=1,
     )
     return bool(rows)
 
 
 @runs_as_service  # #115: email_suppressions is service-only
-def suppress(rhash: str, reason: str = "unsubscribe") -> None:
-    """Add a hash to the suppression list. Idempotent: an existing row keeps
-    its original reason and timestamp. Raises on a DB error (the unsubscribe
-    page must not claim success it did not get)."""
+def suppress(rhash: str, reason: str = "unsubscribe", scope: str = SUPPRESSION_SCOPE_ALL) -> None:
+    """Add a hash to the suppression list for `scope`. Idempotent: an
+    existing row keeps its original reason and timestamp. Raises on a DB
+    error (the unsubscribe page must not claim success it did not get)."""
     table("email_suppressions").upsert(
-        {"recipient_hash": rhash, "reason": reason},
-        on_conflict="recipient_hash",
+        {"recipient_hash": rhash, "reason": reason, "scope": scope},
+        on_conflict="recipient_hash,scope",
         ignore_duplicates=True,
     )
 
 
 @runs_as_service  # #115: email_suppressions is service-only
-def unsuppress(rhash: str) -> bool:
-    """Remove a hash from the suppression list (the admin undo). True when a
-    row was removed. Raises on a DB error, like `suppress`."""
+def unsuppress(rhash: str, scope: str = SUPPRESSION_SCOPE_ALL) -> bool:
+    """Remove a hash's `scope` suppression. The admin undo lifts `all` only,
+    so it never re-enrols an admin in the alerts they stopped. True when a row
+    was removed. Raises on a DB error, like `suppress`."""
     return bool(table("email_suppressions").delete(
-        filters={"recipient_hash": f"eq.{rhash}"},
+        filters={"recipient_hash": f"eq.{rhash}", "scope": f"eq.{scope}"},
     ))
 
 
@@ -428,7 +452,7 @@ def send_email(
         return "failed"
 
     category = email_category(kind)
-    operational = category == "operational"
+    scope = suppression_scope(kind)
     if category == "notification":
         try:
             opted_out = rhash in notification_opt_out_hashes()
@@ -442,7 +466,7 @@ def send_email(
             return "opted_out"
 
     try:
-        suppressed = False if operational else is_suppressed(rhash)
+        suppressed = is_suppressed(rhash, scope)
         row = {
             "kind": kind,
             "dedupe_key": dedupe_key,
@@ -489,11 +513,11 @@ def send_email(
         "html": html,
         "text": text,
     }
-    if not operational:
-        payload["headers"] = {
-            "List-Unsubscribe": f"<{unsubscribe_url(to)}>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        }
+    payload["headers"] = {
+        # Suppresses this kind's scope only: an ops alert's stops ops alerts.
+        "List-Unsubscribe": f"<{unsubscribe_url(to, scope)}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
     reply_to = (getattr(config, "EMAIL_REPLY_TO", "") or "").strip()
     if reply_to:
         payload["reply_to"] = reply_to

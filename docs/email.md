@@ -19,9 +19,10 @@ audiences leave those accounts out of their counts. The setting is matched by
 address hash, so it also covers that person's waitlist address, and a toggle
 reaches a running send within a minute. **Transactional** mail (waitlist,
 "you're in", welcome) ignores that setting. Only the suppression list stops it.
-**Operational** mail (staff alerts) ignores both: it reaches an admin even
-after they unsubscribed from Sapling email, and so carries no unsubscribe link
-or `List-Unsubscribe` header. Only the dedupe claim and the kill switch apply.
+**Operational** mail (staff alerts) ignores the setting and the ordinary
+suppression list: it reaches an admin even after they unsubscribed from a
+broadcast or any other Sapling email. It has an unsubscribe of its own that
+stops only the admin alerts (see Unsubscribe below).
 
 **Kill switch:** with `RESEND_API_KEY` unset, nothing is sent. Each send is
 recorded as `skipped`, and the admin portal shows a "not configured" banner.
@@ -67,19 +68,32 @@ keyed off `SESSION_SECRET`. **Rotating `SESSION_SECRET` orphans every
 suppression and invalidates every unsubscribe link**, so don't rotate it
 casually.
 
-**Unsubscribe:** every email except an operational alert carries a footer link and RFC 8058 one-click
+**Unsubscribe:** every email carries a footer link and RFC 8058 one-click
 headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 `{FRONTEND_URL}/api/email/unsubscribe?t=…`, which the frontend proxies to the
 backend. GET shows a confirm page and POST suppresses, because mail scanners
-prefetch GETs. A suppressed address gets no email of any kind but an
-operational alert; a send to it
-returns and records `suppressed`, including over an earlier `skipped`/`failed`
-row for the same key.
+prefetch GETs. A suppression has a **scope** (`email_suppressions.scope`,
+`email_service.suppression_scope`):
+
+| scope | set by | stops |
+| --- | --- | --- |
+| `all` | the link in any email but an ops alert | every kind except `ops_alert` |
+| `ops_alert` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
+
+An address can hold both. The token's signature binds its scope, so a
+broadcast link cannot be edited into an ops-alert one or the other way round.
+A send to a suppressed address (for that kind's scope) returns and records
+`suppressed`, including over an earlier `skipped`/`failed` row for the same
+key, and a broadcast's audience leaves out only `all`-scope suppressions.
 
 **Undoing a suppression:** `POST /api/admin/email/suppressions/remove` with
-`{"email": "…"}` (admin only) takes the address off the list and returns
-`{"removed": true|false}`. The audit log records the hash, never the address.
-There is no admin UI for it yet.
+`{"email": "…"}` (admin only) takes the address's `all` suppression off the
+list and returns `{"removed": true|false}`. It leaves an `ops_alert`
+suppression alone, so lifting someone's broadcast unsubscribe never re-enrols
+them in the alerts they stopped; lifting an `ops_alert` row is a manual
+delete from `email_suppressions` for now. The audit log records the hash,
+never the address. There is no admin UI for
+it yet.
 
 ## Broadcasts
 
