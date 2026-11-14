@@ -67,10 +67,14 @@ function heldElsewhere(err: unknown): boolean {
  * re-reading, is what picks the guide up when the tab that was writing it
  * closes: its claim lapses and this request takes it.
  *
- * A resume has nothing left to do once that run has finished, so the guide it
- * re-reads is its result. An Update or a Regenerate still has its own work to
- * do (the guide may only have been held while one block was rewritten): it
- * keeps asking for the same thing, and gives up after `MAX_TRIES`.
+ * A resume has nothing left to do once that run has finished the guide, so a
+ * finished guide it re-reads is its result. Only a finished one: a run that
+ * retries a failed section leaves the guide `ready` while it does, and one
+ * that resumes a `failed` guide leaves it `failed` until its first save.
+ * Either is still being written, so the resume keeps waiting on it. An Update
+ * or a Regenerate still has its own work to do (the guide may only have been
+ * held while one block was rewritten): it keeps asking for the same thing,
+ * and gives up after `MAX_TRIES`.
  */
 export async function writeGuide({ userId, guideId, mode, handlers, onHeld }: Run): Promise<GuideDetail> {
   for (let tries = 1; ; tries++) {
@@ -80,7 +84,7 @@ export async function writeGuide({ userId, guideId, mode, handlers, onHeld }: Ru
       if (!heldElsewhere(err)) throw err;
     }
     const fresh = await getGuide(userId, guideId);
-    if (mode === "resume" && fresh.status !== "generating") return fresh;
+    if (mode === "resume" && isFinished(fresh)) return fresh;
     if (mode !== "resume" && tries >= MAX_TRIES) throw new GuideGenerationError(STILL_HELD, true);
     onHeld(fresh);
     await wait(RETRY_MS, handlers.signal);

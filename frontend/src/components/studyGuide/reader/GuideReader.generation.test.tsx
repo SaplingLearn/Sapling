@@ -327,6 +327,39 @@ describe("another run holds the guide", () => {
     expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
   });
 
+  // The other run keeps a ready guide `ready` while it retries a failed
+  // section, and a failed guide `failed` until its first save: neither is
+  // finished, so this resume waits on that run rather than ending on it.
+  it.each([
+    ["a ready guide with a failed section, from its Try again", "ready", "guide-section-retry-s3"],
+    ["a failed guide, from the banner's Retry", "failed", "guide-generation-retry"],
+  ] as const)("waits for the other run on %s, and says it is ready only once it is", async (_, status, button) => {
+    vi.useFakeTimers();
+    const unfinished = () => {
+      const guide = fixtureGuide({ status, read_sections: [] });
+      Object.assign(sectionOf(guide, "s3"), { status: "failed", items: [] });
+      return guide;
+    };
+    mocks.generateGuide.mockRejectedValue(conflict());
+    mocks.getGuide.mockResolvedValueOnce(unfinished()).mockResolvedValueOnce(unfinished()).mockResolvedValue(finishedGuide());
+    renderReader();
+    await flush();
+    await act(async () => screen.getByTestId(button).click());
+    await flush();
+
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.queryByText("Guide ready.")).not.toBeInTheDocument();
+
+    // Asked again, still held: the re-read is finished now.
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("guide-section-s3")).queryByText("This section could not be written.")).not.toBeInTheDocument();
+  });
+
   it("stops when the reader is left while it waits", async () => {
     vi.useFakeTimers();
     mocks.generateGuide.mockRejectedValue(conflict());
