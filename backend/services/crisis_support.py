@@ -74,7 +74,6 @@ Surface = Literal[
     "flashcard_import_paste",
     "flashcard_import_cloze",
     "flashcard_generate",
-    "flashcard_import_cleanup",
 ]
 SURFACES: tuple[str, ...] = get_args(Surface)
 

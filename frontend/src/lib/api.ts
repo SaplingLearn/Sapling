@@ -1081,10 +1081,8 @@ export const importGenerate = (
     }),
   });
 
-// A crisis answer (docs/safety/crisis-support.md) carries `crisis_support` and
-// the cards that were sent, unchanged.
 export const importCleanup = (userId: string, cards: ImportCard[]) =>
-  fetchJSON<{ cards: ImportCard[] } & WithCrisisSupport>(`/api/flashcards/import/cleanup`, {
+  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cleanup`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, cards }),
   });

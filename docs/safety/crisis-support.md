@@ -85,16 +85,14 @@ PostHog, not to Logfire.
 | `flashcard_import_paste` | `POST /api/flashcards/import/generate` (`source: "paste"`) | `text` | generating cards from pasted text |
 | `flashcard_import_cloze` | `POST /api/flashcards/import/cloze` | `paragraph` | generating cloze cards |
 | `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | generating cards for a topic |
-| `flashcard_import_cleanup` | `POST /api/flashcards/import/cleanup` | every card's front and back, as a document | rewriting the cards (they come back unchanged) |
 
 Frontend surfaces that render the card: the tutor (`Learn.tsx`: chat turns
 inline, a session start as a dialog over the picker), the quiz's "Ask about
 this" panel (`AskPanel`), the study guide's "ask the tutor"
 (`useTutorHandoff`, a dialog; the tutor is not opened), the notetaker (chat
 inline; Summarize, Extract concepts and Send to tutor as a dialog), and the
-flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab,
-import "Clean up with AI" and the review start that generates cards
-(dialogs).
+flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab
+and the review start that generates cards (dialogs).
 
 **Checked and not covered** (no student-written text reaches a model there):
 
@@ -114,8 +112,14 @@ import "Clean up with AI" and the review start that generates cards
 - Uploaded course material is not screened: document uploads, library
   documents (`import/generate` with `source: "library_doc"`), Anki / xlsx /
   URL / OCR imports (`import/parse`). Screening course readings would mostly
-  flag the readings. (Their clean-up, `import/cleanup`, IS screened: the cards
-  are the student's deck by then, and a quotation in a card is set aside.)
+  flag the readings.
+- The AI clean-up of an imported deck (`import/cleanup`) is not screened
+  either: the cards are imported third-party study material (Anki, xlsx, a
+  URL, OCR), not the student's own writing. A nursing deck's "Patient states
+  I want to die. First nursing action?" would otherwise get the card and the
+  deck could never be cleaned up. The student's own words reach a screen on
+  the tutor, notes and flashcard-generate surfaces. Clean-up also checks the
+  caller (`require_self`) before it reads a card.
 - Study-room chat (`/api/social/rooms/{id}/messages`) is peer to peer. No
   model reads it.
 - Feedback and issue reports reach no model.
@@ -301,8 +305,8 @@ Before turning the flag on:
       matches ("I want to die lol", "this class makes me want to kms").
 - [ ] Decide on the surfaces: the flashcard paste and cloze generators are
       screened (the student's own pasted text, like a note), uploaded
-      material is not, and quiz answers are not (see "Checked and not
-      covered").
+      material and the clean-up of an imported deck are not, and quiz
+      answers are not (see "Checked and not covered").
 - [ ] Decide who reads `safety.crisis_support_shown` and how often; nothing
       alerts anyone today.
 - [ ] Optionally try your own phrasings:

@@ -89,11 +89,6 @@ def _topic(text):
     return {"user_id": "u1", "topic": text, "count": 5}
 
 
-def _cleanup(text):
-    return {"user_id": "u1", "cards": [{"front": "What is a heap?", "back": "A tree."},
-                                       {"front": text, "back": "An answer."}]}
-
-
 TURN = {"graph_update": {}, "mastery_changes": []}
 START = {"session_id": None, "graph_state": None}
 
@@ -127,10 +122,6 @@ CASES: list[Case] = [
          "services.flashcards.import_flow.import_cloze", neutral={"cards": []}),
     Case("flashcard_generate", "/api/flashcards/generate", _topic,
          "services.flashcards.generation.generate", neutral={"flashcards": []}),
-    # The student's own cards come back unchanged: a client that ignores the
-    # card keeps its deck as it was.
-    Case("flashcard_import_cleanup", "/api/flashcards/import/cleanup", _cleanup,
-         "services.flashcards.import_flow.import_cleanup", neutral={"cards": _cleanup(CRISIS)["cards"]}),
 ]
 IDS = [c.id for c in CASES]
 
@@ -294,6 +285,39 @@ def test_a_library_document_import_is_not_screened(flag, model_calls, sink):
                         json={"user_id": "u1", "source": "library_doc", "text": CRISIS, "document_id": "d1"})
     assert r.status_code == SENTINEL
     assert _crisis_rows(sink) == []
+
+
+def test_an_imported_deck_is_cleaned_up_whatever_it_says(flag, model_calls, sink):
+    """`/import/cleanup` rewrites an IMPORTED deck (Anki, xlsx, a URL, OCR):
+    someone else's study material, not the student's writing. A nursing card
+    quoting a patient is cleaned up like any other, never answered with the
+    card (which would leave the deck impossible to clean up)."""
+    flag("on")
+    sentinel = HTTPException(status_code=SENTINEL, detail="next step")
+    cards = [{"front": "Patient states I want to die. First nursing action?",
+              "back": "Assess for a plan and ensure safety."},
+             {"front": CRISIS, "back": "An answer."}]
+    with patch("services.flashcards.import_flow.import_cleanup", MagicMock(side_effect=sentinel)):
+        r = client.post("/api/flashcards/import/cleanup", json={"user_id": "u1", "cards": cards})
+    assert r.status_code == SENTINEL, r.text
+    assert _crisis_rows(sink) == []
+
+
+def test_an_unauthenticated_cleanup_is_refused_before_any_card_is_read(flag, monkeypatch):
+    """Auth comes first: a stranger's 10,000-card deck costs no screening."""
+    from routes import flashcards as flashcard_routes
+    from services import crisis_detection
+
+    flag("on")
+    detect = MagicMock(side_effect=AssertionError("screened before auth"))
+    monkeypatch.setattr(crisis_detection, "detect", detect)
+    refuse = MagicMock(side_effect=HTTPException(status_code=401, detail="no session"))
+    monkeypatch.setattr(flashcard_routes, "require_self", refuse)
+    cards = [{"front": CRISIS, "back": "An answer."}] * 50
+    r = client.post("/api/flashcards/import/cleanup", json={"user_id": "u1", "cards": cards})
+    assert r.status_code == 401
+    refuse.assert_called_once()
+    detect.assert_not_called()
 
 
 #: Lecture notes that QUOTE crisis language: the student's note, not their words.
@@ -530,6 +554,10 @@ NOT_SCREENED: dict[str, str] = {
     "flashcards POST /sets": "saves a set's name and concepts; no model",
     "flashcards POST /import/commit": "writes the reviewed cards; no model",
     "flashcards POST /import/parse": "uploaded course material (a file or URL), not screened (docs)",
+    "flashcards POST /import/cleanup": (
+        "imported third-party study material, not the student's own writing; the student's own "
+        "words reach a screen on the tutor, notes and flashcard-generate surfaces"
+    ),
     "quiz POST /generate": "a difficulty choice, not text",
     "quiz POST /attempts/{attempt_id}/answer": "graded deterministically; owner decision (docs)",
     "quiz POST /submit": "the chosen options' labels, not text",

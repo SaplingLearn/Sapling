@@ -17,7 +17,6 @@ import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
-import crisisFixture from "@/test-utils/crisisSupport.json";
 
 const api = vi.hoisted(() => ({
   importCommit: vi.fn(),
@@ -421,22 +420,6 @@ describe("FlashcardImportModal layout", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Clean up with AI/ })); });
     expect(toast.error).toHaveBeenCalledWith("Cleanup failed: Error: boom");
     expect(screen.getByLabelText("Term, row 1")).toHaveValue("alpha");
-  });
-
-  it("a clean-up the crisis screen answered shows the card and keeps the deck", async () => {
-    // docs/safety/crisis-support.md: the reply's cards are the student's own, unchanged
-    api.importCleanup.mockResolvedValue({
-      cards: [{ front: "alpha", back: "beta" }], reply: "the card as text", crisis_support: crisisFixture,
-    });
-    render(modal());
-    fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Clean up with AI/ })); });
-    expect(await screen.findByTestId("crisis-support-card")).toHaveTextContent(crisisFixture.title);
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Term, row 1")).toHaveValue("alpha");
-    fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
-    expect(screen.queryByTestId("crisis-support-card")).toBeNull();
   });
 
   it("warns instead of calling the API when no row is filled in", () => {

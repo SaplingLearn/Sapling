@@ -341,18 +341,12 @@ def import_generate(body: ImportGenerateBody, request: Request):
 
 @router.post("/import/cleanup")
 def import_cleanup(body: ImportCleanupBody, request: Request):
-    # docs/safety/crisis-support.md: first, before the import limiter and the
-    # budget. The student's cards are screened as a document (a quotation in
-    # one is set aside) and come back unchanged, so a client that ignores the
-    # card keeps its deck as it was.
-    cards = _card_inputs(body.cards)
-    if crisis := crisis_support.screen(
-        request, body.user_id, "flashcard_import_cleanup",
-        *(text for card in cards for text in (card["front"], card["back"])), source="document",
-    ):
-        return crisis_support.json_body(crisis, cards=cards)
+    # Not crisis-screened (docs/safety/crisis-support.md, "Checked and not
+    # covered"): the cards are an imported deck, someone else's material.
     require_self(body.user_id, request)
-    return _rate_limited_import(import_flow.import_cleanup, body.user_id, cards)
+    return _rate_limited_import(
+        import_flow.import_cleanup, body.user_id, _card_inputs(body.cards),
+    )
 
 
 @router.post("/import/cloze")
