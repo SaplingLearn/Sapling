@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from db.connection import MAX_ROWS
 import services.graph_service as gs
 from services.graph_service import (
     get_graph,
@@ -34,6 +35,8 @@ def _mock_table(data: dict):
     def _factory(name):
         mock = MagicMock()
         mock.select.return_value = data.get(name, [])
+        # page_all (the node-events read) pages through select_with_count.
+        mock.select_with_count.return_value = (data.get(name, []), len(data.get(name, [])))
         mock.insert.return_value = []
         mock.update.return_value = []
         mock.delete.return_value = []
@@ -62,6 +65,7 @@ def _cached_mock_table(data: dict):
         if name not in mocks:
             m = MagicMock()
             m.select.return_value = data.get(name, [])
+            m.select_with_count.return_value = (data.get(name, []), len(data.get(name, [])))
             m.insert.return_value = []
             m.update.return_value = []
             m.delete.return_value = []
@@ -420,58 +424,49 @@ class TestWeekDelta:
         root = self._node(self._graph([_event("n1", 0.2, 1)]), "subject_root__c1")
         assert "week_delta" not in root
 
-    def test_a_complete_history_costs_no_second_read(self):
+    def test_a_short_history_is_one_read(self):
         factory, mocks = self._tables([_event("n1", 0.2, 1)])
         with patch("services.graph_service.table", side_effect=factory):
             get_graph("u1")
-        mocks["node_mastery_events"].select.assert_called_once()
-        mocks["node_mastery_events"].select_with_count.assert_not_called()
-
-    # PostgREST caps the unpaged history read at MAX_ROWS, oldest first: a
-    # full page means this week's events were cut off.
-
-    def _capped(self, week_pages: list):
-        """History capped at MAX_ROWS old rows; the window read answers
-        ``week_pages`` (one (rows, total) per page, or an exception)."""
-        capped = [_event("n1", 0.001, 400)] * gs.MAX_ROWS
-        factory, _ = self._tables(capped)
-        events_tbl = factory("node_mastery_events")
-        events_tbl.select_with_count.side_effect = week_pages
-        return factory, events_tbl
-
-    def test_a_capped_history_reads_the_week_on_its_own(self):
-        factory, events_tbl = self._capped(
-            [([_event("n1", 0.07, 2), _event("n2", 0.03, 1)], 2)])
-        with patch("services.graph_service.table", side_effect=factory):
-            graph = get_graph("u1")
-        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.07)
-        assert self._node(graph, "n2")["week_delta"] == pytest.approx(0.03)
-
-        kwargs = events_tbl.select_with_count.call_args.kwargs
-        assert kwargs["filters"]["node_id"].startswith("in.(")
+        events = mocks["node_mastery_events"]
+        events.select_with_count.assert_called_once()
+        events.select.assert_not_called()
+        kwargs = events.select_with_count.call_args.kwargs
         assert set(kwargs["filters"]["node_id"][4:-1].split(",")) == {"n1", "n2"}
-        bound = datetime.fromisoformat(kwargs["filters"]["created_at"].removeprefix("gte."))
-        age = datetime.now(timezone.utc) - bound
-        assert timedelta(days=7) <= age < timedelta(days=7, minutes=1)
         # Offset paging needs a total order (db.connection.page_all).
         assert kwargs["order"] == "created_at.asc,id.asc"
 
-    def test_a_capped_history_pages_a_week_longer_than_one_response(self):
-        page_one = [_event("n1", 0.001, 3)] * gs.MAX_ROWS
-        factory, events_tbl = self._capped([(page_one, 0), ([_event("n1", 0.5, 1)], 0)])
-        with patch("services.graph_service.table", side_effect=factory):
-            graph = get_graph("u1")
-        assert self._node(graph, "n1")["week_delta"] == pytest.approx(1.5)
-        assert events_tbl.select_with_count.call_count == 2
-        assert events_tbl.select_with_count.call_args.kwargs["offset"] == gs.MAX_ROWS
+    # PostgREST caps one response at MAX_ROWS, and the read sorts oldest
+    # first: an unpaged read would cut off the NEWEST events, the very ones
+    # mastery_events, learning velocity and week_delta are computed from.
 
-    def test_a_failed_week_read_sends_no_number_rather_than_a_wrong_one(self):
-        factory, _ = self._capped([RuntimeError("PostgREST down")])
+    def _paged(self, pages: list):
+        """The events read answers ``pages`` (one (rows, total) per page, or
+        an exception); an unpaged ``select`` would see only the first page."""
+        factory, _ = self._tables(pages[0][0] if isinstance(pages[0], tuple) else [])
+        events_tbl = factory("node_mastery_events")
+        events_tbl.select_with_count.side_effect = pages
+        return factory, events_tbl
+
+    def _long_history(self):
+        """MAX_ROWS old events, then this week's three on the second page."""
+        recent = [_event("n1", 0.07, 2), _event("n1", 0.02, 1), _event("n2", 0.03, 0.5)]
+        return [([_event("n1", 0.001, 400)] * MAX_ROWS, 0), (recent, 0)], recent
+
+    def test_a_history_longer_than_one_response_is_read_to_the_end(self):
+        pages, recent = self._long_history()
+        factory, events_tbl = self._paged(pages)
         with patch("services.graph_service.table", side_effect=factory):
             graph = get_graph("u1")
-        n1 = self._node(graph, "n1")
-        assert "week_delta" not in n1  # the client falls back to mastery_events
-        assert len(n1["mastery_events"]) == 5  # the rest of the node is intact
+        assert events_tbl.select_with_count.call_count == 2
+        assert events_tbl.select_with_count.call_args.kwargs["offset"] == MAX_ROWS
+        n1, n2 = self._node(graph, "n1"), self._node(graph, "n2")
+        assert n1["week_delta"] == pytest.approx(0.09)
+        assert n2["week_delta"] == pytest.approx(0.03)
+        # The kept tail is the NEWEST five, not five 400-day-old rows.
+        assert n1["mastery_events"][-2:] == recent[:2]
+        assert n2["mastery_events"] == recent[2:]
+        assert n1["learning_velocity"] > 0 and n2["learning_velocity"] > 0
 
     def test_a_failed_history_read_sends_no_week_delta_rather_than_zero(self):
         """A PostgREST blip on the events read is NOT "no events this week":
@@ -481,8 +476,7 @@ class TestWeekDelta:
         from tests.db_fakes import with_async_twins
 
         for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
-            factory, _ = self._tables([])
-            factory("node_mastery_events").select.side_effect = RuntimeError("PostgREST down")
+            factory, _ = self._paged([RuntimeError("PostgREST down")])
             with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
                 graph = run()
             for node_id in ("n1", "n2"):
@@ -491,20 +485,29 @@ class TestWeekDelta:
                 assert node["mastery_events"] == []
                 assert node["learning_velocity"] == 0.0
 
-    def test_the_async_twin_answers_the_same_capped_history(self):
+    def test_a_failed_second_page_sends_no_week_delta(self):
+        pages, _ = self._long_history()
+        factory, _ = self._paged([pages[0], RuntimeError("PostgREST down")])
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        assert "week_delta" not in self._node(graph, "n1")
+
+    def test_the_async_twin_answers_the_same_long_history(self):
         import asyncio
 
         from tests.db_fakes import with_async_twins
 
         answers = []
         for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
-            factory, events_tbl = self._capped(
-                [([_event("n1", 0.07, 2), _event("n1", 0.02, 1)], 2)])
+            factory, events_tbl = self._paged(self._long_history()[0])
             with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
-                answers.append({n["id"]: n.get("week_delta") for n in run()["nodes"]})
-            events_tbl.select_with_count.assert_called_once()
+                answers.append({
+                    n["id"]: (n.get("week_delta"),
+                              [e["delta"] for e in n.get("mastery_events") or []])
+                    for n in run()["nodes"]})
+            assert events_tbl.select_with_count.call_count == 2
         assert answers[0] == answers[1]
-        assert answers[0]["n1"] == pytest.approx(0.09) and answers[0]["n2"] == 0.0
+        assert answers[0]["n1"][0] == pytest.approx(0.09)
 
 
 # ── get_courses ───────────────────────────────────────────────────────────────

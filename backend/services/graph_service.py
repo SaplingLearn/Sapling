@@ -17,7 +17,7 @@ from config import (
     get_mastery_tier,
 )
 from db.async_connection import apage_all
-from db.connection import MAX_ROWS, page_all, rpc, table
+from db.connection import page_all, rpc, table
 from db.scope import runs_as_service
 from services.streak_service import effective_streak, touch_streak_safe
 # Module imports, not names: tests patch these on their home modules, and a
@@ -211,9 +211,14 @@ def _scope_nodes(nodes_raw: list | None, allowed_course_ids: set[str] | None) ->
 
 
 #: Mastery events live in the append-only node_mastery_events table (the
-#: graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
-#: of this user's node events in one query, then group by node id.
+#: graph_nodes.mastery_events JSONB column was dropped in 0023). Read EVERY
+#: event of this user's nodes, paged past PostgREST's max_rows, then group by
+#: node id: an unpaged oldest-first read would cut off the NEWEST events, which
+#: are exactly the ones mastery_events (the last five), learning velocity (the
+#: last 14 days) and week_delta (the last 7) are computed from.
 _NODE_EVENTS_SELECT = "node_id,delta,reason,created_at"
+#: Offset paging needs a total order: `id` breaks created_at ties.
+_NODE_EVENTS_ORDER = "created_at.asc,id.asc"
 
 
 def _node_events_filters(nodes: list) -> dict | None:
@@ -236,22 +241,25 @@ def _node_events(nodes: list) -> list | None:
     if filters is None:
         return []
     try:
-        return table("node_mastery_events").select(
-            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
-        ) or []
+        return list(page_all(
+            table("node_mastery_events"), _NODE_EVENTS_SELECT,
+            filters=filters, order=_NODE_EVENTS_ORDER,
+        ))
     except Exception as exc:
         _node_events_failed(exc)
         return None
 
 
 async def _anode_events(nodes: list) -> list | None:
+    """Async twin of :func:`_node_events` (#117)."""
     filters = _node_events_filters(nodes)
     if filters is None:
         return []
     try:
-        return await table("node_mastery_events").aselect(
-            _NODE_EVENTS_SELECT, filters=filters, order="created_at.asc",
-        ) or []
+        return [row async for row in apage_all(
+            table("node_mastery_events"), _NODE_EVENTS_SELECT,
+            filters=filters, order=_NODE_EVENTS_ORDER,
+        )]
     except Exception as exc:
         _node_events_failed(exc)
         return None
@@ -260,9 +268,6 @@ async def _anode_events(nodes: list) -> list | None:
 #: `week_delta` (the Study hub's "+N% this week") covers a ROLLING window: the
 #: events created in the last 7 days, as of the read.
 WEEK_DELTA_DAYS = 7
-_WEEK_EVENTS_SELECT = "node_id,delta,created_at"
-#: Offset paging needs a total order: `id` breaks created_at ties.
-_WEEK_EVENTS_ORDER = "created_at.asc,id.asc"
 
 
 def _week_cutoff() -> datetime:
@@ -285,68 +290,14 @@ def _sum_week_deltas(event_rows: list, cutoff: datetime) -> dict[str, float]:
     return out
 
 
-def _history_is_complete(event_rows: list) -> bool:
-    """Whether the unpaged ``_node_events`` read returned every row. PostgREST
-    caps a response at ``MAX_ROWS`` and that read sorts oldest first, so a
-    full page means the NEWEST events (this week's among them) were cut off;
-    only a short page proves the end (``db.connection.page_all``)."""
-    return len(event_rows) < MAX_ROWS
-
-
-def _week_events_filters(nodes: list, cutoff: datetime) -> dict | None:
-    filters = _node_events_filters(nodes)
-    if filters is None:
-        return None
-    return {**filters, "created_at": f"gte.{cutoff.isoformat()}"}
-
-
-def _week_read_failed(exc: Exception) -> None:
-    logger.warning(
-        "graph: this week's mastery events could not be read (%s); "
-        "week_delta is left off the nodes", type(exc).__name__,
-    )
-
-
-def _week_deltas(
-    nodes: list, event_rows: list | None, cutoff: datetime,
-) -> dict[str, float] | None:
+def _week_deltas(event_rows: list | None, cutoff: datetime) -> dict[str, float] | None:
     """Each node's mastery change since ``cutoff``, over EVERY event of the
-    window. Summed from ``event_rows`` when that read is complete; otherwise
-    from a paged read bounded to the window. ``None`` when either read fails
-    (``event_rows is None``): an unread or truncated history would report a
-    wrong number, so the caller sends none."""
+    window (``event_rows`` is the complete, paged history). ``None`` when that
+    read failed: an unread history would report a wrong number, so the caller
+    sends none."""
     if event_rows is None:
         return None
-    if _history_is_complete(event_rows):
-        return _sum_week_deltas(event_rows, cutoff)
-    try:
-        rows = list(page_all(
-            table("node_mastery_events"), _WEEK_EVENTS_SELECT,
-            filters=_week_events_filters(nodes, cutoff), order=_WEEK_EVENTS_ORDER,
-        ))
-    except Exception as exc:
-        _week_read_failed(exc)
-        return None
-    return _sum_week_deltas(rows, cutoff)
-
-
-async def _aweek_deltas(
-    nodes: list, event_rows: list | None, cutoff: datetime,
-) -> dict[str, float] | None:
-    """Async twin of :func:`_week_deltas` (#117)."""
-    if event_rows is None:
-        return None
-    if _history_is_complete(event_rows):
-        return _sum_week_deltas(event_rows, cutoff)
-    try:
-        rows = [row async for row in apage_all(
-            table("node_mastery_events"), _WEEK_EVENTS_SELECT,
-            filters=_week_events_filters(nodes, cutoff), order=_WEEK_EVENTS_ORDER,
-        )]
-    except Exception as exc:
-        _week_read_failed(exc)
-        return None
-    return _sum_week_deltas(rows, cutoff)
+    return _sum_week_deltas(event_rows, cutoff)
 
 
 #: The STORED streak_count is only reset on the student's next activity, so a
@@ -365,7 +316,7 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     )
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
     event_rows = _node_events(nodes)
-    week_deltas = _week_deltas(nodes, event_rows, _week_cutoff())
+    week_deltas = _week_deltas(event_rows, _week_cutoff())
     user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
     return _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
@@ -395,7 +346,7 @@ async def aget_graph(user_id: str, semester: str | None = None) -> dict:
     )
     nodes = _scope_nodes(nodes_raw, allowed_course_ids)
     event_rows = await _anode_events(nodes)
-    week_deltas = await _aweek_deltas(nodes, event_rows, _week_cutoff())
+    week_deltas = _week_deltas(event_rows, _week_cutoff())
     return _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
         user_rows,
