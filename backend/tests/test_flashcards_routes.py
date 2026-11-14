@@ -77,6 +77,41 @@ class TestListFlashcards:
         assert ids == ["f-fall", "f-unscoped"]  # spring card hidden
         tl.assert_called_once_with("Fall 2025")
 
+    def test_semester_asks_by_the_cards_offerings_not_the_whole_term(self):
+        """A term holds more offerings than one PostgREST response (max_rows):
+        a term-wide read can miss the card's offering and hide its cards. The
+        filter asks for the cards' own offering ids within the term, chunked."""
+        term = {"off-f25", *(f"off-other-{i}" for i in range(1500))}
+        cards = [dict(CARDS[0], id=f"f-{i}", offering_id=f"off-other-{i}") for i in range(120)]
+        calls: list[dict] = []
+
+        def _offerings(cols, filters=None, **_):
+            calls.append(filters)
+            if "id" not in filters:  # term-wide: PostgREST stops at max_rows
+                return [{"id": f"off-other-{i}"} for i in range(500, 1500)]
+            asked = set(filters["id"].removeprefix("in.(").removesuffix(")").split(","))
+            assert filters["term_id"] == "eq.term-f25"
+            return [{"id": o} for o in sorted(asked & term)]
+
+        def side_effect(name):
+            m = MagicMock()
+            if name == "flashcards":
+                m.select.return_value = list(CARDS) + cards
+            elif name == "course_offerings":
+                m.select.side_effect = _offerings
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("services.flashcards.cards.table", side_effect=side_effect), \
+             patch("services.flashcards.cards.term_id_for_label", return_value="term-f25"):
+            r = client.get(f"/api/flashcards/user/{USER_ID}?semester=Fall+2025")
+        assert r.status_code == 200
+        ids = {c["id"] for c in r.json()["flashcards"]}
+        assert ids == {"f-fall", "f-unscoped", *(c["id"] for c in cards)}
+        assert len(calls) == 3  # 122 offering ids, 50 per request
+        assert all(len(c["id"][4:-1].split(",")) <= 50 for c in calls)
+
     def test_unknown_semester_degrades_to_termless_cards_only(self):
         with patch("services.flashcards.cards.table", side_effect=_tables([])), \
              patch("services.flashcards.cards.term_id_for_label", return_value=None):

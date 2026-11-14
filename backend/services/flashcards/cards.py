@@ -78,15 +78,37 @@ def list_flashcards(
         term_id = term_id_for_label(semester)
         allowed: set[str] = set()
         if term_id:
-            offs = table("course_offerings").select(
-                "id", filters={"term_id": f"eq.{term_id}"}
-            ) or []
-            allowed = {o["id"] for o in offs if o.get("id")}
+            allowed = _offerings_in_term(
+                {r["offering_id"] for r in rows if r.get("offering_id")}, term_id,
+            )
         rows = [
             r for r in rows
             if r.get("offering_id") is None or r["offering_id"] in allowed
         ]
     return rows
+
+
+#: Offering ids per ``in.(…)`` filter: keeps the query string bounded.
+_OFFERING_ID_CHUNK = 50
+
+
+def _offerings_in_term(offering_ids: set[str], term_id: str) -> set[str]:
+    """Which of ``offering_ids`` belong to ``term_id``. Asked by the cards' own
+    ids, never by reading the whole term: a term has more offerings than one
+    PostgREST response (max_rows) holds, and an offering past the cut would
+    hide its cards."""
+    ids = sorted(offering_ids)
+    allowed: set[str] = set()
+    for i in range(0, len(ids), _OFFERING_ID_CHUNK):
+        offs = table("course_offerings").select(
+            "id",
+            filters={
+                "id": f"in.({','.join(ids[i:i + _OFFERING_ID_CHUNK])})",
+                "term_id": f"eq.{term_id}",
+            },
+        ) or []
+        allowed.update(o["id"] for o in offs if o.get("id"))
+    return allowed
 
 
 def get_flashcards(
