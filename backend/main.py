@@ -22,6 +22,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+# Uvicorn's access log (stdout -> Railway logs) keeps the path, never the query
+# string: query parameters can carry student text. services/access_log.py.
+from services import access_log  # noqa: E402
+
+access_log.install()
+
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin_flags import router as admin_flags_router
@@ -50,7 +56,13 @@ from db.scope import (
     admin_service_route,
     service_route,
 )
-from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services.logfire_scrubber import (
+    ALL_PATTERNS,
+    PYDANTIC_AI_INSTRUMENTATION,
+    QueryStringStripProcessor,
+    scrub_value,
+    strip_query_request_hook,
+)
 from services import otel_fastapi_compat
 from services.request_context import (
     RequestIDMiddleware,
@@ -85,23 +97,27 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 # Logfire: free local traces during dev; sends to logfire.pydantic.dev only
 # if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
 #
-# Scrubbing: Pydantic AI's instrumentation writes the full prompt text and
-# model output to span attributes (gen_ai.prompt, all_messages_events,
-# input/output.value, ...). For Sapling those carry user-uploaded document
-# text — names, emails, student work — which we never want exfiltrated to
-# logfire.pydantic.dev. ``scrub_value`` redacts those paths before egress,
-# keeping a sha256 fingerprint of the body for debugging. ``EXTRA_PATTERNS``
-# ensures the callback fires for prompt/completion/messages attribute names
-# in addition to Logfire's built-in pattern set (password, secret, ...).
+# No student content leaves the process (services/logfire_scrubber.py has the
+# full story). Agent spans are instrumented WITHOUT content (prompts, outputs,
+# system instructions, tool arguments/results, exception messages), because
+# Logfire's scrubber exempts the standard GenAI message attributes; the
+# callback then replaces any other content-bearing attribute it is routed
+# with a length + sha256 fingerprint (no preview) and strips query strings
+# from URL attributes. ``ALL_PATTERNS`` makes Logfire route those attribute
+# names to the callback in addition to its built-in set (password, secret, ...).
+# URL attributes keep the path only (QueryStringStripProcessor).
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
     scrubbing=logfire.ScrubbingOptions(
         callback=scrub_value,
-        extra_patterns=list(EXTRA_PATTERNS),
+        extra_patterns=list(ALL_PATTERNS),
     ),
+    # Strips query strings from URL attributes at span START, before Logfire
+    # snapshots the pending span (whose message would spell the query out).
+    additional_span_processors=[QueryStringStripProcessor()],
 )
-logfire.instrument_pydantic_ai()
+logfire.instrument_pydantic_ai(**PYDANTIC_AI_INSTRUMENTATION)
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
 #
@@ -226,10 +242,9 @@ def _drop_request_arguments(_request, _attributes):
     Returning ``None`` tells Logfire to record no argument attributes at all.
 
     We keep the method, route template, status, and latency — which is what the
-    request trace is actually for. (The full URL and rendered span message do
-    still carry the raw query string; Sapling query params are ids/enums plus a
-    couple of low-sensitivity search terms, never prompts/completions/document
-    text — see docs/observability-logging-tracking.md.)
+    request trace is actually for. The URL attributes keep only the path:
+    ``strip_query_request_hook`` drops the query string (search terms can be
+    student text).
     """
     return None
 
@@ -255,6 +270,10 @@ logfire.instrument_fastapi(
     capture_headers=False,
     extra_spans=False,
     request_attributes_mapper=_drop_request_arguments,
+    # The request span's URL attributes (and the span message Logfire builds
+    # from http.target) carry the raw query string; Logfire treats them as
+    # safe keys, so they are rewritten to the path here.
+    server_request_hook=strip_query_request_hook,
 )
 
 if recost_api_key and RecostMiddleware is not None:

@@ -146,6 +146,8 @@ CMD ["python", "-m", "worker"]
 # ── full: today's image (the API's command on the heavy image) ───────────────
 FROM heavy AS full
 
+# The access log keeps the path only: main.py installs
+# services/access_log.py's query-string filter on uvicorn.access at import.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
 
 # ── the image a plain `docker build` (and Railway) produces ─────────────────
