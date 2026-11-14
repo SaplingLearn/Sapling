@@ -183,13 +183,30 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     updates_profile = {}
 
     if body.username is not None:
-        # Check uniqueness against user_profiles.
+        # FORMAT, on the write path. `_USERNAME_RE` used to be applied only by
+        # the availability check above, so this endpoint — the one that
+        # actually stores the handle — accepted anything: a 500-character
+        # username was saved happily, and 10,000 characters answered 500 when
+        # the uniqueness lookup below built a PostgREST query string too long
+        # to send. Validating where the value is PERSISTED is what makes the
+        # rule true; the check endpoint is only a convenience for the UI.
+        candidate = body.username.strip().lower()
+        if not _USERNAME_RE.match(candidate):
+            raise HTTPException(
+                status_code=422,
+                detail="Username must be 3-24 characters, using lowercase letters, numbers or underscores.",
+            )
+        # Normalised to lowercase to match the availability check, which
+        # lowercases before comparing. Storing the raw value let "Alice" be
+        # saved while the check reported "alice" as free — two users could
+        # hold the same handle in different cases, and this uniqueness lookup
+        # (a case-sensitive eq.) would not see the collision.
         existing = table("user_profiles").select(
-            "user_id", filters={"username": f"eq.{body.username}"}
+            "user_id", filters={"username": f"eq.{candidate}"}
         )
         if existing and existing[0]["user_id"] != user_id:
             raise HTTPException(status_code=409, detail="Username already taken")
-        updates_profile["username"] = body.username
+        updates_profile["username"] = candidate
 
     if body.bio is not None:
         updates_profile["bio"] = encrypt_if_present(body.bio)

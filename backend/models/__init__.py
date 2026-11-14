@@ -337,10 +337,18 @@ class UpdateProfileBody(BaseModel):
     # Profile fields now live on user_profiles (see migration 0024). `display_name`
     # was a user_settings duplicate of the profile `name` and was dropped; profile
     # name is set during onboarding / OAuth, not via this patch body.
-    username: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    website: Optional[str] = None
+    #
+    # Every field here was UNBOUNDED, and all four are rendered to other
+    # people (a profile is readable cross-user). A 1,000,000-character bio
+    # was accepted and stored; a 10,000-character username answered 500,
+    # because the uniqueness lookup puts the value in a PostgREST query
+    # string and the URL became too long to send. `username`'s ceiling is the
+    # 24 of `routes/profile.py::_USERNAME_RE` — the format rule the route now
+    # also applies on write (it used to run only in the availability check).
+    username: Optional[str] = Field(default=None, max_length=24)
+    bio: Optional[str] = Field(default=None, max_length=2_000)
+    location: Optional[str] = Field(default=None, max_length=120)
+    website: Optional[str] = Field(default=None, max_length=200)
 
 
 class UpdateSettingsBody(BaseModel):

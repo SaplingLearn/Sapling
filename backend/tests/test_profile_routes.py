@@ -293,6 +293,62 @@ class TestUpdateProfile:
         assert "bio" in captured[0]["payload"]
         assert captured[0]["payload"]["bio"] != "Updated bio"
 
+    def test_rejects_an_unbounded_bio(self):
+        """bio/location/website were unbounded and are rendered cross-user."""
+        with _mock_self():
+            r = client.patch(f"/api/profile/{USER_ID}", json={"bio": "x" * 2001})
+        assert r.status_code == 422
+
+    def test_rejects_a_username_that_breaks_the_format_rule(self):
+        """The format rule used to live ONLY in the availability check, so the
+        write path stored anything. A 500-char username was accepted, and
+        10,000 chars answered 500 (the uniqueness lookup built a PostgREST
+        query string too long to send)."""
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": USER_ID, "email": None, "streak_count": 0,
+                                          "created_at": "2025-01-01"}]
+            elif name == "user_profiles":
+                m.select.return_value = [{"user_id": USER_ID, "name": "Test"}]
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        for bad in ["x" * 500, "ab", "Has Spaces", "bad!chars", "x" * 10_000]:
+            with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+                r = client.patch(f"/api/profile/{USER_ID}", json={"username": bad})
+            assert r.status_code == 422, f"{bad[:20]!r} was accepted ({r.status_code})"
+
+    def test_username_is_stored_lowercased(self):
+        """The availability check lowercases before comparing, so storing the
+        raw value let "Alice" be saved while "alice" still read as free."""
+        captured = []
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": USER_ID, "email": None, "streak_count": 0,
+                                          "created_at": "2025-01-01"}]
+            elif name == "user_profiles":
+                m.select.return_value = [{"user_id": USER_ID, "name": "Test"}]
+
+                def _capture(payload, filters):
+                    captured.append(payload)
+                    return [{}]
+
+                m.update.side_effect = _capture
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+            r = client.patch(f"/api/profile/{USER_ID}", json={"username": "MixedCase"})
+        assert r.status_code == 200
+        assert captured and captured[0]["username"] == "mixedcase"
+
     def test_username_conflict_returns_409(self):
         user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
         profile_row = {"user_id": USER_ID, "name": "Test"}
