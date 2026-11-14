@@ -153,6 +153,16 @@ describe("goal and depth", () => {
     expect(on("guide-new-depth-cram")).toBe("true");
     expect(on("guide-new-depth-standard")).toBe("false");
   });
+
+  it("are each a group named by its label, so a pressed option says what it is a choice of", async () => {
+    await modal();
+    const goal = screen.getByRole("group", { name: "Goal" });
+    expect(goal).toBe(screen.getByTestId("guide-new-goal"));
+    expect(within(goal).getAllByRole("button").map(button => button.textContent)).toEqual(["Practice", "Review", "Exam prep"]);
+    const depth = screen.getByRole("group", { name: "Depth" });
+    expect(depth).toBe(screen.getByTestId("guide-new-depth"));
+    expect(within(depth).getByRole("button", { name: "Standard", pressed: true })).toBeTruthy();
+  });
 });
 
 describe("materials", () => {
