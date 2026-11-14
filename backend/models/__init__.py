@@ -239,11 +239,70 @@ class LeaveRoomBody(BaseModel):
     user_id: str
 
 
+# The Supabase Storage bucket the Social chat uploads room images to
+# (frontend Social.tsx `supa.storage.from("chat-images")`), and the public-URL
+# path its getPublicUrl() returns under the project origin.
+ROOM_IMAGE_BUCKET = "chat-images"
+_ROOM_IMAGE_PATH_PREFIX = f"/storage/v1/object/public/{ROOM_IMAGE_BUCKET}/"
+ROOM_IMAGE_URL_MAX = 2048
+
+
+def room_image_url_error(url: str) -> Optional[str]:
+    """Why ``url`` may not be a room message's image, or None when it may.
+
+    A room's transcript renders every message's ``image_url`` as an <img> for
+    every member, so an arbitrary URL is a tracking pixel: each member's
+    browser would fetch it (IP, user agent, read time) from wherever the
+    sender chose. Only the app's own public room-image bucket on its own
+    Supabase project is accepted — exactly what the upload flow produces.
+    Read off ``config`` at call time so a test can point it elsewhere; an
+    unconfigured ``SUPABASE_URL`` accepts nothing (fail closed).
+    """
+    import config  # local: models is imported before config in some entry points
+    from urllib.parse import urlsplit
+
+    base = (getattr(config, "SUPABASE_URL", "") or "").strip().rstrip("/")
+    if not base:
+        return "image uploads are not configured"
+    if len(url) > ROOM_IMAGE_URL_MAX:
+        return "image_url is too long"
+    if any(c.isspace() or ord(c) < 0x20 for c in url) or "\\" in url:
+        return "image_url must be a room image upload"
+    try:
+        want = urlsplit(base)
+        got = urlsplit(url)
+    except ValueError:
+        return "image_url must be a room image upload"
+    if (
+        got.scheme.lower() != want.scheme.lower()
+        or got.netloc.lower() != want.netloc.lower()
+        or not got.path.startswith(_ROOM_IMAGE_PATH_PREFIX)
+        or len(got.path) == len(_ROOM_IMAGE_PATH_PREFIX)
+        or any(seg in {"..", "."} for seg in got.path.split("/"))
+        or "%2e" in got.path.lower()
+        or "%2f" in got.path.lower()
+    ):
+        return "image_url must be a room image upload"
+    return None
+
+
 class SendMessageBody(BaseModel):
     user_id: str
     user_name: str
     text: Optional[str] = None
+    # Only the app's own room-image bucket (room_image_url_error); anything
+    # else is a 422 before it reaches the DB.
     image_url: Optional[str] = None
+
+    @field_validator("image_url")
+    @classmethod
+    def _room_image_only(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        problem = room_image_url_error(v)
+        if problem:
+            raise ValueError(problem)
+        return v
     # Intrinsic pixel size of image_url, measured client-side at upload (#315).
     # Optional: older clients omit them and the UI falls back to unreserved
     # layout, exactly as before.
@@ -340,7 +399,51 @@ class UpdateProfileBody(BaseModel):
     username: Optional[str] = None
     bio: Optional[str] = None
     location: Optional[str] = None
+    # Rendered as a link on the public profile: http(s) only (normalise_website).
     website: Optional[str] = None
+
+    @field_validator("website")
+    @classmethod
+    def _http_website_only(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else normalise_website(v)
+
+
+PROFILE_WEBSITE_MAX = 512
+# A bare host (`example.com`, `example.com/me`), which the Settings field has
+# always accepted as typed; it is stored as https.
+_BARE_HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(?:[/?#]|$)", re.IGNORECASE)
+
+
+def normalise_website(value: str) -> str:
+    """A profile website as stored: "" (cleared) or an absolute http(s) URL.
+
+    The public profile renders it as an ``href`` for every viewer, so a
+    ``javascript:`` / ``data:`` / relative value would be a stored XSS or
+    open-redirect lure. Raises ValueError (a 422 at the route) for anything
+    that is not an http(s) URL with a host, longer than PROFILE_WEBSITE_MAX,
+    or carrying whitespace/control characters or credentials.
+    """
+    from urllib.parse import urlsplit
+
+    v = value.strip()
+    if not v:
+        return ""
+    if len(v) > PROFILE_WEBSITE_MAX:
+        raise ValueError(f"website must be at most {PROFILE_WEBSITE_MAX} characters")
+    if any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in v) or "\\" in v:
+        raise ValueError("website must be an http(s) URL")
+    if "://" not in v and _BARE_HOST.match(v):
+        v = f"https://{v}"
+    try:
+        parts = urlsplit(v)
+        host = parts.hostname
+    except ValueError:
+        raise ValueError("website must be an http(s) URL")
+    if parts.scheme.lower() not in {"http", "https"} or not host or "@" in parts.netloc:
+        raise ValueError("website must be an http(s) URL")
+    if len(v) > PROFILE_WEBSITE_MAX:
+        raise ValueError(f"website must be at most {PROFILE_WEBSITE_MAX} characters")
+    return v
 
 
 class UpdateSettingsBody(BaseModel):

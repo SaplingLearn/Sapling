@@ -119,17 +119,25 @@ describe("ProfileView rendering", () => {
     const link = screen.getByRole("link");
     expect(link.getAttribute("href")).toBe("https://www.example.com/me");
     expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer nofollow");
     expect(link.textContent).toBe(" example.com/me");
   });
 
-  it("drops a bare root path from the website label, and shows an unparsable one raw", () => {
+  it("drops a bare root path from the website label, and links a bare host as https", () => {
     const { unmount } = render(<ProfileView profile={full({ website: "https://example.com/" })} />);
     expect(screen.getByRole("link").textContent).toBe(" example.com");
     unmount();
-    render(<ProfileView profile={full({ website: "not a url" })} />);
-    expect(screen.getByRole("link").textContent).toBe(" not a url");
+    render(<ProfileView profile={full({ website: "example.org/me" })} />);
+    expect(screen.getByRole("link").getAttribute("href")).toBe("https://example.org/me");
   });
+
+  it.each(["javascript:alert(document.cookie)", "data:text/html,<script>1</script>", "/settings", "not a url"])(
+    "never links a website that is not an http(s) URL: %s",
+    (website) => {
+      render(<ProfileView profile={full({ website })} />);
+      expect(screen.queryByRole("link")).toBeNull();
+    },
+  );
 
   it("orders roles by display priority, highest first, missing priority as 0", () => {
     const profile = full();

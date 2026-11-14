@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, sortRolesByPriority, studiesOf,
+  hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, safeWebsiteHref, sortRolesByPriority, studiesOf,
 } from "./profileViewHelpers";
 import type { Cosmetic, Role, UserProfile, UserRole } from "@/lib/types";
 
@@ -83,5 +83,23 @@ describe("prettyUrl", () => {
 
   it("returns an unparsable URL unchanged", () => {
     expect(prettyUrl("not a url")).toBe("not a url");
+  });
+});
+
+describe("safeWebsiteHref", () => {
+  it("keeps an absolute http(s) URL", () => {
+    expect(safeWebsiteHref("https://www.example.com/me")).toBe("https://www.example.com/me");
+    expect(safeWebsiteHref("http://example.com")).toBe("http://example.com/");
+  });
+
+  it("reads a bare host as https", () => {
+    expect(safeWebsiteHref(" example.com ")).toBe("https://example.com/");
+  });
+
+  it.each([
+    null, "", "   ", "javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,x",
+    "vbscript:x", "/relative", "//evil.example", "ftp://example.com", "not a url",
+  ])("refuses %s", (value) => {
+    expect(safeWebsiteHref(value)).toBeNull();
   });
 });
