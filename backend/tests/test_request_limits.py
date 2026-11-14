@@ -168,6 +168,64 @@ class TestReadWithinLimit:
         assert sum(reads) <= 2 * 1024 * 1024
 
 
+class TestReadWithinLimitSync:
+    """The twin for a sync (threadpool) handler: same cap, same refusal."""
+
+    _upload = staticmethod(TestReadWithinLimit._upload)
+
+    def test_returns_the_bytes_within_the_cap(self):
+        data = b"x" * 2048
+        assert request_limits.read_within_limit_sync(self._upload(data), 2048) == data
+
+    def test_default_refusal_matches_the_async_reader(self):
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            request_limits.read_within_limit_sync(self._upload(b"x" * (2 * 1024 * 1024 + 1)), 2 * 1024 * 1024)
+        assert (exc.value.status_code, exc.value.detail) == (413, "File too large. Maximum size is 2 MB.")
+
+    def test_caller_chooses_status_and_detail(self):
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            request_limits.read_within_limit_sync(self._upload(b"x" * 11), 10, status_code=400, detail="too big")
+        assert (exc.value.status_code, exc.value.detail) == (400, "too big")
+
+    def test_stops_reading_one_chunk_past_the_cap(self):
+        import io
+
+        import pytest
+        from fastapi import HTTPException, UploadFile
+
+        reads = []
+
+        class Counting(io.BytesIO):
+            def read(self, size=-1):
+                data = super().read(size)
+                reads.append(len(data))
+                return data
+
+        with pytest.raises(HTTPException):
+            request_limits.read_within_limit_sync(
+                UploadFile(Counting(b"x" * (8 * 1024 * 1024)), filename="f.bin"), 1024 * 1024,
+            )
+        assert sum(reads) <= 2 * 1024 * 1024
+
+
+def test_no_upload_route_keeps_a_capped_reader_of_its_own():
+    """Every capped upload read goes through read_within_limit(_sync): no
+    route reads `cap + 1` bytes by hand."""
+    import pathlib
+    import re
+
+    routes = pathlib.Path(__file__).resolve().parents[1] / "routes"
+    hand_rolled = re.compile(r"\.read\([^)]*\+\s*1\s*\)")
+    offenders = sorted(p.name for p in routes.glob("*.py") if hand_rolled.search(p.read_text()))
+    assert offenders == []
+
+
 def test_checked_upload_keeps_its_own_oversize_detail():
     """services/upload_validation reads through read_within_limit but keeps
     its route-facing wording and status (documents 400, calendar 413)."""

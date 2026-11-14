@@ -437,6 +437,13 @@ def public_route_limit(request, per_address: AbuseLimit, shared: AbuseLimit) -> 
 _UPLOAD_CHUNK = 1024 * 1024
 
 
+def _upload_too_large(max_bytes: int, status_code: int, detail: str | None) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail=detail or f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
+    )
+
+
 async def read_within_limit(
     upload: UploadFile,
     max_bytes: int,
@@ -447,7 +454,8 @@ async def read_within_limit(
     """Read an UploadFile in 1 MB chunks, refusing it as soon as it passes
     ``max_bytes`` — never more than one chunk past the cap is read, so an
     oversize upload is never pulled into memory whole. The one capped upload
-    reader: every upload route reads through it.
+    reader: every upload route reads through it, or through
+    :func:`read_within_limit_sync`, its twin for a sync (threadpool) handler.
 
     Raises ``status_code`` (413 by default) with ``detail`` (default "File too
     large. Maximum size is N MB.") past the cap; a route that has always
@@ -461,9 +469,29 @@ async def read_within_limit(
             break
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(
-                status_code=status_code,
-                detail=detail or f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
-            )
+            raise _upload_too_large(max_bytes, status_code, detail)
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+def read_within_limit_sync(
+    upload: UploadFile,
+    max_bytes: int,
+    *,
+    status_code: int = 413,
+    detail: str | None = None,
+) -> bytes:
+    """:func:`read_within_limit` for a plain ``def`` handler (#117: FastAPI
+    runs it in the threadpool, so it reads the spooled file directly rather
+    than awaiting). Same chunks, cap and refusal."""
+    parts: list[bytes] = []
+    total = 0
+    while True:
+        chunk = upload.file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise _upload_too_large(max_bytes, status_code, detail)
         parts.append(chunk)
     return b"".join(parts)
