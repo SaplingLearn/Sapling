@@ -2,6 +2,7 @@
 
 import React from "react";
 import { KnowledgeGraph } from "@/components/graph/KnowledgeGraph";
+import { useGraphSize } from "@/components/graph/useGraphSize";
 import { CoursesKey, courseProgressFor } from "@/components/graph/CoursesKey";
 import { paletteFor, type GraphEdge, type GraphNode } from "@/lib/data";
 
@@ -81,6 +82,20 @@ function tierFor(score: number): GraphNode["mastery_tier"] {
   return "struggling";
 }
 
+/** The first `count` concepts of a course, keeping only links among them. */
+function trim(c: CourseDef, count: number): CourseDef {
+  if (count >= c.lines.length) return c;
+  const nameOf = (line: string) => line.split(/<<?/)[0].trim();
+  const kept = new Set(c.lines.slice(0, count).map(nameOf));
+  const lines = c.lines.slice(0, count).map((line) => {
+    const builds = line.includes("<<");
+    const [name, rest] = line.split(builds ? "<<" : "<").map((s) => s.trim());
+    const preds = (rest ?? "").split(",").map((s) => s.trim()).filter((p) => kept.has(p));
+    return preds.length ? `${name} ${builds ? "<<" : "<"} ${preds.join(", ")}` : name;
+  });
+  return { ...c, lines, related: c.related.filter(([a, b]) => kept.has(a) && kept.has(b)) };
+}
+
 function build(courses: CourseDef[], withLinks: boolean) {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
@@ -151,18 +166,11 @@ function Toggle<T extends string | number | boolean>({
 
 export default function GraphPreview() {
   const [courseCount, setCourseCount] = React.useState<1 | 3>(3);
+  // Most students' graphs are small; the layout has to read at 5 concepts too.
+  const [perCourse, setPerCourse] = React.useState<5 | 12 | 99>(99);
   const [links, setLinks] = React.useState(true);
   const [legible, setLegible] = React.useState(true);
-  const wrapRef = React.useRef<HTMLDivElement>(null);
-  const [size, setSize] = React.useState({ w: 1200, h: 800 });
-
-  React.useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((e) => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const [wrapRef, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 800 });
 
   // The Dashboard's wiring: hover a row to fade the other courses, hover a
   // concept to light its row, click a row to zoom to the course, again to zoom out.
@@ -177,8 +185,8 @@ export default function GraphPreview() {
   );
 
   const data = React.useMemo(
-    () => build(COURSES.slice(0, courseCount), links),
-    [courseCount, links],
+    () => build(COURSES.slice(0, courseCount).map((c) => trim(c, perCourse)), links),
+    [courseCount, perCourse, links],
   );
   const conceptCount = data.nodes.filter((n) => !n.is_subject_root).length;
   const linkCount = data.edges.filter((e) => !e.source.startsWith("subject_root__")).length;
@@ -189,6 +197,8 @@ export default function GraphPreview() {
         <strong style={{ fontSize: 15 }}>Graph preview</strong>
         <Toggle label="Courses" value={courseCount} onChange={setCourseCount}
           options={[{ v: 1, text: "1" }, { v: 3, text: "3" }]} />
+        <Toggle label="Concepts per course" value={perCourse} onChange={setPerCourse}
+          options={[{ v: 5, text: "5" }, { v: 12, text: "12" }, { v: 99, text: "All" }]} />
         <Toggle label="Concept links" value={links} onChange={setLinks}
           options={[{ v: true, text: "On" }, { v: false, text: "Off (today's data)" }]} />
         <Toggle label="Obsidian legibility" value={legible} onChange={setLegible}
@@ -200,17 +210,19 @@ export default function GraphPreview() {
       <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* The same wrapper the Tree and Dashboard mount (Mastery colors
             toggle, crash boundary), not the bare 2D renderer. */}
-        <KnowledgeGraph
-          key={`${courseCount}-${links}-${legible}`}
-          nodes={data.nodes}
-          edges={data.edges}
-          width={size.w}
-          height={size.h}
-          legible={legible}
-          focusCourseId={keyHover}
-          onHoverCourse={setGraphHover}
-          zoomRequest={zoomRequest}
-        />
+        {size && (
+          <KnowledgeGraph
+            key={`${courseCount}-${perCourse}-${links}-${legible}`}
+            nodes={data.nodes}
+            edges={data.edges}
+            width={size.w}
+            height={size.h}
+            legible={legible}
+            focusCourseId={keyHover}
+            onHoverCourse={setGraphHover}
+            zoomRequest={zoomRequest}
+          />
+        )}
         {legible && courseCount > 1 && (
           <CoursesKey
             courseProgress={courseProgressFor(keyCourses, data.nodes)}

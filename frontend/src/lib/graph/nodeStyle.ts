@@ -99,10 +99,17 @@ export function shadeFor(baseHex: string, nodeId: string, as: "css" | "hex" = "c
   return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${l.toFixed(0)}%)`;
 }
 
+/**
+ * A course root's radius: a fifth bigger than the largest concept (20 by
+ * mastery, 23 by importance in legible mode), so with its course code under
+ * it, a course's own node is plain to see among its concepts.
+ */
+export const COURSE_NODE_R = 28;
+
 /** Visual radius of a concept mark, in the tree's own units. Subject roots are
- *  a flat 22 — they anchor a family and don't encode mastery. */
+ *  a flat `COURSE_NODE_R` — they anchor a family and don't encode mastery. */
 export function radiusFor(mastery: number, isRoot = false): number {
-  if (isRoot) return 22;
+  if (isRoot) return COURSE_NODE_R;
   return 8 + (mastery || 0) * 12;
 }
 
@@ -141,9 +148,18 @@ export function opacityFor(tier: string): number {
   return TIER_OPACITY[tier as MasteryTier] ?? 0.6;
 }
 
-/** Edge stroke width from its 0..1 strength → 0.5 … 1.7. The backend's
- *  hub-spoke edges ship a fixed 0.7 (graph_service.py), i.e. 1.34. */
+/** Edge stroke width from its 0..1 strength → 2.2 … 5.0: a drawn bar, not a
+ *  hairline. The backend's hub-spoke edges ship a fixed 0.7
+ *  (graph_service.py), i.e. 4.16. */
 export function edgeWidthFor(strength: number): number {
+  return 2.2 + (strength || 0.5) * 2.8;
+}
+
+/** Edge stroke width for the thin-line variants (`orb`, `constellation`):
+ *  0.5 … 1.7, the hairline they were drawn with before links became bars.
+ *  Their arrowheads are sized in stroke widths, so a bar there would blow
+ *  them up several times over. */
+export function thinEdgeWidthFor(strength: number): number {
   return 0.5 + (strength || 0.5) * 1.2;
 }
 
@@ -153,12 +169,21 @@ export function truncateLabel(name: string, max = 18): string {
   return name.length > max ? name.slice(0, max - 1) + "…" : name;
 }
 
+/**
+ * The label under a course root. The backend names a root "CODE - Course
+ * Name" (graph_service.py); written out in full it is far wider than the
+ * mark and runs across the concepts around it, so the tree shows the code
+ * alone (the tooltip and the course key carry the full name). A course with
+ * no code keeps its name, cut like a concept label.
+ */
+export function courseLabel(name: string): string {
+  const cut = name.indexOf(" - ");
+  return truncateLabel(cut > 0 ? name.slice(0, cut) : name, 22);
+}
+
 /** Resting stroke opacity of the node body. The tree raises it on hover (0.9)
  *  and while drag-pinned (1.0); static surfaces stay at rest. */
 export const NODE_STROKE_OPACITY = 0.4;
-
-/** The soft halo behind an `organism` node: a blurred disc at `r + pad`. */
-export const GLOW = { pad: 8, opacity: 0.15, blur: 3 } as const;
 
 /**
  * How the tree colours its nodes:

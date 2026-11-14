@@ -33,7 +33,8 @@
 
 import React from "react";
 import type { NeighbourNode } from "@/lib/graph/neighbourhood";
-import { GLOW, edgeWidthFor, truncateLabel } from "@/lib/graph/nodeStyle";
+import { edgeWidthFor, truncateLabel } from "@/lib/graph/nodeStyle";
+import { organicLinkSegment, plainLinkOpacity } from "./knowledgeGraph2DPaint";
 import {
   ConceptMark,
   LABEL_GAP,
@@ -79,7 +80,7 @@ const COMPOSITIONS: Record<
 const WIDE_CANVAS_MIN_WIDTH = 480;
 
 /** Edge opacity — the tree's resting value for the `organism` variant. */
-const EDGE_OPACITY = 0.2;
+const EDGE_OPACITY = plainLinkOpacity(false, "organism");
 
 export interface ConceptNeighbourhoodProps {
   centre: { id: string; name: string; mastery: number; tier: string };
@@ -110,28 +111,6 @@ export interface ConceptNeighbourhoodProps {
   testid?: string;
 }
 
-/** Clearance past a mark's radius, so a line meets its rim rather than its
- *  stroke (the same allowance the tree's links use, #848). */
-const RIM_GAP = 0.75;
-
-/**
- * The visible part of an edge: the centre mark's rim to the sibling's rim.
- * Mark fills are translucent (the tier opacity), so a line drawn centre to
- * centre showed through both discs. `null` when the marks touch.
- */
-function rimToRim(
-  x1: number, y1: number, r1: number,
-  x2: number, y2: number, r2: number,
-): [number, number, number, number] | null {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy);
-  if (len <= r1 + r2) return null;
-  const ux = dx / len;
-  const uy = dy / len;
-  return [x1 + ux * r1, y1 + uy * r1, x2 - ux * r2, y2 - uy * r2];
-}
-
 export function ConceptNeighbourhood({
   centre,
   siblings,
@@ -147,7 +126,6 @@ export function ConceptNeighbourhood({
   composition = width >= WIDE_CANVAS_MIN_WIDTH ? "wide" : "compact",
   testid,
 }: ConceptNeighbourhoodProps) {
-  const filterId = `concept-neighbourhood-glow-${React.useId()}`;
   const [grown] = useGrowth(centreVariant, animate);
 
   const { centreOffsetX, slots } = COMPOSITIONS[composition];
@@ -156,6 +134,8 @@ export function ConceptNeighbourhood({
   const centreRadius = centreVariant.kind === "growth"
     ? Math.max(markRadius(centreVariant.before, false, scale), markRadius(centreVariant.after, false, scale))
     : markRadius(centre.mastery, false, scale);
+  // The radius the centre's outline was chosen for (`ConceptMark`'s rule).
+  const centreShapeR = markRadius(centreVariant.kind === "growth" ? centreVariant.after : centre.mastery);
   const cx = width / 2 + centreOffsetX;
   const cy = height / 2;
 
@@ -184,19 +164,17 @@ export function ConceptNeighbourhood({
       aria-label={ariaLabel}
       data-testid={testid}
     >
-      <defs>
-        <filter id={filterId}>
-          <feGaussianBlur stdDeviation={GLOW.blur * scale} />
-        </filter>
-      </defs>
-
       {placed.map(({ sibling, x, y }) => {
-        const segment = rimToRim(
-          cx, cy, centreRadius + RIM_GAP,
-          x, y, markRadius(sibling.mastery, false, scale) + RIM_GAP,
+        // The tree's own link: a bar in the course's colour from the centre
+        // mark's drawn rim to the sibling's. Mark fills are translucent (the
+        // tier opacity), so the bar stops at each rim rather than running
+        // underneath; marks that touch leave nothing to draw.
+        const [x1, y1, x2, y2] = organicLinkSegment(
+          centre.id, cx, cy, centreRadius, centreShapeR,
+          sibling.id, x, y, markRadius(sibling.mastery, false, scale), markRadius(sibling.mastery),
+          false,
         );
-        if (!segment) return null;
-        const [x1, y1, x2, y2] = segment;
+        if (x1 === x2 && y1 === y2) return null;
         return (
           <line
             key={`edge-${sibling.id}`}
@@ -205,9 +183,10 @@ export function ConceptNeighbourhood({
             y1={y1}
             x2={x2}
             y2={y2}
+            stroke={courseColor}
             strokeOpacity={EDGE_OPACITY}
             strokeWidth={edgeWidthFor(sibling.strength)}
-            strokeLinecap="round"
+            strokeLinecap="butt"
           />
         );
       })}
@@ -246,7 +225,6 @@ export function ConceptNeighbourhood({
         courseColor={courseColor}
         nodeId={centre.id}
         variant={centreVariant}
-        glowFilterId={filterId}
         grown={grown}
       />
       {showLabels && showCentreLabel && (

@@ -168,11 +168,12 @@ function renderResults(
   return { ...view, acts };
 }
 
-/** The growth circle's drawn radius and its scale ratio — 1 once grown. */
+/** The growth mark's drawn radius and its scale ratio — 1 once grown. The
+ *  mark is a hand-drawn outline (a path), so the radius rides on `data-r`. */
 function growthMark(container: HTMLElement) {
   const body = container.querySelector(".concept-node__body--growth")!;
   return {
-    r: Number(body.getAttribute("r")),
+    r: Number(body.getAttribute("data-r")),
     grow: Number(body.getAttribute("style")?.match(/--concept-grow:\s*([\d.]+)/)?.[1]),
   };
 }
