@@ -38,7 +38,10 @@ function Axes({ block, scale }: { block: ChartBlock; scale: ChartScale }) {
       <text x={right} y={bottom + 36} textAnchor="end" className={s.chartAxisLabel}>
         {block.x_label}
       </text>
-      <text x={left - 8} y={top - 6} textAnchor="end" className={s.chartAxisLabel}>
+      {/* From the drawing's left edge, over the margin above the plot. Ending
+          it at the axis put any label past ~9 characters off the left edge,
+          and a label may run to 32. */}
+      <text x={8} y={top - 6} textAnchor="start" className={s.chartAxisLabel}>
         {block.y_label}
       </text>
     </>

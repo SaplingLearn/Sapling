@@ -315,6 +315,16 @@ describe("the chart block", () => {
     expect(within(block("s1-i2")).queryByText(/Illustrative shape/)).not.toBeInTheDocument();
     expect(within(block("s1-i2")).getAllByText("10").length).toBeGreaterThan(0);
   });
+
+  it("starts the y axis label inside the drawing, so a long one runs on to the right, not off the edge", async () => {
+    const guide = fixtureGuide();
+    const chart = guide.content.sections[0].items[1] as Extract<Block, { type: "chart" }>;
+    chart.y_label = "Quantity demanded per week, units";
+    await open(guide);
+    const label = within(block("s1-i2")).getByText("Quantity demanded per week, units");
+    expect(label).toHaveAttribute("text-anchor", "start");
+    expect(Number(label.getAttribute("x"))).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describe("the worked example", () => {
