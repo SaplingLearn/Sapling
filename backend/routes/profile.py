@@ -4,7 +4,6 @@ Profile routes — public profiles, settings, cosmetics, achievements, account m
 
 import base64
 import functools
-import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -55,7 +54,6 @@ from services.profile.users import (  # noqa: F401  (re-export, #118)
     _get_user_stats,
 )
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
