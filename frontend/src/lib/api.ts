@@ -2149,6 +2149,31 @@ export const adminUploadAchievementIcon = (
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
 
+// Mirrors backend/services/storage_service.py::ALLOWED_CONTENT_TYPES.
+export const COSMETIC_ASSET_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * Upload an avatar-frame/banner image through the backend
+ * (`POST /api/admin/cosmetics/assets`, admin-only, service-role storage).
+ * The admin screen used to write to a storage bucket from the browser with
+ * the public anon key; nothing in the browser writes to storage now.
+ */
+export const adminUploadCosmeticAsset = async (file: File): Promise<{ asset_url: string }> => {
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  if (!COSMETIC_ASSET_TYPES.includes(file.type)) {
+    throw new Error('Unsupported image type. Use JPEG, PNG, WebP or GIF.');
+  }
+  const file_base64 = await readFileAsBase64(file);
+  return fetchJSON<{ asset_url: string }>('/api/admin/cosmetics/assets', {
+    method: 'POST',
+    body: JSON.stringify({ file_base64, content_type: file.type }),
+  });
+};
+
 // #764: the sender withdraws a pending friend request.
 export const cancelFriendRequest = (requestId: string, userId: string) =>
   fetchJSON<{ cancelled: boolean }>(
