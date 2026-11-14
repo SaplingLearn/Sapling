@@ -143,7 +143,7 @@ def test_a_semester_never_falls_back_to_another_term(db):
 
 
 def test_scopes_are_the_whole_course_then_assignments_by_due_date(db):
-    listed = run(scopes.alist_scopes(ME, COURSE, None))
+    listed = run(scopes.alist_scopes(ME, FALL))
     assert listed[0] == scopes.Scope(kind="course", id=None, title="Whole course", due_date=None)
     assert [s.id for s in listed[1:]] == ["a-hw1", "a-midterm", "a-final", "a-undated"]
     assert listed[1] == scopes.Scope(
@@ -153,28 +153,27 @@ def test_scopes_are_the_whole_course_then_assignments_by_due_date(db):
 
 
 def test_an_exam_is_one_by_type_or_by_title(db):
-    kinds = {s.id: s.kind for s in run(scopes.alist_scopes(ME, COURSE, None))}
+    kinds = {s.id: s.kind for s in run(scopes.alist_scopes(ME, FALL))}
     assert kinds["a-final"] == "exam"       # assignment_type exam
     assert kinds["a-midterm"] == "exam"     # an exam-like title
     assert kinds["a-hw1"] == "assignment"
 
 
 def test_only_this_students_assignments_in_this_class_are_listed(db):
-    ids = {s.id for s in run(scopes.alist_scopes(ME, COURSE, None))}
+    ids = {s.id for s in run(scopes.alist_scopes(ME, FALL))}
     assert "a-theirs" not in ids  # a classmate in the same offering
     assert "a-bio" not in ids     # the student's own, in another class
-    theirs = {s.id for s in run(scopes.alist_scopes(OTHER, COURSE, None))}
+    theirs = {s.id for s in run(scopes.alist_scopes(OTHER, FALL))}
     assert theirs == {None, "a-theirs"}
 
 
 def test_encrypted_assignment_columns_are_never_selected(db):
-    run(scopes.alist_scopes(ME, COURSE, None))
+    run(scopes.alist_scopes(ME, FALL))
     assert db.selects == ["id,title,due_date,assignment_type"]
 
 
-def test_listing_a_class_the_student_is_not_in_reads_nothing(db):
-    with pytest.raises(GuideNotFound):
-        run(scopes.alist_scopes("user_stranger", COURSE, None))
+def test_listing_an_offering_the_student_is_not_in_reads_nothing(db):
+    assert run(scopes.alist_scopes("user_stranger", FALL)) == [scopes.WHOLE_COURSE]
     assert db.selects == []
 
 

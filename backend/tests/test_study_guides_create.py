@@ -60,7 +60,8 @@ def world(monkeypatch):
             raise state["scope"]
         return state["scope"]
 
-    async def alist_scopes(user_id, course_id, semester):
+    async def alist_scopes(user_id, offering_id):
+        assert (user_id, offering_id) == (ME, OFFERING)
         return [WHOLE_COURSE, MIDTERM, HOMEWORK]
 
     async def alist_materials(user_id, offering_id):
@@ -258,6 +259,14 @@ def test_each_scope_carries_its_suggested_materials(world):
         # Since the exam before it.
         "Homework 3": ["doc-2"],
     }
+
+
+def test_options_resolve_the_offering_once(world):
+    """The scopes are listed for the offering already resolved, not looked
+    up again from the course and term."""
+    seen, _ = world
+    asyncio.run(options.aget_options(ME, COURSE, "Fall 2026"))
+    assert seen["offering"] == [(ME, COURSE, "Fall 2026")]
 
 
 def test_options_for_a_class_the_student_is_not_in_are_not_found(world):

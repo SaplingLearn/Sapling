@@ -11,7 +11,7 @@ async def aget_options(user_id: str, course_id: str, semester: str | None) -> Gu
     """The whole course first, then the class's exams and assignments by
     date. ``GuideNotFound`` when the student is not in the class."""
     offering_id = await scopes.aresolve_offering(user_id, course_id, semester)
-    class_scopes = await scopes.alist_scopes(user_id, course_id, semester)
+    class_scopes = await scopes.alist_scopes(user_id, offering_id)
     class_materials = await materials.alist_materials(user_id, offering_id)
     return GuideOptions(
         scopes=[

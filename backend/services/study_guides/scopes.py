@@ -97,10 +97,10 @@ def _scope(row: dict) -> Scope:
     )
 
 
-async def alist_scopes(user_id: str, course_id: str, semester: str | None) -> list[Scope]:
-    """Everything a guide for this class can be for: the whole course first,
-    then the class's exams and assignments by due date."""
-    offering_id = await aresolve_offering(user_id, course_id, semester)
+async def alist_scopes(user_id: str, offering_id: str) -> list[Scope]:
+    """Everything a guide for the student's offering (from
+    ``aresolve_offering``) can be for: the whole course first, then the
+    class's exams and assignments by due date."""
     rows = await _aassignments(user_id, offering_id)
     return [WHOLE_COURSE, *(_scope(row) for row in rows)]
 
