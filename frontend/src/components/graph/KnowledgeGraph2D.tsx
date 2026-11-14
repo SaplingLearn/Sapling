@@ -50,6 +50,7 @@ import {
   courseLinks,
   forceOrbit,
   importanceRadii,
+  LABEL_ZOOM,
   labelOpacityAt,
   planBounds,
   planRadial,
@@ -521,6 +522,12 @@ function KnowledgeGraph2DImpl({
   // read by the per-tick writer (a hand-drawn link stops short for its arrow).
   const linkArrowRef = React.useRef<boolean[]>([]);
   const legibleRef = React.useRef(legible);
+  // A legible graph (the tree, the dashboard) opens zoomed out to where its
+  // concept labels have just faded out, planned to fill the window from
+  // there: the whole graph first, the names on zooming in. A graph whose
+  // labels never fade, or with an opening zoom of its own, opens as planned
+  // at full size.
+  const openZoom = legible && initialZoom === 1 ? LABEL_ZOOM.hidden : 1;
   // The current zoom, for the per-tick writer (legible nodes keep a minimum
   // on-screen size, so arrow insets depend on it).
   const viewScaleRef = React.useRef(initialZoom);
@@ -744,7 +751,7 @@ function KnowledgeGraph2DImpl({
     // Course spokes are layout-only: the root is a position, never a hub, so
     // only real concept-to-concept edges join the simulation and the render.
     const { concept: conceptEdges } = splitEdges(nodes, edges);
-    const plan = planRadial(nodes, conceptEdges, width, height);
+    const plan = planRadial(nodes, conceptEdges, width, height, openZoom);
     for (const [id, seat] of placedRef.current) {
       const o = plan.orbit.get(id);
       if (o) Object.assign(o, seat);
@@ -752,8 +759,10 @@ function KnowledgeGraph2DImpl({
     planRef.current = plan;
 
     // Open on the whole graph: when the planned courses overflow the window,
-    // zoom out to fit — until the student pans or zooms themselves. Only at
-    // the default zoom: a caller that asks for its own opening zoom (quiz
+    // zoom out to fit — until the student pans or zooms themselves. A legible
+    // graph opens zoomed out to `openZoom` (its concept labels faded out)
+    // whether it overflows or not, centred on what was planned. Only at the
+    // default zoom: a caller that asks for its own opening zoom (quiz
     // home's neighbourhood fragment) is framed on where its nodes actually
     // come to rest instead (`frameContent`, on the tick).
     const b = planBounds(plan, width, height);
@@ -761,8 +770,8 @@ function KnowledgeGraph2DImpl({
     if (initialZoom === 1) {
       const bw = b ? b.maxX - b.minX : 0;
       const bh = b ? b.maxY - b.minY : 0;
-      if (b && (bw > width || bh > height)) {
-        const scale = Math.max(FIT_MIN_ZOOM, Math.min(1, width / bw, height / bh));
+      if (b && (openZoom < 1 || bw > width || bh > height)) {
+        const scale = Math.max(FIT_MIN_ZOOM, Math.min(openZoom, width / bw, height / bh));
         const mx = (b.minX + b.maxX) / 2;
         const my = (b.minY + b.maxY) / 2;
         fittedViewRef.current = { tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale };
@@ -936,7 +945,7 @@ function KnowledgeGraph2DImpl({
     return () => {
       // Simulation is kept across renders; only stop on full unmount below.
     };
-  }, [dataKey, width, height]);
+  }, [dataKey, width, height, openZoom]);
 
   // Stop the simulation on unmount.
   React.useEffect(() => {
@@ -956,11 +965,11 @@ function KnowledgeGraph2DImpl({
   // (each course's plan is remembered, so this costs only the packing).
   const planned = React.useMemo(() => {
     const { concept } = splitEdges(nodes, edges);
-    const plan = planRadial(nodes, concept, width, height);
+    const plan = planRadial(nodes, concept, width, height, openZoom);
     const roots = nodes.filter((n) => n.is_subject_root);
     const rootOfCourse = new Map(roots.map((r) => [r.course_id, r.id]));
     return { concept, plan, roots, rootOfCourse };
-  }, [nodes, edges, width, height]);
+  }, [nodes, edges, width, height, openZoom]);
   // The host's key asked to zoom to a course (Dashboard: click a row).
   const zoomSeq = zoomRequest?.seq;
   const zoomCourse = zoomRequest?.courseId;

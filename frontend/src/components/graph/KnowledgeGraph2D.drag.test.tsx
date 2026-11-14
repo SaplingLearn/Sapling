@@ -86,7 +86,15 @@ const chain = (ids: string[]): GraphEdge[] =>
 type Pt = { x: number; y: number };
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 
-/** Every node's position, by id. The view is the identity in these windows, so these are also window points. */
+/** Where a graph point shows in the window: through the view (the identity, except a legible graph opens zoomed out). */
+function onScreen(container: HTMLElement, p: Pt): Pt {
+  const view = container.querySelector("svg[role=img] > g[transform]")?.getAttribute("transform") ?? "";
+  const m = /translate\(([-\d.e]+),\s*([-\d.e]+)\) scale\(([-\d.e]+)\)/.exec(view);
+  if (!m) return p;
+  return { x: Number(m[1]) + p.x * Number(m[3]), y: Number(m[2]) + p.y * Number(m[3]) };
+}
+
+/** Every node's position, by id, in the graph's own units. */
 function positions(container: HTMLElement): Map<string, Pt> {
   const out = new Map<string, Pt>();
   for (const g of container.querySelectorAll('[data-testid="graph-node"]')) {
@@ -100,20 +108,21 @@ function positions(container: HTMLElement): Map<string, Pt> {
 function drag(container: HTMLElement, id: string, to: Pt, { hold = false } = {}) {
   const svg = container.querySelector("svg[role=img]")!;
   const g = container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"]`)!;
-  const from = positions(container).get(id)!;
+  const from = onScreen(container, positions(container).get(id)!);
+  const end = onScreen(container, to);
   fireEvent.pointerDown(g, { pointerId: 1, button: 0, clientX: from.x, clientY: from.y });
   const steps = 12;
   for (let i = 1; i <= steps; i++) {
     fireEvent.pointerMove(svg, {
       pointerId: 1,
-      clientX: from.x + ((to.x - from.x) * i) / steps,
-      clientY: from.y + ((to.y - from.y) * i) / steps,
+      clientX: from.x + ((end.x - from.x) * i) / steps,
+      clientY: from.y + ((end.y - from.y) * i) / steps,
     });
     frames(2);
   }
   frames(20);
   if (hold) return;
-  fireEvent.pointerUp(svg, { pointerId: 1, clientX: to.x, clientY: to.y });
+  fireEvent.pointerUp(svg, { pointerId: 1, clientX: end.x, clientY: end.y });
   frames(600);
 }
 
@@ -124,7 +133,7 @@ const H = 900;
 function click(container: HTMLElement, id: string) {
   const svg = container.querySelector("svg[role=img]")!;
   const g = container.querySelector(`[data-testid="graph-node"][data-node-id="${id}"]`)!;
-  const p = positions(container).get(id)!;
+  const p = onScreen(container, positions(container).get(id)!);
   fireEvent.pointerDown(g, { pointerId: 1, button: 0, clientX: p.x, clientY: p.y });
   fireEvent.pointerUp(svg, { pointerId: 1, clientX: p.x, clientY: p.y });
   frames(400);

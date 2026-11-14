@@ -19,6 +19,7 @@ import {
   planCourse,
   planRadial,
   splitEdges,
+  spreadCourses,
   startingConcepts,
   type Box,
   type RadialPlan,
@@ -467,6 +468,95 @@ describe("packCourses", () => {
 
   it("is steady: the same question has the same answer", () => {
     expect(packCourses([B, B, B, B, B], W, H)).toEqual(packCourses([B, B, B, B, B], W, H));
+  });
+});
+
+describe("spreadCourses", () => {
+  const box = (w: number, h: number, dx = 0, dy = 0): Box => ({
+    minX: -w / 2 + dx,
+    maxX: w / 2 + dx,
+    minY: -h / 2 + dy,
+    maxY: h / 2 + dy,
+  });
+  const B = box(600, 400);
+  const placed = (boxes: Box[], spots: Pt[]) =>
+    boxes.map((b, i) => ({ minX: spots[i].x + b.minX, maxX: spots[i].x + b.maxX, minY: spots[i].y + b.minY, maxY: spots[i].y + b.maxY }));
+
+  it("puts nothing nowhere, and one course with its box in the middle", () => {
+    expect(spreadCourses([], 3000, 1600)).toEqual([]);
+    const [spot] = spreadCourses([box(300, 200, 40, -30)], 3000, 1600);
+    expect(spot.x).toBeCloseTo(-40, 9);
+    expect(spot.y).toBeCloseTo(30, 9);
+  });
+
+  it("shares the room left over evenly: between the courses of a row and at the edges", () => {
+    // Three 600-wide courses in a row across 3000: 1200 to spare, in four gaps of 300.
+    const [a, b, c] = placed([B, B, B], spreadCourses([B, B, B], 3000, 500));
+    expect(a.minX - -1500).toBeCloseTo(300, 9);
+    expect(b.minX - a.maxX).toBeCloseTo(300, 9);
+    expect(c.minX - b.maxX).toBeCloseTo(300, 9);
+    expect(1500 - c.maxX).toBeCloseTo(300, 9);
+  });
+
+  it("shares it between rows the same way", () => {
+    // Two rows of two in 2000 × 1100: 300 to spare down the window, in three gaps of 100.
+    const [a, b, c, d] = placed([B, B, B, B], spreadCourses([B, B, B, B], 2000, 1100));
+    expect(a.minY).toBeCloseTo(b.minY, 9);
+    expect(c.minY).toBeCloseTo(d.minY, 9);
+    expect(a.minY - -550).toBeCloseTo(100, 9);
+    expect(c.minY - a.maxY).toBeCloseTo(100, 9);
+    expect(550 - c.maxY).toBeCloseTo(100, 9);
+  });
+
+  it("is `packCourses` when there is no room to spare", () => {
+    for (const [w, h] of [[900, 500], [500, 900]] as const) {
+      expect(spreadCourses([B, B, B], w, h)).toEqual(packCourses([B, B, B], w, h));
+    }
+  });
+});
+
+describe("planRadial, for a graph that opens zoomed out", () => {
+  const open = LABEL_ZOOM.hidden;
+  const nodes = [root("c1"), root("c2"), ...concepts(12, "c1"), ...concepts(9, "c2")];
+
+  it("plans a graph with room to spare to fill what the window shows at that zoom", () => {
+    const plan = planRadial(nodes, [], W, H, open);
+    const b = planBounds(plan, W, H)!;
+    // All of it shows at the opening zoom…
+    expect(b.maxX - b.minX).toBeLessThanOrEqual(W / open);
+    expect(b.maxY - b.minY).toBeLessThanOrEqual(H / open);
+    // …and it takes up far more of the window than the same graph planned at full size.
+    const full = planBounds(planRadial(nodes, [], W, H), W, H)!;
+    expect(b.maxX - b.minX).toBeGreaterThan(1.4 * (full.maxX - full.minX));
+    expect(b.maxY - b.minY).toBeGreaterThan(1.4 * (full.maxY - full.minY));
+  });
+
+  it("sets concepts further apart by the same amount everywhere, never by more than the zoom takes back", () => {
+    const plan = planRadial(nodes, [], W, H, open);
+    const full = planRadial(nodes, [], W, H);
+    const grown = [...plan.orbit].map(([id, o]) => o.radius / full.orbit.get(id)!.radius);
+    for (const g of grown) expect(g).toBeCloseTo(grown[0], 9);
+    expect(grown[0]).toBeGreaterThan(1);
+    expect(grown[0]).toBeLessThanOrEqual(1 / open + 1e-9);
+    // Each keeps its bearing round its course.
+    for (const [id, o] of plan.orbit) expect(o.angle).toBe(full.orbit.get(id)!.angle);
+  });
+
+  it("stays centred on the window", () => {
+    const b = planBounds(planRadial(nodes, [], W, H, open), W, H)!;
+    expect((b.minX + b.maxX) / 2).toBeCloseTo(W / 2, 0);
+    expect(Math.abs((b.minY + b.maxY) / 2 - H / 2)).toBeLessThan(40);
+  });
+
+  it("plans a graph too large for that as at full size", () => {
+    const many = ["c1", "c2", "c3", "c4"].flatMap((c) => [root(c), ...concepts(40, c)]);
+    const plan = planRadial(many, [], 700, 500, open);
+    const full = planRadial(many, [], 700, 500);
+    for (const [id, o] of plan.orbit) expect(o.radius).toBeCloseTo(full.orbit.get(id)!.radius, 9);
+  });
+
+  it("is the full-size plan at a zoom of 1", () => {
+    expect(planRadial(nodes, [], W, H, 1)).toEqual(planRadial(nodes, [], W, H));
   });
 });
 

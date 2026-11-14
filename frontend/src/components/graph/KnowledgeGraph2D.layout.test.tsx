@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
-import { planBounds, planRadial, splitEdges } from "@/lib/graph/radialLayout";
+import { LABEL_ZOOM, planBounds, planRadial, splitEdges } from "@/lib/graph/radialLayout";
 import { KnowledgeGraph2D } from "./KnowledgeGraph2D";
 
 afterEach(cleanup);
@@ -139,7 +139,7 @@ describe("KnowledgeGraph2D — where concepts settle", () => {
     const edges = [...chain(ids("c1").slice(0, 8)), ...chain(ids("c2").slice(3, 15)), ...chain(ids("c3").slice(0, 4))];
     const { container } = render(<KnowledgeGraph2D nodes={nodes} edges={edges} width={1240} height={744} legible />);
     const at = positions(container);
-    const plan = planRadial(nodes, splitEdges(nodes, edges).concept, 1240, 744);
+    const plan = planRadial(nodes, splitEdges(nodes, edges).concept, 1240, 744, LABEL_ZOOM.hidden);
     // A legible course root is elastic: its concepts tug it, its home holds it.
     for (const [id, c] of plan.centers) expect(dist(at.get(id)!, c), id).toBeLessThan(20);
   });
@@ -183,6 +183,67 @@ describe("KnowledgeGraph2D — the opening view", () => {
     expect(after.scale).toBeLessThan(before);
     const b = planBounds(planRadial(BIG, [], 400, 300), 400, 300)!;
     expect(after.scale).toBeCloseTo(Math.min(400 / (b.maxX - b.minX), 300 / (b.maxY - b.minY)), 9);
+  });
+
+  describe("a legible graph (the tree)", () => {
+    const COURSES = [root("c1"), root("c2"), root("c3"), ...concepts(14, "c1"), ...concepts(10, "c2"), ...concepts(8, "c3")];
+    const conceptLabels = (container: HTMLElement) =>
+      [...container.querySelectorAll('[data-testid="graph-node"] text:not([data-testid="graph-course-label"])')];
+
+    it("opens zoomed out to where its concept labels have faded out, though it would fit at full size", () => {
+      const { container } = render(<KnowledgeGraph2D nodes={SMALL} edges={[]} width={800} height={600} legible />);
+      expect(view(container).scale).toBe(LABEL_ZOOM.hidden);
+      const labels = conceptLabels(container);
+      expect(labels).toHaveLength(5);
+      for (const label of labels) expect(label).toHaveAttribute("opacity", "0");
+      // The course is still named.
+      expect(container.querySelector('[data-testid="graph-course-label"]')).toHaveTextContent("C1 101");
+    });
+
+    it("shows the labels again on zooming in", () => {
+      const { container } = render(<KnowledgeGraph2D nodes={SMALL} edges={[]} width={800} height={600} legible />);
+      for (let i = 0; i < 3; i++) fireEvent.click(screen.getByTestId("graph-zoom-in"));
+      for (const label of conceptLabels(container)) expect(Number(label.getAttribute("opacity"))).toBeGreaterThan(0.5);
+    });
+
+    it("opens with its courses spread through the window, not gathered in the middle of it", () => {
+      const [w, h] = [1500, 800];
+      const { container } = render(<KnowledgeGraph2D nodes={COURSES} edges={[]} width={w} height={h} legible />);
+      const v = view(container);
+      expect(v.scale).toBe(LABEL_ZOOM.hidden);
+      let [left, right, top, bottom] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const p of positions(container).values()) {
+        const [x, y] = [p.x * v.scale + v.tx, p.y * v.scale + v.ty];
+        // Every concept opens on screen…
+        expect(x).toBeGreaterThan(0);
+        expect(x).toBeLessThan(w);
+        expect(y).toBeGreaterThan(0);
+        expect(y).toBeLessThan(h);
+        [left, right, top, bottom] = [Math.min(left, x), Math.max(right, x), Math.min(top, y), Math.max(bottom, y)];
+      }
+      // …and between them they reach most of the way across it and down it
+      // (planned at full size and opened this far out, under a third of it).
+      expect(right - left).toBeGreaterThan(0.6 * w);
+      expect(bottom - top).toBeGreaterThan(0.6 * h);
+    });
+
+    it("resets to that opening view", () => {
+      const { container } = render(<KnowledgeGraph2D nodes={COURSES} edges={[]} width={1500} height={800} legible />);
+      const opened = viewTransform(container);
+      fireEvent.click(screen.getByTestId("graph-zoom-in"));
+      expect(viewTransform(container)).not.toBe(opened);
+      fireEvent.click(screen.getByTestId("graph-zoom-reset"));
+      expect(viewTransform(container)).toBe(opened);
+    });
+
+    it("opens further out still when the graph is too large to show at that zoom", () => {
+      const many = ["c1", "c2", "c3"].flatMap((c) => [root(c), ...concepts(60, c)]);
+      const { container } = render(<KnowledgeGraph2D nodes={many} edges={[]} width={600} height={400} legible />);
+      const b = planBounds(planRadial(many, [], 600, 400, LABEL_ZOOM.hidden), 600, 400)!;
+      const v = view(container);
+      expect(v.scale).toBeLessThan(LABEL_ZOOM.hidden);
+      expect(v.scale).toBeCloseTo(Math.min(600 / (b.maxX - b.minX), 400 / (b.maxY - b.minY)), 9);
+    });
   });
 
   it("leaves the student's own zoom alone when the window is re-measured", () => {
@@ -263,20 +324,25 @@ describe("KnowledgeGraph2D — re-planning", () => {
     const before = positions(shown.container);
     shown.rerender(<KnowledgeGraph2D nodes={nodes} edges={[]} width={2000} height={500} {...props} />);
     const after = positions(shown.container);
-    const plan = planRadial(nodes, [], 2000, 500);
+    // A legible graph is planned for the zoom it opens at.
+    const openZoom = "legible" in props ? LABEL_ZOOM.hidden : 1;
+    const plan = planRadial(nodes, [], 2000, 500, openZoom);
     // The plan really did move them a long way.
-    const first = planRadial(nodes, [], 700, 700);
+    const first = planRadial(nodes, [], 700, 700, openZoom);
     expect(dist(first.centers.get("root-c3")!, plan.centers.get("root-c3")!)).toBeGreaterThan(400);
     for (const [id, centre] of plan.centers) {
       // Left to the springs, a course stopped well short of a far-off new home.
       // (A legible root is elastic: its concepts, all round it, tug it a little.)
       expect(dist(after.get(id)!, centre), id).toBeLessThan("legible" in props ? 15 : 6);
-      // …and its concepts came with it, each where it sat round its course.
+      // …and its concepts came with it, each where it sat round its course
+      // (a legible course as much wider or closer as the new window has it
+      // planned: it is spread to fill the window it opens in).
       const course = id.replace("root-", "");
       for (const n of nodes.filter((m) => !m.is_subject_root && m.course_id === course)) {
+        const wider = plan.orbit.get(n.id)!.radius / first.orbit.get(n.id)!.radius;
         const was = { x: before.get(n.id)!.x - before.get(id)!.x, y: before.get(n.id)!.y - before.get(id)!.y };
         const is = { x: after.get(n.id)!.x - after.get(id)!.x, y: after.get(n.id)!.y - after.get(id)!.y };
-        expect(dist(was, is), n.id).toBeLessThan(12);
+        expect(dist({ x: was.x * wider, y: was.y * wider }, is), n.id).toBeLessThan(12 * Math.max(1, wider));
       }
     }
   });

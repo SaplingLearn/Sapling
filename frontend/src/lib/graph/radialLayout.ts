@@ -966,17 +966,30 @@ function coursePlan(ids: readonly string[], edges: readonly GraphEdge[], rootId:
  * at full size, the one shaped most like the window wins.
  */
 export function packCourses(boxes: readonly Box[], width: number, height: number): Pt[] {
+  return arrangeCourses(boxes, width, height)?.spots ?? [];
+}
+
+/** One way of setting courses out in rows: where each sits, the rows' lengths, and how large it shows. */
+type Arrangement = { spots: Pt[]; lengths: number[]; scale: number; fill: number };
+
+/**
+ * The arrangement `packCourses` settles on. `cap` is the largest size worth
+ * showing the courses at: arrangements that reach it are told apart by how
+ * well they fill the window.
+ */
+function arrangeCourses(boxes: readonly Box[], width: number, height: number, cap = 1): Arrangement | null {
   const count = boxes.length;
-  if (!count) return [];
+  if (!count) return null;
   const w = Math.max(width, 1);
   const h = Math.max(height, 1);
-  let best: { spots: Pt[]; scale: number; fill: number } | null = null;
+  let best: Arrangement | null = null;
   for (let rows = 1; rows <= count; rows++) {
     const spots: Pt[] = [];
+    const lengths = rowLengths(count, rows);
     let top = 0;
     let spanX = 0;
     let k = 0;
-    for (const length of rowLengths(count, rows)) {
+    for (const length of lengths) {
       const row = boxes.slice(k, k + length);
       const rowHeight = Math.max(...row.map((b) => b.maxY - b.minY));
       const rowWidth = row.reduce((sum, b) => sum + b.maxX - b.minX, 0) + COURSE_MARGIN * (length - 1);
@@ -991,13 +1004,47 @@ export function packCourses(boxes: readonly Box[], width: number, height: number
     }
     const spanY = top - COURSE_MARGIN;
     for (const s of spots) s.y -= spanY / 2;
-    const scale = Math.min(w / spanX, h / spanY, 1);
+    const scale = Math.min(w / spanX, h / spanY, cap);
     const fill = Math.min((spanX * scale) / w, (spanY * scale) / h);
     if (!best || scale > best.scale + 1e-9 || (scale > best.scale - 1e-9 && fill > best.fill + 1e-9)) {
-      best = { spots, scale, fill };
+      best = { spots, lengths, scale, fill };
     }
   }
-  return best!.spots;
+  return best;
+}
+
+/**
+ * `packCourses` for a graph that opens zoomed out, with room to spare: the
+ * same rows, but the room left over is shared out evenly (between the
+ * courses of a row, between the rows, and at the edges) rather than left
+ * round courses gathered in the middle. Courses never come nearer each other
+ * than `COURSE_MARGIN`.
+ */
+export function spreadCourses(boxes: readonly Box[], width: number, height: number): Pt[] {
+  const best = arrangeCourses(boxes, width, height);
+  if (!best) return [];
+  const rows: Box[][] = [];
+  let k = 0;
+  for (const length of best.lengths) {
+    rows.push(boxes.slice(k, k + length));
+    k += length;
+  }
+  const heights = rows.map((row) => Math.max(...row.map((b) => b.maxY - b.minY)));
+  const tall = heights.reduce((sum, v) => sum + v, 0);
+  const gapY = Math.max(COURSE_MARGIN, (Math.max(height, 1) - tall) / (rows.length + 1));
+  const spots: Pt[] = [];
+  let top = -(tall + gapY * (rows.length - 1)) / 2;
+  rows.forEach((row, r) => {
+    const wide = row.reduce((sum, b) => sum + b.maxX - b.minX, 0);
+    const gapX = Math.max(COURSE_MARGIN, (Math.max(width, 1) - wide) / (row.length + 1));
+    let left = -(wide + gapX * (row.length - 1)) / 2;
+    for (const b of row) {
+      spots.push({ x: left - b.minX, y: top + (heights[r] - (b.maxY - b.minY)) / 2 - b.minY });
+      left += b.maxX - b.minX + gapX;
+    }
+    top += heights[r] + gapY;
+  });
+  return spots;
 }
 
 /**
@@ -1038,12 +1085,22 @@ export type RadialPlan = {
  * Plan every course and where each sits. Concepts whose course root is not
  * in the node set (a quiz neighbourhood fragment) are planned round the
  * middle of the canvas instead.
+ *
+ * `openZoom` under 1 plans for a graph that opens zoomed out that far (the
+ * tree, which opens with its concept labels faded out): the window then
+ * shows `1 / openZoom` times as much each way, and the graph is planned to
+ * be spread evenly through all of it. Concepts are set further apart, by up
+ * to `1 / openZoom` (as far apart on the opening screen as they are planned
+ * at full size, and no further), and the courses share out whatever room is
+ * still left (`spreadCourses`). A graph too large for that is planned as at
+ * full size and opens further out still.
  */
 export function planRadial(
   nodes: GraphNode[],
   conceptEdges: GraphEdge[],
   width: number,
   height: number,
+  openZoom = 1,
 ): RadialPlan {
   const roots = nodes.filter((n) => n.is_subject_root);
   const rootByCourse = new Map(roots.map((r) => [r.course_id, r.id]));
@@ -1066,19 +1123,36 @@ export function planRadial(
   }
   for (const r of roots) if (!boxes.has(r.id)) boxes.set(r.id, { ...ROOT_BOX });
 
+  // Opening zoomed out: the room the window shows then, less a margin at its
+  // edges, and how much further apart the concepts can sit and still fit it.
+  const spread = openZoom > 0 && openZoom < 1;
+  const roomX = Math.max(width / (spread ? openZoom : 1) - 2 * COURSE_MARGIN, 1);
+  const roomY = Math.max(height / (spread ? openZoom : 1) - 2 * COURSE_MARGIN, 1);
+  let grow = 1;
+  if (spread) {
+    const whole = roots.length ? roots.map((r) => boxes.get(r.id)!) : [...boxes.values()];
+    grow = Math.max(1, arrangeCourses(whole, roomX, roomY, 1 / openZoom)?.scale ?? 1);
+    if (grow > 1) {
+      for (const [rootId, course] of courses) {
+        boxes.set(rootId, boxOf([...course.seats.values()].map((p) => ({ x: p.x * grow, y: p.y * grow })), rootId != null));
+      }
+    }
+  }
+
   const orbit: RadialPlan["orbit"] = new Map();
   for (const [id, rootId] of rootOf) {
     const course = courses.get(rootId)!;
     const seat = course.seats.get(id)!;
     orbit.set(id, {
       rootId,
-      radius: Math.hypot(seat.x, seat.y),
+      radius: Math.hypot(seat.x, seat.y) * grow,
       angle: Math.atan2(seat.y, seat.x),
       spoke: course.spokes.has(id),
     });
   }
 
-  const spots = packCourses(roots.map((r) => boxes.get(r.id)!), width, height);
+  const rootBoxes = roots.map((r) => boxes.get(r.id)!);
+  const spots = spread ? spreadCourses(rootBoxes, roomX, roomY) : packCourses(rootBoxes, width, height);
   const centers: RadialPlan["centers"] = new Map(
     roots.map((r, i) => [r.id, { x: width / 2 + spots[i].x, y: height / 2 + spots[i].y }]),
   );

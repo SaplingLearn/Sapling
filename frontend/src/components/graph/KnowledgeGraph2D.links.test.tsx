@@ -11,7 +11,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { blobProfile, rimRadius, wobbleFor } from "@/lib/graph/blobShape";
@@ -224,10 +224,13 @@ describe("KnowledgeGraph2D links — the hand-drawn bar", () => {
   });
 
   it("gives directed links an arrowhead in legible mode, sized in the graph's own units", () => {
-    // Arrowheads show from 0.9× up: a window the whole graph fits in at 1×.
     const { container } = render(
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={1200} height={900} legible />,
     );
+    // A legible graph opens zoomed out, its links quiet; arrowheads show
+    // from 0.9× up, three presses in.
+    expect(edgesOf(container).filter((e) => e.hasAttribute("marker-end"))).toHaveLength(0);
+    for (let i = 0; i < 3; i++) fireEvent.click(container.querySelector('[data-testid="graph-zoom-in"]')!);
     const arrowed = edgesOf(container).filter((e) => e.hasAttribute("marker-end"));
     // prerequisite and builds_on; `related` and the course's own links carry none.
     expect(arrowed).toHaveLength(2);
