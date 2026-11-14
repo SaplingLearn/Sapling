@@ -199,8 +199,28 @@ describe('session route — minted session lifetime', () => {
     const payload = payloadOf(cookie?.value ?? '');
     const now = Math.floor(Date.now() / 1000);
     expect(Math.abs((payload.iat as number) - now)).toBeLessThanOrEqual(2);
-    expect((payload.exp as number) - (payload.iat as number)).toBe(7 * 86400);
+    expect((payload.exp as number) - Math.floor(payload.iat as number)).toBe(7 * 86400);
     expect(cookie?.maxAge).toBe(7 * 86400);
+  });
+
+  it('mints iat to the millisecond and exp in whole seconds', async () => {
+    // A whole-second iat cannot tell a session minted earlier in a sign-out's
+    // own second from one minted after it (backend auth_guard.issued_before).
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    const authToken = await handoff('user_1');
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_012_345);
+    try {
+      const res = await POST(new NextRequest(URL, {
+        method: 'POST',
+        headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+        body: JSON.stringify({ authToken }),
+      }));
+      const payload = payloadOf(res.cookies.get('sapling_session')?.value ?? '');
+      expect(payload.iat).toBe(1_700_000_012.345);
+      expect(payload.exp).toBe(1_700_000_012 + 7 * 86400);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

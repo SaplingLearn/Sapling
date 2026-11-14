@@ -191,5 +191,8 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     expect(await verifySession(await sign({ user_id: 'u', exp: now + 29 * day }))).toEqual({ userId: 'u' });
     // An iat in the future is refused.
     expect(await verifySession(await sign({ user_id: 'u', iat: now + 3600, exp: now + day }))).toBeNull();
+    // A millisecond iat (what both minters issue) verifies.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now - 0.655, exp: now + day, typ: 'session' })))
+      .toEqual({ userId: 'u' });
   });
 });

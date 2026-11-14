@@ -40,7 +40,7 @@ from tests.test_auth_session_access_756 import (  # noqa: F401
 )
 
 
-def _token_at(iat: int, user_id: str = "user_alice", ttl: int = config.SESSION_MAX_AGE_SECONDS) -> str:
+def _token_at(iat: float, user_id: str = "user_alice", ttl: int = config.SESSION_MAX_AGE_SECONDS) -> str:
     """A session token issued at `iat` (unix seconds)."""
     original = session_tokens._now
     session_tokens._now = lambda: iat
@@ -68,7 +68,17 @@ def test_minted_tokens_carry_iat_and_cap_the_lifetime():
     now = int(time.time())
     payload = _payload(session_tokens.mint_session("u", ttl=90 * 86400, secret=SECRET))
     assert abs(payload["iat"] - now) <= 2
-    assert payload["exp"] - payload["iat"] == config.SESSION_MAX_AGE_SECONDS
+    assert payload["exp"] - int(payload["iat"]) == config.SESSION_MAX_AGE_SECONDS
+
+
+def test_iat_is_minted_to_the_millisecond(monkeypatch):
+    # A JWT NumericDate may be fractional. Whole seconds would make a session
+    # minted earlier in a sign-out's own second indistinguishable from one
+    # minted after it; `exp` stays whole seconds.
+    monkeypatch.setattr(session_tokens.time, "time", lambda: 1_700_000_012.2)
+    payload = _payload(session_tokens.mint_session("u", ttl=3600, secret=SECRET))
+    assert payload["iat"] == 1_700_000_012.2
+    assert payload["exp"] == 1_700_000_012 + 3600
 
 
 def test_session_max_age_is_seven_days():
@@ -95,20 +105,40 @@ class TestRevocation:
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 60))
         assert auth_guard._real_get_session_user_id(_request(_token_at(now - 30))) == "user_alice"
 
-    def test_session_minted_in_the_sign_out_second_is_honoured(self, real_guard):
-        # `iat` is whole seconds; the cut-off is sub-second. A session minted
-        # in the same second as the sign-out (sign out, then sign straight back
-        # in) must not be refused because its iat was rounded down.
+    def test_session_minted_earlier_in_the_sign_out_second_is_revoked(self, real_guard):
+        # Minted at 12.2, signed out at 12.9: whole seconds would compare 12 < 12.
         now = int(time.time())
-        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.7))
-        assert auth_guard._real_get_session_user_id(_request(_token_at(now))) == "user_alice"
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.9))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now + 0.2)))
+        assert exc.value.detail == "Session revoked"
+
+    def test_session_minted_later_in_the_sign_out_second_is_honoured(self, real_guard):
+        # Sign out, then straight back in within the same second.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.2))
+        assert auth_guard._real_get_session_user_id(_request(_token_at(now + 0.9))) == "user_alice"
 
     def test_session_minted_a_second_before_the_sign_out_is_revoked(self, real_guard):
         now = int(time.time())
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.7))
         with pytest.raises(HTTPException) as exc:
-            auth_guard._real_get_session_user_id(_request(_token_at(now - 1)))
+            auth_guard._real_get_session_user_id(_request(_token_at(now - 0.3)))
         assert exc.value.detail == "Session revoked"
+
+    def test_whole_second_iat_in_the_sign_out_second_is_revoked(self, real_guard):
+        # A legacy whole-second `iat` could be anywhere in its second, so one
+        # from the sign-out's own second gets no benefit of the doubt.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.1))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now)))
+        assert exc.value.detail == "Session revoked"
+
+    def test_whole_second_iat_after_the_sign_out_second_is_honoured(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 0.3))
+        assert auth_guard._real_get_session_user_id(_request(_token_at(now))) == "user_alice"
 
     def test_never_signed_out_revokes_nothing(self, real_guard):
         real_guard.select.return_value = _row(sessions_valid_after=None)

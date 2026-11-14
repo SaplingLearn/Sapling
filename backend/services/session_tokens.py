@@ -6,7 +6,7 @@ and what the frontend session BFF (`frontend/src/lib/sessionToken.ts`) issues to
 the browser:
 
     payload     = {"user_id": <str>, "exp": <unix seconds>, "typ": "session"|"handoff",
-                   "iat": <unix seconds>}
+                   "iat": <unix seconds, to the millisecond>}
     payload_b64 = base64url(json.dumps(payload)).rstrip("=")
     sig_b64     = base64url(HMAC_SHA256(SESSION_SECRET, payload_b64)).rstrip("=")
     token       = f"{payload_b64}.{sig_b64}"
@@ -56,10 +56,11 @@ DEFAULT_TTL_SECONDS = 3600
 MAX_SESSION_TTL_SECONDS = config.SESSION_MAX_AGE_SECONDS
 
 
-def _now() -> int:
-    """Current unix time. Seam so tests can freeze the clock and compare tokens
+def _now() -> float:
+    """Current unix time to the millisecond (a JWT NumericDate may be
+    fractional). Seam so tests can freeze the clock and compare tokens
     byte-for-byte against a reference implementation."""
-    return int(time.time())
+    return round(time.time(), 3)
 
 
 def mint_session(
@@ -88,11 +89,13 @@ def mint_session(
     if typ not in TOKEN_TYPES:
         raise ValueError(f"unknown token typ {typ!r}; expected one of {sorted(TOKEN_TYPES)}")
     # `iat` (issued at) is what server-side revocation (users.sessions_valid_after)
-    # and the admin step-up window compare against; the lifetime is capped at
-    # the session maximum.
+    # and the admin step-up window compare against. It carries milliseconds so
+    # a session minted earlier in a sign-out's own second is still older than
+    # it (auth_guard.issued_before); `exp` stays whole seconds. The lifetime is
+    # capped at the session maximum.
     now = _now()
     ttl = min(int(ttl), MAX_SESSION_TTL_SECONDS)
-    payload = json.dumps({"user_id": user_id, "exp": now + ttl, "typ": typ, "iat": now}).encode()
+    payload = json.dumps({"user_id": user_id, "exp": int(now) + ttl, "typ": typ, "iat": now}).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     sig = hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")

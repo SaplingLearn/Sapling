@@ -65,12 +65,15 @@ async function importKey(): Promise<CryptoKey> {
 }
 
 export async function signSession(userId: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  // Unix seconds to the millisecond (a JWT NumericDate may be fractional).
+  const now = Date.now() / 1000;
   // `iat` is what server-side revocation (sign-out) and the admin step-up
-  // window compare against (backend services/auth_guard.py).
+  // window compare against (backend services/auth_guard.py). Its milliseconds
+  // keep a session minted earlier in a sign-out's own second older than the
+  // sign-out (auth_guard.issued_before); `exp` stays whole seconds.
   const payload = JSON.stringify({
     user_id: userId,
-    exp: now + SESSION_MAX_AGE,
+    exp: Math.floor(now) + SESSION_MAX_AGE,
     typ: 'session',
     iat: now,
   });
