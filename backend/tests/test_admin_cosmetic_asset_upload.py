@@ -79,3 +79,21 @@ def test_the_storage_helper_type_check_applies():
 
     assert r.status_code == 415
     put.assert_not_called()
+
+
+def test_an_oversize_body_is_refused_before_decoding():
+    """Same cap as the achievement icon body: past 8 M base64 characters the
+    request is a 422 and nothing is decoded or stored."""
+    from models import AchievementIconBody, CosmeticAssetBody
+
+    cap = AchievementIconBody.model_fields["file_base64"].metadata[0].max_length
+    assert cap == 8_000_000
+    with patch("routes.admin.require_admin"), \
+         patch("routes.admin.get_session_user_id", return_value="admin1"), \
+         patch_admin("upload_cosmetic_asset") as up:
+        r = _client().post("/api/admin/cosmetics/assets",
+                           json={"file_base64": "A" * (cap + 4), "content_type": "image/png"})
+
+    assert r.status_code == 422
+    up.assert_not_called()
+    assert CosmeticAssetBody.model_fields["content_type"].metadata[0].max_length == 100

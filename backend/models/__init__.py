@@ -649,9 +649,10 @@ class AchievementIconBody(BaseModel):
 
 class CosmeticAssetBody(BaseModel):
     """An admin cosmetic image, uploaded through the backend (never the
-    browser's anon key) before the cosmetic row that points at it exists."""
-    file_base64: str
-    content_type: str
+    browser's anon key) before the cosmetic row that points at it exists.
+    Capped like AchievementIconBody: the storage helper allows 5 MB."""
+    file_base64: str = Field(max_length=8_000_000)
+    content_type: str = Field(max_length=100)
 
 
 class UpdateXpRuleBody(BaseModel):
