@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from routes.flashcards import _COURSE_DOC_LIMIT, _get_course_documents
+from services.academics import COURSE_NOT_ENROLLED_DETAIL
 from tests.split_patches import patch_flashcards
 
 client = TestClient(app)
@@ -301,6 +302,7 @@ class TestGenerateThreadsSemester:
         with patch_flashcards("_get_course_documents", return_value=[]) as gd, \
              patch_flashcards("_get_weak_concepts", return_value=[]), \
              patch_flashcards("generate_flashcards", return_value=[{"front": "q", "back": "a"}]), \
+             patch_flashcards("enrolled_offering_for_course", return_value="off-c1"), \
              patch_flashcards("table", side_effect=_tables([])), \
              patch_flashcards("check_achievements"):
             r = client.post("/api/flashcards/generate", json={
@@ -331,10 +333,11 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
     offerings, so the list can say which course it belongs to (before this
     every generated card came back with no course at all) — and with the
     offering the list will look for it under: the SELECTED semester's, else
-    the one the student is enrolled in, else what the import route uses."""
+    the one the student is enrolled in. A course the student is not enrolled
+    in is refused."""
 
     def _generate(self, body, *, term_offering=None, enrolled=None, fallback="off-any",
-                  term_id="term-f25"):
+                  term_id="term-f25", status=200):
         """`resolve_offering` answers `term_offering` when asked for a term and
         `fallback` when not; `enrolled` is the student's own offering."""
         captured: list[dict] = []
@@ -352,8 +355,9 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
                               side_effect=_table_recording_flashcard_inserts(captured)), \
              patch_flashcards("check_achievements"):
             r = client.post("/api/flashcards/generate", json={"user_id": USER_ID, "count": 1, **body})
-        assert r.status_code == 200
-        self.response_cards = r.json()["flashcards"]
+        assert r.status_code == status, r.text
+        self.response = r.json()
+        self.response_cards = self.response.get("flashcards")
         self.enrolled_mock = enrolled_mock
         return captured, resolve_mock
 
@@ -366,7 +370,6 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
             term_offering="off-f25", enrolled="off-s26",
         )
         resolve.assert_called_once_with("c1", "term-f25", fallback=False)
-        self.enrolled_mock.assert_not_called()
         assert [r["offering_id"] for r in rows] == ["off-f25"]
 
     def test_a_semester_without_an_offering_of_the_course_falls_to_the_enrollment(self):
@@ -390,26 +393,31 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
         resolve.assert_not_called()
         assert [r["offering_id"] for r in rows] == ["off-s26"]
 
-    def test_with_a_course_the_student_is_not_enrolled_in_the_offering_is_stamped(self):
-        """The import route's rule, last: the course's current-term offering."""
-        rows, resolve = self._generate({"topic": "Recursion", "course_id": "c1"}, fallback="off-1")
-        resolve.assert_called_once_with("c1")
-        assert [r["offering_id"] for r in rows] == ["off-1"]
+    @pytest.mark.parametrize("semester", [None, "Fall 2025"])
+    @pytest.mark.parametrize("course_id", ["c-not-mine", "no-such-course"])
+    def test_a_course_the_student_is_not_enrolled_in_is_refused(self, course_id, semester):
+        """As a saved set for it is (404, the "not yours" answer): the cards
+        would otherwise be filed under an offering of a class the student is
+        not in. Refused before any context read or model call."""
+        body = {"topic": "Recursion", "course_id": course_id}
+        if semester:
+            body["semester"] = semester
+        with patch_flashcards("generate_flashcards") as agent, \
+             patch_flashcards("_get_course_documents") as docs:
+            rows, resolve = self._generate(body, enrolled=None, term_offering="off-f25",
+                                           fallback="off-1", status=404)
+        assert self.response["detail"] == COURSE_NOT_ENROLLED_DETAIL
+        self.enrolled_mock.assert_called_once_with(USER_ID, course_id)
+        resolve.assert_not_called()
+        agent.assert_not_called()
+        docs.assert_not_called()
+        assert rows == []
 
     def test_without_a_course_the_card_stays_unfiled(self):
         rows, resolve = self._generate({"topic": "Anything"})
         resolve.assert_not_called()
         self.enrolled_mock.assert_not_called()
         assert [r["offering_id"] for r in rows] == [None]
-
-    def test_a_course_id_that_matches_no_offering_leaves_the_card_unfiled(self):
-        """`resolve_offering` answers None for an unknown course: the cards are
-        still generated and saved, with no course."""
-        rows, resolve = self._generate({"topic": "Recursion", "course_id": "no-such-course"},
-                                       fallback=None)
-        resolve.assert_called_once_with("no-such-course")
-        assert [r["offering_id"] for r in rows] == [None]
-        assert [c["course_id"] for c in self.response_cards] == [None]
 
     def test_the_response_says_which_course_the_cards_were_filed_under(self):
         """`course_id` is the key the card list derives; the response carries
@@ -425,7 +433,8 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
         with patch_flashcards("_get_course_documents", return_value=[]), \
              patch_flashcards("_get_weak_concepts", return_value=[]), \
              patch_flashcards("generate_flashcards") as model, \
-             patch_flashcards("resolve_offering", side_effect=RuntimeError("db down")), \
+             patch_flashcards("enrolled_offering_for_course",
+                              side_effect=RuntimeError("db down")), \
              patch_flashcards("table") as t:
             r = TestClient(app, raise_server_exceptions=False).post(
                 "/api/flashcards/generate",
@@ -751,7 +760,7 @@ class TestWeakConceptsStayInTheRequestsCourse:
              patch_flashcards("_get_weak_concepts", return_value=[]) as weak, \
              patch_flashcards("generate_flashcards", return_value=[]), \
              patch_flashcards("resolve_offering", return_value=None), \
-             patch_flashcards("enrolled_offering_for_course", return_value=None), \
+             patch_flashcards("enrolled_offering_for_course", return_value="off-cs"), \
              patch_flashcards("table"), \
              patch_flashcards("check_achievements"):
             client.post("/api/flashcards/generate", json={
