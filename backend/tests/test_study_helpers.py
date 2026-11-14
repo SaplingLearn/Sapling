@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+import services.study as study
 from services.study import daily, goal
 from services.study.daily import Window
 
@@ -392,8 +393,6 @@ def test_set_daily_goal_lets_a_failed_write_fail():
 
 
 def test_package_exports_its_public_api():
-    import services.study as study
-
     assert sorted(study.__all__) == [
         "DEFAULT_GOAL_MIN", "MAX_GOAL_MIN", "MIN_GOAL_MIN",
         "get_daily", "read_daily_goal", "set_daily_goal",

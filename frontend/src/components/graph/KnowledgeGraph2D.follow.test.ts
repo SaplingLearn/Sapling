@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import GOLDEN from "./__fixtures__/knowledgeGraph2D.follow.golden.json";
+import { ROOT_ROOM } from "@/lib/graph/radialLayout";
 import { followForce } from "./KnowledgeGraph2D";
 
 /**
@@ -8,7 +9,10 @@ import { followForce } from "./KnowledgeGraph2D";
  * simulation effect, closing over refs. The golden
  * (`__fixtures__/knowledgeGraph2D.follow.golden.json`) was captured from that
  * inline body, run verbatim on these scenarios (two ticks each), so the
- * extracted `followForce` is held to exactly the same per-tick math.
+ * extracted `followForce` is held to exactly the same per-tick math. One
+ * value has changed since, on purpose: a freed concept's orbit tracks it no
+ * nearer its course root than `ROOT_ROOM` (it was 40), so a course dragged
+ * into its own concepts no longer leaves them under its label.
  */
 
 type Node = { id: string; x?: number; y?: number; vx?: number; vy?: number; fx?: number | null; fy?: number | null };
@@ -225,7 +229,8 @@ describe("followForce", () => {
     expect(world.orbit.get("b")).toEqual({
       rootId: "root",
       angle: Math.atan2(260 - 240, 330 - 300),
-      radius: Math.max(40, Math.hypot(30, 20)),
+      // Never nearer its course root than the plan keeps a concept.
+      radius: Math.max(ROOT_ROOM, Math.hypot(30, 20)),
     });
     // A rootless orbit tracks the window centre.
     expect(world.orbit.get("c")!.angle).toBe(Math.atan2(250 - 240, 320 - 300));

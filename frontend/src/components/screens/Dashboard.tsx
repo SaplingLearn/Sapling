@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { MiniStat } from "../MiniStat";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { useGraphSize } from "../graph/useGraphSize";
 import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../graph/CoursesKey";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
@@ -410,26 +411,12 @@ export function Dashboard() {
   const focus = useCourseFocus();
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
-  // Graph container is now flex-filled, so there's no "correct" initial
-  // height — 420 is a reasonable pre-measurement guess that lines up
-  // with the new minHeight. ResizeObserver corrects it on mount.
-  const [size, setSize] = React.useState({ w: 720, h: 420 });
-  // Callback ref so the ResizeObserver (re)attaches every time the graph
-  // container mounts — the loading branch renders before the graph exists,
-  // so a plain useRef + useEffect misses the attachment.
-  const roRef = React.useRef<ResizeObserver | null>(null);
-  const gRefCb = React.useCallback((el: HTMLDivElement | null) => {
-    roRef.current?.disconnect();
-    roRef.current = null;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        setSize({ w: e.contentRect.width, h: e.contentRect.height });
-      }
-    });
-    ro.observe(el);
-    roRef.current = ro;
-  }, []);
+  // The graph container is flex-filled, so its size is known only once it
+  // is laid out: measured as it mounts, before the first paint, and the
+  // graph waits for it rather than opening at a guess and re-laying itself
+  // out a frame later. 720 × 420 stands in only where nothing can be
+  // measured (a test DOM).
+  const [gRefCb, size] = useGraphSize<HTMLDivElement>({ w: 720, h: 420 });
 
   const suggest = search.get("suggest");
   const [suggestDismissed, setSuggestDismissed] = React.useState(false);
@@ -528,8 +515,11 @@ export function Dashboard() {
         // The callback ref stays in this JSX (React may not see it handed to
         // a render-time call); the layers inside are a plain render call.
         graphArea: (
-          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
-            {renderGraphLayers({
+          // The card grows with its content, so the graph's own height counts:
+          // at least 420, as it has always opened (the pre-measurement guess
+          // used to hold the card at that height).
+          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 420 }}>
+            {size && renderGraphLayers({
               nodes,
               edges,
               courseProgress,
@@ -1211,24 +1201,20 @@ function FullscreenGraph({
   highlightId?: string;
   onNodeClick: (n: GraphNode) => void;
 }) {
-  const [size, setSize] = React.useState({ w: 1200, h: 700 });
-  const ref = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const ro = new ResizeObserver(e => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
-    if (ref.current) ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
+  const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
-      <KnowledgeGraph
-        legible
-        nodes={nodes}
-        edges={edges}
-        width={size.w}
-        height={size.h}
-        highlightId={highlightId}
-        onNodeClick={onNodeClick}
-      />
+      {size && (
+        <KnowledgeGraph
+          legible
+          nodes={nodes}
+          edges={edges}
+          width={size.w}
+          height={size.h}
+          highlightId={highlightId}
+          onNodeClick={onNodeClick}
+        />
+      )}
     </div>
   );
 }

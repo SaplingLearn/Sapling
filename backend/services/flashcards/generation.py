@@ -110,7 +110,7 @@ def _after_generation(user_id: str, card_count: int, documents: int, weak_concep
     try:
         check_achievements(user_id, "flashcards_created", {})
     except Exception:
-        pass
+        logger.warning("flashcards_created achievement check failed", exc_info=True)
 
 
 def generate(
