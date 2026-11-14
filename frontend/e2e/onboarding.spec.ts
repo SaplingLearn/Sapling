@@ -47,10 +47,13 @@ test("the onboarding funnel renders for an un-onboarded user, with Back and Sign
     expect(box, "the onboarding root should have a layout box").not.toBeNull();
     expect(box!.height, "onboarding must fill the viewport, not collapse").toBeGreaterThan(400);
 
-    // After the intro, the first screen asks for a name, and Next is gated
-    // on one. The way out is on screen from the start.
+    // After the intro, the first screen asks for a first and an optional
+    // last name, both from the account, and Next is gated on the first. The
+    // way out is on screen from the start.
     const name = page.getByTestId("onboarding-name");
     await expect(name).toBeVisible({ timeout: 15_000 });
+    await expect(name).toHaveValue("Rich");
+    await expect(page.getByTestId("onboarding-last-name")).toHaveValue("New");
     await expect(page.getByTestId("onboarding-sign-out")).toBeVisible();
     const next = page.getByTestId("onboarding-continue");
     await name.fill("   ");
@@ -62,6 +65,23 @@ test("the onboarding funnel renders for an un-onboarded user, with Back and Sign
     // machine drives the frame.
     await next.click();
     await expect(page.getByTestId("onboarding-dob-month")).toBeVisible();
+
+    // A birthday under 13 is asked about before anything is blocked, so a
+    // slipped year is put right on the spot.
+    const pick = async (field: string, value: string) => {
+      await page.getByTestId(`onboarding-dob-${field}`).click();
+      await page.getByTestId(`onboarding-dob-${field}-${value}`).click();
+    };
+    await pick("month", "1");
+    await pick("day", "1");
+    await pick("year", String(new Date().getFullYear() - 10));
+    await expect(page.getByTestId("onboarding-under13-confirm")).toBeVisible();
+    await expect(next).toBeDisabled();
+    await page.getByTestId("onboarding-under13-change").click();
+    await expect(page.getByTestId("onboarding-under13-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("onboarding-blocked")).toHaveCount(0);
+    await pick("year", "2000");
+    await expect(next).toBeEnabled();
 
     // Back is a real, visible button, reachable from the keyboard, and
     // returns to the name screen with the answer kept.

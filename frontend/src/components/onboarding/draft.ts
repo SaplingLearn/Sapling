@@ -4,12 +4,14 @@
  * through lib/onboardingDraft.ts.
  */
 import type { OnboardingCourse } from "@/lib/api";
-import { PRIVACY_VERSION, TERMS_VERSION } from "@/lib/legal/versions";
 import { readOnboardingDraft } from "@/lib/onboardingDraft";
 import { LAST, SCREENS, screenIndex, type ConnChoices, type ScreenId } from "./flow";
 
 export interface Draft {
+  /** The first name to call the student by. */
   name: string;
+  /** Optional; prefilled from the Google account like the first name. */
+  lastName: string;
   dobM: string;
   dobD: string;
   dobY: string;
@@ -18,14 +20,13 @@ export interface Draft {
   courses: OnboardingCourse[];
   /** "My courses aren't listed": the save sends no courses. */
   coursesLater: boolean;
+  /** The Terms and Privacy answers live only as long as the page: they are
+   * never stored (forStorage), so they always belong to the text this page
+   * shows, which is the version Finish sends. */
   termsEnd: boolean;
   termsOk: boolean;
-  /** The Terms version that termsEnd and termsOk are about. */
-  termsVersion: string;
   privEnd: boolean;
   privOk: boolean;
-  /** The Privacy Policy version that privEnd and privOk are about. */
-  privacyVersion: string;
   /** Accounts to connect once the profile is saved. */
   conn: ConnChoices;
   screen: number;
@@ -34,32 +35,17 @@ export interface Draft {
 }
 
 export const EMPTY_DRAFT: Draft = {
-  name: "", dobM: "", dobD: "", dobY: "", school: "", year: "", courses: [], coursesLater: false,
-  termsEnd: false, termsOk: false, termsVersion: "", privEnd: false, privOk: false, privacyVersion: "",
+  name: "", lastName: "", dobM: "", dobD: "", dobY: "", school: "", year: "", courses: [], coursesLater: false,
+  termsEnd: false, termsOk: false, privEnd: false, privOk: false,
   conn: {}, screen: 0, done: [],
 };
 
 const TERMS_SCREEN = screenIndex("terms");
-const PRIVACY_SCREEN = screenIndex("privacy");
+const NOT_AGREED = { termsEnd: false, termsOk: false, privEnd: false, privOk: false } as const;
 
-/** Whether both boxes were ticked on the Terms and Privacy Policy in force.
- * Finish sends those versions, so it needs this. */
-export function legalAccepted(d: Draft): boolean {
-  return d.termsOk && d.termsVersion === TERMS_VERSION && d.privOk && d.privacyVersion === PRIVACY_VERSION;
-}
-
-/**
- * Reading or accepting an older Terms or Privacy Policy (or one saved without
- * its version) doesn't count: that screen starts over, and a draft past it
- * goes back to it. So a resumed draft never sends today's version for text
- * the student never saw.
- */
-export function withCurrentLegal(d: Draft): Draft {
-  const terms = d.termsVersion === TERMS_VERSION ? {} : { termsEnd: false, termsOk: false, termsVersion: "" };
-  const privacy = d.privacyVersion === PRIVACY_VERSION ? {} : { privEnd: false, privOk: false, privacyVersion: "" };
-  const out = { ...d, ...terms, ...privacy };
-  const redo = !out.termsOk ? TERMS_SCREEN : !out.privOk ? PRIVACY_SCREEN : LAST;
-  return { ...out, screen: Math.min(out.screen, redo) };
+/** What is written to storage: the draft without its Terms and Privacy answers. */
+export function forStorage(d: Draft): Draft {
+  return { ...d, ...NOT_AGREED };
 }
 
 function resumable(d: Draft): boolean {
@@ -68,13 +54,18 @@ function resumable(d: Draft): boolean {
 }
 
 /** The account's saved draft, or null: none, expired, or from an older
- * onboarding shape (step/first_name), which is not resumable. Its Terms and
- * Privacy answers count only for the versions in force (withCurrentLegal). */
+ * onboarding shape (step/first_name), which is not resumable. The Terms and
+ * Privacy are agreed to again on every visit, so a draft saved past them
+ * resumes at the Terms (and one saved with answers, before they stopped being
+ * stored, has them dropped). */
 export function loadDraft(userId: string): Draft | null {
   const saved = readOnboardingDraft(userId);
   if (!saved) return null;
-  const d = { ...EMPTY_DRAFT, ...saved } as Draft;
-  return resumable(d) ? withCurrentLegal(d) : null;
+  const d = { ...EMPTY_DRAFT, ...saved, ...NOT_AGREED } as Draft & Record<string, unknown>;
+  // The versions older drafts kept beside those answers.
+  delete d.termsVersion;
+  delete d.privacyVersion;
+  return resumable(d) ? { ...d, screen: Math.min(d.screen, TERMS_SCREEN) } : null;
 }
 
 /** Whether the screen's answers let the student move on. */

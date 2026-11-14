@@ -57,14 +57,14 @@ import { onboardingDraftKey, GUEST_DRAFT_KEY, DRAFT_TTL_MS } from "@/lib/onboard
 import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
 import { PRIVACY, TERMS } from "@/lib/legal/documents";
 import { PRIVACY_VERSION, TERMS_VERSION } from "@/lib/legal/versions";
-import { AGE_GATE_MS, rememberUnder13 } from "@/components/onboarding/age";
+import { AGE_GATE_MS, ageGateKey, rememberUnder13 } from "@/components/onboarding/age";
 import { ApiError } from "@/lib/api";
 
 const CONNECT = 8; // index of the last screen
 const AT_CONNECT = {
-  name: "Ada", dobM: "4", dobD: "12", dobY: "2000", school: "bu", year: "junior",
+  name: "Ada", lastName: "Lovelace", dobM: "4", dobD: "12", dobY: "2000", school: "bu", year: "junior",
   courses: [COURSES[0]], coursesLater: false,
-  termsEnd: true, termsOk: true, termsVersion: TERMS_VERSION, privEnd: true, privOk: true, privacyVersion: PRIVACY_VERSION,
+  termsEnd: true, termsOk: true, privEnd: true, privOk: true,
   conn: {}, screen: CONNECT, done: [0, 1, 2, 3, 4],
 };
 
@@ -90,6 +90,20 @@ HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElemen
 
 const continueBtn = () => screen.getByTestId("onboarding-continue") as HTMLButtonElement;
 const heading = () => screen.getByRole("heading", { level: 1 });
+
+/** A resumed draft agrees to the Terms and Privacy again (they are never
+ * stored), then reaches the Connect screen. jsdom lays nothing out, so each
+ * document "fits" and its box unlocks at once. */
+async function agreeToLegal() {
+  for (const title of ["Terms of Service", "Privacy Policy"]) {
+    await screen.findByRole("heading", { level: 1, name: title });
+    const agree = screen.getByTestId("onboarding-agree") as HTMLButtonElement;
+    await waitFor(() => expect(agree.disabled).toBe(false));
+    fireEvent.click(agree);
+    fireEvent.click(continueBtn());
+  }
+  await screen.findByText("Finish");
+}
 
 /** The birthday fields are CustomSelects: open one, click its option. */
 function pickDob(field: string, value: string) {
@@ -139,6 +153,7 @@ describe("Onboarding: the draft", () => {
   it("restores the draft under the account's own key, stamped for its expiry", async () => {
     seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
+    await agreeToLegal();
     await waitFor(() => expect(continueBtn().textContent).toBe("Finish"));
     const stored = storedDraft();
     expect(stored.screen).toBe(CONNECT);
@@ -158,6 +173,7 @@ describe("Onboarding: the draft", () => {
   it("resumes a draft six days old", async () => {
     seedDraft("user_a", AT_CONNECT, Date.now() - 6 * 24 * 60 * 60 * 1000);
     render(<Onboarding />);
+    await agreeToLegal();
     await waitFor(() => expect(continueBtn().textContent).toBe("Finish"));
   });
 
@@ -167,26 +183,18 @@ describe("Onboarding: the draft", () => {
     expect(await screen.findByTestId("onboarding-name")).toBeTruthy();
   });
 
-  it("a draft that accepted an older Terms resumes on the Terms, unticked, and can't be finished", async () => {
-    seedDraft("user_a", { ...AT_CONNECT, termsVersion: "2026-01-01" });
+  it("a resumed draft agrees to the Terms and Privacy again: it resumes on the Terms, unticked", async () => {
+    seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
     await screen.findByRole("heading", { level: 1, name: "Terms of Service" });
-    // (Its end must be reached again too: draft.test.ts. jsdom lays nothing
-    // out, so here the document "fits" and unlocks at once.)
     expect(screen.getByTestId("onboarding-agree").getAttribute("aria-checked")).toBe("false");
     expect(continueBtn().disabled).toBe(true);
     fireEvent.keyDown(window, { key: "Enter" });
     expect(heading().textContent).toBe("Terms of Service");
     expect(submitOnboardingProfile).not.toHaveBeenCalled();
-    await waitFor(() => expect(storedDraft()).toMatchObject({ screen: 6, termsOk: false }));
-  });
-
-  it("a draft that accepted an older Privacy Policy resumes on the Privacy Policy", async () => {
-    seedDraft("user_a", { ...AT_CONNECT, privacyVersion: "2026-01-01" });
-    render(<Onboarding />);
-    await screen.findByRole("heading", { level: 1, name: "Privacy Policy" });
-    expect(screen.getByTestId("onboarding-agree").getAttribute("aria-checked")).toBe("false");
-    expect(continueBtn().disabled).toBe(true);
+    // Ticking it is never stored.
+    fireEvent.click(screen.getByTestId("onboarding-agree"));
+    await waitFor(() => expect(storedDraft()).toMatchObject({ screen: 6, termsOk: false, name: "Ada" }));
   });
 
   it("a switch of account never finishes with the previous account's answers", async () => {
@@ -203,6 +211,7 @@ describe("Onboarding: the draft", () => {
       return null;
     }
     const view = render(<><Onboarding /><FinishOnSwitch /></>);
+    await agreeToLegal();
     await screen.findByText("Finish");
     user = { userId: "user_b", userName: "Bob Builder" };
     view.rerender(<><Onboarding /><FinishOnSwitch /></>);
@@ -291,11 +300,18 @@ describe("Onboarding: screens", () => {
     expect(screen.getByText("Your notes become a map.")).toBeTruthy();
   });
 
-  it("the name field's label and placeholder agree", async () => {
+  it("asks for a first and an optional last name, both from the Google account", async () => {
     render(<Onboarding />);
-    const name = await screen.findByTestId("onboarding-name");
-    expect(name.getAttribute("aria-label")).toBe("Your first name");
-    expect(name.getAttribute("placeholder")).toBe("Your first name");
+    const first = (await screen.findByTestId("onboarding-name")) as HTMLInputElement;
+    const last = screen.getByTestId("onboarding-last-name") as HTMLInputElement;
+    expect([first.getAttribute("aria-label"), first.getAttribute("placeholder"), first.value]).toEqual(["First name", "First name", "Ada"]);
+    expect([last.getAttribute("aria-label"), last.getAttribute("placeholder"), last.value])
+      .toEqual(["Last name (optional)", "Last name (optional)", "Lovelace"]);
+    // The last name can be left empty; the first can't.
+    fireEvent.change(last, { target: { value: "" } });
+    expect(continueBtn().disabled).toBe(false);
+    fireEvent.change(first, { target: { value: " " } });
+    expect(continueBtn().disabled).toBe(true);
   });
 
   it("offers only the days the chosen month and year have", async () => {
@@ -325,19 +341,42 @@ describe("Onboarding: screens", () => {
     expect(screen.queryByTestId(`onboarding-dob-year-${thisYear - 101}`)).toBeNull();
   });
 
-  it("an under-13 answer says what is true, keeps nothing, and holds for a day in this browser", async () => {
+  it("an under-13 birthday is asked about first, and only a yes blocks", async () => {
+    seedDraft("user_a", { ...AT_CONNECT, dobM: "", dobD: "", dobY: "", screen: 1, done: [0] });
+    render(<Onboarding />);
+    await screen.findByText("When's your birthday?");
+    pickDob("month", "1");
+    pickDob("day", "1");
+    pickDob("year", String(new Date().getFullYear() - 10));
+
+    const ask = screen.getByTestId("onboarding-under13-confirm");
+    expect(ask.textContent).toContain("under 13. Is it right?");
+    expect(document.activeElement).toBe(screen.getByTestId("onboarding-under13-confirm-title"));
+    expect(continueBtn().disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(heading().textContent).toBe("When's your birthday?");
+    // A slipped year: back to the fields, month and day kept, nothing remembered.
+    fireEvent.click(screen.getByTestId("onboarding-under13-change"));
+    expect(screen.queryByTestId("onboarding-under13-confirm")).toBeNull();
+    expect(localStorage.getItem(ageGateKey("user_a"))).toBeNull();
+    await waitFor(() => expect(storedDraft()).toMatchObject({ dobM: "1", dobD: "1", dobY: "" }));
+    pickDob("year", "2000");
+    expect(continueBtn().disabled).toBe(false);
+  });
+
+  it("a confirmed under-13 answer says what is true, keeps nothing, and holds for a day for that account", async () => {
     seedDraft("user_a", { ...AT_CONNECT, dobM: "", dobD: "", dobY: "", screen: 1, done: [0] });
     const view = render(<Onboarding />);
     await screen.findByText("When's your birthday?");
     pickDob("month", "1");
     pickDob("day", "1");
     pickDob("year", String(new Date().getFullYear() - 10));
+    fireEvent.click(screen.getByTestId("onboarding-under13-yes"));
 
     const panel = screen.getByTestId("onboarding-blocked");
     expect(panel.textContent).toContain("13 and up");
     expect(panel.textContent).toContain("Signing in with Google created a Sapling account");
     expect(panel.textContent).toContain("haven't kept your birthday");
-    expect(panel.textContent).not.toContain("haven't saved anything");
     expect(document.activeElement).toBe(screen.getByTestId("onboarding-blocked-title"));
     // No straight retry: the date fields and the old "I made a mistake" are gone.
     expect(screen.queryByTestId("onboarding-dob-year")).toBeNull();
@@ -345,17 +384,24 @@ describe("Onboarding: screens", () => {
     expect(continueBtn().disabled).toBe(true);
     // Nothing they entered is kept: not the birthday, not the name.
     await waitFor(() => expect(storedDraft().dobY).toBe(""));
-    expect(storedDraft().name).toBe("");
+    expect(storedDraft()).toMatchObject({ name: "", lastName: "" });
 
-    // A reload (or another account) in this browser is still blocked...
+    // A reload of the same account is still blocked...
     view.unmount();
     render(<Onboarding />);
     await screen.findByTestId("onboarding-blocked");
     cleanup();
-    // ...until the day is up.
-    const until = Number(localStorage.getItem("sapling_age_gate_until"));
+    // ...another account in this browser is not...
+    user = { userId: "user_b", userName: "Bob Builder" };
+    render(<Onboarding />);
+    expect(await screen.findByTestId("onboarding-name")).toBeTruthy();
+    expect(screen.queryByTestId("onboarding-blocked")).toBeNull();
+    cleanup();
+    // ...and the block lapses after a day.
+    user = { userId: "user_a", userName: "Ada Lovelace" };
+    const until = Number(localStorage.getItem(ageGateKey("user_a")));
     expect(until - Date.now()).toBeGreaterThan(AGE_GATE_MS - 60_000);
-    localStorage.setItem("sapling_age_gate_until", String(Date.now() - 1));
+    localStorage.setItem(ageGateKey("user_a"), String(Date.now() - 1));
     render(<Onboarding />);
     await screen.findByText("When's your birthday?");
     expect(screen.queryByTestId("onboarding-blocked")).toBeNull();
@@ -363,7 +409,7 @@ describe("Onboarding: screens", () => {
   });
 
   it("the under-13 panel signs out", async () => {
-    localStorage.setItem("sapling_age_gate_until", String(Date.now() + 1000 * 60));
+    localStorage.setItem(ageGateKey("user_a"), String(Date.now() + 1000 * 60));
     seedDraft("user_a", { ...AT_CONNECT, screen: 1, done: [] });
     render(<Onboarding />);
     fireEvent.click(await screen.findByTestId("onboarding-blocked-sign-out"));
@@ -469,9 +515,9 @@ describe("Onboarding: screens", () => {
     fireEvent.click(await screen.findByTestId("onboarding-course-result-c1"));
     expect(later.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(later);
-    // On to the end and finish.
-    for (let i = 0; i < 5; i++) fireEvent.click(continueBtn());
-    expect(continueBtn().textContent).toBe("Finish");
+    // On through the tour, agree to the Terms and Privacy, and finish.
+    for (let i = 0; i < 3; i++) fireEvent.click(continueBtn());
+    await agreeToLegal();
     fireEvent.click(continueBtn());
     await waitFor(() => expect(submitOnboardingProfile).toHaveBeenCalled());
     expect(submitOnboardingProfile.mock.calls[0][0].course_ids).toEqual([]);
@@ -585,6 +631,7 @@ describe("Onboarding: accessibility", () => {
   it("the consent sheet holds focus, closes on Esc without going back, and returns focus", async () => {
     seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
+    await agreeToLegal();
     const connect = await screen.findByTestId("onboarding-connect-gradescope");
     connect.focus();
     fireEvent.click(connect);
@@ -609,6 +656,7 @@ describe("Onboarding: accessibility", () => {
     seedDraft("user_a", AT_CONNECT);
     submitOnboardingProfile.mockReturnValue(new Promise(() => {}));
     render(<Onboarding />);
+    await agreeToLegal();
     await screen.findByText("Finish");
     const outro = document.querySelector(".ob-moment--outro")!;
     expect(outro.getAttribute("aria-live")).toBe("polite");
@@ -631,6 +679,7 @@ describe("Onboarding: Finish", () => {
     seedDraft("user_a", AT_CONNECT);
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true, courses_linked: 1 });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(submitOnboardingProfile).toHaveBeenCalledWith(
@@ -650,13 +699,14 @@ describe("Onboarding: Finish", () => {
     expect(storedDraft()).toBeNull();
   });
 
-  it("a whole name typed into the field is not saved with the last name twice", async () => {
-    seedDraft("user_a", { ...AT_CONNECT, name: "Ada Lovelace" });
+  it("saves the first and last name as the student left them", async () => {
+    seedDraft("user_a", { ...AT_CONNECT, name: "Augusta", lastName: "King" });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(submitOnboardingProfile).toHaveBeenCalled());
-    expect(submitOnboardingProfile.mock.calls[0][0]).toMatchObject({ first_name: "Ada", last_name: "Lovelace" });
+    expect(submitOnboardingProfile.mock.calls[0][0]).toMatchObject({ first_name: "Augusta", last_name: "King" });
   });
 
   it("an under-18 account sends under_18 with the save, and nothing else", async () => {
@@ -664,6 +714,7 @@ describe("Onboarding: Finish", () => {
     seedDraft("user_a", { ...AT_CONNECT, dobM: "1", dobD: "1", dobY });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(submitOnboardingProfile.mock.calls[0][0].under_18).toBe(true);
@@ -675,6 +726,7 @@ describe("Onboarding: Finish", () => {
     let resolve: (v: unknown) => void = () => {};
     submitOnboardingProfile.mockReturnValueOnce(new Promise(r => { resolve = r; }));
     render(<Onboarding />);
+    await agreeToLegal();
     await screen.findByText("Finish");
     const status = screen.getByTestId("onboarding-setting-up");
     expect(status.getAttribute("role")).toBe("status");
@@ -691,8 +743,9 @@ describe("Onboarding: Finish", () => {
     seedDraft("user_a", AT_CONNECT);
     let resolve: (v: unknown) => void = () => {};
     submitOnboardingProfile.mockReturnValueOnce(new Promise(r => { resolve = r; }));
-    vi.useFakeTimers();
     render(<Onboarding />);
+    await agreeToLegal();
+    vi.useFakeTimers();
     await act(async () => {});
     fireEvent.click(continueBtn());
     const status = screen.getByTestId("onboarding-setting-up");
@@ -709,6 +762,7 @@ describe("Onboarding: Finish", () => {
     seedDraft("user_a", AT_CONNECT);
     submitOnboardingProfile.mockRejectedValueOnce(new ApiError('{"detail":"Onboarding is already complete."}', 409));
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(toast.info).toHaveBeenCalledWith("Your account was already set up.");
@@ -722,9 +776,10 @@ describe("Onboarding: Finish", () => {
   it("an under-13 birthday given in another tab since stops Finish: nothing is saved, and the birthday screen says why", async () => {
     seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
+    await agreeToLegal();
     await screen.findByText("Finish");
-    // Another tab in this browser was told an under-13 birthday.
-    rememberUnder13();
+    // Another tab confirmed an under-13 birthday for this account.
+    rememberUnder13("user_a");
     fireEvent.click(continueBtn());
     expect(await screen.findByTestId("onboarding-blocked")).toBeTruthy();
     expect(heading().textContent).toBe("When's your birthday?");
@@ -740,6 +795,7 @@ describe("Onboarding: Finish", () => {
       '{"detail":{"code":"not_approved"}}', 403, { body: { detail: { code: "not_approved" } } },
     ));
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/pending"));
     expect(markOnboarded).not.toHaveBeenCalled();
@@ -752,6 +808,7 @@ describe("Onboarding: Finish", () => {
       body: { detail: { code: "no_known_courses", message: "None of those courses exist." } },
     }));
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await screen.findByText("What are you taking this term?");
     const notice = screen.getByTestId("onboarding-notice");
@@ -769,6 +826,7 @@ describe("Onboarding: Finish", () => {
       body: { detail: { code: "legal_outdated", message: "Please accept the current terms." } },
     }));
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await screen.findByRole("heading", { level: 1, name: "Terms of Service" });
     expect(screen.getByTestId("onboarding-notice").textContent).toContain("changed after this page opened");
@@ -782,6 +840,7 @@ describe("Onboarding: Finish", () => {
     seedDraft("user_a", AT_CONNECT);
     submitOnboardingProfile.mockRejectedValueOnce(new ApiError('{"detail":{"oops":true}}', 500, { body: { detail: { oops: true } } }));
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     const message = toast.error.mock.calls[0][0] as string;
@@ -805,6 +864,7 @@ describe("Onboarding: Connect", () => {
     seedDraft("user_a", AT_CONNECT);
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByTestId("onboarding-connect-gradescope"));
     const sheet = screen.getByTestId("onboarding-consent");
     expect(sheet.textContent).toContain("sign in to Gradescope");
@@ -821,6 +881,7 @@ describe("Onboarding: Connect", () => {
   it("a chosen account can be un-chosen", async () => {
     seedDraft("user_a", { ...AT_CONNECT, conn: { gradescope: true } });
     render(<Onboarding />);
+    await agreeToLegal();
     const chosen = await screen.findByTestId("onboarding-connect-gradescope");
     expect(chosen.textContent).toBe("Will connect after setup");
     fireEvent.click(chosen);
@@ -833,6 +894,7 @@ describe("Onboarding: Connect", () => {
     seedDraft("user_a", { ...AT_CONNECT, conn: { gradescope: true } });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByTestId("onboarding-connect-gcal"));
     expect(screen.getByTestId("onboarding-consent").textContent).toContain("Google will ask for your permission");
     fireEvent.click(screen.getByTestId("onboarding-consent-continue"));
@@ -847,6 +909,7 @@ describe("Onboarding: Connect", () => {
     seedDraft("user_a", { ...AT_CONNECT, conn: { gcal: true } });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/api/calendar/auth-url?user_id=user_a"));
   });
@@ -857,6 +920,7 @@ describe("Onboarding: Connect", () => {
     seedDraft("user_a", { ...AT_CONNECT, conn: { gcal: true, gradescope: true } });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     fireEvent.click(await screen.findByTestId("onboarding-skip"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(assign).not.toHaveBeenCalled();
@@ -866,6 +930,7 @@ describe("Onboarding: Connect", () => {
     fetchFlags.mockResolvedValue({ hide_calendar: "on" });
     seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
+    await agreeToLegal();
     await screen.findByTestId("onboarding-connect-gradescope");
     await waitFor(() => expect(fetchFlags).toHaveBeenCalled());
     expect(screen.queryByTestId("onboarding-connect-gcal")).toBeNull();
@@ -878,6 +943,7 @@ describe("Onboarding: Connect", () => {
     seedDraft("user_a", { ...AT_CONNECT, conn: { gcal: true } });
     submitOnboardingProfile.mockResolvedValueOnce({ ok: true });
     render(<Onboarding />);
+    await agreeToLegal();
     await waitFor(() => expect(fetchFlags).toHaveBeenCalled());
     await act(async () => {});
     fireEvent.click(await screen.findByText("Finish"));
@@ -889,6 +955,7 @@ describe("Onboarding: Connect", () => {
     fetchFlags.mockRejectedValue(new Error("down"));
     seedDraft("user_a", AT_CONNECT);
     const view = render(<Onboarding />);
+    await agreeToLegal();
     await screen.findByTestId("onboarding-connect-canvas");
     await waitFor(() => expect(fetchFlags).toHaveBeenCalled());
     await act(async () => {});
@@ -897,6 +964,7 @@ describe("Onboarding: Connect", () => {
     view.unmount();
     localStorage.setItem("sapling.flags.v1:user_a", JSON.stringify({ hide_grades: "on" }));
     render(<Onboarding />);
+    await agreeToLegal();
     expect(await screen.findByTestId("onboarding-connect-gcal")).toBeTruthy();
     expect(screen.queryByTestId("onboarding-connect-gradescope")).toBeNull();
   });
@@ -904,6 +972,7 @@ describe("Onboarding: Connect", () => {
   it("accounts Sapling can't connect yet say 'Coming soon' and record nothing", async () => {
     seedDraft("user_a", AT_CONNECT);
     render(<Onboarding />);
+    await agreeToLegal();
     for (const key of ["blackboard", "canvas", "classroom"]) {
       const tag = await screen.findByTestId(`onboarding-connect-${key}`);
       expect(tag.tagName).not.toBe("BUTTON");

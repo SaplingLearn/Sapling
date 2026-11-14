@@ -13,8 +13,8 @@
  * nothing about the person. A new per-user key belongs in the lists below.
  *
  * Deliberately NOT here: onboarding's under-13 memory
- * (`sapling_age_gate_until`, components/onboarding/age.ts). It belongs to the
- * browser, so signing out and in as someone else must not reset it.
+ * (`sapling_age_gate_until:<user id>`, components/onboarding/age.ts). It is
+ * per account already, and signing out and back in must not reset it.
  */
 
 /** localStorage keys holding one account's data or choices. */

@@ -149,6 +149,7 @@
 .ob-input:focus { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
 .ob-root .ob-input:focus-visible { outline: none; }
 .ob-input--name { max-width: 380px; height: 52px; padding: 0 18px; border-radius: 12px; font: 500 18px/1 'Momo Trust Sans', sans-serif; text-align: center; }
+.ob-name-fields { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
 .ob-input--search { height: 48px; padding: 0 20px; font: 500 16px/1 'Momo Trust Sans', sans-serif; }
 .ob-note { margin: 0; font: 400 14px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-mut); text-align: center; }
 .ob-character { height: 120px; width: auto; transform: translateX(15px); display: block; }
@@ -177,6 +178,7 @@
 .ob-blocked-title { margin: 0; }
 .ob-blocked-body { margin: 0; font: 400 15px/1.55 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
 .ob-blocked a { color: var(--ob-acc); }
+.ob-confirm-actions { display: flex; gap: 18px; justify-content: center; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .ob-textlink {
   align-self: center; background: none; border: none; padding: 2px 0; cursor: pointer;
   color: var(--ob-acc); font: 500 14px 'Momo Trust Sans', sans-serif;

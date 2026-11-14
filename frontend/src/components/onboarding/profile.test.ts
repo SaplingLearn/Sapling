@@ -14,34 +14,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { ApiError } from '@/lib/api';
 import { EMPTY_DRAFT } from './draft';
 import {
-  SAVE_TIMEOUT_MS, SaveTimeoutError, classifySaveError, handoffFor, saveProfile, splitName,
+  SAVE_TIMEOUT_MS, SaveTimeoutError, classifySaveError, cleanName, handoffFor, saveProfile,
 } from './profile';
 
-describe('splitName', () => {
-  it('takes the last name from the account', () => {
-    expect(splitName('Ada', 'Ada Lovelace')).toEqual({ first_name: 'Ada', last_name: 'Lovelace' });
-    expect(splitName('  Countess  Ada ', 'Ada Lovelace')).toEqual({ first_name: 'Countess Ada', last_name: 'Lovelace' });
-  });
-
-  it('does not repeat a last name the student typed', () => {
-    expect(splitName('Ada Lovelace', 'Ada Lovelace')).toEqual({ first_name: 'Ada', last_name: 'Lovelace' });
-    expect(splitName('ada lovelace', 'Ada Lovelace')).toEqual({ first_name: 'ada', last_name: 'Lovelace' });
-    expect(splitName('Mary Ann de la Cruz', 'Mary de la Cruz')).toEqual({ first_name: 'Mary Ann', last_name: 'de la Cruz' });
-  });
-
-  it('keeps a name that only ends like the last name', () => {
-    expect(splitName('Adalovelace', 'Ada Lovelace')).toEqual({ first_name: 'Adalovelace', last_name: 'Lovelace' });
-  });
-
-  it('a field holding just the last name is the whole name', () => {
-    expect(splitName('Lovelace', 'Ada Lovelace')).toEqual({ first_name: 'Lovelace', last_name: '' });
-  });
-
-  it('works with a one-word account name, and caps both at 80 characters', () => {
-    expect(splitName('Ada', 'Ada')).toEqual({ first_name: 'Ada', last_name: '' });
-    const { first_name, last_name } = splitName('y'.repeat(100), `Ada ${'x'.repeat(100)}`);
-    expect(first_name.length).toBe(80);
-    expect(last_name.length).toBe(80);
+describe('cleanName', () => {
+  it('collapses spaces and caps the field at 80 characters', () => {
+    expect(cleanName('  Countess  Ada ')).toBe('Countess Ada');
+    expect(cleanName('')).toBe('');
+    expect(cleanName('y'.repeat(100))).toHaveLength(80);
   });
 });
 
@@ -53,11 +33,17 @@ describe('saveProfile', () => {
 
   const draft = { ...EMPTY_DRAFT, name: 'Ada', year: 'junior', courses: [{ id: 'c1', course_code: 'CS 111', course_name: 'CS' }] };
 
+  it('sends the two name fields as the student left them', async () => {
+    submitOnboardingProfile.mockResolvedValue({ ok: true });
+    await saveProfile({ userId: 'u1', draft: { ...draft, name: ' Ada ', lastName: 'King  Lovelace' }, under18: false });
+    expect(submitOnboardingProfile.mock.calls[0][0]).toMatchObject({ first_name: 'Ada', last_name: 'King Lovelace' });
+  });
+
   it('sends the courses, or none when the student will add them later', async () => {
     submitOnboardingProfile.mockResolvedValue({ ok: true });
-    await saveProfile({ userId: 'u1', accountName: 'Ada Lovelace', draft, under18: false });
+    await saveProfile({ userId: 'u1', draft, under18: false });
     expect(submitOnboardingProfile.mock.calls[0][0]).toMatchObject({ course_ids: ['c1'], under_18: false });
-    await saveProfile({ userId: 'u1', accountName: 'Ada Lovelace', draft: { ...draft, coursesLater: true }, under18: true });
+    await saveProfile({ userId: 'u1', draft: { ...draft, coursesLater: true }, under18: true });
     expect(submitOnboardingProfile.mock.calls[1][0]).toMatchObject({ course_ids: [], under_18: true });
   });
 
@@ -68,7 +54,7 @@ describe('saveProfile', () => {
       signal = init.signal;
       return new Promise(() => {});
     });
-    const saving = saveProfile({ userId: 'u1', accountName: 'Ada Lovelace', draft, under18: false });
+    const saving = saveProfile({ userId: 'u1', draft, under18: false });
     const outcome = saving.catch((e: unknown) => e);
     vi.advanceTimersByTime(SAVE_TIMEOUT_MS - 1);
     expect(signal?.aborted).toBe(false);

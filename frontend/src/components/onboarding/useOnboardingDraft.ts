@@ -2,11 +2,12 @@
 
 /**
  * The signed-in account's onboarding draft: loaded once per account, saved on
- * every change, discarded once the profile is saved.
+ * every change (without its Terms and Privacy answers: draft.ts forStorage),
+ * discarded once the profile is saved.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clearOnboardingDraft, writeOnboardingDraft } from "@/lib/onboardingDraft";
-import { EMPTY_DRAFT, loadDraft, type Draft } from "./draft";
+import { EMPTY_DRAFT, forStorage, loadDraft, type Draft } from "./draft";
 
 export interface DraftState {
   /** The signed-in account's draft; empty until it is loaded (`hydrated`). */
@@ -48,19 +49,22 @@ export function useOnboardingDraft(
   useEffect(() => {
     if (!userId) return;
     const saved = loadDraft(userId);
-    const googleFirst = latest.current.accountName.trim().split(/\s+/)[0] || "";
+    // The Google account's name fills both fields; the student can change either.
+    const [googleFirst = "", ...rest] = latest.current.accountName.trim().split(/\s+/);
+    const googleLast = rest.join(" ");
     discarded.current = false;
+    const base = saved ?? EMPTY_DRAFT;
     // Syncing from localStorage (an external store) into state is this
     // effect's whole job; it runs once per account.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDraft(saved ? { ...saved, name: saved.name || googleFirst } : { ...EMPTY_DRAFT, name: googleFirst });
+    setDraft({ ...base, name: base.name || googleFirst, lastName: base.lastName || googleLast });
     setHydratedFor(userId);
     latest.current.onHydrate(!!saved && saved.screen > 0);
   }, [userId]);
 
   useEffect(() => {
     if (!hydrated || discarded.current) return;
-    writeOnboardingDraft(userId, draft);
+    writeOnboardingDraft(userId, forStorage(draft));
   }, [draft, hydrated, userId]);
 
   const patch = useCallback((p: Partial<Draft>) => setDraft(prev => ({ ...prev, ...p })), []);

@@ -29,7 +29,7 @@ import type { GraphPhase, GraphZoom } from "@/components/onboarding/chapterLayer
 import { ageOn, isMinor, isUnder13, rememberUnder13, under13Remembered } from "@/components/onboarding/age";
 import { CONNECTIONS, LAST, SCREENS, screenIndex, type ConnKey, type ScreenId } from "@/components/onboarding/flow";
 import {
-  EMPTY_DRAFT, advance, canAdvance, finished, legalAccepted, withCurrentLegal, type Draft,
+  EMPTY_DRAFT, advance, canAdvance, finished, type Draft,
 } from "@/components/onboarding/draft";
 import { useOnboardingDraft } from "@/components/onboarding/useOnboardingDraft";
 import { useStage } from "@/components/onboarding/useStage";
@@ -74,14 +74,20 @@ function NoticeText({ kind }: { kind: NoticeKind }) {
   );
 }
 
-function ScreenBody({ draft: d, patch, blocked, minor, notice, hidden, onDob, onSignOut, onConnect }: {
+function ScreenBody({
+  draft: d, patch, blocked, confirming, minor, notice, hidden,
+  onDob, onConfirmUnder13, onChangeBirthday, onSignOut, onConnect,
+}: {
   draft: Draft;
   patch: (p: Partial<Draft>) => void;
   blocked: boolean;
+  confirming: boolean;
   minor: boolean;
   notice: NoticeKind | null;
   hidden: Set<ConnKey>;
   onDob: (dob: Dob) => void;
+  onConfirmUnder13: () => void;
+  onChangeBirthday: () => void;
   onSignOut: () => void;
   onConnect: (key: ConnKey) => void;
 }) {
@@ -89,10 +95,18 @@ function ScreenBody({ draft: d, patch, blocked, minor, notice, hidden, onDob, on
   const noticeHere = notice && NOTICE_SCREEN[notice] === id ? <NoticeText kind={notice} /> : undefined;
   switch (id) {
     case "name":
-      return <NameScreen name={d.name} onName={v => patch({ name: v })} />;
+      return (
+        <NameScreen
+          name={d.name} lastName={d.lastName}
+          onName={v => patch({ name: v })} onLastName={v => patch({ lastName: v })}
+        />
+      );
     case "birthday":
       return (
-        <BirthdayScreen dob={{ m: d.dobM, d: d.dobD, y: d.dobY }} blocked={blocked} minor={minor} onDob={onDob} onSignOut={onSignOut} />
+        <BirthdayScreen
+          dob={{ m: d.dobM, d: d.dobD, y: d.dobY }} blocked={blocked} confirming={confirming} minor={minor}
+          onDob={onDob} onConfirmUnder13={onConfirmUnder13} onChangeBirthday={onChangeBirthday} onSignOut={onSignOut}
+        />
       );
     case "school":
       return <SchoolScreen school={d.school} onSchool={v => patch({ school: v })} onSignOut={onSignOut} />;
@@ -116,16 +130,16 @@ function ScreenBody({ draft: d, patch, blocked, minor, notice, hidden, onDob, on
       return (
         <LegalStep
           key="terms" doc={TERMS} reachedEnd={d.termsEnd} agreed={d.termsOk} notice={noticeHere}
-          onReachEnd={() => patch({ termsEnd: true, termsVersion: TERMS.version })}
-          onAgree={v => patch({ termsOk: v, termsVersion: TERMS.version })}
+          onReachEnd={() => patch({ termsEnd: true })}
+          onAgree={v => patch({ termsOk: v })}
         />
       );
     case "privacy":
       return (
         <LegalStep
           key="privacy" doc={PRIVACY} reachedEnd={d.privEnd} agreed={d.privOk}
-          onReachEnd={() => patch({ privEnd: true, privacyVersion: PRIVACY.version })}
-          onAgree={v => patch({ privOk: v, privacyVersion: PRIVACY.version })}
+          onReachEnd={() => patch({ privEnd: true })}
+          onAgree={v => patch({ privOk: v })}
         />
       );
     case "connect":
@@ -202,8 +216,11 @@ export function Onboarding() {
   const toast = useToast();
   const { phase, zoom, introText, outroText, whiteout, enter, outro, abort } = useStage();
   const [ageGate, setAgeGate] = useState(false);
+  // A birthday under 13, picked and not yet confirmed: kept here, never in the draft.
+  const [under13Dob, setUnder13Dob] = useState<Dob | null>(null);
   const { draft, hydrated, setDraft, patch, discard } = useOnboardingDraft(userId, userName, resumed => {
-    setAgeGate(under13Remembered());
+    setAgeGate(under13Remembered(userId));
+    setUnder13Dob(null);
     enter(resumed);
   });
   const [consent, setConsent] = useState<ConnKey | null>(null);
@@ -227,7 +244,9 @@ export function Onboarding() {
   // Not before the signed-in account's own draft is in: after a switch of
   // account nothing can be answered or finished until it is.
   const active = phase === "active" && hydrated;
-  const canNext = active && canAdvance(screen.id, draft, age, blocked);
+  // Not while an under-13 birthday waits for its answer: the draft still
+  // holds the date picked before it.
+  const canNext = active && under13Dob === null && canAdvance(screen.id, draft, age, blocked);
 
   // Each screen's heading takes focus as it arrives (and reads out the notice
   // it names), in a layout effect so nothing typed right after is lost.
@@ -278,18 +297,13 @@ export function Onboarding() {
     setDraft({ ...EMPTY_DRAFT, screen: BIRTHDAY });
   }, [setDraft]);
 
-  // Checked again at Finish, as both can change after their own screens:
-  // another tab may have recorded an under-13 birthday in this browser since,
-  // and only an acceptance of the Terms and Privacy Policy in force is sent.
+  // Checked again at Finish: another tab may have confirmed an under-13
+  // birthday for this account since.
   const refuseFinish = useCallback((): boolean => {
-    if (under13Remembered()) {
-      blockUnder13();
-      return true;
-    }
-    if (legalAccepted(draft)) return false;
-    setDraft(withCurrentLegal);
+    if (!under13Remembered(userId)) return false;
+    blockUnder13();
     return true;
-  }, [draft, blockUnder13, setDraft]);
+  }, [userId, blockUnder13]);
 
   const finish = useCallback((skipConnections: boolean) => {
     // Not `active` while the draft in state is another account's.
@@ -300,7 +314,7 @@ export function Onboarding() {
     setDraft(final);
     setNotice(null);
     setSettingUp(true);
-    const saved = saveProfile({ userId, accountName: userName, draft: final, under18: isMinor(age) }).then(
+    const saved = saveProfile({ userId, draft: final, under18: isMinor(age) }).then(
       () => {
         discard();
         // The greeting and the nav show the name just chosen.
@@ -321,7 +335,7 @@ export function Onboarding() {
         go(handoffFor(userId, visibleChoices(final.conn, hiddenNow())));
       });
     });
-  }, [userId, userName, active, refuseFinish, draft, age, setDraft, discard, refreshProfile, recover, outro, markOnboarded, hiddenNow, go]);
+  }, [userId, active, refuseFinish, draft, age, setDraft, discard, refreshProfile, recover, outro, markOnboarded, hiddenNow, go]);
 
   const next = useCallback(() => {
     if (!canNext) return;
@@ -351,13 +365,25 @@ export function Onboarding() {
 
   const onDob = useCallback((dob: Dob) => {
     if (isUnder13(ageOn(new Date(), dob.m, dob.d, dob.y))) {
-      // Remembered in this browser for a day (age.ts).
-      rememberUnder13();
-      blockUnder13();
+      // Asked first: a slipped year is fixed here, not blocked for a day.
+      setUnder13Dob(dob);
       return;
     }
     patch({ dobM: dob.m, dobD: dob.d, dobY: dob.y });
-  }, [patch, blockUnder13]);
+  }, [patch]);
+
+  const confirmUnder13 = useCallback(() => {
+    // Remembered for this account for a day (age.ts).
+    rememberUnder13(userId);
+    setUnder13Dob(null);
+    blockUnder13();
+  }, [userId, blockUnder13]);
+
+  // Back to the date fields with the month and day kept and the year to pick again.
+  const changeBirthday = useCallback(() => {
+    if (under13Dob) patch({ dobM: under13Dob.m, dobD: under13Dob.d, dobY: "" });
+    setUnder13Dob(null);
+  }, [under13Dob, patch]);
 
   useOnboardingKeys(next, back, consent !== null);
 
@@ -386,10 +412,13 @@ export function Onboarding() {
               draft={draft}
               patch={patch}
               blocked={blocked}
+              confirming={under13Dob !== null}
               minor={isMinor(age)}
               notice={notice}
               hidden={hidden}
               onDob={onDob}
+              onConfirmUnder13={confirmUnder13}
+              onChangeBirthday={changeBirthday}
               onSignOut={leave}
               onConnect={setConsent}
             />

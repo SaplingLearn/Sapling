@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AGE_GATE_MS, YEAR_SPAN, ageOn, dayOptions, daysInMonth, isMinor, isUnder13, keepDay,
+  AGE_GATE_MS, YEAR_SPAN, ageGateKey, ageOn, dayOptions, daysInMonth, isMinor, isUnder13, keepDay,
   rememberUnder13, under13Remembered, yearOptions,
 } from './age';
 import { USER_SCOPED_LOCAL_KEYS, USER_SCOPED_LOCAL_PREFIXES, clearUserScopedStorage } from '@/lib/userScopedStorage';
@@ -51,25 +51,31 @@ describe('the under-13 memory', () => {
   afterEach(() => localStorage.clear());
   const NOW = 1_800_000_000_000;
 
-  it('holds for a day in this browser, then lapses', () => {
-    expect(under13Remembered(NOW)).toBe(false);
-    rememberUnder13(NOW);
-    expect(under13Remembered(NOW + AGE_GATE_MS - 1)).toBe(true);
-    expect(under13Remembered(NOW + AGE_GATE_MS)).toBe(false);
-    expect(under13Remembered(NOW)).toBe(false);
+  it('holds for a day for that account, then lapses', () => {
+    expect(under13Remembered('u1', NOW)).toBe(false);
+    rememberUnder13('u1', NOW);
+    expect(under13Remembered('u1', NOW + AGE_GATE_MS - 1)).toBe(true);
+    expect(under13Remembered('u1', NOW + AGE_GATE_MS)).toBe(false);
+    expect(under13Remembered('u1', NOW)).toBe(false);
   });
 
-  it('survives a sign-out: it is about the browser, not the account', () => {
-    rememberUnder13(NOW);
+  it('blocks only the account that gave it', () => {
+    rememberUnder13('u1', NOW);
+    expect(under13Remembered('u2', NOW + 1)).toBe(false);
+    expect(under13Remembered('', NOW + 1)).toBe(false);
+  });
+
+  it('survives a sign-out', () => {
+    rememberUnder13('u1', NOW);
     clearUserScopedStorage();
-    expect(under13Remembered(NOW + 1)).toBe(true);
-    const key = 'sapling_age_gate_until';
+    expect(under13Remembered('u1', NOW + 1)).toBe(true);
+    const key = ageGateKey('u1');
     expect(USER_SCOPED_LOCAL_KEYS as readonly string[]).not.toContain(key);
     expect(USER_SCOPED_LOCAL_PREFIXES.some((p) => key.startsWith(p))).toBe(false);
   });
 
   it('ignores a stored time further out than a day', () => {
-    localStorage.setItem('sapling_age_gate_until', String(NOW + 10 * AGE_GATE_MS));
-    expect(under13Remembered(NOW)).toBe(false);
+    localStorage.setItem(ageGateKey('u1'), String(NOW + 10 * AGE_GATE_MS));
+    expect(under13Remembered('u1', NOW)).toBe(false);
   });
 });

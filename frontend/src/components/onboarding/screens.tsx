@@ -15,23 +15,40 @@ import { ScreenHead } from "./ScreenHead";
 /** Where the legal contact sends a request about an under-13 account. */
 const CONTACT_EMAIL = "careers@saplinglearn.com";
 
-export function NameScreen({ name, onName }: { name: string; onName: (v: string) => void }) {
+export function NameScreen({ name, lastName, onName, onLastName }: {
+  name: string;
+  lastName: string;
+  onName: (v: string) => void;
+  onLastName: (v: string) => void;
+}) {
   return (
     <section className="ob-screen ob-screen--roomy">
       <ScreenHead title="First, what should I call you?" />
       <div className="ob-body">
         <img src="/onboarding/name-character.svg" alt="" className="ob-character" />
-        <input
-          data-testid="onboarding-name"
-          className="ob-input ob-input--name"
-          value={name}
-          onChange={e => onName(e.target.value)}
-          aria-label="Your first name"
-          placeholder="Your first name"
-          autoComplete="given-name"
-          maxLength={80}
-        />
-        <p className="ob-note">From your Google account. Change it if you go by something else.</p>
+        <div className="ob-name-fields">
+          <input
+            data-testid="onboarding-name"
+            className="ob-input ob-input--name"
+            value={name}
+            onChange={e => onName(e.target.value)}
+            aria-label="First name"
+            placeholder="First name"
+            autoComplete="given-name"
+            maxLength={80}
+          />
+          <input
+            data-testid="onboarding-last-name"
+            className="ob-input ob-input--name"
+            value={lastName}
+            onChange={e => onLastName(e.target.value)}
+            aria-label="Last name (optional)"
+            placeholder="Last name (optional)"
+            autoComplete="family-name"
+            maxLength={80}
+          />
+        </div>
+        <p className="ob-note">From your Google account. Change either if you go by something else.</p>
       </div>
     </section>
   );
@@ -71,8 +88,8 @@ function DobSelect({ label, value, options, width, onChange }: {
 const MONTH_OPTIONS: [string, string][] = MONTHS.map((m, i) => [String(i + 1), m]);
 
 /**
- * Shown instead of the date fields once the student says they are under 13
- * (and, in this browser, for a day after: components/onboarding/age.ts). It
+ * Shown instead of the date fields once the student confirms they are under
+ * 13 (and, for that account, for a day after: components/onboarding/age.ts). It
  * says what is true: signing in made an account, nothing from this flow was
  * kept, and how to have the account removed.
  */
@@ -102,11 +119,44 @@ function AgeBlocked({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-export function BirthdayScreen({ dob, blocked, minor, onDob, onSignOut }: {
+/**
+ * Shown when the date picked makes the student under 13, before anything is
+ * blocked: a slipped year (2015 for 2005) is put right here, and only a
+ * confirmed answer blocks the account.
+ */
+function ConfirmUnder13({ onConfirm, onChange }: { onConfirm: () => void; onChange: () => void }) {
+  const titleRef = useRef<HTMLParagraphElement>(null);
+  // The year field that set this off had focus; hand it to the question.
+  useLayoutEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+  return (
+    <div className="ob-panel ob-blocked" data-testid="onboarding-under13-confirm">
+      <p ref={titleRef} tabIndex={-1} className="ob-blocked-title" data-testid="onboarding-under13-confirm-title">
+        That birthday makes you under 13. Is it right?
+      </p>
+      <p className="ob-blocked-body">Sapling is for students 13 and up.</p>
+      <div className="ob-confirm-actions">
+        <button data-testid="onboarding-under13-change" className="ob-secondary" onClick={onChange}>
+          No, change it
+        </button>
+        <button data-testid="onboarding-under13-yes" className="ob-textlink" onClick={onConfirm}>
+          Yes, it&apos;s right
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function BirthdayScreen({ dob, blocked, confirming, minor, onDob, onConfirmUnder13, onChangeBirthday, onSignOut }: {
   dob: Dob;
   blocked: boolean;
+  /** A birthday under 13 was picked and is waiting for the student to confirm it. */
+  confirming: boolean;
   minor: boolean;
   onDob: (dob: Dob) => void;
+  onConfirmUnder13: () => void;
+  onChangeBirthday: () => void;
   onSignOut: () => void;
 }) {
   const set = (part: keyof Dob, value: string) => {
@@ -120,6 +170,8 @@ export function BirthdayScreen({ dob, blocked, minor, onDob, onSignOut }: {
         <CakeArt />
         {blocked ? (
           <AgeBlocked onSignOut={onSignOut} />
+        ) : confirming ? (
+          <ConfirmUnder13 onConfirm={onConfirmUnder13} onChange={onChangeBirthday} />
         ) : (
           <div className="ob-dob">
             <DobSelect label="Month" value={dob.m} width={170} onChange={v => set("m", v)} options={MONTH_OPTIONS} />

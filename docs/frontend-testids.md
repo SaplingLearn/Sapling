@@ -174,9 +174,12 @@ Signed in only (2026-11-12): the middleware gates `/onboarding` like the shell.
 | `onboarding-next-key` / `onboarding-back-key` | the desktop Enter / Esc hints (mouse only: `tabIndex -1`, `aria-hidden`; hidden on phones) |
 | `onboarding-step` | visually hidden "Step n of 6: chapter" on the progress strip |
 | `onboarding-notice` | why a save sent the student back to this screen (courses gone, Terms changed); the heading's description |
-| `onboarding-name` | name field ("Your first name") |
+| `onboarding-name` | first-name field ("First name"), prefilled from the Google account |
+| `onboarding-last-name` | last-name field ("Last name (optional)"), prefilled from the Google account |
 | `onboarding-dob-month` / `onboarding-dob-day` / `onboarding-dob-year` | the birthday `CustomSelect` triggers; options are `onboarding-dob-${field}-${value}` |
 | `onboarding-minor-note` | the under-18 note (profile private, class sharing off) |
+| `onboarding-under13-confirm` / `onboarding-under13-confirm-title` | the "under 13. Is it right?" question a birthday under 13 asks first, and its focused title |
+| `onboarding-under13-yes` / `onboarding-under13-change` | its "Yes, it's right" (blocks the account for a day) and "No, change it" (back to the date fields, year cleared) |
 | `onboarding-blocked` / `onboarding-blocked-title` | the under-13 panel and its focused title |
 | `onboarding-blocked-sign-out` | the under-13 panel's "Sign out" |
 | `onboarding-school-bu` | the Boston University tile |

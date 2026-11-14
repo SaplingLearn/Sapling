@@ -12,22 +12,9 @@ import type { Draft } from "./draft";
 export const SAVE_TIMEOUT_MS = 15_000;
 const NAME_MAX = 80;
 
-/**
- * The name field asks for the name to call the student by. The account's
- * name (from Google) supplies the last name; when the student typed their
- * whole name anyway ("Ada Lovelace"), the last name is taken off the end so
- * the saved name isn't "Ada Lovelace Lovelace". A field holding only the last
- * name keeps it as the first name, with no last name after it.
- */
-export function splitName(typed: string, accountName: string): { first_name: string; last_name: string } {
-  const name = typed.trim().replace(/\s+/g, " ").slice(0, NAME_MAX).trim();
-  const last = accountName.trim().split(/\s+/).slice(1).join(" ").slice(0, NAME_MAX).trim();
-  if (!last || name.toLowerCase() === last.toLowerCase()) return { first_name: name, last_name: "" };
-  const tail = ` ${last}`;
-  if (name.length > tail.length && name.slice(-tail.length).toLowerCase() === tail.toLowerCase()) {
-    return { first_name: name.slice(0, -tail.length).trim(), last_name: last };
-  }
-  return { first_name: name, last_name: last };
+/** A name field as the save sends it: spaces collapsed, at most 80 characters. */
+export function cleanName(typed: string): string {
+  return typed.trim().replace(/\s+/g, " ").slice(0, NAME_MAX).trim();
 }
 
 export class SaveTimeoutError extends Error {
@@ -38,9 +25,8 @@ export class SaveTimeoutError extends Error {
 }
 
 /** Saves the profile, or rejects (with SaveTimeoutError after SAVE_TIMEOUT_MS). */
-export async function saveProfile({ userId, accountName, draft, under18 }: {
+export async function saveProfile({ userId, draft, under18 }: {
   userId: string;
-  accountName: string;
   draft: Draft;
   under18: boolean;
 }): Promise<void> {
@@ -59,7 +45,8 @@ export async function saveProfile({ userId, accountName, draft, under18 }: {
       submitOnboardingProfile(
         {
           user_id: userId,
-          ...splitName(draft.name, accountName),
+          first_name: cleanName(draft.name),
+          last_name: cleanName(draft.lastName),
           year: draft.year,
           course_ids: draft.coursesLater ? [] : draft.courses.map(c => c.id),
           under_18: under18,
