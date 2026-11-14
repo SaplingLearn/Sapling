@@ -209,6 +209,17 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Keep not-yet-started tutor sessions in Postgres so every replica "
             "can continue, end or delete them. Global: per-user rules and "
             "rollouts do not apply.", False),
+    # Owner decision 2026-11-14: the daily job that hard-deletes the personal
+    # data of an account its student deleted more than 30 days ago
+    # (services/account_purge_sweeper.py -> services/account_purge.py).
+    # Resolved GLOBALLY (user_id=None) at the start of every pass, so turning
+    # it off stops the next pass without a restart. Off = deleted accounts
+    # stay hidden soft deletes (credentials are still removed at the delete
+    # itself). Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
+    FlagDef("account_purge", ("off", "on"),
+            "Daily job: permanently erase the personal data of accounts their "
+            "student deleted more than 30 days ago. Irreversible. Global: "
+            "per-user rules and rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

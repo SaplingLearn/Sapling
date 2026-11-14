@@ -131,6 +131,7 @@ const FLAG_KILL_SWITCHES = [
   "stateless_rate_limit",
   "stateless_locks",
   "stateless_tutor_sessions",
+  "account_purge",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

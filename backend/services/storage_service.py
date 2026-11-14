@@ -189,6 +189,29 @@ def delete_asset(path: str) -> None:
     httpx.delete(url, headers=_headers)
 
 
+def avatar_paths(user_id: str) -> list[str]:
+    """Every path `upload_avatar` can have written for `user_id` (one per
+    accepted image type; re-uploading in another type leaves the old one)."""
+    return [f"avatars/{user_id}/avatar.{ext}" for ext in dict.fromkeys(_EXT_MAP.values())]
+
+
+def delete_objects(bucket: str, paths: list[str]) -> None:
+    """Delete `paths` from `bucket` in one call (Storage's bulk delete).
+
+    A path that does not exist is not an error (the call is idempotent).
+    Raises RuntimeError on any non-2xx answer, so a caller that must not
+    forget an object (the account purge) can retry later. The message names
+    the status only: never the URL or the headers (the service-role key)."""
+    if not paths:
+        return
+    resp = httpx.request(
+        "DELETE", f"{_storage_base}/{bucket}",
+        json={"prefixes": list(paths)}, headers=_headers, timeout=30.0,
+    )
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(f"storage delete in {bucket} failed (status {resp.status_code})")
+
+
 # ── Achievement icons ────────────────────────────────────────────────────────
 #
 # Admins upload a 512x512 PNG/WebP/SVG for `achievements.icon_url` (0043).

@@ -148,6 +148,7 @@ def test_event_taxonomy_is_pinned():
         "account.copy_pull",
         "account.export",
         "account.import",
+        "account.purge",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
         "decision.made",
