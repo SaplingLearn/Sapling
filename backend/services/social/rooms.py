@@ -52,6 +52,34 @@ def _require_member(room_id: str, user_id: str) -> None:
         raise Forbidden("Not a member of this room")
 
 
+#: ids per `in.(…)` filter — the same ceiling the other batched reads use,
+#: so one big page cannot build a query string too long to send.
+_IN_CHUNK = 50
+
+
+def _member_counts(room_ids: list[str]) -> dict[str, int]:
+    """`{room_id: member_count}` for every id, in one query per chunk.
+
+    Both room listings used to do `for room in rooms: select(room_members
+    where room_id = eq.<id>)` — one PostgREST round-trip per room, in series.
+    The public listing is the worse of the two: it reads EVERY public room in
+    the app with no limit, so the number of queries grew with the product.
+    """
+    counts: dict[str, int] = {rid: 0 for rid in room_ids}
+    if not room_ids:
+        return counts
+    for i in range(0, len(room_ids), _IN_CHUNK):
+        chunk = room_ids[i : i + _IN_CHUNK]
+        rows = table("room_members").select(
+            "room_id", filters={"room_id": f"in.({','.join(chunk)})"},
+        ) or []
+        for row in rows:
+            rid = row.get("room_id")
+            if rid in counts:
+                counts[rid] += 1
+    return counts
+
+
 def _live_members(member_rows) -> list[str]:
     """Room member ids minus soft-deleted accounts (#115), in row order: a
     deleted student's name and graph must not stay on the room's pages."""
@@ -104,11 +132,9 @@ def list_public_rooms(user_id: str):
         "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
         filters={"is_public": "eq.true"},
     ) or []
+    counts = _member_counts([r["id"] for r in rooms])
     out = []
     for room in rooms:
-        members = table("room_members").select(
-            "user_id", filters={"room_id": f"eq.{room['id']}"},
-        ) or []
         # Explicit projection (never a row spread): the public payload cannot
         # leak invite_code even if the row carries it.
         out.append({
@@ -121,7 +147,7 @@ def list_public_rooms(user_id: str):
             "created_at": room.get("created_at"),
             "updated_at": room.get("updated_at"),
             "is_public": True,
-            "member_count": len(members),
+            "member_count": counts.get(room["id"], 0),
         })
     return {"rooms": out}
 
@@ -231,9 +257,9 @@ def get_user_rooms(user_id: str):
         "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
         filters={"id": f"in.({','.join(room_ids)})"},
     )
+    counts = _member_counts([r["id"] for r in rooms])
     for room in rooms:
-        members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
-        room["member_count"] = len(members)
+        room["member_count"] = counts.get(room["id"], 0)
     return {"rooms": rooms}
 
 
