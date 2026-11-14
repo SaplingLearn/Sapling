@@ -18,6 +18,7 @@ import type {
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 import { createStreamPacer } from '@/lib/streamPacer';
+import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 
 export const API_URL = '';
 
@@ -139,6 +140,10 @@ function notifySessionExpired(): void {
   }
 }
 
+// Admin step-up 401s (`reauth_required`) go to lib/reauth.ts, not to the
+// session-expired listeners above: the session is alive, it is just too old
+// for an admin route.
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -151,10 +156,14 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
-  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);
+    if (res.status === 401 && isReauthRequired(body)) {
+      notifyReauthRequired();
+      throw new ApiError(err, res.status, { ...errorFieldsFrom(body), code: REAUTH_REQUIRED, body });
+    }
+    if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
     throw new ApiError(err || `HTTP ${res.status}`, res.status, {
       ...errorFieldsFrom(body),
       retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
@@ -190,8 +199,7 @@ export interface MeResponse {
 
 // Cookie-authenticated identity lookup (backend/routes/auth.py::get_me
 // resolves the user via get_session_user_id, which reads the `sapling_session`
-// cookie or an `auth_token` query param — no `user_id` param needed either
-// way). UserContext's bootstrap falls back to this when localStorage has no
+// cookie — the only session channel; no `user_id` param needed). UserContext's bootstrap falls back to this when localStorage has no
 // `sapling_user` entry but the HttpOnly session cookie is still valid
 // (#430); the OAuth callback (src/app/auth/callback/page.tsx) already reads
 // this same endpoint off the same cookie, though via a bare `fetch` rather

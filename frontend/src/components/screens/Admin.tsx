@@ -27,6 +27,7 @@ import { FeatureFlagsTab } from "./admin/FeatureFlags";
 import { AllowlistTab } from "./admin/AllowlistTab";
 import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
 import { AccountToolsDialog } from "./admin/AccountToolsDialog";
+import { AdminReauthBanner } from "./admin/AdminReauthBanner";
 import { fieldStyle } from "./admin/adminStyles";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
@@ -70,6 +71,7 @@ export function Admin() {
         subtitle="School-wide moderation and catalog management"
         actions={<span className="chip chip--err">Staff only</span>}
       />
+      <AdminReauthBanner />
       <div style={{ padding: "12px 32px", borderBottom: "1px solid var(--border)", display: "flex", gap: 4, overflowX: "auto" }}>
         {tabs.map((t) => (
           <button
