@@ -285,6 +285,64 @@ export function followForce(
   if (!moving || (free.dragging == null && alpha < 0.02)) settle();
 }
 
+/** The most ticks, and the most time, spent settling a graph before it is drawn. */
+const QUIET_TICKS = 300;
+const QUIET_MS = 150;
+/** A graph whose fastest node moves less than this (graph units a tick) is at rest. */
+const REST_SPEED = 0.05;
+
+/**
+ * Settles a newly planned graph before it is drawn: the simulation runs
+ * synchronously, from where the plan put each node, until nothing moves,
+ * so the first frame shows the graph at rest instead of shaking into place
+ * (links pulling, concepts pushing apart, every course swinging out and
+ * back). `tick()` fires no "tick" events: the caller re-renders. If time
+ * runs out first (a huge graph on a slow machine), the rest plays out on
+ * screen, already nearly still.
+ */
+export function settleQuietly<N extends SimulationNodeDatum, L extends SimulationLinkDatum<N>>(
+  sim: Simulation<N, L>,
+  now: () => number = () => performance.now(),
+): boolean {
+  sim.stop().alpha(0.9);
+  const start = now();
+  for (let i = 0; i < QUIET_TICKS; i++) {
+    sim.tick();
+    let fastest = 0;
+    for (const n of sim.nodes()) fastest = Math.max(fastest, Math.abs(n.vx ?? 0), Math.abs(n.vy ?? 0));
+    if (fastest < REST_SPEED) {
+      sim.alpha(0);
+      return true;
+    }
+    if (now() - start > QUIET_MS) break;
+  }
+  sim.restart();
+  return false;
+}
+
+/**
+ * Sets a newly planned simulation going, and says whether it is already at
+ * rest when first drawn. Normally it is settled before it is drawn
+ * (`settleQuietly`). With reduced motion — and in test mode, so node
+ * coordinates are identical on every load — it settles synchronously on a
+ * fixed tick count. Mid-drag it plays on, on screen.
+ */
+function startPlanned<N extends SimulationNodeDatum, L extends SimulationLinkDatum<N>>(
+  sim: Simulation<N, L>,
+  dragging: boolean,
+): boolean {
+  if (IS_TEST_MODE || prefersReducedMotion()) {
+    sim.alpha(1).tick(200).alpha(0).stop();
+    return false;
+  }
+  if (dragging) {
+    sim.alpha(0.9).restart();
+    return false;
+  }
+  settleQuietly(sim);
+  return true;
+}
+
 /** Smallest on-screen node radius (px) in legible mode, down to MIN_ZOOM. */
 const MIN_SCREEN_R = 7;
 /** A course node's: plainly bigger than the smallest concept however far out. */
@@ -677,7 +735,7 @@ function KnowledgeGraph2DImpl({
   const viewTouchedRef = React.useRef(false);
   /** Re-assigned every render (it closes over the current size and zoom);
    *  the simulation's tick calls the latest one. */
-  const frameContentRef = React.useRef<() => void>(() => {});
+  const frameContentRef = React.useRef<(snap?: boolean) => void>(() => {});
   /** The node set the opening frame was last fitted to. */
   const framedIdsRef = React.useRef<string | null>(null);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
@@ -868,17 +926,9 @@ function KnowledgeGraph2DImpl({
         }
       });
 
-    // Test mode rides the reduced-motion path: the simulation settles
-    // synchronously (fixed tick count) instead of animating on rAF, so
-    // node coordinates are identical on every load.
-    const reducedMotion = IS_TEST_MODE
-      || (typeof window !== "undefined"
-        && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
-    if (reducedMotion) {
-      sim.alpha(1).tick(200).alpha(0).stop();
-    } else {
-      sim.alpha(0.9).restart();
-    }
+    // A graph with its own opening frame is framed on where its nodes came
+    // to rest, at once, rather than zooming there over the first ticks.
+    if (startPlanned(sim, freeRef.current.dragging != null)) frameContentRef.current(true);
     // One structural render mounts the node/edge elements at their current
     // coordinates; from here on ticks write positions straight to the DOM.
     forceRerender();
@@ -1056,11 +1106,15 @@ function KnowledgeGraph2DImpl({
   // While the student hasn't touched the view, it eases toward that frame as
   // the layout settles — following the fragment into place rather than
   // jumping once it stops.
-  frameContentRef.current = () => {
+  frameContentRef.current = (snap = false) => {
     if (initialZoom === 1 || viewTouchedRef.current || dragRef.current) return;
     const target = contentFrame();
     if (!target) return;
     fittedViewRef.current = target;
+    if (snap) {
+      setView(target);
+      return;
+    }
     setView((v) => {
       const k = 0.25;
       const next = {

@@ -2,6 +2,7 @@
 
 import React from "react";
 import { KnowledgeGraph } from "@/components/graph/KnowledgeGraph";
+import { useGraphSize } from "@/components/graph/useGraphSize";
 import { CoursesKey, courseProgressFor } from "@/components/graph/CoursesKey";
 import { paletteFor, type GraphEdge, type GraphNode } from "@/lib/data";
 
@@ -169,16 +170,7 @@ export default function GraphPreview() {
   const [perCourse, setPerCourse] = React.useState<5 | 12 | 99>(99);
   const [links, setLinks] = React.useState(true);
   const [legible, setLegible] = React.useState(true);
-  const wrapRef = React.useRef<HTMLDivElement>(null);
-  const [size, setSize] = React.useState({ w: 1200, h: 800 });
-
-  React.useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((e) => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const [wrapRef, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 800 });
 
   // The Dashboard's wiring: hover a row to fade the other courses, hover a
   // concept to light its row, click a row to zoom to the course, again to zoom out.
@@ -218,17 +210,19 @@ export default function GraphPreview() {
       <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* The same wrapper the Tree and Dashboard mount (Mastery colors
             toggle, crash boundary), not the bare 2D renderer. */}
-        <KnowledgeGraph
-          key={`${courseCount}-${perCourse}-${links}-${legible}`}
-          nodes={data.nodes}
-          edges={data.edges}
-          width={size.w}
-          height={size.h}
-          legible={legible}
-          focusCourseId={keyHover}
-          onHoverCourse={setGraphHover}
-          zoomRequest={zoomRequest}
-        />
+        {size && (
+          <KnowledgeGraph
+            key={`${courseCount}-${perCourse}-${links}-${legible}`}
+            nodes={data.nodes}
+            edges={data.edges}
+            width={size.w}
+            height={size.h}
+            legible={legible}
+            focusCourseId={keyHover}
+            onHoverCourse={setGraphHover}
+            zoomRequest={zoomRequest}
+          />
+        )}
         {legible && courseCount > 1 && (
           <CoursesKey
             courseProgress={courseProgressFor(keyCourses, data.nodes)}
