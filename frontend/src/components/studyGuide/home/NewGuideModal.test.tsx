@@ -138,6 +138,23 @@ describe("class and scope", () => {
     await screen.findByTestId("guide-new-material-d1");
     expect(mocks.options).toHaveBeenCalledTimes(2);
   });
+
+  it("shows the class loading again on Try again, with no second Try again while it does", async () => {
+    mocks.options.mockRejectedValueOnce(new Error("500"));
+    renderModal();
+    const retry = await screen.findByTestId("guide-new-options-retry");
+    const again = deferred<GuideOptions>();
+    mocks.options.mockReturnValueOnce(again.promise);
+    await userEvent.setup().click(retry);
+
+    expect(screen.queryByTestId("guide-new-options-retry")).toBeNull();
+    expect(screen.getByTestId("guide-new-outline")).toHaveTextContent("Loading this class's materials");
+    expect(mocks.options).toHaveBeenCalledTimes(2);
+
+    await act(async () => again.resolve(OPTIONS));
+    expect(await screen.findByTestId("guide-new-material-d1")).toBeTruthy();
+    expect(mocks.options).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("goal and depth", () => {
