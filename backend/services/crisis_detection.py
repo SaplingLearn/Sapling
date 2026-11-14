@@ -31,7 +31,9 @@ How matching works (every list below is a regex over `normalize(text)`):
    inhibitor", "kill switch" never matches at all). A negation
    (NEGATION_GUARDS) reaches only within its own clause: a comma, dash,
    bracket, joining word ("but", "and") or new first-person subject ends it,
-   so "I'm not okay, I'll kill myself" still matches. TOPIC_GUARDS veto MENTIONS
+   so "I'm not okay, I'll kill myself" still matches, and only a hedge about
+   one's own state ("I don't think I'm suicidal") negates: "I'm not saying
+   I'll kill myself" is a warning sign. TOPIC_GUARDS veto MENTIONS
    (never explicit phrases) anywhere in the text when it names an academic
    topic ("Durkheim", "euthanasia", "theory of suicide").
 
@@ -272,8 +274,12 @@ NEGATION_GUARDS: tuple[str, ...] = (
     # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
     # (up to two words between the negation and the phrase, same clause).
     rf"{_NEGATION}(?: ,)?(?: ever)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
-    # A hedge about one's own state: "I don't think I'm suicidal".
-    rf"{_NEGATION} (?:think|believe|guess|feel|mean|say|saying) (?:i|im|id|ill|ive) {_NEGATED}",
+    # A hedge about one's own STATE: "I don't think I'm suicidal". Never about
+    # an act or a plan ("I don't think I'll kill myself tonight"), and never
+    # "not saying"/"don't mean" ("I'm not saying I'll kill myself" is a
+    # warning sign). A contraction reads like its spelled-out form.
+    rf"{_NEGATION}(?: really)? (?:think|believe|guess|feel)"
+    rf" (?:im|i am|i was|ive been|i have been) {_SUICIDAL}",
     r"(?:dont|do not|didnt|did not|never|wont|will not|dont really)"
     r" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead)",
 )

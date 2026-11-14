@@ -282,6 +282,43 @@ GENUINE_NEGATIONS: list[str] = [
 ]
 
 
+#: "I'm not saying I'll kill myself" is a recognised warning sign, not a
+#: negation: only a hedge about one's own STATE ("I don't think I'm
+#: suicidal") vetoes, and a contraction behaves like its spelled-out form.
+NOT_A_SELF_NEGATION: list[str] = [
+    "Im not saying Ill kill myself but I think about it",
+    "I'm not saying I'll kill myself but I think about it",
+    "I am not saying I will kill myself",
+    "not saying im suicidal",
+    "I'm not saying I'm suicidal",
+    "I am not saying I am suicidal",
+    "im not saying i want to die but",
+    "I don't mean I'll kill myself",
+    "I don't think I'll kill myself tonight",
+    "I don't think I will kill myself tonight",
+    "I don't think I'd kill myself",
+]
+
+#: The hedges that stay negations, contraction or not.
+SELF_NEGATING_HEDGES: list[str] = [
+    "I don't think I'm suicidal",
+    "I don't think I am suicidal",
+    "I don't really think I'm suicidal",
+    "I don't believe I've been suicidal",
+]
+
+
+@pytest.mark.parametrize("text", NOT_A_SELF_NEGATION)
+@pytest.mark.parametrize("source", ["message", "document"])
+def test_saying_or_meaning_is_not_a_self_negation(text, source):
+    assert detect(text, source=source) is not None
+
+
+@pytest.mark.parametrize("text", SELF_NEGATING_HEDGES)
+def test_a_hedge_about_ones_own_state_still_vetoes(text):
+    assert detect(text) is None
+
+
 @pytest.mark.parametrize("text", CLAUSE_CROSSING)
 def test_a_negation_never_reaches_across_a_clause(text):
     assert detect(text) is not None, f"{text!r}: the negation belongs to another clause"

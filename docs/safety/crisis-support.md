@@ -176,7 +176,9 @@ sentence breaks, stretched letters squeezed):
   want to die", "I'm not suicidal"; `NEGATION_GUARDS` reach only within their
   own clause: a comma, dash, bracket, "but"/"and" or a new "I" ends the
   negation, so "I'm not okay, I'll kill myself" and "I won't lie, I'm
-  suicidal" still match), and technical compounds ("suicide squad",
+  suicidal" still match; a hedge about one's own state, "I don't think I'm
+  suicidal", is a negation, but "I'm not saying I'll kill myself" and "I
+  don't think I'll kill myself tonight" are not), and technical compounds ("suicide squad",
   "suicide inhibitor", "suicide burn"). "this problem is killing me", "kill
   the process", "dying to know", "dead code", "kill switch" and "die roll"
   never match anything. **TOPIC_GUARDS** ("Durkheim", "euthanasia", "Hamlet",
