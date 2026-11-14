@@ -13,20 +13,24 @@ export const RETRY_MS = 3000;
 /** How many times an Update or a Regenerate asks for a held guide before it gives up. */
 export const MAX_TRIES = 10;
 
-/** Resolves after `ms`, or rejects as soon as the signal aborts. */
+/**
+ * Resolves after `ms`, or rejects as soon as the signal aborts. Its abort
+ * listener goes when the wait ends: a resume can wait on the same signal
+ * every few seconds for as long as another run holds the guide.
+ */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     // An abort that has already happened fires no event.
     if (signal.aborted) return reject(signal.reason);
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
