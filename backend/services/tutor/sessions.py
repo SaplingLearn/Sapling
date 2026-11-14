@@ -363,10 +363,8 @@ async def resume_session(session_id: str, request: Request):
 async def mode_switch(body: ModeSwitchBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
-    if body.new_mode not in MODE_DISPLAY_NAMES:
-        # sessions.mode is CHECK-constrained to these three; refuse before
-        # the write rather than surface the constraint as a 500.
-        raise HTTPException(status_code=422, detail="Unknown tutor mode")
+    # `new_mode` is a TutorMode Literal, so the body validation has already
+    # refused anything sessions.mode's CHECK constraint would (422).
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the switch is a session state change, not just a message — the
     # stored mode is what the session list and resume report.
