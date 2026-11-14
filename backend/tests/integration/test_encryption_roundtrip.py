@@ -146,7 +146,7 @@ def test_study_guides_previous_content_and_answers_are_ciphertext_and_decrypt(db
     against the real `updated_at` trigger."""
     import asyncio
 
-    from models.study_guide import CheckAnswer
+    from models.study_guide import CheckAnswer, GuideContent
     from services.study_guides import store
 
     user, guide_id = "rich-user-active", "rich-guide-cs-f25-mid"
@@ -161,7 +161,9 @@ def test_study_guides_previous_content_and_answers_are_ciphertext_and_decrypt(db
     previous = _raw(db_conn, "study_guides", "id", guide_id, "previous_content")
     assert isinstance(previous, str), "previous_content stored as PLAINTEXT JSONB"
     assert "recursive traces" not in previous
-    assert decrypt_json(previous) == seeded.content.model_dump(mode="json")
+    # Validated, not compared as a dict: the store keeps fields no dump has
+    # (`last_section_number`, `materials_read_at`).
+    assert GuideContent.model_validate(decrypt_json(previous)) == seeded.content
 
     answers = _raw(db_conn, "study_guides", "id", guide_id, "answers")
     assert isinstance(answers, str), "answers stored as PLAINTEXT JSONB"
