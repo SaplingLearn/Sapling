@@ -165,7 +165,10 @@ sentence breaks, stretched letters squeezed):
   "Suicide" do not.
 - **GUARDS** veto any match they overlap: idioms ("killing myself laughing",
   "cut myself some slack", "the hill I want to die on"), negations ("I don't
-  want to die", "I'm not suicidal"), and technical compounds ("suicide squad",
+  want to die", "I'm not suicidal"; `NEGATION_GUARDS` reach only within their
+  own clause: a comma, dash, bracket, "but"/"and" or a new "I" ends the
+  negation, so "I'm not okay, I'll kill myself" and "I won't lie, I'm
+  suicidal" still match), and technical compounds ("suicide squad",
   "suicide inhibitor", "suicide burn"). "this problem is killing me", "kill
   the process", "dying to know", "dead code", "kill switch" and "die roll"
   never match anything. **TOPIC_GUARDS** ("Durkheim", "euthanasia", "Hamlet",
@@ -177,7 +180,8 @@ then `suicidal_ideation`, then `self_harm`.
 
 **To extend:** add a `Phrase` to `EXPLICIT` (choose its category, write the
 pattern against the normalized form, reuse `_MYSELF` / `_INTENT`), or a
-pattern to `GUARDS` / `TOPIC_GUARDS` for a new false positive. Then add an
+pattern to `GUARDS` / `NEGATION_GUARDS` / `TOPIC_GUARDS` for a new false
+positive. Then add an
 example to `backend/tests/test_crisis_detection.py`. The suite fails if a
 phrase has no positive example, or if a guard vetoes none of the pinned
 negatives.

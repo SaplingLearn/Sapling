@@ -197,6 +197,7 @@ NEGATIVES: list[str] = [
     "I don't want to die",
     "I would never kill myself",
     "I'm not going to kill myself",
+    "I don't think I'm suicidal",
     # unrelated
     "the killer whale",
     "killjoy",
@@ -231,12 +232,12 @@ def test_every_listed_phrase_has_an_example():
 def test_every_guard_vetoes_a_pinned_negative():
     """Each GUARDS / TOPIC_GUARDS entry is load-bearing: dropping it makes a
     pinned negative match. Kept honest by deleting each guard in turn."""
-    for guard_list in ("GUARDS", "TOPIC_GUARDS"):
+    for guard_list in ("GUARDS", "NEGATION_GUARDS", "TOPIC_GUARDS"):
         guards = getattr(crisis_detection, guard_list)
         for i in range(len(guards)):
             reduced = tuple(g for j, g in enumerate(guards) if j != i)
             compiled = tuple(crisis_detection._bounded(g) for g in reduced)
-            attr = "_GUARDS" if guard_list == "GUARDS" else "_TOPIC_GUARDS"
+            attr = f"_{guard_list}"
             original = getattr(crisis_detection, attr)
             setattr(crisis_detection, attr, compiled)
             try:
@@ -244,6 +245,51 @@ def test_every_guard_vetoes_a_pinned_negative():
             finally:
                 setattr(crisis_detection, attr, original)
             assert fired, f"{guard_list}[{i}] vetoes none of NEGATIVES: {guards[i]!r}"
+
+
+#: A negation in an EARLIER clause must not veto a crisis phrase in the next
+#: one: the guard stops at a comma, dash or bracket, a clause-joining word
+#: ("but", "and", ...) and a new first-person subject.
+CLAUSE_CROSSING: list[str] = [
+    "I'm not okay, I'll kill myself",
+    "I won't lie, I'm suicidal",
+    "I'm not ok, I'm suicidal",
+    "No, not really, I'm suicidal",
+    "Not great, feeling suicidal again",
+    "I don't know anymore, hurt myself again",
+    "I'm not okay - I'm suicidal",
+    "I'm not okay — I want to kill myself",
+    "I'm not okay (suicidal tbh)",
+    "I'm not okay but suicidal",
+    "I'm not fine and suicidal",
+    "I'm not okay I'm suicidal",
+    "I won't lie I'm suicidal",
+    "I'm not okay; I'll kill myself",
+    "I'm not sure: I'm suicidal",
+]
+
+#: Negations the guard must keep vetoing, the clause-scoped form included.
+GENUINE_NEGATIONS: list[str] = [
+    "I'm not suicidal",
+    "I'm not suicidal, just stressed",
+    "I would never kill myself",
+    "I would never, ever kill myself",
+    "I don't want to die",
+    "I'm not going to kill myself",
+    "I don't think I'm suicidal",
+    "I'm stressed, but I'm not suicidal",
+    "I'm tired, I would never kill myself though",
+]
+
+
+@pytest.mark.parametrize("text", CLAUSE_CROSSING)
+def test_a_negation_never_reaches_across_a_clause(text):
+    assert detect(text) is not None, f"{text!r}: the negation belongs to another clause"
+
+
+@pytest.mark.parametrize("text", GENUINE_NEGATIONS)
+def test_a_negation_in_the_same_clause_still_vetoes(text):
+    assert detect(text) is None
 
 
 def test_mentions_need_first_person_in_the_same_sentence():

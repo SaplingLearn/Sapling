@@ -28,7 +28,10 @@ How matching works (every list below is a regex over `normalize(text)`):
 4. GUARDS veto any match they overlap: idioms ("killing myself laughing",
    "cut myself some slack", "the hill I want to die on"), negations ("I don't
    want to die") and technical compounds ("suicide squad", "suicide
-   inhibitor", "kill switch" never matches at all). TOPIC_GUARDS veto MENTIONS
+   inhibitor", "kill switch" never matches at all). A negation
+   (NEGATION_GUARDS) reaches only within its own clause: a comma, dash,
+   bracket, joining word ("but", "and") or new first-person subject ends it,
+   so "I'm not okay, I'll kill myself" still matches. TOPIC_GUARDS veto MENTIONS
    (never explicit phrases) anywhere in the text when it names an academic
    topic ("Durkheim", "euthanasia", "theory of suicide").
 
@@ -45,6 +48,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
@@ -238,14 +242,33 @@ FIRST_PERSON = r"(?:i|im|ive|id|ill|me|my|myself|mine)"
 
 # ── GUARDS: veto any match they overlap ────────────────────────────────────
 
-GUARDS: tuple[str, ...] = (
-    # Negations: "I'm not suicidal", "I would never kill myself" say the
-    # opposite (up to two words between the negation and the phrase).
-    rf"(?:not|never|dont|do not|wont|will not|wouldnt|would not|isnt|no longer)(?: [a-z]+){{0,2}}"
-    rf" (?:{_KILL}(?:ing)? ?{_MYSELF}|end my life|{_SUICIDAL}|hurt ?{_MYSELF}|harm ?{_MYSELF}"
-    rf"|commit {_SUICIDE})",
+_NEGATION = r"(?:not|never|dont|do not|wont|will not|wouldnt|would not|isnt|no longer)"
+_NEGATED = (
+    rf"(?:{_KILL}(?:ing)? ?{_MYSELF}|end my life|{_SUICIDAL}|hurt ?{_MYSELF}|harm ?{_MYSELF}"
+    rf"|commit {_SUICIDE})"
+)
+#: A word that may sit between a negation and the phrase it negates: never a
+#: clause-joining word or a new first-person subject, which start the NEXT
+#: clause ("I'm not okay but suicidal", "I won't lie I'm suicidal").
+_GAP_WORD = (
+    r"(?!(?:but|and|so|yet|though|although|because|cause|cuz|bc|plus|or|then"
+    r"|i|im|ill|id|ive)(?![a-z0-9]))[a-z]+"
+)
+
+#: NEGATION_GUARDS veto like GUARDS, but are matched over the CLAUSE form of
+#: the text (`_Forms.clause`), where a comma, dash or bracket is a `,` token
+#: no gap word can cross: "I'm not okay, I'll kill myself" is not negated.
+NEGATION_GUARDS: tuple[str, ...] = (
+    # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
+    # (up to two words between the negation and the phrase, same clause).
+    rf"{_NEGATION}(?: ,)?(?: ever)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
+    # A hedge about one's own state: "I don't think I'm suicidal".
+    rf"{_NEGATION} (?:think|believe|guess|feel|mean|say|saying) (?:i|im|id|ill|ive) {_NEGATED}",
     r"(?:dont|do not|didnt|did not|never|wont|will not|dont really)"
     r" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead)",
+)
+
+GUARDS: tuple[str, ...] = (
     # Idioms whose literal meaning is not self-harm.
     r"my ?self (?:esteem|worth|confidence|respect|image|control|discipline|care)",
     r"(?:my|my own) life (?:savings|story|stories|insurance|goals?|plans?|choices|decisions|back"
@@ -311,20 +334,54 @@ TOPIC_GUARDS: tuple[str, ...] = (
 _APOSTROPHES = re.compile("['’‘ʼ`´]")
 _INVISIBLE = re.compile("[­​-‏⁠﻿]")
 _SENTENCE_BREAK = re.compile(r"[.!?;:\n\r]+")
-_NON_WORD = re.compile(r"[^a-z0-9|]+")
+#: Clause punctuation inside a sentence: a comma, a dash between words, a
+#: bracket. Only the negation guards see it (as a `,` token); every other
+#: pattern reads it as a space, exactly as before.
+_CLAUSE_BREAK = re.compile(r"(?:[,()\[\]{}–—]|(?<!\S)-+(?!\S))+")
+_CLAUSE = ","
+_NON_WORD = re.compile(r"[^a-z0-9|,]+")
 _REPEATED_LETTER = re.compile(r"([a-z])\1{2,}")
 
 
-def normalize(text: str) -> str:
-    """The form every pattern above is written against (see the module doc)."""
+@dataclass(frozen=True)
+class _Forms:
+    """`text` is `normalize`'s form. `clause` is the same with a `,` token at
+    each clause break; `commas` are those tokens' offsets in `clause`, which
+    map a `clause` offset back onto `text`."""
+
+    text: str
+    clause: str
+    commas: tuple[int, ...]
+
+    def from_clause(self, index: int) -> int:
+        # Each `,` token before `index` added two characters (it and a space).
+        return index - 2 * bisect_left(self.commas, index)
+
+
+def _forms(text: str) -> _Forms:
     folded = unicodedata.normalize("NFKD", text[:MAX_SCREEN_CHARS]).casefold()
     folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
     folded = _INVISIBLE.sub("", folded)
     folded = _APOSTROPHES.sub("", folded)
     folded = _SENTENCE_BREAK.sub(" | ", folded)
+    folded = _CLAUSE_BREAK.sub(f" {_CLAUSE} ", folded)
     folded = _NON_WORD.sub(" ", folded)
     folded = _REPEATED_LETTER.sub(r"\1", folded)
-    return " ".join(folded.split())
+    tokens = folded.split()
+    clause = " ".join(tokens)
+    commas: list[int] = []
+    offset = 0
+    for token in tokens:
+        if token == _CLAUSE:
+            commas.append(offset)
+        offset += len(token) + 1
+    norm = " ".join(t for t in tokens if t != _CLAUSE) if commas else clause
+    return _Forms(text=norm, clause=clause, commas=tuple(commas))
+
+
+def normalize(text: str) -> str:
+    """The form every pattern above is written against (see the module doc)."""
+    return _forms(text).text
 
 
 def _bounded(pattern: str) -> re.Pattern[str]:
@@ -336,6 +393,7 @@ _EXPLICIT = tuple((p, _bounded(p.pattern)) for p in sorted(
     EXPLICIT, key=lambda p: CATEGORIES.index(p.category)))
 _MENTIONS = tuple((p, _bounded(p.pattern)) for p in MENTIONS)
 _GUARDS = tuple(_bounded(g) for g in GUARDS)
+_NEGATION_GUARDS = tuple(_bounded(g) for g in NEGATION_GUARDS)
 _TOPIC_GUARDS = tuple(_bounded(g) for g in TOPIC_GUARDS)
 _FIRST_PERSON = _bounded(FIRST_PERSON)
 
@@ -349,7 +407,8 @@ def detect(text: str | None) -> CrisisMatch | None:
     """The most severe crisis phrase in `text`, or None. Never raises on str."""
     if not text or not text.strip():
         return None
-    norm = normalize(text)
+    forms = _forms(text)
+    norm = forms.text
     if not norm:
         return None
     guards: list[tuple[int, int]] | None = None  # read only once something matched
@@ -358,6 +417,11 @@ def detect(text: str | None) -> CrisisMatch | None:
         nonlocal guards
         if guards is None:
             guards = [m.span() for g in _GUARDS for m in g.finditer(norm)]
+            # Negations are matched clause by clause, then mapped onto `norm`.
+            guards += [
+                (forms.from_clause(m.start()), forms.from_clause(m.end()))
+                for g in _NEGATION_GUARDS for m in g.finditer(forms.clause)
+            ]
         return _guarded(span, guards)
 
     for phrase, regex in _EXPLICIT:
