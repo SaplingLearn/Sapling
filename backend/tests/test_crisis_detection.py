@@ -358,9 +358,8 @@ IDIOM_THEN_NEGATION: list[str] = [
 
 
 @pytest.mark.parametrize("text", INTRODUCING_IDIOMS)
-@pytest.mark.parametrize("source", ["message", "document"])
-def test_an_introducing_idiom_is_never_a_negation(text, source):
-    assert detect(text, source=source) is not None
+def test_an_introducing_idiom_is_never_a_negation(text):
+    assert detect(text) is not None
 
 
 @pytest.mark.parametrize("text", IDIOM_THEN_NEGATION)
@@ -369,9 +368,8 @@ def test_a_negation_after_an_introducing_idiom_still_vetoes(text):
 
 
 @pytest.mark.parametrize("text", NOT_A_SELF_NEGATION)
-@pytest.mark.parametrize("source", ["message", "document"])
-def test_saying_or_meaning_is_not_a_self_negation(text, source):
-    assert detect(text, source=source) is not None
+def test_saying_or_meaning_is_not_a_self_negation(text):
+    assert detect(text) is not None
 
 
 @pytest.mark.parametrize("text", SELF_NEGATING_HEDGES)
@@ -435,14 +433,15 @@ def test_long_notes_are_screened_whole():
     assert detect(filler) is None
 
 
-# ── Documents: a quotation is not the student's own words ──────────────────
+# ── A quotation is just text ────────────────────────────────────────────────
 
-#: Note text that QUOTES someone else's crisis language (a case study, a play,
-#: a poem). With source="document" a match inside the quotation does not
-#: count when the quotation's sentence attributes it to someone else (a
-#: reporting verb, a third-person speaker, a `Name:` line) and does not speak
-#: in the first person outside it.
-QUOTED_IN_NOTES: list[str] = [
+#: Crisis language inside quotation marks matches like any other text, in a
+#: typed message and in a stored note alike. No pattern can tell a quoted
+#: patient from a student quoting themselves, so none tries: a note's match
+#: shows the card ALONGSIDE its result (services/crisis_support.py), which
+#: costs the student quoting a play nothing. The last three are the misses
+#: that sank the old quotation exception.
+QUOTATIONS: list[str] = [
     'PSYCH 101 week 4: depression. A patient says "I want to kill myself" and the clinician asks about a plan.',
     "Macbeth, Act 5. Macbeth: “I want to die” is the line we discussed.",
     "Romantic poetry. The speaker's refrain, 'I wish I were dead', closes each stanza.",
@@ -450,129 +449,31 @@ QUOTED_IN_NOTES: list[str] = [
     "Lecture: the narrator says „I want to die“ in the German-style quote example.",
     '"I want to die," she said, and the nurse wrote it down.',
     '"I want to kill myself," said the patient.',
-    'Hamlet says "I want to die" to Horatio.',
     'HAMLET: "I want to die"',
     'Doctor: How are you?\nJane: "I want to die."',
-    'ROMEO: Speak again.\nJULIET: "I want to die"',
-    'Lady Macbeth: "I want to die"',
-    '**Ophelia:** "I want to die"',
-    'The author notes "I want to die" as the turning point.',
     'Patient: "I want to kill myself."',
-]
-
-#: A quotation nobody else is said to have spoken is the student's own: a
-#: label before a colon is not a speaker, and neither is a reporting verb
-#: with no subject ('Wrote it again: "..."' is the student's).
-UNATTRIBUTED_QUOTES_IN_NOTES: list[str] = [
-    'Note: "I want to kill myself"',
-    'Today: "I want to die"',
-    '"I want to die"',
-    'Journal: "I want to die"',
-    'Dear diary: "I want to die"',
-    'Me: "I want to kill myself"',
-    "Monday: 'I want to kill myself'",
-    'Honestly: "I want to die"',
-    'Wrote it again: "I want to die"',
-    'Mood: "I want to die" and mom asked about school later',
-    'Dear Diary: "I want to die"',
-    'They were asleep: "I want to die"',
-    'Talked to her today: "I want to die"',
-    "Week 4 notes\n“I want to die”\nhomework due Friday",
-    # a capitalized word before a colon is a label unless it is a known
-    # literary speaker or the note reads as a script (two different names)
-    'Ugh: "I want to die"',
-    'Tonight: "I want to kill myself"',
-    'Update: "I want to die"',
-    'Honestly Tired: "I want to die"',
-    'Sarah: "I want to die"',
-    'Sam: hi\nSam: "I want to die"',
-    'Mood: bad\nToday: "I want to die"',
-    'Ugh: bad day\nTonight: "I want to die"',
-]
-
-
-@pytest.mark.parametrize("text", UNATTRIBUTED_QUOTES_IN_NOTES)
-def test_an_unattributed_quotation_in_a_note_still_matches(text):
-    assert detect(text, source="document") is not None
-
-
-#: Crisis language in a note that is still the student's own: outside any
-#: quotation, or quoted inside a sentence that speaks in the first person.
-STILL_SCREENED_IN_NOTES: list[str] = [
-    "Notes for class. I want to kill myself.",
-    'He said "see you later" and I want to kill myself.',
-    "I'm so tired and I can't do this, I want to kill myself, it's too much",
-    # an elision is not an opening quote; a plural possessive is not a close
-    "'Cause I want to kill myself, honestly, my friends' notes don't help",
-    'Today was awful. "Whatever." I want to die.',
-    'I keep thinking "I want to kill myself" every night',
-    'I wrote "I want to die" in my journal again',
-    # a `>` line is a Markdown callout, often the student's own: never a quote
-    "> I want to kill myself",
-    "Abnormal psych lecture\n> I want to end my life\nThe patient met criteria for MDD.",
-    "Week 3 notes\n  > **Reminder:** I want to die\n",
-    # an unclosed or line-spanning quote hides nothing
-    'The quote starts here "and then\nI want to kill myself',
-    'A stray " mark, then I want to kill myself',
-]
-
-
-@pytest.mark.parametrize("text", QUOTED_IN_NOTES)
-def test_a_document_quoting_crisis_language_does_not_match(text):
-    assert detect(text) is not None, "a typed message is screened in full"
-    assert detect(text, source="document") is None
-
-
-@pytest.mark.parametrize("text", STILL_SCREENED_IN_NOTES)
-def test_a_documents_own_crisis_language_still_matches(text):
-    assert detect(text, source="document") is not None
-
-
-#: A quotation that ends with its own sentence punctuation ends its sentence
-#: there: the first person in the NEXT sentence is not the quote's speaker.
-#: A break inside the quotation neither shifts nor extends its sentence.
-QUOTE_ENDS_ITS_SENTENCE: list[str] = [
     'The patient said "I want to die." I think this shows depression.',
-    'The patient said "I want to die!" I think this shows depression.',
-    'The patient asked "Why do I want to die?" I think she was in crisis.',
-    "The patient said “I want to die.” I think this shows depression.",
-    "The speaker says 'I wish I were dead.' I think the poem is bleak.",
-    'The patient said "I am tired. I want to die." I think this shows depression.',
-    'Patient: "I want to die." I asked about a plan.',
-    'She said "No. Stop." Then the patient said "I want to die." I wrote it down.',
-]
-
-#: ...but the quote's OWN sentence still counts, before or after the quote,
-#: across a colon that introduces it, and after an earlier quote's sentence.
-QUOTE_IN_A_FIRST_PERSON_SENTENCE: list[str] = [
-    'I wrote "I want to die." in my journal',
-    'I keep thinking "I want to die!" every night',
-    'Do I really think "I want to die?" every night',
+    'Note: "I want to kill myself"',
+    '"I want to die"',
+    'Sarah: "I want to die"',
+    'I keep thinking "I want to kill myself" every night',
     'I wrote in my journal: "I want to die."',
-    'Last night I thought: "I want to kill myself."',
-    'She said "Stop." Then I said "I want to die."',
+    "'Cause I want to kill myself, honestly, my friends' notes don't help",
+    "> I want to kill myself",
+    'Skipped the doctor appointment again, "I want to kill myself"',
+    'Everyone posting their happy photos "I want to kill myself"',
+    'Sarah: hi\nTom: hey\nSarah: "I want to kill myself"',
 ]
 
 
-@pytest.mark.parametrize("text", QUOTE_ENDS_ITS_SENTENCE)
-def test_a_quote_ending_in_punctuation_ends_its_own_sentence(text):
-    assert detect(text) is not None, "a typed message is screened in full"
-    assert detect(text, source="document") is None
+@pytest.mark.parametrize("text", QUOTATIONS)
+def test_a_quotation_matches_like_any_other_text(text):
+    assert detect(text) is not None
+    assert detect_any([None, text]) is not None
 
 
-@pytest.mark.parametrize("text", QUOTE_IN_A_FIRST_PERSON_SENTENCE)
-def test_a_quote_in_a_first_person_sentence_still_matches(text):
-    assert detect(text, source="document") is not None
-
-
-def test_detect_any_passes_the_source_on():
-    quoted = QUOTED_IN_NOTES[0]
-    assert detect_any([quoted]) is not None
-    assert detect_any([None, quoted], source="document") is None
-    assert detect_any([quoted, "I want to end my life"], source="document") is not None
-
-
-def test_quotes_never_change_the_normalized_form():
-    for text in (*QUOTED_IN_NOTES, *STILL_SCREENED_IN_NOTES, *QUOTE_ENDS_ITS_SENTENCE,
-                 *QUOTE_IN_A_FIRST_PERSON_SENTENCE, *UNATTRIBUTED_QUOTES_IN_NOTES):
-        assert crisis_detection._forms(text, quotes=True).text == normalize(text)
+def test_there_is_no_document_mode():
+    """The quotation exception is gone, not dormant: `detect` takes the text
+    alone, so no caller can screen a note any other way than in full."""
+    with pytest.raises(TypeError):
+        detect('A patient says "I want to die"', source="document")  # type: ignore[call-arg]

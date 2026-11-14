@@ -320,32 +320,12 @@ def test_an_unauthenticated_cleanup_is_refused_before_any_card_is_read(flag, mon
     detect.assert_not_called()
 
 
-#: Lecture notes that QUOTE crisis language: the student's note, not their words.
-QUOTING_NOTE = 'PSYCH 101: a patient says "I want to kill myself"; assess for a plan.'
-NOTE_CASES = [c for c in CASES if c.note_field]
-
-
-@pytest.mark.parametrize("case", NOTE_CASES, ids=[c.id for c in NOTE_CASES])
-def test_a_note_that_quotes_crisis_language_is_not_screened_out(case, flag, model_calls, sink):
-    """A quotation in a note is set aside (source="document"), so a lecture
-    note quoting a patient or a play can still be summarized; the same note
-    with the line unquoted still gets the card."""
-    flag("on")
-    r, next_step = _post(case, QUOTING_NOTE)
-    assert r.status_code == SENTINEL, r.text
-    next_step.assert_called_once()
-    assert _crisis_rows(sink) == []
-
-    r, _ = _post(case, QUOTING_NOTE.replace('"', ""))
-    assert "crisis_support" in _card_of(case, r)
-
-
 def test_a_typed_note_chat_message_is_screened_whole_quotes_and_all(flag, model_calls, sink):
-    """Only NOTE content sets quotations aside: what the student types into
-    the note chat is screened in full."""
+    """A quotation is just text: what the student types into the note chat
+    is screened in full."""
     flag("on")
     case = next(c for c in CASES if c.surface == "note_chat" and not c.note_field)
-    r, next_step = _post(case, QUOTING_NOTE)
+    r, next_step = _post(case, 'PSYCH 101: a patient says "I want to kill myself"; assess for a plan.')
     assert "crisis_support" in _card_of(case, r)
     next_step.assert_not_called()
 

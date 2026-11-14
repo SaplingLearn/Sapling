@@ -49,7 +49,7 @@ from services import auth_guard
 from services import crisis_support_copy as crisis_copy
 from services import events_service
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
-from services.crisis_detection import CrisisMatch, Source, detect_any
+from services.crisis_detection import CrisisMatch, detect_any
 from services.feature_flags import flag_on
 from services.request_context import current_request_id
 
@@ -98,20 +98,14 @@ class CrisisSupport:
 
 def screen(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
-    source: Source = "message",
 ) -> CrisisSupport | None:
     """The crisis response for this request, or None to carry on as before.
     Blocking on a match (the auth, flag and school reads): sync routes only.
     Never raises on a store outage — the flag fails closed and the school
     read falls back. Raises the route's own 401/403 for a caller who is not
-    `user_id`, and only on a match.
-
-    `source="document"` is for text the student STORED (a note, a card), not
-    typed as a message: a quotation in it is set aside
-    (`crisis_detection.detect`), so lecture notes quoting a patient or a play
-    are not screened out. A message is always screened whole."""
+    `user_id`, and only on a match."""
     _check_surface(surface)
-    match = detect_any(texts, source=source)
+    match = detect_any(texts)
     if match is None:
         return None
     auth_guard.require_self(user_id, request)
@@ -120,14 +114,13 @@ def screen(
 
 async def screen_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
-    source: Source = "message",
 ) -> CrisisSupport | None:
     """`screen` for an `async def` route: no blocking read on the event loop."""
     _check_surface(surface)
     if sum(len(t or "") for t in texts) > _INLINE_DETECT_CHARS:
-        match = await asyncio.to_thread(detect_any, texts, source=source)
+        match = await asyncio.to_thread(detect_any, texts)
     else:
-        match = detect_any(texts, source=source)
+        match = detect_any(texts)
     if match is None:
         return None
     await auth_guard.guard_off_loop(auth_guard.require_self, user_id, request)

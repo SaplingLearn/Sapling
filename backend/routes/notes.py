@@ -387,9 +387,8 @@ def _note_user_prompt(note: dict) -> str:
 
 def _note_texts(note: dict) -> tuple[str | None, ...]:
     """The student-written note text an agent action hands a model (the title
-    and body; `last_summary` is model output, not the student's words).
-    Screened as a "document": a quotation in it (a patient, a play) is set
-    aside; the note chat's typed message is screened whole."""
+    and body; `last_summary` is model output, not the student's words),
+    screened in full: a quotation in it is screened like the rest."""
     return (note.get("title"), note.get("body"))
 
 
@@ -412,7 +411,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: before any limit or budget; no summary is made or saved
     if crisis := await crisis_support.screen_async(
-        request, body.user_id, "note_summarize", *_note_texts(note), source="document"
+        request, body.user_id, "note_summarize", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis)
     # Limits come after the crisis screen: a student in crisis never gets a 429.
@@ -442,7 +441,7 @@ async def extract_concepts(
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: before any limit or budget; nothing is extracted or linked
     if crisis := await crisis_support.screen_async(
-        request, body.user_id, "note_extract_concepts", *_note_texts(note), source="document"
+        request, body.user_id, "note_extract_concepts", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis, concepts=[], linked=0)
     # Limits come after the crisis screen: a student in crisis never gets a 429.
@@ -489,7 +488,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         raise HTTPException(status_code=404, detail="Note not found.")
     # ...then the note the chat agent reads
     if crisis := await crisis_support.screen_async(
-        request, body.user_id, "note_chat", *_note_texts(note), source="document"
+        request, body.user_id, "note_chat", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis, degraded=False)
     # Limits come after the crisis screen: a student in crisis never gets a 429.
@@ -534,7 +533,7 @@ async def send_to_tutor(
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: nothing is handed to the tutor (no topic, no preface)
     if crisis := await crisis_support.screen_async(
-        request, body.user_id, "note_send_to_tutor", *_note_texts(note), source="document"
+        request, body.user_id, "note_send_to_tutor", *_note_texts(note)
     ):
         return crisis_support.json_body(crisis)
     # Limits come after the crisis screen: a student in crisis never gets a 429.
