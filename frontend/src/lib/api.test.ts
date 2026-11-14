@@ -253,14 +253,15 @@ describe('credentials: include on auth-protected multipart uploads', () => {
   });
 
   it('adminUploadCosmeticAsset goes through the backend, never browser storage', async () => {
-    const originalFR = (globalThis as any).FileReader;
-    (globalThis as any).FileReader = class MockFileReader {
-      onload: ((e: any) => void) | null = null;
-      onerror: ((e: any) => void) | null = null;
+    const g = globalThis as unknown as { FileReader: unknown };
+    const originalFR = g.FileReader;
+    g.FileReader = class MockFileReader {
+      onload: ((e: ProgressEvent) => void) | null = null;
+      onerror: ((e: ProgressEvent) => void) | null = null;
       result: string | null = null;
       readAsDataURL(_file: File) {
         this.result = 'data:image/webp;base64,ZmFrZQ==';
-        queueMicrotask(() => this.onload?.({} as any));
+        queueMicrotask(() => this.onload?.({} as ProgressEvent));
       }
     };
     try {
@@ -280,7 +281,7 @@ describe('credentials: include on auth-protected multipart uploads', () => {
       const body = JSON.parse(init.body as string);
       expect(body).toEqual({ file_base64: 'ZmFrZQ==', content_type: 'image/webp' });
     } finally {
-      (globalThis as any).FileReader = originalFR;
+      g.FileReader = originalFR;
     }
   });
 
