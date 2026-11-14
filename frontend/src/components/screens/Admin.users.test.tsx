@@ -35,7 +35,6 @@ vi.mock("../ToastProvider", () => ({
   useToast: () => toastSpies,
 }));
 
-vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("./admin/AchievementWiki", () => ({ AchievementWiki: () => null }));
 vi.mock("./admin/FeatureFlags", () => ({ FeatureFlagsTab: () => null }));
 

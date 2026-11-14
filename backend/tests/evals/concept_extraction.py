@@ -32,6 +32,7 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from agents.concept_extraction import ConceptList, concept_extraction_agent
 from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
+from services.prompt_safety import wrap_document_input  # noqa: E402  (as the upload pipeline sends it)
 
 
 _ADMIN_NAME_PATTERNS = [
@@ -314,7 +315,7 @@ async def _run(case_input: str) -> ConceptList:
         dataset="concept_extraction",
         case_name=case_name,
         agent=concept_extraction_agent,
-        case_input=case_input,
+        case_input=wrap_document_input(case_input),
         output_model=ConceptList,
     )
 

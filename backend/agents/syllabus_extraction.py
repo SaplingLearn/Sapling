@@ -17,6 +17,7 @@ from pydantic_ai import Agent, PromptedOutput
 from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import DOCUMENT_INPUT_GUARD_PROMPT
 
 
 class SyllabusAssignment(BaseModel):
@@ -79,7 +80,8 @@ _SYSTEM_PROMPT = (
     "verbatim — do not normalize percent vs points. Empty list "
     "is valid when the syllabus does not state a breakdown.\n\n"
     "Fill course_title and instructor if shown at the top of the "
-    "syllabus, else null. Empty assignments list is valid."
+    "syllabus, else null. Empty assignments list is valid.\n\n"
+    + DOCUMENT_INPUT_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

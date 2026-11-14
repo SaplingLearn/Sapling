@@ -580,6 +580,13 @@ class AchievementIconBody(BaseModel):
     content_type: str
 
 
+class CosmeticAssetBody(BaseModel):
+    """An admin cosmetic image, uploaded through the backend (never the
+    browser's anon key) before the cosmetic row that points at it exists."""
+    file_base64: str
+    content_type: str
+
+
 class UpdateXpRuleBody(BaseModel):
     amount: Optional[int] = None
     enabled: Optional[bool] = None

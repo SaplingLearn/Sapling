@@ -28,6 +28,7 @@ from models import (
     AllowlistEmailBody,
     AllowlistBulkBody,
     AchievementIconBody,
+    CosmeticAssetBody,
     UpdateXpRuleBody,
 )
 from services.admin import (
@@ -280,6 +281,14 @@ def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
 def list_cosmetics(request: Request):
     require_admin(request)
     return cosmetics.list_cosmetics()
+
+
+@router.post("/cosmetics/assets")
+def create_cosmetic_asset(body: CosmeticAssetBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    with _admin_errors():
+        return cosmetics.upload_asset(body, actor)
 
 
 @router.post("/cosmetics")

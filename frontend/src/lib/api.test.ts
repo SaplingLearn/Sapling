@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  adminUploadCosmeticAsset,
   extractSyllabus,
   getCourses,
   uploadAvatar,
@@ -249,6 +250,47 @@ describe('credentials: include on auth-protected multipart uploads', () => {
     } finally {
       (globalThis as any).FileReader = originalFR;
     }
+  });
+
+  it('adminUploadCosmeticAsset goes through the backend, never browser storage', async () => {
+    const originalFR = (globalThis as any).FileReader;
+    (globalThis as any).FileReader = class MockFileReader {
+      onload: ((e: any) => void) | null = null;
+      onerror: ((e: any) => void) | null = null;
+      result: string | null = null;
+      readAsDataURL(_file: File) {
+        this.result = 'data:image/webp;base64,ZmFrZQ==';
+        queueMicrotask(() => this.onload?.({} as any));
+      }
+    };
+    try {
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValue(jsonResponse({ asset_url: 'https://cdn/c.webp' }));
+
+      const out = await adminUploadCosmeticAsset(
+        new File(['fake'], 'frame.webp', { type: 'image/webp' }),
+      );
+
+      expect(out.asset_url).toBe('https://cdn/c.webp');
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('/api/admin/cosmetics/assets');
+      expect(url).not.toContain('/storage/v1/');
+      expect(init.method).toBe('POST');
+      expect(init.credentials).toBe('include');
+      const body = JSON.parse(init.body as string);
+      expect(body).toEqual({ file_base64: 'ZmFrZQ==', content_type: 'image/webp' });
+    } finally {
+      (globalThis as any).FileReader = originalFR;
+    }
+  });
+
+  it('adminUploadCosmeticAsset refuses a type the backend would refuse', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+    await expect(
+      adminUploadCosmeticAsset(new File(['<svg/>'], 'x.svg', { type: 'image/svg+xml' })),
+    ).rejects.toThrow(/Unsupported image type/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

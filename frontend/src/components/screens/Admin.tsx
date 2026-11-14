@@ -18,9 +18,9 @@ import {
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminAuditLog, adminAnalyticsOverview,
   adminListFeedback, adminListIssueReports,
+  adminUploadCosmeticAsset, COSMETIC_ASSET_TYPES,
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
-import { supabase } from "@/lib/supabase";
 import type { Role, Cosmetic, CosmeticType, RarityTier, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 import { AchievementWiki } from "./admin/AchievementWiki";
 import { FeatureFlagsTab } from "./admin/FeatureFlags";
@@ -34,17 +34,6 @@ type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" 
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
-
-const COSMETIC_BUCKET = "cosmetic-assets";
-
-async function uploadCosmeticAsset(file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || "png";
-  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await supabase.storage.from(COSMETIC_BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
-  if (error) throw error;
-  const { data } = supabase.storage.from(COSMETIC_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
 
 export function Admin() {
   const { isAdmin } = useUser();
@@ -614,8 +603,10 @@ function CosmeticsTab() {
     if (!file) return;
     setUploading(true);
     try {
-      const url = await uploadCosmeticAsset(file);
-      setForm(f => ({ ...f, asset_url: url }));
+      // Through the backend (admin-only, service-role storage): the browser
+      // never writes to storage with the anon key.
+      const { asset_url } = await adminUploadCosmeticAsset(file);
+      setForm(f => ({ ...f, asset_url }));
       toast.success("Asset uploaded");
     } catch (err) {
       toast.error(`Upload failed: ${String(err)}`);
@@ -707,7 +698,7 @@ function CosmeticsTab() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept={COSMETIC_ASSET_TYPES.join(",")}
                 style={{ display: "none" }}
                 onChange={e => onFilePicked(e.target.files?.[0] ?? null)}
               />
