@@ -22,7 +22,12 @@ from config import SESSION_SECRET
 from db.connection import table
 from db.scope import service_scope
 from services import events_service
-from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_SESSION
+from services.session_tokens import (
+    IAT_PRECISION_CLAIM,
+    IAT_PRECISION_MS,
+    SESSION_COOKIE_NAME,
+    TOKEN_TYPE_SESSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,16 +96,23 @@ def issued_before(payload: dict, cut_off: float) -> bool:
     """Whether the session `payload` was issued before `cut_off` (unix seconds,
     sub-second: `users.sessions_valid_after`), i.e. is revoked by it.
 
-    A millisecond `iat` (every token minted now, by the backend and the BFF)
-    compares exactly. A whole-second `iat` (a legacy token, or the legacy
-    `exp`-derived estimate) could have been minted anywhere in that second, so
-    one from the cut-off's own second counts as issued before it: no benefit
-    of the doubt.
+    A token that says its `iat` is to the millisecond (`iat_precision: "ms"`:
+    every token minted now, by the backend and the BFF, truncated so it is
+    never later than the mint) compares exactly, whether or not that iat
+    falls on a whole second. Anything else (a legacy whole-second `iat`, or
+    the legacy `exp`-derived estimate) could have been minted anywhere in its
+    second, so one from the cut-off's own second counts as issued before it:
+    no benefit of the doubt.
     """
     iat = session_issued_at(payload)
-    if float(iat).is_integer():
-        return iat <= math.floor(cut_off)
-    return iat < cut_off
+    minted_iat = payload.get("iat")
+    if (
+        payload.get(IAT_PRECISION_CLAIM) == IAT_PRECISION_MS
+        and isinstance(minted_iat, (int, float))
+        and not isinstance(minted_iat, bool)
+    ):
+        return iat < cut_off
+    return math.floor(iat) <= math.floor(cut_off)
 
 
 def _decode_session(request: Request) -> dict:

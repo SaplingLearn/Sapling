@@ -217,7 +217,29 @@ describe('session route — minted session lifetime', () => {
       }));
       const payload = payloadOf(res.cookies.get('sapling_session')?.value ?? '');
       expect(payload.iat).toBe(1_700_000_012.345);
+      expect(payload.iat_precision).toBe('ms');
       expect(payload.exp).toBe(1_700_000_012 + 7 * 86400);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('marks an iat on a whole second as milliseconds, not a legacy whole-second one', async () => {
+    // JSON.stringify writes 1700000012.000 as the integer 1700000012; the
+    // backend reads such an iat as legacy (anywhere in its second) unless the
+    // token says it is to the millisecond (auth_guard.issued_before).
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    const authToken = await handoff('user_1');
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_012_000);
+    try {
+      const res = await POST(new NextRequest(URL, {
+        method: 'POST',
+        headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+        body: JSON.stringify({ authToken }),
+      }));
+      const payload = payloadOf(res.cookies.get('sapling_session')?.value ?? '');
+      expect(payload.iat).toBe(1_700_000_012);
+      expect(payload.iat_precision).toBe('ms');
     } finally {
       spy.mockRestore();
     }

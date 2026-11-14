@@ -50,15 +50,39 @@ def _token_at(iat: float, user_id: str = "user_alice", ttl: int = config.SESSION
         session_tokens._now = original
 
 
+def _signed(claims: dict, *, compact: bool = False) -> str:
+    """A token over exactly `claims`, signed with SECRET. `compact` serialises
+    the way the BFF's JSON.stringify does (no spaces; a whole-number iat
+    written as an integer)."""
+    import base64
+    import hashlib
+    import hmac
+
+    body = json.dumps(claims, separators=(",", ":") if compact else None)
+    payload_b64 = base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+    sig = hmac.new(SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    return f"{payload_b64}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')}"
+
+
+def _legacy_token_at(iat: int, user_id: str = "user_alice") -> str:
+    """A whole-second token from before the millisecond iat (no
+    `iat_precision` claim)."""
+    return _signed({"user_id": user_id, "exp": int(iat) + 3600, "typ": "session", "iat": int(iat)})
+
+
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def _payload(token: str) -> dict:
+def _raw_payload(token: str) -> str:
     import base64
 
     b64 = token.split(".")[0]
-    return json.loads(base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4)))
+    return base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4)).decode()
+
+
+def _payload(token: str) -> dict:
+    return json.loads(_raw_payload(token))
 
 
 # ── iat ──────────────────────────────────────────────────────────────────────
@@ -74,11 +98,21 @@ def test_minted_tokens_carry_iat_and_cap_the_lifetime():
 def test_iat_is_minted_to_the_millisecond(monkeypatch):
     # A JWT NumericDate may be fractional. Whole seconds would make a session
     # minted earlier in a sign-out's own second indistinguishable from one
-    # minted after it; `exp` stays whole seconds.
-    monkeypatch.setattr(session_tokens.time, "time", lambda: 1_700_000_012.2)
+    # minted after it; `exp` stays whole seconds. The token says so
+    # (`iat_precision`), so a millisecond iat that happens to be X.000 is not
+    # mistaken for a legacy whole-second one.
+    monkeypatch.setattr(session_tokens.time, "time_ns", lambda: 1_700_000_012_200_000_000)
     payload = _payload(session_tokens.mint_session("u", ttl=3600, secret=SECRET))
     assert payload["iat"] == 1_700_000_012.2
+    assert payload["iat_precision"] == "ms"
     assert payload["exp"] == 1_700_000_012 + 3600
+
+
+def test_iat_is_truncated_to_the_millisecond_never_rounded_up(monkeypatch):
+    # Rounding 12.2996 up to 12.300 would date the session after a sign-out at
+    # 12.2999 that it preceded.
+    monkeypatch.setattr(session_tokens.time, "time_ns", lambda: 1_700_000_012_299_600_000)
+    assert _payload(session_tokens.mint_session("u", secret=SECRET))["iat"] == 1_700_000_012.299
 
 
 def test_session_max_age_is_seven_days():
@@ -132,13 +166,55 @@ class TestRevocation:
         now = int(time.time())
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.1))
         with pytest.raises(HTTPException) as exc:
-            auth_guard._real_get_session_user_id(_request(_token_at(now)))
+            auth_guard._real_get_session_user_id(_request(_legacy_token_at(now)))
         assert exc.value.detail == "Session revoked"
+        # ...even when the sign-out fell on the second's very start.
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now))
+        auth_guard._account_state_cache.clear()
+        with pytest.raises(HTTPException):
+            auth_guard._real_get_session_user_id(_request(_legacy_token_at(now)))
 
     def test_whole_second_iat_after_the_sign_out_second_is_honoured(self, real_guard):
         now = int(time.time())
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 0.3))
-        assert auth_guard._real_get_session_user_id(_request(_token_at(now))) == "user_alice"
+        assert auth_guard._real_get_session_user_id(_request(_legacy_token_at(now))) == "user_alice"
+
+    def test_session_minted_0_4_ms_before_the_sign_out_is_revoked(self, real_guard, monkeypatch):
+        # Minted at 12.2996, signed out at 12.2999: a rounded iat (12.300)
+        # would survive; the truncated one (12.299) is older than the cut-off.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 299_600_000)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.2999))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
+    def test_a_backend_session_minted_at_a_whole_second_is_not_read_as_legacy(self, real_guard, monkeypatch):
+        # Minted at exactly X.000, signed out at X.000: issued at, not before,
+        # the cut-off. The whole-second rule would revoke it.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        assert _payload(token)["iat"] == second
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+
+    def test_a_bff_session_minted_at_a_whole_second_is_not_read_as_legacy(self, real_guard):
+        # The BFF's JSON.stringify writes a whole-number iat as an integer
+        # (`"iat":1700000012`); its `iat_precision` says it is milliseconds.
+        second = int(time.time())
+        token = _signed({"user_id": "user_alice", "exp": second + 604800, "typ": "session",
+                         "iat": second, "iat_precision": "ms"}, compact=True)
+        assert f'"iat":{second},' in _raw_payload(token)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+        # And one minted a millisecond earlier is revoked.
+        auth_guard._account_state_cache.clear()
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.001))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
 
     def test_never_signed_out_revokes_nothing(self, real_guard):
         real_guard.select.return_value = _row(sessions_valid_after=None)
