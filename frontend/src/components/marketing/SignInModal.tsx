@@ -17,7 +17,7 @@ const ERROR_COPY: Record<string, string> = {
   google_not_configured: "Google sign-in is not configured on the server. Please contact support.",
   signin_failed: "Sign-in failed. Please try again.",
   account_deleted:
-    "This account was deleted. If you think that's a mistake, please contact support.",
+    "This account was deleted. It is pending permanent erasure: its data is erased 30 days after the deletion. If you think that's a mistake, please contact support before then.",
   session_expired: "Your session has expired. Please sign in again.",
   env_misconfig: "This environment is misconfigured and can't sign you in. Please contact support.",
   revoked: "Your access has been revoked.",
