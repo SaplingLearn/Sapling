@@ -277,6 +277,10 @@ python tests/evals/run_all.py
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
 | `CodeQL` (GitHub code scanning) | PRs and pushes to `main` | Static security analysis of the Python and JavaScript/TypeScript code |
 | `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
+| `Vulnerability scan` | PRs, pushes to `main`, weekly | `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
+| `Secret scan` | PRs and pushes to `main` | gitleaks over the full git history (allowlist in `.gitleaks.toml`) |
+
+Every action is pinned to a commit SHA (`# vX.Y.Z` comment alongside) and every workflow's token defaults to `contents: read`. Dependabot (`.github/dependabot.yml`) proposes weekly pip, npm, Actions and Docker updates; a pip PR must be re-locked with uv before merge (the command is in that file).
 
 Deploys: the frontend is built and deployed by Cloudflare Workers Builds on push. Production releases go through `make promote` (preflight, backup, migrate, merge `main` into `production`, verify). See [`backend/promotion/README.md`](backend/promotion/README.md).
 
