@@ -46,14 +46,25 @@ STUDY_GUIDE_BLOCK_LIMIT = _limit("STUDY_GUIDE_BLOCK_RATE_LIMIT", 40)
 STUDY_GUIDE_CREATE_LIMIT = _limit("STUDY_GUIDE_CREATE_RATE_LIMIT", 60)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Charge:
-    """One action counted against a student's hourly limit."""
+    """One action counted against a student's hourly limit.
+
+    It is settled once: `keep` when the work it pays for has begun, or
+    `refund`. Whichever comes first stands, so a refund after `keep`, or a
+    second refund, does nothing."""
 
     key: str
     hit: RateLimitClaim
+    settled: bool = False
+
+    def keep(self) -> None:
+        self.settled = True
 
     def refund(self) -> None:
+        if self.settled:
+            return
+        self.settled = True
         refund_rate_limit(self.key, self.hit.slot)
 
 

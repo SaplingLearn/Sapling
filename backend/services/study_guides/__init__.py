@@ -15,7 +15,11 @@ from services.study_guides.errors import (
     GuideRateLimited,
     StudyGuideError,
 )
-from services.study_guides.generation import aprepare_generation, stream_generation
+from services.study_guides.generation import (
+    aprepare_generation,
+    asettle_charge,
+    stream_generation,
+)
 from services.study_guides.legacy import content_from_topics
 from services.study_guides.options import aget_options
 from services.study_guides.plan import aplan
@@ -37,6 +41,7 @@ __all__ = [
     "aplan",
     "aprepare_generation",
     "aregenerate_block",
+    "asettle_charge",
     "content_from_topics",
     "stream_generation",
 ]

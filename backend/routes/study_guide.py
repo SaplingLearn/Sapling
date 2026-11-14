@@ -14,6 +14,7 @@ from contextlib import aclosing, contextmanager
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
+from starlette.background import BackgroundTask
 
 from models.study_guide import AnswerBody, GenerateBody, GuidePatch, GuideRequest
 from services import study_guides
@@ -106,6 +107,8 @@ async def generate_guide(user_id: str, guide_id: str, body: GenerateBody, reques
     return EventSourceResponse(
         event_stream(),
         headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
+        # Runs however the response ends, also when the stream never started.
+        background=BackgroundTask(study_guides.asettle_charge, generation),
     )
 
 

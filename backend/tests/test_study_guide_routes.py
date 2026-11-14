@@ -83,7 +83,8 @@ def _replace(monkeypatch, name: str, result=None, error: Exception | None = None
 
 
 def _stream(monkeypatch, events=EVENTS) -> list:
-    """Replace `stream_generation` with one that yields `events`."""
+    """Replace `stream_generation` with one that yields `events`, and the
+    charge settling after the response with one that records its call."""
     streamed: list = []
 
     async def stream_generation(generation):
@@ -91,7 +92,11 @@ def _stream(monkeypatch, events=EVENTS) -> list:
         for event in events:
             yield event
 
+    async def asettle_charge(generation):
+        streamed.append(("settled", generation))
+
     monkeypatch.setattr(study_guides, "stream_generation", stream_generation)
+    monkeypatch.setattr(study_guides, "asettle_charge", asettle_charge)
     return streamed
 
 
@@ -234,8 +239,10 @@ def test_generate_streams_the_runs_events_as_sse(monkeypatch):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
     assert prepared == [((ME, "g1", "update"), {})]
-    # The stream is given exactly what prepare returned.
-    assert streamed == ["the-generation"]
+    # The stream is given exactly what prepare returned, and the charge is
+    # settled once the response is over (a stream that never started gives
+    # it back there).
+    assert streamed == ["the-generation", ("settled", "the-generation")]
     assert _sse(r.text) == [
         {"event": event.type, "data": event.model_dump(mode="json")} for event in EVENTS
     ]

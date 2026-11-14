@@ -2,7 +2,9 @@
 
 `aprepare_generation` does everything that can still be refused with an HTTP
 status: it loads the guide, refuses one that another run is writing, reads
-what the run needs and charges the hourly limit. `stream_generation` is the
+what the run needs and charges the hourly limit. The charge is kept only once
+a model is asked for something; a run that ends before that (or a stream that
+is never started: `asettle_charge`) gives it back. `stream_generation` is the
 run itself. It takes the guide's claim as its first act, so a stream that is
 never started holds nothing, and reads the guide again under the claim, so it
 works from the row as it is and not as it was prepared. Then the outline, and
@@ -224,6 +226,7 @@ async def _aplan(run: _Run) -> None:
     lose, so its outline is saved at once and a cut stream resumes from it.
     An Update or Regenerate holds its outline until a section is written."""
     generation = run.generation
+    generation.charge.keep()
     run.content = await outline.anew_content(
         run.guide, generation.inputs,
         updating=generation.mode == "update", new_labels=generation.new_labels,
@@ -274,6 +277,7 @@ async def _awrite(run: _Run, section: Section) -> Section:
     # Before the model is paid for: an overtaken run stops here.
     await run.atouch()
     run.attempted += 1
+    run.generation.charge.keep()
     try:
         items = await writer.awrite_section(
             inputs.brief, run.content, section, deps=inputs.deps, beat=run.atouch,
@@ -442,13 +446,14 @@ async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEven
     its last save, before `done`; any other way the stream ends, is closed or
     is cancelled gives it back on the way out. A stream that cannot start
     (the guide is claimed, can no longer be read, or was written by another
-    request since this one was prepared) ends with one event and gives its
+    request since this one was prepared) ends with one event.
+
+    However it ends, a run that never asked a model for anything gives its
     charge back."""
     run = _Run(generation=generation, guide=generation.guide, content=generation.guide.content)
     try:
         ended = await _astart(run)
         if ended is not None:
-            generation.charge.refund()
             yield ended
             return
         async with aclosing(_aevents(run)) as events:
@@ -461,5 +466,17 @@ async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEven
     except Exception as exc:
         yield await _afailed(run, exc)
     finally:
+        # Before the release, which awaits: a cancelled run must not lose it.
+        generation.charge.refund()
         if run.claim:
             await run.arelease()
+
+
+async def asettle_charge(generation: Generation) -> None:
+    """Give the run's charge back unless a model was asked for something.
+
+    The route calls it once the response is over, for the stream that never
+    started: a client gone before the first event is iterated leaves
+    `stream_generation` unstarted, and its own refund never runs. Safe to call
+    after a stream that did run: the charge is settled once."""
+    generation.charge.refund()

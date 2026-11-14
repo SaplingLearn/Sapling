@@ -1446,6 +1446,60 @@ def test_the_hourly_limit(world, monkeypatch):
     assert run(generation.aprepare_generation("user_other", "theirs", "resume")).guide.id == "theirs"
 
 
+def _charged(world: World) -> int:
+    return len(request_limits._rate_state.get(f"study-guide-generate:{ME}", []))
+
+
+def test_a_stream_that_never_starts_gives_its_charge_back(world, monkeypatch):
+    """The client went away before the response iterated the stream: the
+    route settles the charge once the response is over."""
+    world.guide()
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "resume"))
+    assert _charged(world) == 1
+    run(generation.asettle_charge(prepared))
+
+    assert _charged(world) == 0 and script.outline_calls == []
+    # Settling again gives back nothing more.
+    run(generation.aprepare_generation(ME, GUIDE, "resume"))
+    run(generation.asettle_charge(prepared))
+    assert _charged(world) == 1
+
+
+def test_a_run_that_fails_before_asking_a_model_gives_its_charge_back(world, monkeypatch):
+    """Reading the guide again under the claim fails: no model was asked."""
+    world.guide()
+    script = Script(monkeypatch, outline=_outline(_planned("One")))
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "resume"))
+
+    async def unreachable(user_id, guide_id):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(store, "aload_guide", unreachable)
+    events = run(_collect(generation.stream_generation(prepared)))
+
+    assert _shape(events) == [("error", "error")] and script.outline_calls == []
+    assert _charged(world) == 0
+    assert world.stored()["generating_at"] is None
+
+
+def test_a_run_that_asked_a_model_keeps_its_charge(world, monkeypatch):
+    world.guide()
+    Script(monkeypatch, outline=GuideGenerationFailed("no"))
+
+    prepared = run(generation.aprepare_generation(ME, GUIDE, "resume"))
+    events = run(_collect(generation.stream_generation(prepared)))
+    run(generation.asettle_charge(prepared))
+
+    assert events[-1].type == "error"
+    assert _charged(world) == 1
+
+
+async def _collect(stream) -> list:
+    return [event async for event in stream]
+
+
 # ── The claim, however the run ends ───────────────────────────────────────────
 
 
