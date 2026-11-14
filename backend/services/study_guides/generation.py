@@ -62,6 +62,11 @@ ALREADY_WRITTEN_DETAIL = "This guide is already written."
 NOTHING_NEW_DETAIL = "There is nothing new to add to this guide."
 BUSY_DETAIL = "Another tab is writing this guide."
 OVERTAKEN_DETAIL = "Another request took over writing this guide."
+#: The `data.code` of a stream that ends because another run holds the guide
+#: or took it over. The stream is already a 200, so this is how the reader
+#: knows to follow that run (as after a 409) rather than report a failure.
+BUSY_CODE = "busy"
+OVERTAKEN_CODE = "overtaken"
 
 
 @dataclass(frozen=True)
@@ -209,7 +214,7 @@ async def _astart(run: _Run) -> SaplingEvent | None:
     row it loaded. Returns the event the stream ends with when there is
     nothing for this run to do, else None."""
     if not await run.aclaim():
-        return _error(BUSY_DETAIL, retryable=True)
+        return _error(BUSY_DETAIL, retryable=True, code=BUSY_CODE)
     prepared = run.guide
     run.guide = await store.aload_guide(prepared.user_id, prepared.id)
     run.content = run.guide.content
@@ -337,16 +342,28 @@ def _status(step: str, message: str, number: int, total: int) -> SaplingEvent:
     )
 
 
-def _error(message: str, *, retryable: bool) -> SaplingEvent:
-    return SaplingEvent(type="error", step="error", message=message, data={"retryable": retryable})
+def _error(message: str, *, retryable: bool, code: str | None = None) -> SaplingEvent:
+    data: dict[str, Any] = {"retryable": retryable}
+    if code:
+        data["code"] = code
+    return SaplingEvent(type="error", step="error", message=message, data=data)
 
 
 async def _adone(run: _Run) -> SaplingEvent:
-    detail = await abuild_detail(run.guide)
-    return SaplingEvent(
-        type="done", step="done", message="Guide ready",
-        data={"guide": detail.model_dump(mode="json")},
-    )
+    """`done` with the finished guide. The guide is saved (by this run or by
+    the one it found had done the work) before this is built, so a read that
+    fails here must not report a failed run: a Retry of a Regenerate would
+    pay for the whole guide again. `done` then carries no guide, and the
+    reader loads it."""
+    try:
+        guide = (await abuild_detail(run.guide)).model_dump(mode="json")
+    except Exception:
+        logger.warning(
+            "study guide %s: written, but could not be read back for `done`",
+            run.guide.id, exc_info=True,
+        )
+        guide = None
+    return SaplingEvent(type="done", step="done", message="Guide ready", data={"guide": guide})
 
 
 def _reading(sources: int) -> str:
@@ -462,7 +479,7 @@ async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEven
     except store.ClaimLost:
         # Nothing more is written: the guide is another run's now.
         logger.info("study guide %s: the run was overtaken and stopped", run.guide.id)
-        yield _error(OVERTAKEN_DETAIL, retryable=True)
+        yield _error(OVERTAKEN_DETAIL, retryable=True, code=OVERTAKEN_CODE)
     except Exception as exc:
         yield await _afailed(run, exc)
     finally:

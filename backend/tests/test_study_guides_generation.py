@@ -1341,8 +1341,10 @@ def test_two_prepared_runs_cannot_both_write(world, monkeypatch):
 
     lost, still_held, charged, won = run(scenario())
 
+    # A 200 stream cannot answer 409, so `code` says the guide is held: the
+    # reader follows the run that has it instead of reporting a failure.
     assert [(e.type, e.message, e.data) for e in lost] == [
-        ("error", "Another tab is writing this guide.", {"retryable": True})]
+        ("error", "Another tab is writing this guide.", {"retryable": True, "code": "busy"})]
     assert still_held and charged == 1
     assert won[-1].type == "done" and len(script.outline_calls) == 1
 
@@ -1372,6 +1374,48 @@ def test_a_run_prepared_before_another_finished_does_not_write_the_guide_again(w
     assert world.stored()["content"] == finished["content"]
     assert world.stored()["generated_at"] == finished["generated_at"]
     # The run that did nothing was not counted.
+    assert len(request_limits._rate_state[f"study-guide-generate:{ME}"]) == 1
+
+
+async def _unreadable_detail(guide):
+    raise RuntimeError("the database timed out")
+
+
+def test_a_finished_guide_ends_with_done_even_when_it_cannot_be_read_back(world, monkeypatch):
+    """The last save made the guide ready and gave the claim up. A read that
+    fails after it (building `done`) must not report a failed run: a Retry of
+    a Regenerate would pay for the whole guide again, and push the guide it
+    just wrote into `previous_content`."""
+    _ready(world)
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    monkeypatch.setattr(generation, "abuild_detail", _unreadable_detail)
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    assert (events[-1].type, events[-1].data) == ("done", {"guide": None})
+    assert all(event.type != "error" for event in events)
+    row = world.stored()
+    assert (row["status"], row["generating_at"]) == ("ready", None)
+
+
+def test_a_run_that_finds_the_work_done_is_not_counted_even_when_the_guide_cannot_be_read_back(
+    world, monkeypatch,
+):
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        first = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        second = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        won = [event async for event in first]
+        monkeypatch.setattr(generation, "abuild_detail", _unreadable_detail)
+        late = [event async for event in second]
+        return won, late
+
+    won, late = run(scenario())
+
+    assert won[-1].type == "done"
+    assert [(event.type, event.data) for event in late] == [("done", {"guide": None})]
     assert len(request_limits._rate_state[f"study-guide-generate:{ME}"]) == 1
 
 
@@ -1416,15 +1460,15 @@ def test_a_run_writes_from_the_row_as_it_is_under_the_claim(world, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("gone", "message", "retryable"),
+    ("gone", "message", "data"),
     [
         # Nothing to claim: the reader asks again and is told it is gone.
-        ("deleted", "Another tab is writing this guide.", True),
-        ("unreadable", store.GUIDE_UNREADABLE_DETAIL, False),
+        ("deleted", "Another tab is writing this guide.", {"retryable": True, "code": "busy"}),
+        ("unreadable", store.GUIDE_UNREADABLE_DETAIL, {"retryable": False}),
     ],
 )
 def test_a_guide_that_went_away_before_the_claim_ends_the_stream_at_once(
-    world, monkeypatch, gone, message, retryable,
+    world, monkeypatch, gone, message, data,
 ):
     garbage = "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
     world.guide()
@@ -1441,7 +1485,7 @@ def test_a_guide_that_went_away_before_the_claim_ends_the_stream_at_once(
 
     (event,) = run(scenario())
 
-    assert (event.type, event.message, event.data) == ("error", message, {"retryable": retryable})
+    assert (event.type, event.message, event.data) == ("error", message, data)
     assert script.outline_calls == []
     assert request_limits._rate_state[f"study-guide-generate:{ME}"] == []
     if gone == "unreadable":
@@ -1570,7 +1614,7 @@ def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch)
     events, _ = run(_follow(world))
 
     assert _shape(events)[-1] == ("error", "error")
-    assert events[-1].data == {"retryable": True}
+    assert events[-1].data == {"retryable": True, "code": "overtaken"}
     assert events[-1].message == "Another request took over writing this guide."
     row = world.stored()
     # The new holder's claim is untouched, and section two was never saved.
