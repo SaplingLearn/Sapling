@@ -19,10 +19,11 @@ audiences leave those accounts out of their counts. The setting is matched by
 address hash, so it also covers that person's waitlist address, and a toggle
 reaches a running send within a minute. **Transactional** mail (waitlist,
 "you're in", welcome) ignores that setting. Only the suppression list stops it.
-**Operational** mail (staff alerts) ignores the setting and the ordinary
-suppression list: it reaches an admin even after they unsubscribed from a
+**Operational** mail (staff alerts) ignores the setting and an ordinary
+unsubscribe: it reaches an admin even after they unsubscribed from a
 broadcast or any other Sapling email. It has an unsubscribe of its own that
-stops only the admin alerts (see Unsubscribe below).
+stops only the admin alerts (see Unsubscribe below). A bounce or complaint
+recorded against the address still stops it, like every other kind.
 
 **Kill switch:** with `RESEND_API_KEY` unset, nothing is sent. Each send is
 recorded as `skipped`, and the admin portal shows a "not configured" banner.
@@ -78,7 +79,7 @@ prefetch GETs. A suppression has a **scope**
 
 | scope | table | set by | stops |
 | --- | --- | --- | --- |
-| `all` | `email_suppressions` | the link in any email but an ops alert | every kind except `ops_alert` |
+| `all` | `email_suppressions` | the link in any email but an ops alert (reason `unsubscribe`); a bounce or complaint (reason `bounce`/`complaint`; nothing writes these yet, see Known gaps) | every kind except `ops_alert`; with reason `bounce` or `complaint`, `ops_alert` too (`email_service.DELIVERABILITY_REASONS`) |
 | `ops_alert` | `email_alert_suppressions` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
 
 An address can be in both. The two tables have the same columns and key

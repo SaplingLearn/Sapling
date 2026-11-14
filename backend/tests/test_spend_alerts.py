@@ -224,7 +224,7 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
             return []
 
     monkeypatch.setattr(email_service, "table", lambda name: Sends())
-    monkeypatch.setattr(email_service, "is_suppressed", lambda _h, scope="all": False)
+    monkeypatch.setattr(email_service, "is_suppressed", lambda _h, scope="all", reasons=None: False)
     monkeypatch.setattr(config, "RESEND_API_KEY", "")
     _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["skipped"]}
@@ -232,9 +232,9 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
     assert "admin@example.edu" not in claims[0]["dedupe_key"]
 
 
-def _sending(monkeypatch, suppressed_scopes):
+def _sending(monkeypatch, suppressed_scopes, reason="unsubscribe"):
     """email_service over fakes: the given suppression scopes hold every
-    address; returns the Resend payloads sent."""
+    address, with `reason`; returns the Resend payloads sent."""
     sent = []
 
     class Sends:
@@ -245,7 +245,12 @@ def _sending(monkeypatch, suppressed_scopes):
             return []
 
     monkeypatch.setattr(email_service, "table", lambda name: Sends())
-    monkeypatch.setattr(email_service, "is_suppressed", lambda _h, scope="all": scope in suppressed_scopes)
+    monkeypatch.setattr(
+        email_service, "is_suppressed",
+        lambda _h, scope="all", reasons=None: (
+            scope in suppressed_scopes and (reasons is None or reason in reasons)
+        ),
+    )
     monkeypatch.setattr(config, "RESEND_API_KEY", "re_test_key")
     monkeypatch.setattr(email_service, "MIN_REQUEST_INTERVAL_S", 0.0)
 
@@ -276,6 +281,13 @@ def test_a_broadcast_suppressed_admin_still_gets_the_alert_with_a_scoped_link(db
 
 def test_an_admin_who_stopped_ops_alerts_gets_none(db, monkeypatch):
     sent = _sending(monkeypatch, {"ops_alert"})
+    _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
+    assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["suppressed"]}
+    assert sent == []
+
+
+def test_an_admin_whose_address_bounced_gets_none(db, monkeypatch):
+    sent = _sending(monkeypatch, {"all"}, reason="bounce")
     _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["suppressed"]}
     assert sent == []

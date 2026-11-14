@@ -402,32 +402,64 @@ def test_suppressed_recipient_is_recorded_and_not_sent(tables, resend):
 SCOPE_TABLES = {"all": "email_suppressions", "ops_alert": "email_alert_suppressions"}
 
 
-def _suppressed_for(tables, *scopes):
-    """TO's hash is suppressed under `scopes` only (each in its own table)."""
+def _suppressed_for(tables, *scopes, reason="unsubscribe"):
+    """TO's hash is suppressed under `scopes` only (each in its own table),
+    with `reason`; a read filtered on `reason=in.(...)` sees the row only when
+    its reason is in the list."""
     rhash = email_service.recipient_hash(TO)
 
     for scope, name in SCOPE_TABLES.items():
         def select(columns, filters=None, _held=scope in scopes, **_):
-            if _held and (filters or {}).get("recipient_hash") == f"eq.{rhash}":
-                return [{"recipient_hash": rhash}]
-            return []
+            filters = filters or {}
+            if not _held or filters.get("recipient_hash") != f"eq.{rhash}":
+                return []
+            wanted = filters.get("reason")
+            if wanted is not None:
+                assert wanted.startswith("in.(") and wanted.endswith(")"), wanted
+                if reason not in wanted[4:-1].split(","):
+                    return []
+            return [{"recipient_hash": rhash, "reason": reason}]
 
         tables[name].select.side_effect = select
 
 
 def test_a_broadcast_unsubscribe_does_not_stop_ops_alerts(tables, resend):
     """An admin who unsubscribed from Sapling email (one click on a broadcast)
-    still gets ops alerts: an operational send checks only the ops-scoped
-    suppression, and ignores the notification opt-out."""
-    _suppressed_for(tables, "all")
+    still gets ops alerts: an operational send reads email_suppressions only
+    for a bounce or complaint, and ignores the notification opt-out."""
+    _suppressed_for(tables, "all", reason="unsubscribe")
     _opted_out(tables)
     assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "sent"
     assert tables["email_sends"].upsert.call_args.args[0]["status"] == "queued"
-    tables["email_suppressions"].select.assert_not_called()
+    rhash_filter = f"eq.{email_service.recipient_hash(TO)}"
     assert tables["email_alert_suppressions"].select.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{email_service.recipient_hash(TO)}",
+        "recipient_hash": rhash_filter,
+    }
+    assert tables["email_suppressions"].select.call_args.kwargs["filters"] == {
+        "recipient_hash": rhash_filter,
+        "reason": "in.(bounce,complaint)",
     }
     tables["user_settings"].select_with_count.assert_not_called()
+
+
+@pytest.mark.parametrize("reason", ["bounce", "complaint"])
+def test_a_bounce_or_complaint_stops_ops_alerts_too(tables, resend, reason):
+    """A bounce or complaint is about the ADDRESS, not a choice of what to
+    receive: mailing it again hurts the sending domain whatever the kind, so
+    it stops an ops alert like every other kind."""
+    _suppressed_for(tables, "all", reason=reason)
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "suppressed"
+    resend.post.assert_not_called()
+    assert tables["email_sends"].upsert.call_args.args[0]["status"] == "suppressed"
+
+
+def test_an_ordinary_send_still_reads_every_suppression_reason(tables, resend):
+    _suppressed_for(tables, "all", reason="unsubscribe")
+    assert _send(kind="welcome", dedupe_key="welcome:user_1") == "suppressed"
+    assert tables["email_suppressions"].select.call_args.kwargs["filters"] == {
+        "recipient_hash": f"eq.{email_service.recipient_hash(TO)}",
+    }
+    tables["email_alert_suppressions"].select.assert_not_called()
 
 
 def test_an_ops_unsubscribe_stops_ops_alerts_and_nothing_else(tables, resend):

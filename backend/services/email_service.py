@@ -10,7 +10,10 @@ Every send goes through `send_email`, which:
    (`suppression_scope`): `all` (`email_suppressions`) for every kind but the
    operational ones, `ops_alert` (`email_alert_suppressions`) for those
    (staff alerts, which a broadcast unsubscribe must not stop, but which carry
-   an unsubscribe link of their own that stops only them). Recorded as
+   an unsubscribe link of their own that stops only them). An operational
+   send is also refused by an `email_suppressions` row for a bounce or a
+   complaint (`DELIVERABILITY_REASONS`): those are about the address, not a
+   choice of what to receive. Recorded as
    `suppressed` (an earlier `skipped`/`failed` row for the key is flipped to
    `suppressed` too, so the ledger says why);
 3. claims the send's `dedupe_key` in `email_sends` with INSERT … ON CONFLICT DO
@@ -93,9 +96,10 @@ STALE_QUEUED_AFTER = timedelta(minutes=15)
 #: "notification" mail (broadcasts, digests, marketing) also honours
 #: `user_settings.notification_email`; "operational" mail is a staff-only
 #: alert that a broadcast/newsletter unsubscribe must not stop, so it skips the
-#: opt-out and checks only its OWN suppression scope (`ops_alert`), which its
-#: own unsubscribe link and List-Unsubscribe header set (the dedupe claim
-#: still applies). A kind missing here is treated as "notification", so a new
+#: opt-out and checks its OWN suppression scope (`ops_alert`), which its own
+#: unsubscribe link and List-Unsubscribe header set, plus a bounce or
+#: complaint in `email_suppressions` (the dedupe claim still applies). A kind
+#: missing here is treated as "notification", so a new
 #: kind respects the opt-out until classified.
 EMAIL_CATEGORIES: dict[str, str] = {
     "waitlist_confirmation": "transactional",
@@ -114,11 +118,19 @@ def email_category(kind: str) -> str:
 
 
 #: What a suppression stops. `all`: every kind but the operational ones (an
-#: unsubscribe from any ordinary email, a bounce, a complaint). `ops_alert`:
-#: the operational alerts only (their own unsubscribe link). An address can
-#: hold both.
+#: unsubscribe from any ordinary email, a bounce, a complaint), and the
+#: operational ones too when its reason is a `DELIVERABILITY_REASONS` one.
+#: `ops_alert`: the operational alerts only (their own unsubscribe link). An
+#: address can hold both.
 SUPPRESSION_SCOPE_ALL = "all"
 SUPPRESSION_SCOPE_OPS = "ops_alert"
+
+#: `email_suppressions` reasons that say the ADDRESS should not be mailed (a
+#: hard bounce, a spam complaint), as opposed to `unsubscribe`, its owner's
+#: choice of what to receive. Mailing such an address again hurts the sending
+#: domain whatever the kind, so these stop an operational send as well.
+#: (The reason CHECK in 20261022063145_email.sql.)
+DELIVERABILITY_REASONS = ("bounce", "complaint")
 
 #: Where each scope's suppressions live. One table per scope, same columns,
 #: keyed on recipient_hash alone: `email_suppressions` is left exactly as it
@@ -209,11 +221,27 @@ def is_configured() -> bool:
 
 
 @runs_as_service  # #115: the suppression tables are service-only
-def is_suppressed(rhash: str, scope: str = SUPPRESSION_SCOPE_ALL) -> bool:
-    rows = _suppression_table(scope).select(
-        "recipient_hash", filters={"recipient_hash": f"eq.{rhash}"}, limit=1,
-    )
+def is_suppressed(
+    rhash: str, scope: str = SUPPRESSION_SCOPE_ALL, *, reasons: Optional[tuple[str, ...]] = None,
+) -> bool:
+    """Whether `rhash` holds a `scope` suppression (with one of `reasons`,
+    when given)."""
+    filters = {"recipient_hash": f"eq.{rhash}"}
+    if reasons is not None:
+        filters["reason"] = f"in.({','.join(reasons)})"
+    rows = _suppression_table(scope).select("recipient_hash", filters=filters, limit=1)
     return bool(rows)
+
+
+def _stops_send(rhash: str, scope: str) -> bool:
+    """Whether a suppression stops a send of `scope`: any row of its own
+    scope, and for an operational send also a bounce or complaint in the
+    `all` table (an unsubscribe there does not stop it). Raises on a DB error."""
+    if is_suppressed(rhash, scope):
+        return True
+    return scope == SUPPRESSION_SCOPE_OPS and is_suppressed(
+        rhash, SUPPRESSION_SCOPE_ALL, reasons=DELIVERABILITY_REASONS,
+    )
 
 
 @runs_as_service  # #115: the suppression tables are service-only
@@ -489,7 +517,7 @@ def send_email(
             return "opted_out"
 
     try:
-        suppressed = is_suppressed(rhash, scope)
+        suppressed = _stops_send(rhash, scope)
         row = {
             "kind": kind,
             "dedupe_key": dedupe_key,
