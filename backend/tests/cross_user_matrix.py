@@ -74,6 +74,14 @@ PUBLIC_ROOM = "rich-matrix-room-public"
 PUBLIC_ROOM_INVITE = "MTX-PUB-A"
 PRIVATE_CHUNK_ID = "rich-matrix-chunk-private-a"
 PRIVATE_CHUNK_TEXT = "MATRIX-PRIVATE-CHUNK-91c2 A's private upload text"
+#: A saved flashcard set of A's (the rich seed has none), in COURSE_SHARED.
+FLASHCARD_SET_ID = "rich-matrix-flashcard-set-a"
+FLASHCARD_SET_NAME = "MATRIX-FLASHCARD-SET-4be1 only A saved this"
+#: A check question in A's seeded study guide (db/seed_local_rich
+#: GUIDE_CS_MIDTERM, "rich-guide-cs-f25-mid"; "s3-i3" is its other one). The
+#: block routes are probed with a block that exists, so only the guide's
+#: ownership stands between B and A's answer.
+GUIDE_CHECK_BLOCK = "s2-i4"
 
 #: Plaintext that only A's rows hold. If one shows up in a response to B (and B
 #: did not send it), that response leaked A's data. Deliberately long and
@@ -94,6 +102,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     "What keyword declares a variable in Python?",       # quiz_attempts.questions_json
     "confuses = with ==",                                # quiz_context.context_json
     "The midterm's hardest questions are recursive traces",  # study_guides.content
+    "i takes the values 0, 3, 6 and 9",                  # study_guides.content: a check's answer
     "Final Project Proposal",                            # assignments.title
     "Lab 1: Microscopy",                                 # assignments.title
     "Essay Draft: Rhetorical Analysis",                  # assignments.title
@@ -102,6 +111,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     PRIVATE_ROOM_NAME,
     PRIVATE_ROOM_INVITE,
     PRIVATE_CHUNK_TEXT,
+    FLASHCARD_SET_NAME,                                  # flashcard_sets.name
 )
 
 
@@ -184,12 +194,16 @@ ID_SOURCES: dict[str, IdSource] = {
     "document_id": _owned(_DOCUMENT),
     "doc_id": _owned(_DOCUMENT),            # /api/gradebook/syllabus/apply
     "card_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    "set_id": _owned("SELECT id::text FROM flashcard_sets WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "node_id": _owned(_NODE),
     "concept_node_id": _owned(_NODE),
     "anchor_node_id": _owned(_NODE),
     "assignment_id": _owned(_ASSIGNMENT),
     "assignment_ids": _owned(_ASSIGNMENT, many=True),
-    "exam_id": _owned(_ASSIGNMENT),         # study guides key on an exam assignment
+    "exam_id": _owned(_ASSIGNMENT),         # flashcard sets name an exam assignment
+    "guide_id": _owned("SELECT id::text FROM study_guides WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    "scope_id": _owned(_ASSIGNMENT),        # the exam or assignment a study guide is for
+    "material_ids": _owned(_DOCUMENT, many=True),  # the documents a study guide is made from
     "category_id": _owned(
         "SELECT c.id::text FROM gradebook_categories c JOIN enrollments e "
         "ON e.id = c.enrollment_id WHERE e.user_id = %(a)s ORDER BY c.id LIMIT 1"
@@ -224,6 +238,8 @@ EXCLUDED_PARAMS: dict[str, str] = {
     "cosmetic_id": "catalog id (cosmetics); ownership is checked against the caller",
     "achievement_ids": "catalog ids (achievements); earned-ness is checked against the caller",
     "course_ids": "onboarding catalog selection, not a user-owned row",
+    "block_id": "id of an item inside a study guide's content (the guide is probed)",
+    "option_id": "one of a check question's answer letters (a to d), not a row",
 }
 
 #: Route-level coverage outside the per-param matrix. Admin and server routes
@@ -312,6 +328,9 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
     ("POST", "/api/notes"):
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+    ("POST", "/api/study-guide/{user_id}/plan"):
+        ((200,), "an empty plan: the materials are filtered to B's own documents, and the "
+                 "planned outline does not read the scope"),
     ("POST", "/api/learn/start-session"):
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
     ("POST", "/api/learn/start-session/stream"):
@@ -360,8 +379,9 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/documents/doc/{document_id}/scan-concepts"): {"user_id": SELF},
     ("POST", "/api/documents/course/{course_id}/scan-concepts"): {"user_id": SELF},
     ("PATCH", "/api/calendar/assignments/{assignment_id}"): {"user_id": SELF, "title": "matrix"},
-    ("POST", "/api/study-guide/regenerate"):
-        {"user_id": SELF, "course_id": Ref("course_id"), "exam_id": Ref("exam_id")},
+    # The default scope_kind is "course", which refuses any scope_id (422)
+    # before the assignment's ownership is looked at.
+    ("POST", "/api/study-guide/{user_id}/guides"): {"scope_kind": "exam"},
     ("PATCH", "/api/learn/sessions/{session_id}"): {"user_id": SELF, "topic": "matrix"},
     ("POST", "/api/learn/mode-switch"): {"new_mode": "socratic"},
     ("POST", "/api/learn/chat"): {"message": "matrix probe"},
@@ -376,6 +396,10 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/notes/{note_id}/chat"): {"message": "matrix probe"},
     ("POST", "/api/flashcards/import/generate"): {"source": "library_doc"},
     ("POST", "/api/flashcards/import/parse"): {"source": "anki", "payload": "front\tback"},
+    # `concepts` is a bare list[str]: the synthesized [] fails the service's
+    # 1-100 rule (422) before the exam's ownership is looked at.
+    ("POST", "/api/flashcards/sets"): {"name": "Matrix set", "concepts": ["Matrix probe"]},
+    ("PATCH", "/api/flashcards/sets/{set_id}"): {"name": "matrix"},
     ("POST", "/api/gradebook/courses/{course_id}/categories"): {"name": "Matrix", "weight": 10},
     ("PATCH", "/api/gradebook/courses/{course_id}/categories"):
         {"categories": [{"name": "Matrix", "weight": 100}]},
@@ -412,10 +436,15 @@ QUERY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", "/api/profile/username/check"): {"username": "rich-active"},
 }
 
-#: Path values for non-id path params, when the synthesized string is not one
-#: the route accepts.
+#: Path values for path params the registry does not fill, when the
+#: synthesized string is not one the route accepts or would not reach the row
+#: being probed.
 PATH_OVERRIDES: dict[tuple[str, str], dict[str, str]] = {
     ("DELETE", "/api/admin/flags/{key}/targets/{target_type}/{target_id}"): {"target_type": "user"},
+    ("POST", "/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer"):
+        {"block_id": GUIDE_CHECK_BLOCK},
+    ("POST", "/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate"):
+        {"block_id": GUIDE_CHECK_BLOCK},
 }
 
 #: Paths whose wrongful success would destroy data; run last in their group so

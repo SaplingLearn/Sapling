@@ -39,6 +39,7 @@ from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
+from routes.study import router as study_router
 from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate
 from services.llm_budget import LLMBudgetExceeded
@@ -450,6 +451,7 @@ app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
+app.include_router(study_router,       prefix="/api/study", dependencies=nav_feature_gate("/api/study"))
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers", dependencies=_SVC)  # public; job_applications is service-only
 app.include_router(onboarding.router,  prefix="/api/onboarding")

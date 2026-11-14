@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cancelTarget, returnToSource, sourceLabel } from "./exits";
+import { backLink, cancelTarget, returnToSource, sourceLabel } from "./exits";
 import { initialSession } from "./machine";
 import type { QuizConfig, QuizPrefs, QuizSession, QuizSource } from "./types";
 
@@ -66,5 +66,36 @@ describe("cancelTarget", () => {
 
   it("goes to the dashboard when the quiz was opened cold", () => {
     expect(cancelTarget(sessionFrom({ kind: "nav" }))).toBe("/dashboard");
+  });
+});
+
+describe("backLink", () => {
+  it("returns to where the quiz was opened from, named for that page", () => {
+    expect(backLink({ kind: "link", returnTo: "/study?course=c1" })).toEqual({ href: "/study?course=c1", label: "Study" });
+    expect(backLink({ kind: "dashboard", returnTo: "/dashboard" })).toEqual({ href: "/dashboard", label: "Dashboard" });
+    expect(backLink({ kind: "tree", returnTo: "/tree?node=n1" })).toEqual({ href: "/tree?node=n1", label: "Tree" });
+  });
+
+  it("goes to the Study hub when the quiz has no origin", () => {
+    expect(backLink({ kind: "nav" })).toEqual({ href: "/study", label: "Study" });
+  });
+
+  it("never follows an unsafe return", () => {
+    expect(backLink({ kind: "link", returnTo: "https://evil.com" })).toEqual({ href: "/study", label: "Study" });
+  });
+
+  it("says plain Back for a page it has no name for", () => {
+    expect(backLink({ kind: "link", returnTo: "/calendar" })).toEqual({ href: "/calendar", label: "Back" });
+  });
+
+  it("goes to the Dashboard when the page it would return to is hidden from this student", () => {
+    const studyHidden = (path: string) => path.startsWith("/study");
+    // No origin: the Study hub is the default, and it is hidden (hide_study).
+    expect(backLink({ kind: "nav" }, studyHidden)).toEqual({ href: "/dashboard", label: "Dashboard" });
+    expect(backLink({ kind: "link", returnTo: "/study?course=c1" }, studyHidden)).toEqual({ href: "/dashboard", label: "Dashboard" });
+    // A visible origin is still honoured.
+    expect(backLink({ kind: "tree", returnTo: "/tree?node=n1" }, studyHidden)).toEqual({ href: "/tree?node=n1", label: "Tree" });
+    // The check is on the path that will be followed, never on an unsafe one.
+    expect(backLink({ kind: "link", returnTo: "https://evil.com" }, () => false)).toEqual({ href: "/study", label: "Study" });
   });
 });

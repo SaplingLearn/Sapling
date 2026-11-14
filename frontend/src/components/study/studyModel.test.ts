@@ -1,0 +1,411 @@
+import { describe, it, expect } from "vitest";
+import {
+  conceptsForCourse,
+  categoriesFromChecklist,
+  roadmapGroups,
+  OTHER_GROUP,
+  classifyAssessment,
+  readiness,
+  conceptIdsForExam,
+  examQueue,
+  examScope,
+  readinessBand,
+  studyQueue,
+  quickReviews,
+  daysTo,
+  fmtDow,
+} from "./studyModel";
+
+const NOW = new Date(2026, 10, 8, 12);
+const node = (id: string, tier: string, score: number, extra: Record<string, unknown> = {}) => ({
+  id, course_id: "c1", concept_name: id.toUpperCase(), mastery_tier: tier, mastery_score: score, ...extra,
+});
+
+describe("conceptsForCourse", () => {
+  const nodes = [
+    node("a", "mastered", 0.9),
+    node("b", "learning", 0.5),
+    node("c", "unexplored", 0),
+    { id: "subject_root__c1", course_id: "c1", is_subject_root: true, mastery_tier: "subject_root" },
+    { ...node("x", "mastered", 1), course_id: "other" },
+  ];
+  const edges = [
+    { source: "a", target: "b", relationship_type: "prerequisite" },
+    { source: "b", target: "c", relationship_type: "builds_on" },
+    { source: "a", target: "c", relationship_type: "related" },
+  ];
+
+  it("keeps the course's concepts, maps tiers, and layers by prerequisite depth", () => {
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW);
+    expect(cs.map(c => [c.id, c.st, c.m, c.group])).toEqual([
+      ["a", "mastered", 90, "Foundations"],
+      ["b", "progress", 50, "Core Methods"],
+      ["c", "new", 0, "Building On"],
+    ]);
+    // "related" edges are not prerequisites.
+    expect(cs[2].pre).toEqual(["b"]);
+  });
+
+  it("names roadmap columns from the checklist's categories when it covers the course", () => {
+    // "Core" parents a + b; "Extras" parents c. Both are real categories.
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "extras", name: "Extras", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "core", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "extras", node_id: "c" },
+    ]);
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW, cats);
+    expect(cs.map(c => [c.id, c.group])).toEqual([["a", "Core"], ["b", "Core"], ["c", "Extras"]]);
+    expect(roadmapGroups(cs)).toEqual(["Core", "Extras"]);
+  });
+
+  it("orders columns by prerequisite depth, not by name", () => {
+    // "Later" holds c (depth 2); "Early" holds a (depth 0). Alphabetically
+    // "Early" already wins, so flip the names to prove depth is what decides.
+    const cats = categoriesFromChecklist([
+      { id: "zz", name: "Zebra Unit", parent_id: null, node_id: null },
+      { id: "aa", name: "Alpha Unit", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "zz", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "zz", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "aa", node_id: "c" },
+    ]);
+    // Zebra = depths {0, 1} -> mean 0.5; Alpha = depth {2} -> mean 2.
+    expect(roadmapGroups(conceptsForCourse(nodes, edges, "c1", NOW, cats)))
+      .toEqual(["Zebra Unit", "Alpha Unit"]);
+  });
+
+  it("falls back to prerequisite layers when the checklist covers too little", () => {
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+    ]);
+    expect(cats.get("a")).toBe("Core");
+    // One concept of three placed: the outline does not speak for this course.
+    expect(conceptsForCourse(nodes, edges, "c1", NOW, cats).map(c => c.group))
+      .toEqual(["Foundations", "Core Methods", "Building On"]);
+  });
+
+  it("places a covered concept outside every category in Other, last", () => {
+    const cats = categoriesFromChecklist([
+      { id: "core", name: "Core", parent_id: null, node_id: null },
+      { id: "t-a", name: "A", parent_id: "core", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "core", node_id: "b" },
+      // A root that parents nothing is not a category.
+      { id: "t-c", name: "C", parent_id: null, node_id: "c" },
+    ]);
+    expect(cats.has("c")).toBe(false);
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW, cats);
+    expect(cs.map(c => c.group)).toEqual(["Core", "Core", OTHER_GROUP]);
+    expect(roadmapGroups(cs)).toEqual(["Core", OTHER_GROUP]);
+  });
+
+  it("ignores a flat outline, which would give every concept its own column", () => {
+    const cats = categoriesFromChecklist([
+      { id: "t-a", name: "A", parent_id: null, node_id: "a" },
+      { id: "t-b", name: "B", parent_id: null, node_id: "b" },
+      { id: "t-c", name: "C", parent_id: null, node_id: "c" },
+    ]);
+    expect(cats.size).toBe(0);
+    expect(conceptsForCourse(nodes, edges, "c1", NOW, cats).map(c => c.group))
+      .toEqual(["Foundations", "Core Methods", "Building On"]);
+  });
+
+  it("takes the root ancestor, not the immediate parent", () => {
+    const cats = categoriesFromChecklist([
+      { id: "unit", name: "Unit One", parent_id: null, node_id: null },
+      { id: "sub", name: "Sub", parent_id: "unit", node_id: null },
+      { id: "t-a", name: "A", parent_id: "sub", node_id: "a" },
+    ]);
+    expect(cats.get("a")).toBe("Unit One");
+  });
+
+  it("survives a broken checklist hierarchy", () => {
+    // A parent that is not in the outline, and a cycle.
+    const cats = categoriesFromChecklist([
+      { id: "t-a", name: "A", parent_id: "missing", node_id: "a" },
+      { id: "t-b", name: "B", parent_id: "t-c", node_id: "b" },
+      { id: "t-c", name: "C", parent_id: "t-b", node_id: "c" },
+    ]);
+    expect(cats.has("a")).toBe(false);
+    expect(cats.size).toBeGreaterThanOrEqual(0);
+  });
+
+  it("warns when an unmastered concept rests on an unmastered prerequisite", () => {
+    const cs = conceptsForCourse(nodes, edges, "c1", NOW);
+    expect(cs[1].gap).toBe("");
+    expect(cs[2].gap).toBe("Based on B, which isn't mastered yet. You can still start, but expect to revisit it.");
+  });
+
+  it("survives a prerequisite cycle", () => {
+    const cyc = [
+      { source: "a", target: "b", relationship_type: "prerequisite" },
+      { source: "b", target: "a", relationship_type: "prerequisite" },
+    ];
+    expect(conceptsForCourse(nodes, cyc, "c1", NOW)).toHaveLength(3);
+  });
+
+  it("sums this week's mastery events into weekDelta", () => {
+    const n = [node("a", "learning", 0.6, { mastery_events: [
+      { delta: 0.1, created_at: new Date(2026, 10, 6).toISOString() },
+      { delta: 0.3, created_at: new Date(2026, 9, 1).toISOString() },
+    ] })];
+    expect(conceptsForCourse(n, [], "c1", NOW)[0].weekDelta).toBeCloseTo(0.1);
+  });
+
+  it("takes the server's week_delta over the event sum, which only sees the last five events", () => {
+    // Six +0.05 moves this week; the payload carries the last five of them.
+    const lastFive = Array.from({ length: 5 }, () => ({ delta: 0.05, created_at: new Date(2026, 10, 6).toISOString() }));
+    const withTotal = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: 0.3 })], [], "c1", NOW);
+    expect(withTotal[0].weekDelta).toBeCloseTo(0.3);
+    // A node that did not move says 0, and that is taken as said.
+    const still = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: 0 })], [], "c1", NOW);
+    expect(still[0].weekDelta).toBe(0);
+    // An older payload without the field keeps the event sum.
+    const older = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive })], [], "c1", NOW);
+    expect(older[0].weekDelta).toBeCloseTo(0.25);
+    const odd = conceptsForCourse([node("a", "learning", 0.6, { mastery_events: lastFive, week_delta: null })], [], "c1", NOW);
+    expect(odd[0].weekDelta).toBeCloseTo(0.25);
+  });
+});
+
+describe("assessments", () => {
+  it("classifies exams, quizzes and homework", () => {
+    expect(classifyAssessment("exam", "Midterm")).toBe("Exam");
+    expect(classifyAssessment("quiz", "Quiz 5")).toBe("Quiz");
+    expect(classifyAssessment("other", "Final Exam")).toBe("Exam");
+    expect(classifyAssessment("other", "Problem Set 6")).toBe("Homework");
+    expect(classifyAssessment(null, "Weekly quiz")).toBe("Quiz");
+  });
+  it("counts days and formats dates", () => {
+    expect(daysTo("2026-11-13", NOW)).toBe(5);
+    expect(fmtDow("2026-11-13")).toBe("Fri, Nov 13");
+    // Exam tabs pass today: a date in another year carries its year.
+    expect(fmtDow("2026-11-13", new Date(2026, 10, 8))).toBe("Fri, Nov 13");
+    expect(fmtDow("2025-10-15", new Date(2026, 10, 8))).toBe("Wed, Oct 15, 2025");
+  });
+});
+
+describe("readiness and queue", () => {
+  const cs = conceptsForCourse(
+    [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
+    [], "c1", NOW,
+  );
+  it("readiness is mean mastery", () => {
+    expect(readiness(cs).pct).toBe(60);
+  });
+  it("struggling comes before learning", () => {
+    expect(studyQueue(cs).map(c => c.id)).toEqual(["b", "c"]);
+  });
+  it("quick reviews pick stale or weak studied concepts", () => {
+    const stale = conceptsForCourse(
+      [node("a", "mastered", 0.95, { last_studied_at: new Date(2026, 9, 20).toISOString() }),
+       node("b", "mastered", 0.95, { last_studied_at: new Date(2026, 10, 7).toISOString() })],
+      [], "c1", NOW,
+    );
+    const qr = quickReviews(stale, NOW);
+    expect(qr.map(x => x.t.id)).toEqual(["a"]);
+    expect(qr[0].ago).toBe(19);
+  });
+});
+
+describe("conceptIdsForExam", () => {
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is empty with no outline, or no exam", () => {
+    expect(conceptIdsForExam([], "e1").size).toBe(0);
+    expect(conceptIdsForExam([{ node_id: "a", assessments: on("e1") }], null).size).toBe(0);
+    expect(conceptIdsForExam([{ node_id: "a", assessments: on("e1") }], undefined).size).toBe(0);
+  });
+
+  it("is empty when the outline links nothing to that exam", () => {
+    const outline = [
+      { node_id: "a", assessments: on("e2") },
+      { node_id: "b", assessments: [] },
+      // A partial payload (no `assessments` at all) is read as "on nothing".
+      { node_id: "c" },
+      { node_id: "d", assessments: null },
+    ];
+    expect(conceptIdsForExam(outline, "e1").size).toBe(0);
+  });
+
+  it("skips topics the graph never matched", () => {
+    const outline = [
+      { node_id: null, assessments: on("e1") },
+      { node_id: "b", assessments: on("e1") },
+    ];
+    expect([...conceptIdsForExam(outline, "e1")]).toEqual(["b"]);
+    expect(conceptIdsForExam([{ node_id: null, assessments: on("e1") }], "e1").size).toBe(0);
+  });
+
+  it("returns the nodes of the topics on that exam, once each", () => {
+    const outline = [
+      { node_id: "a", assessments: on("e1", "e2") },
+      { node_id: "b", assessments: on("e2") },
+      { node_id: "c", assessments: on("e1") },
+      { node_id: "a", assessments: on("e1") }, // two topics on one node
+    ];
+    expect([...conceptIdsForExam(outline, "e1")].sort()).toEqual(["a", "c"]);
+    expect([...conceptIdsForExam(outline, "e2")].sort()).toEqual(["a", "b"]);
+  });
+
+  it("reads assessment_ids, which names a past exam that assessments leaves out", () => {
+    // The server lists only what is coming up under `assessments`; "past" was
+    // sat last month and "far" is two months out.
+    const outline = [
+      { node_id: "a", assessment_ids: ["past", "soon"], assessments: on("soon") },
+      { node_id: "b", assessment_ids: ["far"], assessments: [] },
+      { node_id: "c", assessment_ids: [], assessments: [] },
+    ];
+    expect([...conceptIdsForExam(outline, "past")]).toEqual(["a"]);
+    expect([...conceptIdsForExam(outline, "soon")]).toEqual(["a"]);
+    expect([...conceptIdsForExam(outline, "far")]).toEqual(["b"]);
+  });
+
+  it("goes by assessment_ids alone when a topic has them, and by assessments when it does not", () => {
+    const outline = [
+      // An empty list is an answer ("on nothing"), not a missing field.
+      { node_id: "a", assessment_ids: [], assessments: on("e1") },
+      // A payload from before the field existed.
+      { node_id: "b", assessments: on("e1") },
+      { node_id: "c", assessment_ids: null, assessments: on("e1") },
+    ];
+    expect([...conceptIdsForExam(outline, "e1")].sort()).toEqual(["b", "c"]);
+  });
+});
+
+describe("readinessBand", () => {
+  const cs = conceptsForCourse(
+    [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
+    [], "c1", NOW,
+  );
+  // NOW is Nov 8.
+  const exam = { id: "e1", title: "Midterm", iso: "2026-11-13" };
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is the exam's own concepts, named for the exam, when the outline links some", () => {
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }, { node_id: "c", assessments: on("e1") }], exam, "CS101", NOW);
+    expect(band.label).toBe("Ready for Midterm");
+    expect(band.note).toBeNull();
+    expect(band.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
+    expect(readiness(band.concepts).pct).toBe(45); // not the course's 60
+  });
+
+  it("is the whole course, named for the course, when the exam has no concepts", () => {
+    for (const outline of [
+      [],
+      [{ node_id: "b", assessments: on("other") }],
+      [{ node_id: null, assessments: on("e1") }],
+      // Linked, but to a node that is not one of this course's concepts.
+      [{ node_id: "elsewhere", assessments: on("e1") }],
+    ]) {
+      const band = readinessBand(cs, outline, exam, "CS101", NOW);
+      // Named for the EXAM either way; the note is what says the figure under
+      // it is the whole course's.
+      expect(band.label).toBe("Ready for Midterm");
+      expect(band.note).toBe("No topics are linked to Midterm yet.");
+      expect(band.concepts).toBe(cs);
+    }
+  });
+
+  it("with no exam selected it is the course's mastery", () => {
+    const band = readinessBand(cs, [{ node_id: "b", assessments: on("e1") }], null, "CS101", NOW);
+    expect(band).toEqual({ concepts: cs, label: "CS101 Mastery", note: null });
+  });
+
+  it("an exam already sat is its coverage, not something to be ready for", () => {
+    const outline = [{ node_id: "b", assessment_ids: ["e1"] }, { node_id: "c", assessment_ids: ["e1"] }];
+    const label = (iso: string) => readinessBand(cs, outline, { ...exam, iso }, "CS101", NOW).label;
+    expect(label("2026-11-07")).toBe("Midterm coverage");
+    expect(label("2026-11-08")).toBe("Ready for Midterm"); // today still counts
+    const past = readinessBand(cs, outline, { ...exam, iso: "2026-10-01" }, "CS101", NOW);
+    expect(past.concepts.map(c => c.id).sort()).toEqual(["b", "c"]);
+    expect(past.note).toBeNull();
+    // A past exam with nothing linked is still named for the exam, and the
+    // note says the figure under it is the whole course's.
+    expect(readinessBand(cs, [], { ...exam, iso: "2026-10-01" }, "CS101", NOW))
+      .toMatchObject({ label: "Midterm coverage", note: "No topics are linked to Midterm yet." });
+  });
+});
+
+describe("examScope", () => {
+  const cs = conceptsForCourse(
+    [node("a", "mastered", 0.9), node("b", "struggling", 0.3), node("c", "learning", 0.6)],
+    [], "c1", NOW,
+  );
+  const exam = { id: "e1", title: "Midterm" };
+  const on = (...ids: string[]) => ids.map(id => ({ id }));
+
+  it("is the exam's title and its concepts among the course's", () => {
+    const scope = examScope(cs, [
+      { node_id: "b", assessments: on("e1") },
+      { node_id: "c", assessments: on("e1", "e2") },
+      { node_id: "a", assessments: on("e2") },
+      // On the exam, but not one of this course's concepts: not counted.
+      { node_id: "elsewhere", assessments: on("e1") },
+    ], exam);
+    expect(scope).toMatchObject({ id: "e1", title: "Midterm" });
+    expect([...scope!.ids].sort()).toEqual(["b", "c"]);
+  });
+
+  it("is null when the outline links none of the course's concepts to the exam", () => {
+    for (const outline of [
+      [],
+      [{ node_id: "b", assessments: on("other") }],
+      [{ node_id: null, assessments: on("e1") }],
+      [{ node_id: "elsewhere", assessments: on("e1") }],
+    ]) {
+      expect(examScope(cs, outline, exam)).toBeNull();
+    }
+  });
+
+  it("is null with no exam selected", () => {
+    expect(examScope(cs, [{ node_id: "b", assessments: on("e1") }], null)).toBeNull();
+  });
+});
+
+describe("examQueue", () => {
+  // The course's own queue: r (struggling), q then p (learning, lowest mastery
+  // first), n (not started), and last the not-started concept that rests on an
+  // unmastered one.
+  const cs = conceptsForCourse(
+    [
+      node("m", "mastered", 0.95),
+      node("p", "learning", 0.6),
+      node("q", "learning", 0.4),
+      node("r", "struggling", 0.3),
+      node("n", "unexplored", 0),
+      node("blocked", "unexplored", 0),
+    ],
+    [{ source: "p", target: "blocked", relationship_type: "prerequisite" }],
+    "c1", NOW,
+  );
+  const scope = (...ids: string[]) => ({ id: "e1", title: "Midterm", ids: new Set(ids) });
+  const ids = (list: { id: string }[]) => list.map(c => c.id);
+
+  it("with no exam scope it is the course's queue", () => {
+    expect(ids(studyQueue(cs))).toEqual(["r", "q", "p", "n", "blocked"]);
+    expect(examQueue(cs, null)).toEqual({ queue: studyQueue(cs), fallback: false });
+  });
+
+  it("is the exam's concepts only, in the queue's own order", () => {
+    // Given out of order, and with a mastered concept that is never queued.
+    const q = examQueue(cs, scope("blocked", "m", "p", "n", "q"));
+    expect(ids(q.queue)).toEqual(["q", "p", "n", "blocked"]);
+    expect(q.fallback).toBe(false);
+    // The course's first pick (r) is not on the exam, so it is not Up Next.
+    expect(q.queue[0].id).toBe("q");
+  });
+
+  it("falls back to the course's queue, and says so, once the exam's concepts are all mastered", () => {
+    const q = examQueue(cs, scope("m"));
+    expect(q.fallback).toBe(true);
+    expect(q.queue).toEqual(studyQueue(cs));
+  });
+
+  it("is empty, with nothing to fall back to, when the whole course is mastered", () => {
+    const done = conceptsForCourse([node("a", "mastered", 0.9), node("b", "mastered", 0.95)], [], "c1", NOW);
+    expect(examQueue(done, scope("a"))).toEqual({ queue: [], fallback: false });
+    expect(examQueue(done, null)).toEqual({ queue: [], fallback: false });
+  });
+});

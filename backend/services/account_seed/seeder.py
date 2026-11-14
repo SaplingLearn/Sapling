@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 from config import get_mastery_tier
 from db.connection import table
+from models.study_guide import GUIDE_FORMAT
 from services.academics import clear_academics_caches, current_term, resolve_offering
 from services.account_bundle import account_exists
 from services.account_wipe import wipe_account_data
@@ -42,6 +43,7 @@ from services.auth_guard import clear_account_state_cache
 from services.encryption import encrypt_if_present, encrypt_json
 from services.growth import level_for_xp
 from services.quiz.identity import question_hash
+from services.study_guides import content_from_topics
 
 if TYPE_CHECKING:
     from services.account_seed.schema import Course, MajorPack
@@ -343,24 +345,29 @@ def _course_rows(
             "created_at": _at(in_term(6 + i), 21),
         })
 
-    # The cached study guide targets the midterm (exam_id = its assignment).
+    # The study guide targets the midterm (exam_id = its assignment). The pack
+    # holds an overview and topics; they are stored as a format-2 guide.
     if midterm is not None:
         exam_id, exam_title, exam_due = midterm
         # A few days before the exam, never before the term nor in the future.
         generated = min(today, max(term_start, min(today - timedelta(days=1),
                                                    exam_due - timedelta(days=3))))
+        content = content_from_topics({
+            "exam": exam_title,
+            "overview": course.study_guide.overview,
+            "topics": [t.model_dump() for t in course.study_guide.topics],
+        })
         rows["study_guides"].append({
             "id": _new_id(),
             "user_id": user_id,
             "offering_id": rc.offering_id,
             "exam_id": exam_id,
+            "scope_kind": "exam",
+            "status": "ready",
+            "format": GUIDE_FORMAT,
             "generated_at": _at(generated, 17),
-            "content": encrypt_json({
-                "exam": exam_title,
-                "due_date": exam_due.isoformat(),
-                "overview": course.study_guide.overview,
-                "topics": [t.model_dump() for t in course.study_guide.topics],
-            }),
+            "created_at": _at(generated, 17),
+            "content": encrypt_json(content.model_dump(mode="json")),
         })
 
     # Completed quiz attempts, in the wire shape routes/quiz.py stores.

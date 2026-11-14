@@ -58,17 +58,37 @@ export const NESTED_NAV_FEATURES: NestedNavFeature[] = [
   { href: "/quiz", label: "Quiz", flag: "hide_quiz", section: "Learn" },
 ];
 
+/**
+ * Pages that belong to a nav destination but sit outside its path: Flashcards
+ * is a Study tool served at /flashcards, not under /study. `owner` is the nav
+ * row's href, and the page is gated by that row's flag, so hiding Study hides
+ * it too. A feature with a hide flag of its own is a NESTED_NAV_FEATURES entry
+ * instead. A new entry also needs lib/appRoutes.ts SHELL_PREFIXES (flags are
+ * only loaded inside the shell) and, for a Study tool, lib/toolHrefs.ts
+ * STUDY_TOOL_PATHS (what keeps Study selected in the nav); a test pins both.
+ */
+export type NavPathAlias = { path: string; owner: string };
+export const NAV_PATH_ALIASES: NavPathAlias[] = [
+  { path: "/flashcards", owner: "/study" },
+];
+
+/** Segment-boundary match: `/quiz` and `/quiz/x`, never `/quizzes`. */
+function isAtOrBelow(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
 /** The `hide_*` flag guarding `pathname` (segment-boundary match), or null. */
 export function navFlagForPath(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
   for (const item of NESTED_NAV_FEATURES) {
-    if (pathname === item.href || pathname.startsWith(item.href + "/")) return item.flag;
+    if (isAtOrBelow(pathname, item.href)) return item.flag;
   }
+  // An aliased page answers as the nav row that owns it.
+  const alias = NAV_PATH_ALIASES.find((a) => isAtOrBelow(pathname, a.path));
+  const path = alias ? alias.owner : pathname;
   for (const section of NAV_SECTIONS) {
     for (const item of section.items) {
-      if (item.flag && (pathname === item.href || pathname.startsWith(item.href + "/"))) {
-        return item.flag;
-      }
+      if (item.flag && isAtOrBelow(path, item.href)) return item.flag;
     }
   }
   return null;

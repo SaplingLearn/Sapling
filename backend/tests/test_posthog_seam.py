@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
-from tests.split_patches import patch_profile_table
+from tests.split_patches import patch_flashcards, patch_profile_table
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
 # users.id is TEXT, not a UUID — a UUID-only rule would drop every real user.
@@ -359,11 +359,11 @@ class TestFlashcardEvents:
     def test_generate_emits_flashcard_generated(self, sink):
         from main import app
 
-        with patch("routes.flashcards._get_course_documents", return_value=[{"x": 1}]), \
-             patch("routes.flashcards._get_weak_concepts", return_value=["a", "b"]), \
-             patch("routes.flashcards._generate", return_value=[{"front": SECRET, "back": "b"}]), \
-             patch("routes.flashcards.table") as t, \
-             patch("services.achievement_service.check_achievements"):
+        with patch_flashcards("_get_course_documents", return_value=[{"x": 1}]), \
+             patch_flashcards("_get_weak_concepts", return_value=["a", "b"]), \
+             patch_flashcards("generate_flashcards", return_value=[{"front": SECRET, "back": "b"}]), \
+             patch_flashcards("table") as t, \
+             patch_flashcards("check_achievements"):
             t.return_value.select.return_value = []
             r = TestClient(app).post("/api/flashcards/generate", json={
                 "user_id": USER_ID, "topic": "CS", "count": 1,
@@ -385,15 +385,15 @@ class TestFlashcardEvents:
         from main import app
 
         cards = [{"front": SECRET, "back": "b"}, {"front": "q", "back": "a"}]
-        with patch("routes.flashcards.check_rate_limit", return_value=None), \
-             patch("routes.flashcards.gemini_generate_cards", return_value=cards):
+        with patch_flashcards("check_rate_limit", return_value=None), \
+             patch_flashcards("gemini_generate_cards", return_value=cards):
             r = TestClient(app).post("/api/flashcards/import/generate", json={
                 "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
             })
         assert r.status_code == 200
-        with patch("routes.flashcards.table"), \
-             patch("routes.flashcards.check_achievements"), \
-             patch("routes.flashcards.resolve_offering", return_value=None):
+        with patch_flashcards("table"), \
+             patch_flashcards("check_achievements"), \
+             patch_flashcards("resolve_offering", return_value=None):
             r = TestClient(app).post("/api/flashcards/import/commit", json={
                 "user_id": USER_ID, "topic": "CS", "cards": cards, "dedup": False,
             })
@@ -409,8 +409,8 @@ class TestFlashcardEvents:
         """#677 re-review: a generation that yields no cards must not count."""
         from main import app
 
-        with patch("routes.flashcards.check_rate_limit", return_value=None), \
-             patch("routes.flashcards.gemini_generate_cards", return_value=[]):
+        with patch_flashcards("check_rate_limit", return_value=None), \
+             patch_flashcards("gemini_generate_cards", return_value=[]):
             r = TestClient(app).post("/api/flashcards/import/generate", json={
                 "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
             })
@@ -421,8 +421,8 @@ class TestFlashcardEvents:
     def test_rate_emits_flashcard_reviewed(self, sink):
         from main import app
 
-        with patch("routes.flashcards.table") as t, \
-             patch("routes.flashcards.check_achievements"):
+        with patch_flashcards("table") as t, \
+             patch_flashcards("check_achievements"):
             t.return_value.select.return_value = [{"id": "c1", "times_reviewed": 2}]
             r = TestClient(app).post("/api/flashcards/rate", json={
                 "user_id": USER_ID, "card_id": "c1", "rating": 3,

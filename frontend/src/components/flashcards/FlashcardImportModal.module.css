@@ -1,0 +1,704 @@
+/* The "Import flashcards" dialog and its five source tabs (tabs/*.tsx).
+
+   One fixed-size sheet of paper: header, a two-column body (where the cards
+   come from | where they go and what they are), footer. Regions are divided by
+   hairlines and whitespace, never by boxes, and the frame keeps its size when
+   the source changes or cards arrive: the two columns scroll inside it.
+
+   The frame is rendered inside the shared <Dialog> (components/Dialog.tsx),
+   which owns the paper surface, radius, border, shadow and max-height; the
+   modal passes it the width. Under 760px the body becomes one scrolling
+   column with the footer pinned. */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  /* The dialog is min(640px, 100dvh - 48px) tall. Dialog's panel adds a 1px
+     border on each side, and caps itself at calc(100vh - 48px) border
+     included, so the frame is 2px short of both numbers. */
+  height: min(638px, calc(100vh - 50px));
+  height: min(638px, calc(100dvh - 50px));
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding: 14px 14px 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 500;
+}
+
+/* Quiet at rest; the ring on keyboard focus is the app-wide :focus-visible. */
+.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.close:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+/* ── Body ───────────────────────────────────────────────────────────── */
+
+.body {
+  display: grid;
+  grid-template-columns: 46% minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.source,
+.preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.source {
+  border-right: 1px solid var(--border);
+}
+
+/* ── Shared small controls ──────────────────────────────────────────── */
+
+/* Segmented control: equal segments on a subtle track, the chosen one lifted
+   to paper. The source picker spans its column; `.segInline` is the same
+   control at its natural width (a tab's own two-way mode switch). */
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  flex: none;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+}
+.segInline {
+  display: inline-grid;
+}
+
+.segOpt {
+  height: 28px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.segOpt:hover {
+  color: var(--text);
+}
+.segOpt[aria-pressed="true"] {
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Text field: 32px, hairline, small radius, small type. `.inputLg` is the
+   36px field that sits beside the course picker. */
+.input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.inputLg {
+  height: 36px;
+  padding: 0 11px;
+  font-size: var(--fs-md);
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--text-muted);
+}
+.input:hover,
+.textarea:hover {
+  border-color: var(--border-strong);
+}
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--brand-forest);
+  box-shadow: 0 0 0 1px var(--brand-forest);
+}
+
+/* CustomSelect takes a class on its wrapper only; its trigger is the button
+   directly inside, and already carries the hairline, radius and paper fill.
+   Here it gets the 32px height and a drawn chevron in place of its "▾" glyph
+   (the glyph span is hidden, the chevron is the button's own ::after). */
+.select {
+  min-width: 0;
+}
+.select > button {
+  height: 32px;
+}
+.select > button > span[aria-hidden] {
+  display: none;
+}
+.select > button::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: -3px 2px 0 0;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition: transform var(--dur-fast) var(--ease), margin var(--dur-fast) var(--ease);
+}
+.select > button[aria-expanded="true"]::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+.selectFill {
+  width: 100%;
+}
+.selectLg > button {
+  height: 36px;
+}
+
+/* A primary action that sits in a row of 32px controls. */
+.go {
+  flex: none;
+  height: 32px;
+  white-space: nowrap;
+}
+
+/* ── Left: where the cards come from ────────────────────────────────── */
+
+.sourcePicker {
+  margin: 16px 20px 0;
+}
+
+/* The active source takes the rest of the column and scrolls inside it when
+   it is taller (a short window, the URL tab's help text). */
+.sourceBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 20px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ── The source tabs ────────────────────────────────────────────────── */
+
+/* A tab's root: a column that fills the source area. Its main input (a
+   textarea, a drop area) takes the spare height; its options sit under it. */
+.tab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 0 auto;
+  min-width: 0;
+}
+
+.textarea {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  resize: none;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+/* The spare height when a tab's main input is not a textarea (the AI tab's
+   library picker), so the options under it do not move between modes. */
+.fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* One row of 32px controls under the main input. A group that does not fit
+   beside the mode switch moves to a second line as a whole. */
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  flex: none;
+  container-type: inline-size;
+}
+.options > .go {
+  margin-left: auto;
+}
+/* Takes a line of its own: a tab's selects on the left, its action on the right. */
+.optionsLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* Label + select pairs that read as one sentence and stay on one line
+   together. In a tight column the selects give up width first; only a column
+   too narrow even for that lets the pairs stack. */
+.pairs {
+  display: flex;
+  align-items: baseline;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.pairLabel {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.pairSelect {
+  flex: 0 1 104px;
+  min-width: 72px;
+}
+/* Room for the longer option names ("Application", "Conceptual"). */
+.pairSelectWide {
+  flex-basis: 120px;
+}
+@container (max-width: 330px) {
+  .pairs {
+    flex-wrap: wrap;
+  }
+}
+
+/* A custom separator's own field, on the line under the selects. */
+.customs {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+.customs > .input {
+  flex: 0 1 200px;
+}
+
+/* Upload / Photo: the whole area is one button that opens the file dialog,
+   and a drop target. */
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 140px;
+  padding: 24px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
+  text-align: center;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.drop:hover {
+  border-color: var(--text-muted);
+  background: var(--bg-subtle);
+  color: var(--text-dim);
+}
+.drop:focus-visible {
+  outline: 2px solid var(--brand-forest);
+  outline-offset: 2px;
+  border-color: var(--brand-forest);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+}
+.dropText {
+  max-width: 34ch;
+  font-size: var(--fs-md);
+}
+.dropMeta {
+  font-size: var(--fs-xs);
+}
+
+/* URL */
+.hint {
+  margin: 0;
+  color: var(--text-dim);
+}
+.urlRow {
+  display: flex;
+  gap: 8px;
+}
+.urlRow > .input {
+  flex: 1 1 auto;
+}
+.notice {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.noticeTitle {
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.noticeDetail {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+}
+
+/* ── Right: where the cards go, then what they are ──────────────────── */
+
+.dest {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex: none;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.fieldCourse {
+  flex: 0 0 45%;
+}
+.fieldTopic {
+  flex: 1 1 0;
+}
+/* CoursePicker sizes itself as a flex item of a row (as in the page headers). */
+.pickerSlot {
+  display: flex;
+  min-width: 0;
+}
+
+/* A container so the actions can react to the column's own width. */
+.previewHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex: none;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  container-type: inline-size;
+}
+
+.count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  min-height: 30px;
+  margin: 0;
+}
+.countCards {
+  color: var(--text);
+  font-weight: 600;
+}
+.countFlagged {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.previewActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+/* In a column too narrow for count and actions side by side, the actions
+   always take their own line, so the head does not change height (and nudge
+   the list) the moment a flagged row adds "N need a look" to the count. */
+@container (max-width: 520px) {
+  .previewActions {
+    flex-basis: 100%;
+    justify-content: space-between;
+  }
+}
+
+.reverse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.reverse input {
+  margin: 0;
+  accent-color: var(--brand-forest);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1.4fr) 28px;
+  align-items: center;
+  column-gap: 2px;
+  flex: none;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--r-sm);
+  transition: background var(--dur-fast) var(--ease);
+}
+.row:nth-child(even) {
+  background: var(--bg-subtle);
+}
+.row:hover,
+.row:focus-within {
+  background: var(--bg-soft);
+}
+/* After the zebra and hover fills so a flagged row keeps its tint. */
+.row[data-flagged] {
+  background: var(--warn-soft);
+}
+
+.rowNum {
+  padding-left: 4px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cell {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+}
+.cell::placeholder {
+  color: var(--text-muted);
+}
+.cell:hover {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.cell:focus {
+  outline: none;
+  background: var(--bg-panel);
+  box-shadow: inset 0 0 0 1px var(--brand-forest);
+}
+
+.rowRemove {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-xs);
+  color: var(--text-muted);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.rowRemove:hover {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.rowReason {
+  grid-column: 2 / 4;
+  padding: 0 6px 4px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+  flex: none;
+  padding: 11px 20px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* What Import will do, in words. */
+.summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-left: auto;
+}
+.action {
+  height: 32px;
+  white-space: nowrap;
+}
+
+/* ── Touch ──────────────────────────────────────────────────────────── */
+
+@media (pointer: coarse) {
+  .close {
+    width: 40px;
+    height: 40px;
+  }
+  .segOpt {
+    height: 34px;
+  }
+  .cell,
+  .rowRemove {
+    height: 36px;
+  }
+  .rowRemove {
+    width: 36px;
+  }
+  .row {
+    grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1.4fr) 36px;
+  }
+}
+
+/* ── Narrow: one column, the body scrolls as one, the footer stays ──── */
+
+@media (max-width: 760px) {
+  .frame {
+    height: calc(100vh - 50px);
+    height: calc(100dvh - 50px);
+  }
+
+  .header {
+    padding: 12px 10px 12px 16px;
+  }
+
+  .body {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .source {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sourcePicker {
+    margin: 14px 16px 0;
+  }
+  .sourceBody {
+    padding: 12px 16px 16px;
+    overflow: visible;
+  }
+  /* Nothing to fill here: the main inputs take a comfortable fixed height. */
+  .tab {
+    flex: none;
+  }
+  .textarea {
+    min-height: 160px;
+  }
+
+  /* Course over topic, each on a row of its own. */
+  .dest {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 14px 16px;
+  }
+  .fieldCourse,
+  .fieldTopic {
+    flex: none;
+  }
+
+  .previewHead {
+    padding: 10px 16px;
+  }
+  .rows {
+    padding: 8px;
+    overflow: visible;
+  }
+  .empty {
+    min-height: 96px;
+  }
+
+  .footer {
+    flex-wrap: wrap;
+    padding: 10px 16px 12px;
+  }
+  .summary {
+    flex-basis: 100%;
+    white-space: normal;
+  }
+}

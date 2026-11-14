@@ -51,7 +51,7 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
 
 test("hiding Quiz removes its Study option and redirects its route (#620)", async ({ browser, page }) => {
   await page.goto(`${FRONTEND_URL}/study`);
-  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("link", { name: "Quiz" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Quiz" })).toBeVisible();
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // Hide Quiz for everyone, through the API the /admin tab uses.
@@ -66,7 +66,7 @@ test("hiding Quiz removes its Study option and redirects its route (#620)", asyn
   // Flags load once per page load: a fresh load picks the change up.
   await page.reload();
   await expect(page.getByTestId("nav-link-tree")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("link", { name: "Quiz" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Quiz" })).toHaveCount(0);
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // A typed URL (and anything below it) lands on the dashboard.
@@ -74,4 +74,46 @@ test("hiding Quiz removes its Study option and redirects its route (#620)", asyn
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("app-shell")).toBeVisible();
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
+});
+
+test("hiding Study redirects its tool pages too, /flashcards included (#870)", async ({ browser, page }) => {
+  // Baseline: Flashcards is a Study page with a top-level path of its own. It
+  // renders inside the shell and keeps the Study row in the nav.
+  await page.goto(`${FRONTEND_URL}/flashcards`);
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await expect(page.getByTestId("nav-link-study")).toBeVisible();
+  await expect(page).toHaveURL(/\/flashcards(\?.*)?$/);
+
+  // Hide Study for everyone, through the API the /admin tab uses.
+  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
+  const adminCtx = await browser.newContext({ storageState: adminState });
+  const res = await adminCtx.request.patch(`${FRONTEND_URL}/api/admin/flags/hide_study`, {
+    data: { default_variant: "on", rollout_percent: 0, rollout_variant: null },
+  });
+  expect(res.ok()).toBeTruthy();
+  await adminCtx.close();
+
+  const flags = await page.request.get(`${FRONTEND_URL}/api/flags`);
+  expect((await flags.json()).flags.hide_study).toBe("on");
+
+  // Every Study URL lands on the dashboard: the hub, the Study Guide below
+  // it, Flashcards outside it, and the retired `?mode=` links that redirect
+  // to those two pages (a redirect onto a hidden page must not loop or stick).
+  // /flashcards was once outside the shell route list: no flags were loaded
+  // there, so it rendered with every /api/flashcards call 404ing.
+  for (const path of [
+    "/study",
+    "/study/guide",
+    "/flashcards",
+    "/flashcards?course=CS101",
+    "/study?mode=guide",
+    "/study?mode=cards",
+  ]) {
+    await page.goto(`${FRONTEND_URL}${path}`);
+    await expect(page, path).toHaveURL(/\/dashboard$/);
+    await expect(page.getByTestId("app-shell"), path).toBeVisible();
+    await expect(page.getByTestId("nav-link-tree"), path).toBeVisible();
+    await expect(page.getByTestId("nav-link-study"), path).toHaveCount(0);
+    await expect(page.getByTestId("error-fallback"), path).toHaveCount(0);
+  }
 });

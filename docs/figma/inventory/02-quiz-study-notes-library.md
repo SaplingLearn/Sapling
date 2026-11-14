@@ -66,6 +66,11 @@ Phase → screen (QuizScreen.tsx:123-199): home/configuring/paused → Home · g
 **Transitions:** ready –Start→ generating → q-* or error · Adjust ↔ dialog –Start→ generating · pick ↔ reset · review-due → generating · Cancel → return / dashboard · resume → item; discard · option → selected –Submit→ correct/incorrect –Next→ … –See results→ scoring → results · Leave/Esc → dialog → stay / source route · Ask → sheet → close · error retry → generating; back → home · practise missed → rerun · quiz again / next concept → generating · back-to-source / Done.
 
 ## /study (`components/screens/Study.tsx`) — no testids
+
+### Retired with the study-guide redesign (2026-11-12)
+
+The per-exam Study Guide screen these rows describe no longer exists. `/study/guide` is now the Study Guides home and `/study/guide/{guideId}` the guide reader (`components/studyGuide/`); their states are not inventoried yet and have no capture recipe. The 14 desktop state ids below (and `study/guide-mobile`) lost their recipes in `frontend/e2e/figma/recipes/study.ts` with the screen, so they cannot be captured again. Their frames are still in the Figma file as a record of the old screen, and `docs/figma/prototype-links.json` still lists the 43 hotspots to and from them, the sidebar's "Study" link (`*shell*` to `study/guide-no-course`) among them. Repoint or drop those links when the new screens are captured.
+
 | State id | What the user sees | Trigger | File:line |
 |---|---|---|---|
 | study/guide-no-course | "Study" + chip + "Study Guide \| Flashcards"; 01 Course / 02 Exam (disabled); "Pick a course to get started"; Recent guides rail | `/study` | Study.tsx:145, 467 |

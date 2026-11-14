@@ -1,0 +1,101 @@
+/* The New study guide dialog: the form on the left, the outline it plans on
+   the right. Under ~700px of dialog the outline goes below the form. The
+   dialog is portalled to <body>, so it sets its own text defaults. */
+
+.dialog {
+  container-type: inline-size;
+  container-name: newguide;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 24px; align-items: start; }
+.form { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* Goal and Depth sit side by side while both fit, and stack when they do not. */
+.choices { display: flex; flex-wrap: wrap; gap: 18px 24px; }
+
+.field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fieldHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-height: 18px; }
+.fieldHint { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* ── materials ───────────────────────────────────────────────────────────── */
+
+.picks { display: inline-flex; gap: 2px; margin-left: auto; }
+/* Small text, but a target a finger can hit. */
+.pick {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px;
+  border: 0; border-radius: var(--r-xs); background: transparent;
+  font: inherit; font-size: var(--fs-sm); font-weight: 600; color: var(--brand-forest); cursor: pointer;
+}
+.pick:hover { background: var(--accent-soft); }
+
+.tiles {
+  list-style: none; margin: 0; padding: 2px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+  max-height: 232px; overflow-y: auto; overscroll-behavior: contain;
+}
+.tile {
+  width: 100%; min-height: 48px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-panel);
+  font: inherit; color: var(--text); text-align: left; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.tile:hover { border-color: var(--border-strong); }
+.tile[aria-pressed="true"] { border-color: var(--accent-border); background: var(--accent-soft); }
+.tile[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.tileCheck {
+  width: 16px; height: 16px; flex-shrink: 0; box-sizing: border-box;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--border-strong); border-radius: var(--r-xs); color: #fff;
+}
+.tile[aria-pressed="true"] .tileCheck { border-color: transparent; background: var(--brand-forest); }
+.tileText { display: flex; flex-direction: column; min-width: 0; }
+.tileName { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tileAdd { justify-content: center; gap: 6px; border-style: dashed; border-color: var(--border-strong); background: transparent; font-weight: 600; color: var(--text-dim); }
+.tileAdd:hover { border-color: var(--brand-forest); color: var(--brand-forest); background: var(--sap-50); }
+
+.note { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); }
+
+/* ── quiz history ────────────────────────────────────────────────────────── */
+
+.history { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.historyText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.historyTitle { font-weight: 600; }
+
+/* ── planned outline ─────────────────────────────────────────────────────── */
+
+.outline { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: var(--r-md); background: var(--bg-subtle); }
+.outlineBody { display: flex; flex-direction: column; gap: 12px; transition: opacity var(--dur-fast) var(--ease); }
+.outlineBody[data-stale] { opacity: 0.6; }
+.outlineNote { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.sections { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.section { display: flex; align-items: flex-start; gap: 9px; padding: 8px 0; border-top: 1px solid var(--border); }
+.section:first-child { border-top: 0; padding-top: 0; }
+/* Holds the swatch on the title's first line. */
+.swatch { display: flex; padding-top: 4px; }
+.sectionText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sectionTitle { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.share { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.minutes { margin: 0; font-weight: 600; color: var(--text); }
+
+/* ── footer ──────────────────────────────────────────────────────────────── */
+
+.foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+.error { flex: 1 1 220px; margin: 0; font-size: var(--fs-md); color: var(--err); }
+
+@container newguide (max-width: 700px) {
+  .body { grid-template-columns: minmax(0, 1fr); }
+}
+@container newguide (max-width: 460px) {
+  .pair, .tiles { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .outlineBody { transition: none; }
+}

@@ -59,4 +59,5 @@ Extend `make gallery-shots` (showcase seed + showcase handlers, one flock'd up�
 - Figma file: https://www.figma.com/design/ToiUnUgkl5xMYvaLAqzXfr (LA-Hacks team), one page, 45 sections in a masonry grid; frame name == state id.
 - **722 / 722** desktop states captured as editable layers (`scripts/figma-capture.sh`, recipes in `frontend/e2e/figma/recipes/`).
 - Prototype: 12,690 click hotspots from `docs/figma/prototype-links.json` (sidebar nav on every app frame, public header/footer, in-flow transitions); 62 labels unmatched (mostly the control isn't visible in that particular state). Flow starting points: App — Dashboard, Public site — Landing, Onboarding, Admin.
+- 2026-11-12: the 14 `study/guide-*` states were retired with the study-guide redesign (their recipes are gone, their frames remain in the file); see the note in [02](02-quiz-study-notes-library.md).
 - Re-run a subset: mint 1+ capture id (Figma MCP `generate_figma_design`), then `FIGMA_WORKERS=4 scripts/figma-capture.sh --pool <ids.json> <states.json> <promptId>` — submits chain on `nextCaptureId`; unused minted ids expire within hours.

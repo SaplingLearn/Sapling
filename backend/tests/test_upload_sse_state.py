@@ -332,7 +332,6 @@ class TestCourseContextOffering:
             patch_documents("process_document", AsyncMock(return_value=result)),
             patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})),
             patch_documents("refresh_course_context", refresh),
-            patch_documents("_invalidate_study_guide_cache"),
             patch_documents("_check_upload_achievements"),
             patch_documents("schedule_document_index"),
         ):

@@ -33,6 +33,10 @@ vi.mock("@/lib/api", () => ({
   scanCourseConcepts: vi.fn(),
 }));
 
+vi.mock("@/lib/studyGuide/api", () => ({
+  listGuides: vi.fn(async () => ({ guides: [] })),
+}));
+
 import { Library } from "./Library";
 import { ToastProvider } from "../ToastProvider";
 import { getDocuments, scanDocumentConcepts } from "@/lib/api";

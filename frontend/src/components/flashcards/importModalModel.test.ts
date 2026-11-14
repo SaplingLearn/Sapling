@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
 import {
   buildFinalCards, commitBlocker, commitLabel, importedMessage,
-  initialCourseId, isCommitDisabled, tabButtonStyle, validCardsOf,
+  initialCourseId, isCommitDisabled, validCardsOf,
 } from "./importModalModel";
 
 const course = (id: string, code: string, name: string): EnrolledCourse => ({
@@ -76,18 +76,5 @@ describe("labels", () => {
   it("importedMessage adds the skip note only when something was skipped", () => {
     expect(importedMessage({ inserted: 1, skipped_duplicates: 0 })).toBe("Imported 1 card.");
     expect(importedMessage({ inserted: 0, skipped_duplicates: 2 })).toBe("Imported 0 cards. 2 skipped (duplicates).");
-  });
-});
-
-describe("tabButtonStyle", () => {
-  it("marks the active tab with weight, accent colour and underline", () => {
-    expect(tabButtonStyle(true)).toEqual({
-      padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "var(--accent)",
-      background: "transparent", borderBottom: "2px solid var(--accent)",
-    });
-    expect(tabButtonStyle(false)).toEqual({
-      padding: "8px 14px", fontSize: 13, fontWeight: 500, color: "var(--text-dim)",
-      background: "transparent", borderBottom: "2px solid transparent",
-    });
   });
 });

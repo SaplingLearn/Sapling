@@ -89,6 +89,9 @@ renders the element.
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
+| Study guide reader | `guide` | `frontend/src/components/studyGuide/reader/**` (the `/study/guide/{guideId}` screen: `GuideReader.tsx` mounts `ReaderTopBar`, `GuideHeader` + `GuideMenu`, `GenerationBanner`, `SectionView` + `Prose`, one file per block type under `blocks/` inside the shared `BlockFrame`, `Sources`, `FeedbackRow` and the rail under `rail/`); `guide-space-bar` is `studyGuide/shared/SpaceBar.tsx`. The ids on `ui/Toggle`, `ui/AnswerOption` and `ui/InlineBanner` are passed in as a `testid` prop |
+| Study Guides home | `guides` | `frontend/src/components/studyGuide/home/GuidesHome.tsx` (the `/study/guide` screen) + `GuidesToolbar.tsx`, `SortMenu.tsx`, `GuideCard.tsx`, `GuidesStates.tsx` |
+| New study guide dialog | `guide-new` | `frontend/src/components/studyGuide/home/NewGuideModal.tsx` (opened from the home) + `ScopeFields.tsx`, `ChoiceFields.tsx`, `MaterialTiles.tsx`, `PlannedOutline.tsx`. The ids on `CustomSelect`, `ui/Toggle` and `ui/Switch` are passed in as a `testId` / `testid` prop |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
@@ -104,6 +107,8 @@ renders the element.
 | Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Settings | `settings` | `frontend/src/components/screens/Settings.tsx` (the `/settings` screen — tab rail + the Data tab's product-analytics opt-out) — added with the PostHog frontend integration |
+| Study hub | none shared (see its inventory note) | `frontend/src/components/study/*.tsx` (the `/study` hub since #870: `ReadinessBand.tsx`, `RoadmapTile.tsx`, `DailyGoalCard.tsx`, `FocusCard.tsx`, `RecentActivity.tsx`, `StudyModal.tsx`), rendered by `screens/Study.tsx` through `study/StudyHub.tsx` |
+| Flashcards | `flashcards` (+ the shared `back-link`) | `frontend/src/components/screens/Flashcards.tsx` (the `/flashcards` page frame and header), `frontend/src/components/flashcards/home/*.tsx` (the home: hero figures, deck grid, mix bar; and the set builder: concept map, tray) and `frontend/src/components/flashcards/review/Review.tsx` (the flip-card review). The header's way back is `frontend/src/components/BackLink.tsx`, shared with the Quiz and Study Guide headers — added with #870 |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
@@ -357,7 +362,9 @@ quiz journey is what drives them.
 | `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course |
 | `graph-node-activate` | the activation `<button>` inside an a11y entry (when the graph is clickable) |
 | `graph-node` | 2D SVG node group (`<g>`); carries `data-node-id={node.id}` |
-| `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
+| `graph-node-circle` | the main mark inside a 2D node group — the shape that encodes the mastery tier as `opacity`. A hand-drawn outline (`<path>`, its radius on `data-r`) in the default variant; a `<circle>` in the thin-line variants. The name is kept so existing selectors hold |
+| `graph-node-highlight` | the pulsing ring round the highlighted node (`highlightId`); it holds the `<animate>` the capture recipes wait on |
+| `graph-course-label` | the course code drawn under a course root's mark in the 2D graph (`CS 101`); it keeps a readable size however far the graph is zoomed out, unlike concept captions, which fade out below 0.55× on the legible graph |
 | `graph-edge` | one 2D SVG edge `<line>` |
 | `graph-zoom-in` / `graph-zoom-out` / `graph-zoom-reset` | 2D zoom controls |
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
@@ -664,6 +671,60 @@ screen; don't add a fifth prefix here without a reason as strong as these.
 | `leaderboard-row-you` | the current viewer's row in the leaderboard list (`achievements/LeaderboardTab.tsx::RankRow`), present only when `row.is_you` |
 | `activity-week-total` | the "Week total" stat tile's value on the Activity tab (`achievements/ActivityTab.tsx`) |
 
+### Study hub (`/study`)
+
+Added with the #870 hub journey (`study-hub.spec.ts`). The ids were written
+with the hub's own unit suite (`study/StudyHub.test.tsx`), before any browser
+journey, and are **not** `study-`-prefixed: each names the panel it is on
+(`readiness-`, `daily-goal`, `tile-`). They are unique to the hub (no other
+screen renders these panels), and renaming them is a breaking change to that
+suite as well as to the journey. A new id on the hub takes the `study-` prefix
+(`study-modal-backdrop` already does).
+
+Only the ids a browser journey uses are listed; the hub carries a few more
+for its unit suite (`focus-card`, `recent-toggle`, `recent-all`,
+`study-modal-backdrop`, and the three lines that say what the selected exam
+tab scopes: `roadmap-exam-caption`, `readiness-unlinked-note`,
+`focus-fallback-note`). Most of the hub's controls have no testid: a journey
+reaches them by role and a name built from DATA — the Daily Goal's target
+button (`Daily goal: {n} minutes. Change daily goal`) and its preset radios
+(`{n} minutes`), a tile menu's items inside `role="menu"` named
+`{concept} actions`, the course field (the page's only
+`button[aria-haspopup="listbox"]`).
+
+| testid | element |
+| --- | --- |
+| `readiness-pct` | the readiness figure (`ReadinessBand.tsx`): the mean mastery of the concepts it is over as `{n}%`, or `–` when there are none to measure |
+| `daily-goal` | the Daily Goal card root (`DailyGoalCard.tsx`): today's minutes "of" the goal (the goal is the edit button), the week's bars, today by activity |
+| `tile-{conceptId}` | one concept on the roadmap (`RoadmapTile.tsx`; a `role="button"` that selects it), suffixed with the graph node id |
+| `tile-actions-{conceptId}` | that tile's "..." button, which opens its menu: "Quiz Me" (absent under `hide_quiz`) and "Make Flashcards" / "{n} Flashcards", each a link INTO the tool for that concept (`start=1`, `lib/toolHrefs.ts`) |
+
+### `flashcards`
+
+Added with #870, when Flashcards became a page of its own (`/flashcards`; the
+old `/study?mode=cards` pane redirects to it). Driven by
+`study-semester.spec.ts` (the semester selector scopes the card read, #141)
+and `study-hub.spec.ts` (the hub's "Make Flashcards" arrives with `start=1`).
+
+The page has three states — home, set builder, review — and one header. Only
+the ids a browser journey uses are listed; the files carry more for their
+unit suites (`flashcards-home-status`, `flashcards-mix`, `flashcards-tally-*`,
+`flashcards-segment`, `flashcards-summary`, …). The decks' controls have no
+testid of their own: a journey scopes to the deck by its testid and takes the
+control by role and name (`Review {deck name}` plays it, `Open {deck name}`
+opens a saved set in the builder, the `Select {deck name}` checkbox ticks it
+for the mix bar).
+
+| testid | element |
+| --- | --- |
+| `flashcards-figure-{kind}` | one of the home hero's three figures (`home/Hero.tsx`), `kind` = `cards` / `concepts` / `sets`; a `<dt>` label and a `<dd>` number (`–` while loading). `cards` counts the chosen course's cards under the active term |
+| `flashcards-deck-{deckId}` | one deck on the home (`home/Decks.tsx`), suffixed with the saved set's id, or `auto:all` ("All of {course}": every concept of the course, never generates) / `auto:due` ("Due today") for the two decks that are not stored |
+| `flashcards-deck-name` | in the page header (`screens/Flashcards.tsx`), what is being reviewed or built: the deck's title in a review, "New set" / the set's name in the builder. Absent on the home, where the course field stands in its place |
+| `flashcards-card` | the review's flip card (`review/Review.tsx`); `data-flipped` says which face is up. Holds both faces' text |
+| `flashcards-topic` | the card's topic, on its front face (absent for a card with none) |
+| `flashcards-selection` | the builder tray's headline (`home/Tray.tsx`): "{n} concepts · {m} cards" for what is ticked |
+| `back-link` | the header's one way back, last in its actions (`BackLink.tsx`, shared by the Quiz, Flashcards and Study Guide headers): a link to Study on a tool's home, a button ("All sets" / "Back") inside a review or the builder |
+
 ### `library`
 
 Added with the upload → SSE → library journey (#387).
@@ -684,6 +745,120 @@ Added with the upload → SSE → library journey (#387).
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
 | `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
 | `library-load-retry` | that notice's "Try again" / "Retry" button |
+| `library-guide-{guideId}` | one saved study guide's card in the "Study guides" section over the documents (`studyGuide/home/LibraryGuides.tsx`, mounted by `screens/Library.tsx`); a link to the reader, suffixed with the guide's id. The section is absent when no saved guide matches the course filter and search |
+
+### `guide`
+
+The study-guide reader (`/study/guide/{guideId}`), added with the study-guide
+redesign. `{sectionId}`, `{itemId}` and `{blockId}` are the ids the guide's
+content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
+
+| testid | element |
+| --- | --- |
+| `guide-mode` | the top bar's Read / Skim toggle (container) |
+| `guide-mode-read` / `guide-mode-skim` | its two options |
+| `back-link` | the shared `BackLink` in the top bar; here it goes to the Study Guides home |
+| `guide-load-error` | the guide could not be loaded (`role="alert"`) |
+| `guide-generating` | the banner that follows the page while the guide is being written: the current label over its progress bar |
+| `guide-generating-bar` | that bar (`role="progressbar"`, `aria-valuenow` 0 to 100) |
+| `guide-generation-error` | the banner when a generation stopped or was turned away (an Update with nothing new, the hourly limit), or the guide's status is `failed` on load. For a failed guide with nothing written it is the whole page |
+| `guide-generation-retry` | its "Retry" button: always present, as a `resume`, when the guide read again after the failure is `generating` or `failed`; otherwise it asks again for what failed (`update` / `regenerate`) and is absent when asking again cannot help (a 422, a stream error marked not retryable); disabled while a block is being regenerated |
+| `guide-generation-dismiss` | its "Dismiss" button: only when the guide, read again after the failure, is `ready` |
+| `guide-title` | the guide's title (`<h2>`: the top bar's "Study" is the page's `<h1>`, and each section's title is an `<h3>`) |
+| `guide-menu` | the three-dot menu button beside the title |
+| `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |
+| `guide-menu-saved` | menu item "Saved to Library", a link to `/library` (only once saved; takes the focus when Save swaps it in) |
+| `guide-menu-export` | menu item "Export PDF" (the browser's print dialog) |
+| `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while the guide is generating or a block is being regenerated) |
+| `guide-space-bar` | the bar that shows each section's share of the guide by mastery (`shared/SpaceBar.tsx`). Also rendered on every home card and in the dialog's planned outline, so scope it to its parent there |
+| `guide-section-{sectionId}` | one section (also its anchor `id`) |
+| `guide-section-read-{sectionId}` | the section's "Mark as read" / "Read" toggle (`aria-pressed`; disabled until the section is written) |
+| `guide-section-expand-{sectionId}` | a mastered section's "Show full section" / "Hide full section" |
+| `guide-section-retry-{sectionId}` | "Try again" on a section that could not be written (runs a `resume` generation; disabled while a block is being regenerated, and gone while a generation runs: the section then shows as being written or queued) |
+| `guide-prose-{itemId}` | one prose passage in Read mode |
+| `guide-skim-{itemId}` | the same passage's one-line summary in Skim mode (absent when it has none) |
+| `guide-block-{blockId}` | one typed block, whatever its type (the shared frame) |
+| `guide-block-regenerate-{blockId}` | the block's "Regenerate" (not on a check block; hidden while the guide is generating; every block's is disabled while one block is being regenerated) |
+| `guide-chart-state-{blockId}` | a chart's Before / After toggle (container; only when the chart has an After state) |
+| `guide-chart-state-{blockId}-before` / `-after` | its two options |
+| `guide-step-next-{blockId}` | a worked example's "Show first step" / "Show next step" |
+| `guide-step-reset-{blockId}` | a worked example's "Start over" |
+| `guide-concept-{blockId}-{idx}` | one concept-map tile (render index; `aria-pressed` while its tutor prompts are open) |
+| `guide-concept-prompt-{blockId}-{idx}` | one tutor prompt for the selected tile (render index: 0 simpler, 1 example, 2 quiz me) |
+| `guide-concept-close-{blockId}` | closes the tutor prompts |
+| `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`; `aria-checked` on the picked one, right or wrong) |
+| `guide-check-result-{blockId}` | the result line after an answer: correct or not, the explanation, and the mastery change when there was one |
+| `guide-sources` | the sources list (also the anchor every citation links to) |
+| `guide-feedback-yes` / `guide-feedback-no` | the "Was this guide useful?" answers (`aria-pressed`) |
+| `guide-progress` | the rail's progress ring: sections read, what the guide is for, days left |
+| `guide-stale` | the rail's "n new lectures since this guide was made" notice |
+| `guide-update` | its "Update guide" button (runs an `update` generation; disabled while the guide is generating or a block is being regenerated) |
+| `guide-updated` | the "Guide is up to date" notice after an Update finished in this visit |
+| `guide-outline-{sectionId}` | the rail outline's link to a section, with its mastery or writing state |
+| `guide-outline-read-{sectionId}` | the rail outline's read mark for a section (`aria-pressed`) |
+| `guide-ask-input` | the rail's "Ask about this guide" input |
+| `guide-ask-send` | its send button (opens the tutor on a new session) |
+
+### `guides`
+
+The Study Guides home (`/study/guide`), added with the study-guide redesign.
+
+| testid | element |
+| --- | --- |
+| `back-link` | the shared `BackLink` in the top bar; here it goes to the Study hub |
+| `guides-search` | the toolbar's search input (title, class name or code, scope) |
+| `guides-sort` | the sort button; its text is the current choice |
+| `guides-sort-{key}` | one sort menu item: `recent`, `oldest`, `class` |
+| `guides-new` | the toolbar's "New study guide" button |
+| `guides-grid` | the list of guide cards |
+| `guides-card-{guideId}` | one guide's card, a link to the reader; `data-status` is the guide's status |
+| `guides-card-status-{guideId}` | "Not finished" or "Could not finish" after the date on a card whose guide is not ready (it takes the new-lectures text's place) |
+| `guides-card-new-{guideId}` | "n new lectures" after the date on a card (only when there are some, and the guide is ready) |
+| `guides-card-saved-{guideId}` | "In Library" on a card whose guide is saved (read out as "Saved: In Library"); absent on an unsaved guide |
+| `guides-card-unsaved-{guideId}` | "Not saved" in the same place on a card whose guide is not in the Library |
+| `guides-card-room-{guideId}` | the row under the card's bar: "Most room: section" and that section's tier label; absent while the guide has no section |
+| `guides-card-sections-{guideId}` / `-blocks-` / `-practice-` / `-minutes-` | the card's four numbers |
+| `guides-loading` | the skeleton grid while the list loads (`aria-busy`) |
+| `guides-empty` | the empty state when the student has no guide |
+| `guides-empty-new` | its "New study guide" button |
+| `guides-no-match` | "No guide matches ..." when the search keeps none |
+| `guides-load-error` | the list could not be loaded (`role="alert"`) |
+| `guides-load-retry` | its "Try again" button |
+
+One guide testid lives outside the two screens:
+
+| testid | element |
+| --- | --- |
+| `recent-g{guideId}` | a study guide's row in the Study hub's Recent Activity (`components/study/RecentActivity.tsx`), a link to the reader. The suffix is the row's key: `g` + the guide's id. Quiz and flashcard rows are not links and carry no testid |
+
+### `guide-new`
+
+The New study guide dialog on the Study Guides home.
+
+| testid | element |
+| --- | --- |
+| `guide-new-dialog` | the dialog's body |
+| `guide-new-class` | the Class select's trigger |
+| `guide-new-class-option-{courseId}` | one class in its list |
+| `guide-new-scope` | the "Studying for" select's trigger |
+| `guide-new-scope-option-{scopeKey}` | one scope in its list: `course`, `exam:{id}` or `assignment:{id}` |
+| `guide-new-goal` | the Goal toggle (container) |
+| `guide-new-goal-{goal}` | its options: `practice`, `review`, `exam_prep` |
+| `guide-new-depth` | the Depth toggle (container) |
+| `guide-new-depth-{depth}` | its options: `cram`, `standard`, `deep` |
+| `guide-new-materials-count` | "n of m selected", or the note that the class has no material yet |
+| `guide-new-materials-suggested` / `-all` / `-none` | the three quick picks over the tiles |
+| `guide-new-material-{documentId}` | one material tile (`aria-pressed`; `aria-disabled` when the cap is reached and it is off) |
+| `guide-new-upload` | the "Add from Library or upload" tile |
+| `guide-new-materials-cap` | the note shown once 30 materials are selected |
+| `guide-new-options-retry` | "Try again" when the class's materials could not be loaded |
+| `guide-new-history` | the "Use my quiz history and mastery" switch |
+| `guide-new-outline` | the planned outline panel (`aria-busy` while it is planned again) |
+| `guide-new-outline-section-{idx}` | one planned section (render index; `data-tier` is its mastery tier) |
+| `guide-new-outline-minutes` | "about n min" |
+| `guide-new-error` | why the guide could not be created (`role="alert"`) |
+| `guide-new-cancel` | the footer's "Cancel" |
+| `guide-new-generate` | the footer's "Generate guide" (disabled until there is a class and a material) |
 
 ### `landing-graph`
 
@@ -858,6 +1033,20 @@ form, avatar picker, accent swatches, export/delete, cosmetics manager) are
 baselined in `frontend/eslint-suppressions.json`, so only NEW interactive
 elements there must carry a testid. The tab rail and the shared `Toggle`
 switch (analytics opt-out and the Notifications toggles) entered tagged.
+
+The Study hub and Flashcards (#870) are only partly in the `files` list:
+`study/RoadmapTile.tsx` and `BackLink.tsx`, whose one `<button>` each a
+journey clicks by testid and already carried it. Their other files hold
+dozens of untagged buttons and inputs (the deck grid, the set builder, the review's
+rating row, the dates editor) that journeys reach by role and name, as the
+inventory notes say; enrolling those files means tagging each control, which
+is for whoever first needs one by id.
+
+The study-guide files (`guide`, `guides` and `guide-new` surfaces) joined the
+`files` list with no baselined backlog: every file under
+`components/studyGuide/` that renders a `<button>`, `<input>` or `<textarea>`
+is listed, and each of those elements entered tagged. A new file there that
+renders one must be added to the list.
 
 ### Adding a surface
 

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services.tutor_sessions import PENDING_SESSIONS
+from tests.split_patches import patch_flashcards
 
 client = TestClient(app)
 
@@ -52,7 +53,8 @@ def pending_for_owner():
 # ── POST /api/flashcards/generate ────────────────────────────────────────────
 
 def _flash_tables():
-    """`routes.flashcards.table` + `services.flashcards.context.table` stand-in;
+    """`table` stand-in for the flashcards generate path (its handler body and
+    `services.flashcards.context`);
     records summary reads."""
     mocks: dict[str, MagicMock] = {}
 
@@ -80,14 +82,14 @@ def _generate(uid, sid):
 @pytest.fixture
 def flash():
     flash_tables = _flash_tables()
-    with patch("routes.flashcards.table", side_effect=flash_tables), \
+    with patch_flashcards("table", side_effect=flash_tables), \
          patch("services.flashcards.context.table", side_effect=flash_tables), \
-         patch("routes.flashcards._get_course_documents", return_value=[]), \
-         patch("routes.flashcards._get_weak_concepts", return_value=[]), \
-         patch("routes.flashcards._generate",
-               return_value=[{"front": "q", "back": "a"}]) as gen, \
+         patch_flashcards("_get_course_documents", return_value=[]), \
+         patch_flashcards("_get_weak_concepts", return_value=[]), \
+         patch_flashcards("generate_flashcards",
+                          return_value=[{"front": "q", "back": "a"}]) as gen, \
          patch("services.flashcards.context.decrypt_json") as dec, \
-         patch("services.achievement_service.check_achievements"):
+         patch_flashcards("check_achievements"):
         yield {"tables": flash_tables, "generate": gen, "decrypt_json": dec}
 
 

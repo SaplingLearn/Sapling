@@ -1,0 +1,26 @@
+/* Export PDF: the app shell's side of the reader's print stylesheet.
+
+   The reader's own parts are hidden or opened in its CSS modules. The shell
+   around it (ShellFrame, the nav, the corner actions) is not the reader's to
+   class, so these rules are global, and every one is fenced to a page that is
+   showing the reader (`data-guide-reader`, set by GuideReader). */
+
+@media print {
+  html:has([data-guide-reader]) [data-app-sidenav],
+  html:has([data-guide-reader]) nav[aria-label="Primary"],
+  html:has([data-guide-reader]) .shell-corner-actions,
+  html:has([data-guide-reader]) .skip-link,
+  html:has([data-guide-reader]) .inline-banner {
+    display: none !important;
+  }
+
+  /* The shell is a viewport-high frame whose <main> scrolls. On paper it has
+     to flow, or the printout stops at the first screenful. */
+  html:has([data-guide-reader]) div:has(> .skip-link),
+  html:has([data-guide-reader]) div:has(> main[data-scroll-container]),
+  html:has([data-guide-reader]) main[data-scroll-container] {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+}

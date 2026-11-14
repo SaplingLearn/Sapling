@@ -118,6 +118,13 @@ def test_event_taxonomy_is_pinned():
         # lives in test_posthog_seam.py::TestFlashcardEvents.
         "flashcard.generated",
         "flashcard.reviewed",
+        # The study-guide redesign. Emit coverage lives in
+        # test_study_guides_answers.py and test_study_guides_state.py (and the
+        # generation and block tests for the first two).
+        "study_guide.generated",
+        "study_guide.block_regenerated",
+        "study_guide.check_answered",
+        "study_guide.saved",
         "session.started",
         "session.ended",
         "rag.retrieval_failed",
