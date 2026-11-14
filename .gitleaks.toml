@@ -32,6 +32,13 @@ paths = ['''^backend/\.env\.local\.example$''']
 regexes = ['''^(0123456789abcdef){4}$''']
 
 [[allowlists]]
+description = """The same demo ENCRYPTION_KEY, written as `"0123456789abcdef" * 4` in the \
+fail-closed config test that proves boot refuses it outside local (commit 500d71f0)."""
+condition = "AND"
+paths = ['''^backend/tests/test_config_validation_failclosed\.py$''']
+regexes = ['''^0123456789abcdef$''']
+
+[[allowlists]]
 description = "Placeholder API keys the CI / E2E / eval lanes set so config validation passes; never valid credentials."
 regexes = [
   '''^e2e-dummy-key-no-billing$''',
